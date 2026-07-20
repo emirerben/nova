@@ -286,7 +286,9 @@ class SmartCaptionRenderPolicy:
         if value is None or isinstance(value, cls):
             return value
         return cls(
-            font_family=str(value["font_family"]),
+            # The family is interpolated into an ASS Style line; strip the
+            # field/section metacharacters — persisted JSONB is re-trusted here.
+            font_family=re.sub(r"[,{}\[\]\r\n]", "", str(value["font_family"])).strip(),
             font_size_px=max(36, min(96, int(value["font_size_px"]))),
             y_frac=max(0.3, min(0.9, float(value["y_frac"]))),
             width_frac=max(0.4, min(0.95, float(value["width_frac"]))),

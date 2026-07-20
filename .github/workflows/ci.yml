@@ -119,7 +119,7 @@ jobs:
           ALLOWED_ORIGINS: '["http://localhost:3000"]'
         run: |
           python -m alembic upgrade head
-          python -m alembic downgrade 0065
+          python -m alembic downgrade -1
           python -m alembic upgrade head
       - name: Run API tests
         working-directory: src/apps/api

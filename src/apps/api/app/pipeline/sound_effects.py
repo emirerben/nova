@@ -65,7 +65,9 @@ class MusicBedTreatment:
             src_gcs_path=str(value["src_gcs_path"]),
             section_start_s=max(0.0, float(value.get("section_start_s") or 0.0)),
             section_end_s=max(0.01, float(value["section_end_s"])),
-            gain_db=float(value.get("gain_db") or -18.0),
+            # Clamp like the sibling fields — from_value re-trusts persisted
+            # JSONB, and an unbounded gain reaches the volume filter verbatim.
+            gain_db=min(0.0, max(-40.0, float(value.get("gain_db") or -18.0))),
             speech_duck_db=float(
                 value["speech_duck_db"] if value.get("speech_duck_db") is not None else -12.0
             ),
@@ -407,7 +409,9 @@ def apply_smart_audio_treatment(
         music_local: str | None = None
         if treatment:
             try:
-                if not treatment.src_gcs_path.startswith("music/"):
+                if not treatment.src_gcs_path.startswith("music/") or any(
+                    part in {"", ".", ".."} for part in treatment.src_gcs_path.split("/")
+                ):
                     raise ValueError("Smart music must use the curated music/ prefix")
                 music_ext = os.path.splitext(treatment.src_gcs_path)[-1].lower() or ".mp3"
                 music_local = os.path.join(tmpdir, f"music{music_ext}")
@@ -442,8 +446,12 @@ def apply_smart_audio_treatment(
                 music_bed=attempt_bed,
                 music_local_path=attempt_music_path,
             )
+            # The tiers share one 600s pass budget: a hung full-graph attempt
+            # must not let the retry double the audio pass against the render
+            # task's 1740s soft limit.
+            tier_timeout = max(60.0, 600.0 - (time.monotonic() - started))
             try:
-                result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+                result = subprocess.run(cmd, capture_output=True, timeout=tier_timeout, check=False)
             except subprocess.TimeoutExpired:
                 receipt["component_failures"].append(
                     {"component": "graph", "id": tier, "reason": "ffmpeg_timeout"}

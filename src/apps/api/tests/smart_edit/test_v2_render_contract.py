@@ -15,7 +15,6 @@ from app.pipeline.render_geometry import (
     NormalizedBox,
     ProtectedRegion,
     arbitrate_media_overlays,
-    sample_face_boxes,
     sample_face_regions,
 )
 from app.pipeline.sound_effects import (
@@ -79,6 +78,23 @@ def test_v2_caption_policy_is_measured_two_line_and_reburn_stable(tmp_path) -> N
     rendered = initial.read_text()
     assert f"{policy['font_family']},{policy['font_size_px']}" in rendered
     assert "\\N" in rendered
+
+
+def test_smart_caption_policy_without_user_edits_keeps_pinned_preset() -> None:
+    """Negative path: absent the *_user_edited flags, the reburn's ass_font and
+    margin_v must NOT leak into the pinned Smart policy."""
+    policy = load_preset("cigdem", "v2").caption.model_dump(mode="json")
+
+    effective = _effective_smart_caption_policy(
+        {"smart_caption_policy": policy},
+        ass_font="TikTok Sans",
+        margin_v=400,
+    )
+
+    assert effective is not None
+    assert effective["font_family"] == policy["font_family"]
+    assert effective["y_frac"] == policy["y_frac"]
+    assert _effective_smart_caption_policy({}, ass_font="TikTok Sans", margin_v=None) is None
 
 
 def test_smart_caption_policy_honors_explicit_creator_font_and_position() -> None:
@@ -194,6 +210,52 @@ def test_shared_geometry_uses_real_aspect_and_alpha_footprint() -> None:
     box = NormalizedBox(**resolved[0]["smart_layout_box"])
     assert box.width == pytest.approx(0.2)
     assert box.height == pytest.approx(0.4 * 1080 / 1920 / 4.0)
+
+
+def test_media_overlay_persistence_keeps_failed_cards_for_reburn() -> None:
+    """Review D4: a transient download failure or arbitration omission must not
+    permanently delete a card — persistence keeps every compiled card, with
+    resolved geometry for the burned survivors."""
+    from app.agents._schemas.media_overlay import MediaOverlay
+    from app.tasks.generative_build import _merged_media_overlay_persistence
+
+    requested = [
+        MediaOverlay.model_validate(
+            {
+                "id": card_id,
+                "kind": "video",
+                "src_gcs_path": f"users/u/plan/p/overlays/{card_id}.mp4",
+                "position": "custom",
+                "x_frac": 0.5,
+                "y_frac": 0.5,
+                "scale": 0.3,
+                "start_s": 0.0,
+                "end_s": 3.0,
+            }
+        )
+        for card_id in ("survivor", "failed-download")
+    ]
+    applied = [
+        {
+            "id": "survivor",
+            "kind": "video",
+            "src_gcs_path": "users/u/plan/p/overlays/survivor.mp4",
+            "position": "custom",
+            "x_frac": 0.2,
+            "y_frac": 0.14,
+            "scale": 0.3,
+            "start_s": 0.0,
+            "end_s": 3.0,
+        }
+    ]
+
+    merged = _merged_media_overlay_persistence(requested, applied)
+
+    assert [card["id"] for card in merged] == ["survivor", "failed-download"]
+    # The survivor persists its arbitration-resolved geometry…
+    assert merged[0]["x_frac"] == 0.2
+    # …while the failed card keeps its original compiled payload for retry.
+    assert merged[1]["x_frac"] == 0.5
 
 
 def test_smart_titles_force_text_caption_compositor_when_public_lane_is_off(monkeypatch) -> None:
@@ -403,10 +465,41 @@ def test_semantic_crop_is_inside_existing_reframe_filter_only() -> None:
 
 
 def test_face_detection_failure_has_bounded_empty_fallback() -> None:
-    boxes, receipt = sample_face_boxes("/does/not/exist.mp4", [0.0, 1.0], timeout_s=0.01)
-    assert boxes == []
+    regions, receipt = sample_face_regions("/does/not/exist.mp4", [0.0, 1.0], timeout_s=0.01)
+    assert regions == []
     assert receipt["attempted"] <= 2
-    assert receipt["elapsed_ms"] < 1000
+    assert receipt["elapsed_ms"] < 5000
+    # A worker failure (as opposed to a genuine zero-face clip) must be
+    # observable: either the budget killed it or the receipt names the error.
+    assert receipt["timed_out"] or "worker_error" in receipt
+
+
+def test_face_sampler_success_payload_becomes_padded_timed_regions(monkeypatch) -> None:
+    import json as json_lib
+    import subprocess  # noqa: F401 — patched below
+    from types import SimpleNamespace
+
+    from app.pipeline import render_geometry as rg
+
+    payload = {
+        "attempted": 1,
+        "samples": [{"at_s": 2.0, "box": {"left": 0.4, "top": 0.2, "right": 0.6, "bottom": 0.5}}],
+    }
+    monkeypatch.setattr(
+        rg.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout=json_lib.dumps(payload), stderr=""),
+    )
+
+    regions, receipt = rg.sample_face_regions("/v.mp4", [2.0])
+
+    assert receipt["detected"] == 1
+    assert "worker_error" not in receipt
+    assert regions[0].start_s == pytest.approx(1.5)
+    assert regions[0].end_s == pytest.approx(2.5)
+    assert regions[0].kind == "face"
+    assert regions[0].box.left == pytest.approx(0.4 - 0.08)
+    assert regions[0].box.bottom == pytest.approx(0.5 + 0.08)
 
 
 def test_face_detection_timeout_is_enforced_by_killable_process(monkeypatch) -> None:

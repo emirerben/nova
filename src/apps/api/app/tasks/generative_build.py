@@ -251,17 +251,29 @@ def _run_generative_job(job_id: str) -> None:
             and str(_raw_smart.get("preset_id") or "").strip()
             and str(_raw_smart.get("preset_version") or "").strip()
         ):
-            smart_captions = {
-                "preset_id": str(_raw_smart["preset_id"]),
-                "preset_version": str(_raw_smart["preset_version"]),
-                "sound_design": ("off" if _raw_smart.get("sound_design") == "off" else "auto"),
-            }
-            if (
-                str(_raw_smart.get("shadow_preset_id") or "").strip()
-                and str(_raw_smart.get("shadow_preset_version") or "").strip()
-            ):
-                smart_captions["shadow_preset_id"] = str(_raw_smart["shadow_preset_id"])
-                smart_captions["shadow_preset_version"] = str(_raw_smart["shadow_preset_version"])
+            # Re-validate every preset token at the worker boundary: assembly_plan
+            # is JSONB any writer can touch, and load_preset builds a filesystem
+            # path from these — match the service-layer charset gate exactly.
+            from app.services.generative_jobs import _SMART_PRESET_TOKEN_RE  # noqa: PLC0415
+
+            _pid = str(_raw_smart["preset_id"])
+            _pver = str(_raw_smart["preset_version"])
+            if _SMART_PRESET_TOKEN_RE.fullmatch(_pid) and _SMART_PRESET_TOKEN_RE.fullmatch(_pver):
+                smart_captions = {
+                    "preset_id": _pid,
+                    "preset_version": _pver,
+                    "sound_design": ("off" if _raw_smart.get("sound_design") == "off" else "auto"),
+                }
+                _sid = str(_raw_smart.get("shadow_preset_id") or "").strip()
+                _sver = str(_raw_smart.get("shadow_preset_version") or "").strip()
+                if (
+                    _sid
+                    and _sver
+                    and _SMART_PRESET_TOKEN_RE.fullmatch(_sid)
+                    and _SMART_PRESET_TOKEN_RE.fullmatch(_sver)
+                ):
+                    smart_captions["shadow_preset_id"] = _sid
+                    smart_captions["shadow_preset_version"] = _sver
         # Plan-declared edit format (Lane A). Coerced defensively — a drifted token
         # falls back to montage rather than failing the job. Resolved against the
         # footage after ingest (see _resolve_archetype).
@@ -2101,7 +2113,7 @@ def _will_reapply_media_layers(variant: dict) -> bool:
     ready/failed, so a poll never observes an effect-less "ready"."""
     return (
         (bool(variant.get("media_overlays")) and settings.media_overlays_enabled)
-        or bool(variant.get("smart_music_treatment"))
+        or (bool(variant.get("smart_music_treatment")) and settings.smart_music_bed_enabled)
         or (bool(variant.get("sound_effects")) and settings.sound_effects_enabled)
     )
 
@@ -2285,7 +2297,10 @@ def _reapply_persisted_sfx_if_any(
             sfx_raw = (
                 existing.get("sound_effects") or [] if _settings_sfx.sound_effects_enabled else []
             )
-            if not sfx_raw and not existing.get("smart_music_treatment"):
+            music_active = bool(existing.get("smart_music_treatment")) and getattr(
+                _settings_sfx, "smart_music_bed_enabled", True
+            )
+            if not sfx_raw and not music_active:
                 return False
             # pre_sfx_video_path must now point to the newly composited overlay video
             # (the current video_path post-overlay), so SFX are re-applied on top.
@@ -2433,7 +2448,11 @@ def _run_sfx_pass(
             return
 
         placements = coerce_sound_effects(sfx_raw) or []
-        music_treatment = existing.get("smart_music_treatment")
+        # Kill switch: with the bed disabled the treatment stays persisted (so
+        # re-enabling restores it) but this pass mixes as if it were absent.
+        music_treatment = (
+            existing.get("smart_music_treatment") if settings.smart_music_bed_enabled else None
+        )
 
         # ── Clear path: remove all effects ───────────────────────────────────
         if not placements and not music_treatment:
@@ -2572,7 +2591,12 @@ def _run_sfx_pass(
                         actual_gen_id=current,
                     )
                     return
-                v["sound_effects"] = [p.model_dump() for p in placements]
+                if placements or settings.sound_effects_enabled:
+                    # Empty placements with the lane ON is an explicit clear.
+                    # With the lane OFF the list was emptied by the kill switch
+                    # (music-bed-only reapply) — never wipe the creator's
+                    # persisted SFX; re-enabling the flag must restore them.
+                    v["sound_effects"] = [p.model_dump() for p in placements]
                 v["pre_sfx_video_path"] = pre_clean
                 v["output_url"] = new_url
                 if audio_receipt is not None:
@@ -7785,6 +7809,9 @@ def _resolve_smart_music_treatment(
         "eligible_tracks": 0,
         "matcher_invocations": 0,
     }
+    if not settings.smart_music_bed_enabled:
+        receipt["reason"] = "disabled_by_flag"
+        return None, receipt
     if not audio_intents:
         receipt["reason"] = "no_audio_intent"
         return None, receipt
@@ -7800,6 +7827,16 @@ def _resolve_smart_music_treatment(
         )
         lock = client.lock(f"{cache_key}:lock", timeout=60, blocking_timeout=2)
         if not lock.acquire(blocking=True):
+            # The lock holder is resolving right now — reuse its result if the
+            # write already landed instead of silently rendering without music.
+            try:
+                cached = client.get(cache_key)
+                if cached:
+                    treatment = json.loads(cached)
+                    receipt.update({"status": "reused", "track_id": treatment.get("track_id")})
+                    return treatment, receipt
+            except Exception:  # noqa: BLE001 — fail open to no-bed
+                pass
             receipt["reason"] = "lock_timeout"
             return None, receipt
     except Exception as exc:  # noqa: BLE001
@@ -8323,14 +8360,11 @@ def _render_subtitled_variant(
                         exc = None
                     except Exception as retry_exc:  # noqa: BLE001
                         exc = retry_exc
-                    if exc is None:
-                        pass
-                    elif not sc_apply:
-                        raise exc
-                if exc is None:
-                    pass
-                elif not sc_apply:
-                    raise
+                # exc now holds the still-unrecovered failure: the original when
+                # no camera retry ran, the retry error when it also failed, or
+                # None when the camera-less retry succeeded.
+                if exc is not None and not sc_apply:
+                    raise exc
                 # Fail-open on the CUT apply (R3a, mirroring talking_head's
                 # uncut retry): a segment-filter failure must cost the cuts,
                 # never the variant. Clear every plan-derived state so captions
@@ -8731,7 +8765,11 @@ def _render_subtitled_variant(
             base["smart_validation_receipts"]["music_resolution"] = {"status": "disabled"}
 
         protected_boxes: list[dict[str, object]] = []
-        if smart_v2 and smart_compiled is not None:
+        if smart_v2 and smart_compiled is not None and not smart_compiled.media_overlays:
+            # Nothing to arbitrate against — skip the face-sampler subprocess
+            # (~2s of cv2 startup) and the box measurements entirely.
+            base["smart_validation_receipts"]["geometry_prepare"] = {"status": "skipped_no_media"}
+        elif smart_v2 and smart_compiled is not None:
             from app.pipeline.render_geometry import (  # noqa: PLC0415
                 NormalizedBox,
                 ProtectedRegion,
@@ -8800,18 +8838,33 @@ def _render_subtitled_variant(
                 )
                 layout_receipts: list[dict[str, Any]] = []
                 applied_media_cards: list[dict[str, Any]] = []
+                # v2 always opts into geometry arbitration (an empty protection
+                # list still enables simultaneous-card dedup); v1 must pass None
+                # so its layout stays byte-stable pre-arbitration.
                 output_url = apply_media_overlays(
                     pre_media_gcs,
                     media_cards,
                     media_target,
                     job_id=job_id,
-                    protected_boxes=protected_boxes or None,
+                    protected_boxes=(
+                        protected_boxes if smart_v2 and smart_compiled is not None else None
+                    ),
                     layout_receipt_out=layout_receipts,
                     applied_cards_out=applied_media_cards,
                 )
                 rendered_gcs = media_target
                 base["pre_media_overlay_video_path"] = pre_media_gcs
-                base["media_overlays"] = applied_media_cards
+                # Persist EVERY compiled card (review D4): survivors carry
+                # their arbitration-resolved geometry, failed/omitted cards
+                # keep their original payload so the next reburn retries them
+                # instead of losing them forever. The applied manifest records
+                # which subset actually reached the burned video.
+                base["media_overlays"] = _merged_media_overlay_persistence(
+                    media_cards, applied_media_cards
+                )
+                base["media_overlays_applied_ids"] = [
+                    str(card.get("id")) for card in applied_media_cards
+                ]
                 base["smart_validation_receipts"]["visual_render"] = {
                     "requested": len(media_cards),
                     "applied": len(applied_media_cards),
@@ -8826,6 +8879,7 @@ def _render_subtitled_variant(
                     error=str(exc)[:300],
                 )
                 base["media_overlays"] = None
+                base["media_overlays_applied_ids"] = None
                 base["pre_media_overlay_video_path"] = None
                 base["smart_validation_receipts"]["visual_render"] = {
                     "requested": len(media_cards),
@@ -9096,6 +9150,24 @@ def _resolve_caption_margin_v(variant: dict) -> int:
     if min_margin <= margin_v <= max_margin:
         return margin_v
     return SUBTITLED_CAPTION_MARGIN_V
+
+
+def _merged_media_overlay_persistence(
+    requested: list[Any],
+    applied: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Persist every compiled card so transient failures self-heal on reburn.
+
+    Survivors of the apply pass carry their arbitration-resolved geometry
+    (persisted state matches the burned video for what IS in it); cards that
+    failed download or lost arbitration keep their original compiled payload
+    so a later reburn retries them instead of dropping them forever. The
+    companion `media_overlays_applied_ids` manifest records the burned subset.
+    """
+    applied_by_id = {str(card.get("id")): card for card in applied}
+    return [
+        applied_by_id.get(str(card.id), card.model_dump(exclude_none=True)) for card in requested
+    ]
 
 
 def _effective_smart_caption_policy(
@@ -10592,6 +10664,7 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # media-overlay cards (slice 1) — MUST survive finalization
                     # or "clear all" loses the pre-overlay clean copy reference.
                     "media_overlays": r.get("media_overlays"),
+                    "media_overlays_applied_ids": r.get("media_overlays_applied_ids"),
                     "pre_media_overlay_video_path": r.get("pre_media_overlay_video_path"),
                     # sound-effect placements (SFX lane) — MUST survive finalization
                     # or any later full re-render (text/song/clip edit) strips the

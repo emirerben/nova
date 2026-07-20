@@ -140,12 +140,45 @@ def test_hint_builder_accepts_grounded_names_and_rejects_paths_prompts_and_metad
             "a detailed generated mascot description with many unrelated words.png",
         ],
     )
+    # The group is grounded (pinar_beyaz.png ≈ "pinar_beyaz"), so ALL of its
+    # curated transcript terms are admitted — including the phonetically
+    # dissimilar character names the alias table exists to repair.
     assert "Pınar Beyaz" in hints
-    assert "Bağırsak" not in hints
-    assert "Pip" not in hints
+    assert "Bağırsak" in hints
+    assert "Pip" in hints
     assert not any("secret" in hint or "ignore" in hint for hint in hints)
 
     assert cc.build_trusted_caption_hints(visual_aliases=aliases, asset_names=[]) == []
+
+
+def test_hint_builder_admits_dissimilar_aliases_only_from_grounded_groups() -> None:
+    """Regression: the curated Çelik-class aliases must survive grounding.
+
+    The alias table maps phonetically DISSIMILAR pairs (character name ↔ asset
+    filename). An anchor-similarity gate on individual aliases silently drops
+    exactly the names the feature was built for, leaving only near-copies of
+    filenames the LLM never needed hints for.
+    """
+    groups = [
+        {
+            "asset_terms": ["robots_wedding", "robot wedding", "robot couple"],
+            "transcript_terms": ["Çelik", "Çeliknaz", "Çelik Naz"],
+        },
+        {
+            "asset_terms": ["cocacola", "coca-cola", "polar bear"],
+            "transcript_terms": ["Coca-Cola", "Ayıcıkları"],
+        },
+    ]
+
+    grounded = cc.build_trusted_caption_hints(
+        visual_aliases=groups,
+        asset_names=["robots_wedding.mp4"],
+    )
+    assert "Çelik" in grounded
+    assert "Çeliknaz" in grounded
+    # The cocacola group has no matching pool file — none of its terms admit.
+    assert "Ayıcıkları" not in grounded
+    assert "Coca-Cola" not in grounded
 
 
 def test_accepted_alias_repair_preserves_word_ids_count_and_timestamps(monkeypatch) -> None:

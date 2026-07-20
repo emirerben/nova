@@ -208,6 +208,54 @@ def test_music_graph_enforces_compiled_ducking_and_loudness_policy():
     assert 1.0 < gentle_ratio < strong_ratio <= 20.0
 
 
+def test_music_bed_only_graph_mixes_voice_and_bed_without_sfx():
+    """The prod-default v2 shape: SFX lane flag off → effects=[] but the music
+    bed still mixes against the voice, with video stream-copied."""
+    cmd = build_sound_effects_command(
+        "/base.mp4",
+        [],
+        [],
+        "/out.mp4",
+        music_bed=MusicBedTreatment(
+            track_id="t",
+            src_gcs_path="music/t/a.mp3",
+            section_start_s=0.0,
+            section_end_s=10.0,
+        ),
+        music_local_path="/music.mp3",
+    )
+
+    graph = " ".join(cmd)
+    assert "amix=inputs=2" in graph
+    assert "[voice]" in graph and "[bed]" in graph
+    assert cmd[cmd.index("-c:v") + 1] == "copy"
+
+
+def test_music_bed_gain_is_clamped_from_persisted_values():
+    treatment = MusicBedTreatment.from_value(
+        {
+            "track_id": "t",
+            "src_gcs_path": "music/t/a.mp3",
+            "section_start_s": 0.0,
+            "section_end_s": 10.0,
+            "gain_db": 60.0,
+        }
+    )
+    assert treatment.gain_db == 0.0
+    assert (
+        MusicBedTreatment.from_value(
+            {
+                "track_id": "t",
+                "src_gcs_path": "music/t/a.mp3",
+                "section_start_s": 0.0,
+                "section_end_s": 10.0,
+                "gain_db": -99.0,
+            }
+        ).gain_db
+        == -40.0
+    )
+
+
 def test_music_treatment_defaults_keep_cached_rows_backward_compatible():
     treatment = MusicBedTreatment.from_value(
         {

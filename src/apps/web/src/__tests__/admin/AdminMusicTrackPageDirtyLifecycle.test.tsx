@@ -214,6 +214,7 @@ describe("AdminMusicTrackPage section-bounds dirty lifecycle", () => {
           best_start_s: 127.2,
           best_end_s: 141,
           slot_every_n_beats: 8,
+          smart_captions_licensed: false,
         },
       });
     });

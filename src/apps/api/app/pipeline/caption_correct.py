@@ -28,6 +28,11 @@ _PROMPTISH = re.compile(
 )
 _SAFE_ALIAS = re.compile(r"^[\wÇĞİÖŞÜçğıöşü -]{2,80}$", re.UNICODE)
 _TOKEN = re.compile(r"[\wÇĞİÖŞÜçğıöşü-]+", re.UNICODE)
+# A preset alias group is trusted only when at least one of its asset_terms
+# phonetically matches a real filename in the creator's uploaded pool.
+_GROUP_GROUNDING_MIN_OVERLAP = 0.58
+# A proposed substitution must sound like the words it replaces.
+_PROPOSAL_MIN_OVERLAP = 0.52
 _ALLOWED_PROPOSAL_KEYS = {
     "line_index",
     "start_word_index",
@@ -120,14 +125,19 @@ def build_trusted_caption_hints(
             transcript_terms = list(getattr(group, "transcript_terms", None) or [])
         group_anchors = [str(term) for term in asset_terms]
         if not any(
-            _phonetic_overlap(asset_term, safe_name) >= 0.58
+            _phonetic_overlap(asset_term, safe_name) >= _GROUP_GROUNDING_MIN_OVERLAP
             for asset_term in group_anchors
             for safe_name in safe_names
         ):
             continue
+        # A grounded group admits ALL of its curated transcript_terms. The whole
+        # point of the alias table is mapping phonetically DISSIMILAR pairs
+        # ("Çelik" ↔ "robots_wedding") — requiring alias≈anchor similarity here
+        # would silently discard exactly the aliases the feature exists for.
+        # The misheard-vs-target phonetic check lives in _validate_proposal.
         for raw in transcript_terms:
             alias = _safe_display_name(str(raw))
-            if alias and any(_phonetic_overlap(alias, anchor) >= 0.58 for anchor in group_anchors):
+            if alias:
                 hints[_fold(alias)] = alias
     return sorted(hints.values(), key=lambda value: (_fold(value), value))[:40]
 
@@ -283,7 +293,7 @@ def _validate_proposal(
     if _fold(original) != _fold(str(proposal["original_span"])):
         return None
     target = aliases_by_fold.get(_fold(str(proposal["target_alias"])))
-    if target is None or _phonetic_overlap(original, target) < 0.52:
+    if target is None or _phonetic_overlap(original, target) < _PROPOSAL_MIN_OVERLAP:
         return None
     target_tokens = target.split()
     if len(target_tokens) != end - start + 1:

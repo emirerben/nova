@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -138,6 +139,7 @@ class PreparedMediaAsset:
         return MediaFootprint(aspect_ratio=aspect, opaque_bounds=self.opaque_bounds)
 
 
+@lru_cache(maxsize=32)
 def _typeface(font_family: str) -> skia.Typeface:
     key = font_family.strip().casefold()
     filename = _FONT_FILES.get(key, _FONT_FILES["tiktok sans"])
@@ -253,6 +255,7 @@ def sample_face_regions(
         }
     regions: list[ProtectedRegion] = []
     attempted = len(anchors)
+    worker_error: str | None = None
     if result.returncode == 0:
         try:
             payload = json.loads(result.stdout)
@@ -268,33 +271,24 @@ def sample_face_regions(
                         kind="face",
                     )
                 )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             regions = []
+            worker_error = f"bad_payload:{type(exc).__name__}"
+    else:
+        # A structurally broken sampler (cv2 missing, unimportable module) must
+        # be distinguishable from a real zero-face clip in the receipts, or the
+        # protection silently never runs and nobody notices.
+        worker_error = f"rc_{result.returncode}:{(result.stderr or '').strip()[:120]}"
     elapsed_ms = round((time.monotonic() - started) * 1000)
-    return regions, {
+    receipt: dict[str, Any] = {
         "attempted": attempted,
         "detected": len(regions),
         "elapsed_ms": elapsed_ms,
         "timed_out": False,
     }
-
-
-def sample_face_boxes(
-    video_path: str,
-    anchor_times_s: list[float],
-    *,
-    max_samples: int = 12,
-    timeout_s: float = 2.0,
-) -> tuple[list[NormalizedBox], dict[str, Any]]:
-    """Compatibility wrapper for callers that only need timeless face boxes."""
-
-    regions, receipt = sample_face_regions(
-        video_path,
-        anchor_times_s,
-        max_samples=max_samples,
-        timeout_s=timeout_s,
-    )
-    return [region.box for region in regions], receipt
+    if worker_error is not None:
+        receipt["worker_error"] = worker_error
+    return regions, receipt
 
 
 def media_dimensions(path: str) -> tuple[int, int]:

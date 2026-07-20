@@ -9,6 +9,7 @@ versioned, and covered by golden tests.
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -175,11 +176,20 @@ def _normalize_version(preset_id: str, version: str) -> str:
     return version[len(prefix) :] if version.startswith(prefix) else version
 
 
+_PRESET_SEGMENT_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
+
+
 @lru_cache(maxsize=16)
 def load_preset(preset_id: str, version: str) -> SmartEditPreset:
     safe_id = preset_id.strip().lower()
     safe_version = _normalize_version(safe_id, version.strip().lower())
-    if any(part in {"", ".", ".."} for part in (safe_id, safe_version)):
+    # Charset-validate each path segment BEFORE the join — ids can arrive from
+    # DB rows written out-of-band, and a separator or dot-segment must never
+    # reach the filesystem lookup.
+    if any(
+        part in {"", ".", ".."} or not _PRESET_SEGMENT_RE.fullmatch(part)
+        for part in (safe_id, safe_version)
+    ):
         raise ValueError("invalid Smart preset identifier")
     path = Path(__file__).with_name("presets") / safe_id / f"{safe_version}.json"
     if not path.is_file():

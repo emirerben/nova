@@ -4638,6 +4638,141 @@ def test_reapply_persisted_sfx_noop_when_disabled(monkeypatch):
     assert called["n"] == 0
 
 
+def test_reapply_music_bed_runs_with_sfx_kill_switch_off(monkeypatch):
+    """SOUND_EFFECTS_ENABLED=false must not strand a Smart v2 reburn: the music
+    bed still re-mixes, with an EMPTY placement list (the lane flag emptied it,
+    not the user)."""
+    import uuid
+
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *a, **k: None)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "smart_music_bed_enabled", True, raising=False)
+    job = _FakeJob(
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "v1",
+                    "sound_effects": [
+                        {"id": "p", "at_s": 1.0, "gain": 1.0, "src_gcs_path": "sound-effects/x.mp3"}
+                    ],
+                    "smart_music_treatment": {
+                        "track_id": "t",
+                        "src_gcs_path": "music/t/audio.mp3",
+                        "section_start_s": 0.0,
+                        "section_end_s": 10.0,
+                    },
+                }
+            ]
+        }
+    )
+    _patch_job_session(monkeypatch, job)
+    calls: list[dict] = []
+    monkeypatch.setattr(gb, "_run_sfx_pass", lambda **kw: calls.append(kw))
+
+    assert gb._reapply_persisted_sfx_if_any(job_id=str(uuid.uuid4()), variant_id="v1") is True
+    assert len(calls) == 1
+    assert calls[0]["sfx_raw"] == []
+
+
+def test_reapply_music_bed_respects_music_kill_switch(monkeypatch):
+    """SMART_MUSIC_BED_ENABLED=false + SFX lane off → the reapply chain no-ops
+    entirely (pre-v2 behavior restored fleet-wide)."""
+    import uuid
+
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "smart_music_bed_enabled", False, raising=False)
+    job = _FakeJob(
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "v1",
+                    "smart_music_treatment": {
+                        "track_id": "t",
+                        "src_gcs_path": "music/t/audio.mp3",
+                        "section_start_s": 0.0,
+                        "section_end_s": 10.0,
+                    },
+                }
+            ]
+        }
+    )
+    _patch_job_session(monkeypatch, job)
+    called = {"n": 0}
+    monkeypatch.setattr(gb, "_run_sfx_pass", lambda **kw: called.__setitem__("n", called["n"] + 1))
+
+    assert gb._reapply_persisted_sfx_if_any(job_id=str(uuid.uuid4()), variant_id="v1") is False
+    assert called["n"] == 0
+
+
+def test_will_reapply_media_layers_music_clause_gated_by_flag(monkeypatch):
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", False, raising=False)
+    variant = {"smart_music_treatment": {"track_id": "t"}}
+
+    monkeypatch.setattr(gb.settings, "smart_music_bed_enabled", True, raising=False)
+    assert gb._will_reapply_media_layers(variant) is True
+    monkeypatch.setattr(gb.settings, "smart_music_bed_enabled", False, raising=False)
+    assert gb._will_reapply_media_layers(variant) is False
+
+
+def test_run_sfx_pass_music_reburn_never_wipes_persisted_sfx(monkeypatch):
+    """REGRESSION (review C1): with the SFX lane flag OFF, a music-bed reburn
+    runs with placements=[] — the success write-back must PRESERVE the
+    creator's persisted sound_effects so re-enabling the flag restores them,
+    not overwrite them with the flag-emptied list."""
+    import uuid
+
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *a, **k: None)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "smart_music_bed_enabled", True, raising=False)
+    persisted_sfx = [{"id": "p", "at_s": 1.0, "gain": 1.0, "src_gcs_path": "sound-effects/x.mp3"}]
+    job = _FakeJob(
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "v1",
+                    "video_path": "generative-jobs/j/v1.mp4",
+                    "sound_effects": list(persisted_sfx),
+                    "smart_music_treatment": {
+                        "track_id": "t",
+                        "src_gcs_path": "music/t/audio.mp3",
+                        "section_start_s": 0.0,
+                        "section_end_s": 10.0,
+                    },
+                }
+            ]
+        }
+    )
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr("app.storage.copy_object", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.pipeline.sound_effects.apply_smart_audio_treatment",
+        lambda **kw: ("https://signed", {"final_tier": "full"}),
+    )
+
+    gb._run_sfx_pass(job_id=str(uuid.uuid4()), variant_id="v1", sfx_raw=[])
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["sound_effects"] == persisted_sfx
+    assert variant["render_status"] == "ready"
+    assert variant["smart_audio_receipt"] == {"final_tier": "full"}
+
+
+def test_resolve_smart_music_treatment_disabled_by_flag(monkeypatch):
+    monkeypatch.setattr(gb.settings, "smart_music_bed_enabled", False, raising=False)
+
+    treatment, receipt = gb._resolve_smart_music_treatment(
+        cues=[],
+        audio_intents=[{"music_match_min_score": 7.0}],
+        job_id="j",
+        variant_id="v",
+        duration_s=30.0,
+    )
+
+    assert treatment is None
+    assert receipt["reason"] == "disabled_by_flag"
+
+
 def test_specs_for_archetype_narrated_carries_caption_style():
     """The narrated spec threads voiceover_caption_style through to the render."""
     specs = gb._specs_for_archetype(

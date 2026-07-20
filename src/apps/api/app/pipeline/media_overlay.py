@@ -360,7 +360,12 @@ def apply_media_overlays(
     """
     if not cards:
         raise MediaOverlayError("apply_media_overlays called with empty card list")
-    needs_geometry = protected_boxes is not None or layout_receipt_out is not None
+    # Geometry arbitration is opted into ONLY via protected_boxes (an empty
+    # list still opts in — it enables mutual-overlap dedup with nothing else
+    # protected). layout_receipt_out alone must NOT flip this on: callers pass
+    # a receipt sink unconditionally, and v1/legacy renders must keep their
+    # pre-arbitration layout byte-stable.
+    needs_geometry = protected_boxes is not None
 
     with tempfile.TemporaryDirectory(prefix="nova_media_overlay_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
@@ -433,7 +438,13 @@ def apply_media_overlays(
                     src_gcs_path=card.src_gcs_path,
                     local_path=norm_local,
                     has_alpha=use_alpha and alpha_preserved,
-                    opaque_bounds=opaque_alpha_box(norm_local),
+                    # opaque_bounds is only consumed by geometry arbitration —
+                    # keep the two probes symmetric so legacy renders skip both.
+                    opaque_bounds=(
+                        opaque_alpha_box(norm_local)
+                        if needs_geometry
+                        else NormalizedBox(0.0, 0.0, 1.0, 1.0)
+                    ),
                     width_px=width_px,
                     height_px=height_px,
                 )
