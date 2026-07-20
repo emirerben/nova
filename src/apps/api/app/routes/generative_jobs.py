@@ -2569,7 +2569,11 @@ async def dispatch_set_orientation(
 
     regenerate_generative_variant.apply_async(
         args=[str(locked_job.id), variant_id],
-        kwargs={"render_gen_id": render_gen_id, "orientation_override": validated},
+        kwargs={
+            "render_gen_id": render_gen_id,
+            "orientation_override": validated,
+            "force_full_render": True,
+        },
     )
 
 
@@ -4499,6 +4503,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
             sections.get("lyrics") is True
             or prep.get("music_window_alignment") is not None
             or prep.get("text_requires_full_render") is True
+            or prep.get("orientation_override") is not None
         ):
             kwargs["force_full_render"] = True
     elif prep["media_overlays_override"] is not None:
