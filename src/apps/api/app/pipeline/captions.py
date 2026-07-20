@@ -4,7 +4,11 @@ ASS (Advanced SubStation Alpha) supports word-level highlight styling
 which produces the "karaoke" caption effect common on TikTok/Reels.
 """
 
+from __future__ import annotations
+
 import re
+from dataclasses import dataclass
+from typing import Any
 
 from app.pipeline.ass_utils import format_ass_time, sanitize_ass_text
 from app.pipeline.transcribe import Transcript, Word
@@ -263,6 +267,65 @@ _SMART_CAPTION_TAGS: dict[str, str] = {
     "cta": "{\\fs78\\c&H16CC84&\\bord8\\shad2}",
 }
 
+
+@dataclass(frozen=True, slots=True)
+class SmartCaptionRenderPolicy:
+    font_family: str
+    font_size_px: int
+    y_frac: float
+    width_frac: float
+    max_lines: int
+    color: str
+    stroke_color: str
+    stroke_width: int
+
+    @classmethod
+    def from_value(
+        cls, value: SmartCaptionRenderPolicy | dict[str, Any] | None
+    ) -> SmartCaptionRenderPolicy | None:
+        if value is None or isinstance(value, cls):
+            return value
+        return cls(
+            font_family=str(value["font_family"]),
+            font_size_px=max(36, min(96, int(value["font_size_px"]))),
+            y_frac=max(0.3, min(0.9, float(value["y_frac"]))),
+            width_frac=max(0.4, min(0.95, float(value["width_frac"]))),
+            max_lines=max(1, min(2, int(value["max_lines"]))),
+            color=str(value["color"]),
+            stroke_color=str(value["stroke_color"]),
+            stroke_width=max(0, min(12, int(value["stroke_width"]))),
+        )
+
+
+def prepare_smart_caption_cues(
+    cues: list[dict[str, Any]],
+    policy_value: SmartCaptionRenderPolicy | dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Attach renderer-measured wrapping/box metadata without changing cue text."""
+
+    from app.pipeline.render_geometry import measure_caption  # noqa: PLC0415
+
+    policy = SmartCaptionRenderPolicy.from_value(policy_value)
+    if policy is None:
+        return [dict(cue) for cue in cues]
+    prepared: list[dict[str, Any]] = []
+    for source in cues:
+        cue = dict(source)
+        measurement = measure_caption(
+            str(cue.get("text") or ""),
+            font_family=policy.font_family,
+            font_size_px=policy.font_size_px,
+            width_frac=policy.width_frac,
+            y_frac=policy.y_frac,
+            max_lines=policy.max_lines,
+        )
+        cue["smart_render_lines"] = list(measurement.lines)
+        cue["smart_render_font_size_px"] = measurement.font_size_px
+        cue["smart_render_box"] = measurement.box.as_dict()
+        prepared.append(cue)
+    return prepared
+
+
 # Splits corrected text into display sentences at terminal punctuation. The
 # negative lookbehind keeps Turkish ordinals/abbreviations together: "3. gün"
 # must not split into a dangling "3." caption.
@@ -396,6 +459,7 @@ def generate_ass_from_cues(
     style: str = "plain",
     margin_v: int | None = None,
     pop_in: bool = False,
+    smart_policy: SmartCaptionRenderPolicy | dict[str, Any] | None = None,
 ) -> None:
     """Write a caption ASS from explicit ``{text, start_s, end_s}`` cues.
 
@@ -416,12 +480,32 @@ def generate_ass_from_cues(
     94%→100%, then hard-cuts to the next cue — prepends :data:`_SENTENCE_POP_TAGS`
     to every line. Off (default) keeps narrated burns byte-identical.
     """
+    policy = SmartCaptionRenderPolicy.from_value(smart_policy)
     valid = [c for c in cues if str(c.get("text", "")).strip()]
     if not valid:
-        _write_empty_ass(output_path, font_name=font_name, style=style, margin_v=margin_v)
+        _write_empty_ass(
+            output_path,
+            font_name=font_name,
+            style=style,
+            margin_v=margin_v,
+            smart_policy=policy,
+        )
         return
-    lines = _format_cue_lines(valid, prefix_tags=_SENTENCE_POP_TAGS if pop_in else "")
-    _write_ass(lines, output_path, font_name=font_name, style=style, margin_v=margin_v)
+    if policy:
+        valid = prepare_smart_caption_cues(valid, policy)
+    lines = _format_cue_lines(
+        valid,
+        prefix_tags=_SENTENCE_POP_TAGS if pop_in else "",
+        smart_policy=policy,
+    )
+    _write_ass(
+        lines,
+        output_path,
+        font_name=font_name,
+        style=style,
+        margin_v=margin_v,
+        smart_policy=policy,
+    )
 
 
 def _words_match_text(words: object, tokens: list[str]) -> bool:
@@ -526,8 +610,11 @@ def _write_ass(
     font_name: str | None,
     style: str = "plain",
     margin_v: int | None = None,
+    smart_policy: SmartCaptionRenderPolicy | None = None,
 ) -> None:
-    if style == "word":
+    if smart_policy is not None:
+        header = _ass_header_smart(smart_policy)
+    elif style == "word":
         header = _ass_header_word(font_name or "TikTok Sans")
     elif style == "word_pop":
         # Line-visible word-by-word: SAME plain geometry (full line at the safe margin);
@@ -552,7 +639,12 @@ def _write_ass(
             f.write(line + "\n")
 
 
-def _format_cue_lines(cues: list[dict], *, prefix_tags: str = "") -> list[str]:
+def _format_cue_lines(
+    cues: list[dict],
+    *,
+    prefix_tags: str = "",
+    smart_policy: SmartCaptionRenderPolicy | None = None,
+) -> list[str]:
     """Format ``{text, start_s, end_s}`` cues into ASS Dialogue lines (sanitized).
 
     ``prefix_tags`` (already-escaped ASS override block, e.g. the sentence pop-in) is
@@ -560,12 +652,24 @@ def _format_cue_lines(cues: list[dict], *, prefix_tags: str = "") -> list[str]:
     """
     lines: list[str] = []
     for c in cues:
-        text = sanitize_ass_text(str(c.get("text", "")).strip())
+        render_lines = c.get("smart_render_lines") if smart_policy else None
+        raw_text = (
+            "\n".join(str(line) for line in render_lines)
+            if isinstance(render_lines, list) and render_lines
+            else str(c.get("text", "")).strip()
+        )
+        text = sanitize_ass_text(raw_text)
         if not text:
             continue
         start = max(0.0, float(c["start_s"]))
         end = max(start + 0.01, float(c["end_s"]))
-        smart_tags = _SMART_CAPTION_TAGS.get(str(c.get("smart_style") or ""), "")
+        if smart_policy:
+            size = int(c.get("smart_render_font_size_px") or smart_policy.font_size_px)
+            role = str(c.get("smart_style") or "")
+            color = "#8FD400" if role in {"hook", "context", "payoff", "cta"} else None
+            smart_tags = f"{{\\fs{size}{_ass_color_tag(color) if color else ''}}}"
+        else:
+            smart_tags = _SMART_CAPTION_TAGS.get(str(c.get("smart_style") or ""), "")
         lines.append(
             f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,0,,"
             f"{prefix_tags}{smart_tags}{text}"
@@ -613,8 +717,50 @@ def _write_empty_ass(
     font_name: str | None = None,
     style: str = "plain",
     margin_v: int | None = None,
+    smart_policy: SmartCaptionRenderPolicy | None = None,
 ) -> None:
-    _write_ass([], output_path, font_name=font_name, style=style, margin_v=margin_v)
+    _write_ass(
+        [],
+        output_path,
+        font_name=font_name,
+        style=style,
+        margin_v=margin_v,
+        smart_policy=smart_policy,
+    )
+
+
+def _hex_to_ass(value: str) -> str:
+    raw = value.strip().lstrip("#")
+    if len(raw) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in raw):
+        raw = "FFFFFF"
+    return f"&H00{raw[4:6]}{raw[2:4]}{raw[0:2]}"
+
+
+def _ass_color_tag(value: str) -> str:
+    return f"\\c{_hex_to_ass(value)}&"
+
+
+def _ass_header_smart(policy: SmartCaptionRenderPolicy) -> str:
+    margin_h = round(1080 * (1.0 - policy.width_frac) / 2)
+    margin_v = round(1920 * (1.0 - policy.y_frac))
+    return (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        "PlayResX: 1080\n"
+        "PlayResY: 1920\n"
+        "WrapStyle: 2\n"
+        "ScaledBorderAndShadow: yes\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
+        "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+        "MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Default,{policy.font_family},{policy.font_size_px},"
+        f"{_hex_to_ass(policy.color)},{_hex_to_ass(policy.color)},"
+        f"{_hex_to_ass(policy.stroke_color)},&H80000000,-1,0,0,0,100,100,0,0,1,"
+        f"{policy.stroke_width},1,2,{margin_h},{margin_h},{margin_v},1\n"
+    )
 
 
 def _ass_caption_header(

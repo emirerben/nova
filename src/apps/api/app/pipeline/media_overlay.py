@@ -49,6 +49,7 @@ import structlog
 from app import storage
 from app.agents._schemas.media_overlay import (
     MediaOverlay,
+    coerce_media_overlays,
     validate_overlay_gcs_path,
 )
 from app.config import settings
@@ -60,6 +61,12 @@ from app.pipeline.image_clip import (
     normalize_to_png,
 )
 from app.pipeline.reframe import _encoding_args
+from app.pipeline.render_geometry import (
+    NormalizedBox,
+    PreparedMediaAsset,
+    arbitrate_media_overlays,
+    opaque_alpha_box,
+)
 
 log = structlog.get_logger()
 
@@ -237,8 +244,7 @@ def build_media_overlay_command(
                 # overlay x expression below uses overlay_w so the card remains
                 # centered while its width changes.
                 card_filter_parts.append(
-                    f"scale=w='{cw}*(0.82+0.18*min(t/0.18,1))':h=-2:eval=frame,"
-                    f"format={pix_fmt}"
+                    f"scale=w='{cw}*(0.82+0.18*min(t/0.18,1))':h=-2:eval=frame,format={pix_fmt}"
                 )
             else:
                 card_filter_parts.append(f"scale={cw}:-2,format={pix_fmt}")
@@ -325,6 +331,8 @@ def apply_media_overlays(
     output_gcs_path: str,
     job_id: str | None = None,
     deadline_monotonic: float | None = None,
+    protected_boxes: list[dict[str, float]] | None = None,
+    layout_receipt_out: list[dict] | None = None,
     canvas: Canvas = PORTRAIT,
 ) -> str:
     """Download base variant, composite cards on top, upload result.
@@ -348,6 +356,18 @@ def apply_media_overlays(
     if not cards:
         raise MediaOverlayError("apply_media_overlays called with empty card list")
 
+    if protected_boxes:
+        boxes = [NormalizedBox(**box) for box in protected_boxes]
+        resolved_payloads, layout_receipts = arbitrate_media_overlays(
+            [card.model_dump(exclude_none=True) for card in cards],
+            protected_boxes=boxes,
+        )
+        cards = coerce_media_overlays(resolved_payloads) or []
+        if layout_receipt_out is not None:
+            layout_receipt_out.extend(layout_receipts)
+        if not cards:
+            raise MediaOverlayError("No decorative media has a collision-free layout")
+
     with tempfile.TemporaryDirectory(prefix="nova_media_overlay_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         storage.download_to_file(base_gcs_path, base_local)
@@ -357,6 +377,8 @@ def apply_media_overlays(
         local_paths: list[str] = []
         widths_px: list[int] = []
         alpha_flags: list[bool] = []
+        raw_by_gcs: dict[str, str] = {}
+        prepared_by_key: dict[tuple[str, bool], PreparedMediaAsset] = {}
 
         for i, card in enumerate(cards):
             try:
@@ -370,36 +392,41 @@ def apply_media_overlays(
                 )
                 continue
 
-            raw_ext = os.path.splitext(card.src_gcs_path)[-1].lower() or ".bin"
-            raw_local = os.path.join(tmpdir, f"card_{i}_raw{raw_ext}")
-            try:
-                storage.download_to_file(card.src_gcs_path, raw_local)
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "media_overlay_download_failed",
-                    job_id=job_id,
-                    card_id=card.id,
-                    src=card.src_gcs_path,
-                    error=str(exc),
-                )
-                continue
+            use_alpha_requested = (
+                settings.media_overlay_alpha_enabled and card.display_mode != "fullscreen"
+            )
+            prepared_key = (card.src_gcs_path, use_alpha_requested)
+            prepared = prepared_by_key.get(prepared_key)
+            if prepared is None:
+                raw_local = raw_by_gcs.get(card.src_gcs_path)
+                if raw_local is None:
+                    raw_ext = os.path.splitext(card.src_gcs_path)[-1].lower() or ".bin"
+                    raw_local = os.path.join(tmpdir, f"asset_{len(raw_by_gcs)}_raw{raw_ext}")
+                    try:
+                        storage.download_to_file(card.src_gcs_path, raw_local)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning(
+                            "media_overlay_download_failed",
+                            job_id=job_id,
+                            card_id=card.id,
+                            src=card.src_gcs_path,
+                            error=str(exc),
+                        )
+                        continue
+                    raw_by_gcs[card.src_gcs_path] = raw_local
 
-            if is_image_file(raw_local) or card.kind == "image":
+            if prepared is None and (is_image_file(raw_local) or card.kind == "image"):
                 # Normalise to JPEG (handles HEIC/WEBP). Alpha-capable pip
                 # images keep PNG only behind the dedicated kill switch.
-                use_alpha = (
-                    settings.media_overlay_alpha_enabled
-                    and card.display_mode != "fullscreen"
-                    and image_has_alpha(raw_local)
-                )
+                use_alpha = use_alpha_requested and image_has_alpha(raw_local)
                 try:
                     if use_alpha:
                         norm_local, alpha_preserved = normalize_to_png(
                             raw_local,
-                            os.path.join(tmpdir, f"card_{i}.png"),
+                            os.path.join(tmpdir, f"asset_{len(prepared_by_key)}.png"),
                         )
                     else:
-                        norm_local = os.path.join(tmpdir, f"card_{i}.jpg")
+                        norm_local = os.path.join(tmpdir, f"asset_{len(prepared_by_key)}.jpg")
                         normalize_to_jpeg(raw_local, norm_local)
                         alpha_preserved = False
                 except Exception as exc:  # noqa: BLE001
@@ -410,11 +437,22 @@ def apply_media_overlays(
                         error=str(exc),
                     )
                     continue
-                local_paths.append(norm_local)
-                alpha_flags.append(use_alpha and alpha_preserved)
-            else:
-                local_paths.append(raw_local)
-                alpha_flags.append(False)
+                prepared = PreparedMediaAsset(
+                    src_gcs_path=card.src_gcs_path,
+                    local_path=norm_local,
+                    has_alpha=use_alpha and alpha_preserved,
+                    opaque_bounds=opaque_alpha_box(norm_local),
+                )
+            elif prepared is None:
+                prepared = PreparedMediaAsset(
+                    src_gcs_path=card.src_gcs_path,
+                    local_path=raw_local,
+                    has_alpha=False,
+                    opaque_bounds=NormalizedBox(0.0, 0.0, 1.0, 1.0),
+                )
+            prepared_by_key[prepared_key] = prepared
+            local_paths.append(prepared.local_path)
+            alpha_flags.append(prepared.has_alpha)
 
             ready_cards.append(card)
             widths_px.append(card.card_width_px())

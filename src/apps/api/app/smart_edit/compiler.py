@@ -172,6 +172,29 @@ def _section_keyword(word_ids: list[str], display_by_word: dict[str, str]) -> st
     return ""
 
 
+def _typewriter_schedule(
+    text: str,
+    *,
+    start_s: float,
+    reveal_end_s: float,
+    min_spacing_ms: int,
+    max_ticks: int = 12,
+) -> list[float]:
+    glyph_count = sum(not char.isspace() for char in text)
+    if glyph_count <= 0:
+        return []
+    duration = max(0.0, reveal_end_s - start_s)
+    if duration <= 0:
+        return [round(start_s, 3)]
+    desired = min(max_ticks, max(2, (glyph_count + 1) // 2))
+    min_spacing_s = min_spacing_ms / 1000
+    capacity = max(1, int(duration / max(min_spacing_s, 0.001)) + 1)
+    count = min(desired, capacity)
+    if count <= 1:
+        return [round(start_s, 3)]
+    return [round(start_s + duration * index / (count - 1), 3) for index in range(count)]
+
+
 def _suppress_claimed_words(
     cues: list[dict[str, Any]],
     document: SmartEditPlanDocument,
@@ -230,6 +253,7 @@ def compile_smart_plan(
     claimed_word_ids: set[str] = set()
     omissions: list[dict[str, str]] = []
     event_receipts: list[dict[str, Any]] = []
+    reveal_schedules: dict[str, list[float]] = {}
 
     for event in document.events:
         if not event.enabled:
@@ -287,36 +311,75 @@ def compile_smart_plan(
                     keyword = _section_keyword(lane.transcript_word_ids, display_by_word)
                     if keyword:
                         keyword_start = start_s + 0.30
-                        text_elements.append(
-                            _text_element(
-                                element_id=f"smart-{event.event_id}-keyword",
-                                text=keyword,
-                                start_s=keyword_start,
-                                end_s=keyword_start + keyword_style.duration_s,
-                                style=keyword_style,
-                                event_id=event.event_id,
-                                role=event.role,
-                                z=81,
-                            ).model_dump(exclude_none=True)
+                        keyword_render_style = (
+                            keyword_style.model_copy(update={"effect": "typewriter"})
+                            if is_v2
+                            else keyword_style
                         )
+                        keyword_element = _text_element(
+                            element_id=f"smart-{event.event_id}-keyword",
+                            text=keyword,
+                            start_s=keyword_start,
+                            end_s=keyword_start + keyword_render_style.duration_s,
+                            style=keyword_render_style,
+                            event_id=event.event_id,
+                            role=event.role,
+                            z=81,
+                        ).model_dump(exclude_none=True)
+                        text_elements.append(keyword_element)
+                        if is_v2:
+                            schedule = _typewriter_schedule(
+                                keyword,
+                                start_s=keyword_start,
+                                reveal_end_s=float(
+                                    keyword_element.get("reveal_s")
+                                    or keyword_start + keyword_render_style.duration_s
+                                ),
+                                min_spacing_ms=preset.sfx_roles[
+                                    "keyword_typewriter_tick"
+                                ].min_spacing_ms,
+                            )
+                            reveal_schedules[event.event_id] = schedule
+                            keyword_element["reveal_schedule_s"] = schedule
+                            keyword_element["source_params"]["reveal_schedule_s"] = schedule
                 elif lane.token == "context_title":
                     title = " ".join(
                         display_by_word.get(word_id, "") for word_id in lane.transcript_word_ids
                     ).strip()
                     if title:
                         style = preset.text_styles["context_title"]
-                        text_elements.append(
-                            _text_element(
-                                element_id=f"smart-{event.event_id}-title",
-                                text=title,
-                                start_s=start_s,
-                                end_s=min(event.active_end_ms / 1000, start_s + style.duration_s),
-                                style=style,
-                                event_id=event.event_id,
-                                role=event.role,
-                                z=72,
-                            ).model_dump(exclude_none=True)
+                        render_style = (
+                            style.model_copy(update={"effect": "typewriter"}) if is_v2 else style
                         )
+                        title_element = _text_element(
+                            element_id=f"smart-{event.event_id}-title",
+                            text=title,
+                            start_s=start_s,
+                            end_s=min(
+                                event.active_end_ms / 1000,
+                                start_s + render_style.duration_s,
+                            ),
+                            style=render_style,
+                            event_id=event.event_id,
+                            role=event.role,
+                            z=72,
+                        ).model_dump(exclude_none=True)
+                        text_elements.append(title_element)
+                        if is_v2:
+                            schedule = _typewriter_schedule(
+                                title,
+                                start_s=start_s,
+                                reveal_end_s=float(
+                                    title_element.get("reveal_s")
+                                    or start_s + render_style.duration_s
+                                ),
+                                min_spacing_ms=preset.sfx_roles[
+                                    "keyword_typewriter_tick"
+                                ].min_spacing_ms,
+                            )
+                            reveal_schedules[event.event_id] = schedule
+                            title_element["reveal_schedule_s"] = schedule
+                            title_element["source_params"]["reveal_schedule_s"] = schedule
                 if lane.caption_visibility == "suppress_claimed_span":
                     claimed_word_ids.update(lane.claimed_word_ids)
             elif isinstance(lane, VisualLane):
@@ -362,6 +425,19 @@ def compile_smart_plan(
                     if role not in preset.sfx_roles:
                         omissions.append({"event_id": event.event_id, "reason": "sfx_role_unknown"})
                         continue
+                    if is_v2 and role == "keyword_typewriter_tick":
+                        for reveal_index, at_s in enumerate(
+                            reveal_schedules.get(event.event_id, [])
+                        ):
+                            sfx_intents.append(
+                                {
+                                    "event_id": event.event_id,
+                                    "role": role,
+                                    "at_s": at_s,
+                                    "reveal_index": reveal_index,
+                                }
+                            )
+                        continue
                     at_ms = event.active_start_ms + lane.offset_ms + _ROLE_OFFSETS_MS.get(role, 0)
                     sfx_intents.append(
                         {
@@ -395,6 +471,11 @@ def compile_smart_plan(
                         "token": lane.token,
                         "intensity_token": lane.intensity_token,
                         "at_s": event.active_start_ms / 1000,
+                        "start_s": event.active_start_ms / 1000,
+                        "end_s": min(
+                            event.active_end_ms / 1000,
+                            event.active_start_ms / 1000 + 0.8,
+                        ),
                     }
                 )
             elif isinstance(lane, AudioTreatmentLane):
@@ -455,6 +536,13 @@ def compile_smart_plan(
             hook_caption_suppressed = True
 
     compiled_cues = _suppress_claimed_words(compiled_cues, document, claimed_word_ids)
+    if is_v2:
+        from app.pipeline.captions import prepare_smart_caption_cues  # noqa: PLC0415
+
+        compiled_cues = prepare_smart_caption_cues(
+            compiled_cues,
+            preset.caption.model_dump(mode="json"),
+        )
     text_elements.sort(key=lambda item: (float(item["start_s"]), str(item["id"])))
     media_overlays.sort(key=lambda item: (float(item["start_s"]), int(item["z"])))
     sfx_intents.sort(key=lambda item: (float(item["at_s"]), str(item["role"])))
@@ -474,6 +562,7 @@ def compile_smart_plan(
         patch["camera_intents"] = camera_intents
         patch["audio_treatment_intents"] = audio_treatment_intents
         patch["hook_caption_suppressed"] = hook_caption_suppressed
+        patch["reveal_schedules"] = reveal_schedules
     validation_receipt = {
         "valid": True,
         "caption_count": len(compiled_cues),

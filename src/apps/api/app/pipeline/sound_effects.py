@@ -26,6 +26,9 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+import time
+from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
@@ -42,12 +45,35 @@ class SoundEffectsError(Exception):
     """Raised when the SFX audio apply-pass fails unrecoverably."""
 
 
+@dataclass(frozen=True, slots=True)
+class MusicBedTreatment:
+    track_id: str
+    src_gcs_path: str
+    section_start_s: float
+    section_end_s: float
+    gain_db: float = -18.0
+
+    @classmethod
+    def from_value(cls, value: MusicBedTreatment | dict[str, Any]) -> MusicBedTreatment:
+        if isinstance(value, cls):
+            return value
+        return cls(
+            track_id=str(value["track_id"]),
+            src_gcs_path=str(value["src_gcs_path"]),
+            section_start_s=max(0.0, float(value.get("section_start_s") or 0.0)),
+            section_end_s=max(0.01, float(value["section_end_s"])),
+            gain_db=float(value.get("gain_db") or -18.0),
+        )
+
+
 def build_sound_effects_command(
     base_video: str,
     effects: list[SoundEffectPlacement],
     effect_local_paths: list[str],
     output_path: str,
     mute_intervals: list[tuple[float, float]] | None = None,
+    music_bed: MusicBedTreatment | None = None,
+    music_local_path: str | None = None,
 ) -> list[str]:
     """Build the ffmpeg command to mix sound effects into a video's audio track.
 
@@ -67,7 +93,8 @@ def build_sound_effects_command(
       -map 0:v -c:v copy -map [aout] -c:a aac -b:a 192k
     """
     assert len(effects) == len(effect_local_paths), "effects and paths must be same length"
-    assert effects, "build_sound_effects_command requires at least one effect"
+    assert effects or music_bed, "audio treatment requires an effect or music bed"
+    assert (music_bed is None) == (music_local_path is None)
 
     # One decoder input per unique asset. Repeated role hits reuse it through
     # asplit, avoiding N downloads/decoders for the same clean pop or whoosh.
@@ -75,6 +102,10 @@ def build_sound_effects_command(
     inputs: list[str] = ["-i", base_video]
     for lp in unique_paths:
         inputs += ["-i", lp]
+    music_input_index: int | None = None
+    if music_bed and music_local_path:
+        music_input_index = len(unique_paths) + 1
+        inputs += ["-stream_loop", "-1", "-i", music_local_path]
 
     filter_parts: list[str] = []
     fx_labels: list[str] = []
@@ -109,8 +140,7 @@ def build_sound_effects_command(
             ts = eff.trim_start_s or 0.0
             if eff.trim_end_s is not None:
                 chain_parts.append(
-                    f"{source}atrim=start={ts:.3f}:end={eff.trim_end_s:.3f}"
-                    f",asetpts=PTS-STARTPTS"
+                    f"{source}atrim=start={ts:.3f}:end={eff.trim_end_s:.3f},asetpts=PTS-STARTPTS"
                 )
             else:
                 chain_parts.append(f"{source}atrim=start={ts:.3f},asetpts=PTS-STARTPTS")
@@ -132,9 +162,24 @@ def build_sound_effects_command(
         filter_parts.append(",".join(chain_parts) + f"[{label}]")
         fx_labels.append(f"[{label}]")
 
+    bed_label = ""
+    if music_bed and music_input_index is not None:
+        section_duration = max(0.01, music_bed.section_end_s - music_bed.section_start_s)
+        filter_parts.insert(0, "[0:a]asplit=2[voice][duckkey]")
+        filter_parts.append(
+            f"[{music_input_index}:a]atrim=start={music_bed.section_start_s:.3f}:"
+            f"duration={section_duration:.3f},asetpts=PTS-STARTPTS,"
+            "aloop=loop=-1:size=2147483647,"
+            f"volume={music_bed.gain_db:.2f}dB[bedraw]"
+        )
+        filter_parts.append(
+            "[bedraw][duckkey]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=250[bed]"
+        )
+        bed_label = "[bed]"
+
     # Mix: base audio + all SFX streams.
-    n_inputs = len(effects) + 1  # base + N effects
-    mix_inputs = "[0:a]" + "".join(fx_labels)
+    n_inputs = len(effects) + 1 + int(bool(bed_label))
+    mix_inputs = ("[voice]" if bed_label else "[0:a]") + "".join(fx_labels) + bed_label
     # CRITICAL: normalize=0 — default normalize=1 divides by sum-of-weights and
     # drops each stream ~6 dB. duration=first pins output length to the base
     # audio (video is stream-copied so the container length is fixed).
@@ -260,3 +305,133 @@ def apply_sound_effects(
         )
         log.info("sfx_applied", job_id=job_id, gcs_path=output_gcs_path)
         return signed_url
+
+
+def _has_decodable_audio(path: str) -> bool:
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def apply_smart_audio_treatment(
+    base_gcs_path: str,
+    effects: list[SoundEffectPlacement],
+    output_gcs_path: str,
+    *,
+    music_bed: MusicBedTreatment | dict[str, Any] | None = None,
+    job_id: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Apply v2 music+SFX with component validation and closed retry tiers.
+
+    The video stream is copied in every tier.  Failure order is full graph,
+    healthy SFX only, then untouched source speech.  A broken music asset can
+    therefore never discard a valid keyboard tick, and no audio failure can
+    replace or mute the speaker.
+    """
+
+    started = time.monotonic()
+    treatment = MusicBedTreatment.from_value(music_bed) if music_bed else None
+    receipt: dict[str, Any] = {
+        "requested_sfx": len(effects),
+        "ready_sfx": 0,
+        "music_requested": treatment is not None,
+        "music_ready": False,
+        "attempted_tiers": [],
+        "component_failures": [],
+        "final_tier": "untouched_speech",
+        "video_codec": "copy",
+    }
+    with tempfile.TemporaryDirectory(prefix="nova_smart_audio_") as tmpdir:
+        base_local = os.path.join(tmpdir, "base.mp4")
+        storage.download_to_file(base_gcs_path, base_local)
+
+        downloaded_by_path: dict[str, str] = {}
+        ready_effects: list[SoundEffectPlacement] = []
+        effect_paths: list[str] = []
+        for effect in effects:
+            try:
+                validate_sfx_gcs_path(effect.src_gcs_path)
+                local = downloaded_by_path.get(effect.src_gcs_path)
+                if local is None:
+                    ext = os.path.splitext(effect.src_gcs_path)[-1].lower() or ".mp3"
+                    local = os.path.join(tmpdir, f"sfx_{len(downloaded_by_path)}{ext}")
+                    storage.download_to_file(effect.src_gcs_path, local)
+                    if not _has_decodable_audio(local):
+                        raise SoundEffectsError("sound effect has no decodable audio")
+                    downloaded_by_path[effect.src_gcs_path] = local
+                ready_effects.append(effect)
+                effect_paths.append(local)
+            except Exception as exc:  # noqa: BLE001
+                receipt["component_failures"].append(
+                    {"component": "sfx", "id": effect.id, "reason": type(exc).__name__}
+                )
+        receipt["ready_sfx"] = len(ready_effects)
+
+        music_local: str | None = None
+        if treatment:
+            try:
+                if not treatment.src_gcs_path.startswith("music/"):
+                    raise ValueError("Smart music must use the curated music/ prefix")
+                music_ext = os.path.splitext(treatment.src_gcs_path)[-1].lower() or ".mp3"
+                music_local = os.path.join(tmpdir, f"music{music_ext}")
+                storage.download_to_file(treatment.src_gcs_path, music_local)
+                if not _has_decodable_audio(music_local):
+                    raise SoundEffectsError("music bed has no decodable audio")
+                receipt["music_ready"] = True
+            except Exception as exc:  # noqa: BLE001
+                music_local = None
+                receipt["component_failures"].append(
+                    {
+                        "component": "music",
+                        "id": treatment.track_id,
+                        "reason": type(exc).__name__,
+                    }
+                )
+
+        attempts: list[tuple[str, MusicBedTreatment | None, str | None]] = []
+        if music_local:
+            attempts.append(("full", treatment, music_local))
+        if ready_effects:
+            attempts.append(("sfx_only", None, None))
+        output_local = os.path.join(tmpdir, "output.mp4")
+        for tier, attempt_bed, attempt_music_path in attempts:
+            receipt["attempted_tiers"].append(tier)
+            cmd = build_sound_effects_command(
+                base_local,
+                ready_effects,
+                effect_paths,
+                output_local,
+                music_bed=attempt_bed,
+                music_local_path=attempt_music_path,
+            )
+            result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+            if result.returncode == 0:
+                receipt["final_tier"] = tier
+                receipt["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+                url = storage.upload_public_read(
+                    output_local, output_gcs_path, content_type="video/mp4"
+                )
+                return url, receipt
+            receipt["component_failures"].append(
+                {"component": "graph", "id": tier, "reason": f"ffmpeg_rc_{result.returncode}"}
+            )
+
+        receipt["attempted_tiers"].append("untouched_speech")
+        receipt["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+        url = storage.upload_public_read(base_local, output_gcs_path, content_type="video/mp4")
+        return url, receipt
