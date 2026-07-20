@@ -6733,7 +6733,13 @@ def _render_generative_variant(
             from app.pipeline.validator import validate_output  # noqa: PLC0415
 
             validation = validate_output(
-                final_path, expected_resolution=(canvas.width, canvas.height)
+                final_path,
+                expected_resolution=(canvas.width, canvas.height),
+                # The validator's default 45–59s contract belongs to the
+                # template pipeline. Generative montages are intentionally
+                # shorter; retain the universal sub-60s ceiling while still
+                # rejecting empty/truncated output.
+                expected_duration_range=(0.1, settings.output_max_duration_s),
             )
             if not validation.passed:
                 raise RuntimeError("; ".join(validation.errors))
