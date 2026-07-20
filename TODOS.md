@@ -36,6 +36,28 @@ ingested_via: put_page
 **Depends on:** plan 010 shipping; sample subtitled/narrated jobs with ready assets.
 **Effort:** M (CC: ~1-2 h incl. eval fixtures)
 
+## Plan 011 — Smart Captions v2 follow-up
+
+### T-SMART-COMP-1 — Consolidate Smart Captions visual rendering into one compositor pass
+**What:** Replace the current caption, title, boundary, media, and final-caption sequence with one renderer-owned visual compositor after v2 canary data proves where the extra encode cost and generational loss occur.
+**Why:** Plan 011 deliberately ships through existing proven renderers first. A single pass is a larger renderer rewrite and should be justified by measured v2 latency or image-quality regressions, not assumed upfront.
+**Trigger:** V2 canary P95 exceeds the v1 comparison threshold or sampled outputs show measurable generational-quality loss attributable to the extra passes.
+**Depends on:** Plan 011 canary receipts and at least 20 successful internal v2 renders.
+**Priority:** P3
+
+### T-SMART-REVIEW — v0.11.0.0 pre-merge review deferrals (2026-07-20)
+Deferred with recommendations from the 8-pass /review of `feat/smart-captions-v2-trust-canary-2026-07-20`; fingerprints in the review log.
+- **P2** Reveal-schedule re-association keys on `(text, round(start_s,3))` (`_text_element_burn_dicts`) — identical-text titles crosswire and edited titles desync typewriter ticks from visuals; key by element id and regenerate tick placements on title edits.
+- **P2** User caption-font edits on Smart variants measure with the wrong typeface (`render_geometry._FONT_FILES` maps only 3 families; falls back to TikTokSans-Bold) while libass burns the chosen font under WrapStyle:2 — wide fonts risk edge clipping; resolve measurement through the font registry.
+- **P2** `voiceover_caption_style="word"` switch on a `smart_captions_applied` variant bypasses the pinned Smart policy and protected-box geometry — either decline like caption-language or teach word-pop the policy.
+- **P2** v2 `_render_subtitled_variant` orchestration error-recovery (retry_without_camera, sc_apply_failed replan, preset fail-open receipts) lacks an end-to-end test harness; happy path covered piecewise only.
+- **P3** Job-status responses expose internal receipts to non-admins (ffmpeg error text, curated GCS keys, matcher rationale in `smart_validation_receipts`/`smart_music_treatment`) — whitelist variant fields for non-admin reads.
+- **P3** Editor caption preview sits ~10% off on v2 renders: persisted `caption_margin_v` (default 384) ≠ policy `y_frac` 0.705 until the first user edit — persist policy-derived values or have the FE prefer `smart_caption_policy`.
+- **P3** Typewriter tick SFX can starve later effects at the 48-placement cap in `resolve_sfx_placements` (chapter-heavy videos) — give ticks their own budget.
+- **P3** 24h music-treatment Redis cache keys only on `job:variant` — preset audio-policy changes within the TTL are ignored on re-render; include an intents hash in the key.
+- **P3** Editor shows persisted-but-unapplied media cards (D4 manifest `media_overlays_applied_ids` has no FE consumer yet) — surface applied/pending state in the overlay lane.
+**Priority:** P2/P3 as marked
+
 ## Generative photos — re-plan (PR #476 closed 2026-07-11)
 
 ### Photo support in generative edits (re-plan against current stack)

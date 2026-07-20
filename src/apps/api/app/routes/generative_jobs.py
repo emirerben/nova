@@ -1433,7 +1433,15 @@ async def persist_variant_caption_font(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Unknown caption font.",
         )
-    await _patch_narrated_variant(job_id, variant_id, {"voiceover_caption_font": caption_font}, db)
+    await _patch_narrated_variant(
+        job_id,
+        variant_id,
+        {
+            "voiceover_caption_font": caption_font,
+            "caption_font_user_edited": True,
+        },
+        db,
+    )
 
 
 async def dispatch_set_caption_position(
@@ -1461,7 +1469,11 @@ async def dispatch_set_caption_position(
     variants = list(plan.get("variants") or [])
     for i, v in enumerate(variants):
         if v.get("variant_id") == variant_id:
-            variants[i] = {**v, "caption_margin_v": req.caption_margin_v}
+            variants[i] = {
+                **v,
+                "caption_margin_v": req.caption_margin_v,
+                "caption_position_user_edited": True,
+            }
             break
     plan["variants"] = variants
     job.assembly_plan = plan
@@ -1589,6 +1601,11 @@ async def dispatch_retranscribe_captions(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Changing the caption language is only available on subtitled videos.",
+        )
+    if variant.get("smart_captions_applied"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Smart Caption language changes require generating a new video.",
         )
     if not variant.get("base_video_path"):
         # A no-speech subtitled variant has no caption-free base — the worker would

@@ -530,6 +530,15 @@ class Settings(BaseSettings):
     # routes return 404; the render apply-pass branch never fires.
     sound_effects_enabled: bool = False
 
+    # Smart Captions v2 licensed music bed. Deliberately independent of
+    # SOUND_EFFECTS_ENABLED (that flag gates the user SFX lane; the music bed
+    # is agent-selected). Kill switch: SMART_MUSIC_BED_ENABLED=false → new
+    # renders resolve no music treatment and reburns skip re-mixing the bed
+    # (persisted treatments are preserved for re-enable, never deleted).
+    # Apply: fly secrets set SMART_MUSIC_BED_ENABLED=false --app nova-video
+    # + machine restart (worker).
+    smart_music_bed_enabled: bool = True
+
     # Overlay auto-placement (plan 005, PR0+). Gates the plan-item asset-pool
     # routes (upload-urls / register / list / delete) and, in later PRs, the
     # matcher + suggestion routes. Frontend twin: NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED

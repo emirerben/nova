@@ -26,6 +26,24 @@ class SmartCaptionsCapability:
     reason: str | None
     preset_id: str | None = None
     preset_version: str | None = None
+    shadow_preset_id: str | None = None
+    shadow_preset_version: str | None = None
+
+
+def _resolved_shadow(assignment: Any) -> tuple[str, str] | None:
+    shadow_id = str(getattr(assignment, "shadow_preset_id", None) or "").strip()
+    shadow_version = str(getattr(assignment, "shadow_preset_version", None) or "").strip()
+    if not shadow_id and not shadow_version:
+        return None
+    if not shadow_id or not shadow_version:
+        return None
+    try:
+        from app.smart_edit.presets import load_preset  # noqa: PLC0415
+
+        load_preset(shadow_id, shadow_version)
+    except Exception:
+        return None
+    return shadow_id, shadow_version
 
 
 def _resolve_from_assignment(
@@ -46,11 +64,20 @@ def _resolve_from_assignment(
     preset_version = str(assignment.preset_version or "").strip()
     if not preset_id or not preset_version:
         return SmartCaptionsCapability(False, "invalid_assignment")
+    try:
+        from app.smart_edit.presets import load_preset  # noqa: PLC0415
+
+        load_preset(preset_id, preset_version)
+    except Exception:
+        return SmartCaptionsCapability(False, "invalid_assignment")
+    shadow = _resolved_shadow(assignment)
     return SmartCaptionsCapability(
         True,
         None,
         preset_id=preset_id,
         preset_version=preset_version,
+        shadow_preset_id=shadow[0] if shadow else None,
+        shadow_preset_version=shadow[1] if shadow else None,
     )
 
 
@@ -96,8 +123,12 @@ def resolve_smart_captions_context_sync(
     capability = _resolve_from_assignment(edit_format=edit_format, assignment=assignment)
     if not capability.available or not capability.preset_id or not capability.preset_version:
         return None
-    return {
+    context = {
         "preset_id": capability.preset_id,
         "preset_version": capability.preset_version,
         "sound_design": "auto" if sound_design_enabled else "off",
     }
+    if capability.shadow_preset_id and capability.shadow_preset_version:
+        context["shadow_preset_id"] = capability.shadow_preset_id
+        context["shadow_preset_version"] = capability.shadow_preset_version
+    return context

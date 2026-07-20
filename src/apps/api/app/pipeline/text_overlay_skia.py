@@ -908,6 +908,51 @@ def fit_text_size_px(
     return min_px
 
 
+def measure_text_overlay_box(
+    overlay: dict,
+    *,
+    render_canvas: Canvas = PORTRAIT,
+) -> dict[str, float]:
+    """Measure a title with the exact typeface/wrap primitives used to draw it.
+
+    Smart layout arbitration calls this before the Skia burn. Returning a plain
+    normalized dict keeps this module independent from the compositor's models
+    while guaranteeing both paths protect the same rendered block.
+    """
+
+    text = _overlay_text(overlay)
+    if not text:
+        return {"left": 0.5, "top": 0.5, "right": 0.5, "bottom": 0.5}
+    typeface = _typeface_for_overlay(overlay)
+    initial_size = _resolve_font_size_px(overlay)
+    max_width = _overlay_max_width_px(overlay, render_canvas)
+    letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
+    font, size, lines = _shrink_to_fit(
+        text,
+        typeface,
+        initial_size,
+        max_width,
+        letter_spacing_em,
+    )
+    spacing_px = letter_spacing_em * size
+    block = _measure_block(
+        font,
+        lines,
+        line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=spacing_px,
+    )
+    cx, cy = _resolve_anchor(overlay, render_canvas)
+    width = max(block["widths"], default=0.0)
+    left = _anchored_left_x(_resolve_text_anchor(overlay), cx, width)
+    top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
+    return {
+        "left": max(0.0, left / render_canvas.width),
+        "top": max(0.0, top / render_canvas.height),
+        "right": min(1.0, (left + width) / render_canvas.width),
+        "bottom": min(1.0, (top + block["block_h"]) / render_canvas.height),
+    }
+
+
 # -- Per-frame drawing -------------------------------------------------------
 
 
@@ -1578,8 +1623,20 @@ def _draw_with_animation(
             progress = min(1.0, t_local / max(duration_s, 0.01))
         alpha = _ease_out_cubic(progress)
     elif effect == "typewriter":
-        chars_per_s = 12.0
-        visible_chars = max(1, int(t_local * chars_per_s) + 1)
+        raw_schedule = overlay.get("reveal_schedule_s")
+        if isinstance(raw_schedule, list) and raw_schedule:
+            start_s = _finite_float(overlay.get("start_s"), 0.0)
+            schedule = sorted(
+                max(0.0, _finite_float(at_s, start_s) - start_s) for at_s in raw_schedule
+            )
+            revealed_steps = max(1, sum(at_s <= t_local for at_s in schedule))
+            visible_chars = max(
+                1,
+                math.ceil(len(reveal_text) * revealed_steps / max(1, len(schedule))),
+            )
+        else:
+            chars_per_s = 12.0
+            visible_chars = max(1, int(t_local * chars_per_s) + 1)
         visible_text = reveal_text[:visible_chars]
     elif effect == "stream-in":
         # "How an AI returns an answer" — reveal WORD by word (not char) with a

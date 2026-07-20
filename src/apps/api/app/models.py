@@ -346,9 +346,7 @@ class SoundEffect(Base):
     provenance: Mapped[str | None] = mapped_column(Text, nullable=True)
     license: Mapped[str | None] = mapped_column(Text, nullable=True)
     quality_tier: Mapped[str | None] = mapped_column(Text, nullable=True)
-    manual_audit_status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="pending"
-    )
+    manual_audit_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
@@ -470,11 +468,20 @@ class CreatorStyleAssignment(Base):
     )
     preset_id: Mapped[str] = mapped_column(Text, nullable=False)
     preset_version: Mapped[str] = mapped_column(Text, nullable=False)
+    shadow_preset_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shadow_preset_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     assigned_by: Mapped[str] = mapped_column(Text, nullable=False, server_default="system")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(shadow_preset_id IS NULL) = (shadow_preset_version IS NULL)",
+            name="ck_creator_style_shadow_pair",
+        ),
     )
 
 

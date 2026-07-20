@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.smart_edit.presets import CaptionPolicy
+from app.smart_edit.schemas import SemanticRole, SmartWord
 
 _TOKEN_RE = re.compile(r"\S+")
 _STRONG_END_RE = re.compile(r"[.!?…][\"')\]]*$")
@@ -118,6 +119,91 @@ def build_smart_caption_cues(
                     }
                     for token in chunk
                 ],
+            }
+        )
+    return result
+
+
+def build_semantic_caption_cues(
+    words: list[SmartWord],
+    policy: CaptionPolicy,
+    *,
+    role_by_word_id: dict[str, SemanticRole],
+    boundary_after_word_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Build v2 presentation cues without allowing them to own semantics.
+
+    ``SmartWord`` is already the canonical timed timeline when this function is
+    called.  It may only group those words for readability, and it must close a
+    cue before a role change or an authored-title boundary.  Word IDs stay on
+    each cue so the compiler can style and claim exact spans later.
+    """
+
+    if not words:
+        return []
+    forced_breaks = boundary_after_word_ids or set()
+    timed = [
+        _TimedToken(
+            text=word.display_text,
+            start_s=word.start_ms / 1000,
+            end_s=word.end_ms / 1000,
+            timing_quality=word.timing_quality,
+        )
+        for word in words
+    ]
+    chunks: list[tuple[list[SmartWord], SemanticRole]] = []
+    current_words: list[SmartWord] = []
+    current_tokens: list[_TimedToken] = []
+    current_role: SemanticRole = role_by_word_id.get(words[0].word_id, "example")
+    for index, (word, token) in enumerate(zip(words, timed)):
+        role = role_by_word_id.get(word.word_id, "example")
+        if current_words and role != current_role:
+            chunks.append((current_words, current_role))
+            current_words = []
+            current_tokens = []
+            current_role = role
+        current_words.append(word)
+        current_tokens.append(token)
+        following = timed[index + 1] if index + 1 < len(timed) else None
+        following_role = (
+            role_by_word_id.get(words[index + 1].word_id, "example")
+            if index + 1 < len(words)
+            else None
+        )
+        should_close = (
+            word.word_id in forced_breaks
+            or following_role != current_role
+            or _should_close(current_tokens, following, policy)
+        )
+        if should_close:
+            chunks.append((current_words, current_role))
+            current_words = []
+            current_tokens = []
+            if following_role is not None:
+                current_role = following_role
+    if current_words:
+        chunks.append((current_words, current_role))
+
+    result: list[dict[str, Any]] = []
+    for chunk, role in chunks:
+        if not chunk:
+            continue
+        result.append(
+            {
+                "text": " ".join(word.display_text for word in chunk),
+                "start_s": round(chunk[0].start_ms / 1000, 3),
+                "end_s": round(chunk[-1].end_ms / 1000, 3),
+                "words": [
+                    {
+                        "text": word.display_text,
+                        "start_s": round(word.start_ms / 1000, 3),
+                        "end_s": round(word.end_ms / 1000, 3),
+                        "timing_quality": word.timing_quality,
+                    }
+                    for word in chunk
+                ],
+                "smart_word_ids": [word.word_id for word in chunk],
+                "smart_role": role,
             }
         )
     return result

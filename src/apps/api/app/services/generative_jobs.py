@@ -166,11 +166,19 @@ def _build_smart_captions_context(raw: dict | None) -> dict[str, str] | None:
     sound_design = str(raw.get("sound_design") or "auto")
     if sound_design not in {"auto", "off"}:
         sound_design = "auto"
-    return {
+    context = {
         "preset_id": preset_id,
         "preset_version": preset_version,
         "sound_design": sound_design,
     }
+    shadow_id = str(raw.get("shadow_preset_id") or "").strip()
+    shadow_version = str(raw.get("shadow_preset_version") or "").strip()
+    if _SMART_PRESET_TOKEN_RE.fullmatch(shadow_id) and _SMART_PRESET_TOKEN_RE.fullmatch(
+        shadow_version
+    ):
+        context["shadow_preset_id"] = shadow_id
+        context["shadow_preset_version"] = shadow_version
+    return context
 
 
 def build_generative_job(

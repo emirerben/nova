@@ -283,6 +283,8 @@ export interface TrackConfig {
   slot_every_n_beats: number;
   required_clips_min: number;
   required_clips_max: number;
+  /** Admin licensing gate for the Smart Captions v2 auto-selected music bed. */
+  smart_captions_licensed?: boolean;
   /** Lives nested in the same JSONB column to avoid an extra round trip. */
   lyrics_config?: LyricsConfig;
 }

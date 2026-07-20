@@ -9,6 +9,7 @@ versioned, and covered by golden tests.
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -91,9 +92,45 @@ class BoundaryPolicy(_Strict):
     intensity: float = Field(ge=0.0, le=1.0)
 
 
+class SceneLayoutPolicy(_Strict):
+    zones: list[str] = Field(min_length=1, max_length=6)
+    min_assets: int = Field(ge=1, le=6)
+    max_assets: int = Field(ge=1, le=6)
+    entrance_token: str = Field(min_length=1, max_length=64)
+    exit_policy: Literal["event_end", "group_end", "video_end"]
+    composition_group_id: str | None = Field(default=None, max_length=64)
+    caption_visibility: Literal["keep", "suppress_if_resolved"] = "keep"
+
+    @model_validator(mode="after")
+    def _asset_range(self) -> SceneLayoutPolicy:
+        if self.min_assets > self.max_assets:
+            raise ValueError("scene min_assets must not exceed max_assets")
+        return self
+
+
+class CameraPolicy(_Strict):
+    token: Literal["semantic_crop_pulse"]
+    intensity_token: Literal["subtle"] = "subtle"
+    eligible_roles: list[
+        Literal["hook", "context_shift", "list_item", "example", "payoff", "cta"]
+    ] = Field(min_length=1, max_length=6)
+    cooldown_ms: int = Field(ge=500, le=15000)
+
+
+class AudioTreatmentPolicy(_Strict):
+    token: Literal["voice_safe_music_bed"]
+    selection_token: Literal["licensed_published_match"]
+    music_match_min_score: float = Field(ge=0.0, le=10.0)
+    bed_gain_db: float = Field(ge=-40.0, le=0.0)
+    speech_duck_db: float = Field(ge=-30.0, le=0.0)
+    final_lufs: float = Field(ge=-24.0, le=-8.0)
+
+
 class DensityPolicy(_Strict):
     hook_window_s: float = Field(gt=0.0, le=15.0)
+    hook_max_duration_s: float | None = Field(default=None, gt=0.0, le=30.0)
     hook_max_visuals: int = Field(ge=1, le=6)
+    hook_caption_suppress_min_visuals: int = Field(default=4, ge=1, le=6)
     hook_group_hold_s: float = Field(ge=0.5, le=5.0)
     normal_visual_duration_s: float = Field(ge=1.0, le=8.0)
     min_normal_gap_s: float = Field(ge=0.0, le=15.0)
@@ -111,6 +148,9 @@ class SmartEditPreset(_Strict):
     sfx_roles: dict[str, SfxRolePolicy]
     boundary_effects: dict[str, BoundaryPolicy]
     density: DensityPolicy
+    scene_layouts: dict[str, SceneLayoutPolicy] = Field(default_factory=dict)
+    camera: CameraPolicy | None = None
+    audio_treatment: AudioTreatmentPolicy | None = None
 
     @field_validator("preset_id", "version")
     @classmethod
@@ -124,6 +164,10 @@ class SmartEditPreset(_Strict):
         missing_zones = set(self.hook_zone_sequence) - set(self.visual_zones)
         if missing_zones:
             raise ValueError(f"hook zone sequence references unknown zones: {missing_zones}")
+        for token, scene in self.scene_layouts.items():
+            unknown = set(scene.zones) - set(self.visual_zones)
+            if unknown:
+                raise ValueError(f"scene {token} references unknown zones: {unknown}")
         return self
 
 
@@ -132,11 +176,20 @@ def _normalize_version(preset_id: str, version: str) -> str:
     return version[len(prefix) :] if version.startswith(prefix) else version
 
 
+_PRESET_SEGMENT_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
+
+
 @lru_cache(maxsize=16)
 def load_preset(preset_id: str, version: str) -> SmartEditPreset:
     safe_id = preset_id.strip().lower()
     safe_version = _normalize_version(safe_id, version.strip().lower())
-    if any(part in {"", ".", ".."} for part in (safe_id, safe_version)):
+    # Charset-validate each path segment BEFORE the join — ids can arrive from
+    # DB rows written out-of-band, and a separator or dot-segment must never
+    # reach the filesystem lookup.
+    if any(
+        part in {"", ".", ".."} or not _PRESET_SEGMENT_RE.fullmatch(part)
+        for part in (safe_id, safe_version)
+    ):
         raise ValueError("invalid Smart preset identifier")
     path = Path(__file__).with_name("presets") / safe_id / f"{safe_version}.json"
     if not path.is_file():

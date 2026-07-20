@@ -1,7 +1,7 @@
 """Tests for the build_sound_effects_command FFmpeg filter graph."""
 
 from app.agents._schemas.sound_effect import SoundEffectPlacement
-from app.pipeline.sound_effects import build_sound_effects_command
+from app.pipeline.sound_effects import MusicBedTreatment, build_sound_effects_command
 
 
 def _make_placement(
@@ -153,3 +153,118 @@ def test_repeated_asset_uses_one_decoder_input_and_asplit():
     assert "[1:a]asplit=3" in fc
     assert "[sfxsrc0_0]" in fc
     assert "[sfxsrc0_2]" in fc
+
+
+def test_music_graph_preserves_sfx_mute_intervals():
+    cmd = build_sound_effects_command(
+        "/base.mp4",
+        [_make_placement(1.0)],
+        ["/sfx.mp3"],
+        "/out.mp4",
+        mute_intervals=[(2.0, 4.0)],
+        music_bed=MusicBedTreatment(
+            track_id="track",
+            src_gcs_path="music/track/audio.mp3",
+            section_start_s=0.0,
+            section_end_s=10.0,
+        ),
+        music_local_path="/music.mp3",
+    )
+
+    assert "volume=0:enable='between(t,2.000000,4.000000)'" in " ".join(cmd)
+
+
+def test_music_graph_enforces_compiled_ducking_and_loudness_policy():
+    common = dict(
+        track_id="track",
+        src_gcs_path="music/track/audio.mp3",
+        section_start_s=0.0,
+        section_end_s=10.0,
+    )
+    gentle = build_sound_effects_command(
+        "/base.mp4",
+        [_make_placement(1.0)],
+        ["/sfx.mp3"],
+        "/gentle.mp4",
+        music_bed=MusicBedTreatment(**common, speech_duck_db=-6.0, final_lufs=-16.0),
+        music_local_path="/music.mp3",
+    )
+    strong = build_sound_effects_command(
+        "/base.mp4",
+        [_make_placement(1.0)],
+        ["/sfx.mp3"],
+        "/strong.mp4",
+        music_bed=MusicBedTreatment(**common, speech_duck_db=-18.0, final_lufs=-12.0),
+        music_local_path="/music.mp3",
+    )
+
+    gentle_graph = " ".join(gentle)
+    strong_graph = " ".join(strong)
+    assert "loudnorm=I=-16:TP=-1.5" in gentle_graph
+    assert "loudnorm=I=-12:TP=-1.5" in strong_graph
+    assert gentle_graph != strong_graph
+    gentle_ratio = float(gentle_graph.split("ratio=")[1].split(":")[0])
+    strong_ratio = float(strong_graph.split("ratio=")[1].split(":")[0])
+    assert 1.0 < gentle_ratio < strong_ratio <= 20.0
+
+
+def test_music_bed_only_graph_mixes_voice_and_bed_without_sfx():
+    """The prod-default v2 shape: SFX lane flag off → effects=[] but the music
+    bed still mixes against the voice, with video stream-copied."""
+    cmd = build_sound_effects_command(
+        "/base.mp4",
+        [],
+        [],
+        "/out.mp4",
+        music_bed=MusicBedTreatment(
+            track_id="t",
+            src_gcs_path="music/t/a.mp3",
+            section_start_s=0.0,
+            section_end_s=10.0,
+        ),
+        music_local_path="/music.mp3",
+    )
+
+    graph = " ".join(cmd)
+    assert "amix=inputs=2" in graph
+    assert "[voice]" in graph and "[bed]" in graph
+    assert cmd[cmd.index("-c:v") + 1] == "copy"
+
+
+def test_music_bed_gain_is_clamped_from_persisted_values():
+    treatment = MusicBedTreatment.from_value(
+        {
+            "track_id": "t",
+            "src_gcs_path": "music/t/a.mp3",
+            "section_start_s": 0.0,
+            "section_end_s": 10.0,
+            "gain_db": 60.0,
+        }
+    )
+    assert treatment.gain_db == 0.0
+    assert (
+        MusicBedTreatment.from_value(
+            {
+                "track_id": "t",
+                "src_gcs_path": "music/t/a.mp3",
+                "section_start_s": 0.0,
+                "section_end_s": 10.0,
+                "gain_db": -99.0,
+            }
+        ).gain_db
+        == -40.0
+    )
+
+
+def test_music_treatment_defaults_keep_cached_rows_backward_compatible():
+    treatment = MusicBedTreatment.from_value(
+        {
+            "track_id": "legacy",
+            "src_gcs_path": "music/legacy/audio.mp3",
+            "section_start_s": 0.0,
+            "section_end_s": 10.0,
+        }
+    )
+
+    assert treatment.speech_duck_db == -12.0
+    assert treatment.final_lufs == -14.0

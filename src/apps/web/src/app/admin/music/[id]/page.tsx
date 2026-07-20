@@ -77,6 +77,7 @@ export default function AdminMusicTrackPage({
   const [bestStart, setBestStart] = useState("");
   const [bestEnd, setBestEnd] = useState("");
   const [slotEveryN, setSlotEveryN] = useState("");
+  const [smartLicensed, setSmartLicensed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
@@ -119,6 +120,7 @@ export default function AdminMusicTrackPage({
     setBestStart(cfg?.best_start_s?.toString() ?? "");
     setBestEnd(cfg?.best_end_s?.toString() ?? "");
     setSlotEveryN(cfg?.slot_every_n_beats?.toString() ?? "8");
+    setSmartLicensed(cfg?.smart_captions_licensed === true);
   }
 
   useEffect(() => {
@@ -142,6 +144,7 @@ export default function AdminMusicTrackPage({
           best_start_s: parseFloat(bestStart),
           best_end_s: parseFloat(bestEnd),
           slot_every_n_beats: parseInt(slotEveryN, 10),
+          smart_captions_licensed: smartLicensed,
         },
       });
       setTrack(updated);
@@ -316,6 +319,8 @@ export default function AdminMusicTrackPage({
           setBestEnd={setBestEnd}
           slotEveryN={slotEveryN}
           setSlotEveryN={setSlotEveryN}
+          smartLicensed={smartLicensed}
+          setSmartLicensed={setSmartLicensed}
           saving={saving}
           saveMsg={saveMsg}
           reanalyzing={reanalyzing}
@@ -346,6 +351,8 @@ interface ConfigTabContentProps {
   setBestEnd: (s: string) => void;
   slotEveryN: string;
   setSlotEveryN: (s: string) => void;
+  smartLicensed: boolean;
+  setSmartLicensed: (v: boolean) => void;
   saving: boolean;
   saveMsg: string | null;
   reanalyzing: boolean;
@@ -369,6 +376,8 @@ function ConfigTabContent({
   setBestEnd,
   slotEveryN,
   setSlotEveryN,
+  smartLicensed,
+  setSmartLicensed,
   saving,
   saveMsg,
   reanalyzing,
@@ -402,7 +411,8 @@ function ConfigTabContent({
   const hasUnsavedChanges =
     bestStart !== (cfg.best_start_s?.toString() ?? "") ||
     bestEnd !== (cfg.best_end_s?.toString() ?? "") ||
-    slotEveryN !== (cfg.slot_every_n_beats?.toString() ?? "8");
+    slotEveryN !== (cfg.slot_every_n_beats?.toString() ?? "8") ||
+    smartLicensed !== (cfg.smart_captions_licensed === true);
 
   // Live "would produce N slots" preview. Mirrors the backend PATCH
   // validator at `admin_music.py` so the user sees the same verdict
@@ -651,6 +661,25 @@ function ConfigTabContent({
               onChange={(e) => setSlotEveryN(e.target.value)}
               className="w-40 bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-violet-500"
             />
+          </label>
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={smartLicensed}
+              onChange={(e) => setSmartLicensed(e.target.checked)}
+              data-testid="smart-licensed-checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 accent-violet-500"
+            />
+            <span>
+              <span className="text-sm text-zinc-100 block">
+                Licensed for Smart Captions music bed
+              </span>
+              <span className="text-xs text-zinc-500 block">
+                Only checked tracks are eligible for the auto-selected v2
+                background bed. Check only after confirming the license covers
+                creator exports.
+              </span>
+            </span>
           </label>
           {saveMsg && (
             <p

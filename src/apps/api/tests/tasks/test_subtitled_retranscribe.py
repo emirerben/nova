@@ -134,6 +134,14 @@ def test_retranscribe_rejects_missing_base(monkeypatch):
         gb._run_retranscribe_subtitled(str(uuid.uuid4()), "subtitled", "tr")
 
 
+def test_retranscribe_rejects_smart_variant_without_atomic_replan(monkeypatch):
+    job = _FakeJob(assembly_plan={"variants": [_subtitled_variant(smart_captions_applied=True)]})
+    _patch_job_session(monkeypatch, job)
+
+    with pytest.raises(ValueError, match="require a new render"):
+        gb._run_retranscribe_subtitled(str(uuid.uuid4()), "subtitled", "tr")
+
+
 # ── happy path ────────────────────────────────────────────────────────────────
 
 

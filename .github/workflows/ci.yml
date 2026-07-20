@@ -107,6 +107,20 @@ jobs:
       - name: Install API dependencies
         working-directory: src/apps/api
         run: pip install -e ".[dev]"
+      - name: Verify Alembic upgrade-downgrade roundtrip
+        working-directory: src/apps/api
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
+          REDIS_URL: redis://localhost:6379
+          STORAGE_BUCKET: nova-test
+          STORAGE_PROVIDER: gcs
+          OPENAI_API_KEY: sk-test
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+          ALLOWED_ORIGINS: '["http://localhost:3000"]'
+        run: |
+          python -m alembic upgrade head
+          python -m alembic downgrade -1
+          python -m alembic upgrade head
       - name: Run API tests
         working-directory: src/apps/api
         env:

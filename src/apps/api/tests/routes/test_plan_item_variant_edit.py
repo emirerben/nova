@@ -874,6 +874,27 @@ def test_caption_language_happy_enqueues_retranscribe(client: TestClient) -> Non
     )
 
 
+def test_caption_language_rejects_smart_variant_until_atomic_replan_exists(
+    client: TestClient,
+) -> None:
+    user = _user()
+    job = _job([{**SUBTITLED_VARIANT, "smart_captions_applied": True}])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+
+    with patch(RETX) as retx:
+        retx.apply_async = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/caption-language",
+            json={"language": "tr"},
+        )
+
+    assert resp.status_code == 422
+    assert "new video" in resp.json()["detail"]
+    retx.apply_async.assert_not_called()
+
+
 def test_caption_language_marks_rendering_synchronously(client: TestClient) -> None:
     """The 409 gate must close AT DISPATCH — otherwise two calls in the enqueue window
     both pass and race to a last-writer-wins variant state."""

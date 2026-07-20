@@ -243,6 +243,7 @@ def reframe_and_export(
     has_audio: bool | None = None,
     keep_segments: list[tuple[float, float]] | None = None,
     keep_segments_punch_in: float | None = None,
+    semantic_crop_pulses: list[dict] | None = None,
     canvas: Canvas | None = None,
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
@@ -302,6 +303,7 @@ def reframe_and_export(
         grid_highlight_intersection=grid_highlight_intersection,
         grid_highlight_color=grid_highlight_color,
         grid_highlight_windows=grid_highlight_windows,
+        semantic_crop_pulses=semantic_crop_pulses,
         canvas=canvas,
     )
 
@@ -854,6 +856,7 @@ def _build_video_filter(
     grid_highlight_intersection: str | None = None,
     grid_highlight_color: str = "#E63946",
     grid_highlight_windows: list[tuple[float, float]] | None = None,
+    semantic_crop_pulses: list[dict] | None = None,
     canvas: Canvas | None = None,
 ) -> list[str]:
     """Return list of filter segments to join with commas.
@@ -945,15 +948,31 @@ def _build_video_filter(
         # Default crop mode: scale-fill the canvas (no bars), trim overflow.
         # `force_original_aspect_ratio=increase` grows BOTH source dims until
         # they cover the target, preserving aspect; `crop` center-trims the
-        # overflow to exact target dims. Mirrors the 16:9 branch above
-        # (`scale=-2:H,crop=W:H`) for non-16:9 sources — covers 3:4 portrait,
-        # 19.5:9 iPhone, square, slightly-off-9:16, etc. Callers that WANT
-        # black bars (e.g. locked 16:9 templates with baked-in hook text on
-        # the sides) MUST pass `output_fit="letterbox_black"` to hit the
-        # branch above; do not rely on this branch padding.
+        # overflow to exact target dims.
         filters.append(f"scale={ow}:{oh}:force_original_aspect_ratio=increase")
         filters.append(f"crop={ow}:{oh}")
 
+    # V2 semantic camera treatment is part of this existing intermediate
+    # reframe encode. It changes only pixels inside bounded event windows;
+    # duration, frame rate, audio, and transcript timestamps stay untouched.
+    valid_pulses: list[tuple[float, float]] = []
+    for pulse in semantic_crop_pulses or []:
+        try:
+            start = max(0.0, float(pulse["start_s"]))
+            end = float(pulse["end_s"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if pulse.get("token") != "semantic_crop_pulse" or end <= start:
+            continue
+        valid_pulses.append((start, end))
+    if valid_pulses:
+        enabled = "+".join(f"between(t,{start:.3f},{end:.3f})" for start, end in valid_pulses)
+        amount = f"min(1,{enabled})"
+        filters.append(
+            f"scale=w='trunc(iw*(1+0.08*({amount}))/2)*2':"
+            f"h='trunc(ih*(1+0.08*({amount}))/2)*2':eval=frame"
+        )
+        filters.append(f"crop={ow}:{oh}:(iw-{ow})/2:(ih-{oh})/2")
     # 2. Color grading (applied before darkening so darkened areas have the grade)
     for f in _color_hint_filters(color_hint):
         filters.append(f)

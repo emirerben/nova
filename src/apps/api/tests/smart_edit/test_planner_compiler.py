@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
+
+import pytest
+from pydantic import ValidationError
 
 from app.agents.smart_edit_planner import (
     SmartEditPlannerAgent,
@@ -10,6 +14,12 @@ from app.agents.smart_edit_planner import (
 )
 from app.smart_edit.compiler import compile_smart_plan, resolve_sfx_placements
 from app.smart_edit.planner import _merge_agent_with_guards, plan_smart_captions
+from app.smart_edit.presets import load_preset
+from app.smart_edit.schemas import (
+    SMART_EDIT_SCHEMA_VERSION,
+    SMART_EDIT_SCHEMA_VERSION_V2,
+    SmartEditPlanDocument,
+)
 
 
 def _cue(text: str, start: float, end: float) -> dict:
@@ -455,3 +465,337 @@ def test_hook_zone_allocation_does_not_reset_across_separate_candidates() -> Non
         (0.81, 0.81),
     ]
     assert [overlay["z"] for overlay in hook_overlays] == [10, 51]
+
+
+def _stable_digest(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _reference_hook_assets() -> list[dict]:
+    return [
+        {
+            "id": "asset-selocan",
+            "kind": "image",
+            "gcs_path": "users/u/pool/selocan.png",
+            "source_filename": "selocan.png",
+            "analysis": {"subject": "Selocan family"},
+        },
+        {
+            "id": "asset-robots",
+            "kind": "image",
+            "gcs_path": "users/u/pool/robots.png",
+            "source_filename": "robots_wedding.png",
+            "analysis": {"subject": "Robot wedding couple"},
+        },
+        {
+            "id": "asset-pinar",
+            "kind": "image",
+            "gcs_path": "users/u/pool/pinar.png",
+            "source_filename": "pinar_beyaz.png",
+            "analysis": {"subject": "White sheep mascot"},
+        },
+        {
+            "id": "asset-selpak",
+            "kind": "image",
+            "gcs_path": "users/u/pool/selpak.png",
+            "source_filename": "selpak-fil.png",
+            "analysis": {"subject": "Selpak elephant character"},
+        },
+        {
+            "id": "asset-cocacola",
+            "kind": "image",
+            "gcs_path": "users/u/pool/cocacola.png",
+            "source_filename": "cocacola-bear.png",
+            "analysis": {"subject": "Polar bear", "brands": ["Coca-Cola"]},
+        },
+    ]
+
+
+def test_v1_plan_and_compiled_patch_remain_byte_stable() -> None:
+    cues = [
+        _cue("Peki neden maskot kullanıyorlardı?", 0.0, 2.0),
+        _cue("Birincisi somutlaştırma önemlidir.", 4.0, 6.0),
+        _cue("Takip et şimdi.", 8.0, 9.0),
+    ]
+
+    planned = plan_smart_captions(
+        cues,
+        preset_version="v1",
+        language="tr",
+        use_agent=False,
+    )
+
+    assert planned is not None
+    compiled = compile_smart_plan(planned.document, planned.caption_cues)
+    assert planned.document.schema_version == SMART_EDIT_SCHEMA_VERSION
+    assert _stable_digest(planned.document.model_dump(mode="json")) == (
+        "333ca9f41e701cd433740a928546d3e4c3adcc2c651bd879d6230c9e717ab028"
+    )
+    assert _stable_digest(planned.caption_cues) == (
+        "a91017032494269d6fdc4e19239162cbe9b6a27c927a27feda6232988af87666"
+    )
+    assert _stable_digest(compiled.compiled_patch) == (
+        "b22ed7db36892cefe756f44d1d89b806d263f0ab74696bfb108304fba4660148"
+    )
+
+
+def test_v2_schema_accepts_typed_camera_and_audio_lanes_but_v1_rejects_them() -> None:
+    event_id = "0" * 24
+    payload = {
+        "schema_version": SMART_EDIT_SCHEMA_VERSION_V2,
+        "preset_id": "cigdem",
+        "preset_version": "v2",
+        "baseline_captions": [
+            {
+                "cue_id": "cue-1",
+                "word_ids": ["w000001"],
+                "display_text": "Peki",
+            }
+        ],
+        "events": [
+            {
+                "event_id": event_id,
+                "role": "hook",
+                "start_word_id": "w000001",
+                "end_word_id": "w000001",
+                "anchor": {"word_id": "w000001"},
+                "active_start_ms": 0,
+                "active_end_ms": 500,
+                "confidence_tier": "high",
+                "lanes": [
+                    {
+                        "kind": "camera",
+                        "token": "semantic_crop_pulse",
+                        "intensity_token": "subtle",
+                    },
+                    {
+                        "kind": "audio_treatment",
+                        "token": "voice_safe_music_bed",
+                        "selection_token": "licensed_published_match",
+                        "gain_token": "preset",
+                    },
+                ],
+            }
+        ],
+    }
+
+    plan = SmartEditPlanDocument.model_validate(payload)
+    assert [lane.kind for lane in plan.events[0].lanes] == ["camera", "audio_treatment"]
+
+    payload["schema_version"] = SMART_EDIT_SCHEMA_VERSION
+    with pytest.raises(ValidationError, match="schema v1"):
+        SmartEditPlanDocument.model_validate(payload)
+
+
+def test_v2_detects_all_production_chapters_before_caption_chunking() -> None:
+    cues = [
+        _cue("Selocanlar Çeliknaz Pınar Beyaz Selpak Fil Coca-Cola Ayıcıkları", 0.0, 7.8),
+        _cue("Bunları hatırlıyor musunuz?", 7.8, 9.5),
+        _cue("Peki bu karakterler neden bu kadar güçlüydü?", 9.6, 13.0),
+        _cue("Dört başlıkta anlatayım: 1.", 13.0, 16.0),
+        _cue("Somutlaştırma markayı akılda tutar.", 16.1, 18.0),
+        _cue("Bu bölümün son sözü İki", 30.0, 33.0),
+        _cue("Pester Power tüketiciyi etkiler.", 33.1, 36.0),
+        _cue("Üç sosyal kanıt sağlar.", 45.0, 48.0),
+        _cue("Dört nostalji yaratır.", 60.0, 63.0),
+    ]
+
+    planned = plan_smart_captions(
+        cues,
+        preset_version="v2",
+        language="tr",
+        assets=_reference_hook_assets(),
+        use_agent=False,
+    )
+
+    assert planned is not None
+    assert planned.document.schema_version == SMART_EDIT_SCHEMA_VERSION_V2
+    assert planned.validation_receipt["detected_chapters"] == [1, 2, 3, 4]
+    assert planned.validation_receipt["missing_chapters"] == []
+    assert planned.validation_receipt["chapter_order_valid"] is True
+    chapter_events = [event for event in planned.document.events if event.role == "list_item"]
+    assert [
+        next(lane.sequence_number for lane in event.lanes if lane.kind == "text")
+        for event in chapter_events
+    ] == [1, 2, 3, 4]
+    assert all(len({cue["smart_role"]}) == 1 for cue in planned.caption_cues)
+    flattened_words = [word for cue in planned.caption_cues for word in cue["words"]]
+    assert all(
+        float(left["start_s"]) <= float(left["end_s"]) <= float(right["start_s"])
+        for left, right in zip(flattened_words, flattened_words[1:])
+    )
+    two_event = chapter_events[1]
+    assert planned.normalized_words[int(two_event.start_word_id[1:]) - 1].display_text == "İki"
+
+    compiled = compile_smart_plan(
+        planned.document,
+        planned.caption_cues,
+        assets_by_id={asset["id"]: asset for asset in _reference_hook_assets()},
+    )
+    assert [element["text"] for element in compiled.text_elements if element["text"].isdigit()] == [
+        "1",
+        "2",
+        "3",
+        "4",
+    ]
+    assert "İki" not in " ".join(cue["text"] for cue in compiled.caption_cues)
+    assert "Power tüketiciyi etkiler." in " ".join(cue["text"] for cue in compiled.caption_cues)
+
+
+def test_v2_missing_chapter_does_not_poison_later_markers() -> None:
+    cues = [
+        _cue("Bunları hatırlıyor musunuz?", 0.0, 2.0),
+        _cue("Dört başlıkta anlatayım: 1.", 3.0, 5.0),
+        _cue("Somutlaştırma önemlidir.", 5.1, 6.5),
+        _cue("Üç sosyal kanıt sağlar.", 12.0, 14.0),
+        _cue("Dört nostalji yaratır.", 18.0, 20.0),
+    ]
+
+    planned = plan_smart_captions(
+        cues,
+        preset_version="v2",
+        language="tr",
+        use_agent=False,
+    )
+
+    assert planned is not None
+    assert planned.validation_receipt["detected_chapters"] == [1, 3, 4]
+    assert planned.validation_receipt["missing_chapters"] == [2]
+
+
+def test_v2_semantic_hook_accumulates_all_visuals_and_suppresses_only_when_resolved() -> None:
+    cues = [
+        _cue("Selocanlar Çeliknaz Pınar Beyaz", 1.0, 5.0),
+        _cue("Selpak Fil Coca-Cola Ayıcıkları", 5.0, 8.0),
+        _cue("Bunları hatırlıyor musunuz?", 8.0, 10.0),
+        _cue("Peki maskotlar neden işe yarıyordu?", 10.1, 13.0),
+    ]
+    assets = _reference_hook_assets()
+    planned = plan_smart_captions(
+        cues,
+        preset_version="v2",
+        language="tr",
+        assets=assets,
+        use_agent=False,
+    )
+
+    assert planned is not None
+    hook_events = [
+        event
+        for event in planned.document.events
+        if any(
+            lane.kind == "visual" and lane.composition_group_id == "hook_accumulation"
+            for lane in event.lanes
+        )
+    ]
+    assert len(hook_events) == 5
+    assert [event.active_start_ms for event in hook_events] == [1000, 2000, 3000, 5000, 6500]
+    assert max(event.active_end_ms for event in hook_events) == 12000
+    assert max(event.active_end_ms for event in hook_events) > 6000
+
+    complete = compile_smart_plan(
+        planned.document,
+        planned.caption_cues,
+        assets_by_id={asset["id"]: asset for asset in assets},
+    )
+    assert complete.compiled_patch["hook_caption_suppressed"] is False
+    assert complete.compiled_patch["hook_caption_suppression_eligible"] is True
+    assert (
+        complete.compiled_patch["hook_caption_suppression_status"]
+        == "deferred_until_transactional_compositor"
+    )
+    assert any(cue.get("smart_role") == "hook" for cue in complete.caption_cues)
+
+    incomplete = compile_smart_plan(
+        planned.document,
+        planned.caption_cues,
+        assets_by_id={asset["id"]: asset for asset in assets[:3]},
+    )
+    assert incomplete.compiled_patch["hook_caption_suppressed"] is False
+    assert incomplete.compiled_patch["hook_caption_suppression_eligible"] is False
+    assert any(cue.get("smart_role") == "hook" for cue in incomplete.caption_cues)
+
+
+def test_v2_scene_tokens_compile_exhaustively_and_emit_camera_audio_intents() -> None:
+    cues = [
+        _cue("Bunları hatırlıyor musunuz?", 0.0, 2.0),
+        _cue("Peki örneklere bakalım.", 3.0, 4.5),
+        _cue("Örneğin Selpak ile Coca-Cola birlikte çalışır.", 6.0, 9.0),
+        _cue("Mesela demo videosu her şeyi gösterir.", 12.0, 15.0),
+        _cue("Örneğin Teklogo tek başına görünür.", 18.0, 21.0),
+    ]
+    assets = [
+        {
+            "id": "selpak",
+            "kind": "image",
+            "gcs_path": "users/u/selpak.png",
+            "source_filename": "selpak.png",
+            "analysis": {"subject": "Selpak elephant"},
+        },
+        {
+            "id": "coke",
+            "kind": "image",
+            "gcs_path": "users/u/coke.png",
+            "source_filename": "cocacola.png",
+            "analysis": {"subject": "Coca-Cola bear"},
+        },
+        {
+            "id": "demo",
+            "kind": "video",
+            "gcs_path": "users/u/demo.mp4",
+            "source_filename": "demo-video.mp4",
+            "analysis": {"subject": "Demo video"},
+        },
+        {
+            "id": "single",
+            "kind": "image",
+            "gcs_path": "users/u/single.png",
+            "source_filename": "teklogo.png",
+            "analysis": {"subject": "Teklogo"},
+        },
+        {
+            "id": "badge",
+            "kind": "image",
+            "gcs_path": "users/u/badge.png",
+            "source_filename": "skip-ad-badge.png",
+            "analysis": {"subject": "Skip ad badge"},
+        },
+    ]
+
+    planned = plan_smart_captions(
+        cues,
+        preset_version="v2",
+        language="tr",
+        assets=assets,
+        use_agent=False,
+    )
+
+    assert planned is not None
+    compiled = compile_smart_plan(
+        planned.document,
+        planned.caption_cues,
+        assets_by_id={asset["id"]: asset for asset in assets},
+    )
+    preset = load_preset("cigdem", "v2")
+    assert set(preset.scene_layouts) == {
+        "hook_accumulation",
+        "single_example",
+        "example_pair",
+        "fullscreen_cutaway",
+        "persistent_badge",
+    }
+    overlays_by_path = {overlay["src_gcs_path"]: overlay for overlay in compiled.media_overlays}
+    assert overlays_by_path["users/u/selpak.png"]["x_frac"] == 0.23
+    assert overlays_by_path["users/u/coke.png"]["x_frac"] == 0.77
+    assert overlays_by_path["users/u/demo.mp4"]["display_mode"] == "fullscreen"
+    assert overlays_by_path["users/u/single.png"]["x_frac"] == 0.77
+    assert overlays_by_path["users/u/badge.png"]["composition_group_id"] == "persistent_badge"
+    assert compiled.audio_treatment_intents[0]["music_match_min_score"] == 7.0
+    assert compiled.camera_intents
+    assert any(intent["role"] == "keyword_typewriter_tick" for intent in compiled.sfx_intents)

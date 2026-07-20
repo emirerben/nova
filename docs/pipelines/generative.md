@@ -59,6 +59,16 @@ preset id/version. Verify an already-assigned creator gets
 Planner/compiler failures fail open to ordinary corrected captions. Roll back
 by setting the Fly flag false; do not delete or broaden creator assignments.
 
+**Smart Captions v2 (v0.11.0.0):** the semantic pipeline in `app/smart_edit/`
+(strict schemas → transcript-anchored planner → preset-driven compiler) builds
+the full Çiğdem-style composition; internals live in
+`docs/pipelines/smart-captions.md`. V2 adds a licensed music bed (kill switch
+`SMART_MUSIC_BED_ENABLED`, independent of `SOUND_EFFECTS_ENABLED`; admin
+licensing toggle on the music Config tab) and a server-pinned shadow-preset
+canary (migration 0066) that compiles and fingerprints a shadow plan without
+changing output. Rollout stays gated by `SMART_CAPTIONS_ENABLED` exactly as
+above; v2 failures fail open to a standard subtitled render with receipts.
+
 ## Key files
 
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery
