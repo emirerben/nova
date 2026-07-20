@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.1.0] — 2026-07-20
+
+### Fixed
+- **Landscape saves now rebuild from the original footage instead of stretching a cached portrait render.** Exported videos fill the centered 16:9 frame at 1920×1080, while portrait exports keep their existing Fit preference.
+
 ## [0.10.0.0] — 2026-07-19
 
 ### Added

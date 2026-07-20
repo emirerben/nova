@@ -1501,9 +1501,12 @@ def _is_fast_reburn_eligible(
         return False
     if new_track_id is not None or mix_override is not None:
         return False  # audio changes → must full re-render
-    if orientation_override is not None and orientation_override != _resolve_variant_orientation(
-        existing
-    ):
+    # Orientation routes persist the requested value before the worker starts.
+    # Comparing the override with ``existing["orientation"]`` therefore cannot
+    # detect a real change: both already contain the new value. Any explicit
+    # orientation request must rebuild from source clips so a cached portrait
+    # base can never be stretched into a landscape encode (or vice versa).
+    if orientation_override is not None:
         return False
     if not existing.get("base_video_path"):
         return False  # no cached base (legacy or lyrics variant)
@@ -6063,6 +6066,11 @@ def _render_generative_variant(
             resolved_orientation = "portrait"
             canvas = PORTRAIT
             base["orientation"] = resolved_orientation
+        # ``landscape_fit`` is a portrait-canvas preference: it controls whether
+        # a wide source is preserved inside 9:16. A landscape output follows the
+        # editor's cover preview and always center-crops to fill 16:9. Resolve it
+        # after the masonry fallback above because that fallback changes canvas.
+        assembly_landscape_fit = "fill" if resolved_orientation == "landscape" else landscape_fit
         effective_available_footage_s = available_footage_s
         if masonry_requested:
             from app.pipeline.masonry_montage import clamp_masonry_duration  # noqa: PLC0415
@@ -6308,7 +6316,7 @@ def _render_generative_variant(
                 # Post-resolution source windows per slot — the clip editor's
                 # ground truth for what each slot actually rendered.
                 resolved_plans_out=resolved_plans,
-                landscape_fit=landscape_fit,
+                landscape_fit=assembly_landscape_fit,
                 canvas=canvas,
             )
             classic_assembly_done = True

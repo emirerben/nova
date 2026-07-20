@@ -108,6 +108,7 @@ async def test_dispatch_set_orientation_persists_and_enqueues(monkeypatch) -> No
             "kwargs": {
                 "render_gen_id": variant["render_generation_id"],
                 "orientation_override": "landscape",
+                "force_full_render": True,
             },
         }
     ]
@@ -169,7 +170,11 @@ def test_enqueue_editor_commit_render_sends_orientation_override(monkeypatch) ->
     assert calls == [
         {
             "args": ["job-1", "song_text"],
-            "kwargs": {"render_gen_id": "gen-2", "orientation_override": "landscape"},
+            "kwargs": {
+                "render_gen_id": "gen-2",
+                "orientation_override": "landscape",
+                "force_full_render": True,
+            },
         }
     ]
 
