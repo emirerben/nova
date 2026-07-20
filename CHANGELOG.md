@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.4.0] — 2026-07-20
+
+### Fixed
+- **Unsaved editor drafts now stay with the exact video version that created them.** Moving between videos or variants can no longer offer or overwrite another edit's recovery draft, and drafts based on an older render are ignored instead of replacing newer work.
+- **Beat-synced clip errors now identify the exact visible clip and explain how much footage is missing.** When a clip cannot fill the next song beat, Save shows its available and required duration with a direct fix instead of the generic “ran out of footage” message.
+
 ## [0.10.3.0] — 2026-07-20
 
 ### Fixed

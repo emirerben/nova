@@ -53,6 +53,7 @@ import { type TextBoxHorizontalPosition } from "@/lib/overlay-layout";
 import {
   buildEditorCommitRequest,
   commitEditorSession,
+  editorCommitBaseGeneration,
   EditorCommitConflictError,
   type AcceptedSuggestionRef,
   type EditorCommitLyricsRequest,
@@ -3377,11 +3378,11 @@ export default function EditorShell({
   const clearDraft = useCallback(() => {
     if (!variant) return;
     try {
-      window.sessionStorage.removeItem(draftKey(variant.variant_id));
+      window.sessionStorage.removeItem(draftKey(itemId, variant.variant_id));
     } catch {
       /* privacy mode / quota — nothing to clean up */
     }
-  }, [variant]);
+  }, [itemId, variant]);
 
   const handleSave = useCallback(async (
     musicAlignment?: "preserve_cuts" | "resync_beats",
@@ -3536,27 +3537,40 @@ export default function EditorShell({
   // ── Draft recovery (plan §9) ────────────────────────────────────────────────
   // Mirror the working document to sessionStorage on every command push (any
   // document change while dirty). Failures degrade draft safety silently.
-  const dirtyDraftVariantRef = useRef<string | null>(null);
+  const dirtyDraftIdentityRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!variant) return;
+    // During client-side [id] navigation React can retain this shell while the
+    // next item loads. Never write the previous item's working document under
+    // the next item's draft key in that gap.
+    if (!variant || item?.id !== itemId) return;
+    const identity = `${itemId}:${variant.variant_id}`;
     if (!dirty) {
-      if (dirtyDraftVariantRef.current === variant.variant_id) {
+      if (dirtyDraftIdentityRef.current === identity) {
         clearDraft();
-        dirtyDraftVariantRef.current = null;
+        dirtyDraftIdentityRef.current = null;
       }
       return;
     }
     try {
       window.sessionStorage.setItem(
-        draftKey(variant.variant_id),
-        serializeDraft(variant.variant_id, getCurrent()),
+        draftKey(itemId, variant.variant_id),
+        serializeDraft(
+          itemId,
+          item?.current_job_id ?? "",
+          variant.variant_id,
+          editorCommitBaseGeneration(variant),
+          getCurrent(),
+        ),
       );
-      dirtyDraftVariantRef.current = variant.variant_id;
+      dirtyDraftIdentityRef.current = identity;
     } catch {
       /* quota full / privacy mode — editing continues, draft safety only */
     }
   }, [
     variant,
+    itemId,
+    item?.id,
+    item?.current_job_id,
     dirty,
     state.bars,
     localSlots,
@@ -3583,20 +3597,32 @@ export default function EditorShell({
   // (once per variant, after seeding so a Resume overrides the seeded bars).
   const draftCheckedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!variant) return;
-    if (draftCheckedRef.current === variant.variant_id) return;
-    draftCheckedRef.current = variant.variant_id;
+    if (!variant || item?.id !== itemId) return;
+    const jobId = item.current_job_id ?? "";
+    const baseGeneration = editorCommitBaseGeneration(variant);
+    const identity = `${itemId}:${jobId}:${variant.variant_id}:${baseGeneration}`;
+    if (draftCheckedRef.current === identity) return;
+    draftCheckedRef.current = identity;
     try {
       const parsed = deserializeDraft(
-        window.sessionStorage.getItem(draftKey(variant.variant_id)),
+        window.sessionStorage.getItem(draftKey(itemId, variant.variant_id)),
       );
-      if (parsed && parsed.variantId === variant.variant_id) {
+      if (
+        parsed &&
+        parsed.planItemId === itemId &&
+        parsed.jobId === jobId &&
+        parsed.variantId === variant.variant_id &&
+        parsed.baseGeneration === baseGeneration
+      ) {
         setDraftDoc(parsed.doc);
+      } else {
+        setDraftDoc(null);
       }
     } catch {
       /* unreadable draft — skip the notice */
+      setDraftDoc(null);
     }
-  }, [variant]);
+  }, [item?.current_job_id, item?.id, itemId, variant]);
 
   const resumeDraft = useCallback(() => {
     if (!draftDoc) return;

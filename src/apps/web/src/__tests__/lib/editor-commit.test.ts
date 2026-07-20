@@ -623,6 +623,43 @@ describe("formatEditorCommitError", () => {
         "One of the clips ran out of footage for this edit. Try trimming it or picking a different clip.",
       ],
       [
+        "beat-aware out-of-bounds detail",
+        {
+          detail: {
+            code: "TIMELINE_OUT_OF_BOUNDS",
+            reason: "source_window_too_short",
+            slot_order: 6,
+            available_duration_s: 0.18,
+            required_duration_s: 0.51,
+            minimum_beat_duration_s: 0.32,
+          },
+        },
+        "Clip 7 has 0.18s of footage after its start point, but the next song beat needs 0.32s. Move the start earlier or choose a longer clip.",
+      ],
+      [
+        "seconds out-of-bounds detail",
+        {
+          detail: {
+            code: "TIMELINE_OUT_OF_BOUNDS",
+            slot_order: 2,
+            available_duration_s: 0.5,
+            required_duration_s: 1,
+          },
+        },
+        "Clip 3 has 0.5s of footage after its start point, but this edit needs 1s. Shorten it, move the start earlier, or choose another clip.",
+      ],
+      [
+        "negative in-point detail",
+        {
+          detail: {
+            code: "TIMELINE_OUT_OF_BOUNDS",
+            reason: "negative_in_point",
+            slot_order: 1,
+          },
+        },
+        "Clip 2 starts before its source footage. Set its start to 0s or later.",
+      ],
+      [
         "unavailable song code object",
         { detail: { code: "music_track_unavailable" } },
         "That song is no longer available. Choose another song and try again.",
