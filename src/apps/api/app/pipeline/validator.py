@@ -20,13 +20,15 @@ class ValidationResult:
 def validate_output(
     file_path: str,
     expected_resolution: tuple[int, int] | None = None,
+    expected_duration_range: tuple[float, float] | None = None,
 ) -> ValidationResult:
     """Run FFprobe on an exported clip and assert it meets the output spec.
 
     Checks:
     - resolution == 1080×1920 unless expected_resolution is provided
     - codec == h264
-    - 45s ≤ duration ≤ 59s
+    - duration is within the configured template range unless a caller-specific
+      range is provided
     - audio stream present
     """
     cmd = [
@@ -81,10 +83,13 @@ def validate_output(
     if codec != "h264":
         errors.append(f"Codec mismatch: expected h264, got {codec}")
 
-    if not (settings.output_min_duration_s <= duration_s <= settings.output_max_duration_s):
+    min_duration_s, max_duration_s = expected_duration_range or (
+        settings.output_min_duration_s,
+        settings.output_max_duration_s,
+    )
+    if not (min_duration_s <= duration_s <= max_duration_s):
         errors.append(
-            f"Duration {duration_s:.1f}s outside spec "
-            f"[{settings.output_min_duration_s}-{settings.output_max_duration_s}]"
+            f"Duration {duration_s:.1f}s outside spec [{min_duration_s}-{max_duration_s}]"
         )
 
     if audio_stream is None:

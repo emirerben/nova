@@ -183,11 +183,13 @@ def test_landscape_canvas_threads_to_assembly_and_validator(monkeypatch, tmp_pat
     assembled_canvases: list[object] = []
     assembled_fits: list[str] = []
     validations: list[tuple[int, int] | None] = []
+    duration_ranges: list[tuple[float, float] | None] = []
     _patch_landscape_render_helpers(
         monkeypatch,
         assembled_canvases,
         validations,
         assembled_fits=assembled_fits,
+        duration_ranges=duration_ranges,
     )
     vdir = tmp_path / "v3"
     vdir.mkdir()
@@ -213,6 +215,7 @@ def test_landscape_canvas_threads_to_assembly_and_validator(monkeypatch, tmp_pat
     assert assembled_canvases == [LANDSCAPE]
     assert assembled_fits == ["fill"]
     assert validations == [(1920, 1080)]
+    assert duration_ranges == [(0.1, gb.settings.output_max_duration_s)]
 
 
 def test_portrait_canvas_preserves_landscape_fit_preference(monkeypatch, tmp_path) -> None:
@@ -254,6 +257,7 @@ def _patch_landscape_render_helpers(
     validations: list[tuple[int, int] | None],
     *,
     assembled_fits: list[str] | None = None,
+    duration_ranges: list[tuple[float, float] | None] | None = None,
 ) -> None:
     import app.pipeline.agents.gemini_analyzer as ga
     import app.pipeline.template_matcher as tm
@@ -294,8 +298,10 @@ def _patch_landscape_render_helpers(
         raising=False,
     )
 
-    def _fake_validate(_path, *, expected_resolution=None):
+    def _fake_validate(_path, *, expected_resolution=None, expected_duration_range=None):
         validations.append(expected_resolution)
+        if duration_ranges is not None:
+            duration_ranges.append(expected_duration_range)
         return types.SimpleNamespace(passed=True, errors=[])
 
     monkeypatch.setattr(validator, "validate_output", _fake_validate, raising=False)

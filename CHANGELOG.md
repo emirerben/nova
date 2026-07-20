@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.2.0] — 2026-07-20
+
+### Fixed
+- **Short landscape edits now finish rendering instead of failing after the 16:9 conversion.** Generative montages keep their intended duration while retaining the sub-60-second output limit; the 45–59-second rule remains unchanged for template exports.
+
 ## [0.10.1.0] — 2026-07-20
 
 ### Fixed
