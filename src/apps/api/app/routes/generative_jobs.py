@@ -3197,8 +3197,10 @@ def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
     return None
 
 
-def _timeline_error(status_code: int, code: str) -> HTTPException:
-    return HTTPException(status_code=status_code, detail={"code": code})
+def _timeline_error(status_code: int, code: str, **context: object) -> HTTPException:
+    detail = {"code": code}
+    detail.update({key: value for key, value in context.items() if value is not None})
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 def _editor_capabilities(job: Job, variant: dict) -> dict:
@@ -3592,13 +3594,46 @@ def resolve_timeline_slots_for_edit(
             duration = beat_grid[offset + beats] - start
             if duration <= max_source_window_s + 1e-6:
                 return beats
-        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_OUT_OF_BOUNDS")
+        return 0
 
     def _snap_half_second(duration_s: float | None) -> float:
         if duration_s is None or duration_s <= 0:
             raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION")
         return round(max(0.5, round(float(duration_s) * 2) / 2), 3)
 
+    def _out_of_bounds(
+        e: TimelineSlotEdit,
+        order: int,
+        src_dur: float | None,
+        required_duration_s: float | None,
+        *,
+        reason: str = "source_window_too_short",
+        minimum_beat_duration_s: float | None = None,
+    ) -> HTTPException:
+        available_duration_s = None if src_dur is None else max(0.0, float(src_dur) - float(e.in_s))
+        return _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "TIMELINE_OUT_OF_BOUNDS",
+            reason=reason,
+            slot_id=e.slot_id,
+            slot_order=order,
+            clip_index=e.clip_index,
+            in_s=round(float(e.in_s), 3),
+            source_duration_s=round(float(src_dur), 3) if src_dur is not None else None,
+            available_duration_s=(
+                round(available_duration_s, 3) if available_duration_s is not None else None
+            ),
+            required_duration_s=(
+                round(float(required_duration_s), 3) if required_duration_s is not None else None
+            ),
+            minimum_beat_duration_s=(
+                round(float(minimum_beat_duration_s), 3)
+                if minimum_beat_duration_s is not None
+                else None
+            ),
+        )
+
+    visible_order = 0
     for order, e in enumerate(slots):
         window_changed = _window_changed(e)
         duration_s = e.duration_s
@@ -3658,6 +3693,17 @@ def resolve_timeline_slots_for_edit(
                     duration_beats = _largest_beat_count_fitting_source(
                         grid_offset, max_source_window_s
                     )
+                    if duration_beats < 1:
+                        minimum_beat_duration_s = (
+                            beat_grid[grid_offset + 1] - beat_grid[grid_offset]
+                        )
+                        raise _out_of_bounds(
+                            e,
+                            visible_order,
+                            src_dur,
+                            duration_s,
+                            minimum_beat_duration_s=minimum_beat_duration_s,
+                        )
                     end = grid_offset + duration_beats
                     duration_s = beat_grid[end] - beat_grid[grid_offset]
                 grid_offset = end
@@ -3680,6 +3726,17 @@ def resolve_timeline_slots_for_edit(
                     duration_beats = _largest_beat_count_fitting_source(
                         grid_offset, max_source_window_s
                     )
+                    if duration_beats < 1:
+                        minimum_beat_duration_s = (
+                            beat_grid[grid_offset + 1] - beat_grid[grid_offset]
+                        )
+                        raise _out_of_bounds(
+                            e,
+                            visible_order,
+                            src_dur,
+                            duration_s,
+                            minimum_beat_duration_s=minimum_beat_duration_s,
+                        )
                     end = grid_offset + duration_beats
                     duration_s = beat_grid[end] - beat_grid[grid_offset]
                 grid_offset = end
@@ -3704,12 +3761,17 @@ def resolve_timeline_slots_for_edit(
             # Older saved timelines can already exceed the source by a few frames;
             # the worker clamps those unchanged windows, so only newly changed
             # source windows should hard-fail here.
-            if e.in_s < 0 or (
-                window_changed and src_dur is not None and e.in_s + duration_s > src_dur + 1e-6
-            ):
-                raise _timeline_error(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_OUT_OF_BOUNDS"
+            if e.in_s < 0:
+                raise _out_of_bounds(
+                    e,
+                    visible_order,
+                    src_dur,
+                    duration_s,
+                    reason="negative_in_point",
                 )
+            if window_changed and src_dur is not None and e.in_s + duration_s > src_dur + 1e-6:
+                raise _out_of_bounds(e, visible_order, src_dur, duration_s)
+            visible_order += 1
         meta = meta_by_idx.get(e.clip_index) or {}
         resolved.append(
             {

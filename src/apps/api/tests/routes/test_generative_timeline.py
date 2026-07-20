@@ -354,8 +354,9 @@ async def _expect_422(monkeypatch, job, slots, code):
     with pytest.raises(HTTPException) as exc:
         await gj.dispatch_edit_timeline(job, "song_text", _req(slots), db=None)
     assert exc.value.status_code == 422
-    assert exc.value.detail == {"code": code}
+    assert exc.value.detail["code"] == code
     assert seq == []  # nothing persisted, nothing enqueued
+    return exc.value.detail
 
 
 @pytest.mark.asyncio
@@ -519,12 +520,39 @@ async def test_edit_accepts_changed_one_beat_slot(monkeypatch):
 async def test_edit_one_beat_reports_out_of_bounds_when_source_is_shorter(monkeypatch):
     job = _timeline_job(src_dur=0.45)
     job.assembly_plan["variants"][0]["music_track_id"] = "track-1"
-    await _expect_422(
+    detail = await _expect_422(
         monkeypatch,
         job,
         [{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_beats": 1}],
         "TIMELINE_OUT_OF_BOUNDS",
     )
+    assert detail == {
+        "code": "TIMELINE_OUT_OF_BOUNDS",
+        "reason": "source_window_too_short",
+        "slot_id": "s1",
+        "slot_order": 0,
+        "clip_index": 0,
+        "in_s": 0.0,
+        "source_duration_s": 0.45,
+        "available_duration_s": 0.45,
+        "required_duration_s": 0.5,
+    }
+
+
+@pytest.mark.asyncio
+async def test_edit_seconds_slot_reports_minimum_beat_when_no_beat_fits(monkeypatch):
+    job = _timeline_job(src_dur=0.45)
+    job.assembly_plan["variants"][0]["music_track_id"] = "track-1"
+    detail = await _expect_422(
+        monkeypatch,
+        job,
+        [{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_s": 0.2}],
+        "TIMELINE_OUT_OF_BOUNDS",
+    )
+    assert detail["slot_order"] == 0
+    assert detail["available_duration_s"] == pytest.approx(0.45)
+    assert detail["required_duration_s"] == pytest.approx(0.5)
+    assert detail["minimum_beat_duration_s"] == pytest.approx(0.5)
 
 
 @pytest.mark.asyncio
@@ -567,12 +595,15 @@ async def test_edit_too_long_cap(monkeypatch):
 @pytest.mark.asyncio
 async def test_edit_out_of_bounds(monkeypatch):
     # in_s + duration runs past the probed 10s source.
-    await _expect_422(
+    detail = await _expect_422(
         monkeypatch,
         _timeline_job(beat_grid=[]),
         [{"slot_id": "s1", "clip_index": 0, "in_s": 9.5, "duration_s": 1.0}],
         "TIMELINE_OUT_OF_BOUNDS",
     )
+    assert detail["slot_order"] == 0
+    assert detail["available_duration_s"] == pytest.approx(0.5)
+    assert detail["required_duration_s"] == pytest.approx(1.0)
 
 
 @pytest.mark.asyncio
@@ -663,12 +694,14 @@ async def test_edit_changed_legacy_out_of_bounds_slot_still_rejects(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_edit_negative_in_s_out_of_bounds(monkeypatch):
-    await _expect_422(
+    detail = await _expect_422(
         monkeypatch,
         _timeline_job(beat_grid=[]),
         [{"slot_id": "s1", "clip_index": 0, "in_s": -0.5, "duration_s": 1.0}],
         "TIMELINE_OUT_OF_BOUNDS",
     )
+    assert detail["reason"] == "negative_in_point"
+    assert detail["slot_order"] == 0
 
 
 @pytest.mark.asyncio
@@ -715,6 +748,40 @@ async def test_edit_delete_shifts_beat_cursor_clamps_instead_of_422(monkeypatch)
     assert s2["duration_beats"] == 1
     assert s2["duration_s"] == pytest.approx(0.7)
     assert s2["in_s"] + s2["duration_s"] <= 0.8 + 1e-6
+
+
+@pytest.mark.asyncio
+async def test_edit_delete_reports_context_when_shifted_slot_cannot_fit_one_beat(monkeypatch):
+    fast_grid = [0.0, 0.7, 1.7, 1.9, 2.2]
+    job = _timeline_job(beat_grid=fast_grid, src_dur=10.0)
+    variant = job.assembly_plan["variants"][0]
+    variant["music_track_id"] = "track-1"
+    variant["ai_timeline"]["slots"][0].update(
+        {"duration_beats": 2, "duration_s": 1.7, "source_duration_s": 10.0}
+    )
+    variant["ai_timeline"]["slots"][1].update(
+        {"in_s": 0.0, "duration_beats": 2, "duration_s": 0.5, "source_duration_s": 0.6}
+    )
+
+    detail = await _expect_422(
+        monkeypatch,
+        job,
+        [
+            {
+                "slot_id": "s1",
+                "clip_index": 0,
+                "in_s": 0.0,
+                "duration_beats": 2,
+                "removed": True,
+            },
+            {"slot_id": "s2", "clip_index": 1, "in_s": 0.0, "duration_beats": 2},
+        ],
+        "TIMELINE_OUT_OF_BOUNDS",
+    )
+    assert detail["slot_order"] == 0
+    assert detail["available_duration_s"] == pytest.approx(0.6)
+    assert detail["required_duration_s"] == pytest.approx(1.7)
+    assert detail["minimum_beat_duration_s"] == pytest.approx(0.7)
 
 
 @pytest.mark.asyncio

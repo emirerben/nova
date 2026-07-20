@@ -341,6 +341,50 @@ const TIMELINE_ERROR_MESSAGES: Record<string, string> = {
     "This older edit cannot preserve its cuts. Choose Re-sync to beats instead.",
 };
 
+type TimelineOutOfBoundsDetail = {
+  code: "TIMELINE_OUT_OF_BOUNDS";
+  reason?: unknown;
+  slot_order?: unknown;
+  available_duration_s?: unknown;
+  required_duration_s?: unknown;
+  minimum_beat_duration_s?: unknown;
+};
+
+function secondsLabel(value: number): string {
+  return `${Number(value.toFixed(2))}s`;
+}
+
+function formatTimelineOutOfBounds(detail: TimelineOutOfBoundsDetail): string {
+  const clipLabel =
+    typeof detail.slot_order === "number" && Number.isInteger(detail.slot_order)
+      ? `Clip ${detail.slot_order + 1}`
+      : "A clip";
+  if (detail.reason === "negative_in_point") {
+    return `${clipLabel} starts before its source footage. Set its start to 0s or later.`;
+  }
+
+  const available =
+    typeof detail.available_duration_s === "number"
+      ? secondsLabel(detail.available_duration_s)
+      : null;
+  const minimumBeat =
+    typeof detail.minimum_beat_duration_s === "number"
+      ? secondsLabel(detail.minimum_beat_duration_s)
+      : null;
+  if (available && minimumBeat) {
+    return `${clipLabel} has ${available} of footage after its start point, but the next song beat needs ${minimumBeat}. Move the start earlier or choose a longer clip.`;
+  }
+
+  const required =
+    typeof detail.required_duration_s === "number"
+      ? secondsLabel(detail.required_duration_s)
+      : null;
+  if (available && required) {
+    return `${clipLabel} has ${available} of footage after its start point, but this edit needs ${required}. Shorten it, move the start earlier, or choose another clip.`;
+  }
+  return TIMELINE_ERROR_MESSAGES.TIMELINE_OUT_OF_BOUNDS;
+}
+
 function formatDetailValue(detail: unknown, fallback: string): string {
   if (typeof detail === "string") {
     if (detail in TIMELINE_ERROR_MESSAGES) {
@@ -370,6 +414,9 @@ function formatDetailValue(detail: unknown, fallback: string): string {
     const record = detail as { detail?: unknown; code?: unknown; msg?: unknown };
     if (record.detail !== undefined) {
       return formatDetailValue(record.detail, fallback);
+    }
+    if (record.code === "TIMELINE_OUT_OF_BOUNDS") {
+      return formatTimelineOutOfBounds(record as TimelineOutOfBoundsDetail);
     }
     if (typeof record.code === "string") return formatDetailValue(record.code, fallback);
     if (typeof record.msg === "string") return record.msg;

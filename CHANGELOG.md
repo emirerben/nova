@@ -10,6 +10,11 @@ All notable changes to this project will be documented in this file.
 - **Background music and sound effects now share a voice-safe final mix.** Licensed tracks are selected deterministically, persisted for reburns, ducked under speech with preset-tuned depth and loudness targets, and mixed with reveal effects without re-encoding the finished video stream.
 - **A server-pinned shadow preset supports production canaries without changing output.** The worker compiles and fingerprints the shadow plan from the same immutable asset snapshot, persists aggregate comparison receipts, and never materializes shadow visuals, text, camera, or audio decisions.
 - **Smart renders degrade gracefully instead of failing or misplacing content.** Stale preset assignments and creator-pool outages fall back to a standard render with receipts; explicit caption font and position edits survive Smart reburns; simultaneous picture-in-picture cards keep collision-free, aspect-correct layouts driven by real asset footprints; face detection runs under a killable time budget; hook captions stay visible until a transactional compositor can safely suppress them; and caption-language changes on Smart videos are declined until a safe re-plan exists.
+## [0.10.4.0] — 2026-07-20
+
+### Fixed
+- **Unsaved editor drafts now stay with the exact video version that created them.** Moving between videos or variants can no longer offer or overwrite another edit's recovery draft, and drafts based on an older render are ignored instead of replacing newer work.
+- **Beat-synced clip errors now identify the exact visible clip and explain how much footage is missing.** When a clip cannot fill the next song beat, Save shows its available and required duration with a direct fix instead of the generic “ran out of footage” message.
 
 ## [0.10.3.0] — 2026-07-20
 

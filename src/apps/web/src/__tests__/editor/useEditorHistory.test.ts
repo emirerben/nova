@@ -147,9 +147,12 @@ describe("serializeDraft / deserializeDraft", () => {
       title: "My clip",
       orientation: "landscape",
     });
-    const parsed = deserializeDraft(serializeDraft("v1", d));
+    const parsed = deserializeDraft(serializeDraft("item-1", "job-1", "v1", "gen-1", d));
     expect(parsed).not.toBeNull();
+    expect(parsed!.planItemId).toBe("item-1");
+    expect(parsed!.jobId).toBe("job-1");
     expect(parsed!.variantId).toBe("v1");
+    expect(parsed!.baseGeneration).toBe("gen-1");
     expect(parsed!.doc).toEqual({
       ...d,
       captionMeta: null,
@@ -167,14 +170,48 @@ describe("serializeDraft / deserializeDraft", () => {
     expect(deserializeDraft(null)).toBeNull();
     expect(deserializeDraft("")).toBeNull();
     expect(deserializeDraft("{not json")).toBeNull();
-    expect(deserializeDraft(JSON.stringify({ v: 2, variantId: "x", doc: {} }))).toBeNull();
+    expect(
+      deserializeDraft(
+        JSON.stringify({
+          v: 3,
+          planItemId: "item",
+          jobId: "job",
+          variantId: "x",
+          baseGeneration: "gen",
+          doc: {},
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      deserializeDraft(
+        JSON.stringify({ v: 2, planItemId: "item", variantId: "x", doc: { bars: [] } }),
+      ),
+    ).toBeNull();
     expect(deserializeDraft(JSON.stringify({ v: 1, variantId: "x" }))).toBeNull();
-    expect(deserializeDraft(JSON.stringify({ v: 1, variantId: "x", doc: { bars: "no" } }))).toBeNull();
+    expect(
+      deserializeDraft(
+        JSON.stringify({
+          v: 2,
+          planItemId: "item",
+          jobId: "job",
+          variantId: "x",
+          baseGeneration: "gen",
+          doc: { bars: "no" },
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("coerces missing optional fields to safe defaults", () => {
     const parsed = deserializeDraft(
-      JSON.stringify({ v: 1, variantId: "x", doc: { bars: [] } }),
+      JSON.stringify({
+        v: 2,
+        planItemId: "item-1",
+        jobId: "job-1",
+        variantId: "x",
+        baseGeneration: "gen-1",
+        doc: { bars: [] },
+      }),
     );
     expect(parsed!.doc).toEqual({
       bars: [],
@@ -204,20 +241,37 @@ describe("serializeDraft / deserializeDraft", () => {
       start_s: 1.2,
       end_s: 4.8,
     });
-    const parsed = deserializeDraft(serializeDraft("v1", doc([], { overlays: [moved] })));
+    const parsed = deserializeDraft(
+      serializeDraft("item-1", "job-1", "v1", "gen-1", doc([], { overlays: [moved] })),
+    );
     expect(parsed?.doc.overlays?.[0]).toEqual(moved);
   });
 
   it("preserves the selected song start in draft recovery", () => {
     const parsed = deserializeDraft(
-      serializeDraft("v1", doc([], { musicStartS: 14.5, musicDirty: true })),
+      serializeDraft(
+        "item-1",
+        "job-1",
+        "v1",
+        "gen-1",
+        doc([], { musicStartS: 14.5, musicDirty: true }),
+      ),
     );
     expect(parsed?.doc.musicStartS).toBe(14.5);
     expect(parsed?.doc.musicDirty).toBe(true);
   });
 
-  it("keys drafts per variant id", () => {
-    expect(draftKey("abc")).toBe("nova-editor-draft:abc");
+  it("keys drafts per plan item and variant id", () => {
+    expect(draftKey("item-a", "abc")).toBe("nova-editor-draft:item-a:abc");
+    expect(draftKey("item-b", "abc")).not.toBe(draftKey("item-a", "abc"));
+  });
+
+  it("ignores legacy drafts that cannot be tied to a plan item", () => {
+    expect(
+      deserializeDraft(
+        JSON.stringify({ v: 1, variantId: "song_text", doc: { bars: [bar("legacy")] } }),
+      ),
+    ).toBeNull();
   });
 });
 

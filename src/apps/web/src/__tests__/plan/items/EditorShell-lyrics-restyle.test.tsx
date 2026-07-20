@@ -239,7 +239,7 @@ describe("EditorShell — Styles drawer on a lyrics-synced variant", () => {
     expect(mockChangePlanItemStyle).toHaveBeenCalledWith("item-1", "song_lyrics", "ocean_drift");
     expect(mockRouterPush).toHaveBeenCalledWith("/plan/items/item-1");
     // The bars-patch path never ran: Save never lit up dirty, no draft was staged.
-    expect(window.sessionStorage.getItem("nova-editor-draft:song_lyrics")).toBeNull();
+    expect(window.sessionStorage.getItem("nova-editor-draft:item-1:song_lyrics")).toBeNull();
   });
 
   it("shows an error and stays on the editor when the style-change call fails", async () => {

@@ -133,20 +133,36 @@ export function redoSnapshot(
 
 // ── sessionStorage draft (plan §9 crash recovery) ─────────────────────────────
 
-/** sessionStorage key for a variant's unsaved draft. */
-export function draftKey(variantId: string): string {
-  return `nova-editor-draft:${variantId}`;
+/** sessionStorage key for one plan-item variant's unsaved draft. */
+export function draftKey(planItemId: string, variantId: string): string {
+  return `nova-editor-draft:${planItemId}:${variantId}`;
 }
 
 export interface SerializedDraft {
-  v: 1;
+  v: 2;
+  planItemId: string;
+  jobId: string;
   variantId: string;
+  baseGeneration: string;
   doc: EditorDocument;
 }
 
 /** JSON-serialize a draft for sessionStorage. */
-export function serializeDraft(variantId: string, doc: EditorDocument): string {
-  const payload: SerializedDraft = { v: 1, variantId, doc };
+export function serializeDraft(
+  planItemId: string,
+  jobId: string,
+  variantId: string,
+  baseGeneration: string,
+  doc: EditorDocument,
+): string {
+  const payload: SerializedDraft = {
+    v: 2,
+    planItemId,
+    jobId,
+    variantId,
+    baseGeneration,
+    doc,
+  };
   return JSON.stringify(payload);
 }
 
@@ -161,12 +177,24 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
     const parsed = JSON.parse(raw) as Partial<SerializedDraft> & {
       doc?: Partial<EditorDocument>;
     };
-    if (!parsed || parsed.v !== 1 || typeof parsed.variantId !== "string") return null;
+    if (
+      !parsed ||
+      parsed.v !== 2 ||
+      typeof parsed.planItemId !== "string" ||
+      typeof parsed.jobId !== "string" ||
+      typeof parsed.variantId !== "string" ||
+      typeof parsed.baseGeneration !== "string"
+    ) {
+      return null;
+    }
     const doc = parsed.doc;
     if (!doc || !Array.isArray(doc.bars)) return null;
     return {
-      v: 1,
+      v: 2,
+      planItemId: parsed.planItemId,
+      jobId: parsed.jobId,
       variantId: parsed.variantId,
+      baseGeneration: parsed.baseGeneration,
       doc: {
         bars: doc.bars as TextElementBar[],
         slots: Array.isArray(doc.slots) ? (doc.slots as DraftSlot[]) : null,
