@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -844,6 +845,35 @@ def _measure_block(
     }
 
 
+def _normalize_reveal_text(text: str) -> str:
+    """Match the wrapper's whitespace normalization before reveal slicing."""
+    return "\n".join(" ".join(raw_line.split()) for raw_line in text.split("\n"))
+
+
+def _fixed_reveal_lines(lines: list[str], visible_text: str) -> tuple[list[str], int]:
+    """Map a visible prefix onto lines wrapped from the complete text.
+
+    The complete lines own geometry; the returned prefixes only control which
+    glyphs are painted. A single source separator (space or newline) is
+    consumed between wrapped lines so reveal timing continues naturally.
+    """
+    remaining = len(visible_text)
+    revealed: list[str] = []
+    cursor_line = 0
+    for index, line in enumerate(lines):
+        visible_count = min(len(line), remaining)
+        revealed.append(line[:visible_count])
+        if visible_count > 0:
+            cursor_line = index
+        if remaining <= len(line):
+            remaining = 0
+        else:
+            remaining -= len(line)
+            if index < len(lines) - 1:
+                remaining = max(0, remaining - 1)
+    return revealed, cursor_line
+
+
 def fit_text_size_px(
     text: str,
     typeface: skia.Typeface,
@@ -892,6 +922,8 @@ def _draw_centered_text(
     alpha: float = 1.0,
     scale: float = 1.0,
     y_translate: float = 0.0,
+    layout_text: str | None = None,
+    show_cursor: bool = False,
 ) -> None:
     """Draw `text` centered horizontally at the overlay's anchor, with
     shadow + optional stroke + fill. Mirrors Pillow's _draw_text_png layout:
@@ -900,29 +932,36 @@ def _draw_centered_text(
     Effect transforms (alpha, scale, y_translate) are applied via a canvas
     matrix so glyph metrics are not perturbed.
     """
-    if not text:
+    if not text and not show_cursor:
         return
 
+    geometry_text = layout_text if layout_text is not None else text
+    if not geometry_text:
+        return
     typeface = _typeface_for_overlay(overlay)
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
     max_width = _overlay_max_width_px(overlay, render_canvas)
     if font_override is not None:
         font = font_override
         size = int(font.getSize())
-        lines = _wrap_text_to_lines(text, font, max_width, letter_spacing_em * size)
+        lines = _wrap_text_to_lines(geometry_text, font, max_width, letter_spacing_em * size)
     else:
         initial_size = _resolve_font_size_px(overlay)
         if overlay.get("preserve_font_size"):
             font, size, lines = _wrap_at_fixed_size(
-                text, typeface, initial_size, max_width, letter_spacing_em
+                geometry_text, typeface, initial_size, max_width, letter_spacing_em
             )
         else:
             font, size, lines = _shrink_to_fit(
-                text, typeface, initial_size, max_width, letter_spacing_em
+                geometry_text, typeface, initial_size, max_width, letter_spacing_em
             )
 
     if not lines:
         return
+
+    draw_lines, cursor_line = (
+        _fixed_reveal_lines(lines, text) if layout_text is not None else (lines, len(lines) - 1)
+    )
 
     letter_spacing_px = letter_spacing_em * size
     block = _measure_block(
@@ -984,17 +1023,34 @@ def _draw_centered_text(
         if letter_spacing_px != 0.0:
             draw_kwargs["letter_spacing_px"] = letter_spacing_px
         draw_kwargs.update(_resolve_glow_kwargs(overlay, alpha))
-        _draw_line_with_layers(
-            canvas,
-            line,
-            line_x,
-            baseline_y,
-            font,
-            fill_color,
-            stroke_px,
-            shadow_alpha,
-            **draw_kwargs,
-        )
+        draw_line = draw_lines[i]
+        if draw_line:
+            _draw_line_with_layers(
+                canvas,
+                draw_line,
+                line_x,
+                baseline_y,
+                font,
+                fill_color,
+                stroke_px,
+                shadow_alpha,
+                **draw_kwargs,
+            )
+        if show_cursor and i == cursor_line:
+            cursor_x = line_x + _measure_line(font, draw_line, letter_spacing_px)
+            if draw_line and letter_spacing_px:
+                cursor_x += letter_spacing_px
+            _draw_line_with_layers(
+                canvas,
+                " |",
+                cursor_x,
+                baseline_y,
+                font,
+                fill_color,
+                stroke_px,
+                shadow_alpha,
+                **draw_kwargs,
+            )
 
     # Emoji compositing onto the canvas at the resolved combined-block x
     if emoji_metrics is not None and lines:
@@ -1006,63 +1062,6 @@ def _draw_centered_text(
         _draw_skia_image(canvas, emoji_metrics["img"], emoji_x, emoji_y, alpha=alpha)
 
     canvas.restore()
-
-
-def _overlay_for_left_reveal_box(
-    overlay: dict,
-    full_text: str,
-    *,
-    render_canvas: Canvas = PORTRAIT,
-) -> dict:
-    """Pin reveal effects to the full text box's left/top origin.
-
-    Typewriter/stream-in draw only the visible substring each frame. If that
-    substring is measured with the overlay's normal center/right anchor, every
-    newly revealed character shifts the block. Resolve the final text box once,
-    then draw each reveal frame as left-anchored inside that box.
-    """
-    if not full_text:
-        return overlay
-
-    typeface = _typeface_for_overlay(overlay)
-    letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
-    max_width = _overlay_max_width_px(overlay, render_canvas)
-    initial_size = _resolve_font_size_px(overlay)
-    if overlay.get("preserve_font_size"):
-        font, size, lines = _wrap_at_fixed_size(
-            full_text,
-            typeface,
-            initial_size,
-            max_width,
-            letter_spacing_em,
-        )
-    else:
-        font, size, lines = _shrink_to_fit(
-            full_text,
-            typeface,
-            initial_size,
-            max_width,
-            letter_spacing_em,
-        )
-    if not lines:
-        return overlay
-
-    block = _measure_block(
-        font,
-        lines,
-        line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
-        letter_spacing_px=letter_spacing_em * size,
-    )
-    cx, cy = _resolve_anchor(overlay, render_canvas)
-    anchor = _resolve_text_anchor(overlay)
-    box_left = _anchored_left_x(anchor, cx, max_width)
-    box_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
-    reveal_overlay = dict(overlay)
-    reveal_overlay["text_anchor"] = "left"
-    reveal_overlay["vertical_anchor"] = "top"
-    reveal_overlay["position_x_frac"] = max(0.0, min(1.0, box_left / render_canvas.width))
-    reveal_overlay["position_y_frac"] = max(0.0, min(1.0, box_top / render_canvas.height))
-    return reveal_overlay
 
 
 def _draw_line_with_layers(
@@ -1558,11 +1557,13 @@ def _draw_with_animation(
     """
     effect = effect or overlay.get("effect", "none")
     text = _overlay_text(overlay)
+    reveal_text = _normalize_reveal_text(text) if effect in ("typewriter", "stream-in") else text
 
     scale = 1.0
     alpha = 1.0
     y_translate = 0.0
     visible_text = text
+    show_cursor = False
 
     if effect == "scale-up":
         if duration_s > 0.6:
@@ -1579,17 +1580,18 @@ def _draw_with_animation(
     elif effect == "typewriter":
         chars_per_s = 12.0
         visible_chars = max(1, int(t_local * chars_per_s) + 1)
-        visible_text = text[:visible_chars]
+        visible_text = reveal_text[:visible_chars]
     elif effect == "stream-in":
         # "How an AI returns an answer" — reveal WORD by word (not char) with a
         # blinking cursor while streaming. Pairs with text_anchor="left" so the
         # answer grows rightward from a fixed margin like a chat response.
-        words = text.split()
+        words = list(re.finditer(r"\S+", reveal_text))
         words_per_s = 6.0
         n = max(1, int(t_local * words_per_s) + 1)
-        visible_text = " ".join(words[:n])
+        last_visible_word = words[min(n, len(words)) - 1] if words else None
+        visible_text = reveal_text[: last_visible_word.end()] if last_visible_word else ""
         if n < len(words) and int(t_local * 2) % 2 == 0:
-            visible_text = f"{visible_text} |"  # blink cursor at ~2 Hz
+            show_cursor = True  # blink cursor at ~2 Hz
     elif effect in ("slide-up", "slide-down"):
         animate_for = min(0.35, duration_s * 0.5)
         progress = min(1.0, t_local / animate_for) if animate_for > 0 else 1.0
@@ -1625,20 +1627,16 @@ def _draw_with_animation(
     if _is_sequence_overlay(overlay):
         alpha *= _sequence_fade_out_alpha(overlay, t_local, duration_s)
 
-    draw_overlay = (
-        _overlay_for_left_reveal_box(overlay, text, render_canvas=render_canvas)
-        if effect in ("typewriter", "stream-in")
-        else overlay
-    )
-
     _draw_centered_text(
         canvas,
         visible_text,
-        draw_overlay,
+        overlay,
         render_canvas=render_canvas,
         alpha=alpha,
         scale=scale,
         y_translate=y_translate,
+        layout_text=reveal_text if effect in ("typewriter", "stream-in") else None,
+        show_cursor=show_cursor,
     )
 
 
