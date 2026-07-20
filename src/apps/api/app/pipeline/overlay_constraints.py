@@ -161,13 +161,17 @@ def apply_overlay_constraints(
         line_count = max(1, len(lines))
         block_h_frac = (line_count * size_px * _TEXT_LINE_SPACING) / canvas_h
         anchor = ov.get("text_anchor", "center")
+        vertical_anchor = ov.get("vertical_anchor")
+        top_anchored = vertical_anchor == "top" or (
+            vertical_anchor not in ("top", "center") and anchor == "left"
+        )
 
-        # Vertical. For left-anchored text position_y_frac is the block TOP
-        # (mirrors renderer _vertical_block_top); for center/right it is the
-        # block CENTER. Clamp whichever so the whole block stays in margins.
+        # Vertical. Legacy left-aligned reveals are top-anchored, while
+        # authored TextElements explicitly opt into a centered vertical anchor
+        # so horizontal alignment cannot move the block up or down.
         y = _block_center_y_frac(ov)
         y_changed = False
-        if anchor == "left":
+        if top_anchored:
             top = y
             top = min(
                 max(top, safe_margin_frac),

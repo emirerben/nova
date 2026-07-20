@@ -8422,6 +8422,7 @@ def _text_element_burn_dicts(variant: dict) -> list[dict]:
         elements,
         video_duration_s=float(variant.get("duration_s") or 10.0),
         include_lyric_line=include_lyric_line,
+        independent_box_alignment=True,
     )
 
 

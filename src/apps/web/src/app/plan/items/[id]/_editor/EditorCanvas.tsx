@@ -34,6 +34,7 @@ import {
   MAX_LINE_W_FRAC,
   MAX_WIDTH_FRAC_MAX,
   MAX_WIDTH_FRAC_MIN,
+  resolveTextElementYFrac,
 } from "@/lib/overlay-layout";
 import { animationStateAt, sequenceOverlayFadeOutAlphaAt } from "@/lib/overlay-animation";
 import { INTRO_FONTS, MAX_INTRO_S, type OverlayCanvas } from "@/lib/overlay-constants";
@@ -612,7 +613,12 @@ export default function EditorCanvas({
         dragOverride?.target === "text" &&
         dragOverride.max_width_frac != null
       ) {
-        onPatchBar(drag.id, { max_width_frac: dragOverride.max_width_frac });
+        const bar = barById.get(drag.id);
+        onPatchBar(drag.id, {
+          max_width_frac: dragOverride.max_width_frac,
+          position: "custom",
+          y_frac: resolveTextElementYFrac(bar?.position, bar?.y_frac),
+        });
       } else if (
         drag.target === "overlay" &&
         drag.mode === "move" &&

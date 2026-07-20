@@ -25,6 +25,18 @@ import {
 } from "@/lib/timeline/text-timeline-reducer";
 import { Playhead } from "@/lib/timeline/Playhead";
 import { INTRO_FONTS } from "@/lib/overlay-constants";
+import {
+  inferTextBoxPosition,
+  resolveTextElementYFrac,
+  xFracForTextAlignment,
+  type TextHorizontalAlignment,
+} from "@/lib/overlay-layout";
+import {
+  collageMotionForTextBar,
+  textBoxPositionPatchForBar,
+  textBoxScreenXFrac,
+} from "@/app/plan/items/[id]/_editor/editor-smart-placement";
+import type { PlanItemVariant } from "@/lib/plan-api";
 
 // ── Re-export so callers can import the type from this file ───────────────────
 
@@ -96,6 +108,8 @@ export interface TextLaneProps {
    * place the panel in the right column).
    */
   textPanelPortalTarget?: HTMLElement | null;
+  /** Active variant supplies moving-board geometry for legacy bars without source metadata. */
+  variant?: PlanItemVariant | null;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -112,6 +126,7 @@ export default function TextLane({
   onTrimClamped,
   isFirstSequenceEdit = false,
   textPanelPortalTarget,
+  variant,
 }: TextLaneProps) {
   // ── T8: one-time "now user-owned" note for sequence variants ──────────────────
   // Declared before the emit useEffect so the ref is in scope when bars change.
@@ -471,6 +486,9 @@ export default function TextLane({
                   bar={bar}
                   bars={bars}
                   dispatch={dispatch}
+                  currentTime={currentTime}
+                  durationSeconds={durationSeconds}
+                  variant={variant}
                   onApply={onApply}
                 />,
                 textPanelPortalTarget,
@@ -481,6 +499,9 @@ export default function TextLane({
                   bar={bar}
                   bars={bars}
                   dispatch={dispatch}
+                  currentTime={currentTime}
+                  durationSeconds={durationSeconds}
+                  variant={variant}
                   onApply={onApply}
                 />
               )
@@ -540,6 +561,9 @@ interface TextPropertyPanelProps {
   bar: TextElementBar;
   bars: TextElementBar[];
   dispatch: Dispatch<TextEditorAction>;
+  currentTime: number;
+  durationSeconds: number;
+  variant?: PlanItemVariant | null;
   onApply?: (bars: TextElementBar[]) => void;
 }
 
@@ -602,6 +626,9 @@ function TextPropertyPanel({
   bar,
   bars,
   dispatch,
+  currentTime,
+  durationSeconds,
+  variant,
   onApply,
 }: TextPropertyPanelProps) {
   // Mobile tab (≤375px only — on desktop both tiers are always visible)
@@ -631,6 +658,20 @@ function TextPropertyPanel({
   const charCount = bar.text.length;
   const sizePx    = bar.size_px      ?? null;
   const strokeW   = bar.stroke_width ?? 0;
+  const isLyric = bar.role === "lyric_line";
+  const alignment = (bar.alignment ?? "center") as TextHorizontalAlignment;
+  const storedMasonryMotion = bar.source_params?.masonry_motion as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const masonryMotion = variant
+    ? collageMotionForTextBar(variant, durationSeconds, bar)
+    : storedMasonryMotion;
+  const boxPosition = inferTextBoxPosition({
+    alignment,
+    xFrac: textBoxScreenXFrac(masonryMotion, currentTime, bar.x_frac ?? 0.5),
+    maxWidthFrac: bar.max_width_frac,
+  });
 
   // ── Tier 1 ───────────────────────────────────────────────────────────────────
 
@@ -783,30 +824,78 @@ function TextPropertyPanel({
 
   const tier2 = (
     <div className="space-y-3">
-      {/* Alignment */}
-      <div>
+      {/* Lyric geometry is timing/render authored and intentionally locked. */}
+      {!isLyric && <div>
         <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
-          Alignment
+          Text alignment
         </label>
         <div className="flex gap-1" role="group" aria-label="Text alignment">
           {(["left", "center", "right"] as const).map((a) => (
             <button
               key={a}
               type="button"
-              onClick={() => patch({ alignment: a })}
-              aria-pressed={bar.alignment === a}
-              aria-label={`Align ${a}`}
-              className={`min-h-11 flex-1 rounded py-1 text-sm transition-colors sm:min-h-0 ${
-                bar.alignment === a
+              onClick={() => {
+                if (a === alignment) return;
+                patch({
+                  alignment: a,
+                  x_frac: xFracForTextAlignment({
+                    alignment,
+                    nextAlignment: a,
+                    xFrac: bar.x_frac,
+                    maxWidthFrac: bar.max_width_frac,
+                  }),
+                  position: "custom",
+                  y_frac: resolveTextElementYFrac(bar.position, bar.y_frac),
+                });
+              }}
+              aria-pressed={alignment === a}
+              aria-label={`Align text ${a}`}
+              className={`min-h-11 flex-1 rounded py-1 text-[10px] transition-colors sm:min-h-0 ${
+                alignment === a
                   ? "bg-lime-400 text-black font-semibold"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
-              {a === "left" ? "◀" : a === "center" ? "▬" : "▶"}
+              {a[0].toUpperCase() + a.slice(1)}
             </button>
           ))}
         </div>
-      </div>
+      </div>}
+
+      {/* Horizontal wrap-box placement */}
+      {!isLyric && <div>
+        <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
+          Box position
+        </label>
+        <div className="flex gap-1" role="group" aria-label="Box position">
+          {(["left", "center", "right"] as const).map((position) => (
+            <button
+              key={position}
+              type="button"
+              onClick={() => {
+                if (boxPosition === position) return;
+                patch(
+                  textBoxPositionPatchForBar({
+                    motion: masonryMotion,
+                    currentTimeS: currentTime,
+                    bar,
+                    position,
+                  }),
+                );
+              }}
+              aria-pressed={boxPosition === position}
+              aria-label={`Place box ${position}`}
+              className={`min-h-11 flex-1 rounded py-1 text-[10px] transition-colors sm:min-h-0 ${
+                boxPosition === position
+                  ? "bg-lime-400 text-black font-semibold"
+                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+              }`}
+            >
+              {position[0].toUpperCase() + position.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>}
 
       {/* Stroke width */}
       <div>

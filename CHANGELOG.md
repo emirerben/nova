@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Beat-synced song edits can now choose the exact section of a track that plays under the video.** The plan-item editor previews a fixed video-length window immediately, snaps it to the nearest beat, supports pointer and keyboard movement with undo/redo, and lets creators either preserve their existing cuts or rebuild them against the selected beat grid on Save. Song swaps, lyrics, recipes, preview offsets, and final audio now share one generation-safe effective window.
 
+## [0.9.10.0] — 2026-07-19
+
+### Added
+- **Text alignment and box placement can now be controlled independently in the video editor.** Creators can combine left, center, or right line alignment with left, center, or right frame placement; every combination previews accurately, survives undo/reload, and reaches the exported video renderer.
+
 ## [0.9.9.0] — 2026-07-19
 
 ### Fixed
