@@ -51,6 +51,7 @@ import {
 import {
   type BarDragHandle,
   BAR_EDGE_HIT_PX,
+  CLIP_MIN_DURATION_S,
   CLICK_DRAG_THRESHOLD_PX,
   applyClipSourceWindowDrag,
   applySfxBarDrag,
@@ -626,7 +627,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     e.currentTarget.setPointerCapture(e.pointerId);
     const slotIndex = slots.findIndex((s) => s.key === slot.key);
     const effectiveDurationS =
-      slot.durationS ?? windows[slotIndex]?.durationS ?? 0.6;
+      slot.durationS ?? windows[slotIndex]?.durationS ?? CLIP_MIN_DURATION_S;
     const minDurationS = minimumClipDurationForSlot({
       grid,
       offsetBeats: windows[slotIndex]?.offsetBeats,

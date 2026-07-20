@@ -481,12 +481,10 @@ class LyricSeedsResponse(BaseModel):
 # ── Timeline editor schemas ────────────────────────────────────────────────────
 
 _TIMELINE_MAX_SLOTS = 50
-# Server-side guardrails on a user-edited timeline. The floor keeps a slot long
-# enough to register as a cut (and clear of xfade window collapse); it applies
-# only to slots whose window the user CHANGED — the worker itself produces
-# sub-floor slots (1 beat at fast BPM, footage trims) that must round-trip.
-# The ceiling matches the product's sub-60s short-form contract.
-TIMELINE_MIN_SLOT_S = 0.6
+# Server-side guardrails on a user-edited timeline. Positive durations are
+# required below; beat timelines retain a natural one-beat minimum and no-grid
+# timelines retain half-second snapping. The ceiling matches the product's
+# sub-60s short-form contract.
 TIMELINE_MAX_TOTAL_S = 60.0
 # Only the montage text variants carry a user-editable slot timeline. Lyrics are
 # beat/line synced (re-cutting breaks sync), voiceover variants are fit to the
@@ -3527,9 +3525,7 @@ def resolve_timeline_slots_for_edit(
             meta_by_idx.setdefault(idx, s)
 
     # Baseline windows (current user_timeline if present, else ai_timeline) keyed
-    # by slot_id: the 0.6s floor only applies to slots whose window CHANGED — the
-    # worker legitimately produces sub-floor slots (1 beat at fast BPM, footage
-    # trims), and an unmodified round-trip must never 422.
+    # by slot_id so untouched worker-authored windows remain byte-stable.
     baseline_by_id = {
         s.get("slot_id"): s for s in (user_slots if user_slots else ai_slots) if s.get("slot_id")
     }
@@ -3570,21 +3566,16 @@ def resolve_timeline_slots_for_edit(
             key=lambda beats: abs((beat_grid[offset + beats] - beat_grid[offset]) - target_s),
         )
 
-    def _smallest_beat_count_clearing_floor(
-        offset: int, *, max_source_window_s: float | None
-    ) -> int:
+    def _largest_beat_count_fitting_source(offset: int, max_source_window_s: float) -> int:
         max_beats = len(beat_grid) - 1 - offset
         if max_beats < 1:
             raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED")
         start = beat_grid[offset]
-        for beats in range(1, max_beats + 1):
+        for beats in range(max_beats, 0, -1):
             duration = beat_grid[offset + beats] - start
-            if duration < TIMELINE_MIN_SLOT_S - 1e-9:
-                continue
-            if max_source_window_s is not None and duration > max_source_window_s + 1e-6:
-                continue
-            return beats
-        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_SHORT")
+            if duration <= max_source_window_s + 1e-6:
+                return beats
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_OUT_OF_BOUNDS")
 
     def _snap_half_second(duration_s: float | None) -> float:
         if duration_s is None or duration_s <= 0:
@@ -3615,24 +3606,13 @@ def resolve_timeline_slots_for_edit(
                 # duration is grid[offset+beats] - grid[offset]; the offset then
                 # advances, so the same beat count can yield different seconds at
                 # different positions (non-uniform grids).
-                if is_song_variant and window_changed:
-                    requested_end = grid_offset + duration_beats
-                    if requested_end <= len(beat_grid) - 1:
-                        requested_duration_s = beat_grid[requested_end] - beat_grid[grid_offset]
-                        if requested_duration_s < TIMELINE_MIN_SLOT_S - 1e-9:
-                            duration_beats = _smallest_beat_count_clearing_floor(
-                                grid_offset,
-                                max_source_window_s=max_source_window_s,
-                            )
                 end = grid_offset + duration_beats
                 if end > len(beat_grid) - 1:
                     raise _timeline_error(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
                     )
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
-                # Reclamp on a sub-floor span ONLY when the user actually changed
-                # this slot (the worker legitimately emits sub-floor beat spans on
-                # untouched slots). Footage-overflow handling is three-way:
+                # Footage-overflow handling is three-way:
                 #  - UNTOUCHED slot whose recomputed span differs from its stored
                 #    one: an upstream delete/edit shifted this slot's cumulative
                 #    grid_offset on the non-uniform grid — reclamp to fit, because
@@ -3657,12 +3637,9 @@ def resolve_timeline_slots_for_edit(
                     and _base_span is not None
                     and abs(duration_s - float(_base_span)) <= 5e-2
                 )
-                if (window_changed and duration_s < TIMELINE_MIN_SLOT_S - 1e-9) or (
-                    overflows_footage and not window_changed and not legacy_unshifted
-                ):
-                    duration_beats = _smallest_beat_count_clearing_floor(
-                        grid_offset,
-                        max_source_window_s=max_source_window_s,
+                if overflows_footage and not window_changed and not legacy_unshifted:
+                    duration_beats = _largest_beat_count_fitting_source(
+                        grid_offset, max_source_window_s
                     )
                     end = grid_offset + duration_beats
                     duration_s = beat_grid[end] - beat_grid[grid_offset]
@@ -3683,9 +3660,8 @@ def resolve_timeline_slots_for_edit(
                 # footage; reclamp to the largest span that still fits (mirrors
                 # the explicit-beat-slot branch above).
                 if max_source_window_s is not None and duration_s > max_source_window_s + 1e-6:
-                    duration_beats = _smallest_beat_count_clearing_floor(
-                        grid_offset,
-                        max_source_window_s=max_source_window_s,
+                    duration_beats = _largest_beat_count_fitting_source(
+                        grid_offset, max_source_window_s
                     )
                     end = grid_offset + duration_beats
                     duration_s = beat_grid[end] - beat_grid[grid_offset]
@@ -3705,8 +3681,6 @@ def resolve_timeline_slots_for_edit(
                 raise _timeline_error(
                     status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION"
                 )
-            if duration_s < TIMELINE_MIN_SLOT_S - 1e-9 and window_changed:
-                raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_SHORT")
             total += duration_s
             # Bounds against the probed source duration. New clips the AI never
             # probed have no known duration — skip; the worker's probe will clamp.

@@ -55,6 +55,7 @@ import type { InspectorTab } from "./InspectorRail";
 import { normalizeEditableHex } from "./editor-color";
 import {
   applyClipSourceWindowDrag,
+  CLIP_MIN_DURATION_S,
   type BarDragHandle,
 } from "./editor-bar-drag";
 import {
@@ -1341,8 +1342,8 @@ function ClipInspector({
   const outS = inS + durationS;
   const sourceDurationS =
     timing.sourceDurationS == null
-      ? Math.max(outS, 0.6)
-      : Math.max(timing.sourceDurationS, 0.6);
+      ? Math.max(outS, CLIP_MIN_DURATION_S)
+      : Math.max(timing.sourceDurationS, CLIP_MIN_DURATION_S);
   const rangeLeftPct = sourceDurationS > 0 ? (inS / sourceDurationS) * 100 : 0;
   const rangeWidthPct =
     sourceDurationS > 0 ? (durationS / sourceDurationS) * 100 : 100;
@@ -1515,7 +1516,7 @@ function ClipInspector({
         <TimingNumberInput
           label="Dur"
           value={durationS}
-          min={0.6}
+          min={CLIP_MIN_DURATION_S}
           onChange={(value) => onPatchTiming({ durationS: value })}
         />
       </TimingSection>

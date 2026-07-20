@@ -167,7 +167,7 @@ export function timelineReducer(state: EditorState, action: EditorAction): Edito
 
       // Seconds slot (no-grid variants, or null-beats footage-trimmed slots on
       // grid variants): ±0.5s from the CURRENT value — no multiple-of-0.5
-      // requirement, so AI bases like 1.137 nudge to 1.637. 0.6s floor, source
+      // requirement, so AI bases like 1.137 nudge to 1.637. Positive 0.1s floor, source
       // fit, total ≤ 60s.
       const dur = slot.durationS ?? 0;
       const nextDur = Math.round((dur + action.delta * SECONDS_STEP) * 1000) / 1000;

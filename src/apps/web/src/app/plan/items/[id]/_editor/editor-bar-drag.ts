@@ -11,7 +11,7 @@ export type BarDragHandle = "left" | "right" | "body";
 export const BAR_EDGE_HIT_PX = 24;
 export const CLICK_DRAG_THRESHOLD_PX = 3;
 export const TEXT_MIN_DURATION_S = 0.3;
-export const CLIP_MIN_DURATION_S = 0.6;
+export const CLIP_MIN_DURATION_S = 0.1;
 
 const EPSILON = 1e-6;
 
@@ -296,7 +296,7 @@ export function minimumClipDurationForSlot({
   const start = grid[offsetBeats];
   const next = grid[offsetBeats + 1];
   if (start == null || next == null) return baseMinDurationS;
-  return roundTiming(Math.max(baseMinDurationS, next - start));
+  return roundTiming(Math.max(Number.EPSILON, next - start));
 }
 
 export function applyClipTimingInput({

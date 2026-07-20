@@ -219,7 +219,9 @@ def test_copilot_clip_duration_seconds_only() -> None:
     out = _parse([{"op": "set_clip_duration", "slot_index": 0, "duration_beats": 4}])
     assert out.ops == []
     out2 = _parse([{"op": "set_clip_duration", "slot_index": 0, "duration_s": 0.2}])
-    assert out2.ops == [{"op": "set_clip_duration", "slot_index": 0, "duration_s": 0.6}]
+    assert out2.ops == [{"op": "set_clip_duration", "slot_index": 0, "duration_s": 0.2}]
+    assert _parse([{"op": "set_clip_duration", "slot_index": 0, "duration_s": 0}]).ops == []
+    assert _parse([{"op": "set_clip_duration", "slot_index": 0, "duration_s": -0.1}]).ops == []
 
 
 def test_copilot_new_ops_coerce_and_clamp() -> None:

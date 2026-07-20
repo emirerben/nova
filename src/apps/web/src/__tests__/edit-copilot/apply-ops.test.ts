@@ -191,6 +191,15 @@ describe("applyCopilotOps", () => {
       durationBeats: null,
     });
 
+    const shortDuration = applyCopilotOps(
+      [{ op: "set_clip_duration", slot_index: 1, duration_s: 0.2 }],
+      ctx(),
+    );
+    expect(shortDuration.nextSlots?.find((s) => s.key === "b")).toMatchObject({
+      durationS: 0.2,
+      durationBeats: null,
+    });
+
     const clipIn = applyCopilotOps([{ op: "set_clip_in", slot_index: 1, in_s: 0.4 }], ctx());
     expect(clipIn.nextSlots?.find((s) => s.key === "b")).toMatchObject({
       inS: 0.4,

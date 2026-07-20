@@ -886,7 +886,9 @@ def _coerce_payload(
                 return None
 
     if "duration_s" in out:
-        out["duration_s"] = max(0.6, out["duration_s"])
+        if out["duration_s"] <= 0:
+            state.invalid_value()
+            return None
     if "in_s" in out:
         out["in_s"] = max(0.0, out["in_s"])
     for key in ("start_s", "end_s", "at_s"):

@@ -618,11 +618,6 @@ describe("formatEditorCommitError", () => {
         "Text bad-font: field font_family — Value error, unknown font_family",
       ],
       [
-        "timeline code object",
-        { detail: { code: "TIMELINE_TOO_SHORT" } },
-        "That clip would be shorter than the minimum (0.6s).",
-      ],
-      [
         "out-of-bounds timeline code object",
         { detail: { code: "TIMELINE_OUT_OF_BOUNDS" } },
         "One of the clips ran out of footage for this edit. Try trimming it or picking a different clip.",

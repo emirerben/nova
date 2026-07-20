@@ -183,10 +183,13 @@ describe("null-beats slots on a grid timeline", () => {
     expect(state.slots[1].durationBeats).toBeNull();
     state = run(state, { type: "NUDGE", key: "s2", delta: -1 }, { type: "NUDGE", key: "s2", delta: -1 });
     expect(state.slots[1].durationS).toBeCloseTo(0.637);
-    // 0.637 - 0.5 = 0.137 < 0.6 floor → clamped, flash
+    // Sub-0.6 remains valid as long as it stays positive.
     const before = state.clampNonce;
     state = run(state, { type: "NUDGE", key: "s2", delta: -1 });
-    expect(state.slots[1].durationS).toBeCloseTo(0.637);
+    expect(state.slots[1].durationS).toBeCloseTo(0.137);
+    expect(state.clampNonce).toBe(before);
+    state = run(state, { type: "NUDGE", key: "s2", delta: -1 });
+    expect(state.slots[1].durationS).toBeCloseTo(0.137);
     expect(state.clampNonce).toBe(before + 1);
     expect(state.clampedKey).toBe("s2");
   });
@@ -238,7 +241,7 @@ describe("timelineReducer", () => {
     expect(state.clampNonce).toBe(before + 1);
   });
 
-  it("NUDGE in seconds mode steps 0.5s with a 0.6s floor and 60s ceiling", () => {
+  it("NUDGE in seconds mode steps 0.5s while duration stays positive", () => {
     let state = init(secondsTimeline());
     state = run(state, { type: "NUDGE", key: "s1", delta: -1 });
     expect(state.slots[0].durationS).toBeCloseTo(1.5);
@@ -246,8 +249,9 @@ describe("timelineReducer", () => {
     state = run(state, { type: "NUDGE", key: "s1", delta: -1 });
     expect(state.slots[0].durationS).toBeCloseTo(1.0);
     state = run(state, { type: "NUDGE", key: "s1", delta: -1 });
-    // 1.0 - 0.5 = 0.5 < 0.6 floor → clamped, unchanged
-    expect(state.slots[0].durationS).toBeCloseTo(1.0);
+    expect(state.slots[0].durationS).toBeCloseTo(0.5);
+    state = run(state, { type: "NUDGE", key: "s1", delta: -1 });
+    expect(state.slots[0].durationS).toBeCloseTo(0.5);
     expect(state.clampedKey).toBe("s1");
   });
 
@@ -492,13 +496,13 @@ describe("SET_WINDOW", () => {
     expect(state.clampedKey).toBe("s1");
   });
 
-  it("enforces 0.6s floor on durationS and flashes", () => {
+  it("accepts sub-0.6s positive durationS", () => {
     const state = run(
       init(secondsTimeline()),
       { type: "SET_WINDOW", key: "s1", inS: 0, durationS: 0.3, record: true },
     );
-    expect(state.slots[0].durationS).toBeCloseTo(0.6);
-    expect(state.clampNonce).toBeGreaterThan(0);
+    expect(state.slots[0].durationS).toBeCloseTo(0.3);
+    expect(state.clampNonce).toBe(0);
   });
 
   it("enforces source-fit and flashes", () => {
