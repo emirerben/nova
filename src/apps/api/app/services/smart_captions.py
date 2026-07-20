@@ -11,11 +11,14 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import CreatorStyleAssignment
+
+log = structlog.get_logger()
 
 SMART_CAPTIONS_EDIT_FORMAT = "subtitled"
 
@@ -169,4 +172,13 @@ def resolve_smart_captions_context_sync(
     if capability.shadow_preset_id and capability.shadow_preset_version:
         context["shadow_preset_id"] = capability.shadow_preset_id
         context["shadow_preset_version"] = capability.shadow_preset_version
+    # One line per dispatch: WHICH preset won and WHY (explicit row vs fleet
+    # default). The 2026-07-20 stale-v1-row incident was undiagnosable from
+    # logs precisely because this decision was invisible.
+    log.info(
+        "smart_captions_context_pinned",
+        user_id=str(user_id),
+        preset=f"{capability.preset_id}/{capability.preset_version}",
+        source="assignment" if assignment is not None else "default",
+    )
     return context

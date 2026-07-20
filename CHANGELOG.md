@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.3.0] — 2026-07-21
+
+### Fixed
+- **Creators stuck on the old Smart Captions style now get the full v2 experience.** Accounts assigned during early testing were silently pinned to the first-generation style, so chapter titles and contextual visuals never appeared even with Smart Captions turned on. Those assignments are upgraded in place, and every render now records which style source was applied so this can never fail invisibly again.
+
 ## [0.11.2.0] — 2026-07-20
 
 ### Added

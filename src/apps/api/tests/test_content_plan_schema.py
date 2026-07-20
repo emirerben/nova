@@ -67,7 +67,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0066"], f"expected a single head 0066, got {heads}"
+    assert heads == ["0067"], f"expected a single head 0067, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -260,3 +260,31 @@ def test_circular_fk_relationships_resolve() -> None:
 def test_personas_user_id_is_unique() -> None:
     # 1:1 with users is enforced at the column level (unique=True).
     assert models.Base.metadata.tables["personas"].columns["user_id"].unique is True
+
+
+def test_0067_upgrades_only_cigdem_v1_rows(monkeypatch) -> None:
+    """0067 lifts exactly cigdem/v1 rows to v2 (and the inverse on downgrade)."""
+
+    migration = importlib.import_module("app.migrations.versions.0067_upgrade_v1_style_assignments")
+    executed: list[str] = []
+
+    class _Result:
+        rowcount = 3
+
+    class _Bind:
+        def execute(self, stmt):
+            executed.append(str(stmt))
+            return _Result()
+
+    monkeypatch.setattr(migration.op, "get_bind", lambda: _Bind())
+
+    migration.upgrade()
+    assert len(executed) == 1
+    assert "SET preset_version = 'v2'" in executed[0]
+    assert "WHERE preset_id = 'cigdem' AND preset_version IN ('v1', 'cigdem-v1')" in executed[0]
+
+    executed.clear()
+    migration.downgrade()
+    assert len(executed) == 1
+    assert "SET preset_version = 'v1'" in executed[0]
+    assert "WHERE preset_id = 'cigdem' AND preset_version = 'v2'" in executed[0]
