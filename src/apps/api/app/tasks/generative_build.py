@@ -258,7 +258,18 @@ def _run_generative_job(job_id: str) -> None:
 
             _pid = str(_raw_smart["preset_id"])
             _pver = str(_raw_smart["preset_version"])
-            if _SMART_PRESET_TOKEN_RE.fullmatch(_pid) and _SMART_PRESET_TOKEN_RE.fullmatch(_pver):
+            if not (
+                _SMART_PRESET_TOKEN_RE.fullmatch(_pid) and _SMART_PRESET_TOKEN_RE.fullmatch(_pver)
+            ):
+                # Fail closed to a non-smart render, but never silently — the
+                # admin debug trail must show WHY smart captions vanished.
+                log.warning(
+                    "smart_preset_token_rejected",
+                    job_id=job_id,
+                    preset_id=_pid[:80],
+                    preset_version=_pver[:80],
+                )
+            else:
                 smart_captions = {
                     "preset_id": _pid,
                     "preset_version": _pver,
@@ -1792,9 +1803,9 @@ def _run_media_overlay_pass(
         # no-op, so this pass stays terminal as before.
         from app.config import settings as _settings_ov  # noqa: PLC0415
 
-        will_reapply_sfx = bool(existing.get("smart_music_treatment")) or (
-            bool(existing.get("sound_effects")) and _settings_ov.sound_effects_enabled
-        )
+        will_reapply_sfx = (
+            bool(existing.get("smart_music_treatment")) and _settings_ov.smart_music_bed_enabled
+        ) or (bool(existing.get("sound_effects")) and _settings_ov.sound_effects_enabled)
 
         # ── Clear path: remove all cards ──────────────────────────────────────
         if not cards:
@@ -1950,6 +1961,10 @@ def _run_media_overlay_pass(
                     return
                 if _canon_cards(v.get("media_overlays")) == overlays_at_start:
                     v["media_overlays"] = [c.model_dump() for c in cards]
+                    # A user-driven rebake has no arbitration pass — the
+                    # first-render applied manifest no longer describes this
+                    # video. Null it rather than let it go stale.
+                    v["media_overlays_applied_ids"] = None
                 else:
                     # User edited during the bake — their metadata wins; the
                     # video shows this bake's cards until the next Download.
@@ -8854,13 +8869,15 @@ def _render_subtitled_variant(
                 )
                 rendered_gcs = media_target
                 base["pre_media_overlay_video_path"] = pre_media_gcs
-                # Persist EVERY compiled card (review D4): survivors carry
-                # their arbitration-resolved geometry, failed/omitted cards
-                # keep their original payload so the next reburn retries them
-                # instead of losing them forever. The applied manifest records
-                # which subset actually reached the burned video.
+                # Persist compiled cards (review D4): survivors carry their
+                # arbitration-resolved geometry, download-failed cards keep
+                # their original payload so the next reburn retries them.
+                # Arbitration-OMITTED cards are dropped — the reburn path has
+                # no arbitration, so persisting them would resurrect the
+                # occlusion the omission prevented. The applied manifest
+                # records which subset actually reached the burned video.
                 base["media_overlays"] = _merged_media_overlay_persistence(
-                    media_cards, applied_media_cards
+                    media_cards, applied_media_cards, layout_receipts
                 )
                 base["media_overlays_applied_ids"] = [
                     str(card.get("id")) for card in applied_media_cards
@@ -9155,19 +9172,33 @@ def _resolve_caption_margin_v(variant: dict) -> int:
 def _merged_media_overlay_persistence(
     requested: list[Any],
     applied: list[dict[str, Any]],
+    layout_receipts: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Persist every compiled card so transient failures self-heal on reburn.
+    """Persist compiled cards so TRANSIENT failures self-heal on reburn.
 
     Survivors of the apply pass carry their arbitration-resolved geometry
     (persisted state matches the burned video for what IS in it); cards that
-    failed download or lost arbitration keep their original compiled payload
-    so a later reburn retries them instead of dropping them forever. The
-    companion `media_overlays_applied_ids` manifest records the burned subset.
+    failed download keep their original compiled payload so a later reburn
+    retries them. Cards the arbitration DELIBERATELY omitted (no collision-free
+    layout) are dropped from persistence — the reburn path applies persisted
+    cards without arbitration, so persisting them would resurrect the exact
+    face/caption occlusion the omission prevented. The companion
+    `media_overlays_applied_ids` manifest records the burned subset.
     """
     applied_by_id = {str(card.get("id")): card for card in applied}
-    return [
-        applied_by_id.get(str(card.id), card.model_dump(exclude_none=True)) for card in requested
-    ]
+    omitted_ids = {
+        str(receipt.get("id"))
+        for receipt in layout_receipts or []
+        if str(receipt.get("decision") or "").startswith("omitted")
+    }
+    merged: list[dict[str, Any]] = []
+    for card in requested:
+        card_id = str(card.id)
+        if card_id in applied_by_id:
+            merged.append(applied_by_id[card_id])
+        elif card_id not in omitted_ids:
+            merged.append(card.model_dump(exclude_none=True))
+    return merged
 
 
 def _effective_smart_caption_policy(

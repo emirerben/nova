@@ -212,10 +212,12 @@ def test_shared_geometry_uses_real_aspect_and_alpha_footprint() -> None:
     assert box.height == pytest.approx(0.4 * 1080 / 1920 / 4.0)
 
 
-def test_media_overlay_persistence_keeps_failed_cards_for_reburn() -> None:
-    """Review D4: a transient download failure or arbitration omission must not
-    permanently delete a card — persistence keeps every compiled card, with
-    resolved geometry for the burned survivors."""
+def test_media_overlay_persistence_keeps_failed_cards_drops_omitted() -> None:
+    """Review D4 + delta finding: a transient download failure must not
+    permanently delete a card (persist it for retry), but a card the
+    arbitration DELIBERATELY omitted must NOT persist — the reburn path
+    applies persisted cards without arbitration, so it would resurrect the
+    exact occlusion the omission prevented."""
     from app.agents._schemas.media_overlay import MediaOverlay
     from app.tasks.generative_build import _merged_media_overlay_persistence
 
@@ -233,7 +235,7 @@ def test_media_overlay_persistence_keeps_failed_cards_for_reburn() -> None:
                 "end_s": 3.0,
             }
         )
-        for card_id in ("survivor", "failed-download")
+        for card_id in ("survivor", "failed-download", "omitted-collision")
     ]
     applied = [
         {
@@ -248,14 +250,20 @@ def test_media_overlay_persistence_keeps_failed_cards_for_reburn() -> None:
             "end_s": 3.0,
         }
     ]
+    layout_receipts = [
+        {"id": "survivor", "decision": "moved"},
+        {"id": "omitted-collision", "decision": "omitted_no_safe_candidate"},
+    ]
 
-    merged = _merged_media_overlay_persistence(requested, applied)
+    merged = _merged_media_overlay_persistence(requested, applied, layout_receipts)
 
     assert [card["id"] for card in merged] == ["survivor", "failed-download"]
     # The survivor persists its arbitration-resolved geometry…
     assert merged[0]["x_frac"] == 0.2
-    # …while the failed card keeps its original compiled payload for retry.
+    # …the download-failed card keeps its original compiled payload for retry…
     assert merged[1]["x_frac"] == 0.5
+    # …and the deliberately-omitted card is gone from persistence entirely.
+    assert all(card["id"] != "omitted-collision" for card in merged)
 
 
 def test_smart_titles_force_text_caption_compositor_when_public_lane_is_off(monkeypatch) -> None:
