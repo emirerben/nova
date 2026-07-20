@@ -39,3 +39,22 @@ def test_smart_edit_planner_eval(
         f"\n{result.fixture_id}: {result.summary()}\n"
         f"  failures: {result.structural_failures}\n  error: {result.error}"
     )
+    if fixture.meta.get("source") == "hand_authored_golden" and result.output:
+        proposals = result.output.get("proposals") or []
+        assert proposals, "reference hook fixture must retain its grounded proposal"
+        hook = proposals[0]
+        assert hook["scene_token"] == "hook_accumulation"
+        assert hook["visual_asset_ids"] == [
+            "asset_selocan",
+            "asset_robots",
+            "asset_pinar_sheep",
+            "asset_selpak_elephant",
+            "asset_cocacola_bear",
+        ]
+        assert hook["visual_anchor_word_ids"] == {
+            "asset_selocan": "w000001",
+            "asset_robots": "w000002",
+            "asset_pinar_sheep": "w000004",
+            "asset_selpak_elephant": "w000006",
+            "asset_cocacola_bear": "w000008",
+        }

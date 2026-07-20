@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SMART_EDIT_SCHEMA_VERSION = "2026-07-18"
+SMART_EDIT_SCHEMA_VERSION_V2 = "2026-07-20"
 MAX_BASELINE_CAPTION_CUES = 300
 MAX_SMART_EDIT_EVENTS = 120
 MAX_SMART_WORDS = 600
@@ -133,7 +134,7 @@ class EventAnchor(StrictModel):
 class CaptionEmphasisLane(StrictModel):
     kind: Literal["caption_emphasis"]
     token: str
-    baseline_caption_word_ids: list[str] = Field(min_length=1, max_length=24)
+    baseline_caption_word_ids: list[str] = Field(min_length=1, max_length=120)
 
     @field_validator("token")
     @classmethod
@@ -251,8 +252,31 @@ class BoundaryEffectLane(StrictModel):
         return value
 
 
+class CameraLane(StrictModel):
+    """Renderer-independent request for a bounded semantic camera pulse."""
+
+    kind: Literal["camera"]
+    token: Literal["semantic_crop_pulse"]
+    intensity_token: Literal["subtle"] = "subtle"
+
+
+class AudioTreatmentLane(StrictModel):
+    """Typed request for the preset-owned, voice-safe continuous audio bed."""
+
+    kind: Literal["audio_treatment"]
+    token: Literal["voice_safe_music_bed"]
+    selection_token: Literal["licensed_published_match"]
+    gain_token: Literal["preset"] = "preset"
+
+
 SmartEditLane = Annotated[
-    CaptionEmphasisLane | TextLane | VisualLane | SfxLane | BoundaryEffectLane,
+    CaptionEmphasisLane
+    | TextLane
+    | VisualLane
+    | SfxLane
+    | BoundaryEffectLane
+    | CameraLane
+    | AudioTreatmentLane,
     Field(discriminator="kind"),
 ]
 
@@ -268,7 +292,7 @@ class SmartEditEvent(StrictModel):
     confidence_tier: Literal["high", "medium", "low"]
     spatial_owner: str | None = Field(default=None, max_length=64)
     enabled: bool = True
-    lanes: list[SmartEditLane] = Field(default_factory=list, max_length=5)
+    lanes: list[SmartEditLane] = Field(default_factory=list, max_length=7)
     provenance: list[str] = Field(default_factory=list, max_length=16)
 
     @field_validator("event_id")
@@ -298,7 +322,10 @@ class SmartEditEvent(StrictModel):
 
 
 class SmartEditPlanDocument(StrictModel):
-    schema_version: Literal[SMART_EDIT_SCHEMA_VERSION] = SMART_EDIT_SCHEMA_VERSION
+    schema_version: Literal[
+        SMART_EDIT_SCHEMA_VERSION,
+        SMART_EDIT_SCHEMA_VERSION_V2,
+    ] = SMART_EDIT_SCHEMA_VERSION
     preset_id: str = Field(default="cigdem", min_length=1, max_length=64)
     preset_version: str = Field(default="v1", min_length=1, max_length=64)
     baseline_captions: list[BaselineCaptionCue] = Field(
@@ -308,6 +335,18 @@ class SmartEditPlanDocument(StrictModel):
 
     @model_validator(mode="after")
     def validate_references(self) -> SmartEditPlanDocument:
+        uses_v2_lane = any(
+            isinstance(lane, (CameraLane, AudioTreatmentLane))
+            for event in self.events
+            for lane in event.lanes
+        )
+        if self.schema_version == SMART_EDIT_SCHEMA_VERSION and uses_v2_lane:
+            raise ValueError("schema v1 cannot contain camera or audio-treatment lanes")
+        if self.preset_version == "v2" and self.schema_version != SMART_EDIT_SCHEMA_VERSION_V2:
+            raise ValueError("cigdem/v2 plans require Smart Edit schema v2")
+        if self.preset_version == "v1" and self.schema_version != SMART_EDIT_SCHEMA_VERSION:
+            raise ValueError("cigdem/v1 plans must remain on Smart Edit schema v1")
+
         cue_ids = [cue.cue_id for cue in self.baseline_captions]
         if len(cue_ids) != len(set(cue_ids)):
             raise ValueError("baseline caption cue ids must be unique")

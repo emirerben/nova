@@ -14,12 +14,15 @@ from app.agents.smart_edit_planner import (
     SmartPlannerCandidate,
     SmartPlannerProposal,
 )
-from app.smart_edit.captions import build_smart_caption_cues
+from app.smart_edit.captions import build_semantic_caption_cues, build_smart_caption_cues
 from app.smart_edit.presets import SmartEditPreset, load_preset
 from app.smart_edit.schemas import (
     MAX_SMART_WORDS,
+    SMART_EDIT_SCHEMA_VERSION_V2,
+    AudioTreatmentLane,
     BaselineCaptionCue,
     BoundaryEffectLane,
+    CameraLane,
     CaptionEmphasisLane,
     EventAnchor,
     SemanticRole,
@@ -33,6 +36,7 @@ from app.smart_edit.schemas import (
 )
 
 PLANNER_VERSION = "smart-events-2026-07-18.4"
+PLANNER_VERSION_V2 = "smart-events-2026-07-20.1"
 _TOKEN_RE = re.compile(r"\S+")
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
@@ -134,6 +138,18 @@ class SmartPlanBuild:
     document: SmartEditPlanDocument
     planner_versions: dict[str, str]
     validation_receipt: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _V2SemanticTimeline:
+    candidates: list[SmartPlannerCandidate]
+    role_by_word_id: dict[str, SemanticRole]
+    boundary_after_word_ids: set[str]
+    hook_end_word_id: str
+    declared_chapter_count: int | None
+    detected_chapters: list[int]
+    missing_chapters: list[int]
+    chapter_order_valid: bool
 
 
 def _fold(value: str) -> str:
@@ -565,6 +581,8 @@ def _fallback_proposals(
 def _merge_agent_with_guards(
     agent: list[SmartPlannerProposal],
     fallback: list[SmartPlannerProposal],
+    *,
+    prefer_guard_scene: bool = False,
 ) -> list[SmartPlannerProposal]:
     if not agent:
         return fallback
@@ -595,9 +613,11 @@ def _merge_agent_with_guards(
         # pool asset, chapter number, transition, or its clean SFX must not
         # silently strip the authored result.
         guarded_sfx = list(dict.fromkeys([*guard.sfx_roles, *proposal.sfx_roles]))[:3]
-        guarded_visuals = list(
-            dict.fromkeys([*guard.visual_asset_ids, *proposal.visual_asset_ids])
-        )[:5]
+        guarded_visuals = (
+            list(guard.visual_asset_ids)
+            if prefer_guard_scene
+            else list(dict.fromkeys([*guard.visual_asset_ids, *proposal.visual_asset_ids]))[:5]
+        )
         guarded_anchors = {
             asset_id: guard.visual_anchor_word_ids.get(
                 asset_id,
@@ -612,7 +632,11 @@ def _merge_agent_with_guards(
                     if guard.sequence_number is not None
                     else proposal.sequence_number,
                     "text_token": proposal.text_token or guard.text_token,
-                    "scene_token": proposal.scene_token or guard.scene_token,
+                    "scene_token": (
+                        guard.scene_token
+                        if prefer_guard_scene and guard.visual_asset_ids
+                        else proposal.scene_token or guard.scene_token
+                    ),
                     "visual_asset_ids": guarded_visuals,
                     "visual_anchor_word_ids": guarded_anchors,
                     "sfx_roles": guarded_sfx,
@@ -864,6 +888,600 @@ def _events_from_proposals(
     return events, omissions
 
 
+def _chapter_markers_v2(
+    words: list[SmartWord],
+    baseline: list[BaselineCaptionCue],
+) -> tuple[list[tuple[int, int, int]], int | None]:
+    """Detect every grounded list marker without a cascading sequence state."""
+
+    declared_count, declaration_index = _declared_count(words)
+    cue_position: dict[str, tuple[int, int, int]] = {}
+    for cue_index, cue in enumerate(baseline):
+        for position, word_id in enumerate(cue.word_ids):
+            cue_position[word_id] = (cue_index, position, len(cue.word_ids))
+
+    # confidence, word index. Direct ordinal/numbered markers outrank bare
+    # cardinals even when a weak incidental cardinal appeared earlier.
+    chosen: dict[int, tuple[int, int]] = {}
+    for index, word in enumerate(words):
+        normalized = word.normalized_text
+        _, position, cue_length = cue_position.get(word.word_id, (-1, -1, -1))
+        direct = _DIRECT_ORDINALS.get(normalized)
+        is_numbered_marker = bool(re.fullmatch(r"[1-9][.)]", word.spoken_text.strip()))
+        if direct is None and is_numbered_marker:
+            direct = int(word.spoken_text.strip()[0])
+        if direct is not None:
+            if declared_count is None and position != 0 and not is_numbered_marker:
+                continue
+            if declared_count is None or direct <= declared_count:
+                previous = chosen.get(direct)
+                if previous is None or previous[0] < 2:
+                    chosen[direct] = (2, index)
+            continue
+
+        cardinal = _CARDINALS.get(normalized)
+        if (
+            cardinal is None
+            or declared_count is None
+            or index <= declaration_index
+            or cardinal > declared_count
+        ):
+            continue
+        edge = position in {0, cue_length - 1}
+        pause_before = index > 0 and word.start_ms - words[index - 1].end_ms >= 250
+        pause_after = index + 1 < len(words) and words[index + 1].start_ms - word.end_ms >= 250
+        punctuation_boundary = index > 0 and words[index - 1].spoken_text.rstrip().endswith(
+            (":", ";", ".", "?")
+        )
+        if edge or pause_before or pause_after or punctuation_boundary:
+            chosen.setdefault(cardinal, (1, index))
+
+    marker_indexes = {index for _, index in chosen.values()}
+    markers: list[tuple[int, int, int]] = []
+    for number, (_, marker_index) in chosen.items():
+        keyword_index = marker_index
+        previous_end_ms = words[marker_index].end_ms
+        for candidate_index in range(marker_index + 1, min(len(words), marker_index + 5)):
+            candidate = words[candidate_index]
+            if candidate_index in marker_indexes or candidate.start_ms - previous_end_ms > 900:
+                break
+            previous_end_ms = candidate.end_ms
+            if (
+                candidate.normalized_text not in _KEYWORD_STOP
+                and candidate.normalized_text not in _LIST_TERMS
+                and candidate.normalized_text not in _CARDINALS
+            ):
+                keyword_index = candidate_index
+                break
+        markers.append((number, marker_index, keyword_index))
+    markers.sort(key=lambda marker: marker[1])
+    return markers, declared_count
+
+
+def _semantic_hook_end_index_v2(
+    words: list[SmartWord],
+    baseline: list[BaselineCaptionCue],
+    chapter_markers: list[tuple[int, int, int]],
+    preset: SmartEditPreset,
+) -> int:
+    if not words:
+        return 0
+    index_by_id = {word.word_id: index for index, word in enumerate(words)}
+    cap_s = preset.density.hook_max_duration_s or preset.density.hook_window_s
+    cap_ms = words[0].start_ms + round(cap_s * 1000)
+    cap_index = max(
+        0,
+        max(
+            (index for index, word in enumerate(words) if word.start_ms < cap_ms),
+            default=0,
+        ),
+    )
+    transitions: list[int] = []
+    for cue_index, cue in enumerate(baseline[1:], start=1):
+        first_index = index_by_id[cue.word_ids[0]]
+        if first_index > cap_index:
+            break
+        folded = _fold(cue.display_text)
+        prior_question = baseline[cue_index - 1].display_text.rstrip().endswith("?")
+        if any(folded.startswith(prefix) for prefix in _CONTEXT_PREFIXES) or prior_question:
+            transitions.append(first_index)
+    transitions.extend(marker_index for _, marker_index, _ in chapter_markers)
+    valid = [index for index in transitions if 0 < index <= cap_index]
+    if valid:
+        return max(0, min(valid) - 1)
+    return min(cap_index, len(words) - 1)
+
+
+def _semantic_timeline_v2(
+    words: list[SmartWord],
+    baseline: list[BaselineCaptionCue],
+    assets: list[SmartPlannerAsset],
+    preset: SmartEditPreset,
+) -> _V2SemanticTimeline:
+    index_by_id = {word.word_id: index for index, word in enumerate(words)}
+    chapter_markers, declared_count = _chapter_markers_v2(words, baseline)
+    hook_end_index = _semantic_hook_end_index_v2(words, baseline, chapter_markers, preset)
+    hook_words = words[: hook_end_index + 1]
+    hook_matches = _matching_assets(hook_words, assets, preset)
+    candidates: list[SmartPlannerCandidate] = [
+        SmartPlannerCandidate(
+            candidate_id=_candidate_id("hook", words[0].word_id, 0),
+            role="hook",
+            start_word_id=words[0].word_id,
+            end_word_id=words[hook_end_index].word_id,
+            anchor_word_id=words[0].word_id,
+            evidence="semantic_hook",
+            suggested_asset_ids=[asset_id for asset_id, _ in hook_matches],
+            suggested_asset_anchor_word_ids=dict(hook_matches),
+        )
+    ]
+    role_by_word_id: dict[str, SemanticRole] = {word.word_id: "example" for word in words}
+    for word in hook_words:
+        role_by_word_id[word.word_id] = "hook"
+    boundary_after_word_ids = {words[hook_end_index].word_id}
+
+    chapter_word_indexes: set[int] = set()
+    for ordinal, (number, marker_index, title_end_index) in enumerate(chapter_markers, start=1):
+        chapter_words = words[marker_index : title_end_index + 1]
+        chapter_word_indexes.update(range(marker_index, title_end_index + 1))
+        for word in chapter_words:
+            role_by_word_id[word.word_id] = "list_item"
+        boundary_after_word_ids.add(chapter_words[-1].word_id)
+        candidates.append(
+            SmartPlannerCandidate(
+                candidate_id=_candidate_id("list_item", chapter_words[0].word_id, ordinal),
+                role="list_item",
+                start_word_id=chapter_words[0].word_id,
+                end_word_id=chapter_words[-1].word_id,
+                anchor_word_id=chapter_words[0].word_id,
+                sequence_number=number,
+                evidence=" ".join(word.display_text for word in chapter_words)[:200],
+            )
+        )
+
+    last_end_ms = 0
+    for cue_index, cue in enumerate(baseline):
+        cue_words = [words[index_by_id[word_id]] for word_id in cue.word_ids]
+        cue_indexes = {index_by_id[word.word_id] for word in cue_words}
+        if (
+            not cue_words
+            or max(cue_indexes) <= hook_end_index
+            or cue_indexes & chapter_word_indexes
+        ):
+            last_end_ms = cue_words[-1].end_ms if cue_words else last_end_ms
+            continue
+        folded = _fold(cue.display_text)
+        pause_ms = max(0, cue_words[0].start_ms - last_end_ms)
+        last_end_ms = cue_words[-1].end_ms
+        role: SemanticRole | None = None
+        if min(cue_indexes) == hook_end_index + 1:
+            role = "context_shift"
+        elif any(folded.startswith(prefix) for prefix in _CTA_TERMS) or any(
+            term in folded for term in _CTA_TERMS
+        ):
+            role = "cta"
+        elif any(folded.startswith(prefix) for prefix in _PAYOFF_PREFIXES):
+            role = "payoff"
+        elif any(folded.startswith(prefix) for prefix in _EXAMPLE_PREFIXES):
+            role = "example"
+        elif any(folded.startswith(prefix) for prefix in _CONTEXT_PREFIXES) or pause_ms >= 1150:
+            role = "context_shift"
+        asset_matches = _matching_assets(cue_words, assets, preset)
+        if role is None and asset_matches:
+            role = "example"
+        if role is None:
+            continue
+        for word in cue_words:
+            role_by_word_id[word.word_id] = role
+        candidates.append(
+            SmartPlannerCandidate(
+                candidate_id=_candidate_id(role, cue_words[0].word_id, cue_index + 100),
+                role=role,
+                start_word_id=cue_words[0].word_id,
+                end_word_id=cue_words[-1].word_id,
+                anchor_word_id=cue_words[0].word_id,
+                evidence=" ".join(word.display_text for word in cue_words)[:200],
+                suggested_asset_ids=[asset_id for asset_id, _ in asset_matches],
+                suggested_asset_anchor_word_ids=dict(asset_matches),
+            )
+        )
+
+    badge_assets = [
+        asset.asset_id
+        for asset in assets
+        if {"badge", "skip", "skipad"} & _asset_terms(asset)
+        or "skip ad" in _fold(" ".join((asset.subject, asset.filename, asset.on_screen_text)))
+    ]
+    if badge_assets:
+        anchor = words[min(1, hook_end_index)]
+        candidates.append(
+            SmartPlannerCandidate(
+                candidate_id=_candidate_id("hook", anchor.word_id, 999),
+                role="hook",
+                start_word_id=anchor.word_id,
+                end_word_id=anchor.word_id,
+                anchor_word_id=anchor.word_id,
+                evidence="persistent badge asset",
+                suggested_asset_ids=badge_assets[:1],
+            )
+        )
+
+    detected = [number for number, _, _ in chapter_markers]
+    detected_set = set(detected)
+    missing = (
+        [number for number in range(1, declared_count + 1) if number not in detected_set]
+        if declared_count
+        else []
+    )
+    return _V2SemanticTimeline(
+        candidates=candidates[:80],
+        role_by_word_id=role_by_word_id,
+        boundary_after_word_ids=boundary_after_word_ids,
+        hook_end_word_id=words[hook_end_index].word_id,
+        declared_chapter_count=declared_count,
+        detected_chapters=detected,
+        missing_chapters=missing,
+        chapter_order_valid=detected == sorted(detected),
+    )
+
+
+def _baseline_from_semantic_cues(cues: list[dict[str, Any]]) -> list[BaselineCaptionCue]:
+    baseline: list[BaselineCaptionCue] = []
+    for index, cue in enumerate(cues):
+        word_ids = [str(word_id) for word_id in cue.get("smart_word_ids") or []]
+        if not word_ids:
+            continue
+        baseline.append(
+            BaselineCaptionCue(
+                cue_id=f"smart-cue-{index + 1:03d}",
+                word_ids=word_ids,
+                display_text=str(cue.get("text") or "").strip(),
+            )
+        )
+    return baseline
+
+
+def _fallback_proposals_v2(
+    candidates: list[SmartPlannerCandidate],
+    words: list[SmartWord],
+    assets: list[SmartPlannerAsset],
+    preset: SmartEditPreset,
+    *,
+    hook_end_word_id: str,
+) -> list[SmartPlannerProposal]:
+    index_by_id = {word.word_id: index for index, word in enumerate(words)}
+    hook_end_index = index_by_id[hook_end_word_id]
+    assets_by_id = {asset.asset_id: asset for asset in assets}
+    proposals: list[SmartPlannerProposal] = []
+    for candidate in candidates:
+        is_badge = "persistent badge" in candidate.evidence
+        in_hook = (
+            index_by_id[candidate.start_word_id] <= hook_end_index and candidate.role == "hook"
+        )
+        visuals = list(candidate.suggested_asset_ids)
+        scene_token: str | None = None
+        if visuals:
+            if is_badge:
+                scene_token = "persistent_badge"
+                visuals = visuals[:1]
+            elif in_hook:
+                scene_token = "hook_accumulation"
+                visuals = visuals[: preset.density.hook_max_visuals]
+            elif len(visuals) >= 2:
+                scene_token = "example_pair"
+                visuals = visuals[:2]
+            elif assets_by_id.get(visuals[0]) and assets_by_id[visuals[0]].kind == "video":
+                scene_token = "fullscreen_cutaway"
+                visuals = visuals[:1]
+            else:
+                scene_token = "single_example"
+                visuals = visuals[:1]
+
+        text_token = None
+        sfx_roles: list[str] = []
+        boundary_token = None
+        if candidate.role == "list_item" and candidate.sequence_number:
+            text_token = "section_heading"
+            sfx_roles = ["chapter_number_pop", "keyword_typewriter_tick"]
+        elif candidate.role == "context_shift":
+            text_token = "context_title"
+            boundary_token = "horizontal_motion_blur"
+            sfx_roles = ["transition_whip", "keyword_typewriter_tick"]
+        elif candidate.role == "cta":
+            sfx_roles = ["cta_click"]
+        if visuals:
+            sfx_roles = [
+                *sfx_roles,
+                "visual_enter_accent" if in_hook else "visual_enter_soft",
+            ][:3]
+        if is_badge:
+            sfx_roles = ["badge_enter"]
+        proposals.append(
+            SmartPlannerProposal(
+                role=candidate.role,  # type: ignore[arg-type]
+                start_word_id=candidate.start_word_id,
+                end_word_id=candidate.end_word_id,
+                anchor_word_id=candidate.anchor_word_id,
+                confidence_tier=(
+                    "high"
+                    if candidate.role in {"hook", "list_item", "cta"}
+                    or candidate.sequence_number is not None
+                    else "medium"
+                ),
+                sequence_number=candidate.sequence_number,
+                text_token=text_token,
+                scene_token=scene_token,
+                visual_asset_ids=visuals,
+                visual_anchor_word_ids={
+                    asset_id: candidate.suggested_asset_anchor_word_ids.get(
+                        asset_id, candidate.anchor_word_id
+                    )
+                    for asset_id in visuals
+                },
+                sfx_roles=sfx_roles,
+                boundary_token=boundary_token,
+                rationale=f"deterministic-v2:{candidate.candidate_id}",
+            )
+        )
+    return proposals
+
+
+def _event_lanes_v2(
+    proposal: SmartPlannerProposal,
+    *,
+    event_id: str,
+    word_ids: list[str],
+    visual_asset_id: str | None,
+    visual_index: int,
+    composition_index: int,
+    preset: SmartEditPreset,
+    include_camera: bool,
+    include_audio: bool,
+) -> list:
+    lanes: list = []
+    if visual_index == 0:
+        lanes.append(
+            CaptionEmphasisLane(
+                kind="caption_emphasis",
+                token={
+                    "hook": "hook_lime",
+                    "context_shift": "context_lime",
+                    "list_item": "list_keyword",
+                    "example": "example_soft",
+                    "payoff": "payoff_lime",
+                    "cta": "cta_lime",
+                }[proposal.role],
+                baseline_caption_word_ids=word_ids,
+            )
+        )
+        if proposal.text_token == "section_heading" and proposal.sequence_number:
+            lanes.append(
+                TextLane(
+                    kind="text",
+                    token="section_heading",
+                    transcript_word_ids=word_ids,
+                    transform="list_number_from_sequence",
+                    sequence_number=proposal.sequence_number,
+                    claimed_word_ids=word_ids,
+                    caption_visibility="suppress_claimed_span",
+                )
+            )
+        elif proposal.text_token == "context_title":
+            claimed = word_ids[: min(7, len(word_ids))]
+            lanes.append(
+                TextLane(
+                    kind="text",
+                    token="context_title",
+                    transcript_word_ids=claimed,
+                    transform="verbatim",
+                    claimed_word_ids=claimed,
+                    caption_visibility="suppress_claimed_span",
+                )
+            )
+        if include_camera and preset.camera:
+            lanes.append(
+                CameraLane(
+                    kind="camera",
+                    token=preset.camera.token,
+                    intensity_token=preset.camera.intensity_token,
+                )
+            )
+        if include_audio and preset.audio_treatment:
+            lanes.append(
+                AudioTreatmentLane(
+                    kind="audio_treatment",
+                    token=preset.audio_treatment.token,
+                    selection_token=preset.audio_treatment.selection_token,
+                )
+            )
+
+    if visual_asset_id and proposal.scene_token:
+        scene = preset.scene_layouts.get(proposal.scene_token)
+        if scene:
+            zone = scene.zones[composition_index % len(scene.zones)]
+            lanes.append(
+                VisualLane(
+                    kind="visual",
+                    asset_id=visual_asset_id,
+                    zone=zone,
+                    entrance_token=scene.entrance_token,
+                    exit_policy=scene.exit_policy,
+                    composition_group_id=scene.composition_group_id,
+                    group_order=composition_index,
+                )
+            )
+
+    roles = list(proposal.sfx_roles)
+    if visual_index > 0:
+        roles = [role for role in roles if role.startswith("visual_enter")]
+    if roles:
+        lanes.append(
+            SfxLane(
+                kind="sfx",
+                role_tokens=roles,
+                sync_to_event_id=event_id,
+                offset_ms=0,
+                gain_token="preset",
+            )
+        )
+    if visual_index == 0 and proposal.boundary_token:
+        lanes.append(
+            BoundaryEffectLane(kind="boundary_effect", effect_token=proposal.boundary_token)
+        )
+    return lanes
+
+
+def _events_from_proposals_v2(
+    proposals: list[SmartPlannerProposal],
+    *,
+    words: list[SmartWord],
+    preset: SmartEditPreset,
+    hook_end_word_id: str,
+) -> tuple[list[SmartEditEvent], list[dict[str, str]]]:
+    by_id = {word.word_id: word for word in words}
+    word_ids = [word.word_id for word in words]
+    index_by_id = {word_id: index for index, word_id in enumerate(word_ids)}
+    hook_end_ms = by_id[hook_end_word_id].end_ms
+    omissions: list[dict[str, str]] = []
+    events: list[SmartEditEvent] = []
+    collisions: dict[tuple[str, str, str], int] = {}
+    hook_composition_index = 0
+    audio_added = False
+    last_camera_ms = -1_000_000
+
+    ordered_proposals = sorted(
+        proposals[: preset.density.max_events],
+        key=lambda proposal: (
+            index_by_id.get(proposal.start_word_id, len(words)),
+            index_by_id.get(proposal.anchor_word_id, len(words)),
+        ),
+    )
+    for proposal in ordered_proposals:
+        if any(
+            word_id not in by_id
+            for word_id in (proposal.start_word_id, proposal.end_word_id, proposal.anchor_word_id)
+        ):
+            omissions.append({"reason": "unknown_word", "anchor": proposal.anchor_word_id})
+            continue
+        start_index = index_by_id[proposal.start_word_id]
+        end_index = index_by_id[proposal.end_word_id]
+        if end_index < start_index:
+            omissions.append({"reason": "inverted_span", "anchor": proposal.anchor_word_id})
+            continue
+        span_ids = word_ids[start_index : end_index + 1]
+        visual_ids = list(proposal.visual_asset_ids)
+        if visual_ids:
+            scene = preset.scene_layouts.get(proposal.scene_token or "")
+            if scene is None or not scene.min_assets <= len(visual_ids) <= scene.max_assets:
+                omissions.append(
+                    {"reason": "invalid_scene_cardinality", "anchor": proposal.anchor_word_id}
+                )
+                visual_ids = []
+        expanded_visual_ids: list[str | None] = visual_ids or [None]
+        for visual_index, visual_id in enumerate(expanded_visual_ids):
+            composition_index = visual_index
+            if proposal.scene_token == "hook_accumulation" and visual_id:
+                composition_index = hook_composition_index
+                hook_composition_index += 1
+            key = (proposal.role, proposal.start_word_id, proposal.end_word_id)
+            collision = collisions.get(key, 0)
+            collisions[key] = collision + 1
+            event_id = build_event_id(
+                preset_version=f"{preset.preset_id}/{preset.version}",
+                role=proposal.role,
+                start_word_id=proposal.start_word_id,
+                end_word_id=proposal.end_word_id,
+                collision_ordinal=collision,
+            )
+            visual_anchor_word_id = (
+                proposal.visual_anchor_word_ids.get(visual_id, proposal.anchor_word_id)
+                if visual_id
+                else proposal.anchor_word_id
+            )
+            if visual_anchor_word_id not in by_id or not (
+                start_index <= index_by_id[visual_anchor_word_id] <= end_index
+            ):
+                omissions.append(
+                    {"reason": "unknown_visual_anchor", "anchor": visual_anchor_word_id}
+                )
+                continue
+            active_start_ms = by_id[visual_anchor_word_id].start_ms
+            if proposal.scene_token == "hook_accumulation":
+                active_end_ms = min(
+                    words[-1].end_ms,
+                    hook_end_ms + round(preset.density.hook_group_hold_s * 1000),
+                )
+            elif proposal.scene_token == "persistent_badge":
+                active_end_ms = words[-1].end_ms
+            elif visual_id:
+                active_end_ms = min(
+                    words[-1].end_ms,
+                    active_start_ms + round(preset.density.normal_visual_duration_s * 1000),
+                )
+            else:
+                active_end_ms = max(by_id[proposal.end_word_id].end_ms, active_start_ms + 500)
+
+            include_camera = False
+            if (
+                visual_index == 0
+                and preset.camera
+                and proposal.role in preset.camera.eligible_roles
+                and active_start_ms - last_camera_ms >= preset.camera.cooldown_ms
+            ):
+                include_camera = True
+                last_camera_ms = active_start_ms
+            include_audio = (
+                visual_index == 0
+                and not audio_added
+                and proposal.role == "hook"
+                and proposal.scene_token != "persistent_badge"
+                and preset.audio_treatment is not None
+            )
+            audio_added = audio_added or include_audio
+            lanes = _event_lanes_v2(
+                proposal,
+                event_id=event_id,
+                word_ids=span_ids,
+                visual_asset_id=visual_id,
+                visual_index=visual_index,
+                composition_index=composition_index,
+                preset=preset,
+                include_camera=include_camera,
+                include_audio=include_audio,
+            )
+            try:
+                events.append(
+                    SmartEditEvent(
+                        event_id=event_id,
+                        role=proposal.role,
+                        start_word_id=proposal.start_word_id,
+                        end_word_id=proposal.end_word_id,
+                        anchor=EventAnchor(word_id=visual_anchor_word_id, offset_ms=0),
+                        active_start_ms=active_start_ms,
+                        active_end_ms=max(active_start_ms + 1, active_end_ms),
+                        confidence_tier=proposal.confidence_tier,
+                        spatial_owner=proposal.scene_token
+                        or ("smart_title" if proposal.text_token else None),
+                        enabled=True,
+                        lanes=lanes,
+                        provenance=[
+                            PLANNER_VERSION_V2,
+                            f"preset:{preset.preset_id}/{preset.version}",
+                        ],
+                    )
+                )
+            except Exception as exc:
+                omissions.append(
+                    {
+                        "reason": "event_validation",
+                        "anchor": proposal.anchor_word_id,
+                        "detail": str(exc)[:120],
+                    }
+                )
+    events.sort(key=lambda event: (event.active_start_ms, event.event_id))
+    return events, omissions
+
+
 def plan_smart_captions(
     cues: list[dict[str, Any]],
     *,
@@ -877,6 +1495,112 @@ def plan_smart_captions(
     """Build a complete Smart event plan from corrected word-timed captions."""
 
     preset = load_preset(preset_id, preset_version)
+    if preset.version == "v2":
+        normalized_words, source_baseline, _ = _normalize_captions(cues, language=language)
+        if not normalized_words or not source_baseline:
+            return None
+        planner_assets = _coerce_assets(assets)
+        semantic = _semantic_timeline_v2(
+            normalized_words,
+            source_baseline,
+            planner_assets,
+            preset,
+        )
+        smart_cues = build_semantic_caption_cues(
+            normalized_words,
+            preset.caption,
+            role_by_word_id=semantic.role_by_word_id,
+            boundary_after_word_ids=semantic.boundary_after_word_ids,
+        )
+        baseline = _baseline_from_semantic_cues(smart_cues)
+        if not baseline:
+            return None
+        fallback = _fallback_proposals_v2(
+            semantic.candidates,
+            normalized_words,
+            planner_assets,
+            preset,
+            hook_end_word_id=semantic.hook_end_word_id,
+        )
+        proposals: list[SmartPlannerProposal] = []
+        agent_proposal_count = 0
+        planner_source = "deterministic"
+        if use_agent and semantic.candidates:
+            try:
+                from app.agents._model_client import default_client  # noqa: PLC0415
+                from app.agents._runtime import RunContext  # noqa: PLC0415
+                from app.config import settings  # noqa: PLC0415
+
+                if settings.gemini_api_key:
+                    output = SmartEditPlannerAgent(default_client()).run(
+                        SmartEditPlannerInput(
+                            words=[
+                                {
+                                    "word_id": word.word_id,
+                                    "text": word.display_text,
+                                    "normalized": word.normalized_text,
+                                }
+                                for word in normalized_words
+                            ],
+                            candidates=semantic.candidates,
+                            assets=planner_assets,
+                            preset_id=preset.preset_id,
+                            preset_version=preset.version,
+                            language=language,
+                        ),
+                        ctx=RunContext(job_id=job_id),
+                    )
+                    proposals = output.proposals
+                    agent_proposal_count = len(proposals)
+                    planner_source = "agent" if proposals else "deterministic_rejected_agent"
+            except Exception:
+                proposals = []
+        proposals = _merge_agent_with_guards(
+            proposals,
+            fallback,
+            prefer_guard_scene=True,
+        )
+        events, omissions = _events_from_proposals_v2(
+            proposals,
+            words=normalized_words,
+            preset=preset,
+            hook_end_word_id=semantic.hook_end_word_id,
+        )
+        document = SmartEditPlanDocument(
+            schema_version=SMART_EDIT_SCHEMA_VERSION_V2,
+            preset_id=preset.preset_id,
+            preset_version=preset.version,
+            baseline_captions=baseline,
+            events=events,
+        )
+        return SmartPlanBuild(
+            normalized_words=normalized_words,
+            caption_cues=smart_cues,
+            document=document,
+            planner_versions={
+                "semantic_planner": PLANNER_VERSION_V2,
+                "decision_source": planner_source,
+            },
+            validation_receipt={
+                "valid": True,
+                "normalized_word_count": len(normalized_words),
+                "baseline_caption_count": len(baseline),
+                "candidate_count": len(semantic.candidates),
+                "agent_grounded_proposal_count": agent_proposal_count,
+                "event_count": len(events),
+                "semantic_hook_end_word_id": semantic.hook_end_word_id,
+                "declared_chapter_count": semantic.declared_chapter_count,
+                "detected_chapters": semantic.detected_chapters,
+                "missing_chapters": semantic.missing_chapters,
+                "chapter_order_valid": semantic.chapter_order_valid,
+                "omissions": omissions,
+                "roles": {
+                    role: sum(event.role == role for event in events)
+                    for role in ("hook", "context_shift", "list_item", "example", "payoff", "cta")
+                },
+            },
+        )
+
     smart_cues = build_smart_caption_cues(cues, preset.caption)
     normalized_words, baseline, _ = _normalize_captions(smart_cues, language=language)
     if not normalized_words or not baseline:

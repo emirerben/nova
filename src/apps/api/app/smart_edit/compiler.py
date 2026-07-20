@@ -12,7 +12,10 @@ from app.agents._schemas.sound_effect import SoundEffectPlacement
 from app.agents._schemas.text_element import TextElement
 from app.smart_edit.presets import TextStylePolicy, load_preset
 from app.smart_edit.schemas import (
+    SMART_EDIT_SCHEMA_VERSION_V2,
+    AudioTreatmentLane,
     BoundaryEffectLane,
+    CameraLane,
     CaptionEmphasisLane,
     SfxLane,
     SmartEditPlanDocument,
@@ -21,6 +24,7 @@ from app.smart_edit.schemas import (
 )
 
 COMPILER_VERSION = "nova-smart-lanes-2026-07-18.2"
+COMPILER_VERSION_V2 = "nova-smart-lanes-2026-07-20.1"
 _STYLE_BY_TOKEN = {
     "hook_lime": "hook",
     "context_lime": "context",
@@ -77,6 +81,8 @@ class CompiledSmartEdit:
     media_overlays: list[dict[str, Any]]
     sfx_intents: list[dict[str, Any]]
     boundary_effects: list[dict[str, Any]]
+    camera_intents: list[dict[str, Any]]
+    audio_treatment_intents: list[dict[str, Any]]
     compiled_patch: dict[str, Any]
     validation_receipt: dict[str, Any]
 
@@ -211,6 +217,7 @@ def compile_smart_plan(
     """Resolve Smart tokens to caption, text, visual, boundary, and SFX lanes."""
 
     preset = load_preset(document.preset_id, document.preset_version)
+    is_v2 = document.schema_version == SMART_EDIT_SCHEMA_VERSION_V2
     compiled_cues = [dict(cue) for cue in cues]
     cue_index_by_word, display_by_word, _ = _word_maps(document, compiled_cues)
     assets_by_id = assets_by_id or {}
@@ -218,6 +225,8 @@ def compile_smart_plan(
     media_overlays: list[dict[str, Any]] = []
     sfx_intents: list[dict[str, Any]] = []
     boundary_effects: list[dict[str, Any]] = []
+    camera_intents: list[dict[str, Any]] = []
+    audio_treatment_intents: list[dict[str, Any]] = []
     claimed_word_ids: set[str] = set()
     omissions: list[dict[str, str]] = []
     event_receipts: list[dict[str, Any]] = []
@@ -236,14 +245,27 @@ def compile_smart_plan(
             len(sfx_intents),
             len(boundary_effects),
         )
+        camera_before = len(camera_intents)
+        audio_before = len(audio_treatment_intents)
         styled_before = bool(cue.get("smart_style"))
         for lane in event.lanes:
             if isinstance(lane, CaptionEmphasisLane):
                 style = _STYLE_BY_TOKEN.get(lane.token)
-                if style and _STYLE_PRIORITY[style] >= _STYLE_PRIORITY.get(
-                    str(cue.get("smart_style") or ""), 0
-                ):
-                    cue["smart_style"] = style
+                target_indexes = (
+                    {
+                        cue_index_by_word[word_id]
+                        for word_id in lane.baseline_caption_word_ids
+                        if word_id in cue_index_by_word
+                    }
+                    if is_v2
+                    else {cue_index}
+                )
+                for target_index in target_indexes:
+                    target_cue = compiled_cues[target_index]
+                    if style and _STYLE_PRIORITY[style] >= _STYLE_PRIORITY.get(
+                        str(target_cue.get("smart_style") or ""), 0
+                    ):
+                        target_cue["smart_style"] = style
             elif isinstance(lane, TextLane):
                 start_s = event.active_start_ms / 1000
                 if lane.token == "section_heading" and lane.sequence_number:
@@ -365,23 +387,79 @@ def compile_smart_plan(
                         "intensity": policy.intensity,
                     }
                 )
-        event_receipts.append(
-            {
-                "event_id": event.event_id,
-                "role": event.role,
-                "caption_style_applied": (not styled_before and bool(cue.get("smart_style"))),
-                "text_elements": len(text_elements) - before[0],
-                "visuals": len(media_overlays) - before[1],
-                "sfx_intents": len(sfx_intents) - before[2],
-                "boundary_effects": len(boundary_effects) - before[3],
-            }
-        )
+            elif isinstance(lane, CameraLane):
+                camera_intents.append(
+                    {
+                        "event_id": event.event_id,
+                        "role": event.role,
+                        "token": lane.token,
+                        "intensity_token": lane.intensity_token,
+                        "at_s": event.active_start_ms / 1000,
+                    }
+                )
+            elif isinstance(lane, AudioTreatmentLane):
+                policy = preset.audio_treatment
+                if policy is None:
+                    omissions.append(
+                        {"event_id": event.event_id, "reason": "audio_treatment_policy_missing"}
+                    )
+                    continue
+                audio_treatment_intents.append(
+                    {
+                        "event_id": event.event_id,
+                        "token": lane.token,
+                        "selection_token": lane.selection_token,
+                        "gain_token": lane.gain_token,
+                        "music_match_min_score": policy.music_match_min_score,
+                        "bed_gain_db": policy.bed_gain_db,
+                        "speech_duck_db": policy.speech_duck_db,
+                        "final_lufs": policy.final_lufs,
+                    }
+                )
+        event_receipt = {
+            "event_id": event.event_id,
+            "role": event.role,
+            "caption_style_applied": (not styled_before and bool(cue.get("smart_style"))),
+            "text_elements": len(text_elements) - before[0],
+            "visuals": len(media_overlays) - before[1],
+            "sfx_intents": len(sfx_intents) - before[2],
+            "boundary_effects": len(boundary_effects) - before[3],
+        }
+        if is_v2:
+            event_receipt["camera_intents"] = len(camera_intents) - camera_before
+            event_receipt["audio_treatment_intents"] = len(audio_treatment_intents) - audio_before
+        event_receipts.append(event_receipt)
+
+    hook_caption_suppressed = False
+    if is_v2:
+        hook_scene = preset.scene_layouts.get("hook_accumulation")
+        resolved_hook_visuals = {
+            str(overlay["id"])
+            for overlay in media_overlays
+            if overlay.get("composition_group_id") == "hook_accumulation"
+        }
+        if (
+            hook_scene
+            and hook_scene.caption_visibility == "suppress_if_resolved"
+            and len(resolved_hook_visuals) >= preset.density.hook_caption_suppress_min_visuals
+        ):
+            for event in document.events:
+                if any(
+                    isinstance(lane, VisualLane)
+                    and lane.composition_group_id == "hook_accumulation"
+                    for lane in event.lanes
+                ):
+                    for lane in event.lanes:
+                        if isinstance(lane, CaptionEmphasisLane):
+                            claimed_word_ids.update(lane.baseline_caption_word_ids)
+            hook_caption_suppressed = True
 
     compiled_cues = _suppress_claimed_words(compiled_cues, document, claimed_word_ids)
     text_elements.sort(key=lambda item: (float(item["start_s"]), str(item["id"])))
     media_overlays.sort(key=lambda item: (float(item["start_s"]), int(item["z"])))
     sfx_intents.sort(key=lambda item: (float(item["at_s"]), str(item["role"])))
     boundary_effects.sort(key=lambda item: (float(item["at_s"]), str(item["event_id"])))
+    camera_intents.sort(key=lambda item: (float(item["at_s"]), str(item["event_id"])))
     patch = {
         "caption_cues": compiled_cues,
         "caption_policy": preset.caption.model_dump(mode="json"),
@@ -389,27 +467,42 @@ def compile_smart_plan(
         "media_overlays": media_overlays,
         "sfx_intents": sfx_intents,
         "boundary_effects": boundary_effects,
-        "compiler_version": COMPILER_VERSION,
+        "compiler_version": COMPILER_VERSION_V2 if is_v2 else COMPILER_VERSION,
         "omissions": omissions,
     }
+    if is_v2:
+        patch["camera_intents"] = camera_intents
+        patch["audio_treatment_intents"] = audio_treatment_intents
+        patch["hook_caption_suppressed"] = hook_caption_suppressed
+    validation_receipt = {
+        "valid": True,
+        "caption_count": len(compiled_cues),
+        "styled_caption_count": sum(bool(cue.get("smart_style")) for cue in compiled_cues),
+        "text_element_count": len(text_elements),
+        "media_overlay_count": len(media_overlays),
+        "sfx_intent_count": len(sfx_intents),
+        "boundary_effect_count": len(boundary_effects),
+        "event_receipts": event_receipts,
+        "omissions": omissions,
+    }
+    if is_v2:
+        validation_receipt.update(
+            {
+                "camera_intent_count": len(camera_intents),
+                "audio_treatment_intent_count": len(audio_treatment_intents),
+                "hook_caption_suppressed": hook_caption_suppressed,
+            }
+        )
     return CompiledSmartEdit(
         caption_cues=compiled_cues,
         text_elements=text_elements,
         media_overlays=media_overlays,
         sfx_intents=sfx_intents,
         boundary_effects=boundary_effects,
+        camera_intents=camera_intents,
+        audio_treatment_intents=audio_treatment_intents,
         compiled_patch=patch,
-        validation_receipt={
-            "valid": True,
-            "caption_count": len(compiled_cues),
-            "styled_caption_count": sum(bool(cue.get("smart_style")) for cue in compiled_cues),
-            "text_element_count": len(text_elements),
-            "media_overlay_count": len(media_overlays),
-            "sfx_intent_count": len(sfx_intents),
-            "boundary_effect_count": len(boundary_effects),
-            "event_receipts": event_receipts,
-            "omissions": omissions,
-        },
+        validation_receipt=validation_receipt,
     )
 
 
