@@ -1066,6 +1066,10 @@ export default function EditorShell({
   const [musicAlignmentPrompt, setMusicAlignmentPrompt] = useState(false);
   // Resume-draft notice (plan §9 crash recovery). Non-null → show the notice.
   const [draftDoc, setDraftDoc] = useState<EditorDocument | null>(null);
+  // A full save is a terminal navigation handoff. Derived dirty checks still
+  // compare against the pre-save variant for one render, so fence draft writes
+  // after commit success or they can recreate the draft we just removed.
+  const draftPersistenceSuspendedRef = useRef(false);
 
   // ── Derived ─────────────────────────────────────────────────────────────────
   const elements = useMemo(
@@ -3462,8 +3466,10 @@ export default function EditorShell({
       }
       // Full success: the stack is void (no undoing into a pre-persist world),
       // the draft is spent, and the item-page hero shows the rendering state.
+      draftPersistenceSuspendedRef.current = true;
       history.clear();
       clearDraft();
+      setDraftDoc(null);
       setTextDirty(false);
       setSfxDirty(false);
       setOverlaysDirty(false);
@@ -3539,6 +3545,7 @@ export default function EditorShell({
   // document change while dirty). Failures degrade draft safety silently.
   const dirtyDraftIdentityRef = useRef<string | null>(null);
   useEffect(() => {
+    if (draftPersistenceSuspendedRef.current) return;
     // During client-side [id] navigation React can retain this shell while the
     // next item loads. Never write the previous item's working document under
     // the next item's draft key in that gap.

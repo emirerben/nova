@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.1.0] — 2026-07-20
+
+### Fixed
+- **Saved editor sessions no longer return as unsaved recovery drafts.** A successful Save now permanently spends that item's recovery draft during navigation, while partial and failed saves preserve the working edits for retry.
+
 ## [0.11.0.0] — 2026-07-20
 
 ### Added
