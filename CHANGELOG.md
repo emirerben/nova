@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - **Admins can mark tracks as licensed for the Smart Captions music bed.** A new toggle on the music Config tab controls which songs the automatic background-music selection may use, so only cleared tracks ever reach a creator's export. A fleet-wide kill switch can disable the music bed without touching creators' saved work.
 - **Smart renders degrade gracefully instead of failing or misplacing content.** Stale preset assignments and creator-pool outages fall back to a standard render with receipts; explicit caption font and position edits survive Smart reburns; simultaneous picture-in-picture cards keep collision-free, aspect-correct layouts driven by real asset footprints; face detection runs under a killable time budget; hook captions stay visible until a transactional compositor can safely suppress them; and caption-language changes on Smart videos are declined until a safe re-plan exists.
 - **Emergency rollbacks and transient failures no longer lose creator work.** Turning the sound-effects lane off during an incident preserves every saved effect for re-enable; a temporary storage failure no longer permanently removes a visual card from a video; and curated character-name corrections ("Çelik", "Pip") now actually reach the caption repair step instead of being silently filtered out.
+
 ## [0.10.4.0] — 2026-07-20
 
 ### Fixed

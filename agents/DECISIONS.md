@@ -262,3 +262,40 @@ over-engineering.
 **Reusable rule:** adding a required kwarg to an existing Celery task always opens this
 window. Either accept it consciously (document it + confirm the reaper backstop covers
 the queue) or ship the kwarg with a server-side default the old worker tolerates.
+
+## [2026-07-20] Smart Captions v2 review decisions (v0.11.0.0)
+
+Internals: `docs/pipelines/smart-captions.md`. Four calls from the pre-merge review
+worth keeping:
+
+**Hook-caption suppression is deferred, not implemented.** The compiler sets
+`hook_caption_suppression_eligible` when the preset's `hook_accumulation` layout says
+`suppress_if_resolved` and enough hook visuals resolved, but `hook_caption_suppressed`
+always stays false. Compile-time asset resolution is planning evidence only —
+downloads, normalization, collision arbitration, and FFmpeg can all still fail later,
+so suppressing speech captions there could ship a hook with neither captions nor
+visuals. Suppression waits until both lanes share a transactional compositor that reads
+the applied-media manifest; the persisted eligibility receipts show how often the
+deferral actually matters. Follow-up tracked as TODOS.md T-SMART-COMP-1.
+
+**Survivors vs manifest (review D4).** Persisted `media_overlays` after a Smart apply
+pass = survivors with arbitration-resolved geometry PLUS download-failed cards with
+their ORIGINAL payload (the next reburn retries them — a transient storage failure must
+never permanently delete a creator's card). Arbitration-OMITTED cards are dropped: the
+reburn path has no arbitration, so persisting them would resurrect the exact occlusion
+the omission prevented. `media_overlays_applied_ids` is the separate record of what
+actually reached the burned video. Guard:
+`tests/smart_edit/test_v2_render_contract.py::test_media_overlay_persistence_keeps_failed_cards_drops_omitted`.
+
+**Music-bed eligibility is a closed allowlist, not a filter.** A track reaches the v2
+music bed only when an admin explicitly set `track_config.smart_captions_licensed =
+true` (music Config tab toggle). Default is ineligible — licensing exposure from an
+uncleared track landing in a creator's export outweighs bed coverage. Guard:
+`test_music_eligibility_is_closed_and_requires_explicit_license`.
+
+**`SMART_MUSIC_BED_ENABLED` is deliberately independent of `SOUND_EFFECTS_ENABLED`.**
+The SFX lane is user-authored; the bed is agent-selected — an incident in one must be
+killable without silencing the other. Off: new renders resolve no treatment and reburns
+skip re-mixing the bed, but persisted `smart_music_treatment` state is never deleted,
+so re-enabling restores creators' saved mixes (same preserve-on-rollback rule the SFX
+lane follows).
