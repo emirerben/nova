@@ -55,6 +55,7 @@ _EXPECTED_CHAIN = {
     "0063": "0062",
     "0064": "0063",
     "0065": "0064",
+    "0066": "0065",
 }
 
 
@@ -66,7 +67,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0065"], f"expected a single head 0065, got {heads}"
+    assert heads == ["0066"], f"expected a single head 0066, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -135,6 +136,11 @@ def test_new_tables_registered() -> None:
     } <= item_cols
     item_constraints = {constraint.name for constraint in tables["plan_items"].constraints}
     assert "ck_plan_items_smart_captions_format" in item_constraints
+
+    assignment = tables["creator_style_assignments"]
+    assert {"shadow_preset_id", "shadow_preset_version"} <= set(assignment.columns.keys())
+    assignment_constraints = {constraint.name for constraint in assignment.constraints}
+    assert "ck_creator_style_shadow_pair" in assignment_constraints
 
 
 def test_quality_core_defers_unused_revision_and_outbox_tables() -> None:

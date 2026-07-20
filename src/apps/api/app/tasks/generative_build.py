@@ -252,6 +252,12 @@ def _run_generative_job(job_id: str) -> None:
                 "preset_version": str(_raw_smart["preset_version"]),
                 "sound_design": ("off" if _raw_smart.get("sound_design") == "off" else "auto"),
             }
+            if (
+                str(_raw_smart.get("shadow_preset_id") or "").strip()
+                and str(_raw_smart.get("shadow_preset_version") or "").strip()
+            ):
+                smart_captions["shadow_preset_id"] = str(_raw_smart["shadow_preset_id"])
+                smart_captions["shadow_preset_version"] = str(_raw_smart["shadow_preset_version"])
         # Plan-declared edit format (Lane A). Coerced defensively — a drifted token
         # falls back to montage rather than failing the job. Resolved against the
         # footage after ingest (see _resolve_archetype).
@@ -7562,48 +7568,77 @@ def _is_smart_captions_v2(smart_captions: dict[str, str] | None) -> bool:
     return version in {"v2", f"{preset_id}-v2"}
 
 
+def _load_smart_caption_assets(job_id: str) -> list[dict[str, Any]]:
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    from app.models import Job as _Job  # noqa: PLC0415
+    from app.models import PlanItemAsset  # noqa: PLC0415
+
+    with _sync_session() as db:
+        smart_job = db.get(_Job, uuid.UUID(job_id))
+        if smart_job is None or smart_job.content_plan_item_id is None:
+            return []
+        rows = (
+            db.execute(
+                _select(PlanItemAsset).where(
+                    PlanItemAsset.plan_item_id == smart_job.content_plan_item_id,
+                    PlanItemAsset.status == "ready",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            {
+                "id": str(row.id),
+                "gcs_path": row.gcs_path,
+                "kind": row.kind,
+                "source_filename": row.source_filename,
+                "duration_s": row.duration_s,
+                "aspect": row.aspect,
+                "analysis": row.analysis or {},
+            }
+            for row in rows
+        ]
+
+
+def _smart_caption_trusted_aliases(
+    smart_captions: dict[str, str] | None,
+    smart_assets: list[dict[str, Any]],
+) -> list[str]:
+    if not smart_captions:
+        return []
+    from app.pipeline.caption_correct import build_trusted_caption_hints  # noqa: PLC0415
+    from app.smart_edit.presets import load_preset  # noqa: PLC0415
+
+    try:
+        visual_aliases: list[Any] = list(
+            load_preset(
+                smart_captions["preset_id"],
+                smart_captions["preset_version"],
+            ).visual_aliases
+        )
+    except Exception:
+        visual_aliases = []
+    return build_trusted_caption_hints(
+        visual_aliases=visual_aliases,
+        asset_names=[str(asset.get("source_filename") or "") for asset in smart_assets],
+    )
+
+
 def _compile_smart_caption_render_plan(
     *,
     cues: list[dict[str, Any]],
     smart_captions: dict[str, str],
     detected_lang: str,
     job_id: str,
+    smart_assets: list[dict[str, Any]],
 ) -> tuple[Any | None, dict[str, Any]]:
-    """Load the visual pool once and compile a closed-token Smart plan."""
+    """Compile a closed-token Smart plan from the caller's one pool snapshot."""
 
-    from sqlalchemy import select as _select  # noqa: PLC0415
-
-    from app.models import Job as _Job  # noqa: PLC0415
-    from app.models import PlanItemAsset  # noqa: PLC0415
     from app.smart_edit.compiler import compile_smart_plan  # noqa: PLC0415
     from app.smart_edit.planner import plan_smart_captions  # noqa: PLC0415
 
-    smart_assets: list[dict[str, Any]] = []
-    with _sync_session() as db:
-        smart_job = db.get(_Job, uuid.UUID(job_id))
-        if smart_job is not None and smart_job.content_plan_item_id is not None:
-            rows = (
-                db.execute(
-                    _select(PlanItemAsset).where(
-                        PlanItemAsset.plan_item_id == smart_job.content_plan_item_id,
-                        PlanItemAsset.status == "ready",
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            smart_assets = [
-                {
-                    "id": str(row.id),
-                    "gcs_path": row.gcs_path,
-                    "kind": row.kind,
-                    "source_filename": row.source_filename,
-                    "duration_s": row.duration_s,
-                    "aspect": row.aspect,
-                    "analysis": row.analysis or {},
-                }
-                for row in rows
-            ]
     assets_by_id = {str(asset["id"]): asset for asset in smart_assets}
     smart_plan = plan_smart_captions(
         cues,
@@ -7637,6 +7672,44 @@ def _compile_smart_caption_render_plan(
         "text_elements": compiled.text_elements,
         "text_elements_user_edited": True,
         "text_elements_materialized_from": "smart_captions",
+    }
+
+
+def _smart_shadow_comparison(
+    *,
+    primary_state: dict[str, Any],
+    shadow_state: dict[str, Any],
+    shadow_compiled: Any,
+) -> dict[str, Any]:
+    import hashlib  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    def fingerprint(value: Any) -> str:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    document = shadow_state.get("smart_edit_document") or {}
+    patch = shadow_state.get("smart_compiled_patch") or {}
+    return {
+        "status": "compiled",
+        "materialized": False,
+        "primary_document_fingerprint": fingerprint(primary_state.get("smart_edit_document") or {}),
+        "shadow_document_fingerprint": fingerprint(document),
+        "shadow_patch_fingerprint": fingerprint(patch),
+        "shadow_preset_id": document.get("preset_id"),
+        "shadow_preset_version": document.get("preset_version"),
+        "events": len(document.get("events") or []),
+        "captions": len(shadow_compiled.caption_cues),
+        "titles": len(shadow_compiled.text_elements),
+        "visuals": len(shadow_compiled.media_overlays),
+        "sfx_intents": len(shadow_compiled.sfx_intents),
+        "camera_intents": len(getattr(shadow_compiled, "camera_intents", [])),
+        "audio_treatment_intents": len(getattr(shadow_compiled, "audio_treatment_intents", [])),
     }
 
 
@@ -7916,6 +7989,7 @@ def _render_subtitled_variant(
         "smart_caption_policy": smart_caption_policy,
         "smart_music_treatment": None,
         "smart_audio_receipt": None,
+        "smart_shadow_comparison": None,
         "boundary_effects": None,
         "text_elements_materialized_from": None,
         # Silence-cut summary {removed, time_saved_s, version} (plans/010) — set
@@ -7959,6 +8033,11 @@ def _render_subtitled_variant(
             )
         aspect = "16:9" if getattr(probe, "aspect_ratio", "") == "16:9" else "9:16"
         fit = resolve_output_fit(probe, landscape_fit=landscape_fit)
+        smart_assets = _load_smart_caption_assets(job_id) if smart_captions is not None else []
+        trusted_caption_aliases = _smart_caption_trusted_aliases(
+            smart_captions,
+            smart_assets,
+        )
 
         # ── Silence/filler/retake cut (plans/010 T5) ────────────────────────────
         # Detection runs on the ORIGINAL clip BEFORE the reframe. The base renders
@@ -7972,6 +8051,7 @@ def _render_subtitled_variant(
         sc_language = ""
         sc_plan = None  # CutPlan captions remap against (no-op when nothing cut)
         sc_apply = False  # True ⇒ pass keep_segments into the reframe
+        sc_apply_failed = False
         if settings.silence_cut_enabled:
             from app.pipeline.silence_cut import (  # noqa: PLC0415
                 KEEP_SEGMENTS_PUNCH_IN,
@@ -8042,8 +8122,10 @@ def _render_subtitled_variant(
                 detected_lang,
                 model=settings.caption_correction_model,
                 enabled=settings.subtitled_caption_correction_enabled,
+                trusted_aliases=trusted_caption_aliases,
             )
             cues = resplit_cues_into_sentences(cues)
+            canonical_cues = copy.deepcopy(cues)
             if smart_captions is not None and cues:
                 try:
                     smart_compiled, smart_state = _compile_smart_caption_render_plan(
@@ -8051,6 +8133,7 @@ def _render_subtitled_variant(
                         smart_captions=smart_captions,
                         detected_lang=detected_lang,
                         job_id=job_id,
+                        smart_assets=smart_assets,
                     )
                     if smart_compiled is not None:
                         cues = smart_compiled.caption_cues
@@ -8076,8 +8159,15 @@ def _render_subtitled_variant(
                 "keep_segments": sc_plan.keep_segments,
                 "keep_segments_punch_in": KEEP_SEGMENTS_PUNCH_IN,
             }
-        if smart_compiled is not None and smart_compiled.camera_intents:
+        if smart_compiled is not None and smart_compiled.camera_intents and not sc_apply:
             reframe_kwargs["semantic_crop_pulses"] = smart_compiled.camera_intents
+        elif smart_compiled is not None and smart_compiled.camera_intents:
+            base["smart_validation_receipts"]["camera_render"] = {
+                "requested": len(smart_compiled.camera_intents),
+                "applied": 0,
+                "status": "omitted_silence_cut_timeline_unmapped",
+                "full_video_encode_count": 1,
+            }
         # Cut-output reuse (7A): a sibling variant may have already paid for the
         # cut encode of this exact clip — copy it instead of re-running ffmpeg.
         cut_reused = False
@@ -8158,6 +8248,7 @@ def _render_subtitled_variant(
                         {"variant_id": variant_id, "error": str(exc)[:200]},
                     )
                     sc_apply = False
+                    sc_apply_failed = True
                     sc_plan = None
                     sc_words = None
                     sc_language = ""
@@ -8175,7 +8266,11 @@ def _render_subtitled_variant(
                         has_audio=probe.has_audio,
                     )
             else:
-                if smart_compiled is not None and smart_compiled.camera_intents:
+                if (
+                    smart_compiled is not None
+                    and smart_compiled.camera_intents
+                    and "semantic_crop_pulses" in reframe_kwargs
+                ):
                     base["smart_validation_receipts"]["camera_render"] = {
                         "requested": len(smart_compiled.camera_intents),
                         "applied": len(smart_compiled.camera_intents),
@@ -8184,6 +8279,51 @@ def _render_subtitled_variant(
                     }
         if not os.path.exists(base_path) or os.path.getsize(base_path) == 0:
             raise RuntimeError("subtitled base render produced empty output")
+        if smart_v2 and sc_apply_failed:
+            # The first semantic plan used the cut timeline. If that cut encode
+            # failed open, rebuild from the successfully rendered uncut base so
+            # captions and every later overlay stay audio-locked. Camera pulses
+            # cannot be folded into the already-complete reframe and are recorded
+            # as omitted; all non-camera Smart lanes can still ship.
+            transcript = transcribe_whisper(base_path, language=None)
+            detected_lang = transcript.language or (language or "en")
+            cues = build_plain_cues(transcript.words, attach_words=True)
+            cues = correct_caption_cues(
+                cues,
+                detected_lang,
+                model=settings.caption_correction_model,
+                enabled=settings.subtitled_caption_correction_enabled,
+                trusted_aliases=trusted_caption_aliases,
+            )
+            cues = resplit_cues_into_sentences(cues)
+            canonical_cues = copy.deepcopy(cues)
+            smart_compiled = None
+            if smart_captions is not None and cues:
+                try:
+                    smart_compiled, smart_state = _compile_smart_caption_render_plan(
+                        cues=cues,
+                        smart_captions=smart_captions,
+                        detected_lang=detected_lang,
+                        job_id=job_id,
+                        smart_assets=smart_assets,
+                    )
+                    if smart_compiled is not None:
+                        cues = smart_compiled.caption_cues
+                        base.update(smart_state)
+                        if smart_compiled.camera_intents:
+                            base["smart_validation_receipts"]["camera_render"] = {
+                                "requested": len(smart_compiled.camera_intents),
+                                "applied": 0,
+                                "status": "omitted_after_silence_cut_retry",
+                                "full_video_encode_count": 1,
+                            }
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "smart_captions_replan_after_cut_failure_failed_open",
+                        job_id=job_id,
+                        variant_id=variant_id,
+                        error=str(exc)[:300],
+                    )
         if sc_apply and not cut_reused and silence_cut_cache is not None:
             # Stash the cut base for sibling variants (best-effort — a copy
             # failure only costs the next variant a re-encode, never the job).
@@ -8249,6 +8389,7 @@ def _render_subtitled_variant(
         # instead of a stacked 4-line block.
         if not smart_v2:
             cues = resplit_cues_into_sentences(cues)
+            canonical_cues = copy.deepcopy(cues)
 
         # Smart Captions semantic pass. It operates on the corrected, final cue
         # text and its word timings, then compiles only closed tokens into Nova's
@@ -8264,6 +8405,7 @@ def _render_subtitled_variant(
                     smart_captions=smart_captions,
                     detected_lang=detected_lang,
                     job_id=job_id,
+                    smart_assets=smart_assets,
                 )
                 if smart_compiled is not None:
                     cues = smart_compiled.caption_cues
@@ -8275,6 +8417,34 @@ def _render_subtitled_variant(
                     variant_id=variant_id,
                     error=str(exc)[:300],
                 )
+
+        shadow_id = smart_captions.get("shadow_preset_id") if smart_captions else None
+        shadow_version = smart_captions.get("shadow_preset_version") if smart_captions else None
+        if shadow_id and shadow_version and canonical_cues:
+            try:
+                shadow_compiled, shadow_state = _compile_smart_caption_render_plan(
+                    cues=canonical_cues,
+                    smart_captions={
+                        "preset_id": shadow_id,
+                        "preset_version": shadow_version,
+                        "sound_design": "off",
+                    },
+                    detected_lang=detected_lang,
+                    job_id=job_id,
+                    smart_assets=smart_assets,
+                )
+                if shadow_compiled is not None:
+                    base["smart_shadow_comparison"] = _smart_shadow_comparison(
+                        primary_state=base,
+                        shadow_state=shadow_state,
+                        shadow_compiled=shadow_compiled,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                base["smart_shadow_comparison"] = {
+                    "status": "failed_open",
+                    "materialized": False,
+                    "error_class": type(exc).__name__,
+                }
 
         if smart_compiled is not None:
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
@@ -8674,6 +8844,7 @@ def _render_subtitled_variant(
             "smart_caption_policy": base["smart_caption_policy"],
             "smart_music_treatment": base["smart_music_treatment"],
             "smart_audio_receipt": base["smart_audio_receipt"],
+            "smart_shadow_comparison": base["smart_shadow_comparison"],
             "boundary_effects": base["boundary_effects"],
             "text_elements": base.get("text_elements"),
             "text_elements_user_edited": base.get("text_elements_user_edited"),
@@ -10305,6 +10476,7 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "smart_caption_policy": r.get("smart_caption_policy"),
                     "smart_music_treatment": r.get("smart_music_treatment"),
                     "smart_audio_receipt": r.get("smart_audio_receipt"),
+                    "smart_shadow_comparison": r.get("smart_shadow_comparison"),
                     "boundary_effects": r.get("boundary_effects"),
                     # TextElement lane state — MUST survive finalization for any variant
                     # whose authored text is edited through PUT /text-elements.

@@ -122,10 +122,59 @@ def test_sync_dispatch_context_omits_unrequested_or_revoked_feature(monkeypatch)
     )
     db.get.assert_not_called()
 
-    db.get.return_value = SimpleNamespace(enabled=False, preset_id="cigdem", preset_version="v1")
+    db.get.return_value = SimpleNamespace(
+        enabled=False,
+        preset_id="cigdem",
+        preset_version="v1",
+    )
     assert (
         resolve_smart_captions_context_sync(
             user_id=uuid.uuid4(), edit_format="subtitled", requested=True, db=db
         )
         is None
     )
+
+
+def test_valid_shadow_is_pinned_but_partial_or_unknown_shadow_is_ignored(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "smart_captions_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    user_id = uuid.uuid4()
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(
+        enabled=True,
+        preset_id="cigdem",
+        preset_version="v1",
+        shadow_preset_id="cigdem",
+        shadow_preset_version="v2",
+    )
+
+    context = resolve_smart_captions_context_sync(
+        user_id=user_id,
+        edit_format="subtitled",
+        requested=True,
+        db=db,
+    )
+    assert context == {
+        "preset_id": "cigdem",
+        "preset_version": "v1",
+        "shadow_preset_id": "cigdem",
+        "shadow_preset_version": "v2",
+        "sound_design": "auto",
+    }
+
+    for shadow_id, shadow_version in (("cigdem", None), ("unknown", "v9")):
+        db.get.return_value = SimpleNamespace(
+            enabled=True,
+            preset_id="cigdem",
+            preset_version="v1",
+            shadow_preset_id=shadow_id,
+            shadow_preset_version=shadow_version,
+        )
+        context = resolve_smart_captions_context_sync(
+            user_id=user_id,
+            edit_format="subtitled",
+            requested=True,
+            db=db,
+        )
+        assert "shadow_preset_id" not in context
+        assert "shadow_preset_version" not in context

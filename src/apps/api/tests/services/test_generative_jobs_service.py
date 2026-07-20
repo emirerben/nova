@@ -160,6 +160,41 @@ def test_smart_captions_context_is_pinned_only_for_subtitled_jobs() -> None:
     assert "smart_captions" not in invalid.all_candidates
 
 
+def test_smart_captions_shadow_context_survives_only_as_a_complete_safe_pair() -> None:
+    base = {"preset_id": "cigdem", "preset_version": "v1"}
+    smart = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        edit_format="subtitled",
+        smart_captions={
+            **base,
+            "shadow_preset_id": "cigdem",
+            "shadow_preset_version": "v2",
+        },
+    )
+    assert smart.all_candidates["smart_captions"] == {
+        **base,
+        "shadow_preset_id": "cigdem",
+        "shadow_preset_version": "v2",
+        "sound_design": "auto",
+    }
+
+    for invalid_shadow in (
+        {"shadow_preset_id": "cigdem"},
+        {"shadow_preset_id": "../../cigdem", "shadow_preset_version": "v2"},
+    ):
+        job = build_generative_job(
+            user_id=uuid.uuid4(),
+            clip_paths=["users/u/plan/i/a.mp4"],
+            edit_format="subtitled",
+            smart_captions={**base, **invalid_shadow},
+        )
+        assert job.all_candidates["smart_captions"] == {
+            **base,
+            "sound_design": "auto",
+        }
+
+
 def test_montage_preset_omits_classic_and_stashes_collage_presets() -> None:
     assert coerce_montage_preset("polaroid_wall") == "polaroid_wall"
 
