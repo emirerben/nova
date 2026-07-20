@@ -3,15 +3,20 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
+
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
 from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.agents._schemas.sound_effect import SoundEffectPlacement
 from app.pipeline.captions import generate_ass_from_cues, prepare_smart_caption_cues
 from app.pipeline.reframe import _build_video_filter
 from app.pipeline.render_geometry import (
+    MediaFootprint,
     NormalizedBox,
+    ProtectedRegion,
     arbitrate_media_overlays,
     sample_face_boxes,
+    sample_face_regions,
 )
 from app.pipeline.sound_effects import (
     MusicBedTreatment,
@@ -22,7 +27,13 @@ from app.pipeline.text_overlay_skia import measure_text_overlay_box
 from app.smart_edit.compiler import compile_smart_plan
 from app.smart_edit.planner import plan_smart_captions
 from app.smart_edit.presets import load_preset
-from app.tasks.generative_build import _smart_music_track_eligible, _text_element_burn_dicts
+from app.tasks.generative_build import (
+    _effective_smart_caption_policy,
+    _load_smart_caption_assets_fail_open,
+    _should_compose_subtitled_final,
+    _smart_music_track_eligible,
+    _text_element_burn_dicts,
+)
 
 
 def _cue(text: str, start_s: float, end_s: float) -> dict:
@@ -58,6 +69,7 @@ def test_v2_caption_policy_is_measured_two_line_and_reburn_stable(tmp_path) -> N
     assert 1 <= len(prepared[0]["smart_render_lines"]) <= 2
     assert box["right"] - box["left"] <= policy["width_frac"] + 0.001
     assert 0.0 <= box["top"] < box["bottom"] <= 1.0
+    assert box["bottom"] == policy["y_frac"]
 
     initial = tmp_path / "initial.ass"
     reburn = tmp_path / "reburn.ass"
@@ -67,6 +79,24 @@ def test_v2_caption_policy_is_measured_two_line_and_reburn_stable(tmp_path) -> N
     rendered = initial.read_text()
     assert f"{policy['font_family']},{policy['font_size_px']}" in rendered
     assert "\\N" in rendered
+
+
+def test_smart_caption_policy_honors_explicit_creator_font_and_position() -> None:
+    policy = load_preset("cigdem", "v2").caption.model_dump(mode="json")
+
+    effective = _effective_smart_caption_policy(
+        {
+            "smart_caption_policy": policy,
+            "caption_font_user_edited": True,
+            "caption_position_user_edited": True,
+        },
+        ass_font="TikTok Sans",
+        margin_v=round((1.0 - 0.66) * 1920),
+    )
+
+    assert effective is not None
+    assert effective["font_family"] == "TikTok Sans"
+    assert effective["y_frac"] == pytest.approx(0.66, abs=0.001)
 
 
 def test_shared_geometry_moves_or_omits_decorative_media() -> None:
@@ -86,6 +116,99 @@ def test_shared_geometry_moves_or_omits_decorative_media() -> None:
         assert box.iou(protected[0]) <= 0.02
     else:
         assert receipts[0]["decision"] == "omitted_no_safe_candidate"
+
+
+def test_shared_geometry_keeps_simultaneous_cards_from_stacking() -> None:
+    overlays = [
+        {
+            "id": card_id,
+            "display_mode": "pip",
+            "position": "custom",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.3,
+            "start_s": 0.0,
+            "end_s": 3.0,
+        }
+        for card_id in ("first", "second")
+    ]
+
+    resolved, _receipts = arbitrate_media_overlays(overlays, protected_boxes=[])
+
+    assert len(resolved) == 2
+    first = NormalizedBox(**resolved[0]["smart_layout_box"])
+    second = NormalizedBox(**resolved[1]["smart_layout_box"])
+    assert first.iou(second) <= 0.02
+
+
+def test_shared_geometry_ignores_protected_regions_outside_card_interval() -> None:
+    overlay = {
+        "id": "early-card",
+        "display_mode": "pip",
+        "position": "custom",
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "scale": 0.3,
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    later_caption = ProtectedRegion(
+        start_s=8.0,
+        end_s=10.0,
+        box=NormalizedBox(0.25, 0.35, 0.75, 0.65),
+        kind="caption",
+    )
+
+    resolved, receipts = arbitrate_media_overlays(
+        [overlay],
+        protected_boxes=[later_caption],
+    )
+
+    assert resolved[0]["x_frac"] == pytest.approx(0.5)
+    assert resolved[0]["y_frac"] == pytest.approx(0.5)
+    assert receipts[0]["decision"] == "kept"
+
+
+def test_shared_geometry_uses_real_aspect_and_alpha_footprint() -> None:
+    overlay = {
+        "id": "wide-transparent-card",
+        "display_mode": "pip",
+        "position": "custom",
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "scale": 0.4,
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    footprint = MediaFootprint(
+        aspect_ratio=4.0,
+        opaque_bounds=NormalizedBox(0.25, 0.0, 0.75, 1.0),
+    )
+
+    resolved, _receipts = arbitrate_media_overlays(
+        [overlay],
+        protected_boxes=[],
+        footprints_by_id={"wide-transparent-card": footprint},
+    )
+
+    box = NormalizedBox(**resolved[0]["smart_layout_box"])
+    assert box.width == pytest.approx(0.2)
+    assert box.height == pytest.approx(0.4 * 1080 / 1920 / 4.0)
+
+
+def test_smart_titles_force_text_caption_compositor_when_public_lane_is_off(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.tasks.generative_build.settings.subtitled_text_lane_enabled",
+        False,
+    )
+
+    assert _should_compose_subtitled_final(
+        {
+            "resolved_archetype": "subtitled",
+            "text_elements_materialized_from": "smart_captions",
+            "text_elements": [{"id": "chapter-1", "text": "1 - somutlastirma"}],
+        }
+    )
 
 
 def test_skia_title_measurement_uses_renderer_geometry() -> None:
@@ -227,6 +350,39 @@ def test_audio_treatment_retries_full_then_sfx_only(monkeypatch, tmp_path) -> No
     assert all(cmd[cmd.index("-c:v") + 1] == "copy" for cmd in calls)
 
 
+def test_audio_treatment_timeout_falls_through_to_untouched_speech(monkeypatch, tmp_path) -> None:
+    import subprocess
+
+    monkeypatch.setattr(
+        "app.pipeline.sound_effects.storage.download_to_file",
+        lambda _gcs, local: open(local, "wb").close(),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.sound_effects.storage.upload_public_read", lambda *a, **k: "u"
+    )
+    monkeypatch.setattr("app.pipeline.sound_effects._has_decodable_audio", lambda _path: True)
+    monkeypatch.setattr(
+        "app.pipeline.sound_effects.subprocess.run",
+        lambda cmd, **_kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd, 600)),
+    )
+
+    _, receipt = apply_smart_audio_treatment(
+        "base.mp4",
+        [
+            SoundEffectPlacement(
+                id="tick",
+                src_gcs_path="sound-effects/tick/audio.wav",
+                at_s=1.0,
+                gain=0.4,
+            )
+        ],
+        "out.mp4",
+    )
+
+    assert receipt["final_tier"] == "untouched_speech"
+    assert receipt["component_failures"][-1]["reason"] == "ffmpeg_timeout"
+
+
 def test_semantic_crop_is_inside_existing_reframe_filter_only() -> None:
     baseline = _build_video_filter("9:16", None)
     assert baseline == _build_video_filter("9:16", None, semantic_crop_pulses=[])
@@ -251,3 +407,31 @@ def test_face_detection_failure_has_bounded_empty_fallback() -> None:
     assert boxes == []
     assert receipt["attempted"] <= 2
     assert receipt["elapsed_ms"] < 1000
+
+
+def test_face_detection_timeout_is_enforced_by_killable_process(monkeypatch) -> None:
+    import subprocess
+
+    def timeout(command, **_kwargs):
+        raise subprocess.TimeoutExpired(command, 0.01)
+
+    monkeypatch.setattr("app.pipeline.render_geometry.subprocess.run", timeout)
+
+    regions, receipt = sample_face_regions("/blocked-decoder.mp4", [0.0, 1.0], timeout_s=0.01)
+
+    assert regions == []
+    assert receipt["timed_out"] is True
+    assert receipt["attempted"] == 2
+    assert receipt["elapsed_ms"] < 500
+
+
+def test_asset_context_failure_returns_empty_pool_and_receipt(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.tasks.generative_build._load_smart_caption_assets",
+        lambda _job_id: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+    )
+
+    assets, receipt = _load_smart_caption_assets_fail_open("00000000-0000-0000-0000-000000000000")
+
+    assert assets == []
+    assert receipt == {"status": "failed_open", "error_class": "RuntimeError"}

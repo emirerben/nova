@@ -145,6 +145,8 @@ def test_hint_builder_accepts_grounded_names_and_rejects_paths_prompts_and_metad
     assert "Pip" not in hints
     assert not any("secret" in hint or "ignore" in hint for hint in hints)
 
+    assert cc.build_trusted_caption_hints(visual_aliases=aliases, asset_names=[]) == []
+
 
 def test_accepted_alias_repair_preserves_word_ids_count_and_timestamps(monkeypatch) -> None:
     monkeypatch.setattr(cc, "_llm_propose_substitutions", lambda *a, **k: [_proposal()])

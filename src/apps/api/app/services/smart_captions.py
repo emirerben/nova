@@ -64,6 +64,12 @@ def _resolve_from_assignment(
     preset_version = str(assignment.preset_version or "").strip()
     if not preset_id or not preset_version:
         return SmartCaptionsCapability(False, "invalid_assignment")
+    try:
+        from app.smart_edit.presets import load_preset  # noqa: PLC0415
+
+        load_preset(preset_id, preset_version)
+    except Exception:
+        return SmartCaptionsCapability(False, "invalid_assignment")
     shadow = _resolved_shadow(assignment)
     return SmartCaptionsCapability(
         True,

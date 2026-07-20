@@ -94,6 +94,10 @@ _MIN_SPINE_COVERAGE = 0.15
 # cadence uses a 1.5s lead-in and drops windows shorter than 0.5s, so a <=2s
 # spine would render as a single clip even when many clips were uploaded.
 _MIN_TALKING_HEAD_SPINE_WITH_BROLL_S = 2.0
+# The music matcher prompt and worker memory must not grow with the full admin
+# catalog. Eligibility is filtered in SQL and this deterministic newest-first
+# cap bounds the ORM/JSONB payload materialized by one Smart render.
+_SMART_MUSIC_CANDIDATE_LIMIT = 80
 
 # Voiceover edits: the user's recorded/uploaded voice is the audio bed. `mix` is the
 # voice-prominence slider (1.0 = bed fully ducked, voice only; 0.0 = bed full).
@@ -2504,6 +2508,7 @@ def _run_sfx_pass(
                     output_gcs_path=current_video_path,
                     music_bed=music_treatment,
                     job_id=job_id,
+                    mute_intervals=muted_sfx_intervals,
                 )
             else:
                 new_url = apply_sound_effects(
@@ -7602,6 +7607,33 @@ def _load_smart_caption_assets(job_id: str) -> list[dict[str, Any]]:
         ]
 
 
+def _load_smart_caption_assets_fail_open(
+    job_id: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Load the creator pool without allowing a context outage to fail video."""
+
+    try:
+        assets = _load_smart_caption_assets(job_id)
+        return assets, {"status": "loaded", "asset_count": len(assets)}
+    except Exception as exc:  # noqa: BLE001 — Smart context is optional polish
+        log.warning(
+            "smart_caption_asset_context_failed_open",
+            job_id=job_id,
+            error_class=type(exc).__name__,
+        )
+        try:
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            record_pipeline_event(
+                "smart_captions",
+                "asset_context_failed_open",
+                {"error_class": type(exc).__name__},
+            )
+        except Exception:  # noqa: BLE001 — observability cannot fail the render
+            pass
+        return [], {"status": "failed_open", "error_class": type(exc).__name__}
+
+
 def _smart_caption_trusted_aliases(
     smart_captions: dict[str, str] | None,
     smart_assets: list[dict[str, Any]],
@@ -7781,8 +7813,52 @@ def _resolve_smart_music_treatment(
             receipt.update({"status": "reused", "track_id": treatment.get("track_id")})
             return treatment, receipt
 
+        from sqlalchemy import select as _select  # noqa: PLC0415
+        from sqlalchemy.orm import load_only  # noqa: PLC0415
+
+        from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION  # noqa: PLC0415
+        from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION  # noqa: PLC0415
+
         with _sync_session() as db:
-            tracks = list(db.query(MusicTrack).all())
+            tracks = list(
+                db.execute(
+                    _select(MusicTrack)
+                    .options(
+                        load_only(
+                            MusicTrack.id,
+                            MusicTrack.title,
+                            MusicTrack.audio_gcs_path,
+                            MusicTrack.duration_s,
+                            MusicTrack.analysis_status,
+                            MusicTrack.published_at,
+                            MusicTrack.archived_at,
+                            MusicTrack.track_config,
+                            MusicTrack.ai_labels,
+                            MusicTrack.label_version,
+                            MusicTrack.best_sections,
+                            MusicTrack.section_version,
+                            MusicTrack.recipe_cached,
+                            MusicTrack.beat_timestamps_s,
+                            MusicTrack.lyrics_cached,
+                        )
+                    )
+                    .where(
+                        MusicTrack.analysis_status == "ready",
+                        MusicTrack.published_at.is_not(None),
+                        MusicTrack.archived_at.is_(None),
+                        MusicTrack.audio_gcs_path.like("music/%"),
+                        MusicTrack.ai_labels.is_not(None),
+                        MusicTrack.label_version == CURRENT_LABEL_VERSION,
+                        MusicTrack.best_sections.is_not(None),
+                        MusicTrack.section_version == CURRENT_SECTION_VERSION,
+                        MusicTrack.track_config.contains({"smart_captions_licensed": True}),
+                    )
+                    .order_by(MusicTrack.created_at.desc(), MusicTrack.id)
+                    .limit(_SMART_MUSIC_CANDIDATE_LIMIT)
+                )
+                .scalars()
+                .all()
+            )
             for track in tracks:
                 _ = (
                     track.id,
@@ -7852,6 +7928,12 @@ def _resolve_smart_music_treatment(
             "section_start_s": round(float(section[0]), 3),
             "section_end_s": round(float(section[1]), 3),
             "gain_db": float(intent.get("bed_gain_db") or -18.0),
+            "speech_duck_db": float(
+                intent["speech_duck_db"] if intent.get("speech_duck_db") is not None else -12.0
+            ),
+            "final_lufs": float(
+                intent["final_lufs"] if intent.get("final_lufs") is not None else -14.0
+            ),
             "matcher_score": float(match["score"]),
             "matcher_rationale": str(match.get("rationale") or ""),
             "minimum_score": floor,
@@ -7933,12 +8015,29 @@ def _render_subtitled_variant(
     smart_v2 = _is_smart_captions_v2(smart_captions)
     smart_render_started = time.monotonic()
     smart_caption_policy: dict[str, Any] | None = None
-    if smart_v2 and smart_captions is not None:
+    smart_preset_receipt: dict[str, Any] | None = None
+    if smart_captions is not None:
         from app.smart_edit.presets import load_preset  # noqa: PLC0415
 
-        smart_caption_policy = load_preset(
-            smart_captions["preset_id"], smart_captions["preset_version"]
-        ).caption.model_dump(mode="json")
+        try:
+            resolved_preset = load_preset(
+                smart_captions["preset_id"], smart_captions["preset_version"]
+            )
+            if smart_v2:
+                smart_caption_policy = resolved_preset.caption.model_dump(mode="json")
+        except Exception as exc:  # noqa: BLE001 — stale assignment must fail open
+            log.warning(
+                "smart_caption_primary_preset_failed_open",
+                job_id=job_id,
+                variant_id=variant_id,
+                error_class=type(exc).__name__,
+            )
+            smart_preset_receipt = {
+                "status": "failed_open",
+                "error_class": type(exc).__name__,
+            }
+            smart_captions = None
+            smart_v2 = False
     base = {
         "variant_id": variant_id,
         "rank": rank,
@@ -7985,7 +8084,9 @@ def _render_subtitled_variant(
         "smart_edit_document": None,
         "smart_compiled_patch": None,
         "smart_planner_versions": None,
-        "smart_validation_receipts": None,
+        "smart_validation_receipts": (
+            {"preset_resolution": smart_preset_receipt} if smart_preset_receipt else None
+        ),
         "smart_caption_policy": smart_caption_policy,
         "smart_music_treatment": None,
         "smart_audio_receipt": None,
@@ -8033,7 +8134,10 @@ def _render_subtitled_variant(
             )
         aspect = "16:9" if getattr(probe, "aspect_ratio", "") == "16:9" else "9:16"
         fit = resolve_output_fit(probe, landscape_fit=landscape_fit)
-        smart_assets = _load_smart_caption_assets(job_id) if smart_captions is not None else []
+        if smart_captions is not None:
+            smart_assets, asset_context_receipt = _load_smart_caption_assets_fail_open(job_id)
+        else:
+            smart_assets, asset_context_receipt = [], None
         trusted_caption_aliases = _smart_caption_trusted_aliases(
             smart_captions,
             smart_assets,
@@ -8463,6 +8567,11 @@ def _render_subtitled_variant(
                 },
             )
 
+        if asset_context_receipt is not None:
+            if not isinstance(base.get("smart_validation_receipts"), dict):
+                base["smart_validation_receipts"] = {}
+            base["smart_validation_receipts"]["asset_context"] = asset_context_receipt
+
         if smart_compiled is not None and smart_compiled.boundary_effects:
             try:
                 from app.pipeline.boundary_effects import apply_boundary_effects  # noqa: PLC0415
@@ -8621,24 +8730,43 @@ def _render_subtitled_variant(
         elif smart_v2 and smart_compiled is not None:
             base["smart_validation_receipts"]["music_resolution"] = {"status": "disabled"}
 
-        protected_boxes: list[dict[str, float]] = []
+        protected_boxes: list[dict[str, object]] = []
         if smart_v2 and smart_compiled is not None:
-            from app.pipeline.render_geometry import sample_face_boxes  # noqa: PLC0415
+            from app.pipeline.render_geometry import (  # noqa: PLC0415
+                NormalizedBox,
+                ProtectedRegion,
+                sample_face_regions,
+            )
             from app.pipeline.text_overlay_skia import measure_text_overlay_box  # noqa: PLC0415
 
-            protected_boxes.extend(
-                dict(box) for cue in cues if isinstance((box := cue.get("smart_render_box")), dict)
-            )
+            for cue in cues:
+                box = cue.get("smart_render_box")
+                if isinstance(box, dict):
+                    protected_boxes.append(
+                        ProtectedRegion(
+                            start_s=float(cue.get("start_s") or 0.0),
+                            end_s=float(cue.get("end_s") or 0.0),
+                            box=NormalizedBox(**box),
+                            kind="caption",
+                        ).as_dict()
+                    )
             for overlay in _text_element_burn_dicts(base):
-                protected_boxes.append(measure_text_overlay_box(overlay))
+                protected_boxes.append(
+                    ProtectedRegion(
+                        start_s=float(overlay.get("start_s") or 0.0),
+                        end_s=float(overlay.get("end_s") or 0.0),
+                        box=NormalizedBox(**measure_text_overlay_box(overlay)),
+                        kind="title",
+                    ).as_dict()
+                )
             anchor_times = [
                 float(intent.get("at_s") or 0.0) for intent in smart_compiled.camera_intents
             ]
             anchor_times.extend(
                 float(event.get("start_s") or 0.0) for event in smart_compiled.media_overlays
             )
-            face_boxes, face_receipt = sample_face_boxes(base_path, anchor_times)
-            protected_boxes.extend(box.as_dict() for box in face_boxes)
+            face_regions, face_receipt = sample_face_regions(base_path, anchor_times)
+            protected_boxes.extend(region.as_dict() for region in face_regions)
             base["smart_validation_receipts"]["geometry_prepare"] = {
                 **face_receipt,
                 "caption_boxes": sum(isinstance(cue.get("smart_render_box"), dict) for cue in cues),
@@ -8671,6 +8799,7 @@ def _render_subtitled_variant(
                     else output_gcs
                 )
                 layout_receipts: list[dict[str, Any]] = []
+                applied_media_cards: list[dict[str, Any]] = []
                 output_url = apply_media_overlays(
                     pre_media_gcs,
                     media_cards,
@@ -8678,15 +8807,14 @@ def _render_subtitled_variant(
                     job_id=job_id,
                     protected_boxes=protected_boxes or None,
                     layout_receipt_out=layout_receipts,
+                    applied_cards_out=applied_media_cards,
                 )
                 rendered_gcs = media_target
                 base["pre_media_overlay_video_path"] = pre_media_gcs
-                base["media_overlays"] = [
-                    card.model_dump(exclude_none=True) for card in media_cards
-                ]
+                base["media_overlays"] = applied_media_cards
                 base["smart_validation_receipts"]["visual_render"] = {
                     "requested": len(media_cards),
-                    "applied": len(media_cards),
+                    "applied": len(applied_media_cards),
                     "status": "applied",
                     "layout": layout_receipts,
                 }
@@ -8970,6 +9098,25 @@ def _resolve_caption_margin_v(variant: dict) -> int:
     return SUBTITLED_CAPTION_MARGIN_V
 
 
+def _effective_smart_caption_policy(
+    variant: dict,
+    *,
+    ass_font: str,
+    margin_v: int | None,
+) -> dict[str, Any] | None:
+    """Merge explicit creator caption overrides into the pinned Smart policy."""
+
+    raw = variant.get("smart_caption_policy")
+    if not isinstance(raw, dict):
+        return None
+    policy = dict(raw)
+    if variant.get("caption_font_user_edited"):
+        policy["font_family"] = ass_font
+    if variant.get("caption_position_user_edited") and margin_v is not None:
+        policy["y_frac"] = max(0.3, min(0.9, 1.0 - margin_v / 1920.0))
+    return policy
+
+
 def _fresh_variant_snapshot(job_id: str, variant_id: str) -> dict | None:
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
@@ -9035,14 +9182,18 @@ def _compose_subtitled_final(base_local: str, variant: dict, tmpdir: str) -> str
 
 
 def _should_compose_subtitled_final(variant: dict) -> bool:
-    """Keep captions when authored text is added by visual-block autoplan.
+    """Keep authored text and captions together on every subtitled reburn.
 
-    The public subtitled text lane has its own rollout flag. AI text cards are
-    authored internally while visual blocks are enabled, so they must still use
-    the text-then-caption compositor or regeneration silently drops captions.
+    The public text lane, visual-block autoplan, and Smart Captions can each
+    author text independently. Persisted Smart titles must therefore use the
+    compositor even while the public text-lane rollout flag is off.
     """
     return variant.get("resolved_archetype") == "subtitled" and (
         getattr(settings, "subtitled_text_lane_enabled", False)
+        or (
+            variant.get("text_elements_materialized_from") == "smart_captions"
+            and bool(variant.get("text_elements"))
+        )
         or (
             getattr(settings, "visual_blocks_enabled", False)
             and _TEXT_ELEMENTS_ENABLED
@@ -9105,6 +9256,11 @@ def _burn_persisted_captions_onto_base(
     # None/unknown → the default). Both narrated AND subtitled persist the font under
     # `voiceover_caption_font` (render + caption-font route + finalize whitelist).
     ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))
+    smart_policy = _effective_smart_caption_policy(
+        variant,
+        ass_font=ass_font,
+        margin_v=margin_v,
+    )
     ass_path = os.path.join(tmpdir, "captions.ass")
     if subtitled_word_pop:
         # Real per-word times for cues left untouched; edited cues re-synthesize
@@ -9121,11 +9277,7 @@ def _burn_persisted_captions_onto_base(
             # user's cue set is authoritative (never re-split here). Narrated
             # stays un-animated (margin_v is None only for narrated).
             pop_in=(archetype == "subtitled"),
-            **(
-                {"smart_policy": variant["smart_caption_policy"]}
-                if variant.get("smart_caption_policy") is not None
-                else {}
-            ),
+            **({"smart_policy": smart_policy} if smart_policy is not None else {}),
         )
     burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
 
@@ -9669,6 +9821,8 @@ def _run_retranscribe_subtitled(
         raise ValueError(f"variant {variant_id} not found on job {job_id}")
     if variant.get("resolved_archetype") != "subtitled":
         raise ValueError(f"variant {variant_id} is not a subtitled variant")
+    if variant.get("smart_captions_applied"):
+        raise ValueError("Smart Caption language changes require a new render")
     base_path = variant.get("base_video_path")
     if not base_path:
         raise ValueError("variant has no caption-free base — cannot re-transcribe")

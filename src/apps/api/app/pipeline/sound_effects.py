@@ -23,6 +23,7 @@ tests/test_encoder_policy.py AST gate does not apply.
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import tempfile
@@ -52,6 +53,8 @@ class MusicBedTreatment:
     section_start_s: float
     section_end_s: float
     gain_db: float = -18.0
+    speech_duck_db: float = -12.0
+    final_lufs: float = -14.0
 
     @classmethod
     def from_value(cls, value: MusicBedTreatment | dict[str, Any]) -> MusicBedTreatment:
@@ -63,7 +66,20 @@ class MusicBedTreatment:
             section_start_s=max(0.0, float(value.get("section_start_s") or 0.0)),
             section_end_s=max(0.01, float(value["section_end_s"])),
             gain_db=float(value.get("gain_db") or -18.0),
+            speech_duck_db=float(
+                value["speech_duck_db"] if value.get("speech_duck_db") is not None else -12.0
+            ),
+            final_lufs=float(value["final_lufs"] if value.get("final_lufs") is not None else -14.0),
         )
+
+
+def _sidechain_ratio_for_duck_db(duck_db: float, *, threshold: float = 0.02) -> float:
+    """Translate desired full-scale attenuation into FFmpeg's compressor ratio."""
+
+    threshold_span_db = -20.0 * math.log10(threshold)
+    attenuation_db = min(max(abs(float(duck_db)), 0.0), threshold_span_db - 0.1)
+    ratio = threshold_span_db / max(0.1, threshold_span_db - attenuation_db)
+    return min(20.0, max(1.0, ratio))
 
 
 def build_sound_effects_command(
@@ -89,7 +105,7 @@ def build_sound_effects_command(
           volume={gain}
         → [fx{i}]
       [0:a][fx0]..[fxN]amix=inputs=N+1:duration=first:normalize=0[mix]
-      [mix]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[aout]
+      [mix]loudnorm=I={final_lufs}:TP=-1.5:LRA=11,aresample=48000[aout]
       -map 0:v -c:v copy -map [aout] -c:a aac -b:a 192k
     """
     assert len(effects) == len(effect_local_paths), "effects and paths must be same length"
@@ -163,7 +179,11 @@ def build_sound_effects_command(
         fx_labels.append(f"[{label}]")
 
     bed_label = ""
+    final_lufs = -14.0
     if music_bed and music_input_index is not None:
+        duck_db = min(0.0, max(-30.0, music_bed.speech_duck_db))
+        duck_ratio = _sidechain_ratio_for_duck_db(duck_db)
+        final_lufs = min(-8.0, max(-24.0, music_bed.final_lufs))
         section_duration = max(0.01, music_bed.section_end_s - music_bed.section_start_s)
         filter_parts.insert(0, "[0:a]asplit=2[voice][duckkey]")
         filter_parts.append(
@@ -173,7 +193,8 @@ def build_sound_effects_command(
             f"volume={music_bed.gain_db:.2f}dB[bedraw]"
         )
         filter_parts.append(
-            "[bedraw][duckkey]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=250[bed]"
+            "[bedraw][duckkey]sidechaincompress=threshold=0.02:"
+            f"ratio={duck_ratio:.3f}:attack=20:release=250[bed]"
         )
         bed_label = "[bed]"
 
@@ -185,7 +206,7 @@ def build_sound_effects_command(
     # audio (video is stream-copied so the container length is fixed).
     filter_parts.append(f"{mix_inputs}amix=inputs={n_inputs}:duration=first:normalize=0[mix]")
     # Final loudness normalization + mandatory aresample (AAC 96kHz pitch bug).
-    filter_parts.append("[mix]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[aout]")
+    filter_parts.append(f"[mix]loudnorm=I={final_lufs:g}:TP=-1.5:LRA=11,aresample=48000[aout]")
 
     cmd = [
         "ffmpeg",
@@ -335,6 +356,7 @@ def apply_smart_audio_treatment(
     *,
     music_bed: MusicBedTreatment | dict[str, Any] | None = None,
     job_id: str | None = None,
+    mute_intervals: list[tuple[float, float]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Apply v2 music+SFX with component validation and closed retry tiers.
 
@@ -416,10 +438,17 @@ def apply_smart_audio_treatment(
                 ready_effects,
                 effect_paths,
                 output_local,
+                mute_intervals=mute_intervals,
                 music_bed=attempt_bed,
                 music_local_path=attempt_music_path,
             )
-            result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+            try:
+                result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+            except subprocess.TimeoutExpired:
+                receipt["component_failures"].append(
+                    {"component": "graph", "id": tier, "reason": "ffmpeg_timeout"}
+                )
+                continue
             if result.returncode == 0:
                 receipt["final_tier"] = tier
                 receipt["elapsed_ms"] = round((time.monotonic() - started) * 1000)

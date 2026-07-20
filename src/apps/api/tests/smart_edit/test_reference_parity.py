@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import array
 import copy
+import math
+import shutil
+import subprocess
 
+import pytest
 from PIL import Image, ImageDraw
 
 import app.pipeline.caption_correct as correction
@@ -12,6 +17,27 @@ from app.smart_edit.compiler import compile_smart_plan
 from app.smart_edit.planner import plan_smart_captions
 from app.smart_edit.presets import load_preset
 from app.tasks.generative_build import _smart_caption_trusted_aliases, _smart_shadow_comparison
+
+
+def _working_ffmpeg() -> bool:
+    binary = shutil.which("ffmpeg")
+    if binary is None:
+        return False
+    return (
+        subprocess.run(
+            [binary, "-version"],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+def _run_ffmpeg(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+    result = subprocess.run(command, capture_output=True, timeout=120, check=False)
+    assert result.returncode == 0, result.stderr.decode(errors="replace")[-800:]
+    return result
 
 
 def _cue(text: str, start_s: float, end_s: float) -> dict:
@@ -145,8 +171,9 @@ def test_sanitized_reference_reaches_semantic_visual_title_audio_camera_parity(m
         asset["gcs_path"] for asset in _assets()[:5]
     }
     assert len({overlay["end_s"] for overlay in hook}) == 1
-    assert compiled.compiled_patch["hook_caption_suppressed"] is True
-    assert not any(cue.get("smart_style") == "hook" for cue in compiled.caption_cues)
+    assert compiled.compiled_patch["hook_caption_suppressed"] is False
+    assert compiled.compiled_patch["hook_caption_suppression_eligible"] is True
+    assert any(cue.get("smart_style") == "hook" for cue in compiled.caption_cues)
     assert planned.validation_receipt["detected_chapters"] == [1, 2, 3, 4]
     assert [element["text"] for element in compiled.text_elements if element["text"].isdigit()] == [
         "1",
@@ -221,6 +248,130 @@ def test_reference_audio_graph_has_reveal_ticks_and_persistent_voice_safe_bed() 
     assert all(f"adelay={2000 + index * 100}|" in graph for index in range(4))
     assert "sidechaincompress" in graph and "aloop=loop=-1" in graph
     assert command[command.index("-c:v") + 1] == "copy"
+
+
+@pytest.mark.skipif(not _working_ffmpeg(), reason="working ffmpeg runtime is required")
+def test_reference_audio_policy_executes_and_keeps_timed_tick_audible(tmp_path) -> None:
+    cues = [
+        _cue("Bunları hatırlıyor musunuz?", 0.0, 0.7),
+        _cue("Dört başlıkta anlatayım: 1.", 0.7, 1.3),
+        _cue("Somutlaştırma markayı akılda tutar.", 1.3, 2.0),
+    ]
+    planned = plan_smart_captions(
+        cues,
+        preset_version="v2",
+        language="tr",
+        use_agent=False,
+    )
+    assert planned is not None
+    compiled = compile_smart_plan(planned.document, planned.caption_cues)
+    intent = compiled.audio_treatment_intents[0]
+
+    base = tmp_path / "base.mp4"
+    music = tmp_path / "music.wav"
+    tick = tmp_path / "tick.wav"
+    output = tmp_path / "output.mp4"
+    _run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=320x568:r=24:d=2",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=2",
+            "-filter:a",
+            "volume=0.03",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(base),
+        ]
+    )
+    _run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=220:sample_rate=48000:duration=2",
+            "-filter:a",
+            "volume=0.02",
+            str(music),
+        ]
+    )
+    _run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1400:sample_rate=48000:duration=0.12",
+            str(tick),
+        ]
+    )
+    placement = SoundEffectPlacement(
+        id="keyboard-tick",
+        src_gcs_path="sound-effects/keyboard/audio.wav",
+        at_s=1.0,
+        gain=1.0,
+    )
+    command = build_sound_effects_command(
+        str(base),
+        [placement],
+        [str(tick)],
+        str(output),
+        music_bed=MusicBedTreatment(
+            track_id="licensed",
+            src_gcs_path="music/licensed/audio.wav",
+            section_start_s=0.0,
+            section_end_s=2.0,
+            gain_db=float(intent["bed_gain_db"]),
+            speech_duck_db=float(intent["speech_duck_db"]),
+            final_lufs=float(intent["final_lufs"]),
+        ),
+        music_local_path=str(music),
+    )
+    _run_ffmpeg(command)
+
+    decoded = _run_ffmpeg(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(output),
+            "-map",
+            "0:a:0",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "s16le",
+            "pipe:1",
+        ]
+    ).stdout
+    samples = array.array("h")
+    samples.frombytes(decoded)
+
+    def rms(start_s: float, end_s: float) -> float:
+        window = samples[round(start_s * 48000) : round(end_s * 48000)]
+        return math.sqrt(sum(sample * sample for sample in window) / len(window))
+
+    assert output.stat().st_size > 0
+    assert rms(1.0, 1.1) > rms(0.3, 0.5) * 1.5
 
 
 def test_shadow_v2_receipt_never_mutates_or_materializes_primary_v1() -> None:

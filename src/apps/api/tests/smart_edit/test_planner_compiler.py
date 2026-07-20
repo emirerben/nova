@@ -704,8 +704,13 @@ def test_v2_semantic_hook_accumulates_all_visuals_and_suppresses_only_when_resol
         planned.caption_cues,
         assets_by_id={asset["id"]: asset for asset in assets},
     )
-    assert complete.compiled_patch["hook_caption_suppressed"] is True
-    assert all(cue.get("smart_role") != "hook" for cue in complete.caption_cues)
+    assert complete.compiled_patch["hook_caption_suppressed"] is False
+    assert complete.compiled_patch["hook_caption_suppression_eligible"] is True
+    assert (
+        complete.compiled_patch["hook_caption_suppression_status"]
+        == "deferred_until_transactional_compositor"
+    )
+    assert any(cue.get("smart_role") == "hook" for cue in complete.caption_cues)
 
     incomplete = compile_smart_plan(
         planned.document,
@@ -713,6 +718,7 @@ def test_v2_semantic_hook_accumulates_all_visuals_and_suppresses_only_when_resol
         assets_by_id={asset["id"]: asset for asset in assets[:3]},
     )
     assert incomplete.compiled_patch["hook_caption_suppressed"] is False
+    assert incomplete.compiled_patch["hook_caption_suppression_eligible"] is False
     assert any(cue.get("smart_role") == "hook" for cue in incomplete.caption_cues)
 
 

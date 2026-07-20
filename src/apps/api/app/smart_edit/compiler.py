@@ -512,6 +512,7 @@ def compile_smart_plan(
         event_receipts.append(event_receipt)
 
     hook_caption_suppressed = False
+    hook_caption_suppression_eligible = False
     if is_v2:
         hook_scene = preset.scene_layouts.get("hook_accumulation")
         resolved_hook_visuals = {
@@ -524,16 +525,13 @@ def compile_smart_plan(
             and hook_scene.caption_visibility == "suppress_if_resolved"
             and len(resolved_hook_visuals) >= preset.density.hook_caption_suppress_min_visuals
         ):
-            for event in document.events:
-                if any(
-                    isinstance(lane, VisualLane)
-                    and lane.composition_group_id == "hook_accumulation"
-                    for lane in event.lanes
-                ):
-                    for lane in event.lanes:
-                        if isinstance(lane, CaptionEmphasisLane):
-                            claimed_word_ids.update(lane.baseline_caption_word_ids)
-            hook_caption_suppressed = True
+            # Asset resolution here is planning-time evidence only. Downloads,
+            # normalization, collision arbitration, and FFmpeg can still fail
+            # later. Suppressing speech here could therefore ship a hook with
+            # neither captions nor visuals. Keep the transcript visible until
+            # both lanes share a transactional compositor that can suppress
+            # from an applied-media manifest.
+            hook_caption_suppression_eligible = True
 
     compiled_cues = _suppress_claimed_words(compiled_cues, document, claimed_word_ids)
     if is_v2:
@@ -562,6 +560,12 @@ def compile_smart_plan(
         patch["camera_intents"] = camera_intents
         patch["audio_treatment_intents"] = audio_treatment_intents
         patch["hook_caption_suppressed"] = hook_caption_suppressed
+        patch["hook_caption_suppression_eligible"] = hook_caption_suppression_eligible
+        patch["hook_caption_suppression_status"] = (
+            "deferred_until_transactional_compositor"
+            if hook_caption_suppression_eligible
+            else "not_eligible"
+        )
         patch["reveal_schedules"] = reveal_schedules
     validation_receipt = {
         "valid": True,
@@ -580,6 +584,7 @@ def compile_smart_plan(
                 "camera_intent_count": len(camera_intents),
                 "audio_treatment_intent_count": len(audio_treatment_intents),
                 "hook_caption_suppressed": hook_caption_suppressed,
+                "hook_caption_suppression_eligible": hook_caption_suppression_eligible,
             }
         )
     return CompiledSmartEdit(

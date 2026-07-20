@@ -118,10 +118,16 @@ def build_trusted_caption_hints(
         else:
             asset_terms = list(getattr(group, "asset_terms", None) or [])
             transcript_terms = list(getattr(group, "transcript_terms", None) or [])
-        anchors = [*safe_names, *[str(term) for term in asset_terms]]
+        group_anchors = [str(term) for term in asset_terms]
+        if not any(
+            _phonetic_overlap(asset_term, safe_name) >= 0.58
+            for asset_term in group_anchors
+            for safe_name in safe_names
+        ):
+            continue
         for raw in transcript_terms:
             alias = _safe_display_name(str(raw))
-            if alias and any(_phonetic_overlap(alias, anchor) >= 0.58 for anchor in anchors):
+            if alias and any(_phonetic_overlap(alias, anchor) >= 0.58 for anchor in group_anchors):
                 hints[_fold(alias)] = alias
     return sorted(hints.values(), key=lambda value: (_fold(value), value))[:40]
 

@@ -135,6 +135,28 @@ def test_sync_dispatch_context_omits_unrequested_or_revoked_feature(monkeypatch)
     )
 
 
+def test_invalid_primary_preset_is_rejected_before_dispatch(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "smart_captions_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(
+        enabled=True,
+        preset_id="missing",
+        preset_version="v2",
+    )
+
+    assert (
+        resolve_smart_captions_context_sync(
+            user_id=uuid.uuid4(),
+            edit_format="subtitled",
+            requested=True,
+            db=db,
+        )
+        is None
+    )
+    db.get.assert_called_once()
+
+
 def test_valid_shadow_is_pinned_but_partial_or_unknown_shadow_is_ignored(monkeypatch) -> None:
     monkeypatch.setattr(settings, "smart_captions_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)

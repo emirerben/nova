@@ -65,6 +65,7 @@ from app.pipeline.render_geometry import (
     NormalizedBox,
     PreparedMediaAsset,
     arbitrate_media_overlays,
+    media_dimensions,
     opaque_alpha_box,
 )
 
@@ -331,8 +332,9 @@ def apply_media_overlays(
     output_gcs_path: str,
     job_id: str | None = None,
     deadline_monotonic: float | None = None,
-    protected_boxes: list[dict[str, float]] | None = None,
+    protected_boxes: list[dict[str, object]] | None = None,
     layout_receipt_out: list[dict] | None = None,
+    applied_cards_out: list[dict] | None = None,
     canvas: Canvas = PORTRAIT,
 ) -> str:
     """Download base variant, composite cards on top, upload result.
@@ -352,31 +354,20 @@ def apply_media_overlays(
         deadline_monotonic: optional time.monotonic() wall-clock ceiling from a
             caller that entered this pass mid-task (R4-2) — clamps the encode
             budget via _resolve_pass_budget. None keeps behavior byte-identical.
+        layout_receipt_out: optional sink for Smart collision decisions.
+        applied_cards_out: optional sink for the resolved cards that actually
+            reached the compositor, suitable for persistence and later reburns.
     """
     if not cards:
         raise MediaOverlayError("apply_media_overlays called with empty card list")
-
-    if protected_boxes:
-        boxes = [NormalizedBox(**box) for box in protected_boxes]
-        resolved_payloads, layout_receipts = arbitrate_media_overlays(
-            [card.model_dump(exclude_none=True) for card in cards],
-            protected_boxes=boxes,
-        )
-        cards = coerce_media_overlays(resolved_payloads) or []
-        if layout_receipt_out is not None:
-            layout_receipt_out.extend(layout_receipts)
-        if not cards:
-            raise MediaOverlayError("No decorative media has a collision-free layout")
+    needs_geometry = protected_boxes is not None or layout_receipt_out is not None
 
     with tempfile.TemporaryDirectory(prefix="nova_media_overlay_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         storage.download_to_file(base_gcs_path, base_local)
 
         # Download and normalise each card asset.
-        ready_cards: list[MediaOverlay] = []
-        local_paths: list[str] = []
-        widths_px: list[int] = []
-        alpha_flags: list[bool] = []
+        prepared_cards: list[tuple[MediaOverlay, PreparedMediaAsset]] = []
         raw_by_gcs: dict[str, str] = {}
         prepared_by_key: dict[tuple[str, bool], PreparedMediaAsset] = {}
 
@@ -437,41 +428,72 @@ def apply_media_overlays(
                         error=str(exc),
                     )
                     continue
+                width_px, height_px = media_dimensions(norm_local) if needs_geometry else (1, 1)
                 prepared = PreparedMediaAsset(
                     src_gcs_path=card.src_gcs_path,
                     local_path=norm_local,
                     has_alpha=use_alpha and alpha_preserved,
                     opaque_bounds=opaque_alpha_box(norm_local),
+                    width_px=width_px,
+                    height_px=height_px,
                 )
             elif prepared is None:
+                width_px, height_px = media_dimensions(raw_local) if needs_geometry else (1, 1)
                 prepared = PreparedMediaAsset(
                     src_gcs_path=card.src_gcs_path,
                     local_path=raw_local,
                     has_alpha=False,
                     opaque_bounds=NormalizedBox(0.0, 0.0, 1.0, 1.0),
+                    width_px=width_px,
+                    height_px=height_px,
                 )
             prepared_by_key[prepared_key] = prepared
-            local_paths.append(prepared.local_path)
-            alpha_flags.append(prepared.has_alpha)
+            prepared_cards.append((card, prepared))
 
-            ready_cards.append(card)
-            widths_px.append(card.card_width_px())
-
-        if not ready_cards:
+        if not prepared_cards:
             log.warning("media_overlay_all_cards_failed", job_id=job_id)
             raise MediaOverlayError("All card assets failed to load — skipping apply-pass")
+
+        if needs_geometry:
+            footprints = {card.id: prepared.footprint for card, prepared in prepared_cards}
+            resolved_payloads, layout_receipts = arbitrate_media_overlays(
+                [card.model_dump(exclude_none=True) for card, _prepared in prepared_cards],
+                protected_boxes=protected_boxes or [],
+                footprints_by_id=footprints,
+                canvas=canvas,
+            )
+            resolved_cards = coerce_media_overlays(resolved_payloads) or []
+            prepared_by_id = {card.id: prepared for card, prepared in prepared_cards}
+            prepared_cards = [
+                (card, prepared_by_id[card.id])
+                for card in resolved_cards
+                if card.id in prepared_by_id
+            ]
+            if layout_receipt_out is not None:
+                layout_receipt_out.extend(layout_receipts)
+            if not prepared_cards:
+                raise MediaOverlayError("No decorative media has a collision-free layout")
 
         # Validate timing: discard cards with end_s <= start_s (shouldn't happen
         # post-schema-validation, but defensive here too).
         valid: list[tuple[MediaOverlay, str, int, bool]] = []
-        for card, lp, wp, has_alpha in zip(ready_cards, local_paths, widths_px, alpha_flags):
+        for card, prepared in prepared_cards:
             if card.end_s <= card.start_s:
                 log.warning("media_overlay_bad_timing", card_id=card.id, job_id=job_id)
                 continue
-            valid.append((card, lp, wp, has_alpha))
+            valid.append(
+                (
+                    card,
+                    prepared.local_path,
+                    round(card.scale * canvas.width),
+                    prepared.has_alpha,
+                )
+            )
 
         if not valid:
             raise MediaOverlayError("No cards have valid timing — skipping apply-pass")
+        if applied_cards_out is not None:
+            applied_cards_out.extend(card.model_dump(exclude_none=True) for card, *_ in valid)
 
         final_cards, final_paths, final_widths, final_alpha_flags = zip(*valid)  # type: ignore[misc]
 

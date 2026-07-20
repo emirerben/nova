@@ -177,6 +177,53 @@ def test_0065_places_constraints_on_their_actual_tables(monkeypatch) -> None:
     assert set(created) == {"creator_style_assignments"}
 
 
+def test_0066_upgrade_downgrade_roundtrip_is_exact(monkeypatch) -> None:
+    """Execute both migration directions against an in-memory schema ledger."""
+
+    migration = importlib.import_module("app.migrations.versions.0066_smart_captions_shadow_preset")
+    table = "creator_style_assignments"
+    columns: set[str] = set()
+    constraints: dict[str, tuple[str, str]] = {}
+
+    def add_column(target: str, column) -> None:
+        assert target == table
+        assert column.name not in columns
+        columns.add(column.name)
+
+    def create_check_constraint(name: str, target: str, expression: str) -> None:
+        assert target == table
+        assert {"shadow_preset_id", "shadow_preset_version"} <= columns
+        constraints[name] = (target, expression)
+
+    def drop_constraint(name: str, target: str, *, type_: str) -> None:
+        assert target == table
+        assert type_ == "check"
+        constraints.pop(name)
+
+    def drop_column(target: str, name: str) -> None:
+        assert target == table
+        assert not constraints
+        columns.remove(name)
+
+    monkeypatch.setattr(migration.op, "add_column", add_column)
+    monkeypatch.setattr(migration.op, "create_check_constraint", create_check_constraint)
+    monkeypatch.setattr(migration.op, "drop_constraint", drop_constraint)
+    monkeypatch.setattr(migration.op, "drop_column", drop_column)
+
+    migration.upgrade()
+    assert columns == {"shadow_preset_id", "shadow_preset_version"}
+    assert constraints == {
+        "ck_creator_style_shadow_pair": (
+            table,
+            "(shadow_preset_id IS NULL) = (shadow_preset_version IS NULL)",
+        )
+    }
+
+    migration.downgrade()
+    assert columns == set()
+    assert constraints == {}
+
+
 def test_plan_item_assets_registered() -> None:
     """Auto-placement PR0 (plans/005): the asset-pool table + expected columns."""
     tables = models.Base.metadata.tables

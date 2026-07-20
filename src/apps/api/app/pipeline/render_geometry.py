@@ -8,7 +8,9 @@ reposition/shrink/omit policy for decorative media.
 
 from __future__ import annotations
 
-import os
+import json
+import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,11 +80,62 @@ class TextMeasurement:
 
 
 @dataclass(frozen=True, slots=True)
+class ProtectedRegion:
+    start_s: float
+    end_s: float
+    box: NormalizedBox
+    kind: str = "protected"
+
+    def overlaps(self, start_s: float, end_s: float) -> bool:
+        return start_s < self.end_s and self.start_s < end_s
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "start_s": round(self.start_s, 3),
+            "end_s": round(self.end_s, 3),
+            "kind": self.kind,
+            "box": self.box.as_dict(),
+        }
+
+    @classmethod
+    def from_value(cls, value: ProtectedRegion | NormalizedBox | dict[str, Any]) -> ProtectedRegion:
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, NormalizedBox):
+            return cls(0.0, float("inf"), value)
+        raw_box = value.get("box") if isinstance(value.get("box"), dict) else value
+        return cls(
+            start_s=max(0.0, float(value.get("start_s") or 0.0)),
+            end_s=max(float(value.get("end_s") or float("inf")), 0.0),
+            box=NormalizedBox(
+                left=float(raw_box["left"]),
+                top=float(raw_box["top"]),
+                right=float(raw_box["right"]),
+                bottom=float(raw_box["bottom"]),
+            ),
+            kind=str(value.get("kind") or "protected"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MediaFootprint:
+    aspect_ratio: float = 1.0
+    opaque_bounds: NormalizedBox = NormalizedBox(0.0, 0.0, 1.0, 1.0)
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedMediaAsset:
     src_gcs_path: str
     local_path: str
     has_alpha: bool
     opaque_bounds: NormalizedBox
+    width_px: int
+    height_px: int
+
+    @property
+    def footprint(self) -> MediaFootprint:
+        aspect = self.width_px / self.height_px if self.width_px > 0 and self.height_px > 0 else 1.0
+        return MediaFootprint(aspect_ratio=aspect, opaque_bounds=self.opaque_bounds)
 
 
 def _typeface(font_family: str) -> skia.Typeface:
@@ -132,12 +185,12 @@ def measure_caption(
     widest = min(max_width_px, max(font.measureText(line) for line in chosen_lines))
     height = chosen_size * 1.18 * len(chosen_lines)
     half_w = widest / canvas.width / 2
-    half_h = height / canvas.height / 2
+    height_frac = height / canvas.height
     box = NormalizedBox(
         max(0.0, 0.5 - half_w),
-        max(0.0, y_frac - half_h),
+        max(0.0, y_frac - height_frac),
         min(1.0, 0.5 + half_w),
-        min(1.0, y_frac + half_h),
+        min(1.0, y_frac),
     )
     return TextMeasurement(lines=chosen_lines, font_size_px=chosen_size, box=box)
 
@@ -164,6 +217,68 @@ def opaque_alpha_box(path: str) -> NormalizedBox:
         return NormalizedBox(0.0, 0.0, 1.0, 1.0)
 
 
+def sample_face_regions(
+    video_path: str,
+    anchor_times_s: list[float],
+    *,
+    max_samples: int = 12,
+    timeout_s: float = 2.0,
+) -> tuple[list[ProtectedRegion], dict[str, Any]]:
+    """Sample faces in a killable subprocess so the wall-clock budget is real."""
+
+    started = time.monotonic()
+    anchors = sorted({max(0.0, float(value)) for value in anchor_times_s})[:max_samples]
+    command = [
+        sys.executable,
+        "-m",
+        "app.pipeline.face_sampler_worker",
+        video_path,
+        json.dumps(anchors, separators=(",", ":")),
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=max(0.01, timeout_s),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        elapsed_ms = round((time.monotonic() - started) * 1000)
+        return [], {
+            "attempted": len(anchors),
+            "detected": 0,
+            "elapsed_ms": elapsed_ms,
+            "timed_out": True,
+        }
+    regions: list[ProtectedRegion] = []
+    attempted = len(anchors)
+    if result.returncode == 0:
+        try:
+            payload = json.loads(result.stdout)
+            attempted = int(payload.get("attempted") or attempted)
+            for sample in payload.get("samples") or []:
+                at_s = max(0.0, float(sample["at_s"]))
+                box = NormalizedBox(**sample["box"]).padded(0.08)
+                regions.append(
+                    ProtectedRegion(
+                        start_s=max(0.0, at_s - 0.5),
+                        end_s=at_s + 0.5,
+                        box=box,
+                        kind="face",
+                    )
+                )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            regions = []
+    elapsed_ms = round((time.monotonic() - started) * 1000)
+    return regions, {
+        "attempted": attempted,
+        "detected": len(regions),
+        "elapsed_ms": elapsed_ms,
+        "timed_out": False,
+    }
+
+
 def sample_face_boxes(
     video_path: str,
     anchor_times_s: list[float],
@@ -171,72 +286,99 @@ def sample_face_boxes(
     max_samples: int = 12,
     timeout_s: float = 2.0,
 ) -> tuple[list[NormalizedBox], dict[str, Any]]:
-    """Sample low-resolution face boxes at semantic anchors with a hard budget."""
+    """Compatibility wrapper for callers that only need timeless face boxes."""
 
-    started = time.monotonic()
-    boxes: list[NormalizedBox] = []
-    attempted = 0
+    regions, receipt = sample_face_regions(
+        video_path,
+        anchor_times_s,
+        max_samples=max_samples,
+        timeout_s=timeout_s,
+    )
+    return [region.box for region in regions], receipt
+
+
+def media_dimensions(path: str) -> tuple[int, int]:
+    """Return real pixel dimensions for image or video assets, square on failure."""
+
     try:
-        import cv2  # noqa: PLC0415
-
-        capture = cv2.VideoCapture(video_path)
-        cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
-        cascade = cv2.CascadeClassifier(cascade_path)
-        for at_s in sorted(set(anchor_times_s))[:max_samples]:
-            if time.monotonic() - started >= timeout_s:
-                break
-            attempted += 1
-            capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, at_s) * 1000)
-            ok, frame = capture.read()
-            if not ok:
-                continue
-            height, width = frame.shape[:2]
-            scale = min(1.0, 480.0 / max(width, height))
-            small = cv2.resize(frame, None, fx=scale, fy=scale)
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
-            if len(faces) == 0:
-                continue
-            x, y, face_w, face_h = max(faces, key=lambda face: face[2] * face[3])
-            sw, sh = small.shape[1], small.shape[0]
-            boxes.append(
-                NormalizedBox(x / sw, y / sh, (x + face_w) / sw, (y + face_h) / sh).padded(0.08)
-            )
-        capture.release()
+        with Image.open(path) as image:
+            return max(1, image.width), max(1, image.height)
     except Exception:
-        boxes = []
-    elapsed_ms = round((time.monotonic() - started) * 1000)
-    return boxes, {
-        "attempted": attempted,
-        "detected": len(boxes),
-        "elapsed_ms": elapsed_ms,
-        "timed_out": elapsed_ms >= round(timeout_s * 1000),
-    }
+        pass
+    try:
+        output = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "json",
+                path,
+            ],
+            text=True,
+            timeout=10,
+            stderr=subprocess.DEVNULL,
+        )
+        stream = (json.loads(output).get("streams") or [])[0]
+        return max(1, int(stream["width"])), max(1, int(stream["height"]))
+    except Exception:
+        return 1, 1
 
 
-def _box_for_overlay(overlay: dict[str, Any]) -> NormalizedBox:
+def _box_for_overlay(
+    overlay: dict[str, Any],
+    *,
+    footprint: MediaFootprint | None = None,
+    canvas: Canvas = PORTRAIT,
+) -> NormalizedBox:
     width = min(1.0, max(0.05, float(overlay.get("scale") or 0.3)))
-    height = width
+    footprint = footprint or MediaFootprint()
+    aspect = max(0.01, footprint.aspect_ratio)
+    height = width * canvas.width / canvas.height / aspect
+    x, y = _center_for_overlay(overlay)
+    left = x - width / 2
+    top = y - height / 2
+    opaque = footprint.opaque_bounds
+    return NormalizedBox(
+        max(0.0, left + opaque.left * width),
+        max(0.0, top + opaque.top * height),
+        min(1.0, left + opaque.right * width),
+        min(1.0, top + opaque.bottom * height),
+    )
+
+
+def _center_for_overlay(overlay: dict[str, Any]) -> tuple[float, float]:
     position = overlay.get("position")
-    x = float(overlay.get("x_frac") or 0.5) if position == "custom" else 0.5
+    raw_x = overlay.get("x_frac")
+    raw_y = overlay.get("y_frac")
+    x = float(raw_x if raw_x is not None else 0.5) if position == "custom" else 0.5
     y = (
         {"top": 0.18, "center": 0.5, "bottom": 0.82}.get(str(position), 0.5)
         if position != "custom"
-        else float(overlay.get("y_frac") or 0.5)
+        else float(raw_y if raw_y is not None else 0.5)
     )
-    return NormalizedBox(x - width / 2, y - height / 2, x + width / 2, y + height / 2)
+    return x, y
 
 
 def arbitrate_media_overlays(
     overlays: list[dict[str, Any]],
     *,
-    protected_boxes: list[NormalizedBox],
+    protected_boxes: list[ProtectedRegion | NormalizedBox | dict[str, Any]],
+    footprints_by_id: dict[str, MediaFootprint] | None = None,
     max_iou: float = 0.02,
+    canvas: Canvas = PORTRAIT,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Reposition, shrink, then omit decorative PiP overlays on collisions."""
 
     resolved: list[dict[str, Any]] = []
     receipts: list[dict[str, Any]] = []
+    protected_regions = [ProtectedRegion.from_value(value) for value in protected_boxes]
+    footprints_by_id = footprints_by_id or {}
+    occupied: list[tuple[float, float, NormalizedBox]] = []
     candidates = ((0.2, 0.14), (0.8, 0.14), (0.2, 0.42), (0.8, 0.42), (0.5, 0.2))
     for source in overlays:
         overlay = dict(source)
@@ -244,14 +386,22 @@ def arbitrate_media_overlays(
             resolved.append(overlay)
             receipts.append({"id": overlay.get("id"), "decision": "fullscreen"})
             continue
+        start_s = float(overlay.get("start_s") or 0.0)
+        end_s = float(overlay.get("end_s") or float("inf"))
+        footprint = footprints_by_id.get(str(overlay.get("id")), MediaFootprint())
+        collision_boxes = [
+            *[region.box for region in protected_regions if region.overlaps(start_s, end_s)],
+            *[
+                box
+                for occupied_start, occupied_end, box in occupied
+                if start_s < occupied_end and occupied_start < end_s
+            ],
+        ]
         accepted: dict[str, Any] | None = None
-        original_box = _box_for_overlay(overlay)
+        original_x, original_y = _center_for_overlay(overlay)
         for shrink in (1.0, 0.85, 0.70):
             for x_frac, y_frac in (
-                (
-                    (original_box.left + original_box.right) / 2,
-                    (original_box.top + original_box.bottom) / 2,
-                ),
+                (original_x, original_y),
                 *candidates,
             ):
                 trial = {
@@ -261,8 +411,8 @@ def arbitrate_media_overlays(
                     "y_frac": y_frac,
                     "scale": float(overlay.get("scale") or 0.3) * shrink,
                 }
-                box = _box_for_overlay(trial)
-                if all(box.iou(protected) <= max_iou for protected in protected_boxes):
+                box = _box_for_overlay(trial, footprint=footprint, canvas=canvas)
+                if all(box.iou(protected) <= max_iou for protected in collision_boxes):
                     accepted = trial
                     break
             if accepted is not None:
@@ -273,13 +423,15 @@ def arbitrate_media_overlays(
         decision = "kept"
         if accepted["scale"] < float(overlay.get("scale") or 0.3):
             decision = "shrunk"
-        elif (accepted["x_frac"], accepted["y_frac"]) != (
-            overlay.get("x_frac"),
-            overlay.get("y_frac"),
+        elif not (
+            abs(float(accepted["x_frac"]) - original_x) < 1e-9
+            and abs(float(accepted["y_frac"]) - original_y) < 1e-9
         ):
             decision = "moved"
-        accepted["smart_layout_box"] = _box_for_overlay(accepted).as_dict()
+        accepted_box = _box_for_overlay(accepted, footprint=footprint, canvas=canvas)
+        accepted["smart_layout_box"] = accepted_box.as_dict()
         resolved.append(accepted)
+        occupied.append((start_s, end_s, accepted_box))
         receipts.append(
             {
                 "id": overlay.get("id"),
@@ -288,8 +440,9 @@ def arbitrate_media_overlays(
                 "max_protected_iou": round(
                     max(
                         (
-                            _box_for_overlay(accepted).iou(protected)
-                            for protected in protected_boxes
+                            accepted_box.iou(region.box)
+                            for region in protected_regions
+                            if region.overlaps(start_s, end_s)
                         ),
                         default=0.0,
                     ),

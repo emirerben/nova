@@ -36,6 +36,15 @@ ingested_via: put_page
 **Depends on:** plan 010 shipping; sample subtitled/narrated jobs with ready assets.
 **Effort:** M (CC: ~1-2 h incl. eval fixtures)
 
+## Plan 011 — Smart Captions v2 follow-up
+
+### T-SMART-COMP-1 — Consolidate Smart Captions visual rendering into one compositor pass
+**What:** Replace the current caption, title, boundary, media, and final-caption sequence with one renderer-owned visual compositor after v2 canary data proves where the extra encode cost and generational loss occur.
+**Why:** Plan 011 deliberately ships through existing proven renderers first. A single pass is a larger renderer rewrite and should be justified by measured v2 latency or image-quality regressions, not assumed upfront.
+**Trigger:** V2 canary P95 exceeds the v1 comparison threshold or sampled outputs show measurable generational-quality loss attributable to the extra passes.
+**Depends on:** Plan 011 canary receipts and at least 20 successful internal v2 renders.
+**Priority:** P3
+
 ## Generative photos — re-plan (PR #476 closed 2026-07-11)
 
 ### Photo support in generative edits (re-plan against current stack)
