@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.3.0] — 2026-07-20
+
+### Fixed
+- **Text alignment now matches between the editor and exported video.** Left, center, and right alignment remain stable while typewriter and stream-in text appears, including wrapped lines and the streaming cursor.
+- **Clips can now be trimmed and split below the old 0.6-second minimum.** The editor accepts positive 0.1-second inputs, beat-synced edits keep a one-beat minimum, and timeline saves still enforce source bounds, song length, and the 60-second cap.
+
 ## [0.10.2.0] — 2026-07-20
 
 ### Fixed

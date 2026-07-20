@@ -36,7 +36,11 @@ import {
   MAX_WIDTH_FRAC_MIN,
   resolveTextElementYFrac,
 } from "@/lib/overlay-layout";
-import { animationStateAt, sequenceOverlayFadeOutAlphaAt } from "@/lib/overlay-animation";
+import {
+  animationStateAt,
+  normalizeAnimatedRevealText,
+  sequenceOverlayFadeOutAlphaAt,
+} from "@/lib/overlay-animation";
 import { INTRO_FONTS, MAX_INTRO_S, type OverlayCanvas } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
@@ -914,7 +918,7 @@ export default function EditorCanvas({
                     Math.max(0.01, layout.end_s - layout.start_s),
                     bar?.fade_out_ms,
                   );
-                  const revealGrowsFromLeft =
+                  const usesFixedRevealLayout =
                     effect === "typewriter" || effect === "stream-in";
                   const baseStyle = textElementWrapperStyle({
                     layout,
@@ -958,8 +962,12 @@ export default function EditorCanvas({
                         fontSize={`${fontPx}px`}
                         strokeWidth={strokePx > 0 ? `${strokePx}px` : null}
                         canvasPixelCssSize={`${stageSize.h / canvas.h}px`}
-                        textAlignOverride={revealGrowsFromLeft ? "left" : null}
-                        reserveText={revealGrowsFromLeft ? layout.text : null}
+                        reserveText={
+                          usesFixedRevealLayout
+                            ? normalizeAnimatedRevealText(layout.text)
+                            : null
+                        }
+                        showCursor={animation.showCursor}
                       >
                         {animation.visibleText}
                       </TextElementOverlayContent>

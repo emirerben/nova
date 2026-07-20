@@ -15,8 +15,8 @@
 
 import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
 
-/** Smallest half a split may produce (seconds). Matches the clip-lane floor. */
-export const MIN_SLOT_SPLIT_S = 0.3;
+/** Smallest half a split may produce (seconds). Matches editor input precision. */
+export const MIN_SLOT_SPLIT_S = 0.1;
 
 export interface SlotSplitResult {
   slots: DraftSlot[];

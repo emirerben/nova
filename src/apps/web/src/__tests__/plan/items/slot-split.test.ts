@@ -2,7 +2,6 @@ import {
   splitSlotAt,
   deleteSlotEnforceFloor,
   activeSlotCount,
-  MIN_SLOT_SPLIT_S,
 } from "@/app/plan/items/[id]/_editor/slot-split";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 
@@ -60,9 +59,16 @@ describe("splitSlotAt (seconds mode)", () => {
 
   it("refuses a cut that leaves a half below the minimum", () => {
     const slots = [slot()]; // window [0,4]
-    const tooEarly = splitSlotAt(slots, [], "s1", MIN_SLOT_SPLIT_S / 2, "x");
+    const tooEarly = splitSlotAt(slots, [], "s1", 0.04, "x");
     expect(tooEarly.didSplit).toBe(false);
     expect(tooEarly.slots).toHaveLength(1);
+  });
+
+  it("accepts a split that produces sub-0.6s positive halves", () => {
+    const slots = [slot({ durationS: 0.4 })];
+    const result = splitSlotAt(slots, [], "s1", 0.2, "s1b");
+    expect(result.didSplit).toBe(true);
+    expect(result.slots.map((s) => s.durationS)).toEqual([0.2, 0.2]);
   });
 
   it("refuses to split a beats-gridded slot (no-grid split only)", () => {

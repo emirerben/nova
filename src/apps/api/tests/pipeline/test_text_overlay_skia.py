@@ -570,24 +570,93 @@ def test_animated_effects_all_produce_sequences(tmp_workdir):
         assert seq["n_frames"] > 1
 
 
-def test_typewriter_reveal_pins_to_full_text_box_left_edge():
+@pytest.mark.parametrize("effect", ["typewriter", "stream-in"])
+@pytest.mark.parametrize("text_anchor", ["left", "center", "right"])
+def test_reveal_effects_keep_full_wrapped_layout_geometry(effect, text_anchor):
     overlay = {
-        "text": "TYPEWRITER TITLE",
+        "text": "ALPHA  BETA GAMMA DELTA EPSILON ZETA ETA THETA",
+        "effect": effect,
         "position": "center",
         "position_x_frac": 0.5,
         "position_y_frac": 0.5,
-        "max_width_frac": 0.6,
-        "text_anchor": "center",
+        "max_width_frac": 0.45,
+        "text_anchor": text_anchor,
+        "vertical_anchor": "center",
         "font_family": "Inter",
         "text_size_px": 80,
         "text_color": "#FFFFFF",
     }
+    surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
 
-    reveal_overlay = tos._overlay_for_left_reveal_box(overlay, overlay["text"])
+    def draw_calls_at(t_local):
+        calls = []
 
-    assert reveal_overlay["text_anchor"] == "left"
-    assert reveal_overlay["position_x_frac"] == pytest.approx(0.2)
-    assert reveal_overlay["position_y_frac"] < overlay["position_y_frac"]
+        def capture(_canvas, line, x, baseline_y, *_args, **_kwargs):
+            calls.append((line, x, baseline_y))
+
+        with mock.patch.object(tos, "_draw_line_with_layers", side_effect=capture):
+            tos._draw_with_animation(surface.getCanvas(), overlay, t_local, 10.0)
+        return calls
+
+    partial = draw_calls_at(0.0)
+    settled = draw_calls_at(10.0)
+    partial_text = "A" if effect == "typewriter" else "ALPHA"
+
+    assert partial[0][0] == partial_text
+    assert len(settled) >= 2
+    assert partial[0][1:] == pytest.approx(settled[0][1:])
+
+    first_line = settled[0][0]
+    if effect == "typewriter":
+        visible_units = len(first_line) + 2  # separator + first next-line glyph
+        wrapped_partial = draw_calls_at((visible_units - 1) / 12.0)
+        assert wrapped_partial[1][0] == settled[1][0][:1]
+    else:
+        visible_words = len(first_line.split()) + 1
+        wrapped_partial = draw_calls_at((visible_words - 1) / 6.0)
+        assert wrapped_partial[1][0] == settled[1][0].split()[0]
+    assert wrapped_partial[1][1:] == pytest.approx(settled[1][1:])
+
+
+def test_reveal_text_normalization_matches_wrapping_contract():
+    assert tos._normalize_reveal_text("  ALPHA   BETA\n GAMMA\tDELTA ") == (
+        "ALPHA BETA\nGAMMA DELTA"
+    )
+
+
+def test_stream_in_cursor_blinks_without_changing_full_layout_geometry():
+    overlay = {
+        "text": "one two three four five six",
+        "effect": "stream-in",
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "max_width_frac": 0.45,
+        "text_anchor": "right",
+        "vertical_anchor": "center",
+        "font_family": "Inter",
+        "text_size_px": 80,
+        "text_color": "#FFFFFF",
+    }
+    surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
+
+    def draw_calls_at(t_local):
+        calls = []
+
+        def capture(_canvas, line, x, baseline_y, *_args, **_kwargs):
+            calls.append((line, x, baseline_y))
+
+        with mock.patch.object(tos, "_draw_line_with_layers", side_effect=capture):
+            tos._draw_with_animation(surface.getCanvas(), overlay, t_local, 10.0)
+        return calls
+
+    cursor_on = draw_calls_at(0.0)
+    cursor_off = draw_calls_at(0.5)
+    settled = draw_calls_at(10.0)
+
+    assert [call[0] for call in cursor_on] == ["one", " |"]
+    assert " |" not in [call[0] for call in cursor_off]
+    assert " |" not in [call[0] for call in settled]
+    assert cursor_on[0][1:] == pytest.approx(settled[0][1:])
 
 
 # -- Layout edge cases -------------------------------------------------------

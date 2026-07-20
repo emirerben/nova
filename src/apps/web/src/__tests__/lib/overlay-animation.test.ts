@@ -1,6 +1,7 @@
 import {
   animationStateAt,
   easeOutCubic,
+  normalizeAnimatedRevealText,
   popInScaleAt,
   sequenceFadeOutAlphaAt,
   sequenceOverlayFadeOutAlphaAt,
@@ -159,8 +160,8 @@ describe("animationStateAt — stream-in", () => {
 
   it('t=0 → "a" (n=max(1,floor(0)+1)=1 word)', () => {
     const s = animationStateAt("stream-in", 0, DUR, text4);
-    // n=1, floor(0*2)%2=0 → cursor added (n < 4)
-    expect(s.visibleText).toBe("a |");
+    expect(s.visibleText).toBe("a");
+    expect(s.showCursor).toBe(true);
   });
 
   it("t=1/6 → n=2 words", () => {
@@ -169,6 +170,18 @@ describe("animationStateAt — stream-in", () => {
     // n=2 < 4. floor((1/6)*2)=0 → even → cursor
     expect(s.visibleText).toMatch(/^a b/);
     expect(s.visibleText.startsWith("a b")).toBe(true);
+    expect(s.showCursor).toBe(true);
+  });
+
+  it("normalizes whitespace like Skia while revealing complete words", () => {
+    const s = animationStateAt("stream-in", 1 / 6, DUR, "a  b\nc");
+    expect(s.visibleText).toBe("a b");
+  });
+
+  it("hides the cursor once all words are visible", () => {
+    const s = animationStateAt("stream-in", 10, DUR, text4);
+    expect(s.visibleText).toBe(text4);
+    expect(s.showCursor).toBe(false);
   });
 
   it("scale and alpha are identity", () => {
@@ -176,6 +189,14 @@ describe("animationStateAt — stream-in", () => {
     expect(s.scale).toBeCloseTo(1.0);
     expect(s.alpha).toBeCloseTo(1.0);
     expect(s.yTranslate).toBeCloseTo(0.0);
+  });
+});
+
+describe("normalizeAnimatedRevealText", () => {
+  it("collapses intra-line whitespace while preserving explicit line breaks", () => {
+    expect(normalizeAnimatedRevealText("  ALPHA   BETA\n GAMMA\tDELTA ")).toBe(
+      "ALPHA BETA\nGAMMA DELTA",
+    );
   });
 });
 

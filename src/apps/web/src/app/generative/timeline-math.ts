@@ -7,14 +7,14 @@
  * offset is the cumulative beats of all PRIOR non-removed beats-bearing
  * slots. Slots with duration_beats null (no-grid variants, or footage-trimmed
  * slots on grid variants) use duration_s directly and never advance the
- * offset. Nudges step 0.5s with a 0.6s floor; total ≤ 60s.
+ * offset. Nudges step 0.5s with a positive 0.1s floor; total ≤ 60s.
  */
 
 import type { TimelineResponse, TimelineSlot } from "@/lib/generative-api";
 
 // ── No-grid (original_text) constraints ──────────────────────────────────────
 export const SECONDS_STEP = 0.5;
-export const SECONDS_FLOOR = 0.6;
+export const SECONDS_FLOOR = 0.1;
 export const MAX_TOTAL_SECONDS = 60;
 
 /** Client-side draft slot. `key` is a stable client identity that survives

@@ -45,8 +45,8 @@ export function TextElementOverlayContent({
   fontSize,
   strokeWidth,
   canvasPixelCssSize = `${100 / CANVAS_H}cqh`,
-  textAlignOverride,
   reserveText,
+  showCursor = false,
   children,
 }: {
   layout: TextElementLayout;
@@ -54,12 +54,12 @@ export function TextElementOverlayContent({
   strokeWidth?: string | null;
   /** CSS length occupied by one 1080x1920 renderer-canvas pixel. */
   canvasPixelCssSize?: string;
-  textAlignOverride?: TextElementLayout["alignment"] | null;
   reserveText?: string | null;
+  showCursor?: boolean;
   children?: ReactNode;
 }) {
   const { family, weight, style } = resolveClusterCssFont(layout.fontFamily);
-  const textAlign = textAlignOverride ?? layout.alignment;
+  const textAlign = layout.alignment;
   const content = children ?? layout.text;
   const canvasPx = (pixels: number) => `calc(${pixels} * ${canvasPixelCssSize})`;
   const glowRgb = layout.glowColor?.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
@@ -94,20 +94,18 @@ export function TextElementOverlayContent({
     padding: "0.08em 0.18em",
   };
 
-  if (reserveText) {
+  if (reserveText != null && typeof content === "string" && reserveText.startsWith(content)) {
+    const hiddenRemainder = reserveText.slice(content.length);
     return (
-      <div style={{ ...sharedStyle, position: "relative" }}>
-        <span aria-hidden style={{ visibility: "hidden" }}>
-          {reserveText}
-        </span>
-        <span
-          style={{
-            position: "absolute",
-            inset: "0.08em 0.18em",
-            padding: 0,
-          }}
-        >
-          {content}
+      <div style={sharedStyle}>
+        <span>{content}</span>
+        {showCursor && (
+          <span aria-hidden style={{ position: "relative", display: "inline-block", width: 0 }}>
+            <span style={{ position: "absolute", left: "0.2em" }}>|</span>
+          </span>
+        )}
+        <span aria-hidden data-reveal-remainder style={{ visibility: "hidden" }}>
+          {hiddenRemainder}
         </span>
       </div>
     );

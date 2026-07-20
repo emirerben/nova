@@ -314,7 +314,6 @@ function formatLoc(loc: unknown): string {
  * listed here fall through to the raw string — better than nothing, but add
  * new codes here as they're discovered surfacing verbatim to users. */
 const TIMELINE_ERROR_MESSAGES: Record<string, string> = {
-  TIMELINE_TOO_SHORT: "That clip would be shorter than the minimum (0.6s).",
   TIMELINE_TOO_LONG: "That timeline is longer than the maximum allowed length.",
   TIMELINE_OUT_OF_BOUNDS:
     "One of the clips ran out of footage for this edit. Try trimming it or picking a different clip.",

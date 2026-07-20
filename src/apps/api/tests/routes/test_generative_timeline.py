@@ -499,10 +499,7 @@ async def test_edit_no_grid_accepts_half_steps(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_edit_too_short_floor(monkeypatch):
-    # 1 beat from grid start = 0.5s < the 0.6s floor; the slot's window CHANGED
-    # (baseline s1 is 2 beats), so song variants snap up to the smallest legal
-    # beat count instead of surfacing raw TIMELINE_TOO_SHORT.
+async def test_edit_accepts_changed_one_beat_slot(monkeypatch):
     seq, _, delays = _arm(monkeypatch)
     job = _timeline_job()
     job.assembly_plan["variants"][0]["music_track_id"] = "track-1"
@@ -514,27 +511,24 @@ async def test_edit_too_short_floor(monkeypatch):
     )
     assert seq == ["persist", "enqueue"]
     override = delays[0][1]["timeline_override"]
-    assert override[0]["duration_beats"] == 2
-    assert override[0]["duration_s"] == pytest.approx(1.1)
+    assert override[0]["duration_beats"] == 1
+    assert override[0]["duration_s"] == pytest.approx(0.5)
 
 
 @pytest.mark.asyncio
-async def test_edit_too_short_floor_when_no_legal_beat_fits_source(monkeypatch):
-    job = _timeline_job(src_dur=0.55)
+async def test_edit_one_beat_reports_out_of_bounds_when_source_is_shorter(monkeypatch):
+    job = _timeline_job(src_dur=0.45)
     job.assembly_plan["variants"][0]["music_track_id"] = "track-1"
     await _expect_422(
         monkeypatch,
         job,
         [{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_beats": 1}],
-        "TIMELINE_TOO_SHORT",
+        "TIMELINE_OUT_OF_BOUNDS",
     )
 
 
 @pytest.mark.asyncio
-async def test_edit_floor_skipped_for_untouched_sub_floor_slot(monkeypatch):
-    # B2: the worker legitimately produces sub-0.6s slots (1 beat at fast BPM).
-    # An UNTOUCHED slot (same slot_id + in_s + duration_beats as the baseline)
-    # must never trip the floor on round-trip.
+async def test_edit_round_trips_untouched_fast_one_beat_slot(monkeypatch):
     fast_grid = [0.0, 0.45, 0.9, 1.35]
     job = _timeline_job(beat_grid=fast_grid)
     variant = job.assembly_plan["variants"][0]

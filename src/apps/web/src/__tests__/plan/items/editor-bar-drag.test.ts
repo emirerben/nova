@@ -140,7 +140,7 @@ describe("editor bar drag math", () => {
     ).toEqual({ inS: 0, durationS: 6, durationBeats: null });
   });
 
-  it("trims a clip right with source bounds and a 0.6s floor", () => {
+  it("trims a clip right with source bounds and a 0.1s positive floor", () => {
     expect(
       applyClipEdgeDrag({
         slot: { inS: 8, durationS: 2 },
@@ -157,7 +157,7 @@ describe("editor bar drag math", () => {
         deltaS: -8,
         sourceDurationS: 11,
       }),
-    ).toEqual({ inS: 8, durationS: 0.6, durationBeats: null });
+    ).toEqual({ inS: 8, durationS: 0.1, durationBeats: null });
   });
 
   it("allows optimistic clip duration when source duration is unknown", () => {
@@ -178,7 +178,7 @@ describe("editor bar drag math", () => {
         outS: 5.2,
         sourceDurationS: 9,
       }),
-    ).toEqual({ inS: 5, durationS: 0.6, durationBeats: null });
+    ).toEqual({ inS: 5, durationS: 0.2, durationBeats: null });
   });
 
   it("slides a source window while preserving duration and clamping to source bounds", () => {
@@ -201,7 +201,7 @@ describe("editor bar drag math", () => {
     ).toEqual({ inS: 0, durationS: 3, durationBeats: null });
   });
 
-  it("uses the 0.6s floor for source-window edge trims", () => {
+  it("uses the 0.1s positive floor for source-window edge trims", () => {
     expect(
       applyClipSourceWindowDrag({
         slot: { inS: 2, durationS: 3 },
@@ -209,13 +209,13 @@ describe("editor bar drag math", () => {
         deltaS: -9,
         sourceDurationS: 8,
       }),
-    ).toEqual({ inS: 2, durationS: 0.6, durationBeats: null });
+    ).toEqual({ inS: 2, durationS: 0.1, durationBeats: null });
   });
 
   it("raises the clip trim floor to one beat on song grids", () => {
     const grid = [0, 0.8, 1.1];
     expect(minimumClipDurationForSlot({ grid, offsetBeats: 0 })).toBe(0.8);
-    expect(minimumClipDurationForSlot({ grid, offsetBeats: 1 })).toBe(0.6);
+    expect(minimumClipDurationForSlot({ grid, offsetBeats: 1 })).toBe(0.3);
   });
 
   it("moves SFX starts while keeping duration inside the video", () => {

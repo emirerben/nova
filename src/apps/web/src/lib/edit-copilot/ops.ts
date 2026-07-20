@@ -526,7 +526,7 @@ export function validateCopilotOp(
       if (!hasIndex(snapshot, "slot", raw.slot_index)) {
         return reject("invalid_index", "slot_index must point into snapshot slots", opName);
       }
-      if (raw.duration_s < 0.6) return reject("invalid_value", "duration_s must be at least 0.6", opName);
+      if (raw.duration_s <= 0) return reject("invalid_value", "duration_s must be positive", opName);
       return { ok: true, op: { op: opName, slot_index: raw.slot_index, duration_s: raw.duration_s } };
     }
     case "set_clip_in": {

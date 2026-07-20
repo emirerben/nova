@@ -17,6 +17,8 @@ export interface AnimationState {
   yTranslate: number;
   /** Visible text slice (typewriter / stream-in effects). */
   visibleText: string;
+  /** Whether a zero-width streaming cursor should be drawn after visibleText. */
+  showCursor: boolean;
 }
 
 /** Mirror of _ease_out_cubic. t must be in [0,1]; clamped. */
@@ -45,6 +47,14 @@ export function popInScaleAt(tLocal: number, durationS: number): number {
   return KF_SCALES[KF_SCALES.length - 1];
 }
 
+/** Mirror Skia's word-wrapper normalization for fixed-layout reveal effects. */
+export function normalizeAnimatedRevealText(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/).filter(Boolean).join(" "))
+    .join("\n");
+}
+
 /**
  * Mirror of _draw_with_animation — returns the four reduced values without
  * drawing. `durationS` should be MAX_INTRO_S (from overlay-constants.ts).
@@ -61,6 +71,7 @@ export function animationStateAt(
   let alpha = 1.0;
   let yTranslate = 0.0;
   let visibleText = text;
+  let showCursor = false;
 
   if (effect === "scale-up") {
     const window = durationS > 0.6 ? 0.6 : Math.max(durationS, 0.01);
@@ -71,16 +82,21 @@ export function animationStateAt(
     const progress = Math.min(1.0, tLocal / window);
     alpha = easeOutCubic(progress);
   } else if (effect === "typewriter") {
+    const revealText = normalizeAnimatedRevealText(text);
     const CHARS_PER_S = 12.0;
     const visibleChars = Math.max(1, Math.floor(tLocal * CHARS_PER_S) + 1);
-    visibleText = text.slice(0, visibleChars);
+    visibleText = revealText.slice(0, visibleChars);
   } else if (effect === "stream-in") {
+    const revealText = normalizeAnimatedRevealText(text);
     const WORDS_PER_S = 6.0;
-    const words = text.split(" ");
+    const words = Array.from(revealText.matchAll(/\S+/g));
     const n = Math.max(1, Math.floor(tLocal * WORDS_PER_S) + 1);
-    visibleText = words.slice(0, n).join(" ");
+    const lastVisibleWord = words[Math.min(n, words.length) - 1];
+    visibleText = lastVisibleWord
+      ? revealText.slice(0, (lastVisibleWord.index ?? 0) + lastVisibleWord[0].length)
+      : "";
     if (n < words.length && Math.floor(tLocal * 2) % 2 === 0) {
-      visibleText = visibleText + " |";
+      showCursor = true;
     }
   } else if (effect === "slide-up" || effect === "slide-down") {
     const animateFor = Math.min(0.35, durationS * 0.5);
@@ -106,7 +122,7 @@ export function animationStateAt(
   }
   // "none", "static", "karaoke-line", "lyric-line", "font-cycle", unknown → identity
 
-  return { scale, alpha, yTranslate, visibleText };
+  return { scale, alpha, yTranslate, visibleText, showCursor };
 }
 
 /** Mirror of `_sequence_fade_out_alpha` in text_overlay_skia.py.

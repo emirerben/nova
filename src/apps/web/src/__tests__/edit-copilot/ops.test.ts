@@ -38,6 +38,23 @@ describe("edit-copilot op contract fixtures", () => {
 });
 
 describe("edit-copilot extended op validation", () => {
+  it("accepts sub-0.6s positive clip durations and rejects non-positive values", () => {
+    expect(
+      validateCopilotOp(
+        { op: "set_clip_duration", slot_index: 0, duration_s: 0.2 },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { duration_s: 0.2 } });
+    for (const duration_s of [0, -0.1]) {
+      expect(
+        validateCopilotOp(
+          { op: "set_clip_duration", slot_index: 0, duration_s },
+          validationSnapshot,
+        ),
+      ).toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+    }
+  });
+
   it("rejects timing and removal for lyric bars", () => {
     const lyricSnapshot = {
       ...validationSnapshot,

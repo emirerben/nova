@@ -91,32 +91,30 @@ describe("TextElementOverlayLayer", () => {
     expect(screen.queryByText("READY NOW")).not.toBeInTheDocument();
   });
 
-  it("can reserve full text geometry while a typewriter reveal grows from the left", () => {
-    const [layout] = resolveTextElementsLayout([{ ...element, alignment: "center" }]);
+  it.each(["left", "center", "right"] as const)(
+    "reserves settled geometry for a partial reveal while preserving %s alignment",
+    (alignment) => {
+      const [layout] = resolveTextElementsLayout([{ ...element, alignment }]);
 
-    render(
-      <TextElementOverlayContent
-        layout={layout}
-        fontSize="20px"
-        reserveText="READY NOW"
-        textAlignOverride="left"
-      >
-        READY
-      </TextElementOverlayContent>,
-    );
+      const { container } = render(
+        <TextElementOverlayContent
+          layout={layout}
+          fontSize="20px"
+          reserveText={"READY NOW\nWRAPPED LINE"}
+          showCursor
+        >
+          READY
+        </TextElementOverlayContent>,
+      );
 
-    const reserve = screen.getByText("READY NOW");
-    const visible = screen.getByText("READY");
-    expect(reserve).toHaveStyle({ visibility: "hidden" });
-    expect(visible).toHaveStyle({
-      position: "absolute",
-      inset: "0.08em 0.18em",
-    });
-    expect(visible.parentElement).toHaveStyle({
-      position: "relative",
-      textAlign: "left",
-    });
-  });
+      const visible = screen.getByText("READY");
+      const remainder = container.querySelector("[data-reveal-remainder]");
+      expect(visible.parentElement).toHaveStyle({ textAlign: alignment });
+      expect(remainder).toHaveStyle({ visibility: "hidden" });
+      expect(remainder).toHaveTextContent("NOW WRAPPED LINE");
+      expect(container.querySelector('[style*="width: 0"]')).toHaveTextContent("|");
+    },
+  );
 
   it("honors explicit shadow off when no stroke is present", () => {
     render(
