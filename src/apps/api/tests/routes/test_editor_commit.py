@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import app.routes.generative_jobs as gj
 from app.auth import get_current_user
@@ -117,6 +118,21 @@ def _slot_edits() -> list[gj.TimelineSlotEdit]:
 def _commit_req(**kw) -> gj.EditorCommitRequest:
     kw.setdefault("base_generation", "2026-07-01T00:00:00Z")
     return gj.EditorCommitRequest(**kw)
+
+
+def _music_track(**overrides):
+    values = {
+        "id": "t1",
+        "analysis_status": "ready",
+        "audio_gcs_path": "music/t1.m4a",
+        "duration_s": 12.0,
+        "beat_timestamps_s": [i * 0.5 for i in range(25)],
+        "track_config": {"best_start_s": 4.0, "best_end_s": 7.0},
+        "published_at": "2026-07-01T00:00:00Z",
+        "archived_at": None,
+    }
+    values.update(overrides)
+    return types.SimpleNamespace(**values)
 
 
 def _montage_block(asset_ids=("a1", "a2", "a3")) -> dict:
@@ -1551,6 +1567,42 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
     regen.apply_async.assert_called_once()
 
 
+def test_endpoint_music_window_loads_current_track_and_enqueues_once(
+    client: TestClient, monkeypatch
+) -> None:
+    _arm(monkeypatch)
+    user = _user()
+    job = _job()
+    item, plan = _owned_item(user.id, job=job)
+    track = _music_track()
+    db = _db([item, track], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch(REGEN) as regen:
+        regen.apply_async = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/editor-commit",
+            json={
+                "music_window": {
+                    "start_s": 2.2,
+                    "alignment": "resync_beats",
+                },
+                "base_generation": "2026-07-01T00:00:00Z",
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    variant = job.assembly_plan["variants"][0]
+    assert variant["music_start_s"] == pytest.approx(2.0)
+    assert resp.json()["sections"]["music"] is True
+    db.commit.assert_awaited_once()
+    regen.apply_async.assert_called_once()
+    worker_kwargs = regen.apply_async.call_args.kwargs["kwargs"]
+    assert "music_window_alignment" not in worker_kwargs
+    assert worker_kwargs["force_full_render"] is True
+
+
 def test_endpoint_stale_baseline_409(client: TestClient, monkeypatch) -> None:
     _arm(monkeypatch)
     user = _user()
@@ -1784,6 +1836,279 @@ def test_visual_blocks_nonempty_list_on_lyrics_variant_still_422(monkeypatch):
 
 
 # ── E4: editor_capabilities per archetype ──────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("variant_extra", "track", "editable", "preserve", "reason"),
+    [
+        ({}, _music_track(), True, True, None),
+        ({"ai_timeline": None, "duration_s": 3.0}, _music_track(), True, False, None),
+        ({}, _music_track(duration_s=2.0), False, True, "song_shorter_than_video"),
+        ({}, _music_track(duration_s=None), False, True, "track_duration_unknown"),
+        (
+            {},
+            _music_track(beat_timestamps_s=[]),
+            False,
+            True,
+            "timing_metadata_unavailable",
+        ),
+    ],
+)
+def test_music_window_capability_matrix(variant_extra, track, editable, preserve, reason) -> None:
+    variant = _job(**variant_extra).assembly_plan["variants"][0]
+    capability = gj._music_window_capability(variant, track)
+
+    assert capability is not None
+    assert capability["editable"] is editable
+    assert capability["preserve_available"] is preserve
+    assert capability["video_duration_s"] == pytest.approx(3.0)
+    assert capability["reason"] == reason
+
+
+def test_music_window_capability_hidden_for_unsupported_variant() -> None:
+    variant = _job(variant_id="original_text").assembly_plan["variants"][0]
+    assert gj._music_window_capability(variant, _music_track()) is None
+
+
+def test_music_window_preserve_requires_second_based_linear_timeline() -> None:
+    slots = _ai_slots("generative-jobs/legacy/sources/")
+    for slot in slots:
+        slot.pop("duration_s")
+    variant = _job(
+        duration_s=3.0,
+        ai_timeline={"beat_grid": list(GRID), "slots": slots},
+    ).assembly_plan["variants"][0]
+
+    capability = gj._music_window_capability(variant, _music_track())
+
+    assert capability is not None
+    assert capability["editable"] is True
+    assert capability["preserve_available"] is False
+    assert capability["preserve_reason"] == "linear_timeline_unavailable"
+
+
+def test_music_window_preserve_freezes_seconds_and_relative_grid(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            music_window=gj.EditorCommitMusicWindow(
+                start_s=2.2,
+                alignment="preserve_cuts",
+            )
+        ),
+        music_track=_music_track(),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["music_start_s"] == pytest.approx(2.0)
+    assert variant["music_window_video_duration_s"] == pytest.approx(3.0)
+    assert variant["user_timeline"]["beat_grid"] == [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+    assert [slot["duration_s"] for slot in variant["user_timeline"]["slots"]] == [1.1, 1.9]
+    assert all(slot["duration_beats"] is None for slot in variant["user_timeline"]["slots"])
+    assert prep["timeline_override"] == variant["user_timeline"]["slots"]
+    assert prep["music_window_alignment"] == "preserve_cuts"
+    assert prep["sections"]["music"] is True
+
+
+def test_music_window_preserve_atomically_freezes_submitted_timeline(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    submitted = [
+        gj.TimelineSlotEdit(
+            slot_id="s1",
+            clip_index=0,
+            in_s=0.25,
+            duration_s=1.4,
+            removed=False,
+        ),
+        gj.TimelineSlotEdit(
+            slot_id="s2",
+            clip_index=1,
+            in_s=1.5,
+            duration_s=1.6,
+            removed=True,
+        ),
+    ]
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            timeline_slots=submitted,
+            music_window=gj.EditorCommitMusicWindow(
+                start_s=2.2,
+                alignment="preserve_cuts",
+            ),
+        ),
+        music_track=_music_track(),
+    )
+
+    timeline = job.assembly_plan["variants"][0]["user_timeline"]
+    # The existing beat grid first resolves the submitted durations to their
+    # effective cut points; Preserve then freezes those exact seconds while
+    # retaining the locally changed source in-points.
+    assert [(slot["in_s"], slot["duration_s"]) for slot in timeline["slots"]] == [
+        (0.25, 1.6),
+        (1.5, 1.6),
+    ]
+    assert timeline["slots"][1]["removed"] is True
+    assert job.assembly_plan["variants"][0]["music_window_video_duration_s"] == pytest.approx(1.6)
+    assert timeline["beat_grid"] == [0.0, 0.5, 1.0, 1.5, 1.6]
+    assert all(slot["duration_beats"] is None for slot in timeline["slots"])
+    assert prep["timeline_override"] == timeline["slots"]
+
+
+def test_music_window_resync_clears_user_timeline_atomically(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job(user_timeline={"slots": _ai_slots("generative-jobs/legacy/sources/")})
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(music_window=gj.EditorCommitMusicWindow(start_s=6.1, alignment="resync_beats")),
+        music_track=_music_track(),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["music_start_s"] == pytest.approx(6.0)
+    assert "user_timeline" not in variant
+    assert prep["timeline_override"] is None
+    assert prep["music_window_alignment"] == "resync_beats"
+
+
+def test_music_window_resync_rejects_submitted_timeline_without_partial_write(
+    monkeypatch,
+) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                timeline_slots=_slot_edits(),
+                music_window=gj.EditorCommitMusicWindow(
+                    start_s=2.2,
+                    alignment="resync_beats",
+                ),
+            ),
+            music_track=_music_track(),
+        )
+
+    assert exc.value.status_code == 422
+    assert job.assembly_plan == before
+
+
+def test_music_window_rejects_out_of_range_without_partial_write(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                music_window=gj.EditorCommitMusicWindow(
+                    start_s=9.1,
+                    alignment="resync_beats",
+                )
+            ),
+            music_track=_music_track(),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {"code": "music_window_out_of_range"}
+    assert job.assembly_plan == before
+
+
+@pytest.mark.parametrize("start_s", [-0.1, float("nan"), float("inf")])
+def test_music_window_schema_rejects_negative_and_nonfinite_offsets(start_s) -> None:
+    with pytest.raises(ValidationError):
+        gj.EditorCommitMusicWindow(start_s=start_s, alignment="resync_beats")
+
+
+def test_music_window_accepts_existing_ready_unpublished_track(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    track = _music_track(published_at=None)
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(music_window=gj.EditorCommitMusicWindow(start_s=1.1, alignment="resync_beats")),
+        music_track=track,
+    )
+
+    assert job.assembly_plan["variants"][0]["music_start_s"] == pytest.approx(1.0)
+
+
+def test_music_window_rejects_unpublished_track_swap_without_partial_write(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+    track = _music_track(id="t2", published_at=None)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                music_track_id="t2",
+                music_window=gj.EditorCommitMusicWindow(
+                    start_s=1.0,
+                    alignment="resync_beats",
+                ),
+            ),
+            music_track=track,
+        )
+
+    assert exc.value.status_code == 422
+    assert job.assembly_plan == before
+
+
+def test_track_swap_clears_lyric_overrides_even_if_stale_client_echoes_them(
+    monkeypatch,
+) -> None:
+    _arm(monkeypatch)
+    monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", True)
+    job = _job(
+        lyric_line_overrides={"L0": {"text": "old", "orig_text": "old line", "orig_start_s": 0.0}},
+        lyric_overlay_snapshot=[{"line_key": "L0"}],
+        text_elements=[
+            {**_VALID_ELEMENT, "id": "lyric_L0", "role": "lyric_line"},
+            {**_VALID_ELEMENT, "id": "intro", "role": "intro"},
+        ],
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            music_track_id="t2",
+            lyrics=gj.LyricsSectionRequest(
+                line_overrides={
+                    "L0": {
+                        "text": "stale",
+                        "orig_text": "old line",
+                        "orig_start_s": 0.0,
+                    }
+                }
+            ),
+        ),
+        music_track=_music_track(id="t2"),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["lyric_line_overrides"] is None
+    assert variant["lyric_overlay_snapshot"] is None
+    assert [element["id"] for element in variant["text_elements"]] == ["intro"]
 
 
 def _caps(job, variant_id: str) -> dict:

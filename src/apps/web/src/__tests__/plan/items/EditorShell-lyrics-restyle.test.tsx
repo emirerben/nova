@@ -17,7 +17,7 @@
 
 import "@testing-library/jest-dom";
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 // jsdom lacks ResizeObserver (EditorCanvas / EditorTimelineBody measure loops).
 class ResizeObserverMock {
@@ -41,6 +41,15 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: jest.fn(),
   })),
 });
+
+Object.defineProperty(global, "fetch", {
+  writable: true,
+  value: jest.fn().mockRejectedValue(new Error("preview fetch unavailable in jsdom")),
+});
+
+const mediaPause = jest
+  .spyOn(HTMLMediaElement.prototype, "pause")
+  .mockImplementation(() => undefined);
 
 const mockRouterPush = jest.fn();
 jest.mock("next/navigation", () => ({
@@ -117,10 +126,20 @@ const LYRICS_SYNC_CAPABILITIES: EditorCapabilities = {
   timeline: false,
   split_clips: false,
   mix: false,
-  sfx: true,
-  overlays: true,
+  sfx: false,
+  overlays: false,
   suggestions: false,
   reason: "lyrics_sync",
+  music_window: {
+    editable: true,
+    preserve_available: true,
+    video_duration_s: 3,
+    track_duration_s: 12,
+    recommended_start_s: 4,
+    beat_timestamps_s: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    reason: null,
+    preserve_reason: null,
+  },
 };
 
 const EDITABLE_CAPABILITIES: EditorCapabilities = {
@@ -143,6 +162,9 @@ function makeLyricsVariant(): PlanItemVariant {
     intro_text_size_px: null,
     text_elements: [],
     resolved_archetype: null,
+    music_track_id: "track-1",
+    music_preview_url: "https://storage.example/track.m4a",
+    music_preview_start_s: 4,
     editor_capabilities: LYRICS_SYNC_CAPABILITIES,
   } as unknown as PlanItemVariant;
 }
@@ -195,6 +217,8 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
+afterAll(() => mediaPause.mockRestore());
+
 describe("EditorShell — Styles drawer on a lyrics-synced variant", () => {
   it("Text tool is locked while Styles stays enabled", async () => {
     await renderShell(makeLyricsVariant());
@@ -226,6 +250,21 @@ describe("EditorShell — Styles drawer on a lyrics-synced variant", () => {
 
     expect(mockRouterPush).not.toHaveBeenCalled();
     expect(screen.getByText("Backend unavailable")).toBeInTheDocument();
+  });
+
+  it("previews a moved song window over the rendered lyrics video", async () => {
+    await renderShell(makeLyricsVariant());
+
+    fireEvent.click(screen.getByRole("button", { name: "Sounds tool" }));
+    const slider = await screen.findByRole("slider", { name: "Song section start" });
+    fireEvent.change(slider, { target: { value: "5" } });
+
+    const audio = await screen.findByTestId("rendered-music-window-preview");
+    expect(audio).toHaveAttribute("src", "https://storage.example/track.m4a");
+    await waitFor(() => {
+      expect(document.querySelector("video")?.muted).toBe(true);
+    });
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 });
 

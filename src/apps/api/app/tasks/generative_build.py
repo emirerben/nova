@@ -26,6 +26,8 @@ task owns it), so the API needs no new DB column to distinguish text modes.
 
 from __future__ import annotations
 
+import copy
+import math
 import os
 import shutil
 import tempfile
@@ -1310,8 +1312,9 @@ def regenerate_generative_variant(
 
     `timeline_override` (clip timeline editor): user-edited slot list — takes
     precedence over the variant's persisted `user_timeline`. On montage
-    song_text/original_text variants an active timeline skips the whole
-    ingest+Gemini+match leg (see `_run_regenerate_variant`).
+    song_text/original_text variants, plus the internal preserve-cuts path for
+    song_lyrics, an active timeline skips the whole ingest+Gemini+match leg
+    (see `_run_regenerate_variant`).
 
     `text_behind_subject`: explicit text-behind-subject toggle (None = leave the
     persisted `intro_behind_subject` decision alone). Kwarg name is a frozen
@@ -3257,9 +3260,10 @@ def _reburn_text_on_base(
 _BEAT_SPAN_TOLERANCE_S = 0.05
 
 # Variants whose layout is a beat-driven montage — the only ones the timeline
-# override path may re-assemble. Lyrics need re-injection against the matcher
-# plan and voiceover/talking_head layouts follow a spine, not a slot grid.
-_TIMELINE_OVERRIDE_VARIANTS = frozenset({"song_text", "original_text"})
+# override path may re-assemble. song_lyrics is included for the internal
+# preserve-cuts flow; public lyric clip editing remains route-gated. Voiceover
+# and talking_head layouts follow a spine, not a slot grid.
+_TIMELINE_OVERRIDE_VARIANTS = frozenset({"song_text", "song_lyrics", "original_text"})
 
 
 def _derive_duration_beats(durations: list[float], beat_grid: list[float]) -> list[int | None]:
@@ -3465,6 +3469,58 @@ def _prepare_timeline_assembly(
         "clip_id_to_gcs": clip_id_to_gcs,
         "probe_map": probe_map,
     }
+
+
+def _project_recipe_overlays_to_steps(recipe_dict: dict, steps: list) -> None:
+    """Project recipe-relative overlays onto exact user-timeline steps.
+
+    Preserve-cuts bypasses the matcher and uses prebuilt AssemblySteps, so the
+    recipe's slot dictionaries are otherwise never consulted by assembly. Copy
+    every injected overlay through absolute video time and clip it back into
+    each exact step; this keeps lyric burns aligned without exposing lyric
+    variants to the general clip editor.
+    """
+    overlays: list[tuple[float, float, dict]] = []
+    cursor = 0.0
+    for slot in recipe_dict.get("slots") or []:
+        try:
+            duration_s = max(0.0, float(slot.get("target_duration_s") or 0.0))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        for overlay in slot.get("text_overlays") or []:
+            if not isinstance(overlay, dict):
+                continue
+            try:
+                start_s = cursor + float(overlay.get("start_s") or 0.0)
+                end_s = cursor + float(overlay.get("end_s") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if end_s > start_s:
+                overlays.append((start_s, end_s, overlay))
+        cursor += duration_s
+
+    step_cursor = 0.0
+    for step in steps:
+        slot = getattr(step, "slot", None)
+        if not isinstance(slot, dict):
+            continue
+        try:
+            duration_s = max(0.0, float(slot.get("target_duration_s") or 0.0))
+        except (TypeError, ValueError):
+            duration_s = 0.0
+        step_end = step_cursor + duration_s
+        projected: list[dict] = []
+        for overlay_start, overlay_end, overlay in overlays:
+            clipped_start = max(step_cursor, overlay_start)
+            clipped_end = min(step_end, overlay_end)
+            if clipped_end <= clipped_start:
+                continue
+            copied = copy.deepcopy(overlay)
+            copied["start_s"] = round(clipped_start - step_cursor, 6)
+            copied["end_s"] = round(clipped_end - step_cursor, 6)
+            projected.append(copied)
+        slot["text_overlays"] = projected
+        step_cursor = step_end
 
 
 def _run_regenerate_variant(
@@ -3682,6 +3738,15 @@ def _run_regenerate_variant(
             return
         rank = int(existing.get("rank", 1))
         existing_track_id = existing.get("music_track_id")
+        existing_music_start_s = existing.get("music_start_s")
+        existing_music_window_duration_s = existing.get("music_window_video_duration_s")
+        music_window_alignment = None
+        if existing_music_window_duration_s is not None:
+            music_window_alignment = (
+                "preserve_cuts"
+                if (existing.get("user_timeline") or {}).get("slots")
+                else "resync_beats"
+            )
         existing_text_mode = existing.get("text_mode", "agent_text")
         inherited_lyrics_enabled = existing.get("lyrics_enabled")
         inherited_lyric_line_overrides = (
@@ -3779,6 +3844,8 @@ def _run_regenerate_variant(
 
     audio_only_song_swap = (
         _is_collage_audio_only_swap_eligible(existing, new_track_id)
+        and not force_full_render
+        and music_window_alignment is None
         and override_text is None
         and not remove_text
         and style_set_id is None
@@ -3859,11 +3926,13 @@ def _run_regenerate_variant(
     # force a fresh match — this is the contract the frontend ConfirmDialog
     # states ("your clip edits will be reset") and docs/pipelines/generative.md
     # documents.
-    if new_track_id is not None:
+    if new_track_id is not None and music_window_alignment != "preserve_cuts":
         timeline_override = None
         _clear_user_timeline(job_id, variant_id)
     active_timeline_slots: list[dict] | None = None
-    if settings.GENERATIVE_TIMELINE_EDITOR_ENABLED and new_track_id is None:
+    if settings.GENERATIVE_TIMELINE_EDITOR_ENABLED and (
+        new_track_id is None or music_window_alignment == "preserve_cuts"
+    ):
         raw_timeline_slots = timeline_override
         if raw_timeline_slots is None:
             raw_timeline_slots = (existing.get("user_timeline") or {}).get("slots") or None
@@ -4167,6 +4236,9 @@ def _run_regenerate_variant(
             "rank": rank,
             "text_mode": text_mode,
             "track": track,
+            "music_start_s": existing_music_start_s,
+            "music_window_video_duration_s": existing_music_window_duration_s,
+            "storage_generation": render_gen_id,
         }
         # Voiceover variant re-render (e.g. the mix slider): re-attach the voice bed and
         # the resolved mix. Precedence: explicit slider value → the variant's persisted
@@ -4307,6 +4379,7 @@ def _run_regenerate_variant(
             expected_render_gen_id=render_gen_id,
             outcome="full_render",
         ):
+            _discard_generation_storage(result, job_id=job_id, generation=render_gen_id)
             return
         # Write accepted — the retired snapshot blobs are unreachable; free them
         # (D16-C) before the reapply pass mints fresh ones.
@@ -5201,6 +5274,64 @@ def _fit_section_to_footage(track_config: dict, available_footage_s: float) -> d
     return cfg
 
 
+def _effective_music_window(
+    track: MusicTrack,
+    *,
+    requested_start_s: float | None,
+    requested_duration_s: float | None,
+    fallback_footage_s: float,
+) -> dict[str, Any]:
+    """Resolve one song window for recipe, lyrics, preview persistence, and mix."""
+    from app.services.music_sections import track_config_with_rank_one  # noqa: PLC0415
+
+    cfg = _fit_section_to_footage(track_config_with_rank_one(track), fallback_footage_s)
+    if requested_start_s is None or requested_duration_s is None:
+        start_s = float(cfg.get("best_start_s", 0.0) or 0.0)
+        end_s = float(cfg.get("best_end_s", start_s) or start_s)
+        return {
+            "start_s": start_s,
+            "end_s": end_s,
+            "duration_s": max(0.0, end_s - start_s),
+            "track_config": cfg,
+            "validated": False,
+        }
+
+    track_duration_s = float(track.duration_s or 0.0)
+    duration_s = float(requested_duration_s)
+    if track_duration_s <= 0 or duration_s <= 0 or track_duration_s + 0.02 < duration_s:
+        raise ValueError("Selected song window is no longer available")
+    max_start = max(0.0, track_duration_s - duration_s)
+    requested = max(0.0, min(float(requested_start_s), max_start))
+    beats: list[float] = []
+    for raw_beat in track.beat_timestamps_s or []:
+        try:
+            beat = float(raw_beat)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(beat) and beat >= 0:
+            beats.append(beat)
+    beats = sorted(set(beats))
+    candidates = [beat for beat in beats if beat <= max_start]
+    if not candidates:
+        raise ValueError("Selected song has no usable beat timing")
+    start_s = min(candidates, key=lambda beat: (abs(beat - requested), beat))
+    end_s = start_s + duration_s
+    cfg.update(
+        {
+            "best_start_s": round(start_s, 3),
+            "best_end_s": round(end_s, 3),
+            "exact_window": True,
+        }
+    )
+    return {
+        "start_s": round(start_s, 3),
+        "end_s": round(end_s, 3),
+        "duration_s": round(duration_s, 3),
+        "track_config": cfg,
+        "validated": True,
+    }
+
+
 # ── Transcript-synced typographic sequence (editorial auto-upgrade, D6/D16) ─────
 
 # Hard wall-clock guard on the in-task Whisper call (D18 "API-or-static"): the
@@ -5632,6 +5763,38 @@ def _masonry_classic_safe_inputs(
     return safe_steps, safe_local, safe_gcs, safe_probe_map, safe_metas, len(image_ids)
 
 
+def _variant_storage_key(job_id: str, filename: str, generation: object = None) -> str:
+    """Return an immutable generation-scoped key for re-render outputs."""
+    token = "".join(character for character in str(generation or "") if character.isalnum())[:32]
+    if token:
+        stem, extension = os.path.splitext(filename)
+        filename = f"{stem}_{token}{extension}"
+    return f"generative-jobs/{job_id}/{filename}"
+
+
+def _discard_generation_storage(result: dict, *, job_id: str, generation: object) -> None:
+    """Best-effort cleanup for outputs rejected by the generation guard."""
+    token = "".join(character for character in str(generation or "") if character.isalnum())[:32]
+    if not token:
+        return
+    prefix = f"generative-jobs/{job_id}/"
+    keys = {
+        value
+        for field in ("video_path", "base_video_path", "subject_matte_path")
+        if isinstance((value := result.get(field)), str)
+        and value.startswith(prefix)
+        and token in value
+    }
+    if not keys:
+        return
+    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+    for key in keys:
+        delete_object_best_effort(key)
+        if key == result.get("subject_matte_path"):
+            delete_object_best_effort(f"{key}.json")
+
+
 def _render_generative_variant(
     *,
     job_id: str,
@@ -5770,6 +5933,10 @@ def _render_generative_variant(
         "rank": rank,
         "text_mode": text_mode,
         "music_track_id": track_id,
+        # Seed from the committed selection so a renderer failure cannot erase
+        # the user's saved song window. Successful resolution overwrites this
+        # with the same snapped effective value below.
+        "music_start_s": spec.get("music_start_s"),
         "track_title": track_title,
         "style_set_id": style_set_id,
         # Agent-decided (or user-pinned) intro size. None for non-text variants.
@@ -5845,6 +6012,8 @@ def _render_generative_variant(
         "lyric_line_overrides": lyric_line_overrides or None,
         "lyric_overlay_snapshot": None,
     }
+    if spec.get("music_window_video_duration_s") is not None:
+        base["music_window_video_duration_s"] = spec["music_window_video_duration_s"]
     if resolved_montage_preset != DEFAULT_MONTAGE_PRESET:
         # User-selected preset + actual renderer outcome. Only present when the
         # user opted in so classic jobs keep their historical variant shape.
@@ -5865,6 +6034,7 @@ def _render_generative_variant(
         base["lyrics_baked"] = False
     try:
         beats: list[float] = []
+        effective_music_window: dict[str, Any] | None = None
         voiceover_local: str | None = None
         voiceover_target_s = available_footage_s
 
@@ -5916,19 +6086,22 @@ def _render_generative_variant(
                 clip_metas, voiceover_target_s, min_slots=min_slots
             )
         elif track is not None:
-            from app.services.music_sections import (  # noqa: PLC0415
-                track_config_with_rank_one,
-            )
-
             if not track.audio_gcs_path:
                 raise ValueError(f"Track {track_id} has no audio_gcs_path")
             # Clamp the song's best-section window to the uploaded footage BEFORE
             # generating slots. The recipe slices [best_start, best_end] into
             # beat-snapped slots, so capping the window here is what keeps a
             # music variant from ever running longer than the content exists for.
-            track_config = _fit_section_to_footage(
-                track_config_with_rank_one(track), effective_available_footage_s
+            effective_music_window = _effective_music_window(
+                track,
+                requested_start_s=spec.get("music_start_s"),
+                requested_duration_s=spec.get("music_window_video_duration_s"),
+                fallback_footage_s=effective_available_footage_s,
             )
+            track_config = effective_music_window["track_config"]
+            base["music_start_s"] = effective_music_window["start_s"]
+            if effective_music_window["validated"]:
+                base["music_window_video_duration_s"] = effective_music_window["duration_s"]
             track_data = {
                 "beat_timestamps_s": track.beat_timestamps_s or [],
                 "track_config": track_config,
@@ -5956,17 +6129,37 @@ def _render_generative_variant(
         # separate step so fast-reburn can skip re-assembly on future edits.
         lyrics_rendered = effective_lyrics_enabled and track is not None
         if lyrics_rendered:
-            lyric_result = _inject_lyrics(
-                recipe_dict,
-                track,
-                style_set_id=style_set_id,
-                line_overrides=lyric_line_overrides,
-            )
+            lyric_kwargs = {
+                "style_set_id": style_set_id,
+                "line_overrides": lyric_line_overrides,
+            }
+            if effective_music_window and effective_music_window["validated"]:
+                lyric_kwargs.update(
+                    music_start_s=effective_music_window["start_s"],
+                    music_end_s=effective_music_window["end_s"],
+                )
+            lyric_result = _inject_lyrics(recipe_dict, track, **lyric_kwargs)
             if isinstance(lyric_result, tuple):
                 recipe_dict, lyric_snapshot = lyric_result
             else:
                 recipe_dict, lyric_snapshot = lyric_result, []
             base["lyric_overlay_snapshot"] = lyric_snapshot
+            from app.pipeline.lyric_injector import (  # noqa: PLC0415
+                rematerialize_lyric_line_overrides,
+            )
+
+            active_lyric_keys = {
+                str(entry.get("line_key"))
+                for entry in lyric_snapshot
+                if isinstance(entry, dict) and entry.get("line_key")
+            }
+            base["lyric_line_overrides"] = rematerialize_lyric_line_overrides(
+                track.lyrics_cached,
+                lyric_line_overrides,
+                active_lyric_keys,
+            )
+            if assembly_steps_override is not None:
+                _project_recipe_overlays_to_steps(recipe_dict, assembly_steps_override)
 
         # Resolve agent_text overlay params early (before assembly) so we have
         # intro_px / intro_source for base dict even if the burn fails below.
@@ -6250,13 +6443,19 @@ def _render_generative_variant(
             )
         elif track is not None:
             # Song variants: replace source audio with the matched track.
-            cfg = track.track_config or {}
+            if effective_music_window is None:
+                raise RuntimeError("Music window was not resolved")
             _mix_template_audio(
                 assembled_path,
                 track.audio_gcs_path,
                 audio_mixed_path,
                 variant_dir,
-                audio_start_offset_s=float(cfg.get("best_start_s", 0.0)),
+                audio_start_offset_s=float(effective_music_window["start_s"]),
+                validated_window_duration_s=(
+                    float(effective_music_window["duration_s"])
+                    if effective_music_window["validated"]
+                    else None
+                ),
                 require_audio=True,
             )
         else:
@@ -6280,7 +6479,11 @@ def _render_generative_variant(
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
             # Upload the text-free base first.
-            base_gcs = f"generative-jobs/{job_id}/base_{rank}_{variant_id}.mp4"
+            base_gcs = _variant_storage_key(
+                job_id,
+                f"base_{rank}_{variant_id}.mp4",
+                spec.get("storage_generation"),
+            )
             base_url_unused = upload_public_read(audio_mixed_path, base_gcs)  # noqa: F841
             base["base_video_path"] = base_gcs
             log.info(
@@ -6501,7 +6704,11 @@ def _render_generative_variant(
                     )
         else:
             if text_mode == "lyrics" or lyrics_rendered:
-                base_gcs = f"generative-jobs/{job_id}/base_{rank}_{variant_id}.mp4"
+                base_gcs = _variant_storage_key(
+                    job_id,
+                    f"base_{rank}_{variant_id}.mp4",
+                    spec.get("storage_generation"),
+                )
                 base_url_unused = upload_public_read(audio_mixed_path, base_gcs)  # noqa: F841
                 base["base_video_path"] = base_gcs
                 log.info(
@@ -6523,7 +6730,11 @@ def _render_generative_variant(
             if not validation.passed:
                 raise RuntimeError("; ".join(validation.errors))
 
-        output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
+        output_gcs = _variant_storage_key(
+            job_id,
+            f"variant_{rank}_{variant_id}.mp4",
+            spec.get("storage_generation"),
+        )
         output_url = upload_public_read(final_path, output_gcs)
         log.info("generative_variant_uploaded", job_id=job_id, variant_id=variant_id)
         return {
@@ -9016,6 +9227,8 @@ def _inject_lyrics(
     track: MusicTrack,
     style_set_id: str | None = None,
     line_overrides: dict | None = None,
+    music_start_s: float | None = None,
+    music_end_s: float | None = None,
 ) -> tuple[dict, list[dict]]:
     from app.pipeline.lyric_injector import (  # noqa: PLC0415
         _apply_lyric_style_overrides,
@@ -9034,7 +9247,11 @@ def _inject_lyrics(
     # Overwrite target_duration_s with post-beat-snap values before injection
     # so lyric windows are clamped to the slot boundaries _assemble_clips will
     # actually produce (karaoke word-highlight drift fix).
-    _beats = list(track.beat_timestamps_s or [])
+    # The recipe grid is already relative to the effective song-window start.
+    # Using the track's absolute beat timestamps here would re-snap a 55s
+    # selection against video time 0 and desynchronize lyric projection from
+    # the recipe and final audio seek.
+    _beats = list(recipe_dict.get("beat_timestamps_s") or [])
     _snapped = compute_snapped_slot_durations(
         recipe_dict.get("slots") or [],
         _beats,
@@ -9075,8 +9292,10 @@ def _inject_lyrics(
     recipe_dict = inject_lyric_overlays(
         recipe_dict,
         lyrics_cached_for_render,
-        best_start_s=float(cfg.get("best_start_s", 0.0)),
-        best_end_s=float(cfg.get("best_end_s", 0.0)),
+        best_start_s=float(
+            music_start_s if music_start_s is not None else cfg.get("best_start_s", 0.0)
+        ),
+        best_end_s=float(music_end_s if music_end_s is not None else cfg.get("best_end_s", 0.0)),
         lyrics_config=lyrics_config,
     )
     _apply_lyric_style_overrides(recipe_dict, line_overrides)

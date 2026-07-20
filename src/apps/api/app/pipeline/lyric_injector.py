@@ -475,14 +475,7 @@ def apply_lyric_line_overrides(lyrics_cached: dict, overrides: dict | None) -> d
             current_text_norm = _normalize_override_fingerprint_text(line.get("text"))
             orig_text_norm = _normalize_override_fingerprint_text(override.get("orig_text"))
             text_matches = bool(orig_text_norm) and orig_text_norm == current_text_norm
-            timing_matches = False
-            try:
-                timing_matches = (
-                    abs(float(line.get("start_s")) - float(override.get("orig_start_s"))) <= 0.25
-                )
-            except (TypeError, ValueError):
-                timing_matches = False
-            if not text_matches and not timing_matches:
+            if not text_matches:
                 log.info("lyric_override_dropped_drift", line_key=line_key)
                 continue
 
@@ -503,6 +496,36 @@ def apply_lyric_line_overrides(lyrics_cached: dict, overrides: dict | None) -> d
             log.warning("lyric_override_entry_skipped", line_key=line_key, exc_info=True)
             continue
     return out
+
+
+def rematerialize_lyric_line_overrides(
+    lyrics_cached: dict,
+    overrides: dict | None,
+    active_line_keys: set[str],
+) -> dict | None:
+    """Keep only same-fingerprint overrides present in the selected song window."""
+    if not isinstance(lyrics_cached, dict) or not isinstance(overrides, dict):
+        return None
+    lines = lyrics_cached.get("lines")
+    if not isinstance(lines, list):
+        return None
+    retained: dict[str, dict] = {}
+    for line_key, override in overrides.items():
+        idx = _parse_line_key(line_key)
+        if (
+            line_key not in active_line_keys
+            or idx is None
+            or idx < 0
+            or idx >= len(lines)
+            or not isinstance(lines[idx], dict)
+            or not isinstance(override, dict)
+        ):
+            continue
+        original = _normalize_override_fingerprint_text(override.get("orig_text"))
+        current = _normalize_override_fingerprint_text(lines[idx].get("text"))
+        if original and original == current:
+            retained[line_key] = copy.deepcopy(override)
+    return retained or None
 
 
 def _apply_lyric_style_overrides(recipe_dict: dict, overrides: dict | None) -> None:

@@ -20,6 +20,7 @@ in `Job.assembly_plan["variants"]`, which the status endpoint surfaces directly.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import uuid
@@ -203,6 +204,34 @@ class UnplacedShot(BaseModel):
     reason: Literal["unusable_footage", "song_too_short"]
 
 
+class MusicWindowCapabilityOut(BaseModel):
+    editable: bool
+    preserve_available: bool
+    video_duration_s: float
+    track_duration_s: float
+    recommended_start_s: float
+    beat_timestamps_s: list[float]
+    reason: (
+        Literal[
+            "track_unavailable",
+            "video_duration_unknown",
+            "track_duration_unknown",
+            "song_shorter_than_video",
+            "timing_metadata_unavailable",
+        ]
+        | None
+    ) = None
+    preserve_reason: Literal["linear_timeline_unavailable"] | None = None
+
+
+class EditorCapabilitiesOut(BaseModel):
+    """Typed additions plus forward-compatible existing editor capability fields."""
+
+    music_window: MusicWindowCapabilityOut | None = None
+
+    model_config = {"extra": "allow"}
+
+
 class GenerativeVariant(BaseModel):
     """Per-variant state as surfaced on the status response.
 
@@ -225,6 +254,7 @@ class GenerativeVariant(BaseModel):
     # are signed — the unpublished library is not enumerable through this.
     music_preview_url: str | None = None
     music_preview_start_s: float | None = None
+    editor_capabilities: EditorCapabilitiesOut | None = None
     text_mode: str | None = None
     style_set_id: str | None = None
     rank: int | None = None
@@ -306,6 +336,7 @@ class ArchetypeFallbackOut(BaseModel):
 class GenerativeJobStatusResponse(BaseModel):
     job_id: str
     status: str
+    # Keep dict pass-through for backwards-compatible internal callers.
     variants: list[dict]
     error_detail: str | None
     created_at: datetime
@@ -562,6 +593,18 @@ class EditorCommitMix(BaseModel):
     original_level: float | None = Field(None, ge=0.0, le=1.0)
 
 
+class EditorCommitMusicWindow(BaseModel):
+    start_s: float = Field(ge=0.0)
+    alignment: Literal["preserve_cuts", "resync_beats"]
+
+    @field_validator("start_s")
+    @classmethod
+    def validate_finite_start(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("Song start must be finite")
+        return value
+
+
 class EditorCommitCaptionMeta(BaseModel):
     enabled: bool | None = None
     style: Literal["sentence", "word"] | None = None
@@ -584,6 +627,7 @@ class EditorCommitRequest(BaseModel):
     timeline_slots: list[TimelineSlotEdit] | None = None
     mix: EditorCommitMix | None = None
     music_track_id: str | None = None
+    music_window: EditorCommitMusicWindow | None = None
     lyrics: LyricsSectionRequest | None = None
     orientation: str | None = None
     sound_effects: list[dict] | None = None
@@ -1040,19 +1084,48 @@ async def dispatch_swap_song(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Requested song is not available for rendering.",
         )
+    selecting_existing_unpublished = str(track.id) == str(variant.get("music_track_id") or "")
+    if not selecting_existing_unpublished and (
+        track.published_at is None or track.archived_at is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "music_track_unavailable"},
+        )
 
     # Persist render_status="rendering" before enqueuing — full dict replacement so
     # SQLAlchemy tracks the change without flag_modified.
     variants = list((job.assembly_plan or {}).get("variants") or [])
+    render_gen_id = uuid.uuid4().hex
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
+            v["render_generation_id"] = render_gen_id
+            v["music_start_s"] = round(
+                _recommended_music_start(track, visual_block_variant_duration(variant)), 3
+            )
+            v.pop("music_window_video_duration_s", None)
+            v["lyric_line_overrides"] = None
+            v["lyric_overlay_snapshot"] = None
+            v["text_elements"] = [
+                element
+                for element in (v.get("text_elements") or [])
+                if not isinstance(element, dict) or element.get("role") != "lyric_line"
+            ]
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    # Make the generation visible before enqueue. A slower legacy swap can
+    # then be rejected if a newer atomic editor commit supersedes it.
+    await db.commit()
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-    regenerate_generative_variant.delay(str(job.id), variant_id, new_track_id=new_track_id)
+    regenerate_generative_variant.delay(
+        str(job.id),
+        variant_id,
+        new_track_id=new_track_id,
+        render_gen_id=render_gen_id,
+    )
 
 
 # Mode-neutral: a sequence variant is either transcript-synced (voiceover) OR
@@ -2907,8 +2980,160 @@ def _timeline_parts(variant: dict) -> tuple[list[dict], list[dict], list[float]]
     ai_slots = [s for s in (ai.get("slots") or []) if isinstance(s, dict)]
     user = variant.get("user_timeline") or {}
     user_slots = [s for s in (user.get("slots") or []) if isinstance(s, dict)]
-    beat_grid = [float(b) for b in (ai.get("beat_grid") or [])]
+    beat_grid = [float(b) for b in (user.get("beat_grid") or ai.get("beat_grid") or [])]
     return ai_slots, user_slots, beat_grid
+
+
+_MUSIC_WINDOW_VARIANTS = frozenset({"song_text", "song_lyrics"})
+_MUSIC_WINDOW_EPSILON_S = 0.02
+
+
+def _track_duration(track: MusicTrack | None) -> float:
+    try:
+        value = float(getattr(track, "duration_s", 0.0) or 0.0) if track is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+    return value if math.isfinite(value) and value > 0 else 0.0
+
+
+def _track_beats(track: MusicTrack | None) -> list[float]:
+    beats: list[float] = []
+    for raw in (getattr(track, "beat_timestamps_s", None) or []) if track is not None else []:
+        try:
+            beat = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(beat) and beat >= 0:
+            beats.append(beat)
+    return sorted(set(beats))
+
+
+def _recommended_music_start(track: MusicTrack | None, video_duration_s: float) -> float:
+    cfg = (getattr(track, "track_config", None) or {}) if track is not None else {}
+    try:
+        requested = float(cfg.get("best_start_s", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        requested = 0.0
+    track_duration_s = _track_duration(track)
+    if track_duration_s <= 0:
+        return max(0.0, requested)
+    return max(0.0, min(requested, max(0.0, track_duration_s - video_duration_s)))
+
+
+def _snap_music_start(track: MusicTrack, start_s: float, video_duration_s: float) -> float:
+    max_start = max(0.0, _track_duration(track) - video_duration_s)
+    requested = float(start_s)
+    if requested < 0 or requested > max_start + _MUSIC_WINDOW_EPSILON_S:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "music_window_out_of_range"},
+        )
+    clamped = max(0.0, min(requested, max_start))
+    candidates = [beat for beat in _track_beats(track) if beat <= max_start]
+    if not candidates:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "timing_metadata_unavailable"},
+        )
+    return round(min(candidates, key=lambda beat: (abs(beat - clamped), beat)), 3)
+
+
+def _relative_music_grid(track: MusicTrack, start_s: float, video_duration_s: float) -> list[float]:
+    end_s = start_s + video_duration_s
+    relative = [0.0]
+    relative.extend(
+        round(beat - start_s, 3)
+        for beat in _track_beats(track)
+        if start_s + _MUSIC_WINDOW_EPSILON_S < beat < end_s - _MUSIC_WINDOW_EPSILON_S
+    )
+    relative.append(round(video_duration_s, 3))
+    return sorted(set(relative))
+
+
+def _has_linear_slots(source: list[dict]) -> bool:
+    active = [slot for slot in source if not slot.get("removed")]
+    if not active:
+        return False
+    for slot in active:
+        try:
+            duration_s = float(slot.get("duration_s"))
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(duration_s) or duration_s <= 0:
+            return False
+    return True
+
+
+def _has_linear_timeline(variant: dict) -> bool:
+    ai_slots, user_slots, _ = _timeline_parts(variant)
+    return _has_linear_slots(user_slots or ai_slots)
+
+
+def _music_window_capability(variant: dict, track: MusicTrack | None) -> dict | None:
+    """Authoritative editor contract. None means hidden for unsupported variants."""
+    if str(variant.get("variant_id") or "") not in _MUSIC_WINDOW_VARIANTS:
+        return None
+    video_duration_s = visual_block_variant_duration(variant)
+    track_duration_s = _track_duration(track)
+    beats = _track_beats(track)
+    reason: str | None = None
+    if (
+        track is None
+        or getattr(track, "analysis_status", "ready") != "ready"
+        or not getattr(track, "audio_gcs_path", None)
+    ):
+        reason = "track_unavailable"
+    elif video_duration_s <= 0:
+        reason = "video_duration_unknown"
+    elif track_duration_s <= 0:
+        reason = "track_duration_unknown"
+    elif track_duration_s + _MUSIC_WINDOW_EPSILON_S < video_duration_s:
+        reason = "song_shorter_than_video"
+    elif not beats:
+        reason = "timing_metadata_unavailable"
+    preserve_available = _has_linear_timeline(variant)
+    return {
+        "editable": reason is None,
+        "preserve_available": preserve_available,
+        "video_duration_s": round(video_duration_s, 3),
+        "track_duration_s": round(track_duration_s, 3),
+        "recommended_start_s": round(_recommended_music_start(track, video_duration_s), 3),
+        "beat_timestamps_s": beats,
+        "reason": reason,
+        "preserve_reason": None if preserve_available else "linear_timeline_unavailable",
+    }
+
+
+def _freeze_music_window_timeline(
+    variant: dict, source_slots: list[dict] | None = None
+) -> list[dict]:
+    ai_slots, user_slots, _ = _timeline_parts(variant)
+    source = source_slots if source_slots is not None else user_slots or ai_slots
+    if not source:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "linear_timeline_unavailable"},
+        )
+    # Legacy variants without a stored linear timeline cannot use Preserve,
+    # even if a client attempts to synthesize slots in the same request.
+    if not _has_linear_timeline(variant) or not _has_linear_slots(source):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "linear_timeline_unavailable"},
+        )
+    frozen: list[dict] = []
+    for order, slot in enumerate(source):
+        copied = dict(slot)
+        copied["order"] = order
+        copied["duration_s"] = round(float(slot.get("duration_s") or 0.0), 3)
+        copied["duration_beats"] = None
+        frozen.append(copied)
+    if not any(not slot.get("removed") and slot["duration_s"] > 0 for slot in frozen):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "linear_timeline_unavailable"},
+        )
+    return frozen
 
 
 def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
@@ -3632,6 +3857,7 @@ def prepare_editor_commit(
         and payload.timeline_slots is None
         and payload.mix is None
         and payload.music_track_id is None
+        and payload.music_window is None
         and payload.lyrics is None
         and payload.orientation is None
         and payload.sound_effects is None
@@ -3651,6 +3877,15 @@ def prepare_editor_commit(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="accepted_suggestion_ids requires the media_overlays section.",
+        )
+    if (
+        payload.music_window is not None
+        and payload.timeline_slots is not None
+        and payload.music_window.alignment != "preserve_cuts"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="timeline_slots can only accompany a preserve_cuts music window.",
         )
 
     # ── Validate every provided section BEFORE any write ──────────────────────
@@ -3748,6 +3983,80 @@ def prepare_editor_commit(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Requested song is not available for rendering.",
             )
+        existing_track_id = str(variant.get("music_track_id") or "")
+        selecting_existing_unpublished = str(music_track.id) == existing_track_id
+        if not selecting_existing_unpublished and (
+            getattr(music_track, "published_at", True) is None
+            or getattr(music_track, "archived_at", None) is not None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "music_track_unavailable"},
+            )
+
+    resolved_music_start_s: float | None = None
+    music_window_video_duration_s: float | None = None
+    music_window_grid: list[float] | None = None
+    frozen_music_slots: list[dict] | None = None
+    if payload.music_window is not None:
+        if str(variant.get("variant_id") or "") not in _MUSIC_WINDOW_VARIANTS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "music_window_unsupported_variant"},
+            )
+        effective_track_id = payload.music_track_id or variant.get("music_track_id")
+        if (
+            music_track is None
+            or str(music_track.id) != str(effective_track_id or "")
+            or music_track.analysis_status != "ready"
+            or not music_track.audio_gcs_path
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "music_track_unavailable"},
+            )
+        existing_track_id = str(variant.get("music_track_id") or "")
+        if str(music_track.id) != existing_track_id and (
+            music_track.published_at is None or music_track.archived_at is not None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "music_track_unavailable"},
+            )
+        video_duration_s = visual_block_variant_duration(variant)
+        if payload.music_window.alignment == "preserve_cuts":
+            frozen_music_slots = _freeze_music_window_timeline(variant, resolved_slots)
+            video_duration_s = round(
+                sum(
+                    float(slot.get("duration_s") or 0.0)
+                    for slot in frozen_music_slots
+                    if not slot.get("removed")
+                ),
+                3,
+            )
+        track_duration_s = _track_duration(music_track)
+        if video_duration_s <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "video_duration_unknown"},
+            )
+        if track_duration_s <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "track_duration_unknown"},
+            )
+        if track_duration_s + _MUSIC_WINDOW_EPSILON_S < video_duration_s:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "song_shorter_than_video"},
+            )
+        resolved_music_start_s = _snap_music_start(
+            music_track, payload.music_window.start_s, video_duration_s
+        )
+        music_window_grid = _relative_music_grid(
+            music_track, resolved_music_start_s, video_duration_s
+        )
+        music_window_video_duration_s = video_duration_s
 
     validated_lyrics: dict | None = None
     if payload.lyrics is not None:
@@ -3938,6 +4247,7 @@ def prepare_editor_commit(
         or resolved_slots is not None
         or payload.mix is not None
         or payload.music_track_id is not None
+        or payload.music_window is not None
         or validated_lyrics is not None
         or validated_orientation is not None
         or validated_sfx is not None
@@ -3947,6 +4257,9 @@ def prepare_editor_commit(
     new_gen = uuid.uuid4().hex if has_render_section else None
 
     variants = list((job.assembly_plan or {}).get("variants") or [])
+    track_changed = payload.music_track_id is not None and payload.music_track_id != variant.get(
+        "music_track_id"
+    )
     for i, v in enumerate(variants):
         if v.get("variant_id") != variant_id:
             continue
@@ -3971,10 +4284,36 @@ def prepare_editor_commit(
                 updated["original_audio_level"] = float(payload.mix.original_level)
         if payload.music_track_id is not None:
             updated["music_track_id"] = payload.music_track_id
+            if track_changed:
+                updated["lyric_line_overrides"] = None
+                updated["lyric_overlay_snapshot"] = None
+                updated["text_elements"] = [
+                    element
+                    for element in (updated.get("text_elements") or [])
+                    if not isinstance(element, dict) or element.get("role") != "lyric_line"
+                ]
+            if payload.music_window is None and music_track is not None:
+                updated["music_start_s"] = round(
+                    _recommended_music_start(music_track, visual_block_variant_duration(variant)),
+                    3,
+                )
+                updated.pop("music_window_video_duration_s", None)
+        if payload.music_window is not None and resolved_music_start_s is not None:
+            updated["music_start_s"] = resolved_music_start_s
+            updated["music_window_video_duration_s"] = round(
+                music_window_video_duration_s or visual_block_variant_duration(variant), 3
+            )
+            if payload.music_window.alignment == "preserve_cuts":
+                updated["user_timeline"] = {
+                    "slots": frozen_music_slots or [],
+                    "beat_grid": music_window_grid or [],
+                }
+            else:
+                updated.pop("user_timeline", None)
         if validated_lyrics is not None:
             if "enabled" in payload.lyrics.model_fields_set:
                 updated["lyrics_enabled"] = bool(validated_lyrics["enabled"])
-            if "line_overrides" in payload.lyrics.model_fields_set:
+            if "line_overrides" in payload.lyrics.model_fields_set and not track_changed:
                 updated["lyric_line_overrides"] = validated_lyrics["line_overrides"]
         if validated_orientation is not None:
             updated["orientation"] = validated_orientation
@@ -4019,13 +4358,21 @@ def prepare_editor_commit(
     return {
         "generation": new_gen or payload.base_generation,
         "has_render_section": has_render_section,
-        "timeline_override": resolved_slots,
+        "timeline_override": (
+            frozen_music_slots
+            if payload.music_window is not None
+            and payload.music_window.alignment == "preserve_cuts"
+            else resolved_slots
+        ),
         "mix_override": mix_override,
         "sfx_override": validated_sfx,
         "media_overlays_override": validated_overlays,
         "visual_blocks_override": validated_visual_blocks,
         "orientation_override": validated_orientation,
         "new_track_id": payload.music_track_id,
+        "music_window_alignment": (
+            payload.music_window.alignment if payload.music_window is not None else None
+        ),
         "caption_cues_override": validated_caption_cues,
         "text_requires_full_render": text_requires_full_render,
         # R2: lets enqueue_editor_commit_render route caption-archetype lane-only
@@ -4038,7 +4385,7 @@ def prepare_editor_commit(
             "caption_meta": payload.caption_meta is not None,
             "timeline": payload.timeline_slots is not None,
             "mix": payload.mix is not None,
-            "music": payload.music_track_id is not None,
+            "music": payload.music_track_id is not None or payload.music_window is not None,
             "lyrics": payload.lyrics is not None,
             "orientation": payload.orientation is not None,
             # validated_* (not raw payload presence) so an ignored empty-list
@@ -4141,13 +4488,18 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         or prep.get("text_requires_full_render") is True
         or prep["sections"].get("visual_blocks") is True
         or sections.get("lyrics") is True
+        or prep.get("music_window_alignment") is not None
     )
     if full_render or has_text_section:
         # Text/timeline/mix full re-renders read the just-persisted variant state.
         # SFX are reapplied by the worker's persisted-SFX hook after the new base lands.
         # Lyric-state commits carry no override kwargs, so the regen's own
         # fast-reburn check must be pinned off or lyric re-injection is skipped.
-        if sections.get("lyrics") is True or prep.get("text_requires_full_render") is True:
+        if (
+            sections.get("lyrics") is True
+            or prep.get("music_window_alignment") is not None
+            or prep.get("text_requires_full_render") is True
+        ):
             kwargs["force_full_render"] = True
     elif prep["media_overlays_override"] is not None:
         # Overlay pass is outer-video, then the worker's terminal hook reapplies the
@@ -4162,6 +4514,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         and prep.get("orientation_override") is None
         and prep.get("text_requires_full_render") is not True
         and sections.get("lyrics") is not True
+        and prep.get("music_window_alignment") is None
         and sections.get("visual_blocks") is not True
     )
     apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}
@@ -4279,14 +4632,23 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession) -> None
         return
     for variant in variants:
         track = tracks.get(variant.get("music_track_id") or "")
-        if track is None:
-            continue
-        cfg = track.track_config or {}
-        variant["music_preview_url"] = _preview_audio_url(track.audio_gcs_path)
-        try:
-            variant["music_preview_start_s"] = round(float(cfg.get("best_start_s", 0.0)), 2)
-        except (TypeError, ValueError):
-            variant["music_preview_start_s"] = 0.0
+        capability = _music_window_capability(variant, track)
+        if capability is not None:
+            editor_capabilities = dict(variant.get("editor_capabilities") or {})
+            editor_capabilities["music_window"] = capability
+            variant["editor_capabilities"] = editor_capabilities
+        if track is not None:
+            video_duration_s = visual_block_variant_duration(variant)
+            variant["music_preview_url"] = _preview_audio_url(track.audio_gcs_path)
+            try:
+                start_s = float(
+                    variant.get("music_start_s")
+                    if variant.get("music_start_s") is not None
+                    else _recommended_music_start(track, video_duration_s)
+                )
+                variant["music_preview_start_s"] = round(start_s, 2)
+            except (TypeError, ValueError):
+                variant["music_preview_start_s"] = 0.0
 
 
 @router.get("/{job_id}/status", response_model=GenerativeJobStatusResponse)
@@ -4366,7 +4728,6 @@ async def swap_song(
     """Re-render a variant against a different library song (async re-slot)."""
     job = await _load_generative_job(job_id, db, current_user)
     await dispatch_swap_song(job, variant_id, new_track_id=req.new_track_id, db=db)
-    await db.commit()
     log.info(
         "generative_swap_song", job_id=str(job.id), variant_id=variant_id, track_id=req.new_track_id
     )

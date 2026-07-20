@@ -284,6 +284,43 @@ def test_generate_music_recipe_basic() -> None:
         assert slot["slot_type"] == "broll"
 
 
+def test_exact_music_window_keeps_partial_final_beat_and_full_duration() -> None:
+    data = _make_track_data(
+        [0.0, 1.0, 2.0, 3.0, 4.0],
+        best_start=0.0,
+        best_end=4.25,
+        slot_every_n=1,
+        duration_s=10.0,
+    )
+    data["track_config"]["exact_window"] = True
+
+    recipe = generate_music_recipe(data)
+
+    durations = [slot["target_duration_s"] for slot in recipe["slots"]]
+    assert sum(durations) == pytest.approx(4.25)
+    assert durations[-1] == pytest.approx(1.25)
+    assert recipe["beat_timestamps_s"][0] == 0.0
+    assert recipe["beat_timestamps_s"][-1] == pytest.approx(4.25)
+    assert recipe["total_duration_s"] == pytest.approx(4.25)
+
+
+def test_exact_music_window_min_slot_count_uses_synthetic_endpoints() -> None:
+    data = _make_track_data(
+        [0.0, 1.0, 2.0, 3.0, 4.0],
+        best_start=0.0,
+        best_end=4.75,
+        slot_every_n=4,
+        duration_s=10.0,
+    )
+    data["track_config"]["exact_window"] = True
+
+    recipe = generate_music_recipe(data, min_slots=1)
+
+    assert len(recipe["slots"]) == 2
+    assert [slot["target_duration_s"] for slot in recipe["slots"]] == [4.0, 0.75]
+    assert sum(slot["target_duration_s"] for slot in recipe["slots"]) == pytest.approx(4.75)
+
+
 def test_generate_music_recipe_empty_beats() -> None:
     data = _make_track_data([], best_start=0.0, best_end=30.0)
     with pytest.raises(ValueError, match="0 slots"):

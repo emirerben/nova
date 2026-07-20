@@ -17,15 +17,33 @@ DEFAULT_WINDOW_S = 45.0
 DEFAULT_SLOT_EVERY_N_BEATS = 8
 
 
-def count_slots(beats: list[float], start_s: float, end_s: float, n: int) -> int:
+def _window_beats(
+    beats: list[float], start_s: float, end_s: float, *, exact_window: bool
+) -> list[float]:
+    window = sorted(b for b in beats if start_s <= b <= end_s)
+    if exact_window:
+        window = sorted(set([start_s, *window, end_s]))
+    return window
+
+
+def count_slots(
+    beats: list[float],
+    start_s: float,
+    end_s: float,
+    n: int,
+    *,
+    exact_window: bool = False,
+) -> int:
     """Count slots that generate_music_recipe() would produce for these inputs.
 
     Single source of truth for the slot-loop arithmetic so PATCH validators
     (admin track-config edits) can reject (window, n) combos the recipe
-    generator would reject at job time. Mirrors the loop bound in
-    generate_music_recipe(): `range(0, len(window_beats) - n, n)`.
+    generator would reject at job time. Exact windows include their synthetic
+    endpoints; legacy/admin windows preserve the historical loop arithmetic.
     """
-    window_beats = [b for b in beats if start_s <= b <= end_s]
+    window_beats = _window_beats(beats, start_s, end_s, exact_window=exact_window)
+    if exact_window:
+        return len(range(0, max(0, len(window_beats) - 1), n))
     if len(window_beats) <= n:
         return 0
     return len(range(0, len(window_beats) - n, n))
@@ -87,7 +105,12 @@ def generate_music_recipe(
     n: int = int(cfg.get("slot_every_n_beats", DEFAULT_SLOT_EVERY_N_BEATS))
 
     # Beats inside the configured window (inclusive on both ends)
-    window_beats = sorted(b for b in beats if start_s <= b <= end_s)
+    exact_window = bool(cfg.get("exact_window"))
+    # A user-selected window is an exact video-length interval, not merely the
+    # span between the first/last natural beats inside it. Synthetic endpoints
+    # keep recipe, lyric projection, and final audio duration identical even
+    # when the selected end falls between beats.
+    window_beats = _window_beats(beats, start_s, end_s, exact_window=exact_window)
 
     # Slot-count floor: when a shot plan assigned N clips to this variant, the
     # recipe must yield ≥ N slots so _narrative_pass can guarantee every clip
@@ -96,9 +119,21 @@ def generate_music_recipe(
     # the song window — that would change which section plays and hurt quality.
     # If even n=1 can't satisfy the floor (tiny song window), emit max-possible
     # slots and let _build_unplaced_shots surface the residual per-variant.
-    if min_slots > 0 and count_slots(beats, start_s, end_s, n) < min_slots:
+    if (
+        min_slots > 0
+        and count_slots(beats, start_s, end_s, n, exact_window=exact_window) < min_slots
+    ):
         for candidate_n in range(n - 1, 0, -1):
-            if count_slots(beats, start_s, end_s, candidate_n) >= min_slots:
+            if (
+                count_slots(
+                    beats,
+                    start_s,
+                    end_s,
+                    candidate_n,
+                    exact_window=exact_window,
+                )
+                >= min_slots
+            ):
                 n = candidate_n
                 break
         else:
@@ -106,9 +141,12 @@ def generate_music_recipe(
 
     # Generate slots: every N beats → one clip cut
     slots = []
-    for i in range(0, len(window_beats) - n, n):
+    slot_starts = (
+        range(0, len(window_beats) - 1, n) if exact_window else range(0, len(window_beats) - n, n)
+    )
+    for i in slot_starts:
         slot_start_s = window_beats[i] - start_s
-        slot_end_s = window_beats[i + n] - start_s
+        slot_end_s = window_beats[min(i + n, len(window_beats) - 1)] - start_s
         duration = slot_end_s - slot_start_s
         if duration <= 0:
             continue
@@ -124,6 +162,17 @@ def generate_music_recipe(
                 "speed_factor": 1.0,
             }
         )
+
+    # A synthetic end can create a tiny last fragment. Keep total duration
+    # exact without creating a blink-length cut by folding it into the prior
+    # slot. The previous slot's end still lands exactly on the window endpoint.
+    if exact_window and len(slots) > 1 and slots[-1]["target_duration_s"] < 0.6:
+        fragment = slots.pop()
+        slots[-1]["target_duration_s"] = round(
+            slots[-1]["target_duration_s"] + fragment["target_duration_s"], 3
+        )
+        for position, slot in enumerate(slots, start=1):
+            slot["position"] = position
 
     if not slots:
         raise ValueError(

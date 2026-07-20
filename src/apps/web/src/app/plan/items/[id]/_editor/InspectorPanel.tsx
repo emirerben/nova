@@ -64,6 +64,7 @@ import {
   MEDIA_OVERLAY_MAX_SCALE,
 } from "./editor-media-overlays";
 import PresetGrid from "./PresetGrid";
+import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
 
 /** Fields with dedicated (potentially editable) rows in this panel. */
 const EDITABLE_ROW_FIELDS = new Set([
@@ -143,6 +144,7 @@ export default function InspectorPanel({
   musicEditable = false,
   onPatchMix,
   onPickMusic,
+  musicWindow,
   smartPlaceAvailable = false,
   onSmartPlace,
   onClose,
@@ -188,6 +190,7 @@ export default function InspectorPanel({
   musicEditable?: boolean;
   onPatchMix?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  musicWindow?: SongWindowControl;
   smartPlaceAvailable?: boolean;
   onSmartPlace?: () => void;
   /** Close X clears the selection — the column stays (D6). */
@@ -276,6 +279,7 @@ export default function InspectorPanel({
           currentMusicTrackId={currentMusicTrackId}
           musicEditable={musicEditable}
           onPickMusic={onPickMusic}
+          musicWindow={musicWindow}
           onPatch={onPatchMix}
           onClose={onClose}
         />
@@ -308,6 +312,7 @@ function MixInspector({
   musicEditable,
   onPatch,
   onPickMusic,
+  musicWindow,
   onClose,
 }: {
   level?: number | null;
@@ -319,6 +324,7 @@ function MixInspector({
   musicEditable: boolean;
   onPatch?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  musicWindow?: SongWindowControl;
   onClose: () => void;
 }) {
   const safeLevel = Math.max(0, Math.min(1, level ?? 0));
@@ -382,6 +388,11 @@ function MixInspector({
           </p>
         )}
       </div>
+      {musicWindow && (
+        <div className="mt-4">
+          <SongWindowSelector {...musicWindow} />
+        </div>
+      )}
       {editable ? (
         <div className="mt-4">
           <div className="flex items-center justify-between text-[12px] font-semibold text-[#3f3f46]">

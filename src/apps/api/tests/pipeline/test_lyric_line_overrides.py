@@ -9,6 +9,7 @@ from app.pipeline.lyric_injector import (
     apply_lyric_line_overrides,
     build_lyric_overlay_snapshot,
     inject_lyric_overlays,
+    rematerialize_lyric_line_overrides,
 )
 
 
@@ -107,6 +108,27 @@ def test_fingerprint_mismatch_skips_override_and_does_not_mutate_input() -> None
 
     assert out == before
     assert cache == before
+
+
+def test_matching_timing_does_not_rescue_changed_original_text() -> None:
+    cache = _cache()
+    out = apply_lyric_line_overrides(
+        cache,
+        {"L0": {"text": "Changed", "orig_text": "Stale words", "orig_start_s": 10.0}},
+    )
+
+    assert out["lines"][0]["text"] == "Hello world"
+
+
+def test_rematerialize_keeps_only_active_same_fingerprint_overrides() -> None:
+    overrides = {
+        "L0": {"text": "Good night", "orig_text": "Hello world", "orig_start_s": 10.0},
+        "L1": {"text": "Old edit", "orig_text": "Changed upstream", "orig_start_s": 12.4},
+    }
+
+    retained = rematerialize_lyric_line_overrides(_cache(), overrides, {"L0", "L1"})
+    assert retained == {"L0": overrides["L0"]}
+    assert rematerialize_lyric_line_overrides(_cache(), overrides, {"L1"}) is None
 
 
 def test_malformed_entries_never_raise_and_valid_entries_still_apply() -> None:

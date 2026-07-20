@@ -157,6 +157,7 @@ describe("serializeDraft / deserializeDraft", () => {
       captionMetaPatch: undefined,
       musicTrackId: undefined,
       musicDirty: false,
+      musicStartS: null,
       lyricsEnabled: undefined,
       orientation: "landscape",
     });
@@ -187,6 +188,7 @@ describe("serializeDraft / deserializeDraft", () => {
       captionMetaPatch: undefined,
       musicTrackId: undefined,
       musicDirty: false,
+      musicStartS: null,
       lyricsEnabled: undefined,
       orientation: "portrait",
       title: "",
@@ -204,6 +206,14 @@ describe("serializeDraft / deserializeDraft", () => {
     });
     const parsed = deserializeDraft(serializeDraft("v1", doc([], { overlays: [moved] })));
     expect(parsed?.doc.overlays?.[0]).toEqual(moved);
+  });
+
+  it("preserves the selected song start in draft recovery", () => {
+    const parsed = deserializeDraft(
+      serializeDraft("v1", doc([], { musicStartS: 14.5, musicDirty: true })),
+    );
+    expect(parsed?.doc.musicStartS).toBe(14.5);
+    expect(parsed?.doc.musicDirty).toBe(true);
   });
 
   it("keys drafts per variant id", () => {

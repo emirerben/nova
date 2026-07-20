@@ -65,10 +65,13 @@ _LYRIC_INJECTOR_PATH = (
 # `_inject_karaoke`, and `build_lyric_seed_elements`); the frozen Line content
 # is byte-identical (same SHA). Verified with
 # `test_lyric_injector_no_stacking.py` (68 tests) on 2026-07-18.
+# 1854..2383 after song-window override rematerialization helpers grew above
+# `_inject_line`; the frozen Line content is byte-identical (same SHA). Verified
+# with `test_lyric_injector_no_stacking.py` (68 tests) on 2026-07-19.
 # If the file structure changes such that this range no longer captures the
 # right scope, update BOTH endpoints below AND the SHA.
-_LINE_FROZEN_RANGE_START: int = 1831
-_LINE_FROZEN_RANGE_END: int = 2360
+_LINE_FROZEN_RANGE_START: int = 1854
+_LINE_FROZEN_RANGE_END: int = 2383
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.

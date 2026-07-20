@@ -50,6 +50,7 @@ export interface EditorDocument {
   mixLevel?: number | null;
   mixDirty?: boolean;
   musicTrackId?: string | null;
+  musicStartS?: number | null;
   musicDirty?: boolean;
   lyricsEnabled?: boolean;
   orientation?: EditorOrientation;
@@ -190,6 +191,10 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
         mixDirty: Boolean(doc.mixDirty),
         musicTrackId:
           typeof doc.musicTrackId === "string" ? doc.musicTrackId : doc.musicTrackId === null ? null : undefined,
+        musicStartS:
+          typeof doc.musicStartS === "number" && Number.isFinite(doc.musicStartS)
+            ? Math.max(0, doc.musicStartS)
+            : null,
         musicDirty: Boolean(doc.musicDirty),
         lyricsEnabled:
           typeof doc.lyricsEnabled === "boolean" ? doc.lyricsEnabled : undefined,

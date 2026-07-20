@@ -1492,7 +1492,6 @@ async def swap_item_song(
     """Re-render one of this item's variants against a different library song."""
     job = await _owned_item_render_job(item_id, user.id, db)
     await dispatch_swap_song(job, variant_id, new_track_id=req.new_track_id, db=db)
-    await db.commit()
     log.info("plan_item_swap_song", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -2460,7 +2459,7 @@ async def editor_commit_item(
         selected_music_track = (
             await db.execute(select(MusicTrack).where(MusicTrack.id == commit_body.music_track_id))
         ).scalar_one_or_none()
-    elif commit_body.lyrics is not None:
+    elif commit_body.lyrics is not None or commit_body.music_window is not None:
         locked_variant = next(
             (
                 v

@@ -254,9 +254,30 @@ def test_convert_heif_overlay_preview_generates_jpeg(monkeypatch, tmp_path) -> N
 
 def test_swap_song_happy_path(client: TestClient) -> None:
     user = _user()
-    job = _job([dict(SONG_VARIANT)])
+    job = _job(
+        [
+            {
+                **SONG_VARIANT,
+                "music_window_video_duration_s": 8.0,
+                "lyric_line_overrides": {"L0": {"text": "edited"}},
+                "lyric_overlay_snapshot": [{"line_key": "L0"}],
+                "text_elements": [
+                    {"id": "lyric_L0", "role": "lyric_line"},
+                    {"id": "intro", "role": "intro"},
+                ],
+            }
+        ]
+    )
     item, plan = _owned_item(user.id, job=job)
-    track = MagicMock(analysis_status="ready", audio_gcs_path="music/x.mp3")
+    track = MagicMock(
+        id="track-new",
+        analysis_status="ready",
+        audio_gcs_path="music/x.mp3",
+        duration_s=30.0,
+        track_config={"best_start_s": 7.2},
+        published_at="2026-01-01",
+        archived_at=None,
+    )
     # execute order: load item → load track → reload item (for the response).
     db = _db([item, track, item], plan)
     _override(user, db)
@@ -264,10 +285,43 @@ def test_swap_song_happy_path(client: TestClient) -> None:
         regen.delay = MagicMock()
         resp = client.post(
             f"/plan-items/{item.id}/variants/song_text/swap-song",
-            json={"new_track_id": "track-123"},
+            json={"new_track_id": "track-new"},
         )
     assert resp.status_code == 200
-    regen.delay.assert_called_once_with(str(job.id), "song_text", new_track_id="track-123")
+    regen.delay.assert_called_once()
+    call = regen.delay.call_args
+    assert call.args == (str(job.id), "song_text")
+    assert call.kwargs["new_track_id"] == "track-new"
+    assert call.kwargs["render_gen_id"] == job.assembly_plan["variants"][0]["render_generation_id"]
+    db.commit.assert_awaited_once()
+    variant = job.assembly_plan["variants"][0]
+    assert variant["music_start_s"] == pytest.approx(7.2)
+    assert "music_window_video_duration_s" not in variant
+    assert variant["lyric_line_overrides"] is None
+    assert variant["lyric_overlay_snapshot"] is None
+    assert variant["text_elements"] == [{"id": "intro", "role": "intro"}]
+
+
+def test_swap_song_rejects_unpublished_catalog_track(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    track = MagicMock(
+        id="track-new",
+        analysis_status="ready",
+        audio_gcs_path="music/x.mp3",
+        published_at=None,
+        archived_at=None,
+    )
+    db = _db([item, track], plan)
+    _override(user, db)
+
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/song_text/swap-song",
+        json={"new_track_id": "track-new"},
+    )
+
+    assert resp.status_code == 422
 
 
 def test_swap_song_rejects_original_variant(client: TestClient) -> None:
@@ -516,7 +570,15 @@ def test_swap_song_sets_rendering_synchronously(client: TestClient) -> None:
     user = _user()
     job = _job([dict(SONG_VARIANT)])
     item, plan = _owned_item(user.id, job=job)
-    track = MagicMock(analysis_status="ready", audio_gcs_path="music/x.mp3")
+    track = MagicMock(
+        id="track-123",
+        analysis_status="ready",
+        audio_gcs_path="music/x.mp3",
+        duration_s=30.0,
+        track_config={"best_start_s": 4.0},
+        published_at="2026-01-01",
+        archived_at=None,
+    )
     db = _db([item, track, item], plan)
     _override(user, db)
 

@@ -135,6 +135,7 @@ import InspectorPanel from "./InspectorPanel";
 import InspectorRail, { type InspectorTab } from "./InspectorRail";
 import ToolDrawer from "./ToolDrawer";
 import ToolRail, { type EditorTool } from "./ToolRail";
+import type { SongWindowState } from "./SongWindowSelector";
 import PresetGrid, { presetMatchesFields } from "./PresetGrid";
 import { useVirtualPreview } from "./useVirtualPreview";
 import { useEditorLayoutMode } from "./useEditorLayoutMode";
@@ -768,6 +769,7 @@ export default function EditorShell({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const renderedMusicAudioRef = useRef<HTMLAudioElement>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Timeline view state (plan §6) ───────────────────────────────────────────
@@ -786,7 +788,11 @@ export default function EditorShell({
   const [selectedMusicTrackId, setSelectedMusicTrackId] = useState<string | null>(
     variant?.music_track_id ?? null,
   );
+  const [musicStartS, setMusicStartS] = useState<number>(
+    variant?.music_preview_start_s ?? 0,
+  );
   const [musicDirty, setMusicDirty] = useState(false);
+  const musicHydratedVariantIdRef = useRef<string | null>(null);
   const [overlayUploading, setOverlayUploading] = useState(false);
   const [poolAssets, setPoolAssets] = useState<PoolAsset[]>([]);
   const [maxPoolAssets, setMaxPoolAssets] = useState(20);
@@ -809,9 +815,14 @@ export default function EditorShell({
     setTimelineDirty(false);
   }, [clip.loadState, clip.state.slots, timelineVariantId, variant]);
   useEffect(() => {
+    const nextVariantId = variant?.variant_id ?? null;
+    const changedVariant = musicHydratedVariantIdRef.current !== nextVariantId;
+    if (!changedVariant && musicDirty) return;
+    musicHydratedVariantIdRef.current = nextVariantId;
     setSelectedMusicTrackId(variant?.music_track_id ?? null);
+    setMusicStartS(variant?.music_preview_start_s ?? 0);
     setMusicDirty(false);
-  }, [variant?.variant_id, variant?.music_track_id]);
+  }, [musicDirty, variant?.variant_id, variant?.music_track_id, variant?.music_preview_start_s]);
   const slots = localSlots ?? clip.state.slots;
   const reloadClipTimeline = clip.reload;
   const clipDirty = useMemo(
@@ -858,7 +869,7 @@ export default function EditorShell({
   }, []);
 
   useEffect(() => {
-    if (!clipDirty) {
+    if (!clipDirty && !musicDirty) {
       setVirtualFallback(false);
       virtualRefetchAttemptedRef.current = false;
       virtualRefetchInFlightRef.current = false;
@@ -866,7 +877,7 @@ export default function EditorShell({
       musicRefetchAttemptedRef.current = false;
       virtualMusicAutoFetchRef.current = false;
     }
-  }, [clipDirty]);
+  }, [clipDirty, musicDirty]);
 
   // Toast auto-clear.
   useEffect(() => {
@@ -874,12 +885,6 @@ export default function EditorShell({
     const t = window.setTimeout(() => setToast(null), 2600);
     return () => window.clearTimeout(t);
   }, [toast]);
-
-  // Live audio: mute the preview element when either channel is toggled off
-  // (the preview is a single mixed element; the render honors the split via mix).
-  useEffect(() => {
-    if (videoRef.current) videoRef.current.muted = videoMuted || soundMuted;
-  }, [videoMuted, soundMuted, variant]);
 
   // ── Read-only capability gate (plan §9 / E4) ────────────────────────────────
   // A variant whose editor_capabilities are ALL false is read-only: banner +
@@ -896,7 +901,8 @@ export default function EditorShell({
     capabilities.sfx === false &&
     capabilities.overlays === false &&
     capabilities.visual_blocks !== true &&
-    capabilities.orientation?.editable !== true;
+    capabilities.orientation?.editable !== true &&
+    capabilities.music_window?.editable !== true;
   const readOnlyReason = editorReasonCopy(capabilities?.reason);
   // Text-elements gate (plan 010 OV-1): once sfx/overlays flip true on
   // subtitled variants the shell is editable, but on-video text still lives
@@ -942,6 +948,7 @@ export default function EditorShell({
       mixLevel,
       mixDirty,
       musicTrackId: selectedMusicTrackId,
+      musicStartS,
       musicDirty,
       lyricsEnabled,
       orientation,
@@ -961,6 +968,7 @@ export default function EditorShell({
       mixLevel,
       mixDirty,
       selectedMusicTrackId,
+      musicStartS,
       musicDirty,
       lyricsEnabled,
       orientation,
@@ -981,6 +989,7 @@ export default function EditorShell({
       setMixLevel(doc.mixLevel ?? null);
       setMixDirty(doc.mixDirty ?? false);
       setSelectedMusicTrackId(doc.musicTrackId ?? variant?.music_track_id ?? null);
+      setMusicStartS(doc.musicStartS ?? variant?.music_preview_start_s ?? 0);
       setMusicDirty(doc.musicDirty ?? false);
       setLyricsEnabled(doc.lyricsEnabled ?? persistedLyricsEnabled(variant));
       setOrientation(doc.orientation ?? persistedOrientation(variant));
@@ -1053,6 +1062,7 @@ export default function EditorShell({
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const saving = saveState === "saving";
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [musicAlignmentPrompt, setMusicAlignmentPrompt] = useState(false);
   // Resume-draft notice (plan §9 crash recovery). Non-null → show the notice.
   const [draftDoc, setDraftDoc] = useState<EditorDocument | null>(null);
 
@@ -1152,12 +1162,60 @@ export default function EditorShell({
     setVirtualMusicUnavailable(true);
   }, [refreshMusicTracks]);
 
-  const virtualPreviewRequested =
-    clipDirty && !virtualFallback && clip.loadState === "ready";
   const effectiveMusicTrackId = selectedMusicTrackId ?? variant?.music_track_id ?? null;
   const virtualMusicTrack = effectiveMusicTrackId
     ? musicTracks.find((track) => track.id === effectiveMusicTrackId) ?? null
     : null;
+  const musicWindowCapability = capabilities?.music_window;
+  const songWindowState = useMemo<SongWindowState | null>(() => {
+    if (!musicWindowCapability || !effectiveMusicTrackId) return null;
+    const isCurrentTrack = effectiveMusicTrackId === variant?.music_track_id;
+    const trackDurationS = isCurrentTrack
+      ? musicWindowCapability.track_duration_s
+      : (virtualMusicTrack?.duration_s ?? 0);
+    const beats = isCurrentTrack
+      ? musicWindowCapability.beat_timestamps_s
+      : (virtualMusicTrack?.beat_timestamps_s ?? []);
+    const videoDurationS =
+      clipDirty && timelineDuration > 0
+        ? timelineDuration
+        : musicWindowCapability.video_duration_s;
+    const reason = isCurrentTrack
+      ? musicWindowCapability.reason
+      : trackDurationS <= 0
+        ? "track_duration_unknown"
+        : trackDurationS + 0.02 < videoDurationS
+          ? "song_shorter_than_video"
+          : beats.length === 0
+            ? "timing_metadata_unavailable"
+            : null;
+    return {
+      startS: musicStartS,
+      videoDurationS,
+      trackDurationS,
+      recommendedStartS: isCurrentTrack
+        ? musicWindowCapability.recommended_start_s
+        : (virtualMusicTrack?.preview_start_s ?? 0),
+      beatTimestampsS: beats,
+      editable: reason === null,
+      reason,
+    };
+  }, [
+    effectiveMusicTrackId,
+    clipDirty,
+    musicStartS,
+    musicWindowCapability,
+    timelineDuration,
+    variant?.music_track_id,
+    virtualMusicTrack,
+  ]);
+  // All mutators and draft/history restores maintain musicDirty against the
+  // persisted start. Keying this solely to that flag avoids a one-render false
+  // positive while a newly loaded variant hydrates its local start offset.
+  const musicWindowDirty = !!songWindowState && musicDirty;
+  const virtualPreviewRequested =
+    (clipDirty || musicWindowDirty) && !virtualFallback && clip.loadState === "ready";
+  const musicPreviewRequested = musicWindowDirty || virtualPreviewRequested;
   const effectiveMusicTitle = virtualMusicTrack?.title ?? variant?.track_title ?? "Music";
   // Fallback for tracks the public gallery doesn't list (the matcher considers
   // unpublished tracks): the status response carries a fresh-signed preview URL
@@ -1169,9 +1227,7 @@ export default function EditorShell({
     ? null
     : virtualMusicTrack?.preview_audio_url ??
       (variantMusicFallbackActive ? variant?.music_preview_url ?? null : null);
-  const virtualMusicStartS =
-    virtualMusicTrack?.preview_start_s ??
-    (variantMusicFallbackActive ? variant?.music_preview_start_s ?? 0 : 0);
+  const virtualMusicStartS = musicStartS;
 
   // Blob-cache the track audio (a few MB of m4a) once per track: streaming the
   // signed GCS URL rebuffers mid-preview on real networks (measured: 5 music
@@ -1179,7 +1235,7 @@ export default function EditorShell({
   // A local object URL can never starve. Best-effort — CORS/network failure
   // just keeps streaming from the remote URL.
   useEffect(() => {
-    if (!virtualPreviewRequested || !effectiveMusicTrackId || !virtualMusicRemoteUrl) return;
+    if (!musicPreviewRequested || !effectiveMusicTrackId || !virtualMusicRemoteUrl) return;
     if (virtualMusicBlob?.trackId === effectiveMusicTrackId) return;
     const controller = new AbortController();
     let cancelled = false;
@@ -1202,7 +1258,7 @@ export default function EditorShell({
       cancelled = true;
       controller.abort();
     };
-  }, [virtualPreviewRequested, effectiveMusicTrackId, virtualMusicRemoteUrl, virtualMusicBlob]);
+  }, [musicPreviewRequested, effectiveMusicTrackId, virtualMusicRemoteUrl, virtualMusicBlob]);
   useEffect(
     () => () => {
       setVirtualMusicBlob((prev) => {
@@ -1229,13 +1285,13 @@ export default function EditorShell({
   // track list loads lazily — make sure the active track's preview URL is
   // being fetched when the preview needs it (once per edit session).
   useEffect(() => {
-    if (!virtualPreviewRequested || !effectiveMusicTrackId) return;
+    if (!musicPreviewRequested || !effectiveMusicTrackId) return;
     if (musicTracksLoaded || musicTracksLoading) return;
     if (virtualMusicAutoFetchRef.current) return;
     virtualMusicAutoFetchRef.current = true;
     void refreshMusicTracks();
   }, [
-    virtualPreviewRequested,
+    musicPreviewRequested,
     effectiveMusicTrackId,
     musicTracksLoaded,
     musicTracksLoading,
@@ -1262,6 +1318,60 @@ export default function EditorShell({
     virtualPreviewRequested &&
     !virtualPreview.timeline.hasMissingSource &&
     virtualPreview.timeline.entries.length > 0;
+  const renderedMusicPreviewActive =
+    musicWindowDirty && !virtualPreviewActive && !!virtualMusicAudioUrl;
+
+  // Music-only edits on variants without an editable clip timeline (notably
+  // legacy song_lyrics) preview against the rendered video. The baked mix is
+  // always muted while a separate audio element follows its transport.
+  useEffect(() => {
+    const video = videoRef.current;
+    const audio = renderedMusicAudioRef.current;
+    if (!video) return;
+    video.muted = videoMuted || soundMuted || renderedMusicPreviewActive;
+    if (!audio || !renderedMusicPreviewActive) {
+      audio?.pause();
+      return;
+    }
+    audio.muted = soundMuted;
+    const sync = () => {
+      const target = Math.max(0, musicStartS + video.currentTime);
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        audio.currentTime = Math.min(target, Math.max(0, audio.duration - 0.01));
+      } else {
+        audio.currentTime = target;
+      }
+    };
+    const play = () => {
+      sync();
+      void audio.play().catch(() => {});
+    };
+    const pause = () => audio.pause();
+    const keepSynced = () => {
+      const target = musicStartS + video.currentTime;
+      if (Math.abs(audio.currentTime - target) > 0.15) sync();
+    };
+    video.addEventListener("play", play);
+    video.addEventListener("pause", pause);
+    video.addEventListener("seeking", sync);
+    video.addEventListener("timeupdate", keepSynced);
+    sync();
+    if (!video.paused) play();
+    return () => {
+      video.removeEventListener("play", play);
+      video.removeEventListener("pause", pause);
+      video.removeEventListener("seeking", sync);
+      video.removeEventListener("timeupdate", keepSynced);
+      audio.pause();
+    };
+  }, [
+    musicStartS,
+    renderedMusicPreviewActive,
+    soundMuted,
+    variant,
+    videoMuted,
+    virtualMusicAudioUrl,
+  ]);
   const pauseVirtualPreview = virtualPreview.pause;
   const seekVirtualPreview = virtualPreview.seekTo;
   const toggleVirtualPreview = virtualPreview.toggle;
@@ -1789,10 +1899,41 @@ export default function EditorShell({
       if (trackId === selectedMusicTrackId) return;
       history.record();
       setSelectedMusicTrackId(trackId);
-      setMusicDirty(trackId !== variant.music_track_id);
+      const selectedTrack = musicTracks.find((track) => track.id === trackId);
+      const nextStartS = selectedTrack?.preview_start_s ?? 0;
+      setMusicStartS(nextStartS);
+      setMusicDirty(
+        trackId !== variant.music_track_id ||
+          Math.abs(nextStartS - (variant.music_preview_start_s ?? 0)) > 0.005,
+      );
     },
-    [history, readOnly, selectedMusicTrackId, variant?.music_track_id],
+    [history, musicTracks, readOnly, selectedMusicTrackId, variant],
   );
+
+  const patchMusicStart = useCallback(
+    (startS: number) => {
+      if (readOnly || !songWindowState?.editable || !Number.isFinite(startS)) return;
+      const maxStart = Math.max(
+        0,
+        songWindowState.trackDurationS - songWindowState.videoDurationS,
+      );
+      const nextStartS = Math.max(0, Math.min(maxStart, startS));
+      setMusicStartS(nextStartS);
+      setMusicDirty(
+        selectedMusicTrackId !== variant?.music_track_id ||
+          Math.abs(nextStartS - (variant?.music_preview_start_s ?? 0)) > 0.005,
+      );
+    }, [readOnly, selectedMusicTrackId, songWindowState, variant],
+  );
+
+  const musicWindowControl = songWindowState
+    ? {
+        value: songWindowState,
+        onPreview: patchMusicStart,
+        onChange: patchMusicStart,
+        onBegin: () => history.record(),
+      }
+    : undefined;
 
   const previewTextTiming = useCallback(
     (id: string, patch: Pick<TextElementBar, "start_s" | "end_s">) => {
@@ -3242,14 +3383,22 @@ export default function EditorShell({
     }
   }, [variant]);
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (
+    musicAlignment?: "preserve_cuts" | "resync_beats",
+  ) => {
     if (!variant || saveState === "saving" || readOnly) return;
-    if (musicDirty && (timelineDirty || clipDirty)) {
+    const commitMusicWindow = musicWindowDirty && !!songWindowState?.editable;
+    if (commitMusicWindow && !musicAlignment) {
+      setMusicAlignmentPrompt(true);
+      return;
+    }
+    if (!commitMusicWindow && musicDirty && (timelineDirty || clipDirty)) {
       const proceed = window.confirm(
         "Changing the song resets clip cuts to the new beat grid. Save with the new song?",
       );
       if (!proceed) return;
     }
+    setMusicAlignmentPrompt(false);
     setSaveState("saving");
     setSaveMessage(null);
     try {
@@ -3277,6 +3426,10 @@ export default function EditorShell({
         mixLevel,
         musicDirty,
         musicTrackId: selectedMusicTrackId,
+        musicWindow:
+          commitMusicWindow && musicAlignment
+            ? { startS: songWindowState.startS, alignment: musicAlignment }
+            : undefined,
         sfxDirty,
         soundEffects: localSfx,
         overlaysDirty,
@@ -3356,6 +3509,8 @@ export default function EditorShell({
     mixLevel,
     musicDirty,
     selectedMusicTrackId,
+    musicWindowDirty,
+    songWindowState,
     captionMetaDirty,
     captionMetaPatch,
     textDirty,
@@ -3416,6 +3571,7 @@ export default function EditorShell({
     mixLevel,
     mixDirty,
     selectedMusicTrackId,
+    musicStartS,
     musicDirty,
     title,
     orientation,
@@ -3885,6 +4041,28 @@ export default function EditorShell({
         </header>
       )}
 
+      {renderedMusicPreviewActive && virtualMusicAudioUrl && (
+        <audio
+          ref={renderedMusicAudioRef}
+          data-testid="rendered-music-window-preview"
+          src={virtualMusicAudioUrl}
+          preload="auto"
+          className="hidden"
+          onError={handleVirtualMusicError}
+          onLoadedMetadata={(event) => {
+            const audio = event.currentTarget;
+            const video = videoRef.current;
+            if (!video) return;
+            const target = Math.max(0, musicStartS + video.currentTime);
+            audio.currentTime =
+              Number.isFinite(audio.duration) && audio.duration > 0
+                ? Math.min(target, Math.max(0, audio.duration - 0.01))
+                : target;
+            if (!video.paused) void audio.play().catch(() => {});
+          }}
+        />
+      )}
+
       {/* ── Middle row: rail · drawer · canvas · inspector · edge rail ── */}
       {layoutMode === "light" ? (
         <div className="relative min-h-0">
@@ -3972,6 +4150,7 @@ export default function EditorShell({
               currentMusicTrackId={selectedMusicTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
+              musicWindow={musicWindowControl}
               overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
@@ -4033,6 +4212,7 @@ export default function EditorShell({
               currentMusicTrackId={selectedMusicTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
+              musicWindow={musicWindowControl}
               overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
@@ -4171,6 +4351,7 @@ export default function EditorShell({
           currentMusicTrackId={selectedMusicTrackId}
           musicEditable={musicSwapEditable}
           onPickMusic={pickMusicTrack}
+          musicWindow={musicWindowControl}
           onPatchMix={patchMixLevel}
           smartPlaceAvailable={
             !!selectedBar && !readOnly && (isMasonryVariant(variant) || !!smartPlacementCandidate)
@@ -4437,6 +4618,14 @@ export default function EditorShell({
         </div>
       )}
 
+      <MusicAlignmentDialog
+        open={musicAlignmentPrompt}
+        preserveAvailable={musicWindowCapability?.preserve_available === true}
+        preserveReason={musicWindowCapability?.preserve_reason ?? null}
+        onChoose={(alignment) => void handleSave(alignment)}
+        onCancel={() => setMusicAlignmentPrompt(false)}
+      />
+
       <ConfirmDialog
         open={confirmLeave}
         question="Discard your edits?"
@@ -4449,6 +4638,98 @@ export default function EditorShell({
         }}
         onCancel={() => setConfirmLeave(false)}
       />
+    </div>
+  );
+}
+
+export function MusicAlignmentDialog({
+  open,
+  preserveAvailable,
+  preserveReason,
+  onChoose,
+  onCancel,
+}: {
+  open: boolean;
+  preserveAvailable: boolean;
+  preserveReason: string | null;
+  onChoose: (alignment: "preserve_cuts" | "resync_beats") => void;
+  onCancel: () => void;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const preserveRef = useRef<HTMLButtonElement>(null);
+  const resyncRef = useRef<HTMLButtonElement>(null);
+  useFocusTrap(cardRef, open);
+  useEffect(() => {
+    if (!open) return;
+    (preserveAvailable ? preserveRef.current : resyncRef.current)?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        onCancel();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onCancel, open, preserveAvailable]);
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 px-6"
+      onClick={onCancel}
+    >
+      <div
+        ref={cardRef}
+        role="alertdialog"
+        aria-modal="true"
+        aria-label="How should the cuts follow this song section?"
+        className="w-full max-w-[460px] rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <p className="font-display text-xl text-[#0c0c0e]">
+          How should the cuts follow this song section?
+        </p>
+        <p className="mt-2 text-sm leading-relaxed text-[#71717a]">
+          Your selected song section is saved either way.
+        </p>
+        <div className="mt-5 space-y-3">
+          <button
+            ref={preserveRef}
+            type="button"
+            disabled={!preserveAvailable}
+            onClick={() => onChoose("preserve_cuts")}
+            className="min-h-14 w-full rounded-xl border border-zinc-300 bg-white px-4 text-left text-sm font-semibold text-[#0c0c0e] hover:border-zinc-500 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          >
+            Preserve cuts
+            <span className="mt-1 block text-[12px] font-normal text-[#71717a]">
+              Keep the current clip order and timing.
+            </span>
+          </button>
+          {!preserveAvailable && preserveReason === "linear_timeline_unavailable" && (
+            <p className="px-1 text-[11px] text-[#71717a]">
+              Preserve cuts isn’t available for this older render.
+            </p>
+          )}
+          <button
+            ref={resyncRef}
+            type="button"
+            onClick={() => onChoose("resync_beats")}
+            className="min-h-14 w-full rounded-xl bg-[#0c0c0e] px-4 text-left text-sm font-semibold text-white hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          >
+            Re-sync to beats
+            <span className="mt-1 block text-[12px] font-normal text-white/70">
+              Rebuild the cuts around the beats in this section.
+            </span>
+          </button>
+        </div>
+        <button
+          type="button"
+          className="mt-5 min-h-11 w-full text-sm text-[#71717a] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

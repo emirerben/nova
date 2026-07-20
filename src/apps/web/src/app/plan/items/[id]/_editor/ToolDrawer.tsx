@@ -27,6 +27,7 @@ import {
 import PresetGrid from "./PresetGrid";
 import StylesDrawer from "./StylesDrawer";
 import CopilotDrawer from "./CopilotDrawer";
+import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
 import type { EditorTool } from "./ToolRail";
 import type { EditorLayoutMode } from "./useEditorLayoutMode";
 import type {
@@ -61,6 +62,7 @@ export default function ToolDrawer({
   currentMusicTrackId = null,
   musicEditable = false,
   onPickMusic,
+  musicWindow,
   overlayUploading = false,
   onOverlayUpload,
   overlaySuggestions = null,
@@ -107,6 +109,7 @@ export default function ToolDrawer({
   currentMusicTrackId?: string | null;
   musicEditable?: boolean;
   onPickMusic?: (trackId: string) => void;
+  musicWindow?: SongWindowControl;
   overlayUploading?: boolean;
   onOverlayUpload?: (
     files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
@@ -375,6 +378,7 @@ export default function ToolDrawer({
           currentMusicTrackId={currentMusicTrackId}
           musicEditable={musicEditable}
           onPickMusic={onPickMusic}
+          musicWindow={musicWindow}
         />
       )}
 
@@ -1199,6 +1203,7 @@ function SoundsDrawer({
   currentMusicTrackId,
   musicEditable,
   onPickMusic,
+  musicWindow,
 }: {
   effects: SoundEffectSummary[];
   loading: boolean;
@@ -1208,6 +1213,7 @@ function SoundsDrawer({
   currentMusicTrackId: string | null;
   musicEditable: boolean;
   onPickMusic?: (trackId: string) => void;
+  musicWindow?: SongWindowControl;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
@@ -1253,6 +1259,11 @@ function SoundsDrawer({
               No ready songs found.
             </div>
           )}
+        </div>
+      )}
+      {musicWindow && (
+        <div className="mb-5">
+          <SongWindowSelector {...musicWindow} />
         </div>
       )}
       <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Effects</p>
