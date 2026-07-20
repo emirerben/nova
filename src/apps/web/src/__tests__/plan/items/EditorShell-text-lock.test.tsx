@@ -171,20 +171,117 @@ const READ_ONLY_CAPABILITIES: EditorCapabilities = {
   reason: "caption_archetype",
 };
 
-async function renderShell(variant: PlanItemVariant) {
-  mockGetPlanItem.mockResolvedValue(ITEM);
+async function renderShell(variant: PlanItemVariant, itemId = "item-1") {
+  mockGetPlanItem.mockResolvedValue({ ...ITEM, id: itemId });
   mockGetPlanItemJobStatus.mockResolvedValue({
     variants: [variant],
   } as unknown as Awaited<ReturnType<typeof getPlanItemJobStatus>>);
+  let view: ReturnType<typeof render> | undefined;
   await act(async () => {
-    render(<EditorShell itemId="item-1" variantParam="var-sub" />);
+    view = render(<EditorShell itemId={itemId} variantParam="var-sub" />);
   });
+  return view!;
 }
 
 afterEach(() => {
   jest.clearAllMocks();
   wideViewport = true;
   window.sessionStorage.clear();
+});
+
+describe("EditorShell — item-scoped draft recovery", () => {
+  it("offers a draft only to the plan item that created it", async () => {
+    window.sessionStorage.setItem(
+      "nova-editor-draft:item-1:var-sub",
+      JSON.stringify({
+        v: 2,
+        planItemId: "item-1",
+        jobId: "job-1",
+        variantId: "var-sub",
+        baseGeneration: "",
+        doc: { bars: [] },
+      }),
+    );
+
+    const first = await renderShell(makeVariant(EDITABLE_CAPABILITIES), "item-1");
+    expect(screen.getByText("Resume your unsaved edits?")).toBeInTheDocument();
+    first.unmount();
+
+    window.sessionStorage.setItem(
+      "nova-editor-draft:item-2:var-sub",
+      JSON.stringify({
+        v: 2,
+        planItemId: "item-1",
+        jobId: "job-1",
+        variantId: "var-sub",
+        baseGeneration: "",
+        doc: { bars: [] },
+      }),
+    );
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES), "item-2");
+    expect(screen.queryByText("Resume your unsaved edits?")).toBeNull();
+  });
+
+  it("ignores a draft based on an older render generation", async () => {
+    window.sessionStorage.setItem(
+      "nova-editor-draft:item-1:var-sub",
+      JSON.stringify({
+        v: 2,
+        planItemId: "item-1",
+        jobId: "job-1",
+        variantId: "var-sub",
+        baseGeneration: "old-generation",
+        doc: { bars: [] },
+      }),
+    );
+    const variant = {
+      ...makeVariant(EDITABLE_CAPABILITIES),
+      render_generation_id: "new-generation",
+    } as PlanItemVariant;
+
+    await renderShell(variant);
+    expect(screen.queryByText("Resume your unsaved edits?")).toBeNull();
+  });
+
+  it("ignores a draft created by an older job for the same item and variant", async () => {
+    window.sessionStorage.setItem(
+      "nova-editor-draft:item-1:var-sub",
+      JSON.stringify({
+        v: 2,
+        planItemId: "item-1",
+        jobId: "old-job",
+        variantId: "var-sub",
+        baseGeneration: "",
+        doc: { bars: [] },
+      }),
+    );
+
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+    expect(screen.queryByText("Resume your unsaved edits?")).toBeNull();
+  });
+
+  it("does not overwrite the next item's draft while client navigation loads", async () => {
+    const view = await renderShell(makeVariant(EDITABLE_CAPABILITIES), "item-1");
+    fireEvent.click(screen.getByRole("button", { name: "Presets inspector tab" }));
+    fireEvent.click(screen.getAllByRole("radio", { name: /^Text preset:/ })[0]);
+
+    const nextDraft = JSON.stringify({
+      v: 2,
+      planItemId: "item-2",
+      jobId: "job-2",
+      variantId: "var-sub",
+      baseGeneration: "next-generation",
+      doc: { bars: [] },
+    });
+    window.sessionStorage.setItem("nova-editor-draft:item-2:var-sub", nextDraft);
+    mockGetPlanItem.mockImplementationOnce(() => new Promise(() => {}));
+
+    act(() => {
+      view.rerender(<EditorShell itemId="item-2" variantParam="var-sub" />);
+    });
+
+    expect(window.sessionStorage.getItem("nova-editor-draft:item-2:var-sub")).toBe(nextDraft);
+  });
 });
 
 describe("EditorShell — add-text path on a text-locked shell (OV-1)", () => {
@@ -364,7 +461,7 @@ describe("EditorShell — masonry smart placement history", () => {
     fireEvent.click(screen.getByRole("button", { name: "Split & place" }));
 
     await act(async () => {});
-    const rawDraft = window.sessionStorage.getItem("nova-editor-draft:var-sub");
+    const rawDraft = window.sessionStorage.getItem("nova-editor-draft:item-1:var-sub");
     expect(rawDraft).not.toBeNull();
     const bars = (JSON.parse(rawDraft as string) as { doc: { bars: Array<Record<string, unknown>> } })
       .doc.bars;
@@ -415,7 +512,7 @@ describe("EditorShell — masonry smart placement history", () => {
 
     expect(screen.getByRole("button", { name: "Split & place" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(window.sessionStorage.getItem("nova-editor-draft:var-sub")).toBeNull();
+    expect(window.sessionStorage.getItem("nova-editor-draft:item-1:var-sub")).toBeNull();
   });
 
   it("anchors selected Smart place to the current playhead", async () => {
@@ -444,12 +541,12 @@ describe("EditorShell — masonry smart placement history", () => {
     fireEvent.click(screen.getByRole("button", { name: "Text tool" }));
     fireEvent.click(screen.getByRole("button", { name: "Smart place all" }));
     expect(save).toBeEnabled();
-    expect(window.sessionStorage.getItem("nova-editor-draft:var-sub")).not.toBeNull();
+    expect(window.sessionStorage.getItem("nova-editor-draft:item-1:var-sub")).not.toBeNull();
 
     fireEvent.keyDown(document, { key: "z", metaKey: true });
     expect(save).toBeDisabled();
     expect(screen.getByRole("button", { name: "Redo" })).toBeEnabled();
-    expect(window.sessionStorage.getItem("nova-editor-draft:var-sub")).toBeNull();
+    expect(window.sessionStorage.getItem("nova-editor-draft:item-1:var-sub")).toBeNull();
   });
 
   it("leaves the document unchanged when overlapping bars exceed pocket capacity", async () => {
