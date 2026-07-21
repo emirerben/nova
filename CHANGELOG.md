@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.2.0] — 2026-07-20
+
+### Added
+- **Smart Captions v2 can now roll out to every creator.** A configurable fleet-wide default preset applies to all users at once, while individual creators can still be given a different style, kept on a canary comparison, or opted out entirely — and those per-creator choices always win over the default. Turning the default off never touches per-creator settings.
+- **Admins can manage creator style assignments directly.** New admin endpoints assign a Smart Captions style to a creator by email, list every assignment alongside the active fleet default, and remove an assignment — no database access required.
+
 ## [0.11.1.0] — 2026-07-20
 
 ### Fixed

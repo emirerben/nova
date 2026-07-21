@@ -163,6 +163,14 @@ class Settings(BaseSettings):
     # renderer gate. Default OFF for controlled creator rollout.
     smart_captions_enabled: bool = False
 
+    # Fleet-wide default Smart Captions preset for users WITHOUT a
+    # creator_style_assignments row. Both must be set (e.g. "cigdem" + "v2")
+    # or the default is off and rollout stays per-assignment. An existing row
+    # always wins — enabled=false stays a per-creator opt-out. Rollback: unset
+    # both (fly secrets unset) + machine restart; assigned creators keep v2.
+    smart_captions_default_preset_id: str = ""
+    smart_captions_default_preset_version: str = ""
+
     # Kill switch for authored TextElements on subtitled variants. When False,
     # subtitled remains captions-only and the text-element routes/capabilities
     # reject it. When True, user-authored text is burned onto the caption-free

@@ -12,6 +12,7 @@ from app.limiter import limiter
 from app.routes import (
     admin,
     admin_build_tasks,
+    admin_creator_style,
     admin_generative,
     admin_jobs,
     admin_music,
@@ -113,6 +114,11 @@ app.include_router(
     admin_build_tasks.router, prefix="/admin/build-tasks", tags=["admin-build-tasks"]
 )
 app.include_router(admin_review.router, prefix="/admin/review", tags=["admin-review"])
+app.include_router(
+    admin_creator_style.router,
+    prefix="/admin/creator-style-assignments",
+    tags=["admin-creator-style"],
+)
 app.include_router(template_jobs.router, prefix="/template-jobs", tags=["template-jobs"])
 app.include_router(music.router, prefix="/music-tracks", tags=["music"])
 app.include_router(sound_effects.router, prefix="/sound-effects", tags=["sound-effects"])

@@ -50,13 +50,16 @@ Vercel off first, then Fly.
 
 **Smart Captions (server-only flag):** set `SMART_CAPTIONS_ENABLED=true` on Fly
 and restart the API/workers. There is deliberately no `NEXT_PUBLIC` twin. A
-creator is eligible when `SUBTITLED_ARCHETYPE_ENABLED=true` and the plan item
-uses `edit_format="subtitled"`. Unassigned creators default to `cigdem/v2`;
-`CreatorStyleAssignment` rows are only preset/disable/shadow overrides. Verify a
-fresh account gets `smart_captions_available=true`, the job trace records
+creator is eligible only when `SUBTITLED_ARCHETYPE_ENABLED=true`, the plan item
+uses `edit_format="subtitled"`, and either an enabled
+`CreatorStyleAssignment` pins a preset id/version or
+`SMART_CAPTIONS_DEFAULT_PRESET_ID`/`SMART_CAPTIONS_DEFAULT_PRESET_VERSION`
+configure a fleet-wide default. Verify an eligible creator gets
+`smart_captions_available=true`, the job trace records
 `smart_captions.plan_compiled`, and the ready variant persists
 `smart_captions_applied=true`. Planner/compiler failures fail open to ordinary
-corrected captions. Roll back by setting the Fly flag false.
+corrected captions. Roll back by setting the Fly flag false; unset the default
+preset secrets to remove open-to-all eligibility without deleting assignments.
 
 **Smart Captions v2 (v0.11.0.0):** the semantic pipeline in `app/smart_edit/`
 (strict schemas → transcript-anchored planner → preset-driven compiler) builds

@@ -600,6 +600,8 @@ def test_patch_smart_captions_uses_server_assignment(client: TestClient, monkeyp
 
     monkeypatch.setattr(settings, "smart_captions_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_id", "cigdem", raising=False)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_version", "v2", raising=False)
     user = _user()
     item, plan = _owned_item(user.id)
     item.edit_format = "subtitled"
@@ -626,6 +628,8 @@ def test_patch_smart_captions_defaults_available_without_assignment(
 
     monkeypatch.setattr(settings, "smart_captions_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_id", "cigdem", raising=False)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_version", "v2", raising=False)
     user = _user()
     item, plan = _owned_item(user.id)
     item.edit_format = "subtitled"

@@ -8,15 +8,15 @@ mechanics (v0.11.0.0).
 
 `app/services/smart_captions.py` is the single server-authoritative resolver: a
 creator is eligible when `SMART_CAPTIONS_ENABLED=true`,
-`SUBTITLED_ARCHETYPE_ENABLED=true`, and the plan item uses
-`edit_format="subtitled"`. Unassigned creators default to the reviewed
-`cigdem/v2` preset, so new accounts are eligible without a DB backfill. The
-browser persists intent but can never select a preset or bypass rollout gates.
-`CreatorStyleAssignment` rows are now overrides: they may pin a different
-reviewed `preset_id`/`preset_version`, explicitly disable one account, or carry
-`shadow_preset_id`/`shadow_preset_version` (migration 0066; check-constrained to
-be set or null as a pair) — see the shadow canary section. Guard:
-`tests/smart_edit/test_capability.py`.
+`SUBTITLED_ARCHETYPE_ENABLED=true`, the plan item uses `edit_format="subtitled"`,
+and either an enabled `CreatorStyleAssignment` pins a `preset_id`/`preset_version`
+or `SMART_CAPTIONS_DEFAULT_PRESET_ID`/`SMART_CAPTIONS_DEFAULT_PRESET_VERSION`
+configure a fleet-wide default for users without an assignment row. The browser
+persists intent but can never select a preset or bypass rollout gates. Assignment
+rows win over the default: they may pin a different reviewed preset, explicitly
+disable one account, or carry `shadow_preset_id`/`shadow_preset_version`
+(migration 0066; check-constrained to be set or null as a pair) — see the shadow
+canary section. Guard: `tests/smart_edit/test_capability.py`.
 
 ## Planner → compiler contract
 

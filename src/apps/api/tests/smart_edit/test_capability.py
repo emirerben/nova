@@ -29,7 +29,7 @@ async def test_capability_fails_closed_before_query_when_flag_is_off(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_capability_requires_supported_format_and_defaults_unassigned(monkeypatch) -> None:
+async def test_capability_requires_supported_format_and_assignment(monkeypatch) -> None:
     monkeypatch.setattr(settings, "smart_captions_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     db = AsyncMock()
@@ -44,10 +44,7 @@ async def test_capability_requires_supported_format_and_defaults_unassigned(monk
     unassigned = await resolve_smart_captions_capability(
         user_id=uuid.uuid4(), edit_format="subtitled", db=db
     )
-    assert unassigned.available is True
-    assert unassigned.reason is None
-    assert unassigned.preset_id == "cigdem"
-    assert unassigned.preset_version == "v2"
+    assert unassigned.reason == "not_assigned"
 
 
 @pytest.mark.asyncio
@@ -73,27 +70,6 @@ async def test_capability_returns_server_owned_preset(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_capability_explicit_assignment_can_disable_account(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "smart_captions_enabled", True)
-    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
-    db = AsyncMock()
-    db.get.return_value = SimpleNamespace(
-        enabled=False,
-        preset_id="cigdem",
-        preset_version="v2",
-    )
-    user_id = uuid.uuid4()
-
-    result = await resolve_smart_captions_capability(
-        user_id=user_id, edit_format="subtitled", db=db
-    )
-
-    assert result.available is False
-    assert result.reason == "disabled_by_assignment"
-    db.get.assert_awaited_once_with(CreatorStyleAssignment, user_id)
-
-
-@pytest.mark.asyncio
 async def test_capability_fails_closed_when_the_base_renderer_is_disabled(monkeypatch) -> None:
     monkeypatch.setattr(settings, "smart_captions_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", False)
@@ -108,29 +84,7 @@ async def test_capability_fails_closed_when_the_base_renderer_is_disabled(monkey
     db.get.assert_not_awaited()
 
 
-def test_sync_dispatch_context_defaults_to_v2_without_assignment(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "smart_captions_enabled", True)
-    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
-    user_id = uuid.uuid4()
-    db = MagicMock()
-    db.get.return_value = None
-
-    context = resolve_smart_captions_context_sync(
-        user_id=user_id,
-        edit_format="subtitled",
-        requested=True,
-        db=db,
-    )
-
-    assert context == {
-        "preset_id": "cigdem",
-        "preset_version": "v2",
-        "sound_design": "auto",
-    }
-    db.get.assert_called_once_with(CreatorStyleAssignment, user_id)
-
-
-def test_sync_dispatch_context_rechecks_assignment_and_pins_override(monkeypatch) -> None:
+def test_sync_dispatch_context_rechecks_assignment_and_pins_preset(monkeypatch) -> None:
     monkeypatch.setattr(settings, "smart_captions_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     user_id = uuid.uuid4()
@@ -246,3 +200,114 @@ def test_valid_shadow_is_pinned_but_partial_or_unknown_shadow_is_ignored(monkeyp
         )
         assert "shadow_preset_id" not in context
         assert "shadow_preset_version" not in context
+
+
+# ── Fleet-wide default preset (open-to-all rollout) ──────────────────────────
+
+
+def _enable_default(monkeypatch, preset_id: str = "cigdem", version: str = "v2") -> None:
+    monkeypatch.setattr(settings, "smart_captions_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_id", preset_id, raising=False)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_version", version, raising=False)
+
+
+@pytest.mark.asyncio
+async def test_default_preset_applies_to_users_without_a_row(monkeypatch) -> None:
+    _enable_default(monkeypatch)
+    db = AsyncMock()
+    db.get.return_value = None
+
+    result = await resolve_smart_captions_capability(
+        user_id=uuid.uuid4(), edit_format="subtitled", db=db
+    )
+
+    assert result.available is True
+    assert (result.preset_id, result.preset_version) == ("cigdem", "v2")
+    # The default never carries a shadow — shadow stays an assigned-canary tool.
+    assert result.shadow_preset_id is None
+    # The row was still consulted (an override or opt-out must win).
+    db.get.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_disabled_row_is_an_opt_out_that_beats_the_default(monkeypatch) -> None:
+    _enable_default(monkeypatch)
+    db = AsyncMock()
+    db.get.return_value = SimpleNamespace(enabled=False, preset_id="cigdem", preset_version="v2")
+
+    result = await resolve_smart_captions_capability(
+        user_id=uuid.uuid4(), edit_format="subtitled", db=db
+    )
+
+    assert result.available is False
+    assert result.reason == "not_assigned"
+
+
+@pytest.mark.asyncio
+async def test_explicit_row_beats_the_default(monkeypatch) -> None:
+    _enable_default(monkeypatch, version="v2")
+    db = AsyncMock()
+    db.get.return_value = SimpleNamespace(enabled=True, preset_id="cigdem", preset_version="v1")
+
+    result = await resolve_smart_captions_capability(
+        user_id=uuid.uuid4(), edit_format="subtitled", db=db
+    )
+
+    assert result.available is True
+    assert result.preset_version == "v1"
+
+
+@pytest.mark.asyncio
+async def test_unloadable_default_fails_closed(monkeypatch) -> None:
+    _enable_default(monkeypatch, preset_id="missing", version="v9")
+    db = AsyncMock()
+    db.get.return_value = None
+
+    result = await resolve_smart_captions_capability(
+        user_id=uuid.uuid4(), edit_format="subtitled", db=db
+    )
+
+    assert result.available is False
+    assert result.reason == "not_assigned"
+
+
+@pytest.mark.asyncio
+async def test_default_still_respects_hard_gates_without_db_read(monkeypatch) -> None:
+    _enable_default(monkeypatch)
+    monkeypatch.setattr(settings, "smart_captions_enabled", False)
+    db = AsyncMock()
+
+    result = await resolve_smart_captions_capability(
+        user_id=uuid.uuid4(), edit_format="subtitled", db=db
+    )
+
+    assert result.reason == "feature_disabled"
+    db.get.assert_not_awaited()
+
+
+def test_default_preset_pins_into_dispatch_context_sync(monkeypatch) -> None:
+    _enable_default(monkeypatch)
+    db = MagicMock()
+    db.get.return_value = None
+
+    context = resolve_smart_captions_context_sync(
+        user_id=uuid.uuid4(),
+        edit_format="subtitled",
+        requested=True,
+        db=db,
+    )
+
+    assert context == {
+        "preset_id": "cigdem",
+        "preset_version": "v2",
+        "sound_design": "auto",
+    }
+    # Byte-identity when the default is unset: no context, exactly as before.
+    monkeypatch.setattr(settings, "smart_captions_default_preset_id", "", raising=False)
+    assert (
+        resolve_smart_captions_context_sync(
+            user_id=uuid.uuid4(), edit_format="subtitled", requested=True, db=db
+        )
+        is None
+    )
