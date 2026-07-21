@@ -1,0 +1,53 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v6",
+  "input": {
+    "utterance": "use the staggered slice animation on the title",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["style"],
+      "has_narrated_captions": false,
+      "text_bars": [
+        {
+          "text": "GOAL OF THE\nTOURNAMENT",
+          "start_s": 0,
+          "end_s": 4,
+          "color": "#FFFFFF",
+          "effect": "static"
+        }
+      ],
+      "slots": [
+        {
+          "output_start_s": 0,
+          "output_end_s": 4,
+          "duration_s": 4
+        }
+      ],
+      "total_duration_s": 4
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"effect\":\"staggered-slice\"}}],\"confidence\":0.98,\"reply\":\"Applied the Staggered slice animation to the title.\",\"suggestions\":[\"Preview the animation\",\"Adjust the title timing\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_text_style",
+        "bar_index": 0,
+        "patch": {
+          "effect": "staggered-slice"
+        }
+      }
+    ],
+    "confidence": 0.98,
+    "reply": "Applied the Staggered slice animation to the title.",
+    "suggestions": [
+      "Preview the animation",
+      "Adjust the title timing"
+    ],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "explicit staggered slice text effect"
+  }
+}

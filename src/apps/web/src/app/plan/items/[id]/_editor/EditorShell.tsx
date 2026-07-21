@@ -1435,7 +1435,6 @@ export default function EditorShell({
       }
       return;
     }
-    pauseVirtualPreview();
     const rendered = videoRef.current;
     if (!rendered) return;
     const clamped = Math.max(0, Math.min(duration || currentTime, currentTime));
@@ -1445,7 +1444,6 @@ export default function EditorShell({
   }, [
     currentTime,
     duration,
-    pauseVirtualPreview,
     seekVirtualPreview,
     virtualPreview.timeline.totalDurationS,
     virtualPreviewActive,
@@ -2880,6 +2878,11 @@ export default function EditorShell({
       openTools,
       sfxPlacements: localSfx,
       sfxCatalog: sfxGlossaryEffects,
+      // Speech marks describe the PERSISTED render's timeline — hide them while
+      // local clip edits have shifted it (same staleness discipline the prompt
+      // applies to beat marks). Saving refreshes the map.
+      speechMap: clipDirty ? null : variant?.speech_map ?? null,
+      sfxSuggestions: clipDirty ? null : variant?.pending_sfx_suggestions ?? null,
       overlayCards: localOverlays,
       poolAssets,
       pendingSuggestions: overlaySuggestions.rows,
@@ -2903,6 +2906,7 @@ export default function EditorShell({
     captionMeta,
     clip.clips,
     clip.state.grid,
+    clipDirty,
     effectiveMusicTitle,
     effectiveMusicTrackId,
     dirty,
@@ -2922,9 +2926,11 @@ export default function EditorShell({
     variant?.intro_layout,
     variant?.intro_mode,
     variant?.intro_text,
+    variant?.pending_sfx_suggestions,
     variant?.render_status,
     variant?.resolved_archetype,
     variant?.sequence_synced,
+    variant?.speech_map,
     variant?.text_elements_user_edited,
     variant?.text_mode,
   ]);
@@ -4128,6 +4134,7 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            playing={playing}
             masonryDurationS={previewDuration}
             zoomPct={100}
             tool="select"
@@ -4330,6 +4337,7 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            playing={playing}
             masonryDurationS={previewDuration}
             zoomPct={zoomPct}
             tool={canvasTool}

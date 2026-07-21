@@ -18,12 +18,46 @@ ingested_via: put_page
 **Priority:** P2
 **Depends on:** copilot-creative PR (beat marks give the ops their timing vocabulary)
 
-### Server-side beat-driven SFX auto-suggestion
-**What:** Extend the `build_suggestions`-style auto-placement engine (`services/overlay_autoplace.py`) to propose SFX placements on beat marks near high-energy moments, so the editor (and a copilot accept-suggestion flow) can offer one-tap sound accents.
-**Why:** The copilot now places SFX on beats when asked; proactive suggestions close the loop for users who don't ask.
-**Effort:** M (CC: ~half day)
-**Priority:** P3
-**Depends on:** SOUND_EFFECTS_ENABLED rollout state
+### ~~Server-side beat-driven SFX auto-suggestion~~ — SHIPPED (word-level sound design train, 2026-07-21)
+Superseded and shipped as `sfx_autoplace` (dark behind `SFX_AUTOPLACE_ENABLED`): agent-proposed
+SFX suggestions anchored to spoken words/pauses/clip moments (not just beats), persisted as
+stale-filtered `pending_sfx_suggestions`, surfaced through the copilot. See
+docs/pipelines/generative.md "Speech map + SFX auto-suggestions". Remaining follow-ups below.
+
+### SFX suggestion rail in the SfxLane (accept/reject UI)
+**What:** Surface `pending_sfx_suggestions` as one-tap chips in the SfxLane (mirror OverlaySuggestions/SuggestionRail), instead of copilot-only realization.
+**Why:** Users who never open the copilot still get the auto sound design; suggestions currently reach only chat users.
+**How:** Read `variant.pending_sfx_suggestions` (already typed in plan-api.ts), render a suggestion row in `SfxLane.tsx`, accept = append to `sfxPlacements` via the existing reducer; no new backend.
+**Effort:** S-M (CC: ~2-3h) **Priority:** P2 **Depends on:** SFX_AUTOPLACE_ENABLED rollout
+
+### SFX/speech review deferrals (from the word-level sound design review, 2026-07-21)
+**What:** Five non-blocking findings deferred at diff review: (1) `overlay_transcript` stale-write race — the SFX/overlay tasks read the variant unlocked, run minutes of Whisper/LLM, then blind-write; a mid-flight re-render persists words for the old video (pre-existing pattern, now three writers — fix = render-generation check at persist). (2) `sfx_autoplace_attempted` marker is permanent — a broker blip/Gemini 429 after commit means that render generation never gets suggestions and in-place re-renders don't re-arm (matches overlay-chain posture). (3) speech_map/hash recomputed per status poll — persist once per render generation if polling cost ever shows up in profiles. (4) `contains_voice` NULL fails open for unanalyzed legacy effects — analysis backfill tightens. (5) `resolve_sfx_suggestions` ignores existing manual SoundEffectPlacements when spacing (suggestion can land within 1.5s of a manual pin). Plus two test gaps: role_tags route-level serialization test, clipDirty→speechMap gating extraction+test in EditorShell.
+**Why:** Each is real but low-probability/advisory-only under the dark flag; recorded so the flag-flip review re-weighs them.
+**Effort:** S each **Priority:** P3 **Depends on:** SFX_AUTOPLACE_ENABLED flip decision
+
+### Speech map for montage variants without persisted words
+**What:** Variants with a matched song and no editorial sequence have no word source → no speech_map. Add an opt-in bounded Whisper pass (task context, persist to `overlay_transcript`) so speech-synced copilot edits work there too.
+**Why:** "Place a sound at the pause" fails honestly (model says no speech data) on music-first montages even when there is audible speech under the track.
+**How:** Extend `_maybe_sfx_autoplace_after_finalize`-style eligibility or a lazy route-triggered task; NEVER Whisper in `_variants_for_response` (read path must stay fast).
+**Effort:** M **Priority:** P3 **Depends on:** —
+
+### clip_metadata mood/humor tag on best_moments
+**What:** Add an optional `mood` field ("funny" | "wholesome" | "hype" | ...) to `Moment` in clip_metadata so humor comes from Gemini's video+audio pass, not just transcript inference.
+**Why:** Visual gags with no spoken punchline are invisible to the copilot's current funny-moment heuristic (SPEECH WORDS + moment descriptions).
+**How:** Prompt bump (analyze_clip) + thread through parse() (the #398 parse-threading trap!) + live evals per the prompt-change rule.
+**Effort:** M (mostly eval cost) **Priority:** P3 **Depends on:** eval budget
+
+### Comedic/meme SFX library content
+**What:** The seeded SFX library is procedural UI sounds (clicks/ticks/whooshes) — no comedy sting, laugh, or meme audio. Curate + license a small comedic set with `role_tags: ["comedic_sting"]` etc.
+**Why:** "Add a funny sound" currently gets an honest no-fit reply by design; content is the missing half of funny-moment intelligence. Rights matter (same trap as the music library — don't bulk-import copyrighted meme audio).
+**How:** Source project-owned/licensed clips → admin upload → `sfx_analysis` runs automatically → tag roles → publish.
+**Effort:** S (code: none) **Priority:** P2 **Depends on:** licensing decision
+
+### Speech-mark snapping / server rejection of invented copilot times
+**What:** apply-ops currently snaps SFX times to beat marks only (0.12s epsilon); invented speech times rely on prompt discipline. Consider snapping to the nearest pause/word mark when the utterance references speech, or rejecting times not near any supplied mark.
+**Why:** Codex outside-voice flag from the plan review — verbatim-copy prompt discipline is brittle in principle (though beat-sync's identical discipline has held in prod goldens).
+**How:** Extend `snapToBeatMark` machinery with a speech-mark candidate set; watch for double-snap conflicts with beat marks.
+**Effort:** S-M **Priority:** P3 **Depends on:** observed live failures (don't build speculatively)
 
 ## Editor virtual preview — follow-ups (from v0.7.30.1)
 

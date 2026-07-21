@@ -574,6 +574,16 @@ class Settings(BaseSettings):
     # MEDIA_OVERLAYS_ENABLED is off, auto-apply degrades to suggest-only + trace.
     overlay_autoapply_enabled: bool = False
 
+    # SFX auto-suggestions (word-level sound design): after a plan-item render
+    # finalizes, an agent proposes sound-effect placements anchored to spoken
+    # words / pauses / clip moments, persisted as ADVISORY
+    # `pending_sfx_suggestions` on the variant (stale-filtered on read; nothing
+    # renders until the user or the copilot realizes one as an ordinary
+    # placement). Suggest-only by design — there is deliberately no autoapply
+    # twin (cut at plan review: SFX are taste-heavy, catalog is thin).
+    # Kill switch: SFX_AUTOPLACE_ENABLED=false → chain never dispatches.
+    sfx_autoplace_enabled: bool = False
+
     # Full-screen cutaway takeovers (plan 009). Gates ONLY the AI suggestion
     # branch (build_suggestions slot "full" → display_mode="fullscreen"); the
     # manual popover toggle is ungated, and render rollback is covered by

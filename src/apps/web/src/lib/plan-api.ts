@@ -804,6 +804,37 @@ export interface SoundEffectPlacement {
 // reads (text_mode, style_set_id, intro_text_size_px, render_status,
 // base_video_url, intro_layout, intro_mode) must mirror EditableVariant's types
 // — keep them in lockstep.
+/**
+ * Spoken-word timing map (assembled-time), derived server-side from the
+ * variant's persisted speech source (sequence transcript or caption-cue
+ * words). Feeds the copilot's SPEECH WORDS / PAUSE MARKS sections — word- and
+ * pause-precise SFX/text/overlay placement. Keys are compact on purpose
+ * (server payload shape): w=word, s=start_s, e=end_s.
+ */
+export interface VariantSpeechMap {
+  source: string;
+  words: { w: string; s: number; e: number }[];
+  pauses: { s: number; e: number; after: string | null }[];
+}
+
+/**
+ * Advisory SFX placement proposed by the server's auto sound-design pass
+ * (dark-flagged). Stale-filtered server-side against the current transcript
+ * hash — anything served is realizable as an ordinary add_sfx.
+ */
+export interface PendingSfxSuggestion {
+  id?: string | null;
+  effect_id: string;
+  /** Display name of the effect, resolved server-side. */
+  name?: string | null;
+  at_s: number;
+  gain?: number | null;
+  reason?: string | null;
+  /** Mark-type provenance ("pause" | "word_start" | ...) — debug only. */
+  anchor?: string | null;
+  transcript_hash?: string | null;
+}
+
 /** One editable caption line: display text held over [start_s, end_s] (assembled-time). */
 export interface CaptionCue {
   text: string;
@@ -849,13 +880,16 @@ export interface TextElement {
   alignment?: "left" | "center" | "right" | null;
   effect?:
     | "static"
+    | "none"
     | "fade-in"
     | "slide-up"
+    | "slide-down"
     | "karaoke-line"
     | "pop-in"
     | "scale-up"
     | "typewriter"
     | "stream-in"
+    | "staggered-slice"
     | "bounce"
     | "slide-in"
     | null;
@@ -1076,6 +1110,13 @@ export interface PlanItemVariant {
   // Narrated on-video caption editor: editable cues over the caption-free base.
   // Present only on narrated variants; null otherwise.
   caption_cues?: CaptionCue[] | null;
+  // Spoken-word + pause timing map for copilot speech-synced placement.
+  // Absent when the variant has no persisted word-level speech source.
+  speech_map?: VariantSpeechMap | null;
+  // Advisory SFX placements from the auto sound-design pass (dark-flagged).
+  // null = freshness unverifiable right now (hold prior state); [] = verified,
+  // none fresh. Distinct on purpose.
+  pending_sfx_suggestions?: PendingSfxSuggestion[] | null;
   // Subtitles on/off, independent of caption_cues length — off always yields the
   // caption-free burn on Apply. Null/absent on legacy variants ⇒ treat as enabled
   // (matches the render-time default). See setPlanItemCaptionsEnabled.

@@ -25,7 +25,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-07-21-v5"
+EDIT_COPILOT_PROMPT_VERSION = "2026-07-21-v6"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -33,6 +33,11 @@ _MAX_OPS = 12
 # Renderer-side guard only — the producer (snapshot.ts COPILOT_BEAT_MARKS_MAX)
 # stride-caps to the same count before sending, preserving late-video marks.
 _BEAT_MARKS_SHOWN_MAX = 60
+# Speech-section guards — the producer (snapshot.ts) head-caps to the same
+# counts (head-biased: early words carry the hook window).
+_SPEECH_WORDS_SHOWN_MAX = 150
+_PAUSE_MARKS_SHOWN_MAX = 40
+_SFX_SUGGESTIONS_SHOWN_MAX = 6
 _TEXT_INDEX_KEYS = ("text_bars", "textBars", "bars", "text_elements", "textElements")
 _SLOT_INDEX_KEYS = ("slots", "local_slots", "localSlots")
 
@@ -384,6 +389,48 @@ def _format_snapshot(snapshot: dict) -> str:
                     f"median interval between listed marks: {intervals[len(intervals) // 2]:.3f}s"
                 )
 
+    speech = snapshot.get("speech")
+    if isinstance(speech, dict):
+        words = speech.get("words") if isinstance(speech.get("words"), list) else []
+        pauses = speech.get("pauses") if isinstance(speech.get("pauses"), list) else []
+        word_parts: list[str] = []
+        for w in words[:_SPEECH_WORDS_SHOWN_MAX]:
+            if not isinstance(w, dict):
+                continue
+            text = _clean_prompt_data(w.get("text") or w.get("w"), max_chars=40)
+            start = _safe_finite_float(w.get("start_s", w.get("s")))
+            end = _safe_finite_float(w.get("end_s", w.get("e")))
+            if text and start is not None and end is not None:
+                # repr-escaped like every other snapshot field — word text must
+                # not be able to terminate its own quoted span in the prompt.
+                word_parts.append(f"{text!r}@{start:.2f}-{end:.2f}")
+        pause_parts: list[str] = []
+        for p in pauses[:_PAUSE_MARKS_SHOWN_MAX]:
+            if not isinstance(p, dict):
+                continue
+            start = _safe_finite_float(p.get("start_s", p.get("s")))
+            end = _safe_finite_float(p.get("end_s", p.get("e")))
+            if start is None or end is None:
+                continue
+            after = _clean_prompt_data(p.get("after"), max_chars=40)
+            suffix = f' (after "{after}")' if after else " (before speech starts)"
+            pause_parts.append(f"{start:.2f}-{end:.2f}{suffix}")
+        if word_parts or pause_parts:
+            source = _clean_prompt_data(speech.get("source"), max_chars=40)
+            lines.append(
+                "\nSPEECH WORDS (spoken words, assembled-timeline seconds; for "
+                "word-precise placement copy timing values exactly from this list; "
+                f"source={source}):"
+            )
+            # The producer may drop the word list under byte-budget pressure
+            # while keeping pauses — pause placement stays possible.
+            lines.append(", ".join(word_parts) if word_parts else "(word list trimmed for size)")
+            lines.append(
+                'PAUSE MARKS (silences between spoken words; "at the pause" means '
+                "the pause's start time):"
+            )
+            lines.append("; ".join(pause_parts) if pause_parts else "(none detected)")
+
     if isinstance(snapshot.get("sfx"), dict):
         sfx = snapshot["sfx"]
         placements = sfx.get("placements") if isinstance(sfx.get("placements"), list) else []
@@ -409,13 +456,34 @@ def _format_snapshot(snapshot: dict) -> str:
             for effect in catalog[:20]:
                 if not isinstance(effect, dict):
                     continue
+                roles = effect.get("role_tags")
+                roles_part = ""
+                if isinstance(roles, list) and roles:
+                    clean_roles = [_clean_prompt_data(r, max_chars=40) for r in roles[:6]]
+                    roles_part = f" roles={','.join(r for r in clean_roles if r)}"
                 lines.append(
                     f"- id={_clean_prompt_data(effect.get('id'), max_chars=80)!r} "
                     f"name={_clean_prompt_data(effect.get('name'), max_chars=32)!r} "
                     f"duration={_fmt_round3(_first_number(effect, ('duration_s',)))}s"
+                    f"{roles_part}"
                 )
         else:
             lines.append("(none)")
+        suggestions = sfx.get("suggestions") if isinstance(sfx.get("suggestions"), list) else []
+        if suggestions:
+            lines.append(
+                "PENDING SFX SUGGESTIONS (advisory, from the auto sound-design pass; "
+                "realize one by emitting add_sfx with exactly these values):"
+            )
+            for s in suggestions[:_SFX_SUGGESTIONS_SHOWN_MAX]:
+                if not isinstance(s, dict):
+                    continue
+                lines.append(
+                    f"- effect_id={_clean_prompt_data(s.get('effect_id'), max_chars=80)!r} "
+                    f"at={_fmt_round3(_first_number(s, ('at_s',)))}s "
+                    f"gain={_fmt_round3(_first_number(s, ('gain',)))} "
+                    f"reason={_clean_prompt_data(s.get('reason'), max_chars=80)!r}"
+                )
 
     if isinstance(snapshot.get("overlays"), dict):
         overlays = snapshot["overlays"]

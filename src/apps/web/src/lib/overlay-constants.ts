@@ -159,6 +159,7 @@ export const INTRO_ANIMATIONS: IntroAnimation[] = [
   { value: "bounce",     label: "Bounce"     },
   { value: "typewriter", label: "Typewriter" },
   { value: "stream-in",  label: "Stream in"  },
+  { value: "staggered-slice", label: "Staggered slice" },
   { value: "none",       label: "None"       },
 ];
 

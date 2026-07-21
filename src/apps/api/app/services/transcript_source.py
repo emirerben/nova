@@ -3,11 +3,12 @@ and what hash identifies that state?" (plans/005, decisions 3A + outside-voice t
 
 Precedence:
   1. `variants[i]["transcript"]`   — persisted compact word records ({"word","start_s","end_s"})
-  2. word-timed caption cues       — (not yet persisted anywhere word-granular → skipped;
-                                      branch documented so PR-later can add it here, and ONLY here)
-  3. on-demand bounded Whisper     — the flagship talking-head-with-original-audio case has
-                                      neither 1 nor 2; transcribe once, persist to
-                                      `variants[i]["transcript"]` so it never re-runs
+     (then `overlay_transcript`, the matcher's run-once Whisper key)
+  2. word-timed caption cues       — `caption_cues[].words` (subtitled/narrated), via
+                                      `words_from_caption_cues`; consulted BEFORE Whisper
+  3. on-demand bounded Whisper     — talking-head-with-original-audio has neither 1 nor 2;
+                                      transcribe once, persist to
+                                      `variants[i]["overlay_transcript"]` so it never re-runs
   4. None                          — caller disables the feature for this variant
 
 The hash covers word texts + timings + variant duration. The matcher AND the
@@ -90,6 +91,69 @@ def words_from_variant(variant: dict) -> list[dict] | None:
     return words or None
 
 
+def words_from_caption_cues(variant: dict) -> list[dict] | None:
+    """Branch 2: word-timed caption cues (subtitled/narrated variants).
+
+    Cue `words` are the raw Whisper word timings, offset-shifted to final
+    assembled-timeline seconds at build time (`build_plain_cues(attach_words=True)`).
+    Cue *text* may have been user-edited since; the word records still describe
+    the spoken audio, which is what timing consumers want. A cue without `words`
+    is skipped (legacy narrated cues); a malformed word record drops the whole
+    source (same fail-closed posture as `words_from_variant`).
+    """
+    cues = variant.get("caption_cues")
+    if not isinstance(cues, list) or not cues:
+        return None
+    words: list[dict] = []
+    for cue in cues:
+        if not isinstance(cue, dict):
+            return None
+        for w in cue.get("words") or []:
+            if not isinstance(w, dict):
+                return None
+            text = str(w.get("text") or w.get("word") or "").strip()
+            if not text:
+                continue
+            try:
+                start_s = float(w.get("start_s", 0.0))
+                end_s = float(w.get("end_s", 0.0))
+            except (TypeError, ValueError):
+                return None
+            if (
+                not math.isfinite(start_s)
+                or not math.isfinite(end_s)
+                or start_s < 0.0
+                or end_s < start_s
+            ):
+                return None
+            words.append({"word": text, "start_s": start_s, "end_s": end_s})
+    return words or None
+
+
+def speech_words_for_variant(variant: dict) -> tuple[list[dict], str] | None:
+    """Spoken-word records for READ paths (no ASR): (words, source_label) or None.
+
+    Precedence: persisted transcript records (`words_from_variant` — untouched,
+    its key precedence doubles as a sequence-eligibility signal, review C19),
+    then word-timed caption cues. Never runs Whisper — read paths must stay
+    fast; on-demand ASR remains task-context-only via
+    `transcript_source(allow_whisper=True)`.
+    """
+    words = words_from_variant(variant)
+    if words is not None:
+        source = "sequence_transcript" if variant.get("transcript") else "overlay_transcript"
+        return words, source
+    cue_words = words_from_caption_cues(variant)
+    if cue_words is not None:
+        return cue_words, "caption_words"
+    return None
+
+
+def variant_duration_s(variant: dict) -> float | None:
+    """Public alias for the variant-duration lookup (speech_map consumers)."""
+    return _variant_duration_s(variant)
+
+
 def _variant_duration_s(variant: dict) -> float | None:
     for key in ("duration_s", "output_duration_s", "video_duration_s"):
         v = variant.get(key)
@@ -158,9 +222,14 @@ def transcript_source(
     `transcript` — review C19, see words_from_variant).
     """
     words = words_from_variant(variant)
-    # Branch 2 (word-timed caption cues) intentionally lands here when a
-    # word-granular persisted cue source exists. Do not add other lookups
-    # elsewhere — this module is the single source of truth.
+    # Branch 2: word-timed caption cues (subtitled/narrated). Consulted BEFORE
+    # Whisper so every consumer (overlay matcher, SFX suggestions, read-path
+    # staleness) derives the SAME words for the same variant state — a
+    # precedence divergence here mints transcript hashes that can never match
+    # the read path's recompute. Also skips a pointless ASR run: cue words ARE
+    # the render's Whisper words.
+    if words is None:
+        words = words_from_caption_cues(variant)
     if words is None and allow_whisper:
         words = transcribe_variant_video(variant)
     if not words:

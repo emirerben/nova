@@ -46,6 +46,15 @@ function latestBar(onChange: jest.Mock): TextElementBar {
 }
 
 describe("TextLane horizontal controls", () => {
+  it("offers and applies the shared staggered-slice animation", async () => {
+    const onChange = renderLane(makeBar({ effect: "static" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Staggered slice" }));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    expect(latestBar(onChange).effect).toBe("staggered-slice");
+  });
+
   it("does not create history entries when the active choices are clicked", () => {
     const onChange = renderLane(makeBar());
 

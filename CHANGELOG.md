@@ -18,6 +18,25 @@ All notable changes to this project will be documented in this file.
 - The matcher is advisory and fail-open: every suggestion is validated against the transcript and asset catalog (unknown words/assets, duplicate chapter numbers, and low-confidence guesses are dropped), and any agent failure falls back to the previous deterministic behavior. Kill switch: `SMART_SCENE_MATCHER_ENABLED=false`.
 - End-to-end verified on a local render of the reference English video: all 8 uploaded visuals appear at their exact spoken words (flags on country names, Messi/Rodri/Mbappé/Anderson on their mentions) with all 4 chapters detected.
 
+## [0.12.0.0] - 2026-07-21
+
+### Added
+- **Text can now enter with the new Staggered slice animation.** Choose it in Nova's text animation picker to build every line character by character with a quick vertical rise and subtle alternating rotation, including emoji and accented characters as intact units.
+
+### Changed
+- Staggered slice previews now follow video playback smoothly in the editor and use the same deterministic timing and settled frame in production renders, including short overlays, multiline text, and text placed behind a subject.
+
+## [0.11.8.0] — 2026-07-21
+
+### Added
+- **Nova (the editor copilot) now understands your speech, word by word.** Ask "add a click at the pauses between the words in the first 4 seconds" or "place a sound effect on the funny moment" and it places sounds, overlays, and text at the exact spoken-word and pause times — previously it refused these because it had no word timings. Works on any variant with speech (subtitled, narrated, transcript-synced montages); when a variant has no speech data it says so honestly and offers beat-synced placement instead.
+- **Sound picks are now made by fit, not by name-guessing.** The copilot sees each sound effect's role (keyboard tick, badge click, whoosh, ...) and matches it to the moment — typewriter ticks under typing, clicks on UI taps, stings on punchlines — and honestly tells you when the library has no fitting sound instead of placing the wrong one.
+- **Auto sound-design suggestions (dark, off by default).** After a render finishes, an agent can propose up to 6 sound-effect placements anchored to spoken words, pauses, and clip moments (`SFX_AUTOPLACE_ENABLED`). Suggestions are advisory: they surface through the copilot and never render without your say-so, and they retire themselves automatically when clip edits shift the timeline.
+
+### Changed
+- Caption word timings are now the shared speech source everywhere: the overlay auto-placement matcher reuses them on subtitled videos instead of re-transcribing the render (faster suggestions, identical timings across features).
+- The public sound-effects list now includes each effect's role tags.
+
 ## [0.11.6.0] — 2026-07-21
 
 ### Fixed
