@@ -349,3 +349,49 @@ recovery worked, but the user stared at healthy-looking "rendering" for 30+ minu
 `SOURCE_DOWNSCALE_FFMPEG_THREADS`, `WORKER_MAX_MEMORY_PER_CHILD_KB`,
 `RENDER_HEARTBEAT_INTERVAL_S` / `RENDER_HEARTBEAT_STALE_AFTER_S`. Apply on Fly:
 `fly secrets set <VAR>=<val> --app nova-video` + `fly machine restart <id>` (worker).
+
+### [2026-07-22] Pre-merge review hardening of the OOM fixes (same branch)
+
+/review (7 specialists + red team + adversarial) confirmed the design and
+forced these changes before merge — all shipped in the same PR:
+
+- **Guard aggregate budget:** per-clip timeouts alone let 20 heavy clips ×
+  serial re-encodes eat the orchestrator's soft_time_limit (the d30c61fe
+  serial-preprocessing class). `_GUARD_TOTAL_BUDGET_S=900` now bounds the
+  whole pass; overflow clips keep originals + trace event. Serial stays
+  deliberate — parallel conversions would double the peak memory the guard
+  exists to bound.
+- **Guard coverage widened:** `_prepare_timeline_assembly` (timeline re-render
+  decodes durable ORIGINALS — would have reproduced the incident verbatim) and
+  the bed-level reburn now run the guard too. AAC-transcode retry when `-c:a
+  copy` can't mux into .mp4 (PCM/.mov, Opus) — the silent-skip class. Failure
+  branch now emits a pipeline-trace event + deletes the partial tmpfs file.
+- **tmpfs orphan sweep:** a SIGKILL'd child's TemporaryDirectory survives on
+  RAM-backed /tmp into the redelivered attempt (invisible to
+  worker_max_memory_per_child — not process RSS). `task_prerun` →
+  `app/pipeline/tmp_sweep.py` sweeps nova* dirs older than 1850s; the cutoff
+  invariant (> every render time_limit 1800, ≤ visibility_timeout 1900) is
+  pinned by `test_tmp_sweep_cutoff_stays_inside_redelivery_window`.
+- **Heartbeat honesty:** beacon written with `func.now()` (DB clock — worker/API
+  VM skew shifted the 150s window); `retrying` now has an UPPER bound
+  (visibility_timeout + stale + 300s slack) because a hard-time_limit SIGKILL
+  ACKS the message and no redelivery ever comes — past the window the reaper
+  owns the row. Threshold floors at 2× beat interval (misconfig guard).
+  Beats also refresh `updated_at` via the model's onupdate — documented as
+  deliberate, not a leak.
+- **worker_max_memory_per_child semantics:** billiard compares lifetime PEAK
+  RSS (ru_maxrss), not current residency — one >3GB spike recycles the child
+  even if freed. Deliberate, but validate in prod via billiard's "child
+  process exceeding memory limit" log line; every-task recycling ⇒ raise it.
+- **Frontend:** EditPayoff (onboarding) was a missed ProgressTheater call site
+  — a dead first-render attempt showed "About 90 seconds" indefinitely; ETA
+  label suppressed while retrying; recovery note is an aria-live status
+  region; contradictory static reassurance lines gated off while retrying.
+
+**Known accepted gaps (documented, not fixed):** variant re-render/reburn tasks
+(`regenerate_generative_variant`, caption/bed reburns) do NOT heartbeat and run
+while job.status is terminal, so a dead re-render attempt still shows
+render_status="rendering" until the boot-time variant reconciler — a
+variant-level beacon is future work. Template/music ingest paths still lack the
+downscale guard (separate task chip). Guard conversions re-run on every
+swap-song/retext regen (clip_metas re-analysis already does; cacheable later).

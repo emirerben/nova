@@ -15,6 +15,7 @@ All subprocess calls are mocked — no ffmpeg needed.
 
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -45,6 +46,8 @@ def _probe(width: int, height: int, color_trc: str = "bt709") -> SimpleNamespace
         (1920, 1080, False),  # 1080p landscape
         (1440, 2560, False),  # QHD portrait — short edge 1440
         (2560, 1440, False),  # QHD landscape
+        (1920, 2560, False),  # exact threshold — strict > contract, no trigger
+        (1921, 2560, True),  # one past the threshold — triggers
         (0, 0, False),  # broken probe dims
     ],
 )
@@ -171,3 +174,88 @@ def test_failed_conversion_keeps_original(tmp_path) -> None:
     assert paths == [str(src)]
     assert src.exists()
     assert probe_map == {str(src): probe_map[str(src)]}
+
+
+def test_failed_conversion_cleans_partial_intermediate(tmp_path) -> None:
+    # A timed-out ffmpeg leaves a near-full-size partial file on RAM-backed
+    # tmpfs — dead weight against the budget the guard protects. It must go.
+    src = tmp_path / "big.mp4"
+    src.write_bytes(b"x")
+    paths = [str(src)]
+    probe_map = {str(src): _probe(3840, 2160)}
+
+    def _fake_run(cmd, **kwargs):
+        with open(cmd[-1], "wb") as fh:
+            fh.write(b"partial")
+        raise subprocess.TimeoutExpired(cmd, 1)
+
+    converted = _run_guard(paths, probe_map, tmp_path, _fake_run, MagicMock())
+
+    assert converted == 0
+    assert paths == [str(src)]
+    leftovers = [p for p in tmp_path.iterdir() if p.name.startswith("guard_")]
+    assert leftovers == []
+
+
+def test_audio_copy_mux_failure_retries_with_aac(tmp_path) -> None:
+    # PCM/.mov and Opus/webm audio cannot be stream-copied into the .mp4
+    # muxer — the guard must degrade to an AAC transcode, not silently skip
+    # the downscale for exactly the heavy-source class it exists for.
+    src = tmp_path / "big.mp4"
+    src.write_bytes(b"x")
+    paths = [str(src)]
+    probe_map = {str(src): _probe(2160, 3840)}
+    new_probe = _probe(1080, 1920)
+    seen_cmds: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        seen_cmds.append(cmd)
+        if cmd[cmd.index("-c:a") + 1] == "copy":
+            raise subprocess.CalledProcessError(1, cmd, stderr=b"could not find tag for codec")
+        with open(cmd[-1], "wb") as fh:
+            fh.write(b"y")
+        return MagicMock(returncode=0)
+
+    converted = _run_guard(paths, probe_map, tmp_path, _fake_run, MagicMock(return_value=new_probe))
+
+    assert converted == 1
+    assert len(seen_cmds) == 2
+    assert seen_cmds[0][seen_cmds[0].index("-c:a") + 1] == "copy"
+    assert seen_cmds[1][seen_cmds[1].index("-c:a") + 1] == "aac"
+    assert paths[0].startswith(str(tmp_path))
+
+
+def test_timeout_is_not_retried(tmp_path) -> None:
+    # Retrying a SLOW encode would double the budget damage — only the fast
+    # mux failure (CalledProcessError) earns the AAC second attempt.
+    src = tmp_path / "big.mp4"
+    src.write_bytes(b"x")
+    paths = [str(src)]
+    probe_map = {str(src): _probe(3840, 2160)}
+    run_mock = MagicMock(side_effect=subprocess.TimeoutExpired(["ffmpeg"], 1))
+
+    converted = _run_guard(paths, probe_map, tmp_path, run_mock, MagicMock())
+
+    assert converted == 0
+    assert run_mock.call_count == 1
+
+
+def test_budget_exhaustion_skips_remaining_clips(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 20 heavy clips × serial re-encodes must not eat the orchestrator's
+    # soft_time_limit — once the aggregate budget is spent, remaining clips
+    # keep their originals (best-effort contract).
+    import app.pipeline.source_guard as sg
+
+    monkeypatch.setattr(sg, "_GUARD_TOTAL_BUDGET_S", 0)
+    src = tmp_path / "big.mp4"
+    src.write_bytes(b"x")
+    paths = [str(src)]
+    probe_map = {str(src): _probe(3840, 2160)}
+    run_mock = MagicMock()
+
+    converted = _run_guard(paths, probe_map, tmp_path, run_mock, MagicMock())
+
+    assert converted == 0
+    assert paths == [str(src)]
+    run_mock.assert_not_called()
+    assert src.exists()

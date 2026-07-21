@@ -253,21 +253,32 @@ class PhaseTimer:
 
 
 def beat_heartbeat(job_id: str | uuid.UUID) -> None:
-    """Tick jobs.worker_heartbeat_at to the DB clock. Best-effort, column-only.
+    """Tick jobs.worker_heartbeat_at to the DB clock (func.now()). Best-effort.
 
-    Deliberately a bare column UPDATE — the heartbeat thread runs concurrently
-    with the orchestrator's own row-locked assembly_plan read-modify-writes,
-    so it must never touch any other column (a stale-snapshot write-back would
-    clobber variant state).
+    Postgres is the single clock source for the beacon on purpose: the worker
+    VM writes it and the API VM reads it, so a worker-clock timestamp would
+    let cross-VM skew shift the staleness window (false `retrying: true` on a
+    slow clock, masked stalls on a fast one). The reader still compares with
+    its own app clock — that halves the skew sources; API↔DB skew is
+    NTP-bounded and ≪ the 150s threshold.
+
+    Deliberately a bare read-free UPDATE — the heartbeat thread runs
+    concurrently with the orchestrator's row-locked assembly_plan
+    read-modify-writes, so it must never read-modify-write any JSONB state.
+    Note it is not literally single-column: the model's `updated_at`
+    onupdate=func.now() fires on every UPDATE, so beats also refresh
+    updated_at. That is deliberate — a beating worker keeps the row visibly
+    fresh (the reaper's `updated_at < cutoff` staleness gate only ever fires
+    on rows whose beats have stopped).
     """
     job_uuid = _coerce_uuid(job_id)
     if job_uuid is None:
         return
     try:
+        from sqlalchemy import func  # noqa: PLC0415
+
         with sync_session() as db:
-            db.execute(
-                update(Job).where(Job.id == job_uuid).values(worker_heartbeat_at=datetime.now(UTC))
-            )
+            db.execute(update(Job).where(Job.id == job_uuid).values(worker_heartbeat_at=func.now()))
             db.commit()
     except Exception as exc:  # pragma: no cover — best-effort
         log.warning("job_heartbeat_failed", job_id=str(job_id), error=str(exc))
@@ -302,6 +313,12 @@ def job_heartbeat(job_id: str | uuid.UUID) -> Iterator[None]:
         yield
     finally:
         stop.set()
+        # A beat blocked on a row lock can outlive the 2s join: the daemon
+        # thread then writes ONE final beat after the caller's terminal status
+        # write and exits (stop is set). Harmless by construction — the status
+        # route checks job.status before beacon age, so a fresh beacon on a
+        # terminal row can never resurrect `retrying` — but that ordering is
+        # the load-bearing contract if _compute_retrying is ever refactored.
         thread.join(timeout=2)
 
 

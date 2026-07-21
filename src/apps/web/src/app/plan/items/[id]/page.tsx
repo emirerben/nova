@@ -2012,7 +2012,10 @@ export default function PlanItemPage() {
                 </ProgressTheater>
               </div>
             )}
-            {isGenerating && (
+            {/* Suppressed while retrying: "Usually 2–3 minutes" directly above
+                the theater's "Hit a snag — retrying" note is two contradictory
+                time signals in one zone. */}
+            {isGenerating && !data?.job?.retrying && (
               <p className="mt-1 text-xs text-[#a1a1aa]">
                 Usually 2–3 minutes. You can leave this page — we&apos;ll keep rendering.
               </p>

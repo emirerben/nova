@@ -1,6 +1,6 @@
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import worker_ready
+from celery.signals import task_prerun, worker_ready
 
 from app.config import settings
 
@@ -52,13 +52,21 @@ celery_app.conf.update(
     # Prefork child recycling (2026-07-21 OOM, job e8173a25): a burst of
     # analyze_pool_asset tasks leaves CLIP/torch/Whisper residency in the single
     # long-lived child (concurrency=1), and the NEXT render's ffmpeg peak then
-    # stacks on top of it. When the child's RSS exceeds this many KB after a
-    # task completes, Celery replaces it — BETWEEN tasks, never mid-task, so
-    # acks_late semantics are untouched. The replacement forks from the parent,
-    # which still holds the prewarmed CLIP singleton (copy-on-write), so the
-    # recycle is cheap. A dedicated queue/machine for analysis tasks was
-    # considered and rejected: concurrency=1 already serializes execution — the
-    # problem was residual memory, not co-execution. 0 disables.
+    # stacks on top of it. Semantics (billiard, Linux): the check is
+    # getrusage(RUSAGE_SELF).ru_maxrss — the child's lifetime PEAK RSS, which
+    # never decreases — compared after each task completes; the child is
+    # replaced BETWEEN tasks, never mid-task, so acks_late semantics are
+    # untouched. Peak-not-current means one transient >3GB spike marks the
+    # child for recycle even if the memory was freed — deliberate here (we
+    # WANT a fresh child after any task that ballooned), but it also means the
+    # threshold must sit above routine task peaks or every task recycles.
+    # Validate in prod via billiard's "child process exceeding memory limit"
+    # log line: occasional = working as intended; every task = raise the
+    # threshold. The replacement forks from the parent, which holds the
+    # prewarmed CLIP singleton (copy-on-write), so the recycle is cheap.
+    # A dedicated queue/machine for analysis tasks was considered and
+    # rejected: concurrency=1 already serializes execution — the problem was
+    # residual memory, not co-execution. 0 disables.
     **(
         {"worker_max_memory_per_child": settings.worker_max_memory_per_child_kb}
         if settings.worker_max_memory_per_child_kb > 0
@@ -150,6 +158,24 @@ def _reap_orphans_on_startup(sender, **kwargs):  # pragma: no cover (signal wiri
             print(f"[worker_ready] build_task reap failed (non-fatal): {exc!r}")
 
     threading.Thread(target=_run, daemon=True, name="orphan-reaper").start()
+
+
+@task_prerun.connect
+def _sweep_stale_tmpdirs(sender=None, **kwargs):  # pragma: no cover (signal wiring)
+    """Reclaim a dead attempt's tmpfs footprint before the next task starts.
+
+    A SIGKILL'd prefork child never runs its TemporaryDirectory cleanup; on
+    RAM-backed /tmp those orphaned dirs shrink the very memory budget the
+    redelivered attempt needs. task_prerun fires in the (possibly respawned)
+    child before every task — see app/pipeline/tmp_sweep.py for the age-cutoff
+    invariant that keeps this safe for local-dev sibling workers.
+    """
+    try:
+        from app.pipeline.tmp_sweep import sweep_stale_nova_tmpdirs  # noqa: PLC0415
+
+        sweep_stale_nova_tmpdirs()
+    except Exception as exc:  # noqa: BLE001 — sweep must never fail a task
+        print(f"[task_prerun] tmp sweep failed (non-fatal): {exc!r}")
 
 
 @worker_ready.connect

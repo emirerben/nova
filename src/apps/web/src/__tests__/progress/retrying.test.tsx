@@ -58,4 +58,19 @@ describe("ProgressTheater retrying contract", () => {
     render(<ProgressTheater {...BASE_PROPS} retrying isTerminal isSuccess />);
     expect(screen.queryByText(/Hit a snag mid-render/)).not.toBeInTheDocument();
   });
+
+  it("test_retrying_suppresses_eta: no confident ETA above the recovery note", () => {
+    const withEta = { ...BASE_PROPS, expectedPhaseMs: { queued: 10000, assemble: 300000 } };
+    const { rerender } = render(<ProgressTheater {...withEta} />);
+    expect(screen.getByText(/left|less than a minute/)).toBeInTheDocument();
+    rerender(<ProgressTheater {...withEta} retrying />);
+    expect(screen.queryByText(/left|less than a minute/)).not.toBeInTheDocument();
+  });
+
+  it("test_recovery_note_is_a_live_region: screen readers hear the state change", () => {
+    render(<ProgressTheater {...BASE_PROPS} retrying />);
+    const note = screen.getByText(/Hit a snag mid-render/);
+    expect(note).toHaveAttribute("role", "status");
+    expect(note).toHaveAttribute("aria-live", "polite");
+  });
 });

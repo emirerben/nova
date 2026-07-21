@@ -13,6 +13,12 @@ Additive nullable column — NULL on every legacy row and on jobs from
 orchestrators that don't heartbeat (the route treats NULL as "no signal",
 never as stale).
 
+Rollback order: roll the Fly image back FIRST, then `alembic downgrade 0067`.
+Downgrading the schema under current code drops a column the deployed ORM
+maps, so every Job SELECT fails with UndefinedColumn. Code-only rollback
+(old image, column kept) is safe — the old ORM doesn't map the column and
+the frontend field is optional. Treat as roll-forward-only in practice.
+
 Revision ID: 0068
 Revises: 0067
 Create Date: 2026-07-21

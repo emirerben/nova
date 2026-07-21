@@ -3559,6 +3559,12 @@ def _prepare_timeline_assembly(
     used_indices = sorted({r[0] for r in resolved})
     local_paths = _download_clips_parallel([clip_paths_gcs[i] for i in used_indices], tmpdir)
     probe_map = _probe_clips(local_paths)
+    # Heavy-source guard (2026-07-21 OOM): timeline re-renders decode the
+    # DURABLE ORIGINALS — an un-guarded re-render of a 4K job reproduces the
+    # exact incident. Same in-place mutation contract as _ingest_clips.
+    from app.pipeline.source_guard import downscale_oversized_sources  # noqa: PLC0415
+
+    downscale_oversized_sources(local_paths, probe_map, tmpdir, job_id=job_id)
     clip_id_to_local = {f"clip_{i}": path for i, path in zip(used_indices, local_paths)}
     clip_id_to_gcs = {f"clip_{i}": gcs for i, gcs in enumerate(clip_paths_gcs)}
 
@@ -9747,6 +9753,22 @@ def _run_reburn_narrated_bed_level(
         from app.storage import download_to_file  # noqa: PLC0415
 
         local_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
+        # Heavy-source guard (2026-07-21 OOM): the bed-level reburn re-decodes
+        # the durable originals through the narrated spine render — probe +
+        # downscale here so a 4K job's reburn can't reproduce the incident.
+        # Best-effort as a UNIT: this path never probed before, so a probe
+        # failure must skip the guard (originals kept), not newly fail the task.
+        try:
+            from app.pipeline.source_guard import downscale_oversized_sources  # noqa: PLC0415
+            from app.tasks.template_orchestrate import _probe_clips  # noqa: PLC0415
+
+            downscale_oversized_sources(
+                local_paths, _probe_clips(local_paths), tmpdir, job_id=job_id
+            )
+        except Exception as exc:  # noqa: BLE001 — guard is an optimization here
+            log.warning(
+                "bed_level_reburn_source_guard_skipped", job_id=job_id, error=str(exc)[:160]
+            )
         clip_id_to_local = {f"clip_{i}": path for i, path in enumerate(local_paths)}
         voiceover_local = os.path.join(tmpdir, "voiceover_src")
         download_to_file(voiceover_gcs_path, voiceover_local)

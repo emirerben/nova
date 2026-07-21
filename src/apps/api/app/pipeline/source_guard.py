@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 
 import structlog
 
@@ -49,22 +50,36 @@ from app.config import settings
 
 log = structlog.get_logger()
 
-# Keep in sync with reframe._HLG_TRANSFER / reframe._HDR10_TRANSFER (imported
-# lazily where needed to avoid a config-time import cycle; values are stable
-# ffprobe transfer-characteristic names).
-_HDR_TRANSFERS = frozenset({"arib-std-b67", "smpte2084"})
-
 # Single ffmpeg invocation budget for one downscale pass. A 134s 4K source at
 # 2 threads re-encodes in well under this; the cap exists so a pathological
 # input can't eat the orchestrator's soft_time_limit.
 _GUARD_TIMEOUT_S = 900
+
+# Aggregate wall-clock budget for the WHOLE guard pass. Per-clip timeouts alone
+# don't bound a multi-clip upload: 20 clips × serial re-encodes inside the
+# orchestrator's soft_time_limit=1740s would convert the OOM incident into a
+# deterministic timeout failure (the d30c61fe serial-preprocessing class).
+# Once the budget is spent, remaining clips keep their originals — the
+# best-effort contract already allows a skipped conversion. Serial by design:
+# parallel conversions would double the peak memory this module exists to bound.
+_GUARD_TOTAL_BUDGET_S = 900
+# Don't start a conversion with less runway than this — a cut-off ffmpeg wastes
+# the time AND leaves nothing usable.
+_GUARD_MIN_REMAINING_S = 60
+
+
+def _hdr_transfers() -> frozenset[str]:
+    """The canonical HDR transfer names, imported from reframe (single source)."""
+    from app.pipeline.reframe import _HDR10_TRANSFER, _HLG_TRANSFER  # noqa: PLC0415
+
+    return frozenset({_HLG_TRANSFER, _HDR10_TRANSFER})
 
 
 def needs_downscale(probe: object) -> bool:
     """True when this SDR source's short edge exceeds the guard threshold."""
     if not settings.source_downscale_guard_enabled:
         return False
-    if getattr(probe, "color_trc", "bt709") in _HDR_TRANSFERS:
+    if getattr(probe, "color_trc", "bt709") in _hdr_transfers():
         return False
     try:
         width = int(getattr(probe, "width", 0) or 0)
@@ -76,7 +91,9 @@ def needs_downscale(probe: object) -> bool:
     return min(width, height) > settings.source_downscale_short_edge_max
 
 
-def build_downscale_cmd(input_path: str, output_path: str) -> list[str]:
+def build_downscale_cmd(
+    input_path: str, output_path: str, *, audio_codec: str = "copy"
+) -> list[str]:
     """ffmpeg command for one bounded downscale pass (pure — unit-testable).
 
     The cover-scale expression uses ``iw``/``ih`` (post-autorotate) so rotated
@@ -84,12 +101,24 @@ def build_downscale_cmd(input_path: str, output_path: str) -> list[str]:
     ``trunc(…/2)*2`` keeps dims even for libx264+yuv420p. Commas inside the
     quoted expression are protected by the single quotes ffmpeg's filter
     parser honors (args are passed as a list — no shell).
+
+    ``audio_codec``: "copy" preserves original audio bytes (first attempt);
+    the caller retries once with "aac" when the copy attempt fails — local
+    clip files are always named ``.mp4`` regardless of true source container,
+    and the MP4 muxer rejects stream-copied PCM (pro-camera .mov) and Opus
+    (webm) audio, which would otherwise silently disable the guard for
+    exactly the heavy-source class it exists for.
     """
     ow = settings.output_width
     oh = settings.output_height
     cover = f"min(1,max({ow}/iw,{oh}/ih))"
     vf = f"scale=w='trunc(iw*{cover}/2)*2':h='trunc(ih*{cover}/2)*2':flags=lanczos:eval=init"
     threads = str(settings.source_downscale_ffmpeg_threads)
+    audio_args = (
+        ["-c:a", "copy"]
+        if audio_codec == "copy"
+        else ["-c:a", "aac", "-b:a", settings.output_audio_bitrate]
+    )
     return [
         "ffmpeg",
         "-y",
@@ -111,12 +140,39 @@ def build_downscale_cmd(input_path: str, output_path: str) -> list[str]:
         # Encoder thread cap (output-side -threads).
         "-threads",
         threads,
-        "-c:a",
-        "copy",
+        *audio_args,
         "-movflags",
         "+faststart",
         output_path,
     ]
+
+
+def _run_downscale(local_path: str, out_path: str, *, timeout_s: float) -> None:
+    """One conversion: stream-copy audio first, AAC-transcode retry on mux failure.
+
+    The retry fires ONLY on a non-zero ffmpeg exit (CalledProcessError) — a
+    timeout raises through to the caller unchanged (retrying a slow encode
+    would double the budget damage, not fix it).
+    """
+    try:
+        subprocess.run(
+            build_downscale_cmd(local_path, out_path),
+            check=True,
+            capture_output=True,
+            timeout=timeout_s,
+        )
+    except subprocess.CalledProcessError as exc:
+        log.info(
+            "source_guard_audio_copy_retry_aac",
+            input=os.path.basename(local_path),
+            stderr_tail=(exc.stderr or b"")[-300:].decode("utf-8", "replace"),
+        )
+        subprocess.run(
+            build_downscale_cmd(local_path, out_path, audio_codec="aac"),
+            check=True,
+            capture_output=True,
+            timeout=timeout_s,
+        )
 
 
 def downscale_oversized_sources(
@@ -140,6 +196,7 @@ def downscale_oversized_sources(
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     converted = 0
+    deadline = time.monotonic() + _GUARD_TOTAL_BUDGET_S
     for idx, local_path in enumerate(local_paths):
         probe = probe_map.get(local_path)
         if probe is None or not needs_downscale(probe):
@@ -149,10 +206,25 @@ def downscale_oversized_sources(
         # through a libx264 video pass (image_clip owns image rendering).
         if is_image_file(local_path):
             continue
+        remaining_s = deadline - time.monotonic()
+        if remaining_s < _GUARD_MIN_REMAINING_S:
+            # Budget spent — keep the remaining originals (best-effort contract)
+            # rather than eating the orchestrator's soft_time_limit.
+            log.warning(
+                "source_guard_budget_exhausted",
+                job_id=job_id,
+                converted=converted,
+                first_skipped_index=idx,
+            )
+            record_pipeline_event(
+                "reframe",
+                "source_guard_budget_exhausted",
+                {"converted": converted, "first_skipped_index": idx},
+            )
+            break
         out_path = os.path.join(tmpdir, f"guard_{idx}_{os.path.basename(local_path)}")
-        cmd = build_downscale_cmd(local_path, out_path)
         try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=_GUARD_TIMEOUT_S)
+            _run_downscale(local_path, out_path, timeout_s=min(_GUARD_TIMEOUT_S, remaining_s))
             new_probe = probe_video(out_path)
         except Exception as exc:  # noqa: BLE001 — guard is best-effort by contract
             stderr = getattr(exc, "stderr", b"") or b""
@@ -163,6 +235,20 @@ def downscale_oversized_sources(
                 error=str(exc)[:200],
                 stderr_tail=stderr[-500:].decode("utf-8", "replace") if stderr else "",
             )
+            # The failure must reach the admin job-debug view — the render is
+            # proceeding with exactly the oversized-source condition the
+            # 2026-07-21 OOM was about, and a log line alone is invisible there.
+            record_pipeline_event(
+                "reframe",
+                "source_guard_downscale_failed",
+                {"clip_index": idx, "error": str(exc)[:160]},
+            )
+            # A partial intermediate on RAM-backed tmpfs is dead weight against
+            # the very budget this guard protects — clean it up best-effort.
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
             continue
         probe_map[out_path] = new_probe
         # Drop the ORIGINAL's probe entry — `_available_footage_s` sums
