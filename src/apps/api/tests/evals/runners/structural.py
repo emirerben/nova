@@ -29,6 +29,7 @@ from app.agents.clip_metadata import (
 from app.agents.clip_plan_matcher import ClipPlanMatcherInput, ClipPlanMatcherOutput
 from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
+from app.agents.edit_copilot import _MAX_OPS as _EDIT_COPILOT_MAX_OPS
 from app.agents.edit_copilot import EditCopilotOutput
 from app.agents.idea_expander import IdeaExpanderInput, IdeaExpanderOutput
 from app.agents.intro_writer import (
@@ -1703,8 +1704,8 @@ def check_edit_copilot(output: Any) -> list[str]:
         failures.append("reply is empty")
     if len(output.suggestions) > 5:
         failures.append(f"suggestions has {len(output.suggestions)} items (max 5)")
-    if len(output.ops) > 8:
-        failures.append(f"ops has {len(output.ops)} items (max 8)")
+    if len(output.ops) > _EDIT_COPILOT_MAX_OPS:
+        failures.append(f"ops has {len(output.ops)} items (max {_EDIT_COPILOT_MAX_OPS})")
     if output.needs_clarification and output.ops:
         failures.append("needs_clarification=true must return ops=[]")
 

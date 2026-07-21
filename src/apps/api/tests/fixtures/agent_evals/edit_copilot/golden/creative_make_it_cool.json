@@ -1,0 +1,50 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v4",
+  "input": {
+    "utterance": "make this edit cool",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline", "sfx"],
+      "has_narrated_captions": false,
+      "text_bars": [
+        {"text": "we tried the new night market", "start_s": 0.2, "end_s": 3.5, "size_px": 64, "effect": "static"}
+      ],
+      "slots": [
+        {"output_start_s": 0, "output_end_s": 1.92, "duration_s": 1.92, "moment": "neon signs flicker on"},
+        {"output_start_s": 1.92, "output_end_s": 3.84, "duration_s": 1.92, "moment": "chef flips noodles in a wok fire"},
+        {"output_start_s": 3.84, "output_end_s": 5.76, "duration_s": 1.92, "moment": "friends toast with cups"}
+      ],
+      "total_duration_s": 5.76,
+      "beat_marks": [0, 0.48, 0.96, 1.44, 1.92, 2.4, 2.88, 3.36, 3.84, 4.32, 4.8, 5.28, 5.76],
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {"id": "sfx_whoosh", "name": "Whoosh", "duration_s": 0.4},
+          {"id": "sfx_sizzle", "name": "Sizzle", "duration_s": 0.6},
+          {"id": "sfx_pop", "name": "Pop", "duration_s": 0.2}
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_text_timing\",\"bar_index\":0,\"start_s\":0,\"end_s\":1.92},{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"effect\":\"slide-up\"}},{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"letter_spacing\":0.05}},{\"op\":\"add_text\",\"text\":\"night market run\",\"start_s\":3.84,\"end_s\":5.76},{\"op\":\"add_sfx\",\"effect_id\":\"sfx_whoosh\",\"at_s\":0.96,\"gain\":0.9},{\"op\":\"add_sfx\",\"effect_id\":\"sfx_whoosh\",\"at_s\":1.92,\"gain\":1},{\"op\":\"add_sfx\",\"effect_id\":\"sfx_sizzle\",\"at_s\":2.4,\"gain\":0.8},{\"op\":\"add_sfx\",\"effect_id\":\"sfx_pop\",\"at_s\":3.84,\"gain\":1},{\"op\":\"add_sfx\",\"effect_id\":\"sfx_pop\",\"at_s\":5.28,\"gain\":1}],\"confidence\":0.75,\"reply\":\"Hook rides the neon intro, a closer line lands on the toast, and whoosh-sizzle-pop accents hit the beats through the wok and the cheers.\",\"suggestions\":[\"Tighten the pacing next\",\"Try a bolder hook font\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {"op": "set_text_timing", "bar_index": 0, "start_s": 0, "end_s": 1.92},
+      {"op": "patch_text_style", "bar_index": 0, "patch": {"effect": "slide-up"}},
+      {"op": "patch_text_style", "bar_index": 0, "patch": {"letter_spacing": 0.05}},
+      {"op": "add_text", "text": "night market run", "start_s": 3.84, "end_s": 5.76},
+      {"op": "add_sfx", "effect_id": "sfx_whoosh", "at_s": 0.96, "gain": 0.9},
+      {"op": "add_sfx", "effect_id": "sfx_whoosh", "at_s": 1.92, "gain": 1},
+      {"op": "add_sfx", "effect_id": "sfx_sizzle", "at_s": 2.4, "gain": 0.8},
+      {"op": "add_sfx", "effect_id": "sfx_pop", "at_s": 3.84, "gain": 1},
+      {"op": "add_sfx", "effect_id": "sfx_pop", "at_s": 5.28, "gain": 1}
+    ],
+    "confidence": 0.75,
+    "reply": "Hook rides the neon intro, a closer line lands on the toast, and whoosh-sizzle-pop accents hit the beats through the wok and the cheers.",
+    "suggestions": ["Tighten the pacing next", "Try a bolder hook font"],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "9-op creative bundle (exercises the raised 12-op cap): beat-timed text + moment-matched SFX, no clip mutations mixed in"}
+}

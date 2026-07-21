@@ -1,0 +1,25 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v4",
+  "input": {
+    "utterance": "make it pop",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style"],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [],
+      "total_duration_s": 0
+    }
+  },
+  "raw_text": "{\"intent\":\"clarify\",\"ops\":[],\"confidence\":0.45,\"reply\":\"There is no text or music context here yet - do you want me to add a hook, or restyle something specific?\",\"suggestions\":[\"Add a hook\",\"Open the style tools\"],\"needs_clarification\":true}",
+  "output": {
+    "intent": "clarify",
+    "ops": [],
+    "confidence": 0.45,
+    "reply": "There is no text or music context here yet - do you want me to add a hook, or restyle something specific?",
+    "suggestions": ["Add a hook", "Open the style tools"],
+    "needs_clarification": true
+  },
+  "meta": {"source": "hand_authored_golden", "case": "truly ambiguous (empty draft, no beats) still clarifies under v4"}
+}

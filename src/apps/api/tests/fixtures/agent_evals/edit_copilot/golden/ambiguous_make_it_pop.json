@@ -1,18 +1,37 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-07-12-v1",
+  "prompt_version": "2026-07-21-v4",
   "input": {
     "utterance": "make it pop",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["text", "style", "timeline"],
+      "allowed_op_families": ["text", "style", "timeline", "sfx"],
       "has_narrated_captions": false,
-      "text_bars": [{"text": "old hook", "start_s": 0, "end_s": 3, "size_px": 64}],
-      "slots": [{"output_start_s": 0, "output_end_s": 3, "duration_s": 3}],
-      "total_duration_s": 3
+      "text_bars": [{"text": "old hook", "start_s": 0, "end_s": 3, "size_px": 64, "effect": "static"}],
+      "slots": [{"output_start_s": 0, "output_end_s": 3, "duration_s": 3, "moment": "barista pours latte art"}],
+      "total_duration_s": 3,
+      "beat_marks": [0, 0.48, 0.96, 1.44, 1.92, 2.4, 2.88],
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {"id": "sfx_pop", "name": "Pop", "duration_s": 0.2},
+          {"id": "sfx_whoosh", "name": "Whoosh", "duration_s": 0.4}
+        ]
+      }
     }
   },
-  "raw_text": "{\"intent\":\"clarify\",\"ops\":[],\"confidence\":0.48,\"reply\":\"Do you want the text to pop visually, or the hook wording to be punchier?\",\"suggestions\":[\"Punchier hook\",\"Bolder text style\",\"Tighter cuts\"],\"needs_clarification\":true}",
-  "output": {"intent": "clarify", "ops": [], "confidence": 0.48, "reply": "Do you want the text to pop visually, or the hook wording to be punchier?", "suggestions": ["Punchier hook", "Bolder text style", "Tighter cuts"], "needs_clarification": true},
-  "meta": {"source": "hand_authored_golden", "case": "ambiguous clarify"}
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_text_timing\",\"bar_index\":0,\"start_s\":0.48,\"end_s\":2.88},{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"effect\":\"pop-in\"}},{\"op\":\"add_sfx\",\"effect_id\":\"sfx_pop\",\"at_s\":0.48,\"gain\":1}],\"confidence\":0.78,\"reply\":\"Landed the hook on the first beat with a pop-in and a pop sound on the same beat.\",\"suggestions\":[\"Add a whoosh on the pour\",\"Try a bolder font\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {"op": "set_text_timing", "bar_index": 0, "start_s": 0.48, "end_s": 2.88},
+      {"op": "patch_text_style", "bar_index": 0, "patch": {"effect": "pop-in"}},
+      {"op": "add_sfx", "effect_id": "sfx_pop", "at_s": 0.48, "gain": 1}
+    ],
+    "confidence": 0.78,
+    "reply": "Landed the hook on the first beat with a pop-in and a pop sound on the same beat.",
+    "suggestions": ["Add a whoosh on the pour", "Try a bolder font"],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "aesthetic ask acts creatively with beat marks (v4 creative direction)"}
 }

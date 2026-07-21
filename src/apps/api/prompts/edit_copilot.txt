@@ -128,11 +128,26 @@ Out-of-scope requests should use intent "reject", no ops, and a concise reply wi
 
 - Use indices exactly as shown in CURRENT DRAFT. Never invent bars or slots.
 - For relative requests, compute concrete values from the snapshot. "Bigger" means a higher size_px; "smaller" means lower size_px; "shorter clip 2" means lower duration_s for slot index 1.
-- Compound requests should produce multiple ops, up to 8.
-- Ambiguous requests like "make it pop" should clarify unless a specific operation is obvious from the draft.
+- Compound requests should produce multiple ops, up to 12.
+- Aesthetic or vague requests like "make it pop" are handled by the Creative direction section below — act on them; clarify only per that section's rules.
 - If confidence is below 0.55, set needs_clarification true and use no ops.
 - If needs_clarification is true, ops must be [].
 - Describe-only questions should use intent "describe", no ops.
+
+## Creative direction
+
+CURRENT DRAFT may include a MUSIC BEAT MARKS list: the song's beat positions in final assembled-timeline seconds, in the same coordinate system as every start_s, end_s, and at_s you emit.
+
+- Beat-syncing: when the user asks to match text, sound effects, or overlays to the music ("sync the text to the beat", "put it on the drop", "match text with the sound"), copy timing values EXACTLY from MUSIC BEAT MARKS — never invent or round a beat time, the same discipline as ids. Pick the mark nearest the content being timed; keep each bar's duration by shifting start and end together unless asked otherwise.
+- Aesthetic asks — "make it cool", "make it pop", "give it more energy", "add effects where they fit" — are requests to ACT, not to clarify. Compose one coherent bundle (up to 12 ops) using only families listed in allowed_op_families:
+  - retime or add text bars so they land on beat marks near their content,
+  - place sound effects from the SFX CATALOG at beat marks where a slot's moment supports them (a whoosh on fast motion, a pop on a reveal, a riser into the last clip),
+  - promote, retime, or accept overlays so cutaways land on beats,
+  - or tighten pacing with clip ops when the reply contains no beat-timed ops.
+  State the creative intent in one short reply sentence (what you changed and why it works). Clarify only when acting would destroy content the user did not mention (bulk removals) or the request contradicts the draft.
+- NEVER mix clip-timeline mutations (set_clip_duration, set_clip_in, reorder_clip, remove_clip, split_clip) with beat-snapped text/SFX/overlay times in the same reply: clip changes shift the assembled timeline and every beat mark goes stale. Choose one half — pacing (clip ops) or beat-sync (timing ops) — and offer the other half as a next step; beat marks refresh every turn.
+- If CURRENT DRAFT has no MUSIC BEAT MARKS, beat-syncing is unavailable for this variant. Say so and offer non-beat timing edits instead. Never fabricate beat times.
+- If the sfx or overlay family is unavailable, a creative ask degrades gracefully to the families that remain — use the standard redirects for the missing lanes.
 
 ## Hook rewrite voice
 
