@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.4.0] — 2026-07-21
+
+### Added
+- **The editing copilot now handles creative direction, not just literal commands.** Asking Nova to "make it pop", "make this edit cool", or "add effects where they fit" produces a coherent bundle of edits — beat-timed text, sound effects matched to what's happening in each clip, and style accents — instead of a clarifying question. Compound creative requests can carry up to 12 edits in one reply.
+- **The copilot can match text and sound to the music.** It now sees the video's beat positions and copies them exactly when retiming text bars, placing sound effects, or scheduling overlays — "sync the text with the beat" lands on the actual beats of the matched track. Near-miss timings snap onto the closest beat automatically, and beat-synced placements can never land in the inaudible final instant of the video.
+- **Creative edits stay safe.** All creative-bundle edits are instant, undoable draft changes; beat syncing and clip re-cutting never mix in one reply (clip changes shift the timeline, so the copilot does one, then offers the other); and variants without music degrade gracefully to non-beat editing.
+
+### Fixed
+- **Hardened the copilot against malformed editor state.** Hostile or corrupted beat data (oversized numbers, infinities) can no longer crash a copilot turn, and beat lists from long, high-tempo songs keep their late-video beats addressable instead of being cut off.
+
 ## [0.11.3.0] — 2026-07-21
 
 ### Fixed
