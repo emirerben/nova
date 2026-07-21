@@ -939,23 +939,79 @@ def _chapter_markers_v2(
     marker_indexes = {index for _, index in chosen.values()}
     markers: list[tuple[int, int, int]] = []
     for number, (_, marker_index) in chosen.items():
-        keyword_index = marker_index
-        previous_end_ms = words[marker_index].end_ms
-        for candidate_index in range(marker_index + 1, min(len(words), marker_index + 5)):
-            candidate = words[candidate_index]
-            if candidate_index in marker_indexes or candidate.start_ms - previous_end_ms > 900:
-                break
-            previous_end_ms = candidate.end_ms
-            if (
-                candidate.normalized_text not in _KEYWORD_STOP
-                and candidate.normalized_text not in _LIST_TERMS
-                and candidate.normalized_text not in _CARDINALS
-            ):
-                keyword_index = candidate_index
-                break
+        keyword_index = _marker_keyword_index(words, marker_index, marker_indexes)
         markers.append((number, marker_index, keyword_index))
     markers.sort(key=lambda marker: marker[1])
     return markers, declared_count
+
+
+def _marker_keyword_index(
+    words: list[SmartWord], marker_index: int, marker_indexes: set[int]
+) -> int:
+    """First non-stopword after a chapter marker (the spoken heading word)."""
+
+    keyword_index = marker_index
+    previous_end_ms = words[marker_index].end_ms
+    for candidate_index in range(marker_index + 1, min(len(words), marker_index + 5)):
+        candidate = words[candidate_index]
+        if candidate_index in marker_indexes or candidate.start_ms - previous_end_ms > 900:
+            break
+        previous_end_ms = candidate.end_ms
+        if (
+            candidate.normalized_text not in _KEYWORD_STOP
+            and candidate.normalized_text not in _LIST_TERMS
+            and candidate.normalized_text not in _CARDINALS
+        ):
+            keyword_index = candidate_index
+            break
+    return keyword_index
+
+
+@dataclass(frozen=True)
+class _SceneHints:
+    """Validated scene-matcher output mapped onto transcript word indexes.
+
+    matches: (word_index, asset_id, anchor_word_id) — word-anchored visual
+    matches in transcript order. chapter_tags: word_index → spoken sequence
+    number. role_tags: word_index → semantic role (never hook/list_item).
+    """
+
+    matches: list[tuple[int, str, str]]
+    chapter_tags: dict[int, int]
+    role_tags: dict[int, SemanticRole]
+
+    @property
+    def hinted_asset_ids(self) -> set[str]:
+        return {asset_id for _, asset_id, _ in self.matches}
+
+
+def _merge_hint_chapters(
+    words: list[SmartWord],
+    markers: list[tuple[int, int, int]],
+    hints: _SceneHints | None,
+) -> list[tuple[int, int, int]]:
+    """Union agent-tagged chapters with vocab-detected ones.
+
+    The vocab tables stay authoritative when they fire (transcript-derived
+    facts); the agent ADDS chapters they cannot see — any language, spoken
+    numbers the dictionaries don't cover. Conflicts dedupe by sequence number
+    and by word index; the detected marker wins.
+    """
+
+    if hints is None or not hints.chapter_tags:
+        return markers
+    detected_numbers = {number for number, _, _ in markers}
+    detected_indexes = {index for _, index, _ in markers}
+    merged = list(markers)
+    marker_indexes = set(detected_indexes) | set(hints.chapter_tags.keys())
+    for word_index, number in sorted(hints.chapter_tags.items()):
+        if number in detected_numbers or word_index in detected_indexes:
+            continue
+        keyword_index = _marker_keyword_index(words, word_index, marker_indexes)
+        merged.append((number, word_index, keyword_index))
+        detected_numbers.add(number)
+    merged.sort(key=lambda marker: marker[1])
+    return merged
 
 
 def _semantic_hook_end_index_v2(
@@ -992,17 +1048,106 @@ def _semantic_hook_end_index_v2(
     return min(cap_index, len(words) - 1)
 
 
+def _run_scene_matcher(
+    words: list[SmartWord],
+    assets: list[SmartPlannerAsset],
+    *,
+    language: str,
+    job_id: str | None,
+    use_agent: bool,
+) -> tuple[_SceneHints | None, dict[str, Any]]:
+    """Run the word→visual matching brain; fail open to the vocab heuristics.
+
+    Returns (hints, receipt). hints=None means "behave exactly as before the
+    agent existed" — kill switch off, no API key, or any failure. The agent
+    runs even with an empty asset pool: chapter/role tags are language-
+    agnostic value on their own.
+    """
+
+    from app.config import settings  # noqa: PLC0415
+
+    if not use_agent:
+        return None, {"status": "disabled_use_agent"}
+    if not getattr(settings, "smart_scene_matcher_enabled", True):
+        return None, {"status": "disabled_by_flag"}
+    if not settings.gemini_api_key:
+        return None, {"status": "no_api_key"}
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.scene_matcher import SceneMatcherAgent, SceneMatcherInput  # noqa: PLC0415
+
+        output = SceneMatcherAgent(default_client()).run(
+            SceneMatcherInput(
+                words=[{"word_id": word.word_id, "text": word.display_text} for word in words],
+                assets=assets,
+                language=language,
+            ),
+            ctx=RunContext(job_id=job_id),
+        )
+        index_by_id = {word.word_id: index for index, word in enumerate(words)}
+        matches = sorted(
+            (index_by_id[match.anchor_word_id], match.asset_id, match.anchor_word_id)
+            for match in output.matches
+            if match.anchor_word_id in index_by_id
+        )
+        chapter_tags: dict[int, int] = {}
+        role_tags: dict[int, SemanticRole] = {}
+        for tag in output.cue_tags:
+            index = index_by_id.get(tag.anchor_word_id)
+            if index is None or index == 0:
+                # The very first word is the hook, never a tag anchor.
+                continue
+            if tag.role == "list_item" and tag.sequence_number is not None:
+                chapter_tags[index] = tag.sequence_number
+            elif tag.role in {"context_shift", "payoff", "cta"}:
+                role_tags[index] = tag.role
+        hints = _SceneHints(matches=matches, chapter_tags=chapter_tags, role_tags=role_tags)
+        return hints, {
+            "status": "ok",
+            "matches": len(matches),
+            "chapter_tags": len(chapter_tags),
+            "role_tags": len(role_tags),
+        }
+    except Exception as exc:  # noqa: BLE001 — advisory brain, never blocks a render
+        return None, {"status": "failed_open", "error_class": type(exc).__name__}
+
+
 def _semantic_timeline_v2(
     words: list[SmartWord],
     baseline: list[BaselineCaptionCue],
     assets: list[SmartPlannerAsset],
     preset: SmartEditPreset,
+    scene_hints: _SceneHints | None = None,
 ) -> _V2SemanticTimeline:
     index_by_id = {word.word_id: index for index, word in enumerate(words)}
     chapter_markers, declared_count = _chapter_markers_v2(words, baseline)
+    chapter_markers = _merge_hint_chapters(words, chapter_markers, scene_hints)
     hook_end_index = _semantic_hook_end_index_v2(words, baseline, chapter_markers, preset)
     hook_words = words[: hook_end_index + 1]
-    hook_matches = _matching_assets(hook_words, assets, preset)
+    # Word-anchored agent matches take precedence over the token-overlap
+    # heuristic: the heuristic can only pair a visual with a literally-shared
+    # token, which cross-matches generic terms ("flag") and misses world-
+    # knowledge pairs ("Argentina #10 jersey" ↔ "Messi"). Assets the agent
+    # never mentioned still fall through to the heuristic.
+    hinted_ids = scene_hints.hinted_asset_ids if scene_hints else set()
+
+    def _range_matches(lo: int, hi: int) -> list[tuple[str, str]]:
+        if scene_hints is None:
+            return []
+        seen: set[str] = set()
+        ranged: list[tuple[str, str]] = []
+        for word_index, asset_id, anchor_word_id in scene_hints.matches:
+            if lo <= word_index <= hi and asset_id not in seen:
+                seen.add(asset_id)
+                ranged.append((asset_id, anchor_word_id))
+        return ranged
+
+    hook_matches = _range_matches(0, hook_end_index) + [
+        match
+        for match in _matching_assets(hook_words, assets, preset)
+        if match[0] not in hinted_ids
+    ]
     candidates: list[SmartPlannerCandidate] = [
         SmartPlannerCandidate(
             candidate_id=_candidate_id("hook", words[0].word_id, 0),
@@ -1027,6 +1172,10 @@ def _semantic_timeline_v2(
         for word in chapter_words:
             role_by_word_id[word.word_id] = "list_item"
         boundary_after_word_ids.add(chapter_words[-1].word_id)
+        # "number one Spain" — the visual named INSIDE a chapter heading must
+        # attach here: cues overlapping a chapter are skipped below, so this
+        # candidate is the only carrier for hint matches in that range.
+        chapter_matches = _range_matches(marker_index, title_end_index)
         candidates.append(
             SmartPlannerCandidate(
                 candidate_id=_candidate_id("list_item", chapter_words[0].word_id, ordinal),
@@ -1036,6 +1185,8 @@ def _semantic_timeline_v2(
                 anchor_word_id=chapter_words[0].word_id,
                 sequence_number=number,
                 evidence=" ".join(word.display_text for word in chapter_words)[:200],
+                suggested_asset_ids=[asset_id for asset_id, _ in chapter_matches],
+                suggested_asset_anchor_word_ids=dict(chapter_matches),
             )
         )
 
@@ -1053,9 +1204,23 @@ def _semantic_timeline_v2(
         folded = _fold(cue.display_text)
         pause_ms = max(0, cue_words[0].start_ms - last_end_ms)
         last_end_ms = cue_words[-1].end_ms
+        hint_role: SemanticRole | None = None
+        if scene_hints is not None:
+            hint_role = next(
+                (
+                    scene_hints.role_tags[index]
+                    for index in sorted(cue_indexes)
+                    if index in scene_hints.role_tags
+                ),
+                None,
+            )
         role: SemanticRole | None = None
         if min(cue_indexes) == hook_end_index + 1:
             role = "context_shift"
+        elif hint_role is not None:
+            # Language-agnostic semantic tag from the scene matcher — the
+            # vocab prefixes below only ever fire on Turkish.
+            role = hint_role
         elif any(folded.startswith(prefix) for prefix in _CTA_TERMS) or any(
             term in folded for term in _CTA_TERMS
         ):
@@ -1066,7 +1231,11 @@ def _semantic_timeline_v2(
             role = "example"
         elif any(folded.startswith(prefix) for prefix in _CONTEXT_PREFIXES) or pause_ms >= 1150:
             role = "context_shift"
-        asset_matches = _matching_assets(cue_words, assets, preset)
+        asset_matches = _range_matches(min(cue_indexes), max(cue_indexes)) + [
+            match
+            for match in _matching_assets(cue_words, assets, preset)
+            if match[0] not in hinted_ids
+        ]
         if role is None and asset_matches:
             role = "example"
         if role is None:
@@ -1500,11 +1669,19 @@ def plan_smart_captions(
         if not normalized_words or not source_baseline:
             return None
         planner_assets = _coerce_assets(assets)
+        scene_hints, scene_receipt = _run_scene_matcher(
+            normalized_words,
+            planner_assets,
+            language=language,
+            job_id=job_id,
+            use_agent=use_agent,
+        )
         semantic = _semantic_timeline_v2(
             normalized_words,
             source_baseline,
             planner_assets,
             preset,
+            scene_hints=scene_hints,
         )
         smart_cues = build_semantic_caption_cues(
             normalized_words,
@@ -1594,6 +1771,7 @@ def plan_smart_captions(
                 "missing_chapters": semantic.missing_chapters,
                 "chapter_order_valid": semantic.chapter_order_valid,
                 "omissions": omissions,
+                "scene_matcher": scene_receipt,
                 "roles": {
                     role: sum(event.role == role for event in events)
                     for role in ("hook", "context_shift", "list_item", "example", "payoff", "cta")

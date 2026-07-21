@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.7.0] — 2026-07-21
+
+### Added
+- **Smart Captions now has a word-to-visual matching brain.** Saying "Spain" pops the Spain flag on the word "Spain"; saying "Messi" pops the Messi photo on "Messi" — a new scene-matcher agent reads the transcript next to the analyzed asset pool and pairs each visual with the exact spoken word that names it, using world knowledge (an "Argentina #10 jersey" photo matches "Messi"; a filename like `mbappe.jpg` matches "Mbappé"). It never cross-matches lookalikes: with four flags in the pool, saying "England" can only ever surface the England flag, and an uncertain match is omitted rather than guessed.
+- **Chapter numbers and structure now work in every language.** "Number one", "first", "segundo", "üçüncü" — the scene matcher tags numbered chapters, topic shifts, payoffs, and follow/subscribe moments by meaning instead of a Turkish-only keyword list, so English (and any other language) videos get numbered chapter beats and contextual framing.
+- **Visuals named inside a chapter heading now attach there.** "Number one Spain" places the Spain flag on the chapter beat itself instead of dropping it.
+
+### Notes
+- The matcher is advisory and fail-open: every suggestion is validated against the transcript and asset catalog (unknown words/assets, duplicate chapter numbers, and low-confidence guesses are dropped), and any agent failure falls back to the previous deterministic behavior. Kill switch: `SMART_SCENE_MATCHER_ENABLED=false`.
+
 ## [0.11.6.0] — 2026-07-21
 
 ### Fixed

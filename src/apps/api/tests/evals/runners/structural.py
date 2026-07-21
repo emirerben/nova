@@ -54,6 +54,7 @@ from app.agents.retake_detector import (
     RetakeDetectorOutput,
     retake_structural_failures,
 )
+from app.agents.scene_matcher import SceneMatcherInput, SceneMatcherOutput
 from app.agents.sequence_emphasis import SequenceEmphasisInput, SequenceEmphasisOutput
 from app.agents.sequence_quote_writer import SequenceQuoteOutput, quote_structural_failures
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
@@ -1972,6 +1973,46 @@ def check_smart_edit_planner(
     return failures
 
 
+def check_scene_matcher(
+    output: SceneMatcherOutput,
+    input: SceneMatcherInput,  # noqa: A002
+) -> list[str]:
+    """Pin the scene matcher's grounding walls independently of parse()."""
+    failures: list[str] = []
+    known_words = {str(word.get("word_id")) for word in input.words}
+    known_assets = {asset.asset_id for asset in input.assets}
+
+    per_asset: dict[str, int] = {}
+    for index, match in enumerate(output.matches):
+        if match.asset_id not in known_assets:
+            failures.append(f"match {index}: unknown asset {match.asset_id!r}")
+        if match.anchor_word_id not in known_words:
+            failures.append(f"match {index}: unknown anchor {match.anchor_word_id!r}")
+        if match.confidence not in {"high", "medium"}:
+            failures.append(f"match {index}: confidence {match.confidence!r} not allowed")
+        per_asset[match.asset_id] = per_asset.get(match.asset_id, 0) + 1
+    for asset_id, count in per_asset.items():
+        if count > 2:
+            failures.append(f"asset {asset_id}: {count} anchors exceeds the per-asset cap")
+
+    seen_sequences: set[int] = set()
+    for index, tag in enumerate(output.cue_tags):
+        if tag.anchor_word_id not in known_words:
+            failures.append(f"cue_tag {index}: unknown anchor {tag.anchor_word_id!r}")
+        if tag.role not in {"list_item", "context_shift", "payoff", "cta"}:
+            failures.append(f"cue_tag {index}: role {tag.role!r} not allowed")
+        if tag.role == "list_item" and tag.sequence_number is not None:
+            if not 1 <= tag.sequence_number <= 20:
+                failures.append(f"cue_tag {index}: sequence {tag.sequence_number} out of range")
+            elif tag.sequence_number in seen_sequences:
+                failures.append(f"cue_tag {index}: duplicate sequence {tag.sequence_number}")
+            seen_sequences.add(tag.sequence_number)
+        if tag.role != "list_item" and tag.sequence_number is not None:
+            failures.append(f"cue_tag {index}: sequence number on non-list role")
+
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -2030,6 +2071,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return failures
     if agent_name == "nova.compose.smart_edit_planner":
         return check_smart_edit_planner(output, input)
+    if agent_name == "nova.compose.scene_matcher":
+        return check_scene_matcher(output, input)
     if agent_name == "nova.compose.sequence_emphasis":
         return check_sequence_emphasis(output, input)
     if agent_name == "nova.compose.sequence_quote":

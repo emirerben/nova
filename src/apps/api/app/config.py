@@ -171,6 +171,13 @@ class Settings(BaseSettings):
     smart_captions_default_preset_id: str = ""
     smart_captions_default_preset_version: str = ""
 
+    # The word→visual matching brain (nova.compose.scene_matcher): one Gemini
+    # call per v2 render pairing pool assets with the exact spoken word and
+    # tagging chapters/roles language-agnostically. Fail-open advisory — any
+    # failure falls back to the deterministic vocab heuristics. Kill switch:
+    # false = pre-agent behavior byte-identically.
+    smart_scene_matcher_enabled: bool = True
+
     # Kill switch for authored TextElements on subtitled variants. When False,
     # subtitled remains captions-only and the text-element routes/capabilities
     # reject it. When True, user-authored text is burned onto the caption-free

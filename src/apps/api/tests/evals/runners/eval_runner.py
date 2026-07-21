@@ -264,6 +264,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.smart_edit_planner import SmartEditPlannerAgent
 
         return SmartEditPlannerAgent
+    if agent_name == "nova.compose.scene_matcher":
+        from app.agents.scene_matcher import SceneMatcherAgent
+
+        return SceneMatcherAgent
     if agent_name == "nova.compose.sequence_emphasis":
         from app.agents.sequence_emphasis import SequenceEmphasisAgent
 
