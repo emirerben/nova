@@ -219,6 +219,30 @@ def opaque_alpha_box(path: str) -> NormalizedBox:
         return NormalizedBox(0.0, 0.0, 1.0, 1.0)
 
 
+def _face_protection_box(raw: NormalizedBox) -> NormalizedBox:
+    """Turn a raw Haar detection into the box the layout engine protects.
+
+    Haar on low-res selfie frames merges background into giant detections (a
+    "face" spanning 70% of the frame width) and a uniform 0.08 padding then
+    blankets the empty band above the hairline — together they blocked every
+    top corner and broke the four-corner flag composition (2026-07-21).
+    Clamp implausible widths to a centered head-size box and keep the TOP
+    padding thin; sides and chin stay generously padded.
+    """
+
+    if raw.width > 0.55:
+        center_x = (raw.left + raw.right) / 2
+        raw = NormalizedBox(
+            max(0.0, center_x - 0.275), raw.top, min(1.0, center_x + 0.275), raw.bottom
+        )
+    return NormalizedBox(
+        max(0.0, raw.left - 0.06),
+        max(0.0, raw.top - 0.02),
+        min(1.0, raw.right + 0.06),
+        min(1.0, raw.bottom + 0.08),
+    )
+
+
 def sample_face_regions(
     video_path: str,
     anchor_times_s: list[float],
@@ -262,7 +286,7 @@ def sample_face_regions(
             attempted = int(payload.get("attempted") or attempted)
             for sample in payload.get("samples") or []:
                 at_s = max(0.0, float(sample["at_s"]))
-                box = NormalizedBox(**sample["box"]).padded(0.08)
+                box = _face_protection_box(NormalizedBox(**sample["box"]))
                 regions.append(
                     ProtectedRegion(
                         start_s=max(0.0, at_s - 0.5),
@@ -420,19 +444,31 @@ def arbitrate_media_overlays(
         ]
         accepted: dict[str, Any] | None = None
         original_x, original_y = _center_for_overlay(overlay)
-        # Try fallbacks nearest the card's assigned spot first: a top-left
-        # hook flag that cannot sit exactly there should slide down the LEFT
-        # edge, not teleport to whichever corner happens to be free — the
-        # planner's four-corner composition survives collisions that way.
+
+        # Fallback spots rank in three tiers — true corners, then edges, then
+        # the center column as a last resort — and closest to the card's
+        # assigned spot within a tier. The loop is SPOT-major: every shrink is
+        # tried at a preferred spot before moving on, because a slightly
+        # smaller flag in the free corner beats a full-size one parked under
+        # the captions (2026-07-21 France-flag-in-the-middle report; the
+        # padded face box only misses the corner gate at reduced scale).
+        def _spot_tier(spot: tuple[float, float]) -> int:
+            if abs(spot[0] - 0.5) < 0.1:
+                return 2
+            return 0 if spot[1] <= 0.2 or spot[1] >= 0.75 else 1
+
         ranked_candidates = sorted(
             candidates,
-            key=lambda spot: (spot[0] - original_x) ** 2 + (spot[1] - original_y) ** 2,
+            key=lambda spot: (
+                _spot_tier(spot),
+                (spot[0] - original_x) ** 2 + (spot[1] - original_y) ** 2,
+            ),
         )
-        for shrink in (1.0, 0.85, 0.70, 0.55):
-            for x_frac, y_frac in (
-                (original_x, original_y),
-                *ranked_candidates,
-            ):
+        for x_frac, y_frac in (
+            (original_x, original_y),
+            *ranked_candidates,
+        ):
+            for shrink in (1.0, 0.85, 0.70, 0.55):
                 trial = {
                     **overlay,
                     "position": "custom",
