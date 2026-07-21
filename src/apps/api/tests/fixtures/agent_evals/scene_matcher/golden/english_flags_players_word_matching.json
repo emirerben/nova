@@ -1,0 +1,319 @@
+{
+ "agent": "nova.compose.scene_matcher",
+ "prompt_version": "2026-07-21.1",
+ "input": {
+  "words": [
+   {
+    "word_id": "w000001",
+    "text": "today"
+   },
+   {
+    "word_id": "w000002",
+    "text": "I"
+   },
+   {
+    "word_id": "w000003",
+    "text": "rank"
+   },
+   {
+    "word_id": "w000004",
+    "text": "the"
+   },
+   {
+    "word_id": "w000005",
+    "text": "best"
+   },
+   {
+    "word_id": "w000006",
+    "text": "football"
+   },
+   {
+    "word_id": "w000007",
+    "text": "nations"
+   },
+   {
+    "word_id": "w000008",
+    "text": "number"
+   },
+   {
+    "word_id": "w000009",
+    "text": "one"
+   },
+   {
+    "word_id": "w000010",
+    "text": "Spain"
+   },
+   {
+    "word_id": "w000011",
+    "text": "their"
+   },
+   {
+    "word_id": "w000012",
+    "text": "flag"
+   },
+   {
+    "word_id": "w000013",
+    "text": "is"
+   },
+   {
+    "word_id": "w000014",
+    "text": "red"
+   },
+   {
+    "word_id": "w000015",
+    "text": "and"
+   },
+   {
+    "word_id": "w000016",
+    "text": "yellow"
+   },
+   {
+    "word_id": "w000017",
+    "text": "number"
+   },
+   {
+    "word_id": "w000018",
+    "text": "two"
+   },
+   {
+    "word_id": "w000019",
+    "text": "Argentina"
+   },
+   {
+    "word_id": "w000020",
+    "text": "the"
+   },
+   {
+    "word_id": "w000021",
+    "text": "home"
+   },
+   {
+    "word_id": "w000022",
+    "text": "of"
+   },
+   {
+    "word_id": "w000023",
+    "text": "Messi"
+   },
+   {
+    "word_id": "w000024",
+    "text": "then"
+   },
+   {
+    "word_id": "w000025",
+    "text": "England"
+   },
+   {
+    "word_id": "w000026",
+    "text": "with"
+   },
+   {
+    "word_id": "w000027",
+    "text": "Elliot"
+   },
+   {
+    "word_id": "w000028",
+    "text": "Anderson"
+   },
+   {
+    "word_id": "w000029",
+    "text": "and"
+   },
+   {
+    "word_id": "w000030",
+    "text": "finally"
+   },
+   {
+    "word_id": "w000031",
+    "text": "France"
+   },
+   {
+    "word_id": "w000032",
+    "text": "the"
+   },
+   {
+    "word_id": "w000033",
+    "text": "dictator"
+   },
+   {
+    "word_id": "w000034",
+    "text": "Mbappe"
+   },
+   {
+    "word_id": "w000035",
+    "text": "runs"
+   },
+   {
+    "word_id": "w000036",
+    "text": "their"
+   },
+   {
+    "word_id": "w000037",
+    "text": "attack"
+   },
+   {
+    "word_id": "w000038",
+    "text": "follow"
+   },
+   {
+    "word_id": "w000039",
+    "text": "for"
+   },
+   {
+    "word_id": "w000040",
+    "text": "part"
+   },
+   {
+    "word_id": "w000041",
+    "text": "two"
+   }
+  ],
+  "assets": [
+   {
+    "asset_id": "a-spain",
+    "kind": "image",
+    "subject": "flag of Spain",
+    "description": "red and yellow horizontally striped national flag",
+    "on_screen_text": "",
+    "brands": [
+     "Spain"
+    ],
+    "filename": "IMG_2001.jpg"
+   },
+   {
+    "asset_id": "a-arg",
+    "kind": "image",
+    "subject": "flag of Argentina",
+    "description": "light blue and white striped flag with sun emblem",
+    "on_screen_text": "",
+    "brands": [
+     "Argentina"
+    ],
+    "filename": "IMG_2002.jpg"
+   },
+   {
+    "asset_id": "a-eng",
+    "kind": "image",
+    "subject": "flag of England",
+    "description": "white flag with red St George cross",
+    "on_screen_text": "",
+    "brands": [
+     "England"
+    ],
+    "filename": "IMG_2003.jpg"
+   },
+   {
+    "asset_id": "a-fra",
+    "kind": "image",
+    "subject": "flag of France",
+    "description": "blue white red vertical tricolour flag",
+    "on_screen_text": "",
+    "brands": [
+     "France"
+    ],
+    "filename": "IMG_2004.jpg"
+   },
+   {
+    "asset_id": "a-messi",
+    "kind": "image",
+    "subject": "footballer celebrating",
+    "description": "footballer in a light blue and white striped number 10 jersey lifting a trophy",
+    "on_screen_text": "",
+    "brands": [],
+    "filename": "IMG_3001.jpg"
+   },
+   {
+    "asset_id": "a-mbappe",
+    "kind": "image",
+    "subject": "footballer sprinting",
+    "description": "footballer in a dark blue France jersey number 10 with arms crossed celebration",
+    "on_screen_text": "",
+    "brands": [],
+    "filename": "mbappe.jpg"
+   },
+   {
+    "asset_id": "a-ander",
+    "kind": "image",
+    "subject": "footballer portrait",
+    "description": "young midfielder in a white England training kit",
+    "on_screen_text": "",
+    "brands": [
+     "Elliot Anderson"
+    ],
+    "filename": "IMG_3003.jpg"
+   }
+  ],
+  "language": "en"
+ },
+ "raw_text": "{\"matches\": [{\"asset_id\": \"a-spain\", \"anchor_word_id\": \"w000010\", \"confidence\": \"high\", \"reason\": \"word names the country of the flag\"}, {\"asset_id\": \"a-arg\", \"anchor_word_id\": \"w000019\", \"confidence\": \"high\", \"reason\": \"country name\"}, {\"asset_id\": \"a-eng\", \"anchor_word_id\": \"w000025\", \"confidence\": \"high\", \"reason\": \"country name\"}, {\"asset_id\": \"a-fra\", \"anchor_word_id\": \"w000031\", \"confidence\": \"high\", \"reason\": \"country name\"}, {\"asset_id\": \"a-messi\", \"anchor_word_id\": \"w000023\", \"confidence\": \"high\", \"reason\": \"Argentina #10 with trophy is Messi\"}, {\"asset_id\": \"a-mbappe\", \"anchor_word_id\": \"w000033\", \"confidence\": \"medium\", \"reason\": \"epithet refers to the France attacker in the pool\"}, {\"asset_id\": \"a-ander\", \"anchor_word_id\": \"w000028\", \"confidence\": \"high\", \"reason\": \"named England midfielder\"}], \"cue_tags\": [{\"anchor_word_id\": \"w000009\", \"role\": \"list_item\", \"sequence_number\": 1, \"reason\": \"number one\"}, {\"anchor_word_id\": \"w000018\", \"role\": \"list_item\", \"sequence_number\": 2, \"reason\": \"number two\"}, {\"anchor_word_id\": \"w000038\", \"role\": \"cta\", \"reason\": \"follow ask\"}]}",
+ "output": {
+  "matches": [
+   {
+    "asset_id": "a-spain",
+    "anchor_word_id": "w000010",
+    "confidence": "high",
+    "reason": "word names the country of the flag"
+   },
+   {
+    "asset_id": "a-arg",
+    "anchor_word_id": "w000019",
+    "confidence": "high",
+    "reason": "country name"
+   },
+   {
+    "asset_id": "a-eng",
+    "anchor_word_id": "w000025",
+    "confidence": "high",
+    "reason": "country name"
+   },
+   {
+    "asset_id": "a-fra",
+    "anchor_word_id": "w000031",
+    "confidence": "high",
+    "reason": "country name"
+   },
+   {
+    "asset_id": "a-messi",
+    "anchor_word_id": "w000023",
+    "confidence": "high",
+    "reason": "Argentina #10 with trophy is Messi"
+   },
+   {
+    "asset_id": "a-mbappe",
+    "anchor_word_id": "w000033",
+    "confidence": "medium",
+    "reason": "epithet refers to the France attacker in the pool"
+   },
+   {
+    "asset_id": "a-ander",
+    "anchor_word_id": "w000028",
+    "confidence": "high",
+    "reason": "named England midfielder"
+   }
+  ],
+  "cue_tags": [
+   {
+    "anchor_word_id": "w000009",
+    "role": "list_item",
+    "sequence_number": 1,
+    "reason": "number one"
+   },
+   {
+    "anchor_word_id": "w000018",
+    "role": "list_item",
+    "sequence_number": 2,
+    "reason": "number two"
+   },
+   {
+    "anchor_word_id": "w000038",
+    "role": "cta",
+    "sequence_number": null,
+    "reason": "follow ask"
+   }
+  ]
+ },
+ "meta": {
+  "source": "hand_authored_golden",
+  "note": "2026-07-21 user scenario: 4 flags + players, English speech, word-anchored matching"
+ }
+}
