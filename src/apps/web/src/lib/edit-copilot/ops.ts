@@ -340,7 +340,10 @@ function clamp(value: number, min: number, max: number): number {
 
 function clampAtS(value: number, snapshot: CopilotValidationSnapshot | undefined): number {
   const total = snapshot?.total_duration_s;
-  if (!finiteNumber(total)) return Math.max(0, value);
+  // total <= 0 means the duration is unknown (slot-less variant before the
+  // video metadata loads) — clamping against it would collapse every
+  // placement to second 0. Keep the lower bound only.
+  if (!finiteNumber(total) || total <= 0) return Math.max(0, value);
   return clamp(value, 0, Math.max(0, total - 0.1));
 }
 

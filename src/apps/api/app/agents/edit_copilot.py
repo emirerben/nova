@@ -1027,7 +1027,9 @@ def _coerce_payload(
 
     if name in _SFX_OPS and "at_s" in out:
         total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
-        if total_s is not None:
+        # total <= 0 = unknown duration (slot-less subtitled variant) — clamping
+        # against it collapses every placement to 0.0s. Skip the upper clamp.
+        if total_s is not None and total_s > 0:
             out["at_s"] = min(out["at_s"], max(0.0, total_s - 0.1))
 
     if name in {"add_overlay"}:

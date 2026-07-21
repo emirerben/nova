@@ -262,6 +262,9 @@ export interface CaptionCueLike {
 }
 
 export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
+  /** Real video duration (seconds) — the total_duration_s fallback for
+   * slot-less variants (subtitled talk-to-camera), whose layout total is 0. */
+  videoDurationS?: number | null;
   sfxPlacements?: SoundEffectPlacement[];
   sfxCatalog?: SoundEffectSummary[];
   /** Server-derived spoken-word/pause map. Pass null (not the map) while the
@@ -477,7 +480,16 @@ export function buildCopilotSnapshot(
   };
   const allowedFamilies = allowedOpFamiliesFromCapabilities(capabilities, allowedOptions);
   const allowed = new Set<CopilotOpFamily>(allowedFamilies);
-  const total = roundCopilotNumber(layout.totalDurationS);
+  // Slot-less variants (subtitled talk-to-camera) have no clip timeline, so the
+  // layout total is 0 — fall back to the real video duration. A 0 total is
+  // poison downstream: every at_s/timing clamp collapses to second 0 (the
+  // "all SFX placed at 0:00" bug) and the model reads a zero-length video.
+  const layoutTotal = layout.totalDurationS;
+  const fallbackTotal =
+    typeof options.videoDurationS === "number" && Number.isFinite(options.videoDurationS)
+      ? Math.max(0, options.videoDurationS)
+      : 0;
+  const total = roundCopilotNumber(layoutTotal > 0 ? layoutTotal : fallbackTotal);
   const snapshot: CopilotSnapshot = {
     text_bars: textBars,
     slots: snapSlots,

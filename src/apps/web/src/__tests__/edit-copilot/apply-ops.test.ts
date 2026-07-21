@@ -769,3 +769,67 @@ function suggestion(over: Partial<OverlaySuggestion> = {}): OverlaySuggestion {
     ...over,
   };
 }
+
+describe("slot-less variants (zero layout duration)", () => {
+  // Regression: subtitled talk-to-camera variants have no clip slots, so the
+  // snapshot's layout total is 0. Every at_s used to be clamped to
+  // min(at_s, max(0, 0 - 0.1)) = 0 — SFX placed at second 0 regardless of the
+  // model's (correct) requested times.
+  it("does not collapse add_sfx at_s to 0 when the snapshot total is 0", () => {
+    const sfxCatalog = [effect()];
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [],
+      clips,
+      { text_elements: true, timeline: true, sfx: true },
+      [],
+      { sfxEnabled: true, sfxPlacements: [], sfxCatalog },
+    );
+    expect(snapshot.total_duration_s).toBe(0);
+    const res = applyCopilotOps(
+      [{ op: "add_sfx", effect_id: "effect-1", at_s: 46.22, gain: 0.7 }],
+      {
+        bars: [bar()],
+        slots: [],
+        snapshot,
+        capabilities: { text_elements: true, timeline: true, sfx: true },
+        videoDurationS: 80,
+        sfx: [],
+        sfxCatalog,
+        makeTextBarId: () => "new-text",
+        makeSlotKey: (s: DraftSlot) => `${s.key}-split`,
+        makeSfxPlacementId: () => "new-sfx",
+      },
+    );
+    expect(res.rejected).toEqual([]);
+    expect(res.nextSfx?.at(-1)).toMatchObject({ at_s: 46.22 });
+  });
+
+  it("clamps against the real video duration when the layout total is 0", () => {
+    const sfxCatalog = [effect()];
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [],
+      clips,
+      { text_elements: true, timeline: true, sfx: true },
+      [],
+      { sfxEnabled: true, sfxPlacements: [], sfxCatalog },
+    );
+    const res = applyCopilotOps(
+      [{ op: "add_sfx", effect_id: "effect-1", at_s: 500, gain: 0.7 }],
+      {
+        bars: [bar()],
+        slots: [],
+        snapshot,
+        capabilities: { text_elements: true, timeline: true, sfx: true },
+        videoDurationS: 80,
+        sfx: [],
+        sfxCatalog,
+        makeTextBarId: () => "new-text",
+        makeSlotKey: (s: DraftSlot) => `${s.key}-split`,
+        makeSfxPlacementId: () => "new-sfx",
+      },
+    );
+    expect(res.nextSfx?.at(-1)).toMatchObject({ at_s: 79.9 });
+  });
+});

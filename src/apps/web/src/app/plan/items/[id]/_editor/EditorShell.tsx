@@ -2878,6 +2878,9 @@ export default function EditorShell({
       mixAllowed,
       titleEditable: !readOnly,
       openTools,
+      // Slot-less variants (subtitled) have a 0 layout total — the real video
+      // duration keeps every timing clamp from collapsing at_s values to 0.
+      videoDurationS: previewDuration,
       sfxPlacements: localSfx,
       sfxCatalog: sfxGlossaryEffects,
       // Speech marks describe the PERSISTED render's timeline — hide them while
@@ -2918,6 +2921,7 @@ export default function EditorShell({
     musicTracks,
     overlaySuggestions.rows,
     poolAssets,
+    previewDuration,
     readOnly,
     sfxGlossaryEffects,
     slots,

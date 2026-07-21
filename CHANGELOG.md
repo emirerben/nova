@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.8.1] — 2026-07-21
+
+### Fixed
+- **Copilot sound effects no longer pile up at 0:00 on talk-to-camera videos.** On subtitled videos (which have no clip timeline) every placement time was clamped against a zero video length, so "place the sound at the pauses" put all sounds at the very start regardless of the times Nova announced. Placement times now clamp against the real video duration, and the copilot sees the true length instead of 0.
+
 ## [0.11.8.0] — 2026-07-21
 
 ### Added
