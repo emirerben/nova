@@ -216,6 +216,32 @@ def test_format_snapshot_renders_beat_marks() -> None:
     assert "median interval between listed marks" in rendered
 
 
+def test_format_snapshot_renders_meta_only_captions() -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    snap = _snapshot(allowed=["text", "style", "caption"])
+    snap["captions"] = {
+        "total_cues": 14,
+        "truncated": False,
+        "cues_editable": False,
+        "cues": [],
+        "meta": {"enabled": True, "style": "sentence", "font": None, "y_frac": 0.8},
+    }
+    rendered = _format_snapshot(snap)
+    assert "meta-only captions: 14 transcript cues" in rendered
+    assert "set_caption_meta" in rendered
+
+    editable = _snapshot(allowed=["text", "style", "caption"])
+    editable["captions"] = {
+        "total_cues": 1,
+        "truncated": False,
+        "cues_editable": True,
+        "cues": [{"index": 0, "id": "c0", "text": "hi", "start_s": 0.0, "end_s": 1.0}],
+        "meta": {"enabled": True, "style": "sentence", "font": None, "y_frac": 0.8},
+    }
+    assert "meta-only captions" not in _format_snapshot(editable)
+
+
 def test_format_snapshot_omits_beat_marks_when_absent_or_malformed() -> None:
     from app.agents.edit_copilot import _format_snapshot
 

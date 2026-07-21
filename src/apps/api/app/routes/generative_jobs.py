@@ -3994,9 +3994,11 @@ def prepare_editor_commit(
 
     caption_meta_patch: dict | None = None
     if payload.caption_meta is not None:
-        if variant.get("resolved_archetype") != "narrated" or not _is_editable_caption_variant(
-            variant
-        ):
+        # Meta toggles (style/font/enabled/position) are accepted for BOTH caption
+        # archetypes — the fields and the reburn task are shared, and the copilot's
+        # set_caption_meta rides this path for subtitled variants. Transcript-cue
+        # edits on subtitled variants remain owned by the Captions tab.
+        if not _is_editable_caption_variant(variant):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{CAPTION_TAB_COPY}.",
@@ -4017,8 +4019,13 @@ def prepare_editor_commit(
             caption_meta_patch["voiceover_caption_style"] = meta.style
         if meta.font_set:
             caption_meta_patch["voiceover_caption_font"] = meta.font
+            # Mirror the Captions-tab dispatch routes: without this flag the
+            # smart-caption policy (_effective_smart_caption_policy) ignores the
+            # committed font and the edit silently no-ops on Smart Captions.
+            caption_meta_patch["caption_font_user_edited"] = True
         if meta.y_frac is not None:
             caption_meta_patch["caption_margin_v"] = round((1.0 - meta.y_frac) * 1920)
+            caption_meta_patch["caption_position_user_edited"] = True
 
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None:
