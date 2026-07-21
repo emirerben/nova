@@ -1011,7 +1011,7 @@ def _variants_for_response(job: Job) -> list[dict]:
         # Speech map (word/pause timing for the editor + copilot): derived from
         # the un-stripped variant BEFORE the transcript pop below. Only for
         # variants with a rendered video that isn't mid-re-render — the words
-        # describe the persisted render's timeline. Pure arithmetic (≤250 words),
+        # describe the persisted render's timeline. Pure arithmetic (≤150 words),
         # safe on every poll. None → key absent → the copilot honestly reports
         # no speech data for this variant.
         speech_map = None
