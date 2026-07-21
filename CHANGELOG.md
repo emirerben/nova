@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.11.9.0] — 2026-07-21
+## [0.12.1.0] — 2026-07-21
 
 ### Added
 - **Smart Captions now has a word-to-visual matching brain.** Saying "Spain" pops the Spain flag on the word "Spain"; saying "Messi" pops the Messi photo on "Messi" — a new scene-matcher agent reads the transcript next to the analyzed asset pool and pairs each visual with the exact spoken word that names it, using world knowledge (an "Argentina #10 jersey" photo matches "Messi"; a filename like `mbappe.jpg` matches "Mbappé"). It never cross-matches lookalikes: with four flags in the pool, saying "England" can only ever surface the England flag, and an uncertain match is omitted rather than guessed.
