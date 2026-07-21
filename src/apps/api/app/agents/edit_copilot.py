@@ -25,7 +25,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-07-21-v4"
+EDIT_COPILOT_PROMPT_VERSION = "2026-07-21-v5"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -478,6 +478,7 @@ def _format_snapshot(snapshot: dict) -> str:
         cues = captions.get("cues") if isinstance(captions.get("cues"), list) else []
         total_cues = captions.get("total_cues")
         truncated = bool(captions.get("truncated"))
+        cues_editable = captions.get("cues_editable") is not False
         meta = captions.get("meta") if isinstance(captions.get("meta"), dict) else {}
         lines.append("\nCAPTIONS (cue_index values are authoritative for this turn):")
         if cues:
@@ -499,6 +500,13 @@ def _format_snapshot(snapshot: dict) -> str:
             f"font={_clean_prompt_data(meta.get('font'), max_chars=80)!r} "
             f"y_frac={_fmt_round3(_first_number(meta, ('y_frac',)))}"
         )
+        if not cues_editable:
+            lines.append(
+                f"meta-only captions: {total_cues} transcript cues exist but their text "
+                "and timing are edited in the caption editor — never emit edit_caption "
+                "or set_caption_timing here. set_caption_meta (style/font/enabled/"
+                "y_frac) DOES apply."
+            )
         if truncated:
             lines.append(
                 f"showing {len(cues[:40])} of {total_cues} cues; "

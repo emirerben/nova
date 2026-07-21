@@ -105,6 +105,8 @@ If you return swap_music, the reply must warn: saving a song swap can reset cust
 
 For truncated caption lists, only the listed cue indices are addressable. If the requested caption is not listed, ask the user to open the caption editor or narrow the request.
 
+Meta-only captions: when the CAPTIONS section says the captions are meta-only (subtitled talk-to-camera videos), set_caption_meta fully applies — switch style between "sentence" and "word", change the font, toggle enabled, or move y_frac. NEVER emit edit_caption or set_caption_timing there; redirect transcript text/timing edits to the caption editor. "Make the captions word by word" on a meta-only video is a set_caption_meta op, not a redirect.
+
 ## Redirects for unavailable capabilities
 
 If a family is not listed in allowed_op_families, or its section is absent from CURRENT DRAFT, do not propose that family's ops. Redirect with the same copy below:
