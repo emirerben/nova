@@ -287,6 +287,45 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.beat_marks?.[0]).toBe(0);
   });
 
+  it("emits a meta-only captions section for subtitled variants", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 30 }],
+      { text_elements: true, timeline: true },
+      [],
+      {
+        captionsPresent: true,
+        captionMeta: { enabled: true, style: "sentence", font: "TikTok Sans Bold", y_frac: 0.8 },
+        captionCuesEditable: false,
+        captionTotalCues: 14,
+      },
+    );
+    expect(snapshot.captions).toMatchObject({
+      total_cues: 14,
+      cues_editable: false,
+      cues: [],
+      meta: { style: "sentence" },
+    });
+    expect(snapshot.allowed_op_families).toContain("caption");
+  });
+
+  it("marks caption cues editable on the narrated path", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar(), bar({ id: "caption-1", role: "narrated_caption", text: "line one" })],
+      [slot()],
+      [{ source_duration_s: 30 }],
+      { text_elements: true, timeline: true },
+      [],
+      {
+        captionsPresent: true,
+        captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.8 },
+      },
+    );
+    expect(snapshot.captions?.cues_editable).toBe(true);
+    expect(snapshot.captions?.cues.length).toBe(1);
+  });
+
   it("emits the intro section and render family only when the variant can switch layouts", () => {
     const snapshot = buildCopilotSnapshot(
       [bar()],

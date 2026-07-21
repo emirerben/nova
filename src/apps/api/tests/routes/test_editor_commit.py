@@ -554,7 +554,61 @@ def test_narrated_caption_meta_font_null_resets_when_font_set(monkeypatch):
     assert job.assembly_plan["variants"][0]["voiceover_caption_font"] is None
 
 
-def test_caption_meta_non_narrated_archetype_422(monkeypatch):
+def test_subtitled_caption_meta_commit_persists_and_reburns_caption_task(monkeypatch):
+    """Meta toggles (style/font/enabled/position) work on subtitled variants —
+    the copilot's set_caption_meta rides this path. Transcript cues stay owned
+    by the Captions tab."""
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        caption_cues=[{"text": "Line", "start_s": 0.0, "end_s": 1.0}],
+        mix=None,
+    )
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "subtitled",
+        _commit_req(
+            caption_meta=gj.EditorCommitCaptionMeta(
+                style="word",
+                font="Playfair Display",
+                font_set=True,
+                y_frac=0.66,
+            )
+        ),
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["voiceover_caption_style"] == "word"
+    assert v["voiceover_caption_font"] == "Playfair Display"
+    assert v["caption_margin_v"] == 653
+    # Without these flags the smart-caption policy ignores the committed
+    # font/position — the edit would silently no-op on Smart Captions.
+    assert v["caption_font_user_edited"] is True
+    assert v["caption_position_user_edited"] is True
+    assert v["render_status"] == "rendering"
+    assert prep["sections"]["caption_meta"] is True
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        REBURN_NARRATED,
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "subtitled", prep)
+    assert calls == [
+        {
+            "args": [str(job.id), "subtitled"],
+            "kwargs": {"render_gen_id": prep["generation"]},
+            "queue": "overlay-jobs",
+        }
+    ]
+
+
+def test_caption_meta_non_caption_archetype_422(monkeypatch):
     _arm(monkeypatch)
     job = _job()
     before = copy.deepcopy(job.assembly_plan)

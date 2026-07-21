@@ -1,0 +1,32 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v5",
+  "input": {
+    "utterance": "fix the typo in the second caption",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline", "caption"],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [{"output_start_s": 0, "output_end_s": 21.4, "duration_s": 21.4, "moment": "talking to camera at a desk"}],
+      "total_duration_s": 21.4,
+      "captions": {
+        "total_cues": 14,
+        "truncated": false,
+        "cues_editable": false,
+        "cues": [],
+        "meta": {"enabled": true, "style": "sentence", "font": "TikTok Sans Bold", "y_frac": 0.8}
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.85,\"reply\":\"Caption text is edited in the caption editor - I can change the style, font, or position from here.\",\"suggestions\":[\"Word-by-word captions\",\"Move the captions up\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "reject",
+    "ops": [],
+    "confidence": 0.85,
+    "reply": "Caption text is edited in the caption editor - I can change the style, font, or position from here.",
+    "suggestions": ["Word-by-word captions", "Move the captions up"],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "subtitled meta-only captions: transcript edits still redirect to the caption editor"}
+}

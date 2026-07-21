@@ -2815,10 +2815,21 @@ export default function EditorShell({
       if (tool === "visuals") return VISUAL_BLOCKS_UI_ENABLED;
       return true;
     });
+    // Narrated: cues live as editor bars — full caption editing. Subtitled:
+    // transcript cues are owned by the Captions tab, but the copilot still gets
+    // a META-ONLY captions section (style/font/enabled/position via
+    // set_caption_meta) so "make the captions word by word" works in chat.
+    const captionCuesEditable = variant?.resolved_archetype !== "subtitled";
     const captionsPresent =
-      variant?.resolved_archetype === "narrated" &&
       captionMeta != null &&
-      visibleTextBars.some((bar) => bar.role === "narrated_caption");
+      (variant?.resolved_archetype === "narrated"
+        ? visibleTextBars.some((bar) => bar.role === "narrated_caption")
+        : variant?.resolved_archetype === "subtitled" &&
+          (variant?.caption_cues?.length ?? 0) > 0 &&
+          // Matches the server's _is_editable_caption_variant predicate — a
+          // subtitled variant without the caption-free base can't reburn, so
+          // don't offer a captions section whose Save would 422.
+          !!variant?.base_video_path);
     const musicSwappable = !!variant?.music_track_id && !readOnly;
     const mixAllowed = capabilities?.mix !== false && mixLevel !== undefined;
     const introText = variant?.intro_text?.trim() ?? "";
@@ -2873,6 +2884,8 @@ export default function EditorShell({
       poolAssets,
       pendingSuggestions: overlaySuggestions.rows,
       captionMeta: captionsPresent ? captionMeta : undefined,
+      captionCuesEditable,
+      captionTotalCues: captionCuesEditable ? undefined : variant?.caption_cues?.length ?? 0,
       musicState: {
         swappable: musicSwappable,
         currentTrackId: effectiveMusicTrackId,

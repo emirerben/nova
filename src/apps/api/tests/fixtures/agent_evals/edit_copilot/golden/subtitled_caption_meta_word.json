@@ -1,0 +1,34 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v5",
+  "input": {
+    "utterance": "change the captions to be word by word",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline", "caption"],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [{"output_start_s": 0, "output_end_s": 21.4, "duration_s": 21.4, "moment": "talking to camera at a desk"}],
+      "total_duration_s": 21.4,
+      "captions": {
+        "total_cues": 14,
+        "truncated": false,
+        "cues_editable": false,
+        "cues": [],
+        "meta": {"enabled": true, "style": "sentence", "font": "TikTok Sans Bold", "y_frac": 0.8}
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_caption_meta\",\"patch\":{\"style\":\"word\"}}],\"confidence\":0.9,\"reply\":\"Switched the captions to word-by-word - Save applies it to the video.\",\"suggestions\":[\"Back to sentence style\",\"Move the captions up\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {"op": "set_caption_meta", "patch": {"style": "word"}}
+    ],
+    "confidence": 0.9,
+    "reply": "Switched the captions to word-by-word - Save applies it to the video.",
+    "suggestions": ["Back to sentence style", "Move the captions up"],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "subtitled meta-only captions: word-by-word style flip via set_caption_meta (the prod redirect bug this fixes)"}
+}
