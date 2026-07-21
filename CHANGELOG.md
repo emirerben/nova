@@ -2,10 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.11.8.1] — 2026-07-21
+## [0.12.1.1] — 2026-07-21
 
 ### Fixed
 - **Copilot sound effects no longer pile up at 0:00 on talk-to-camera videos.** On subtitled videos (which have no clip timeline) every placement time was clamped against a zero video length, so "place the sound at the pauses" put all sounds at the very start regardless of the times Nova announced. Placement times now clamp against the real video duration, and the copilot sees the true length instead of 0.
+
+## [0.12.1.0] — 2026-07-21
+
+### Added
+- **Smart Captions now has a word-to-visual matching brain.** Saying "Spain" pops the Spain flag on the word "Spain"; saying "Messi" pops the Messi photo on "Messi" — a new scene-matcher agent reads the transcript next to the analyzed asset pool and pairs each visual with the exact spoken word that names it, using world knowledge (an "Argentina #10 jersey" photo matches "Messi"; a filename like `mbappe.jpg` matches "Mbappé"). It never cross-matches lookalikes: with four flags in the pool, saying "England" can only ever surface the England flag, and an uncertain match is omitted rather than guessed.
+- **Chapter numbers and structure now work in every language.** "Number one", "first", "segundo", "üçüncü" — the scene matcher tags numbered chapters, topic shifts, payoffs, and follow/subscribe moments by meaning instead of a Turkish-only keyword list, so English (and any other language) videos get numbered chapter beats and contextual framing.
+- **Visuals named inside a chapter heading now attach there.** "Number one Spain" places the Spain flag on the chapter beat itself instead of dropping it.
+
+### Fixed
+- **A player photo can no longer get stuck in a corner for the whole video.** Gemini describing a jersey crest as a "badge" used to promote that photo to persistent brand furniture; word-anchored visuals are now excluded from badge detection, so the photo pops at the player's name instead.
+- **Visuals no longer vanish on talk-to-camera footage.** The placement engine only tried top-half positions, which the creator's face and chapter headings occupy — player photos were silently dropped. It now also tries lower-screen positions (still honoring captions and faces), and can shrink one step further before giving up. In the reference video this took placed visuals from 4 to 12.
+- **A visual named just after a chapter heading is kept, not lost.** "Number four… Elliot Anderson" now attaches Anderson's photo to that chapter beat; previously the sentence's overlap with the heading discarded the match, and a validation wall could take the whole chapter heading down with it.
+
+### Notes
+- The matcher is advisory and fail-open: every suggestion is validated against the transcript and asset catalog (unknown words/assets, duplicate chapter numbers, and low-confidence guesses are dropped), and any agent failure falls back to the previous deterministic behavior. Kill switch: `SMART_SCENE_MATCHER_ENABLED=false`.
+- End-to-end verified on a local render of the reference English video: all 8 uploaded visuals appear at their exact spoken words (flags on country names, Messi/Rodri/Mbappé/Anderson on their mentions) with all 4 chapters detected.
+
+## [0.12.0.0] - 2026-07-21
+
+### Added
+- **Text can now enter with the new Staggered slice animation.** Choose it in Nova's text animation picker to build every line character by character with a quick vertical rise and subtle alternating rotation, including emoji and accented characters as intact units.
+
+### Changed
+- Staggered slice previews now follow video playback smoothly in the editor and use the same deterministic timing and settled frame in production renders, including short overlays, multiline text, and text placed behind a subject.
 
 ## [0.11.8.0] — 2026-07-21
 

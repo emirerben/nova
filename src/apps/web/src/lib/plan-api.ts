@@ -880,13 +880,16 @@ export interface TextElement {
   alignment?: "left" | "center" | "right" | null;
   effect?:
     | "static"
+    | "none"
     | "fade-in"
     | "slide-up"
+    | "slide-down"
     | "karaoke-line"
     | "pop-in"
     | "scale-up"
     | "typewriter"
     | "stream-in"
+    | "staggered-slice"
     | "bounce"
     | "slide-in"
     | null;

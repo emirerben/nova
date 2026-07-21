@@ -24,7 +24,7 @@ import {
   type TextElementBar,
 } from "@/lib/timeline/text-timeline-reducer";
 import { Playhead } from "@/lib/timeline/Playhead";
-import { INTRO_FONTS } from "@/lib/overlay-constants";
+import { INTRO_ANIMATIONS, INTRO_FONTS } from "@/lib/overlay-constants";
 import {
   inferTextBoxPosition,
   resolveTextElementYFrac,
@@ -577,19 +577,10 @@ const PANEL_SIZE_PRESETS: Array<{ label: string; value: string }> = [
   { label: "J",  value: "jumbo"  },
 ];
 
-/**
- * Effects supported by the TextElement API schema
- * (Literal["static","fade-in","slide-up","karaoke-line"]).
- * The full INTRO_ANIMATIONS list (e.g. "pop-in","bounce") is only valid for
- * the intro-overlay POST /edit path and would 422 against PUT /text-elements.
- * Expand after widening TextElement.effect in the backend schema.
- * INTRO_FONTS is imported above for the PANEL_FONTS derivation.
- */
 const PANEL_EFFECTS: Array<{ label: string; value: string }> = [
-  { label: "Static",   value: "static"       },
-  { label: "Fade in",  value: "fade-in"      },
-  { label: "Slide up", value: "slide-up"     },
-  { label: "Karaoke",  value: "karaoke-line" },
+  { label: "Static", value: "static" },
+  ...INTRO_ANIMATIONS,
+  { label: "Karaoke", value: "karaoke-line" },
 ];
 
 /**

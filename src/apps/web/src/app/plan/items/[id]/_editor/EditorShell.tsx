@@ -1435,7 +1435,6 @@ export default function EditorShell({
       }
       return;
     }
-    pauseVirtualPreview();
     const rendered = videoRef.current;
     if (!rendered) return;
     const clamped = Math.max(0, Math.min(duration || currentTime, currentTime));
@@ -1445,7 +1444,6 @@ export default function EditorShell({
   }, [
     currentTime,
     duration,
-    pauseVirtualPreview,
     seekVirtualPreview,
     virtualPreview.timeline.totalDurationS,
     virtualPreviewActive,
@@ -4140,6 +4138,7 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            playing={playing}
             masonryDurationS={previewDuration}
             zoomPct={100}
             tool="select"
@@ -4342,6 +4341,7 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            playing={playing}
             masonryDurationS={previewDuration}
             zoomPct={zoomPct}
             tool={canvasTool}

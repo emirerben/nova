@@ -193,13 +193,16 @@ const LEGACY_FONT_ALIASES = new Set([
 
 const ALLOWED_EFFECTS = new Set([
   "static",
+  "none",
   "fade-in",
   "slide-up",
+  "slide-down",
   "karaoke-line",
   "pop-in",
   "scale-up",
   "typewriter",
   "stream-in",
+  "staggered-slice",
   "bounce",
   "slide-in",
 ]);

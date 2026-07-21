@@ -38,6 +38,32 @@ describe("edit-copilot op contract fixtures", () => {
 });
 
 describe("edit-copilot extended op validation", () => {
+  it("accepts the editor-directed staggered-slice effect", () => {
+    expect(
+      validateCopilotOp(
+        {
+          op: "patch_text_style",
+          bar_index: 0,
+          patch: { effect: "staggered-slice" },
+        },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { patch: { effect: "staggered-slice" } } });
+  });
+
+  it.each(["none", "slide-down"])("accepts the shared-picker %s effect", (effect) => {
+    expect(
+      validateCopilotOp(
+        {
+          op: "patch_text_style",
+          bar_index: 0,
+          patch: { effect },
+        },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { patch: { effect } } });
+  });
+
   it("accepts sub-0.6s positive clip durations and rejects non-positive values", () => {
     expect(
       validateCopilotOp(

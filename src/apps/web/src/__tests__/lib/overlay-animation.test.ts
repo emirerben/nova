@@ -5,6 +5,10 @@ import {
   popInScaleAt,
   sequenceFadeOutAlphaAt,
   sequenceOverlayFadeOutAlphaAt,
+  segmentGraphemes,
+  staggeredSliceSettleS,
+  staggeredSlicePreviewVisibleAt,
+  staggeredSliceStateAt,
 } from "@/lib/overlay-animation";
 
 describe("easeOutCubic", () => {
@@ -197,6 +201,78 @@ describe("normalizeAnimatedRevealText", () => {
     expect(normalizeAnimatedRevealText("  ALPHA   BETA\n GAMMA\tDELTA ")).toBe(
       "ALPHA BETA\nGAMMA DELTA",
     );
+  });
+});
+
+describe("staggeredSliceStateAt", () => {
+  const text = "GOAL OF THE\nTOURNAMENT";
+
+  it("builds the first word, pauses, then reveals the remainder", () => {
+    const paused = staggeredSliceStateAt(text, 0.7, 4);
+    const glyphs = paused.lines[0].glyphs;
+    expect(glyphs.slice(0, 4).every((glyph) => glyph.opacity === 1)).toBe(true);
+    expect(glyphs.slice(4).every((glyph) => glyph.opacity === 0)).toBe(true);
+
+    const revealing = staggeredSliceStateAt(text, 1.05, 4);
+    expect(revealing.lines[0].glyphs.slice(4).some((glyph) => glyph.opacity > 0)).toBe(true);
+  });
+
+  it("builds subsequent lines with the same glyph motion as the first line", () => {
+    const before = staggeredSliceStateAt(text, 1.49, 4).lines[1].glyphs;
+    expect(before.every((glyph) => glyph.opacity === 0)).toBe(true);
+
+    const active = staggeredSliceStateAt(text, 1.6, 4).lines[1].glyphs;
+    expect(active.some((glyph) => glyph.opacity > 0)).toBe(true);
+    expect(active.some((glyph) => glyph.opacity < 1)).toBe(true);
+    expect(active.some((glyph) => glyph.translateYEm > 0)).toBe(true);
+    expect(active.some((glyph) => glyph.rotateDeg < 0)).toBe(true);
+    expect(active.some((glyph) => glyph.rotateDeg > 0)).toBe(true);
+
+    const settled = staggeredSliceStateAt(text, 1.85, 4);
+    expect(settled.settled).toBe(true);
+    expect(settled.lines[1].glyphs.every((glyph) => glyph.opacity === 1)).toBe(true);
+  });
+
+  it("compresses the full choreography into short overlay windows", () => {
+    expect(staggeredSliceStateAt(text, 0.99, 1).settled).toBe(false);
+    expect(staggeredSliceStateAt(text, 1, 1).settled).toBe(true);
+  });
+
+  it("compresses many explicit lines into the 2.4s cap without snapping the last line", () => {
+    const manyLines = Array.from({ length: 10 }, (_, index) => `LINE ${index + 1}`).join("\n");
+    expect(staggeredSliceSettleS(manyLines)).toBe(2.4);
+    expect(staggeredSliceStateAt(manyLines, 2.39, 4).settled).toBe(false);
+    const settled = staggeredSliceStateAt(manyLines, 2.4, 4);
+    expect(settled.settled).toBe(true);
+    expect(settled.lines[settled.lines.length - 1].glyphs.every((glyph) => glyph.opacity === 1)).toBe(
+      true,
+    );
+  });
+
+  it("uses character-build only for a single logical line", () => {
+    const state = staggeredSliceStateAt("ONE LINE", 2, 4);
+    expect(state.lines).toHaveLength(1);
+    expect(state.lines[0].kind).toBe("glyphs");
+    expect(staggeredSliceSettleS("ONE LINE")).toBe(1.35);
+  });
+
+  it("segments combining marks and joined emoji as user-visible characters", () => {
+    expect(segmentGraphemes("e\u0301👩‍💻")).toEqual(["e\u0301", "👩‍💻"]);
+    expect(staggeredSliceStateAt("e\u0301👩‍💻", 0, 4).lines[0].glyphs).toHaveLength(2);
+  });
+});
+
+describe("staggeredSlicePreviewVisibleAt", () => {
+  it("pre-mounts invisibly while playing so coarse media events cannot skip the opening", () => {
+    expect(staggeredSlicePreviewVisibleAt(-0.3, 3, true)).toBe(true);
+    expect(staggeredSlicePreviewVisibleAt(-0.36, 3, true)).toBe(false);
+    expect(staggeredSlicePreviewVisibleAt(-0.1, 3, false)).toBe(false);
+  });
+
+  it("keeps normal timing bounds once the effect begins", () => {
+    expect(staggeredSlicePreviewVisibleAt(0, 3, true)).toBe(true);
+    expect(staggeredSlicePreviewVisibleAt(2.99, 3, false)).toBe(true);
+    expect(staggeredSlicePreviewVisibleAt(3, 3, true)).toBe(false);
   });
 });
 

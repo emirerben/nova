@@ -902,10 +902,38 @@ class TestSecurityGuards:
             TextElement(text="test", start_s=0, end_s=1, effect="shell_inject")
 
     def test_allowed_effects_accepted(self):
-        """The four allowed effects are accepted without error."""
-        for effect in ("static", "fade-in", "slide-up", "karaoke-line"):
+        """Representative editor effects are accepted without error."""
+        for effect in (
+            "static",
+            "none",
+            "fade-in",
+            "slide-up",
+            "slide-down",
+            "karaoke-line",
+            "staggered-slice",
+        ):
             elem = TextElement(text="test", start_s=0, end_s=1, effect=effect)
             assert elem.effect == effect
+
+    def test_staggered_slice_roundtrips_to_the_burn_dict(self):
+        elem = TextElement(
+            text="GOAL OF THE\nTOURNAMENT",
+            start_s=0,
+            end_s=4,
+            effect="staggered-slice",
+        )
+        [overlay] = build_overlays_from_text_elements([elem], video_duration_s=4.0)
+        assert overlay["effect"] == "staggered-slice"
+        assert overlay["text"] == "GOAL OF THE\nTOURNAMENT"
+
+    def test_staggered_slice_roundtrips_from_the_burn_dict(self):
+        variant = {
+            "intro_text": "GOAL OF THE\nTOURNAMENT",
+            "intro_effect": "staggered-slice",
+            "text_mode": "agent_text",
+        }
+        [elem] = text_elements_for_variant(variant)
+        assert elem.effect == "staggered-slice"
 
     def test_size_px_clamped_to_max_300(self):
         """size_px > 300 is silently clamped to 300 (A18 — Skia OOM guard)."""

@@ -219,6 +219,30 @@ def opaque_alpha_box(path: str) -> NormalizedBox:
         return NormalizedBox(0.0, 0.0, 1.0, 1.0)
 
 
+def _face_protection_box(raw: NormalizedBox) -> NormalizedBox:
+    """Turn a raw Haar detection into the box the layout engine protects.
+
+    Haar on low-res selfie frames merges background into giant detections (a
+    "face" spanning 70% of the frame width) and a uniform 0.08 padding then
+    blankets the empty band above the hairline — together they blocked every
+    top corner and broke the four-corner flag composition (2026-07-21).
+    Clamp implausible widths to a centered head-size box and keep the TOP
+    padding thin; sides and chin stay generously padded.
+    """
+
+    if raw.width > 0.55:
+        center_x = (raw.left + raw.right) / 2
+        raw = NormalizedBox(
+            max(0.0, center_x - 0.275), raw.top, min(1.0, center_x + 0.275), raw.bottom
+        )
+    return NormalizedBox(
+        max(0.0, raw.left - 0.06),
+        max(0.0, raw.top - 0.02),
+        min(1.0, raw.right + 0.06),
+        min(1.0, raw.bottom + 0.08),
+    )
+
+
 def sample_face_regions(
     video_path: str,
     anchor_times_s: list[float],
@@ -262,7 +286,7 @@ def sample_face_regions(
             attempted = int(payload.get("attempted") or attempted)
             for sample in payload.get("samples") or []:
                 at_s = max(0.0, float(sample["at_s"]))
-                box = NormalizedBox(**sample["box"]).padded(0.08)
+                box = _face_protection_box(NormalizedBox(**sample["box"]))
                 regions.append(
                     ProtectedRegion(
                         start_s=max(0.0, at_s - 0.5),
@@ -373,7 +397,24 @@ def arbitrate_media_overlays(
     protected_regions = [ProtectedRegion.from_value(value) for value in protected_boxes]
     footprints_by_id = footprints_by_id or {}
     occupied: list[tuple[float, float, NormalizedBox]] = []
-    candidates = ((0.2, 0.14), (0.8, 0.14), (0.2, 0.42), (0.8, 0.42), (0.5, 0.2))
+    placed_assets: list[tuple[float, float, str]] = []
+    candidates = (
+        (0.2, 0.14),
+        (0.8, 0.14),
+        (0.2, 0.42),
+        (0.8, 0.42),
+        (0.5, 0.2),
+        # Lower-band fallbacks: on talk-to-camera footage the face and the
+        # chapter heading own the whole top half, so a top-only grid omitted
+        # every chapter visual as no_safe_candidate (2026-07-21 player-photo
+        # report). Captions are protected regions, so the IoU gate still
+        # rejects any lower spot the caption band actually occupies.
+        (0.2, 0.68),
+        (0.8, 0.68),
+        (0.19, 0.81),
+        (0.81, 0.81),
+        (0.5, 0.74),
+    )
     for source in overlays:
         overlay = dict(source)
         if overlay.get("display_mode") == "fullscreen":
@@ -382,6 +423,16 @@ def arbitrate_media_overlays(
             continue
         start_s = float(overlay.get("start_s") or 0.0)
         end_s = float(overlay.get("end_s") or float("inf"))
+        asset_key = str(overlay.get("src_gcs_path") or overlay.get("asset_id") or "")
+        if asset_key and any(
+            key == asset_key and start_s < placed_end and placed_start < end_s
+            for placed_start, placed_end, key in placed_assets
+        ):
+            # The same asset visible twice at once reads as a glitch, not a
+            # composition (2026-07-21 duplicate-Spain report) — whatever lane
+            # produced the second card, only the first placement renders.
+            receipts.append({"id": overlay.get("id"), "decision": "omitted_duplicate_asset"})
+            continue
         footprint = footprints_by_id.get(str(overlay.get("id")), MediaFootprint())
         collision_boxes = [
             *[region.box for region in protected_regions if region.overlaps(start_s, end_s)],
@@ -393,11 +444,31 @@ def arbitrate_media_overlays(
         ]
         accepted: dict[str, Any] | None = None
         original_x, original_y = _center_for_overlay(overlay)
-        for shrink in (1.0, 0.85, 0.70):
-            for x_frac, y_frac in (
-                (original_x, original_y),
-                *candidates,
-            ):
+
+        # Fallback spots rank in three tiers — true corners, then edges, then
+        # the center column as a last resort — and closest to the card's
+        # assigned spot within a tier. The loop is SPOT-major: every shrink is
+        # tried at a preferred spot before moving on, because a slightly
+        # smaller flag in the free corner beats a full-size one parked under
+        # the captions (2026-07-21 France-flag-in-the-middle report; the
+        # padded face box only misses the corner gate at reduced scale).
+        def _spot_tier(spot: tuple[float, float]) -> int:
+            if abs(spot[0] - 0.5) < 0.1:
+                return 2
+            return 0 if spot[1] <= 0.2 or spot[1] >= 0.75 else 1
+
+        ranked_candidates = sorted(
+            candidates,
+            key=lambda spot: (
+                _spot_tier(spot),
+                (spot[0] - original_x) ** 2 + (spot[1] - original_y) ** 2,
+            ),
+        )
+        for x_frac, y_frac in (
+            (original_x, original_y),
+            *ranked_candidates,
+        ):
+            for shrink in (1.0, 0.85, 0.70, 0.55):
                 trial = {
                     **overlay,
                     "position": "custom",
@@ -426,6 +497,8 @@ def arbitrate_media_overlays(
         accepted["smart_layout_box"] = accepted_box.as_dict()
         resolved.append(accepted)
         occupied.append((start_s, end_s, accepted_box))
+        if asset_key:
+            placed_assets.append((start_s, end_s, asset_key))
         receipts.append(
             {
                 "id": overlay.get("id"),

@@ -49,6 +49,7 @@ _SKIA_EFFECTS = {
     "static",
     "typewriter",
     "stream-in",
+    "staggered-slice",
     "bounce",
     "slide-up",
     "slide-in",

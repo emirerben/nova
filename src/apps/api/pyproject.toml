@@ -89,6 +89,7 @@ dependencies = [
     # ImageSegmenter task API path does not import cv2 itself (only
     # mediapipe's drawing_utils / legacy solutions API + its own tests do).
     "mediapipe>=0.10,<0.11",
+    "regex>=2024.11",
 ]
 
 [project.optional-dependencies]

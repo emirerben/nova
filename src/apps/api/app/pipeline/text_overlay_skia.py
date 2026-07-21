@@ -49,6 +49,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 import numpy as np
+import regex
 import skia
 import structlog
 from PIL import Image
@@ -133,6 +134,157 @@ _POP_IN_KEYFRAMES_S = (0.0, 0.150, 0.250)
 _POP_IN_SCALES = (0.30, 1.15, 1.00)
 _POP_IN_MAX_SCALE = max(_POP_IN_SCALES)
 _POP_SUFFIX_MAX_LINES = 2
+
+_STAGGERED_SLICE_FIRST_WORD_END_S = 0.55
+_STAGGERED_SLICE_REMAINDER_START_S = 0.95
+_STAGGERED_SLICE_REMAINDER_END_S = 1.35
+_STAGGERED_SLICE_LINES_START_S = 1.5
+_STAGGERED_SLICE_LINE_STAGGER_S = 0.12
+_STAGGERED_SLICE_LINE_GLYPH_STAGE_S = 0.35
+_STAGGERED_SLICE_GLYPH_DURATION_S = 0.16
+_STAGGERED_SLICE_MAX_SETTLE_S = 2.4
+
+
+@dataclass(frozen=True)
+class StaggeredSliceGlyphState:
+    grapheme: str
+    opacity: float
+    translate_y_em: float
+    rotate_deg: float
+
+
+@dataclass(frozen=True)
+class StaggeredSliceLineState:
+    text: str
+    kind: str
+    glyphs: tuple[StaggeredSliceGlyphState, ...] = ()
+
+
+@dataclass(frozen=True)
+class StaggeredSliceState:
+    lines: tuple[StaggeredSliceLineState, ...]
+    settled: bool
+    settle_s: float
+
+
+def _segment_graphemes(text: str) -> list[str]:
+    return regex.findall(r"\X", text)
+
+
+def _staggered_slice_choreography_s(text: str) -> float:
+    line_count = max(1, len(_normalize_reveal_text(text).split("\n")))
+    if line_count == 1:
+        return _STAGGERED_SLICE_REMAINDER_END_S
+    last_line_start = (
+        _STAGGERED_SLICE_LINES_START_S + max(0, line_count - 2) * _STAGGERED_SLICE_LINE_STAGGER_S
+    )
+    return last_line_start + _STAGGERED_SLICE_LINE_GLYPH_STAGE_S
+
+
+def _staggered_slice_settle_s(text: str) -> float:
+    return min(_STAGGERED_SLICE_MAX_SETTLE_S, _staggered_slice_choreography_s(text))
+
+
+def _staggered_slice_nominal_time(
+    t_local: float, duration_s: float, settle_s: float, choreography_s: float
+) -> float:
+    available = max(0.01, min(duration_s, settle_s))
+    return max(0.0, t_local) / (available / choreography_s)
+
+
+def _staggered_slice_progress(t: float, start: float, duration: float) -> float:
+    return _ease_out_cubic((t - start) / max(0.01, duration))
+
+
+def _staggered_slice_state(text: str, t_local: float, duration_s: float) -> StaggeredSliceState:
+    """Pure timing model mirrored by `staggeredSliceStateAt` in the editor."""
+    normalized = _normalize_reveal_text(text)
+    logical_lines = normalized.split("\n")
+    choreography_s = _staggered_slice_choreography_s(normalized)
+    settle_s = _staggered_slice_settle_s(normalized)
+    t = _staggered_slice_nominal_time(t_local, duration_s, settle_s, choreography_s)
+    lines: list[StaggeredSliceLineState] = []
+
+    for line_index, line in enumerate(logical_lines):
+        if line_index == 0:
+            graphemes = _segment_graphemes(line)
+            first_space = next(
+                (i for i, grapheme in enumerate(graphemes) if grapheme.isspace()), -1
+            )
+            first_word_count = len(graphemes) if first_space == -1 else first_space
+            remainder_count = max(0, len(graphemes) - first_word_count)
+            first_stagger = (
+                0.0
+                if first_word_count <= 1
+                else min(
+                    0.07,
+                    (_STAGGERED_SLICE_FIRST_WORD_END_S - _STAGGERED_SLICE_GLYPH_DURATION_S)
+                    / (first_word_count - 1),
+                )
+            )
+            remainder_stagger = (
+                0.0
+                if remainder_count <= 1
+                else (
+                    _STAGGERED_SLICE_REMAINDER_END_S
+                    - _STAGGERED_SLICE_REMAINDER_START_S
+                    - _STAGGERED_SLICE_GLYPH_DURATION_S
+                )
+                / (remainder_count - 1)
+            )
+            glyph_states: list[StaggeredSliceGlyphState] = []
+            for glyph_index, grapheme in enumerate(graphemes):
+                if glyph_index < first_word_count:
+                    start = glyph_index * first_stagger
+                else:
+                    start = (
+                        _STAGGERED_SLICE_REMAINDER_START_S
+                        + (glyph_index - first_word_count) * remainder_stagger
+                    )
+                progress = _staggered_slice_progress(t, start, _STAGGERED_SLICE_GLYPH_DURATION_S)
+                glyph_states.append(
+                    StaggeredSliceGlyphState(
+                        grapheme=grapheme,
+                        opacity=progress,
+                        translate_y_em=0.18 * (1.0 - progress),
+                        rotate_deg=(-4.0 if glyph_index % 2 == 0 else 4.0) * (1.0 - progress),
+                    )
+                )
+            lines.append(
+                StaggeredSliceLineState(text=line, kind="glyphs", glyphs=tuple(glyph_states))
+            )
+            continue
+
+        line_start = (
+            _STAGGERED_SLICE_LINES_START_S + (line_index - 1) * _STAGGERED_SLICE_LINE_STAGGER_S
+        )
+        graphemes = _segment_graphemes(line)
+        glyph_stagger = (
+            0.0
+            if len(graphemes) <= 1
+            else (_STAGGERED_SLICE_LINE_GLYPH_STAGE_S - _STAGGERED_SLICE_GLYPH_DURATION_S)
+            / (len(graphemes) - 1)
+        )
+        glyph_states = []
+        for glyph_index, grapheme in enumerate(graphemes):
+            progress = _staggered_slice_progress(
+                t,
+                line_start + glyph_index * glyph_stagger,
+                _STAGGERED_SLICE_GLYPH_DURATION_S,
+            )
+            glyph_states.append(
+                StaggeredSliceGlyphState(
+                    grapheme=grapheme,
+                    opacity=progress,
+                    translate_y_em=0.18 * (1.0 - progress),
+                    rotate_deg=(-4.0 if glyph_index % 2 == 0 else 4.0) * (1.0 - progress),
+                )
+            )
+        lines.append(StaggeredSliceLineState(text=line, kind="glyphs", glyphs=tuple(glyph_states)))
+
+    return StaggeredSliceState(
+        lines=tuple(lines), settled=t + 1e-9 >= choreography_s, settle_s=settle_s
+    )
 
 
 def _overlay_max_width_px(overlay: dict, canvas: Canvas = PORTRAIT) -> float:
@@ -1178,6 +1330,130 @@ def _draw_line_with_layers(
     _draw_string_spaced(canvas, line, x, baseline_y, font, fill_paint, letter_spacing_px)
 
 
+def _draw_staggered_slice(
+    canvas: skia.Canvas,
+    overlay: dict,
+    t_local: float,
+    duration_s: float,
+    *,
+    render_canvas: Canvas = PORTRAIT,
+) -> None:
+    """Draw the editor-directed staggered glyph-build title animation."""
+    text = _normalize_reveal_text(_overlay_text(overlay))
+    if not text:
+        return
+    state = _staggered_slice_state(text, t_local, duration_s)
+    if state.settled:
+        _draw_centered_text(canvas, text, overlay, render_canvas=render_canvas)
+        return
+
+    typeface = _typeface_for_overlay(overlay)
+    letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
+    max_width = _overlay_max_width_px(overlay, render_canvas)
+    initial_size = _resolve_font_size_px(overlay)
+    if overlay.get("preserve_font_size"):
+        font, size, _ = _wrap_at_fixed_size(
+            text, typeface, initial_size, max_width, letter_spacing_em
+        )
+    else:
+        font, size, _ = _shrink_to_fit(text, typeface, initial_size, max_width, letter_spacing_em)
+    letter_spacing_px = letter_spacing_em * size
+
+    visual_rows: list[tuple[int, str]] = []
+    for logical_index, logical_line in enumerate(text.split("\n")):
+        wrapped = _wrap_text_to_lines(logical_line, font, max_width, letter_spacing_px)
+        visual_rows.extend((logical_index, row) for row in wrapped)
+    lines = [row for _, row in visual_rows]
+    block = _measure_block(
+        font,
+        lines,
+        line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=letter_spacing_px,
+    )
+    cx, cy = _resolve_anchor(overlay, render_canvas)
+    anchor = _resolve_text_anchor(overlay)
+    block_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
+    first_baseline = block_top + block["ascent_offset"]
+    stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
+    shadow_alpha = 0 if overlay.get("shadow_enabled") is False else 160
+    base_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"), 255)
+    block_w = max(block["widths"]) if block["widths"] else float(render_canvas.width)
+    block_x = _anchored_left_x(anchor, cx, block_w)
+    gradient_shader = (
+        _skia_gradient_shader(
+            overlay["text_gradient"],
+            block_x,
+            block_top,
+            block_w,
+            float(block["block_h"]),
+            1.0,
+        )
+        if overlay.get("text_gradient")
+        else None
+    )
+    draw_kwargs: dict[str, Any] = {"shader": gradient_shader}
+    if letter_spacing_px != 0.0:
+        draw_kwargs["letter_spacing_px"] = letter_spacing_px
+    draw_kwargs.update(_resolve_glow_kwargs(overlay, 1.0))
+
+    glyph_cursors = [0] * len(state.lines)
+    seen_logical_rows: set[int] = set()
+
+    for row_index, (logical_index, row) in enumerate(visual_rows):
+        baseline_y = first_baseline + row_index * block["line_step"]
+        row_width = block["widths"][row_index]
+        line_x = _anchored_left_x(anchor, cx, row_width)
+        logical_state = state.lines[min(logical_index, len(state.lines) - 1)]
+
+        glyph_states = logical_state.glyphs
+        glyph_cursor = glyph_cursors[logical_index]
+        if logical_index in seen_logical_rows:
+            while (
+                glyph_cursor < len(glyph_states) and glyph_states[glyph_cursor].grapheme.isspace()
+            ):
+                glyph_cursor += 1
+        seen_logical_rows.add(logical_index)
+        x = line_x
+        for grapheme in _segment_graphemes(row):
+            if glyph_cursor >= len(glyph_states):
+                break
+            glyph_state = glyph_states[glyph_cursor]
+            if glyph_state.grapheme != grapheme:
+                match_index = next(
+                    (
+                        i
+                        for i in range(glyph_cursor, len(glyph_states))
+                        if glyph_states[i].grapheme == grapheme
+                    ),
+                    glyph_cursor,
+                )
+                glyph_cursor = match_index
+                glyph_state = glyph_states[glyph_cursor]
+            glyph_width = font.measureText(grapheme)
+            if glyph_state.opacity > 0.001:
+                canvas.saveLayerAlpha(None, _clamp_byte(255 * glyph_state.opacity))
+                pivot_x = x + glyph_width / 2.0
+                pivot_y = baseline_y - size * 0.4
+                canvas.translate(pivot_x, pivot_y + size * glyph_state.translate_y_em)
+                canvas.rotate(glyph_state.rotate_deg)
+                canvas.translate(-pivot_x, -pivot_y)
+                _draw_line_with_layers(
+                    canvas,
+                    grapheme,
+                    x,
+                    baseline_y,
+                    font,
+                    base_color,
+                    stroke_px,
+                    shadow_alpha,
+                    **draw_kwargs,
+                )
+                canvas.restore()
+            x += glyph_width + letter_spacing_px
+            glyph_cursor += 1
+        glyph_cursors[logical_index] = glyph_cursor
+
+
 # -- Emoji compositing -------------------------------------------------------
 
 
@@ -1710,6 +1986,7 @@ _ANIMATED_EFFECTS_SKIA = {
     "slide-down",
     "pop-in",
     "bounce",
+    "staggered-slice",
     "karaoke-line",
     # lyric-line must be animated to honor fade_in_ms / fade_out_ms. Without
     # this, two consecutive lyric overlays whose [start_s, end_s] windows
@@ -1775,6 +2052,8 @@ def _draw_overlay_on_canvas(
         _draw_karaoke_line(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
     elif effect == "pop-in" and overlay.get("pop_animated_suffix"):
         _draw_pop_in_with_suffix(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
+    elif effect == "staggered-slice":
+        _draw_staggered_slice(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
     elif _is_animated(overlay):
         # `lyric-line` is in this branch because its fade_in_ms / fade_out_ms
         # are honored per-frame in `_draw_with_animation`. `_overlay_text`
@@ -1960,6 +2239,20 @@ def _sequence_hold_plan(
     return render_indices, settled_idx, hold_indices
 
 
+def _staggered_slice_hold_plan(
+    overlay: dict, n_render: int, frame_dur: float, duration_s: float
+) -> tuple[list[int], int, list[int]] | None:
+    if overlay.get("effect") != "staggered-slice" or n_render <= 1:
+        return None
+    settle_s = min(duration_s, _staggered_slice_settle_s(_overlay_text(overlay)))
+    settled_idx = min(n_render - 1, int(math.ceil(settle_s / frame_dur - 1e-9)))
+    if settled_idx >= n_render - 1:
+        return None
+    render_indices = list(range(settled_idx + 1))
+    hold_indices = list(range(settled_idx + 1, n_render))
+    return render_indices, settled_idx, hold_indices
+
+
 def _generate_overlay_sequence(
     overlay: dict,
     work_dir: str,
@@ -2086,10 +2379,16 @@ def _generate_overlay_sequence(
 
     # Sequence overlays render only their fade-in head + fade-out tail; the
     # settled middle is hard-linked from one frame (see _sequence_hold_plan).
+    # Staggered-slice uses the same economy after its deterministic entrance
+    # settles, so a 4s editor window does not encode ~2s of duplicate PNGs.
     # behind_subject disables the hold economy — the mask can change on every
     # frame even when the glyphs don't, so a hard-linked frame would freeze
     # the occlusion at whatever the settled frame's mask happened to be.
-    hold_plan = None if behind else _sequence_hold_plan(overlay, n_render, frame_dur, duration_s)
+    hold_plan = None
+    if not behind:
+        hold_plan = _sequence_hold_plan(overlay, n_render, frame_dur, duration_s)
+        if hold_plan is None:
+            hold_plan = _staggered_slice_hold_plan(overlay, n_render, frame_dur, duration_s)
     if hold_plan is None:
         render_indices: list[int] = list(range(n_render))
         settled_idx = -1
@@ -2162,7 +2461,10 @@ def _validate_and_clamp(overlay: dict, slot_duration_s: float) -> dict | None:
     # but only if we got a non-None result.
     clamped = dict(overlay)
     if validated_text is not None:
-        clamped["text"] = validated_text
+        # `_validate_overlay` is shared with libass and encodes explicit line
+        # breaks as ASS's literal `\N`. Skia needs real newlines for wrapping
+        # and logical-line animation stages.
+        clamped["text"] = validated_text.replace("\\N", "\n")
         clamped["start_s"] = start_s
         clamped["end_s"] = end_s
     return clamped

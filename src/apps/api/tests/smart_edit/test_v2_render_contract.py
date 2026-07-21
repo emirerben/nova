@@ -134,6 +134,132 @@ def test_shared_geometry_moves_or_omits_decorative_media() -> None:
         assert receipts[0]["decision"] == "omitted_no_safe_candidate"
 
 
+def test_lower_band_rescues_card_blocked_out_of_the_top() -> None:
+    # Talk-to-camera: face + chapter heading protect the whole top half. The
+    # card must land in the lower band, not die as no_safe_candidate.
+    protected = [NormalizedBox(0.0, 0.0, 1.0, 0.6)]
+    overlays = [
+        {
+            "id": "player-photo",
+            "display_mode": "pip",
+            "position": "top",
+            "scale": 0.3,
+            "start_s": 5.0,
+            "end_s": 8.0,
+        }
+    ]
+
+    resolved, receipts = arbitrate_media_overlays(overlays, protected_boxes=protected)
+
+    assert receipts[0]["decision"] in {"moved", "shrunk"}
+    box = NormalizedBox(**resolved[0]["smart_layout_box"])
+    assert box.top >= 0.55
+    assert box.iou(protected[0]) <= 0.02
+
+
+def test_face_protection_clamps_giant_detections_and_keeps_top_thin() -> None:
+    from app.pipeline.render_geometry import _face_protection_box
+
+    # Real krat.mp4 detection: Haar returned a "face" spanning 71% of the
+    # frame width. The protection box must clamp to a plausible head and keep
+    # the band above the hairline free for corner cards.
+    raw = NormalizedBox(0.074, 0.177, 0.781, 0.575)
+
+    box = _face_protection_box(raw)
+
+    assert box.width <= 0.55 + 0.12 + 1e-9  # clamped width + side padding
+    assert box.top >= raw.top - 0.02 - 1e-9  # thin top padding only
+    assert box.bottom >= raw.bottom  # chin stays protected
+    # A sane detection is padded but not clamped.
+    sane = _face_protection_box(NormalizedBox(0.3, 0.2, 0.7, 0.55))
+    assert abs(sane.left - 0.24) < 1e-9 and abs(sane.right - 0.76) < 1e-9
+
+
+def test_same_asset_never_renders_twice_at_once() -> None:
+    overlays = [
+        {
+            "id": card_id,
+            "display_mode": "pip",
+            "position": "custom",
+            "x_frac": x,
+            "y_frac": 0.8,
+            "scale": 0.25,
+            "start_s": 2.0,
+            "end_s": 9.0,
+            "src_gcs_path": "pool/spain-flag.png",
+        }
+        for card_id, x in (("hook-copy", 0.2), ("pair-copy", 0.8))
+    ]
+
+    resolved, receipts = arbitrate_media_overlays(overlays, protected_boxes=[])
+
+    assert len(resolved) == 1
+    assert receipts[1]["decision"] == "omitted_duplicate_asset"
+
+
+def test_displaced_card_claims_the_nearest_free_corner() -> None:
+    # Bottom-right card whose whole corner zone is blocked must claim the
+    # nearest FREE true corner (bottom-left here) — never the center column.
+    protected = [NormalizedBox(0.55, 0.72, 1.0, 0.95)]
+    overlays = [
+        {
+            "id": "corner-card",
+            "display_mode": "pip",
+            "position": "custom",
+            "x_frac": 0.81,
+            "y_frac": 0.81,
+            "scale": 0.25,
+            "start_s": 0.0,
+            "end_s": 4.0,
+        }
+    ]
+
+    resolved, receipts = arbitrate_media_overlays(overlays, protected_boxes=protected)
+
+    assert receipts[0]["decision"] in {"moved", "shrunk"}
+    box = NormalizedBox(**resolved[0]["smart_layout_box"])
+    x_center = (box.left + box.right) / 2
+    assert x_center < 0.35  # nearest free corner column
+    assert box.top > 0.6  # stayed in the bottom band
+
+
+def test_displaced_corner_card_claims_free_corner_not_center() -> None:
+    # France scenario: assigned lower-left, but the lower-left band is
+    # blocked and lower-right is occupied. The card must take a free CORNER
+    # (top-left here), never park in the center column under the captions.
+    protected = [NormalizedBox(0.0, 0.3, 0.45, 1.0)]
+    overlays = [
+        {
+            "id": "occupies-lower-right",
+            "display_mode": "pip",
+            "position": "custom",
+            "x_frac": 0.81,
+            "y_frac": 0.81,
+            "scale": 0.25,
+            "start_s": 0.0,
+            "end_s": 6.0,
+        },
+        {
+            "id": "displaced-lower-left",
+            "display_mode": "pip",
+            "position": "custom",
+            "x_frac": 0.2,
+            "y_frac": 0.81,
+            "scale": 0.25,
+            "start_s": 0.0,
+            "end_s": 6.0,
+        },
+    ]
+
+    resolved, receipts = arbitrate_media_overlays(overlays, protected_boxes=protected)
+
+    assert len(resolved) == 2
+    box = NormalizedBox(**resolved[1]["smart_layout_box"])
+    x_center = (box.left + box.right) / 2
+    assert x_center < 0.35 or x_center > 0.65  # a corner column, not center
+    assert box.bottom < 0.3  # the free corner is up top
+
+
 def test_shared_geometry_keeps_simultaneous_cards_from_stacking() -> None:
     overlays = [
         {
@@ -506,7 +632,10 @@ def test_face_sampler_success_payload_becomes_padded_timed_regions(monkeypatch) 
     assert regions[0].start_s == pytest.approx(1.5)
     assert regions[0].end_s == pytest.approx(2.5)
     assert regions[0].kind == "face"
-    assert regions[0].box.left == pytest.approx(0.4 - 0.08)
+    # Asymmetric padding: generous sides/chin, thin above the hairline so
+    # corner cards can sit beside the hair.
+    assert regions[0].box.left == pytest.approx(0.4 - 0.06)
+    assert regions[0].box.top == pytest.approx(0.2 - 0.02)
     assert regions[0].box.bottom == pytest.approx(0.5 + 0.08)
 
 
