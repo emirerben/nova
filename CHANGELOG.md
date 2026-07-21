@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.8.0] — 2026-07-21
+
+### Added
+- **Nova (the editor copilot) now understands your speech, word by word.** Ask "add a click at the pauses between the words in the first 4 seconds" or "place a sound effect on the funny moment" and it places sounds, overlays, and text at the exact spoken-word and pause times — previously it refused these because it had no word timings. Works on any variant with speech (subtitled, narrated, transcript-synced montages); when a variant has no speech data it says so honestly and offers beat-synced placement instead.
+- **Sound picks are now made by fit, not by name-guessing.** The copilot sees each sound effect's role (keyboard tick, badge click, whoosh, ...) and matches it to the moment — typewriter ticks under typing, clicks on UI taps, stings on punchlines — and honestly tells you when the library has no fitting sound instead of placing the wrong one.
+- **Auto sound-design suggestions (dark, off by default).** After a render finishes, an agent can propose up to 6 sound-effect placements anchored to spoken words, pauses, and clip moments (`SFX_AUTOPLACE_ENABLED`). Suggestions are advisory: they surface through the copilot and never render without your say-so, and they retire themselves automatically when clip edits shift the timeline.
+
+### Changed
+- Caption word timings are now the shared speech source everywhere: the overlay auto-placement matcher reuses them on subtitled videos instead of re-transcribing the render (faster suggestions, identical timings across features).
+- The public sound-effects list now includes each effect's role tags.
+
 ## [0.11.6.0] — 2026-07-21
 
 ### Fixed
