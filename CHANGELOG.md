@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.11.6.0] — 2026-07-21
 
 ### Fixed
+- **Smart Captions visuals now reliably reach the rendered video.** Adding several photos to a video no longer times out the visual composition step — each image is processed only for the moment it appears on screen instead of the full video length, cutting composition time several-fold. Videos that previously shipped without their flag, player, or product images now include them.
 - **The chat copilot can now restyle captions on talk-to-camera videos.** Asking Nova to "change the captions to be word by word" (or switch back to sentences, change the caption font, turn captions off, or move them) applies immediately instead of redirecting to the caption editor. Editing the transcript's text and timing stays in the caption editor, and the copilot says so when asked.
 - **Caption font and position changes now actually reach Smart Captions renders.** A chat-driven font or position change is honored on reburn instead of silently keeping the preset look while reporting success.
 
