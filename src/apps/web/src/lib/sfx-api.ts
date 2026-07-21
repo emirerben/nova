@@ -20,6 +20,9 @@ export interface SoundEffectSummary {
   // the API (app/routes/sound_effects.py SoundEffectSummary.preview_audio_url) —
   // a mismatch silently drops live SFX preview audio.
   preview_audio_url?: string | null;
+  // Closed-vocabulary role tags (smart sound design) — surfaced to the copilot
+  // catalog so sounds can be picked by fit. Empty/absent on legacy effects.
+  role_tags?: string[] | null;
 }
 
 export interface SoundEffectListResponse {

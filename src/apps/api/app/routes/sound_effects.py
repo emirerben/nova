@@ -39,6 +39,10 @@ class SoundEffectSummary(BaseModel):
     # Short-lived signed URL for audio preview in the picker. None when
     # signing fails or the effect has no audio yet.
     preview_audio_url: str | None = None
+    # Closed-vocabulary role tags (smart sound design, migration 0065) — lets
+    # the editor copilot pick sounds by fit ("keyword_typewriter_tick",
+    # "badge_enter", ...). Empty list on unclassified legacy effects.
+    role_tags: list[str] = []
 
 
 class SoundEffectListResponse(BaseModel):
@@ -66,6 +70,7 @@ async def list_sound_effects(
                 name=e.name,
                 duration_s=e.duration_s,
                 preview_audio_url=_preview_audio_url(e.audio_gcs_path),
+                role_tags=list(e.role_tags or []),
             )
             for e in effects
         ]

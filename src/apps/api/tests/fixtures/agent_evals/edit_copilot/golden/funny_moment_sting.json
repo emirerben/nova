@@ -1,0 +1,60 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v6",
+  "input": {
+    "utterance": "place a sound effect on the right funny moments",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline", "sfx"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "pov: first day at the lake house", "start_s": 0, "end_s": 2.2, "size_px": 72}],
+      "slots": [
+        {"output_start_s": 0, "output_end_s": 4.0, "duration_s": 4.0, "moment": "walking down the dock talking"},
+        {"output_start_s": 4.0, "output_end_s": 8.0, "duration_s": 4.0, "moment": "friend slips and grabs the rail"}
+      ],
+      "total_duration_s": 8.0,
+      "speech": {
+        "source": "sequence_transcript",
+        "words": [
+          {"text": "we", "start_s": 0.5, "end_s": 0.62},
+          {"text": "said", "start_s": 0.66, "end_s": 0.9},
+          {"text": "no", "start_s": 0.95, "end_s": 1.1},
+          {"text": "phones", "start_s": 1.14, "end_s": 1.55},
+          {"text": "this", "start_s": 1.6, "end_s": 1.75},
+          {"text": "weekend", "start_s": 1.78, "end_s": 2.3},
+          {"text": "and", "start_s": 3.1, "end_s": 3.22},
+          {"text": "then", "start_s": 3.26, "end_s": 3.45},
+          {"text": "dave", "start_s": 3.5, "end_s": 3.85},
+          {"text": "facetimed", "start_s": 3.9, "end_s": 4.5},
+          {"text": "his", "start_s": 4.55, "end_s": 4.68},
+          {"text": "dog", "start_s": 4.72, "end_s": 5.1}
+        ],
+        "pauses": [
+          {"start_s": 0.0, "end_s": 0.5, "after": null},
+          {"start_s": 2.3, "end_s": 3.1, "after": "weekend"},
+          {"start_s": 5.1, "end_s": 6.0, "after": "dog"}
+        ]
+      },
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {"id": "sfx_comedy_sting", "name": "Comedy sting", "duration_s": 0.9, "role_tags": ["comedic_sting"]},
+          {"id": "sfx_badge_click", "name": "Smart badge click", "duration_s": 0.3, "role_tags": ["badge_enter"]},
+          {"id": "sfx_whoosh", "name": "Smart clean whoosh", "duration_s": 0.4, "role_tags": ["transition_whip"]}
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"add_sfx\",\"effect_id\":\"sfx_comedy_sting\",\"at_s\":5.1,\"gain\":0.8}],\"confidence\":0.8,\"reply\":\"Put the comedy sting at 5.10s — right as the punchline 'facetimed his dog' lands, at the pause before the slip.\",\"suggestions\":[\"Add a whoosh on the slip at 4.0s\",\"Lower the sting volume\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {"op": "add_sfx", "effect_id": "sfx_comedy_sting", "at_s": 5.1, "gain": 0.8}
+    ],
+    "confidence": 0.8,
+    "reply": "Put the comedy sting at 5.10s — right as the punchline 'facetimed his dog' lands, at the pause before the slip.",
+    "suggestions": ["Add a whoosh on the slip at 4.0s", "Lower the sting volume"],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "funny ask → punchline identified from SPEECH WORDS text (joke setup/payoff) + slot moment; comedic-role effect chosen from catalog; at_s is the pause start after the punchline, copied verbatim"}
+}

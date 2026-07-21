@@ -905,7 +905,16 @@ def _load_glossary(db) -> list[dict]:
         .all()
     )
     return [
-        {"id": r.id, "name": r.name, "audio_gcs_path": r.audio_gcs_path, "duration_s": r.duration_s}
+        {
+            "id": r.id,
+            "name": r.name,
+            "audio_gcs_path": r.audio_gcs_path,
+            "duration_s": r.duration_s,
+            # Sound-design metadata (migration 0065) — consumed by the SFX
+            # suggestion path; the overlay intent mapper ignores them.
+            "role_tags": list(r.role_tags or []),
+            "contains_voice": bool(r.contains_voice),
+        }
         for r in rows
     ]
 
@@ -1277,3 +1286,169 @@ def match_overlay_suggestions(
             except Exception:  # noqa: BLE001
                 pass
             _record("autoplace_match_failed", reason=str(exc)[:160], variant_id=variant_id)
+
+
+@celery_app.task(name="app.tasks.autoplace.autoplace_sfx_suggestions", **_AUTOPLACE_TASK_LIMITS)
+def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
+    """Propose advisory SFX placements for one rendered variant (dark-flagged).
+
+    Best-effort end to end: any failure logs + leaves the variant untouched —
+    a generative job never degrades because sound-design suggestions failed.
+    Speech source precedence mirrors the read path (persisted words → caption
+    cue words), then bounded Whisper as the task-context fallback; Whisper
+    words are persisted under `overlay_transcript` (run-once semantics, same
+    contract as the overlay matcher — NEVER `transcript`, review C19).
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+    from app.services.sfx_autoplace import resolve_sfx_suggestions  # noqa: PLC0415
+    from app.services.speech_map import build_speech_map  # noqa: PLC0415
+    from app.services.transcript_source import (  # noqa: PLC0415
+        compute_transcript_hash,
+        speech_words_for_variant,
+        transcribe_variant_video,
+        variant_duration_s,
+    )
+
+    if not settings.sfx_autoplace_enabled:
+        return
+    with pipeline_trace_for(job_id):
+        try:
+            # 1. Unlocked read (the LLM call must not hold a row lock).
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id))
+                if job is None:
+                    return
+                variant = _find_variant(job, variant_id)
+                if variant is None:
+                    return
+                glossary = _load_glossary(db)
+            if not glossary:
+                _record("sfx_autoplace_skipped", reason="empty_glossary", variant_id=variant_id)
+                return
+
+            # 2. Speech source: read-path precedence first, Whisper fallback.
+            whisper_words: list[dict] | None = None
+            speech = speech_words_for_variant(variant)
+            if speech is not None:
+                words, _source = speech
+            elif variant.get("music_track_id") is not None:
+                # Never Whisper over a song (garbage anchors) — the dispatch
+                # guard enforces this too, but redeliveries/manual invocations
+                # bypass it.
+                _record("sfx_autoplace_skipped", reason="music_variant", variant_id=variant_id)
+                return
+            else:
+                whisper_words = transcribe_variant_video(variant)
+                if not whisper_words:
+                    _record("sfx_autoplace_skipped", reason="no_transcript", variant_id=variant_id)
+                    return
+                words = whisper_words
+            duration_s = variant_duration_s(variant)
+            if duration_s is None:
+                duration_s = float(words[-1].get("end_s", 0.0)) + 1.0
+            speech_map = build_speech_map(words, duration_s, "task")
+            if speech_map is None:
+                _record("sfx_autoplace_skipped", reason="no_usable_words", variant_id=variant_id)
+                return
+
+            # 3. Clip-moment windows from the persisted AI timeline (cumulative
+            # output windows in slot order); best-effort — empty when absent.
+            moments: list[dict] = []
+            timeline = variant.get("ai_timeline") or {}
+            slots = timeline.get("slots") if isinstance(timeline, dict) else None
+            if isinstance(slots, list):
+                cursor = 0.0
+                for slot in sorted(
+                    (s for s in slots if isinstance(s, dict)),
+                    key=lambda s: s.get("order", 0),
+                ):
+                    try:
+                        slot_dur = float(slot.get("duration_s", 0.0))
+                    except (TypeError, ValueError):
+                        continue
+                    if slot_dur <= 0:
+                        continue
+                    description = str(slot.get("moment_description") or "")
+                    if description:
+                        moments.append(
+                            {
+                                "start_s": round(cursor, 2),
+                                "end_s": round(cursor + slot_dur, 2),
+                                "description": description,
+                            }
+                        )
+                    cursor += slot_dur
+
+            # 4. One agent call; validation is the server's job.
+            from app.agents._model_client import default_client  # noqa: PLC0415
+            from app.agents._runtime import RunContext  # noqa: PLC0415
+            from app.agents.sfx_placement import (  # noqa: PLC0415
+                _MAX_EFFECTS,
+                SfxCatalogEffect,
+                SfxPlacementAgent,
+                SfxPlacementInput,
+            )
+
+            if not settings.gemini_api_key:
+                _record("sfx_autoplace_skipped", reason="no_gemini_key", variant_id=variant_id)
+                return
+            agent_out = SfxPlacementAgent(default_client()).run(
+                SfxPlacementInput(
+                    words=words,
+                    pauses=speech_map["pauses"],
+                    moments=moments,
+                    # Slice BEFORE constructing the input: the schema caps
+                    # effects at _MAX_EFFECTS and an oversized glossary would
+                    # fail Pydantic validation and silently kill the task.
+                    effects=[
+                        SfxCatalogEffect(
+                            effect_id=str(g["id"]),
+                            name=str(g.get("name") or ""),
+                            role_tags=list(g.get("role_tags") or []),
+                            duration_s=g.get("duration_s"),
+                        )
+                        for g in [x for x in glossary if not x.get("contains_voice")][:_MAX_EFFECTS]
+                    ],
+                    duration_s=duration_s,
+                ),
+                ctx=RunContext(job_id=job_id),
+            )
+            # Hash with the SAME duration input the read path will use
+            # (`variant_duration_s`, possibly None) — hashing the local
+            # fallback duration would mismatch the serializer's recompute and
+            # permanently stale-filter suggestions on duration-less variants.
+            transcript_hash = compute_transcript_hash(words, variant_duration_s(variant))
+            # The verbatim-copy discipline, enforced: at_s must land on a
+            # supplied mark (word start/end, pause start, moment edge) or the
+            # suggestion is dropped as an invented time.
+            allowed_marks = [w["s"] for w in speech_map["words"]]
+            allowed_marks += [w["e"] for w in speech_map["words"]]
+            allowed_marks += [pz["s"] for pz in speech_map["pauses"]]
+            for m in moments:
+                allowed_marks.extend((m["start_s"], m["end_s"]))
+            suggestions = resolve_sfx_suggestions(
+                agent_out.placements,
+                glossary,
+                duration_s,
+                transcript_hash,
+                allowed_marks=allowed_marks,
+            )
+
+            # 5. Persist under the row lock; trace AFTER the lock releases
+            # (record_pipeline_event opens its own connection and UPDATEs the
+            # same jobs row — firing it mid-lock self-deadlocks the worker).
+            with _sync_session() as db:
+                fields: dict = {"pending_sfx_suggestions": suggestions}
+                if whisper_words:
+                    fields["overlay_transcript"] = whisper_words
+                _persist_variant_fields(db, job_id, variant_id, fields)
+            _record(
+                "sfx_autoplace_suggested",
+                variant_id=variant_id,
+                proposed=len(agent_out.placements),
+                accepted=len(suggestions),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("sfx_autoplace.failed", job_id=job_id, error=str(exc)[:300])
+            _record("sfx_autoplace_failed", reason=str(exc)[:160], variant_id=variant_id)

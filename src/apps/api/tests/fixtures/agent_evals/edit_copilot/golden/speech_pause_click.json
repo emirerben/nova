@@ -1,0 +1,61 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v6",
+  "input": {
+    "utterance": "add a click at the pauses between the words within the first 4 seconds",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline", "sfx"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "how i plan my week", "start_s": 0, "end_s": 2.4, "size_px": 72}],
+      "slots": [
+        {"output_start_s": 0, "output_end_s": 12.0, "duration_s": 12.0, "moment": "talking to camera at a desk"}
+      ],
+      "total_duration_s": 12.0,
+      "speech": {
+        "source": "caption_words",
+        "words": [
+          {"text": "so", "start_s": 0.4, "end_s": 0.55},
+          {"text": "i", "start_s": 0.62, "end_s": 0.7},
+          {"text": "opened", "start_s": 0.74, "end_s": 1.02},
+          {"text": "the", "start_s": 1.05, "end_s": 1.12},
+          {"text": "app", "start_s": 1.15, "end_s": 1.44},
+          {"text": "and", "start_s": 1.78, "end_s": 1.9},
+          {"text": "typed", "start_s": 1.95, "end_s": 2.3},
+          {"text": "my", "start_s": 2.34, "end_s": 2.42},
+          {"text": "name", "start_s": 2.45, "end_s": 2.9},
+          {"text": "then", "start_s": 3.35, "end_s": 3.55},
+          {"text": "waited", "start_s": 3.6, "end_s": 4.05},
+          {"text": "forever", "start_s": 5.6, "end_s": 6.1}
+        ],
+        "pauses": [
+          {"start_s": 0.0, "end_s": 0.4, "after": null},
+          {"start_s": 1.44, "end_s": 1.78, "after": "app"},
+          {"start_s": 2.9, "end_s": 3.35, "after": "name"},
+          {"start_s": 4.05, "end_s": 5.6, "after": "waited"}
+        ]
+      },
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {"id": "sfx_badge_click", "name": "Smart badge click", "duration_s": 0.3, "role_tags": ["badge_enter"]},
+          {"id": "sfx_keyboard_tick", "name": "Smart keyboard tick", "duration_s": 0.2, "role_tags": ["keyword_typewriter_tick"]},
+          {"id": "sfx_whoosh", "name": "Smart clean whoosh", "duration_s": 0.4, "role_tags": ["transition_whip"]}
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"add_sfx\",\"effect_id\":\"sfx_badge_click\",\"at_s\":1.44,\"gain\":0.6},{\"op\":\"add_sfx\",\"effect_id\":\"sfx_badge_click\",\"at_s\":2.9,\"gain\":0.6}],\"confidence\":0.85,\"reply\":\"Placed clicks at the two pauses in the first 4 seconds — after 'app' (1.44s) and after 'name' (2.90s).\",\"suggestions\":[\"Use a keyboard tick instead\",\"Add one at the long pause at 4.05s\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {"op": "add_sfx", "effect_id": "sfx_badge_click", "at_s": 1.44, "gain": 0.6},
+      {"op": "add_sfx", "effect_id": "sfx_badge_click", "at_s": 2.9, "gain": 0.6}
+    ],
+    "confidence": 0.85,
+    "reply": "Placed clicks at the two pauses in the first 4 seconds — after 'app' (1.44s) and after 'name' (2.90s).",
+    "suggestions": ["Use a keyboard tick instead", "Add one at the long pause at 4.05s"],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "pause ask → at_s copied verbatim from PAUSE MARKS inside the requested 4s window; the 4.05s and leading pauses are correctly excluded"}
+}
