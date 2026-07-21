@@ -12,8 +12,11 @@ A failed phase write must never fail the user's job.
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any, Final
 
@@ -21,6 +24,7 @@ import structlog
 from sqlalchemy import cast, literal, update
 from sqlalchemy.dialects.postgresql import JSONB
 
+from app.config import settings
 from app.database import sync_session
 from app.models import Job
 
@@ -174,17 +178,11 @@ def record_sub_phase(
             if job is None:
                 return
             if job.started_at is not None:
-                entry["t_offset_ms"] = int(
-                    (now - job.started_at).total_seconds() * 1000
-                )
+                entry["t_offset_ms"] = int((now - job.started_at).total_seconds() * 1000)
             stmt = (
                 update(Job)
                 .where(Job.id == job_uuid)
-                .values(
-                    phase_log=Job.phase_log.op("||")(
-                        cast(literal(json.dumps([entry])), JSONB)
-                    )
-                )
+                .values(phase_log=Job.phase_log.op("||")(cast(literal(json.dumps([entry])), JSONB)))
             )
             db.execute(stmt)
             db.commit()
@@ -252,6 +250,59 @@ class PhaseTimer:
             elapsed_ms=elapsed_ms,
             next_phase=self.next_phase,
         )
+
+
+def beat_heartbeat(job_id: str | uuid.UUID) -> None:
+    """Tick jobs.worker_heartbeat_at to the DB clock. Best-effort, column-only.
+
+    Deliberately a bare column UPDATE — the heartbeat thread runs concurrently
+    with the orchestrator's own row-locked assembly_plan read-modify-writes,
+    so it must never touch any other column (a stale-snapshot write-back would
+    clobber variant state).
+    """
+    job_uuid = _coerce_uuid(job_id)
+    if job_uuid is None:
+        return
+    try:
+        with sync_session() as db:
+            db.execute(
+                update(Job).where(Job.id == job_uuid).values(worker_heartbeat_at=datetime.now(UTC))
+            )
+            db.commit()
+    except Exception as exc:  # pragma: no cover — best-effort
+        log.warning("job_heartbeat_failed", job_id=str(job_id), error=str(exc))
+
+
+@contextmanager
+def job_heartbeat(job_id: str | uuid.UUID) -> Iterator[None]:
+    """Tick the job's liveness beacon on a daemon thread while the body runs.
+
+    Why (2026-07-21 OOM incident, job e8173a25): an OOM-killed worker leaves
+    its job at status="rendering" with zero signal until the acks_late
+    redelivery fires (visibility_timeout=1900s) — 30+ minutes of a dead
+    attempt looking identical to healthy progress. The status route compares
+    this beacon against now(); once it goes stale it reports
+    `retrying: true`, and the redelivered attempt's FIRST beat (synchronous,
+    below) clears the flag immediately on resume.
+
+    The thread is a daemon and the interval wait doubles as the stop signal,
+    so a SIGKILL'd worker simply stops beating — which is exactly the signal.
+    """
+    beat_heartbeat(job_id)  # immediate: a redelivered attempt un-stales at once
+    stop = threading.Event()
+    interval = max(5, int(settings.render_heartbeat_interval_s))
+
+    def _loop() -> None:
+        while not stop.wait(interval):
+            beat_heartbeat(job_id)
+
+    thread = threading.Thread(target=_loop, daemon=True, name=f"job-heartbeat-{str(job_id)[:8]}")
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=2)
 
 
 def mark_failed_phase(job_id: str | uuid.UUID) -> None:

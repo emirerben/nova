@@ -54,7 +54,13 @@ from app.schemas.montage_preset import (
     is_collage_montage_preset,
 )
 from app.services.generative_jobs import CONTENT_PLAN_PRIMARY_VARIANT_POLICY
-from app.services.job_phases import mark_failed_phase, mark_finished, mark_started, record_phase
+from app.services.job_phases import (
+    job_heartbeat,
+    mark_failed_phase,
+    mark_finished,
+    mark_started,
+    record_phase,
+)
 from app.worker import celery_app
 
 
@@ -165,7 +171,10 @@ def orchestrate_generative_job(self, job_id: str) -> None:
 
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
-    with pipeline_trace_for(job_id):
+    # job_heartbeat: liveness beacon for the status route's `retrying` flag —
+    # a silently killed attempt stops beating, and the redelivered attempt's
+    # first beat clears the stale state (2026-07-21 OOM, job e8173a25).
+    with pipeline_trace_for(job_id), job_heartbeat(job_id):
         mark_started(job_id)
         try:
             _run_generative_job(job_id)
@@ -1069,6 +1078,15 @@ def _ingest_clips(
 
     local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
     probe_map = _probe_clips(local_clip_paths)
+    # Heavy-source guard (2026-07-21 OOM): oversized SDR clips are downscaled
+    # ONCE here — before Gemini upload (smaller upload) and before any variant
+    # reframe (bounded decode). Mutates local_clip_paths/probe_map in place so
+    # the clip_id maps below point at the intermediates. HDR clips pass through
+    # untouched (the pre-tonemap pass owns those). Best-effort: a failed
+    # conversion keeps the original.
+    from app.pipeline.source_guard import downscale_oversized_sources  # noqa: PLC0415
+
+    downscale_oversized_sources(local_clip_paths, probe_map, tmpdir, job_id=job_id)
     if skip_analysis:
         return {
             "clip_metas": [],

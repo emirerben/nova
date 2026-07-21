@@ -1714,6 +1714,9 @@ export interface PlanItemJobStatus {
    *  Mirrors ArchetypeFallbackOut in routes/generative_jobs.py — the single TS
    *  definition lives in plan-generate-gate.ts. */
   archetype_fallback?: ArchetypeFallback | null;
+  /** True while the render attempt died silently and is awaiting automatic
+   *  retry (stale worker heartbeat). Optional — older API builds omit it. */
+  retrying?: boolean;
 }
 
 export async function getPlanItemJobStatus(jobId: string): Promise<PlanItemJobStatus> {

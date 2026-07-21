@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.2.0] — 2026-07-21
+
+### Fixed
+- **A heavy 4K upload can no longer crash the render worker mid-edit.** A 170MB high-bitrate clip OOM-killed the worker during reframing (prod job e8173a25): every variant re-decoded the full-resolution source while leftover AI-analysis models still occupied worker memory. Oversized SDR clips are now downscaled once at ingest with a bounded-memory pass (HDR clips already had their own), and the worker recycles its task process whenever residual memory from analysis bursts exceeds 3GB — so renders always start with a clean memory slate. Kill switches: `SOURCE_DOWNSCALE_GUARD_ENABLED=false`, `WORKER_MAX_MEMORY_PER_CHILD_KB=0`.
+
+### Added
+- **You can now tell a crashed-and-recovering render apart from a healthy one.** When a render attempt dies silently, the job used to show normal "rendering" progress for the entire 30+ minute automatic-retry window. The worker now ticks a liveness heartbeat while rendering; once it goes quiet the progress view switches to "Hit a snag mid-render — retrying automatically," and flips back the moment the retried attempt picks up.
+
 ## [0.12.1.1] — 2026-07-21
 
 ### Fixed

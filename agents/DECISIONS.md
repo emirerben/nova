@@ -299,3 +299,53 @@ killable without silencing the other. Off: new renders resolve no treatment and 
 skip re-mixing the bed, but persisted `smart_music_treatment` state is never deleted,
 so re-enabling restores creators' saved mixes (same preserve-on-rollback rule the SFX
 lane follows).
+
+## [2026-07-21] Worker OOM mid-reframe + 30-min silent redelivery gap (prod job e8173a25)
+
+**Incident:** a 170MB / 134s high-bitrate clip OOM-killed worker 6e826515c714e8 during
+`reframe_and_export` (last log `reframe_filter_chain` 18:26:17Z, silent death, fresh
+Celery boot 18:31:41Z). Compounding: 7 `analyze_pool_asset` tasks had just run on the
+same worker, leaving CLIP/torch/Whisper residency in the single long-lived prefork
+child (concurrency=1) for the ffmpeg peak to stack on. acks_late +
+visibility_timeout=1900s redelivered at 18:56:57Z and attempt 2 finished cleanly — so
+recovery worked, but the user stared at healthy-looking "rendering" for 30+ minutes.
+
+**Three-part fix (this entry is the narrative; invariants live in the guard tests):**
+
+1. **Heavy-source downscale guard** — `app/pipeline/source_guard.py`, wired into
+   `_ingest_clips` (generative_build.py). SDR sources with short edge > 1920px are
+   re-encoded ONCE at ingest (2-thread decode cap, h264 crf16/fast, cover-scale of
+   1080x1920, never upscaled, audio stream-copied, original deleted from tmpfs), so
+   every downstream per-slot reframe decodes a bounded intermediate instead of native
+   4K HEVC — and Gemini uploads shrink too. HDR is excluded: `_pretonemap_hdr_clips`
+   already downscales HDR inside its zscale chain, and an 8-bit re-encode here would
+   destroy its input. Still images excluded (image_clip owns those). Kill switch:
+   `SOURCE_DOWNSCALE_GUARD_ENABLED=false` + worker restart (byte-identical off).
+   Guards: `tests/pipeline/test_source_guard.py`. Template/music ingest paths NOT
+   wired yet — follow-up if the class recurs there.
+
+2. **Prefork child recycling** — `worker_max_memory_per_child` in `app/worker.py`
+   (`WORKER_MAX_MEMORY_PER_CHILD_KB`, default 3GB, 0 disables). Recycles the child
+   BETWEEN tasks once RSS exceeds the threshold; the replacement forks from the parent
+   and keeps the prewarmed CLIP singleton via copy-on-write. A dedicated queue/machine
+   for analysis tasks was rejected: concurrency=1 already serializes execution — the
+   problem was residual memory, not co-execution. Guards:
+   `tests/tasks/test_worker_memory_recycle.py` (conf carries the value; threshold
+   stays under the fly.toml worker VM size).
+
+3. **User-visible retrying state** — `jobs.worker_heartbeat_at` (migration 0068) is
+   ticked ~30s by a daemon thread (`job_phases.job_heartbeat`, column-only UPDATE by
+   design — it must never read-modify-write assembly_plan) wrapped around
+   `orchestrate_generative_job`. The status route computes `retrying: true` at READ
+   time when a processing/rendering job's beacon is older than
+   `RENDER_HEARTBEAT_STALE_AFTER_S` (150s); the redelivered attempt's synchronous
+   entry beat clears it immediately. ProgressTheater swaps the leave-note for honest
+   recovery copy. NULL beacon never flags (legacy rows / non-heartbeating
+   orchestrators). Guards: `tests/routes/test_generative_retrying.py`,
+   `src/apps/web/src/__tests__/progress/retrying.test.tsx`.
+
+**Env vars (not in CLAUDE.md — its 38k budget was full at the time):**
+`SOURCE_DOWNSCALE_GUARD_ENABLED` / `SOURCE_DOWNSCALE_SHORT_EDGE_MAX` /
+`SOURCE_DOWNSCALE_FFMPEG_THREADS`, `WORKER_MAX_MEMORY_PER_CHILD_KB`,
+`RENDER_HEARTBEAT_INTERVAL_S` / `RENDER_HEARTBEAT_STALE_AFTER_S`. Apply on Fly:
+`fly secrets set <VAR>=<val> --app nova-video` + `fly machine restart <id>` (worker).

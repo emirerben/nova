@@ -2004,6 +2004,7 @@ export default function PlanItemPage() {
                   isSuccess={theaterIsSuccess}
                   receiptText={deriveReceiptText(data.job)}
                   variants={variants}
+                  retrying={data.job.retrying ?? false}
                   size="full"
                   tone="light"
                 >

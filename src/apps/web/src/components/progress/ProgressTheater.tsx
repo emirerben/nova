@@ -49,6 +49,13 @@ interface ProgressTheaterProps {
   /** Called when user requests retry. */
   onRetry?: () => void;
   /**
+   * True when the backend reports the render attempt died and is being
+   * automatically retried (stale worker heartbeat — see the generative
+   * status route's `retrying` field). Replaces the leave-note with honest
+   * recovery copy so a dead attempt doesn't masquerade as healthy progress.
+   */
+  retrying?: boolean;
+  /**
    * D13 layout mode.
    * - 'full': dedicated page-level layout (default).
    * - 'inline': compact status band only, no page-level wrapper.
@@ -90,6 +97,7 @@ export function ProgressTheater({
   receiptText = "Your edits are ready",
   variants,
   onRetry: _onRetry,
+  retrying = false,
   size = "full",
   children,
   tone = "dark",
@@ -146,8 +154,9 @@ export function ProgressTheater({
     elapsedMs,
     totalBaseline,
   );
-  const leaveNote =
-    tier >= 2
+  const leaveNote = retrying
+    ? "Hit a snag mid-render — retrying automatically. This can add a few minutes."
+    : tier >= 2
       ? "Taking a bit longer than expected — still working on it."
       : "You can leave this page — we'll keep rendering.";
 
@@ -220,7 +229,7 @@ export function ProgressTheater({
             <p
               className={[
                 "text-xs",
-                tier >= 2
+                retrying || tier >= 2
                   ? (tone === "light" ? "text-lime-700" : "text-amber-400")
                   : (tone === "light" ? "text-[#a1a1aa]" : "text-zinc-600"),
               ].join(" ")}

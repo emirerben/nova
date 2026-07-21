@@ -49,6 +49,21 @@ celery_app.conf.update(
     # so re-delivery happens promptly without risking duplicate execution
     # while a real task is still running.
     broker_transport_options={"visibility_timeout": 1900},
+    # Prefork child recycling (2026-07-21 OOM, job e8173a25): a burst of
+    # analyze_pool_asset tasks leaves CLIP/torch/Whisper residency in the single
+    # long-lived child (concurrency=1), and the NEXT render's ffmpeg peak then
+    # stacks on top of it. When the child's RSS exceeds this many KB after a
+    # task completes, Celery replaces it — BETWEEN tasks, never mid-task, so
+    # acks_late semantics are untouched. The replacement forks from the parent,
+    # which still holds the prewarmed CLIP singleton (copy-on-write), so the
+    # recycle is cheap. A dedicated queue/machine for analysis tasks was
+    # considered and rejected: concurrency=1 already serializes execution — the
+    # problem was residual memory, not co-execution. 0 disables.
+    **(
+        {"worker_max_memory_per_child": settings.worker_max_memory_per_child_kb}
+        if settings.worker_max_memory_per_child_kb > 0
+        else {}
+    ),
     # Beat schedule — picked up only when a `celery beat` process is
     # running (see fly.toml [processes].beat). The worker process ignores
     # this dict, so it's safe to define unconditionally.
