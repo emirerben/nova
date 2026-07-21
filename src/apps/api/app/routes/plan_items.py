@@ -675,15 +675,15 @@ async def delete_idea(
     item = await _load_owned_item(item_id, user.id, db)
 
     def ensure_deletable(candidate: PlanItem) -> None:
+        derived = derive_item_status(candidate)
         if candidate.current_job_id is not None:
-            derived = derive_item_status(candidate)
             if derived == "generating":
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Cannot delete an item with an active job. Cancel the job first.",
                 )
 
-        if candidate.clip_gcs_paths:
+        if candidate.clip_gcs_paths and derived not in {"ready", "failed"}:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Cannot delete an item that has clips attached. Remove clips first.",
@@ -721,6 +721,9 @@ async def delete_idea(
             if len(retained_seeds) != len(persona.idea_seeds):
                 persona.idea_seeds = retained_seeds
                 flag_modified(persona, "idea_seeds")
+
+    if item.current_job is not None:
+        item.current_job.content_plan_item_id = None
 
     await db.delete(item)
     await db.commit()

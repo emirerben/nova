@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.5.0] — 2026-07-21
+
+### Fixed
+- **Ideas can be deleted again after they have rendered.** Removing a ready idea now takes it out of the plan, clears its persistent idea seed, and keeps the finished video available in the library instead of blocking on attached clips.
+- **The Ideas page now recovers from stale AI-generation spinners.** If an idea-generation request gets stranded, the next plan load repairs the stale state after the same timeout used by the local recovery script, so “Kria is writing an idea…” no longer stays visible forever.
+- **Delete failures now explain what happened.** When an idea cannot be removed because work is still active, the Ideas page shows the backend reason instead of the generic “Couldn’t save.”
+
 ## [0.11.4.0] — 2026-07-21
 
 ### Added

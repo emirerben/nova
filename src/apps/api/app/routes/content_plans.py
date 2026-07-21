@@ -11,7 +11,7 @@ GET  /content-plans   — the user's latest plan with its items. Each item's liv
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -41,6 +41,7 @@ log = structlog.get_logger()
 router = APIRouter()
 
 _PERSONA_READY = ("ready", "edited")
+_STALE_PLAN_GENERATION_AFTER = timedelta(minutes=10)
 
 
 class CreatePlanBody(BaseModel):
@@ -132,6 +133,21 @@ def _plan_response(
         pool_matched_count=sum(1 for c in pool_clips if c.get("matched_item_id")),
         idea_seeds=idea_seeds or [],
     )
+
+
+async def _repair_stale_plan_generation(plan: ContentPlan, db: AsyncSession) -> None:
+    if plan.plan_status != "generating":
+        return
+    started_at = plan.generation_started_at or plan.updated_at
+    if not isinstance(started_at, datetime):
+        return
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    if datetime.now(UTC) - started_at <= _STALE_PLAN_GENERATION_AFTER:
+        return
+
+    plan.plan_status = "ready" if (plan.items or []) else "failed"
+    await db.commit()
 
 
 @router.post("", response_model=ContentPlanResponse, status_code=status.HTTP_201_CREATED)
@@ -289,6 +305,7 @@ async def get_plan(
     ).scalar_one_or_none()
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No content plan yet")
+    await _repair_stale_plan_generation(plan, db)
     # Include idea_seeds from the linked persona so the plan-home sidebar can show
     # them with their current in_plan status without a separate persona API call.
     # Also build id→text map for T5 provenance badge.

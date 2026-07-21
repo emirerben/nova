@@ -204,7 +204,7 @@ def test_add_idea_creates_plan_item_and_seed_mirror(client: TestClient) -> None:
     assert "FOR UPDATE" in str(persona_stmt).upper()
 
 
-# ── T12: DELETE refuses with active job or clips ─────────────────────────────
+# ── T12: DELETE refuses active work, detaches terminal jobs ──────────────────
 
 
 def test_delete_idea_refuses_with_active_job_and_preserves_seed(client: TestClient) -> None:
@@ -264,6 +264,48 @@ def test_delete_idea_refuses_with_clips_and_preserves_seed(client: TestClient) -
     db.delete.assert_not_awaited()
     db.commit.assert_not_awaited()
     db.get.assert_awaited_once()
+
+
+def test_delete_ready_idea_with_clips_detaches_library_job_and_removes_seed(
+    client: TestClient,
+) -> None:
+    """A rendered idea can leave the plan while the library video is preserved."""
+    user = _user()
+    job_id = uuid.uuid4()
+    item, plan = _idea_item(
+        user.id,
+        item_status="awaiting_clips",
+        current_job_id=job_id,
+        clips=["users/u1/clip.mp4"],
+    )
+    seed_id = uuid.uuid4().hex
+    item.source_idea_seed_id = seed_id
+    job = MagicMock()
+    job.status = "variants_ready"
+    job.content_plan_item_id = item.id
+    item.current_job = job
+    other_seed = {"id": uuid.uuid4().hex, "text": "keep me", "status": "pending"}
+    persona = MagicMock()
+    persona.idea_seeds = [
+        {"id": seed_id, "text": item.idea, "status": "in_plan"},
+        other_seed,
+    ]
+
+    db = AsyncMock()
+    db.delete = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona), _result(item)])
+    db.get = AsyncMock(side_effect=[plan, plan])
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.delete(f"/plan-items/{item.id}")
+    assert resp.status_code == 204
+    assert job.content_plan_item_id is None
+    assert persona.idea_seeds == [other_seed]
+    db.delete.assert_awaited_once_with(item)
+    db.commit.assert_awaited_once()
 
 
 def test_delete_unlinked_idea_succeeds_when_clean(client: TestClient) -> None:

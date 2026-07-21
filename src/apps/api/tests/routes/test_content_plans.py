@@ -179,7 +179,106 @@ def _plan_mock(user_id: uuid.UUID, *, status: str = "ready") -> MagicMock:
     plan.items = []
     plan.start_date = None
     plan.generation_started_at = None
+    plan.updated_at = datetime.now(UTC)
+    plan.pool = {}
     return plan
+
+
+def _plan_item_mock() -> MagicMock:
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.day_index = None
+    item.theme = None
+    item.idea = "stale generated idea"
+    item.position = 1
+    item.scheduled_date = None
+    item.notes = None
+    item.scenes = []
+    item.filming_suggestion = None
+    item.rationale = None
+    item.filming_guide = []
+    item.clip_gcs_paths = []
+    item.clip_assignments = []
+    item.item_status = "idea"
+    item.current_job_id = None
+    item.current_job = None
+    item.user_edited = False
+    item.conformance = None
+    item.content_mode = None
+    item.edit_format = None
+    item.montage_preset = "classic"
+    item.voiceover_gcs_path = None
+    item.landscape_fit = "fit"
+    item.voiceover_bed_level = None
+    item.voiceover_caption_style = None
+    item.source_idea_seed_id = None
+    item.source_idea_seed_text = None
+    return item
+
+
+def _persona_mock() -> MagicMock:
+    persona = MagicMock()
+    persona.idea_seeds = []
+    persona.persona = {}
+    return persona
+
+
+def test_get_plan_repairs_stale_generating_plan_with_items_to_ready(
+    client: TestClient,
+) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="generating")
+    plan.generation_started_at = datetime.now(UTC) - timedelta(minutes=11)
+    plan.items = [_plan_item_mock()]
+    db = _async_db(scalar_result=plan)
+    db.get = AsyncMock(return_value=_persona_mock())
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.get("/content-plans")
+
+    assert resp.status_code == 200
+    assert resp.json()["plan_status"] == "ready"
+    assert plan.plan_status == "ready"
+    db.commit.assert_awaited_once()
+
+
+def test_get_plan_repairs_stale_generating_empty_plan_to_failed(
+    client: TestClient,
+) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="generating")
+    plan.generation_started_at = datetime.now(UTC) - timedelta(minutes=11)
+    plan.items = []
+    db = _async_db(scalar_result=plan)
+    db.get = AsyncMock(return_value=_persona_mock())
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.get("/content-plans")
+
+    assert resp.status_code == 200
+    assert resp.json()["plan_status"] == "failed"
+    assert plan.plan_status == "failed"
+    db.commit.assert_awaited_once()
+
+
+def test_get_plan_keeps_fresh_generating_plan_in_flight(client: TestClient) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="generating")
+    plan.generation_started_at = datetime.now(UTC) - timedelta(minutes=2)
+    plan.items = []
+    db = _async_db(scalar_result=plan)
+    db.get = AsyncMock(return_value=_persona_mock())
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.get("/content-plans")
+
+    assert resp.status_code == 200
+    assert resp.json()["plan_status"] == "generating"
+    assert plan.plan_status == "generating"
+    db.commit.assert_not_awaited()
 
 
 def test_regenerate_enqueues_and_sets_generating(client: TestClient) -> None:
