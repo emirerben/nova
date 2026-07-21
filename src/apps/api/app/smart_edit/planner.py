@@ -1165,17 +1165,36 @@ def _semantic_timeline_v2(
         role_by_word_id[word.word_id] = "hook"
     boundary_after_word_ids = {words[hook_end_index].word_id}
 
+    cue_ranges: list[tuple[int, int]] = []
+    for cue in baseline:
+        cue_word_indexes = [index_by_id[wid] for wid in cue.word_ids if wid in index_by_id]
+        if cue_word_indexes:
+            cue_ranges.append((min(cue_word_indexes), max(cue_word_indexes)))
+
     chapter_word_indexes: set[int] = set()
+    claimed_chapter_assets: set[str] = set()
     for ordinal, (number, marker_index, title_end_index) in enumerate(chapter_markers, start=1):
         chapter_words = words[marker_index : title_end_index + 1]
         chapter_word_indexes.update(range(marker_index, title_end_index + 1))
         for word in chapter_words:
             role_by_word_id[word.word_id] = "list_item"
         boundary_after_word_ids.add(chapter_words[-1].word_id)
-        # "number one Spain" — the visual named INSIDE a chapter heading must
+        # A visual named INSIDE a chapter heading ("number one Spain") must
         # attach here: cues overlapping a chapter are skipped below, so this
-        # candidate is the only carrier for hint matches in that range.
-        chapter_matches = _range_matches(marker_index, title_end_index)
+        # candidate is the only carrier for hint matches in that range. Absorb
+        # the FULL span of every overlapping cue — a hint anchored later in
+        # the same sentence ("number four ... Elliot Anderson") would
+        # otherwise vanish with the skipped cue.
+        span_lo, span_hi = marker_index, title_end_index
+        for cue_lo, cue_hi in cue_ranges:
+            if cue_lo <= title_end_index and cue_hi >= marker_index:
+                span_lo, span_hi = min(span_lo, cue_lo), max(span_hi, cue_hi)
+        chapter_matches = [
+            match
+            for match in _range_matches(max(span_lo, hook_end_index + 1), span_hi)
+            if match[0] not in claimed_chapter_assets
+        ]
+        claimed_chapter_assets.update(asset_id for asset_id, _ in chapter_matches)
         candidates.append(
             SmartPlannerCandidate(
                 candidate_id=_candidate_id("list_item", chapter_words[0].word_id, ordinal),
@@ -1255,11 +1274,17 @@ def _semantic_timeline_v2(
             )
         )
 
+    # A scene-hinted asset is CONTENT anchored to a spoken word, never brand
+    # furniture — Gemini describing a jersey crest as "badge" must not pin a
+    # player photo to a corner for the whole video (2026-07-21 Messi report).
     badge_assets = [
         asset.asset_id
         for asset in assets
-        if {"badge", "skip", "skipad"} & _asset_terms(asset)
-        or "skip ad" in _fold(" ".join((asset.subject, asset.filename, asset.on_screen_text)))
+        if asset.asset_id not in hinted_ids
+        and (
+            {"badge", "skip", "skipad"} & _asset_terms(asset)
+            or "skip ad" in _fold(" ".join((asset.subject, asset.filename, asset.on_screen_text)))
+        )
     ]
     if badge_assets:
         anchor = words[min(1, hook_end_index)]
@@ -1506,6 +1531,7 @@ def _events_from_proposals_v2(
     words: list[SmartWord],
     preset: SmartEditPreset,
     hook_end_word_id: str,
+    scene_hints: _SceneHints | None = None,
 ) -> tuple[list[SmartEditEvent], list[dict[str, str]]]:
     by_id = {word.word_id: word for word in words}
     word_ids = [word.word_id for word in words]
@@ -1517,14 +1543,22 @@ def _events_from_proposals_v2(
     hook_composition_index = 0
     audio_added = False
     last_camera_ms = -1_000_000
+    hint_anchor_ids: dict[str, set[str]] = {}
+    if scene_hints is not None:
+        for _, hint_asset_id, hint_anchor_word_id in scene_hints.matches:
+            hint_anchor_ids.setdefault(hint_asset_id, set()).add(hint_anchor_word_id)
 
+    # Truncate AFTER the chronological sort: merge appends un-matched
+    # deterministic fallbacks (chapter headings included) at the END, so a
+    # pre-sort cut silently dropped whole chapters instead of the latest
+    # low-value events.
     ordered_proposals = sorted(
-        proposals[: preset.density.max_events],
+        proposals,
         key=lambda proposal: (
             index_by_id.get(proposal.start_word_id, len(words)),
             index_by_id.get(proposal.anchor_word_id, len(words)),
         ),
-    )
+    )[: preset.density.max_events]
     for proposal in ordered_proposals:
         if any(
             word_id not in by_id
@@ -1567,13 +1601,34 @@ def _events_from_proposals_v2(
                 if visual_id
                 else proposal.anchor_word_id
             )
-            if visual_anchor_word_id not in by_id or not (
+            anchor_known = visual_anchor_word_id in by_id
+            anchor_in_span = anchor_known and (
                 start_index <= index_by_id[visual_anchor_word_id] <= end_index
-            ):
+            )
+            # A scene-matcher anchor is transcript ground truth even when the
+            # carrying proposal's text span doesn't reach it — a chapter
+            # heading absorbs visuals named later in the same sentence
+            # ("number four ... Elliot Anderson"). Only unhinted out-of-span
+            # anchors are the hallucination class this wall exists for.
+            anchor_hint_grounded = (
+                visual_id is not None
+                and anchor_known
+                and visual_anchor_word_id in hint_anchor_ids.get(visual_id, ())
+            )
+            if not anchor_in_span and not anchor_hint_grounded:
                 omissions.append(
                     {"reason": "unknown_visual_anchor", "anchor": visual_anchor_word_id}
                 )
                 continue
+            event_anchor_word_id = visual_anchor_word_id
+            if not anchor_in_span:
+                # The event model requires its anchor inside the text span;
+                # the true spoken time still drives active_start_ms below.
+                event_anchor_word_id = (
+                    proposal.end_word_id
+                    if index_by_id[visual_anchor_word_id] > end_index
+                    else proposal.start_word_id
+                )
             active_start_ms = by_id[visual_anchor_word_id].start_ms
             if proposal.scene_token == "hook_accumulation":
                 active_end_ms = min(
@@ -1625,7 +1680,7 @@ def _events_from_proposals_v2(
                         role=proposal.role,
                         start_word_id=proposal.start_word_id,
                         end_word_id=proposal.end_word_id,
-                        anchor=EventAnchor(word_id=visual_anchor_word_id, offset_ms=0),
+                        anchor=EventAnchor(word_id=event_anchor_word_id, offset_ms=0),
                         active_start_ms=active_start_ms,
                         active_end_ms=max(active_start_ms + 1, active_end_ms),
                         confidence_tier=proposal.confidence_tier,
@@ -1742,6 +1797,7 @@ def plan_smart_captions(
             words=normalized_words,
             preset=preset,
             hook_end_word_id=semantic.hook_end_word_id,
+            scene_hints=scene_hints,
         )
         document = SmartEditPlanDocument(
             schema_version=SMART_EDIT_SCHEMA_VERSION_V2,

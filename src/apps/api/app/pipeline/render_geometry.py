@@ -373,7 +373,23 @@ def arbitrate_media_overlays(
     protected_regions = [ProtectedRegion.from_value(value) for value in protected_boxes]
     footprints_by_id = footprints_by_id or {}
     occupied: list[tuple[float, float, NormalizedBox]] = []
-    candidates = ((0.2, 0.14), (0.8, 0.14), (0.2, 0.42), (0.8, 0.42), (0.5, 0.2))
+    candidates = (
+        (0.2, 0.14),
+        (0.8, 0.14),
+        (0.2, 0.42),
+        (0.8, 0.42),
+        (0.5, 0.2),
+        # Lower-band fallbacks: on talk-to-camera footage the face and the
+        # chapter heading own the whole top half, so a top-only grid omitted
+        # every chapter visual as no_safe_candidate (2026-07-21 player-photo
+        # report). Captions are protected regions, so the IoU gate still
+        # rejects any lower spot the caption band actually occupies.
+        (0.2, 0.68),
+        (0.8, 0.68),
+        (0.19, 0.81),
+        (0.81, 0.81),
+        (0.5, 0.74),
+    )
     for source in overlays:
         overlay = dict(source)
         if overlay.get("display_mode") == "fullscreen":
@@ -393,7 +409,7 @@ def arbitrate_media_overlays(
         ]
         accepted: dict[str, Any] | None = None
         original_x, original_y = _center_for_overlay(overlay)
-        for shrink in (1.0, 0.85, 0.70):
+        for shrink in (1.0, 0.85, 0.70, 0.55):
             for x_frac, y_frac in (
                 (original_x, original_y),
                 *candidates,

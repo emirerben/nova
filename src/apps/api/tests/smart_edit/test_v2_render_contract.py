@@ -134,6 +134,29 @@ def test_shared_geometry_moves_or_omits_decorative_media() -> None:
         assert receipts[0]["decision"] == "omitted_no_safe_candidate"
 
 
+def test_lower_band_rescues_card_blocked_out_of_the_top() -> None:
+    # Talk-to-camera: face + chapter heading protect the whole top half. The
+    # card must land in the lower band, not die as no_safe_candidate.
+    protected = [NormalizedBox(0.0, 0.0, 1.0, 0.6)]
+    overlays = [
+        {
+            "id": "player-photo",
+            "display_mode": "pip",
+            "position": "top",
+            "scale": 0.3,
+            "start_s": 5.0,
+            "end_s": 8.0,
+        }
+    ]
+
+    resolved, receipts = arbitrate_media_overlays(overlays, protected_boxes=protected)
+
+    assert receipts[0]["decision"] in {"moved", "shrunk"}
+    box = NormalizedBox(**resolved[0]["smart_layout_box"])
+    assert box.top >= 0.55
+    assert box.iou(protected[0]) <= 0.02
+
+
 def test_shared_geometry_keeps_simultaneous_cards_from_stacking() -> None:
     overlays = [
         {

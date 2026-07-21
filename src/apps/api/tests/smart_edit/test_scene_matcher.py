@@ -197,6 +197,151 @@ def test_hint_chapters_never_override_vocab_detected_markers() -> None:
     assert 2 in numbers  # the agent-only chapter is added
 
 
+# ── badge hijack + chapter-cue absorption (2026-07-21 Messi/Anderson report) ─
+
+
+def _player_scenario() -> tuple[list[str], _SceneHints]:
+    words = (
+        "today I present rankings for football now number one Messi Anderson defends "
+        "greatly then more end"
+    ).split()
+    index = {tok: i for i, tok in enumerate(words)}
+    wid = {tok: f"w{i + 1:06d}" for i, tok in enumerate(words)}
+    hints = _SceneHints(
+        matches=[
+            (index["Messi"], "a-messi", wid["Messi"]),
+            (index["Anderson"], "a-anderson", wid["Anderson"]),
+        ],
+        chapter_tags={index["one"]: 1},
+        role_tags={},
+    )
+    return words, hints
+
+
+def test_hinted_asset_never_becomes_persistent_badge() -> None:
+    words, hints = _player_scenario()
+    assets = [
+        # Gemini describes the jersey crest as a "badge" — the term must not
+        # turn a word-anchored player photo into corner furniture.
+        SmartPlannerAsset(
+            asset_id="a-messi",
+            subject="Lionel Messi in Argentina jersey",
+            description="jersey with club badge and logo",
+            filename="messi.jpg",
+        ),
+        SmartPlannerAsset(asset_id="a-skipper", subject="skip ad badge", filename="skip-ad.png"),
+    ]
+
+    semantic = _timeline(words, assets, hints)
+
+    badge = [c for c in semantic.candidates if c.evidence == "persistent badge asset"]
+    assert len(badge) == 1 and badge[0].suggested_asset_ids == ["a-skipper"]
+    wid = {tok: f"w{i + 1:06d}" for i, tok in enumerate(words)}
+    chapter = next(c for c in semantic.candidates if c.sequence_number == 1)
+    assert chapter.suggested_asset_anchor_word_ids.get("a-messi") == wid["Messi"]
+
+
+def test_chapter_absorbs_hint_match_from_overlapping_cue() -> None:
+    words, hints = _player_scenario()
+    assets = [
+        SmartPlannerAsset(asset_id="a-messi", subject="Messi", filename="messi.jpg"),
+        SmartPlannerAsset(asset_id="a-anderson", subject="Anderson", filename="anderson.jpg"),
+    ]
+
+    semantic = _timeline(words, assets, hints)
+
+    # "Anderson" sits past the chapter title but inside the same (skipped)
+    # cue — it must land on the chapter candidate, not vanish.
+    wid = {tok: f"w{i + 1:06d}" for i, tok in enumerate(words)}
+    chapter = next(c for c in semantic.candidates if c.sequence_number == 1)
+    assert chapter.suggested_asset_anchor_word_ids.get("a-messi") == wid["Messi"]
+    assert chapter.suggested_asset_anchor_word_ids.get("a-anderson") == wid["Anderson"]
+
+
+# ── compile walls: hint anchors + truncation (run-3 chapter-loss report) ─────
+
+
+def _compile(proposals, words, hints):
+    from app.smart_edit.planner import _events_from_proposals_v2, _normalize_captions
+
+    normalized, _, _ = _normalize_captions(_cues(words), language="en")
+    preset = load_preset("cigdem", "v2")
+    return _events_from_proposals_v2(
+        proposals,
+        words=normalized,
+        preset=preset,
+        hook_end_word_id=normalized[0].word_id,
+        scene_hints=hints,
+    )
+
+
+def test_out_of_span_hint_anchor_compiles_instead_of_killing_the_event() -> None:
+    from app.agents.smart_edit_planner import SmartPlannerProposal
+
+    words, hints = _player_scenario()
+    wid = {tok: f"w{i + 1:06d}" for i, tok in enumerate(words)}
+    proposal = SmartPlannerProposal(
+        role="list_item",
+        start_word_id=wid["number"],
+        end_word_id=wid["Messi"],
+        anchor_word_id=wid["number"],
+        confidence_tier="high",
+        sequence_number=1,
+        text_token="section_heading",
+        scene_token="single_example",
+        visual_asset_ids=["a-anderson"],
+        # Absorbed from the overlapping cue — spoken AFTER the heading span.
+        visual_anchor_word_ids={"a-anderson": wid["Anderson"]},
+        rationale="test",
+    )
+
+    events, omissions = _compile([proposal], words, hints)
+
+    assert not omissions
+    visuals = [lane for ev in events for lane in ev.lanes if lane.kind == "visual"]
+    assert [lane.asset_id for lane in visuals] == ["a-anderson"]
+
+    # Without the hint the same anchor is the hallucination class the wall
+    # exists for — the visual is dropped (and with it the sole event).
+    events, omissions = _compile([proposal], words, None)
+    assert [o["reason"] for o in omissions] == ["unknown_visual_anchor"]
+    assert not events
+
+
+def test_event_cap_truncates_chronologically_not_by_list_order() -> None:
+    from app.agents.smart_edit_planner import SmartPlannerProposal
+
+    words, hints = _player_scenario()
+    wid = {tok: f"w{i + 1:06d}" for i, tok in enumerate(words)}
+    preset = load_preset("cigdem", "v2")
+    filler = [
+        SmartPlannerProposal(
+            role="example",
+            start_word_id=wid["greatly"],
+            end_word_id=wid["greatly"],
+            anchor_word_id=wid["greatly"],
+            rationale=f"filler-{i}",
+        )
+        for i in range(preset.density.max_events + 1)
+    ]
+    chapter = SmartPlannerProposal(
+        role="list_item",
+        start_word_id=wid["number"],
+        end_word_id=wid["Messi"],
+        anchor_word_id=wid["number"],
+        sequence_number=1,
+        text_token="section_heading",
+        rationale="backfilled chapter",
+    )
+
+    # Merge appends backfilled fallbacks at the END — the cap must still keep
+    # this early-video chapter and shed the latest events instead.
+    events, _ = _compile([*filler, chapter], words, hints)
+
+    roles = [ev.role for ev in events]
+    assert "list_item" in roles
+
+
 # ── _run_scene_matcher gating ────────────────────────────────────────────────
 
 
