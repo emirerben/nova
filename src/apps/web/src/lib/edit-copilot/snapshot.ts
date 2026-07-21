@@ -1,4 +1,4 @@
-import type { DraftSlot } from "@/app/generative/timeline-math";
+import { beatMarks, type DraftSlot } from "@/app/generative/timeline-math";
 import type { EditorCapabilities, MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
@@ -13,6 +13,27 @@ import { sequentialSlotLayout } from "@/app/plan/items/[id]/_editor/editor-bar-d
 import type { CopilotOpFamily } from "./ops";
 
 export const COPILOT_SNAPSHOT_MAX_BYTES = 18000;
+export const COPILOT_BEAT_MARKS_MAX = 60;
+/** Tighter fallback applied by trimSnapshotToBudget when the snapshot exceeds
+ * the byte budget — a second, coarser sampling of the already-capped list. */
+const BEAT_MARKS_TRIM_MAX = 30;
+
+/** Cap by even sampling, never by truncation — the FIRST and LAST marks are
+ * always retained so late-video beats stay addressable for accents near the
+ * end of the cut. Mirrored by `_BEAT_MARKS_SHOWN_MAX` in the server renderer
+ * (app/agents/edit_copilot.py). */
+function strideCapBeatMarks(marks: number[], cap: number): number[] {
+  if (marks.length <= cap) return marks;
+  const lastIndex = marks.length - 1;
+  const sampled: number[] = [];
+  for (let i = 0; i < cap; i++) {
+    const value = marks[Math.round((i * lastIndex) / (cap - 1))];
+    if (sampled.length === 0 || value !== sampled[sampled.length - 1]) {
+      sampled.push(value);
+    }
+  }
+  return sampled;
+}
 
 export interface CopilotClipLike {
   source_duration_s?: number | null;
@@ -138,6 +159,8 @@ export interface CopilotSnapshot {
   total_duration_s: number;
   max_duration_s: 60;
   remaining_duration_s: number;
+  /** Beat positions projected into assembled-output seconds (grid variants only). */
+  beat_marks?: number[];
   sfx?: {
     placements: CopilotSfxPlacementSnapshot[];
     catalog: CopilotSfxCatalogSnapshot[];
@@ -284,6 +307,10 @@ function trimSnapshotToBudget(snapshot: CopilotSnapshot): CopilotSnapshot {
     snapshot.music.candidates = snapshot.music.candidates.slice(0, 10);
   }
   if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (snapshot.beat_marks && snapshot.beat_marks.length > BEAT_MARKS_TRIM_MAX) {
+    snapshot.beat_marks = strideCapBeatMarks(snapshot.beat_marks, BEAT_MARKS_TRIM_MAX);
+  }
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
   if (snapshot.overlays && snapshot.overlays.pending_suggestions.length > 3) {
     snapshot.overlays.pending_suggestions = snapshot.overlays.pending_suggestions.slice(0, 3);
   }
@@ -389,6 +416,10 @@ export function buildCopilotSnapshot(
     remaining_duration_s: roundCopilotNumber(Math.max(0, 60 - total)),
     allowed_op_families: allowedFamilies,
   };
+  const marks = strideCapBeatMarks(beatMarks(slots, grid), COPILOT_BEAT_MARKS_MAX);
+  if (marks.length > 0) {
+    snapshot.beat_marks = marks;
+  }
   if (allowed.has("sfx") && (options.sfxPlacements || options.sfxCatalog)) {
     snapshot.sfx = {
       placements: (options.sfxPlacements ?? []).slice(0, 15).map((placement, index) => ({

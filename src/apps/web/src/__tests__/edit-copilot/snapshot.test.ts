@@ -208,6 +208,85 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.slots.every((snapSlot) => (snapSlot.moment?.length ?? 0) <= 40)).toBe(true);
   });
 
+  it("includes beat marks for grid variants and omits them otherwise", () => {
+    const grid = [0, 0.5, 1.0, 1.5, 2.0];
+    const gridSnapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot({ durationBeats: 4, durationS: null })],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      grid,
+    );
+    expect(gridSnapshot.beat_marks).toEqual([0, 0.5, 1.0, 1.5, 2.0]);
+
+    const noGrid = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+    );
+    expect(noGrid.beat_marks).toBeUndefined();
+  });
+
+  it("caps beat marks by even sampling, always retaining both endpoints", () => {
+    const grid = Array.from({ length: 200 }, (_, i) => i * 0.25);
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot({ durationBeats: 150, durationS: null })],
+      [{ source_duration_s: 60 }],
+      { text_elements: true, timeline: true },
+      grid,
+    );
+    const marks = snapshot.beat_marks ?? [];
+    expect(marks.length).toBeLessThanOrEqual(60);
+    expect(marks[0]).toBe(0);
+    // 150 beats over a 0.25s grid → the true final mark is 37.5s and must
+    // survive sampling (late-video beats stay addressable).
+    expect(marks[marks.length - 1]).toBe(37.5);
+  });
+
+  it("re-samples beat marks under byte-budget pressure", () => {
+    const capped = "x".repeat(80);
+    const longMoment = "x".repeat(2000);
+    const grid = Array.from({ length: 200 }, (_, i) => i * 0.25);
+    const bars = Array.from({ length: 6 }, (_, i) =>
+      bar({ id: `bar-${i}`, text: capped, start_s: i, end_s: i + 0.5 }),
+    ).concat(
+      Array.from({ length: 40 }, (_, i) =>
+        bar({ id: `caption-${i}`, role: "narrated_caption", text: capped, start_s: i, end_s: i + 0.5 }),
+      ),
+    );
+    const slots = [slot({ key: "beats", slotId: "beats", durationBeats: 150, durationS: null })].concat(
+      Array.from({ length: 11 }, (_, i) =>
+        slot({ key: `slot-${i}`, slotId: `slot-${i}`, clipIndex: 0, momentDescription: longMoment }),
+      ),
+    );
+    const snapshot = buildCopilotSnapshot(bars, slots, [{ source_duration_s: 60 }], { sfx: true, overlays: true }, grid, {
+      sfxEnabled: true,
+      sfxPlacements: Array.from({ length: 15 }, (_, i) => sfx({ id: `sfx-${i}` })),
+      sfxCatalog: Array.from({ length: 20 }, (_, i) => effect({ id: `effect-${i}` })),
+      overlaysEnabled: true,
+      overlayCards: Array.from({ length: 12 }, (_, i) => overlay({ id: `overlay-${i}` })),
+      poolAssets: Array.from({ length: 12 }, (_, i) => asset({ id: `asset-${i}`, subject: capped })),
+      pendingSuggestions: Array.from({ length: 6 }, (_, i) => suggestion({ id: `suggestion-${i}`, reason: capped })),
+      captionsPresent: true,
+      captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.7 },
+      musicState: {
+        swappable: true,
+        currentTrackId: "track-1",
+        currentTrackTitle: capped,
+        candidates: Array.from({ length: 20 }, (_, i) => ({ id: `track-${i}`, title: capped })),
+      },
+      mixLevel: 0.5,
+      title: capped,
+      openTools: ["text", "sounds", "overlays", "styles"],
+    });
+
+    expect(byteLength(snapshot)).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
+    expect(snapshot.beat_marks?.length ?? 0).toBeLessThanOrEqual(30);
+    expect(snapshot.beat_marks?.[0]).toBe(0);
+  });
+
   it("emits the intro section and render family only when the variant can switch layouts", () => {
     const snapshot = buildCopilotSnapshot(
       [bar()],

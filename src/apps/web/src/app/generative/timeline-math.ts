@@ -98,6 +98,45 @@ export function slotWindows(slots: DraftSlot[], grid: number[]): SlotWindow[] {
   return out;
 }
 
+/**
+ * Project the beat grid into OUTPUT-timeline seconds across the current cut.
+ * For each non-removed beat-bearing slot, beats offset..offset+durationBeats
+ * map to startS + (grid[k] - grid[offset]). Footage-trimmed / no-beat slots
+ * contribute no marks (their windows are not beat-aligned). Rounded to 3dp,
+ * sorted, adjacent-boundary duplicates collapsed.
+ */
+export function beatMarks(slots: DraftSlot[], grid: number[]): number[] {
+  if (grid.length === 0) return [];
+  const windows = slotWindows(slots, grid);
+  const marks: number[] = [];
+  slots.forEach((slot, i) => {
+    const win = windows[i];
+    if (
+      slot.removed ||
+      win.startS == null ||
+      win.offsetBeats == null ||
+      slot.durationBeats == null
+    ) {
+      return;
+    }
+    // offsetBeats can overrun the grid on malformed drafts (slotWindows clamps
+    // the same way); when it does, `last < k` and the loop emits nothing.
+    const base = grid[Math.min(win.offsetBeats, grid.length - 1)];
+    const last = Math.min(win.offsetBeats + slot.durationBeats, grid.length - 1);
+    for (let k = win.offsetBeats; k <= last; k++) {
+      marks.push(win.startS + (grid[k] - base));
+    }
+  });
+  const rounded = marks
+    .map((m) => Math.round(m * 1000) / 1000)
+    .sort((a, b) => a - b);
+  const out: number[] = [];
+  for (const m of rounded) {
+    if (out.length === 0 || m - out[out.length - 1] > 0.001) out.push(m);
+  }
+  return out;
+}
+
 /** Total seconds of the current (non-removed) cut. */
 export function totalDurationS(slots: DraftSlot[], grid: number[]): number {
   const windows = slotWindows(slots, grid);
