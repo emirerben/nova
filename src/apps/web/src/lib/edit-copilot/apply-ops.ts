@@ -464,7 +464,10 @@ export function applyCopilotOps(
   const snapAtS = (value: number): number => {
     const snapped = snapToBeatMark(value, beatMarksNow());
     const total = ctx.snapshot.total_duration_s;
-    return Number.isFinite(total) ? Math.min(snapped, Math.max(0, total - 0.1)) : snapped;
+    // A 0/absent total (slot-less subtitled variant) must not clamp everything
+    // to second 0 — fall back to the real video duration (already 60s-floored).
+    const cap = Number.isFinite(total) && total > 0 ? total : videoDurationS;
+    return Number.isFinite(cap) ? Math.min(snapped, Math.max(0, cap - 0.1)) : snapped;
   };
   let nextSfx: SoundEffectPlacement[] | undefined;
   let workingSfx = ctx.sfx ?? [];
