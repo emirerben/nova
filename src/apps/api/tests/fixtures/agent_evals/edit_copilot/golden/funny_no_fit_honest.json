@@ -1,0 +1,48 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v6",
+  "input": {
+    "utterance": "add a funny meme sound on the punchline",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline", "sfx"],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [
+        {"output_start_s": 0, "output_end_s": 6.0, "duration_s": 6.0, "moment": "talking to camera"}
+      ],
+      "total_duration_s": 6.0,
+      "speech": {
+        "source": "caption_words",
+        "words": [
+          {"text": "my", "start_s": 0.4, "end_s": 0.55},
+          {"text": "landlord", "start_s": 0.6, "end_s": 1.05},
+          {"text": "raised", "start_s": 1.1, "end_s": 1.4},
+          {"text": "the", "start_s": 1.44, "end_s": 1.5},
+          {"text": "rent", "start_s": 1.55, "end_s": 1.95},
+          {"text": "again", "start_s": 2.0, "end_s": 2.5}
+        ],
+        "pauses": [
+          {"start_s": 2.5, "end_s": 3.4, "after": "again"}
+        ]
+      },
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {"id": "sfx_badge_click", "name": "Smart badge click", "duration_s": 0.3, "role_tags": ["badge_enter"]},
+          {"id": "sfx_keyboard_tick", "name": "Smart keyboard tick", "duration_s": 0.2, "role_tags": ["keyword_typewriter_tick"]}
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"describe\",\"ops\":[],\"confidence\":0.75,\"reply\":\"The sound library doesn't have a meme or comedy sound yet — only clicks and keyboard ticks. The closest fit is the badge click at the pause after 'again' (2.50s); want me to place that instead?\",\"suggestions\":[\"Place the badge click at 2.50s\",\"Skip the sound\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "describe",
+    "ops": [],
+    "confidence": 0.75,
+    "reply": "The sound library doesn't have a meme or comedy sound yet — only clicks and keyboard ticks. The closest fit is the badge click at the pause after 'again' (2.50s); want me to place that instead?",
+    "suggestions": ["Place the badge click at 2.50s", "Skip the sound"],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "funny ask with a UI-only catalog → honest no-fit reply with the closest fit offered; zero mismatched ops placed"}
+}

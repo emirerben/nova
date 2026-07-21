@@ -246,6 +246,37 @@ The variant sits "rendering" until the 60-min reaper (`tasks/reaper.py`)
 converts it to a failed badge; the user recovers by re-tapping Apply. See
 agents/DECISIONS.md (2026-07-11) for the reusable rule.
 
+## Speech map + SFX auto-suggestions (word-level sound design)
+
+**Speech map.** `_variants_for_response` (routes/generative_jobs.py) attaches
+`variant["speech_map"]` — `{source, words: [{w,s,e}], pauses: [{s,e,after}]}` in
+final assembled-timeline seconds — derived on read from the variant's persisted
+word source via `services/transcript_source.speech_words_for_variant`
+(precedence: `transcript` → `caption_cues[].words`; never Whisper on a read
+path) and shaped by `services/speech_map.build_speech_map` (pause = inter-word
+gap ≥ 0.28s, leading silence ≥ 0.5s; head-biased caps 250 words / 40 pauses;
+out-of-range words dropped — coordinate invariant). Only rendered,
+not-mid-re-render variants get the key. The editor forwards it into the copilot
+snapshot as SPEECH WORDS / PAUSE MARKS (omitted while the local clip timeline
+is dirty — the marks describe the persisted render), which is what makes
+"add a click at the pauses in the first 4 seconds" and "place a sound effect on
+the funny moment" answerable with verbatim word/pause times (prompt v6
+speech-sync + moment-intelligence rules).
+
+**SFX auto-suggestions** (`SFX_AUTOPLACE_ENABLED`, default false).
+`_maybe_sfx_autoplace_after_finalize` (tasks/generative_build.py) dispatches
+`autoplace_sfx_suggestions` (tasks/autoplace.py) per eligible variant (rendered,
+once per generation via `sfx_autoplace_attempted`, speech-plausible). The task
+feeds words/pauses/clip-moments + the published SFX glossary (role_tags,
+voice-banned) to the `sfx_placement` agent (prompts/sfx_placement.txt, ONE
+Gemini call); `services/sfx_autoplace.resolve_sfx_suggestions` validates (known
+id, no voice, in-range, 1.5s spacing, cap 6) and persists ADVISORY
+`pending_sfx_suggestions` stamped with `transcript_hash`. The read path
+stale-filters against the current hash (clip re-cuts silently retire them), and
+the copilot lists survivors as PENDING SFX SUGGESTIONS the model realizes as
+ordinary `add_sfx` ops. Deliberately no autoapply twin — suggestions never
+render without a human ask.
+
 ## Visual blocks
 
 `visual_blocks` are first-class, per-variant base-layer replacements for rapid

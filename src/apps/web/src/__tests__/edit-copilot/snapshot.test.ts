@@ -487,3 +487,137 @@ function suggestion(over: Partial<OverlaySuggestion> = {}): OverlaySuggestion {
     ...over,
   };
 }
+
+describe("buildCopilotSnapshot speech + SFX suggestions", () => {
+  const speechMap = {
+    source: "caption_words",
+    words: [
+      { w: "hello", s: 0.62, e: 1.0 },
+      { w: "world", s: 1.5, e: 2.0 },
+    ],
+    pauses: [
+      { s: 0.0, e: 0.62, after: null },
+      { s: 1.0, e: 1.5, after: "hello" },
+    ],
+  };
+
+  it("builds the speech section from a server speech map", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      { speechMap },
+    );
+    expect(snapshot.speech).toEqual({
+      source: "caption_words",
+      words: [
+        { text: "hello", start_s: 0.62, end_s: 1 },
+        { text: "world", start_s: 1.5, end_s: 2 },
+      ],
+      pauses: [
+        { start_s: 0, end_s: 0.62, after: null },
+        { start_s: 1, end_s: 1.5, after: "hello" },
+      ],
+    });
+  });
+
+  it("omits the speech section when the map is null or wordless", () => {
+    const withNull = buildCopilotSnapshot(
+      [bar()], [slot()], [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true }, [], { speechMap: null },
+    );
+    expect(withNull.speech).toBeUndefined();
+    const wordless = buildCopilotSnapshot(
+      [bar()], [slot()], [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true }, [],
+      { speechMap: { source: "x", words: [], pauses: [{ s: 0, e: 1, after: null }] } },
+    );
+    expect(wordless.speech).toBeUndefined();
+  });
+
+  it("passes catalog role_tags through and attaches sfx suggestions", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true, sfx: true },
+      [],
+      {
+        sfxEnabled: true,
+        sfxCatalog: [
+          {
+            id: "fx_tick",
+            name: "Smart keyboard tick",
+            duration_s: 0.2,
+            published_at: null,
+            archived_at: null,
+            status: "ready",
+            source_filename: null,
+            role_tags: ["keyword_typewriter_tick"],
+          },
+        ],
+        sfxSuggestions: [
+          { effect_id: "fx_tick", at_s: 3.1, gain: 0.7, reason: "tick under typing" },
+        ],
+      },
+    );
+    expect(snapshot.sfx?.catalog[0].role_tags).toEqual(["keyword_typewriter_tick"]);
+    expect(snapshot.sfx?.suggestions).toEqual([
+      { effect_id: "fx_tick", at_s: 3.1, gain: 0.7, reason: "tick under typing" },
+    ]);
+  });
+
+  it("head-caps words under moderate budget pressure, keeping pauses", () => {
+    // Words are the overflow source: after the head-cap stage the snapshot
+    // fits, so pauses and the leading 60 words survive.
+    const words = Array.from({ length: 150 }, (_, i) => ({
+      w: `word${i}-${"x".repeat(24)}`,
+      s: i * 0.4,
+      e: i * 0.4 + 0.3,
+    }));
+    const bigMap = { source: "caption_words", words, pauses: [{ s: 1.0, e: 1.5, after: "word2" }] };
+    const bars = Array.from({ length: 28 }, (_, i) =>
+      bar({ id: `bar-${i}`, text: `label ${i} ${"y".repeat(110)}` }),
+    );
+    const snapshot = buildCopilotSnapshot(
+      bars,
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      { speechMap: bigMap },
+    );
+    const bytes = Buffer.byteLength(JSON.stringify(snapshot), "utf8");
+    expect(bytes).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
+    expect(snapshot.speech).toBeDefined();
+    expect(snapshot.speech?.words.length).toBeLessThanOrEqual(60);
+    expect(snapshot.speech?.words[0].text.startsWith("word0")).toBe(true);
+    expect(snapshot.speech?.pauses.length).toBe(1);
+  });
+
+  it("drops the speech section entirely as the last speech trim stage", () => {
+    // The rest of the snapshot alone exceeds the budget — every speech stage
+    // fires and the section is removed rather than shipping a blown budget
+    // with it still attached.
+    const words = Array.from({ length: 150 }, (_, i) => ({
+      w: `word${i}-${"x".repeat(24)}`,
+      s: i * 0.4,
+      e: i * 0.4 + 0.3,
+    }));
+    const bigMap = { source: "caption_words", words, pauses: [{ s: 1.0, e: 1.5, after: "word2" }] };
+    const bars = Array.from({ length: 70 }, (_, i) =>
+      bar({ id: `bar-${i}`, text: `label ${i} ${"y".repeat(110)}` }),
+    );
+    const snapshot = buildCopilotSnapshot(
+      bars,
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      { speechMap: bigMap },
+    );
+    expect(snapshot.speech).toBeUndefined();
+  });
+});

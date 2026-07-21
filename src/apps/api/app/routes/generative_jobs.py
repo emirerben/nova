@@ -316,6 +316,14 @@ class GenerativeVariant(BaseModel):
     # on pool-only jobs, legacy renders, and variants where all shots landed.
     # Present only when ≥1 assigned clip was left unplaced after match().
     unplaced_shots: list[UnplacedShot] | None = None
+    # Spoken-word timing map for the editor + copilot: {"source", "words":
+    # [{"w","s","e"}], "pauses": [{"s","e","after"}]}, assembled-timeline
+    # seconds (see services/speech_map.py). Absent when the variant has no
+    # persisted word-level speech source.
+    speech_map: dict | None = None
+    # Advisory SFX placements proposed by sfx_autoplace (dark-flagged);
+    # stale-filtered against the current transcript hash on every read.
+    pending_sfx_suggestions: list[dict] | None = None
 
     model_config = {"extra": "allow"}
 
@@ -992,6 +1000,43 @@ def _variants_for_response(job: Job) -> list[dict]:
         # the persisted intro_layout — they can never be "sequence".
         intro_mode = v.get("intro_mode") or v.get("intro_layout") or None
         v = {**v, "intro_mode": intro_mode, "sequence_synced": intro_mode == "sequence"}
+        # Speech map (word/pause timing for the editor + copilot): derived from
+        # the un-stripped variant BEFORE the transcript pop below. Only for
+        # variants with a rendered video that isn't mid-re-render — the words
+        # describe the persisted render's timeline. Pure arithmetic (≤250 words),
+        # safe on every poll. None → key absent → the copilot honestly reports
+        # no speech data for this variant.
+        from app.services.speech_map import build_speech_map  # noqa: PLC0415
+        from app.services.transcript_source import (  # noqa: PLC0415
+            compute_transcript_hash,
+            speech_words_for_variant,
+            variant_duration_s,
+        )
+
+        speech_map = None
+        speech_src = None
+        if v.get("video_path") and v.get("render_status") != "rendering":
+            speech_src = speech_words_for_variant(v)
+            if speech_src is not None:
+                speech_map = build_speech_map(speech_src[0], variant_duration_s(v), speech_src[1])
+        if speech_map is not None:
+            v = {**v, "speech_map": speech_map}
+        # Pending SFX suggestions (sfx_autoplace, dark-flagged): advisory-only,
+        # stale-filtered — a suggestion minted against different words/duration
+        # (clip re-cuts, re-transcription) is dropped, not served.
+        raw_sfx_suggestions = v.get("pending_sfx_suggestions")
+        if raw_sfx_suggestions:
+            if speech_map is not None and speech_src is not None:
+                current_hash = compute_transcript_hash(speech_src[0], variant_duration_s(v))
+                fresh_suggestions = [
+                    s
+                    for s in raw_sfx_suggestions
+                    if isinstance(s, dict) and s.get("transcript_hash") == current_hash
+                ]
+            else:
+                # No current speech source → cannot verify freshness → serve none.
+                fresh_suggestions = []
+            v = {**v, "pending_sfx_suggestions": fresh_suggestions}
         # Drop server-only sequence internals from the polled payload: the full
         # per-word `transcript` and parallel `scenes` are read by the reburn path
         # from the persisted Job row, never by the FE. Returning them on every

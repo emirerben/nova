@@ -833,6 +833,13 @@ def _run_generative_job(job_id: str) -> None:
         _maybe_visual_blocks_after_finalize(job_id)
     except Exception as exc:  # noqa: BLE001
         log.warning("visual_blocks_chain_dispatch_failed", job_id=job_id, error=str(exc)[:200])
+    # SFX suggestion chain (word-level sound design). Independent of the overlay
+    # chain's flag/asset guards — it needs speech + the SFX glossary, not the
+    # asset pool. Same AFTER-finalize ordering constraint. Best-effort.
+    try:
+        _maybe_sfx_autoplace_after_finalize(job_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sfx_autoplace_chain_dispatch_failed", job_id=job_id, error=str(exc)[:200])
 
 
 def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
@@ -874,6 +881,56 @@ def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
     except Exception:
         _clear_visual_block_attempts(job_id, eligible)
         raise
+
+
+def _maybe_sfx_autoplace_after_finalize(job_id: str) -> None:
+    """Dispatch advisory SFX suggestions per eligible variant (dark-flagged).
+
+    Guards, in order (each a silent no-op, never raised to the caller):
+      - SFX_AUTOPLACE_ENABLED off ⇒ byte-identical behavior.
+      - Public generative jobs (no content_plan_item_id) ⇒ no-op — the editor
+        surface that realizes suggestions is the plan-item editor.
+      - Per variant: rendered (video_path + ready), only ONCE per render
+        generation (`sfx_autoplace_attempted` marker, same acks_late guard as
+        the overlay chain), and speech-plausible: a persisted word source
+        (sequence transcript / caption cue words / overlay_transcript) OR no
+        matched music track (bounded Whisper on speech is sane; on a song it
+        yields garbage anchors — same rule as the overlay chain).
+    """
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    from app.config import settings as _settings  # noqa: PLC0415
+    from app.services.transcript_source import speech_words_for_variant  # noqa: PLC0415
+    from app.tasks.autoplace import autoplace_sfx_suggestions  # noqa: PLC0415
+
+    if not _settings.sfx_autoplace_enabled:
+        return
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None or job.content_plan_item_id is None:
+            return
+        variants = list((job.assembly_plan or {}).get("variants") or [])
+        eligible: list[str] = []
+        for v in variants:
+            if (
+                v.get("render_status") == "ready"
+                and v.get("video_path")
+                and not v.get("sfx_autoplace_attempted")
+                and (speech_words_for_variant(v) is not None or v.get("music_track_id") is None)
+            ):
+                v["sfx_autoplace_attempted"] = True
+                eligible.append(str(v.get("variant_id")))
+        if not eligible:
+            return
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+        flag_modified(job, "assembly_plan")
+        db.commit()
+    for variant_id in eligible:
+        autoplace_sfx_suggestions.apply_async(
+            args=[job_id, variant_id],
+            queue=_settings.autoplace_queue,
+        )
+    log.info("sfx_autoplace_chain_dispatched", job_id=job_id, variants=eligible)
 
 
 def _maybe_autoplace_after_finalize(job_id: str) -> None:

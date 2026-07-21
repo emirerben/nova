@@ -1,5 +1,5 @@
 import { beatMarks, type DraftSlot } from "@/app/generative/timeline-math";
-import type { EditorCapabilities, MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
+import type { EditorCapabilities, MediaOverlay, OverlaySuggestion, PendingSfxSuggestion, PoolAsset, SoundEffectPlacement, VariantSpeechMap } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -17,6 +17,15 @@ export const COPILOT_BEAT_MARKS_MAX = 60;
 /** Tighter fallback applied by trimSnapshotToBudget when the snapshot exceeds
  * the byte budget — a second, coarser sampling of the already-capped list. */
 const BEAT_MARKS_TRIM_MAX = 30;
+/** Speech caps mirror `_SPEECH_WORDS_SHOWN_MAX` / `_PAUSE_MARKS_SHOWN_MAX` in
+ * the server renderer (app/agents/edit_copilot.py). Head-biased, never strided:
+ * early words carry the hook window ("the first 4 seconds") and phrases must
+ * stay contiguous for punchline reading. */
+export const COPILOT_SPEECH_WORDS_MAX = 150;
+export const COPILOT_PAUSE_MARKS_MAX = 40;
+/** Budget-pressure fallback: head-cap words before dropping them entirely. */
+const SPEECH_WORDS_TRIM_MAX = 60;
+const COPILOT_SFX_SUGGESTIONS_MAX = 6;
 
 /** Cap by even sampling, never by truncation — the FIRST and LAST marks are
  * always retained so late-video beats stay addressable for accents near the
@@ -93,6 +102,34 @@ export interface CopilotSfxCatalogSnapshot {
   id: string;
   name: string;
   duration_s: number | null;
+  /** Closed-vocabulary roles ("keyword_typewriter_tick", ...) — pick-by-fit. */
+  role_tags?: string[];
+}
+
+export interface CopilotSfxSuggestionSnapshot {
+  effect_id: string;
+  at_s: number;
+  gain: number | null;
+  reason: string;
+}
+
+export interface CopilotSpeechWordSnapshot {
+  text: string;
+  start_s: number;
+  end_s: number;
+}
+
+export interface CopilotSpeechPauseSnapshot {
+  start_s: number;
+  end_s: number;
+  /** Word spoken just before the pause; null for a leading silence. */
+  after: string | null;
+}
+
+export interface CopilotSpeechSnapshot {
+  source: string;
+  words: CopilotSpeechWordSnapshot[];
+  pauses: CopilotSpeechPauseSnapshot[];
 }
 
 export interface CopilotOverlayCardSnapshot {
@@ -161,9 +198,15 @@ export interface CopilotSnapshot {
   remaining_duration_s: number;
   /** Beat positions projected into assembled-output seconds (grid variants only). */
   beat_marks?: number[];
+  /** Spoken words + pauses (assembled-output seconds). Omitted when the variant
+   * has no speech source or the local clip timeline is dirty (marks would be
+   * stale against the shifted timeline — same discipline as beat marks). */
+  speech?: CopilotSpeechSnapshot;
   sfx?: {
     placements: CopilotSfxPlacementSnapshot[];
     catalog: CopilotSfxCatalogSnapshot[];
+    /** Advisory server suggestions, realizable via ordinary add_sfx ops. */
+    suggestions?: CopilotSfxSuggestionSnapshot[];
   };
   overlays?: {
     cards: CopilotOverlayCardSnapshot[];
@@ -221,6 +264,11 @@ export interface CaptionCueLike {
 export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
   sfxPlacements?: SoundEffectPlacement[];
   sfxCatalog?: SoundEffectSummary[];
+  /** Server-derived spoken-word/pause map. Pass null (not the map) while the
+   * local clip timeline is dirty — the persisted times no longer match. */
+  speechMap?: VariantSpeechMap | null;
+  /** Advisory SFX suggestions from the auto sound-design pass. */
+  sfxSuggestions?: PendingSfxSuggestion[] | null;
   overlayCards?: MediaOverlay[];
   poolAssets?: PoolAsset[];
   pendingSuggestions?: OverlaySuggestion[];
@@ -322,6 +370,20 @@ function trimSnapshotToBudget(snapshot: CopilotSnapshot): CopilotSnapshot {
   if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
   if (snapshot.overlays && snapshot.overlays.pending_suggestions.length > 3) {
     snapshot.overlays.pending_suggestions = snapshot.overlays.pending_suggestions.slice(0, 3);
+  }
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  // Speech trims are staged: head-cap words (hook window survives) → drop words
+  // but keep pauses (pause placement stays possible) → drop the section.
+  if (snapshot.speech && snapshot.speech.words.length > SPEECH_WORDS_TRIM_MAX) {
+    snapshot.speech.words = snapshot.speech.words.slice(0, SPEECH_WORDS_TRIM_MAX);
+  }
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (snapshot.speech && snapshot.speech.words.length > 0) {
+    snapshot.speech.words = [];
+  }
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (snapshot.speech) {
+    delete snapshot.speech;
   }
   if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
   snapshot.slots = snapshot.slots.map((slot) => ({
@@ -429,7 +491,33 @@ export function buildCopilotSnapshot(
   if (marks.length > 0) {
     snapshot.beat_marks = marks;
   }
-  if (allowed.has("sfx") && (options.sfxPlacements || options.sfxCatalog)) {
+  if (options.speechMap && options.speechMap.words.length > 0) {
+    const speechWords = options.speechMap.words
+      .slice(0, COPILOT_SPEECH_WORDS_MAX)
+      .map((w) => ({
+        text: truncate(w.w, 40) ?? "",
+        start_s: roundCopilotNumber(w.s),
+        end_s: roundCopilotNumber(w.e),
+      }))
+      .filter((w) => w.text.length > 0);
+    if (speechWords.length > 0) {
+      snapshot.speech = {
+        source: options.speechMap.source,
+        words: speechWords,
+        pauses: (options.speechMap.pauses ?? [])
+          .slice(0, COPILOT_PAUSE_MARKS_MAX)
+          .map((p) => ({
+            start_s: roundCopilotNumber(p.s),
+            end_s: roundCopilotNumber(p.e),
+            after: p.after == null ? null : truncate(p.after, 40),
+          })),
+      };
+    }
+  }
+  if (
+    allowed.has("sfx") &&
+    (options.sfxPlacements || options.sfxCatalog || options.sfxSuggestions?.length)
+  ) {
     snapshot.sfx = {
       placements: (options.sfxPlacements ?? []).slice(0, 15).map((placement, index) => ({
         index,
@@ -443,8 +531,20 @@ export function buildCopilotSnapshot(
         id: effect.id,
         name: truncate(effect.name, 32) ?? "",
         duration_s: effect.duration_s == null ? null : roundCopilotNumber(effect.duration_s),
+        ...(effect.role_tags?.length ? { role_tags: effect.role_tags.slice(0, 6) } : {}),
       })),
     };
+    const sfxSuggestions = (options.sfxSuggestions ?? [])
+      .slice(0, COPILOT_SFX_SUGGESTIONS_MAX)
+      .map((s) => ({
+        effect_id: s.effect_id,
+        at_s: roundCopilotNumber(s.at_s),
+        gain: s.gain == null ? null : roundCopilotNumber(s.gain),
+        reason: truncate(s.reason ?? "", 80) ?? "",
+      }));
+    if (sfxSuggestions.length > 0) {
+      snapshot.sfx.suggestions = sfxSuggestions;
+    }
   }
   if (allowed.has("overlay") && (options.overlayCards || options.poolAssets || options.pendingSuggestions)) {
     snapshot.overlays = {
