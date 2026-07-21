@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@jest/globals";
-import { applyCopilotOps } from "@/lib/edit-copilot/apply-ops";
+import { applyCopilotOps, snapToBeatMark } from "@/lib/edit-copilot/apply-ops";
 import { buildCopilotSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -489,6 +489,160 @@ describe("consolidateChips", () => {
       { label: "effect", from: "fade-in", to: "pop-in" },
     ]);
     expect(out).toEqual([{ label: "effect", from: "fade-in", to: "pop-in", count: 3 }]);
+  });
+});
+
+describe("beat mark snapping", () => {
+  const GRID = [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
+
+  function beatCtx() {
+    const bars = [bar(), bar({ id: "bar-2", text: "second", start_s: 3, end_s: 5 })];
+    const slots = [slot({ key: "a", slotId: "a", durationBeats: 6, durationS: null })];
+    const sfxPlacements = [sfx({ at_s: 1.7, gain: 1 })];
+    const sfxCatalog = [effect()];
+    const extras: Parameters<typeof buildCopilotSnapshot>[5] = {
+      sfxEnabled: true,
+      sfxPlacements,
+      sfxCatalog,
+    };
+    return {
+      bars,
+      slots,
+      grid: GRID,
+      snapshot: buildCopilotSnapshot(
+        bars,
+        slots,
+        clips,
+        { text_elements: true, timeline: true, sfx: true },
+        GRID,
+        extras,
+      ),
+      capabilities: { text_elements: true, timeline: true, split_clips: true, sfx: true },
+      sfx: sfxPlacements,
+      sfxCatalog,
+      makeTextBarId: () => "new-text",
+      makeSlotKey: (s: DraftSlot) => `${s.key}-split`,
+      makeSfxPlacementId: () => "new-sfx",
+    };
+  }
+
+  it("exposes beat_marks on the snapshot for grid slots", () => {
+    expect(beatCtx().snapshot.beat_marks).toEqual([0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]);
+  });
+
+  it("snaps near-miss text timings onto the closest beat mark", () => {
+    const result = applyCopilotOps(
+      [{ op: "set_text_timing", bar_index: 0, start_s: 0.55, end_s: 2.93 }],
+      beatCtx(),
+    );
+    expect(result.rejected).toEqual([]);
+    expect(result.textActions).toEqual([
+      { type: "PATCH_BAR", id: "bar-1", patch: { start_s: 0.5, end_s: 3.0 } },
+    ]);
+  });
+
+  it("snaps add_sfx onto a beat but leaves deliberate off-beat times alone", () => {
+    const snapped = applyCopilotOps(
+      [{ op: "add_sfx", effect_id: "effect-1", at_s: 2.45, gain: 1 }],
+      beatCtx(),
+    );
+    expect(snapped.rejected).toEqual([]);
+    expect(snapped.nextSfx?.[1]?.at_s).toBe(2.5);
+
+    const offBeat = applyCopilotOps(
+      [{ op: "add_sfx", effect_id: "effect-1", at_s: 1.73, gain: 1 }],
+      beatCtx(),
+    );
+    expect(offBeat.rejected).toEqual([]);
+    expect(offBeat.nextSfx?.[1]?.at_s).toBe(1.73);
+  });
+
+  it("snaps patch_sfx near-miss moves onto the beat", () => {
+    const result = applyCopilotOps(
+      [{ op: "patch_sfx", sfx_index: 0, at_s: 1.05 }],
+      beatCtx(),
+    );
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSfx?.[0]?.at_s).toBe(1.0);
+  });
+
+  it("pins the snap epsilon boundary, ties, and empty-marks behavior", () => {
+    const marks = [1.0, 2.0];
+    expect(snapToBeatMark(1.119, marks)).toBe(1.0); // inside epsilon: snaps
+    expect(snapToBeatMark(1.121, marks)).toBe(1.121); // just past: untouched
+    expect(snapToBeatMark(1.5, marks)).toBe(1.5); // equidistant but outside epsilon
+    expect(snapToBeatMark(0.95, [])).toBe(0.95);
+    expect(snapToBeatMark(0.95, undefined)).toBe(0.95);
+  });
+
+  it("stops snapping after a clip-timeline mutation in the same bundle", () => {
+    const result = applyCopilotOps(
+      [
+        { op: "set_clip_duration", slot_index: 0, duration_s: 2.0 },
+        { op: "add_sfx", effect_id: "effect-1", at_s: 2.45, gain: 1 },
+      ],
+      beatCtx(),
+    );
+    expect(result.rejected).toEqual([]);
+    // The clip trim shifted the timeline; the stale 2.5 mark must NOT attract
+    // the SFX — the raw time passes through instead.
+    expect(result.nextSfx?.[1]?.at_s).toBe(2.45);
+  });
+
+  it("re-clamps an SFX snapped onto the terminal beat mark", () => {
+    // Validator clamps 2.95 → 2.9, snap would pull it to the 3.0 end mark —
+    // the post-snap clamp keeps it inside the audible window.
+    const result = applyCopilotOps(
+      [{ op: "add_sfx", effect_id: "effect-1", at_s: 2.95, gain: 1 }],
+      beatCtx(),
+    );
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSfx?.[1]?.at_s).toBe(2.9);
+  });
+
+  it("keeps a deliberately short span from collapsing onto one mark", () => {
+    const result = applyCopilotOps(
+      [{ op: "set_text_timing", bar_index: 0, start_s: 0.45, end_s: 0.55 }],
+      beatCtx(),
+    );
+    expect(result.rejected).toEqual([]);
+    const patch = (result.textActions[0] as { patch: { start_s: number; end_s: number } }).patch;
+    expect(patch.start_s).toBe(0.5);
+    expect(patch.end_s).toBeGreaterThan(patch.start_s);
+  });
+
+  it("snaps overlay spans onto beat marks", () => {
+    const base = beatCtx();
+    const withOverlays = {
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        allowed_op_families: [...base.snapshot.allowed_op_families, "overlay" as const],
+        overlays: { cards: [], asset_pool: [{ id: "asset-1", kind: "image" as const, subject: null, duration_s: null }], pending_suggestions: [] },
+      },
+      capabilities: { ...base.capabilities, overlays: true },
+      overlays: [],
+      poolAssets: [asset()],
+      makeOverlayId: () => "new-overlay",
+    };
+    const result = applyCopilotOps(
+      [{ op: "add_overlay", asset_id: "asset-1", start_s: 0.55, end_s: 2.45 }],
+      withOverlays,
+    );
+    expect(result.rejected).toEqual([]);
+    expect(result.nextOverlays?.[0]).toMatchObject({ start_s: 0.5, end_s: 2.5 });
+  });
+
+  it("does not snap when the snapshot has no beat marks", () => {
+    const noGrid = ctx();
+    expect(noGrid.snapshot.beat_marks).toBeUndefined();
+    const result = applyCopilotOps(
+      [{ op: "set_text_timing", bar_index: 0, start_s: 0.55, end_s: 2.93 }],
+      noGrid,
+    );
+    expect(result.textActions).toEqual([
+      { type: "PATCH_BAR", id: "bar-1", patch: { start_s: 0.55, end_s: 2.93 } },
+    ]);
   });
 });
 

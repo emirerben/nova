@@ -10,6 +10,7 @@ state and the existing editor-commit path validates again on Save.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Iterable
 from typing import Any, ClassVar, Literal
@@ -24,9 +25,14 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-07-13-v3"
+EDIT_COPILOT_PROMPT_VERSION = "2026-07-21-v4"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
-_MAX_OPS = 8
+# Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
+# eval structural gate (tests/evals/runners/structural.py imports this).
+_MAX_OPS = 12
+# Renderer-side guard only — the producer (snapshot.ts COPILOT_BEAT_MARKS_MAX)
+# stride-caps to the same count before sending, preserving late-video marks.
+_BEAT_MARKS_SHOWN_MAX = 60
 _TEXT_INDEX_KEYS = ("text_bars", "textBars", "bars", "text_elements", "textElements")
 _SLOT_INDEX_KEYS = ("slots", "local_slots", "localSlots")
 
@@ -229,12 +235,27 @@ def _slot_window(slot: dict) -> tuple[float | None, float | None]:
     return start, end
 
 
+def _safe_finite_float(value: object) -> float | None:
+    """Coerce an untrusted snapshot value to a finite float, or None.
+
+    json.loads yields arbitrary-precision ints (float() can raise OverflowError)
+    and accepts Infinity/NaN literals — none of which may reach the prompt.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return result if math.isfinite(result) else None
+
+
 def _first_number(data: dict, keys: Iterable[str]) -> float | None:
     for key in keys:
         if key in data:
             try:
                 return float(data[key])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return None
     return None
 
@@ -344,6 +365,24 @@ def _format_snapshot(snapshot: dict) -> str:
             )
     else:
         lines.append("(none)")
+
+    beat_marks = snapshot.get("beat_marks")
+    if isinstance(beat_marks, list):
+        marks = [m for m in (_safe_finite_float(v) for v in beat_marks) if m is not None]
+        if marks:
+            shown = marks[:_BEAT_MARKS_SHOWN_MAX]
+            intervals = sorted(b - a for a, b in zip(shown, shown[1:]) if b > a)
+            lines.append(
+                "\nMUSIC BEAT MARKS (assembled-timeline seconds; when beat-syncing, "
+                "copy timing values exactly from this list):"
+            )
+            lines.append(", ".join(_fmt_round3(m) for m in shown))
+            if intervals:
+                # "listed marks", not "beats": the producer may stride-cap a
+                # long grid, so consecutive listed marks can span several beats.
+                lines.append(
+                    f"median interval between listed marks: {intervals[len(intervals) // 2]:.3f}s"
+                )
 
     if isinstance(snapshot.get("sfx"), dict):
         sfx = snapshot["sfx"]

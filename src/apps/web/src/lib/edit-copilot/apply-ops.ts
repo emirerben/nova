@@ -261,6 +261,48 @@ function labelForOp(op: CopilotOp): string {
   return _exhaustive;
 }
 
+/** Beat fidelity is not prompt-only: a model-proposed timing within this window
+ * of a snapshot beat mark snaps exactly onto it. Times farther away are treated
+ * as deliberate non-beat placements and pass through untouched. */
+export const BEAT_SNAP_EPSILON_S = 0.12;
+
+export function snapToBeatMark(value: number, marks: number[] | undefined): number {
+  if (!marks || marks.length === 0) return value;
+  let best = value;
+  let bestDiff = Number.POSITIVE_INFINITY;
+  for (const mark of marks) {
+    const diff = Math.abs(mark - value);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = mark;
+    }
+  }
+  return bestDiff <= BEAT_SNAP_EPSILON_S ? best : value;
+}
+
+function snapOptToBeatMark(
+  value: number | undefined,
+  marks: number[] | undefined,
+): number | undefined {
+  return value === undefined ? undefined : snapToBeatMark(value, marks);
+}
+
+/** Snap a start/end span. Snapping both edges onto the SAME mark would collapse
+ * a deliberately short span (min-duration clamps then push the end off-beat),
+ * so when that happens the raw end is kept instead. */
+function snapSpanToBeatMarks(
+  startS: number | undefined,
+  endS: number | undefined,
+  marks: number[] | undefined,
+): { startS: number | undefined; endS: number | undefined } {
+  const snappedStart = snapOptToBeatMark(startS, marks);
+  let snappedEnd = snapOptToBeatMark(endS, marks);
+  if (snappedStart !== undefined && snappedEnd !== undefined && snappedStart === snappedEnd) {
+    snappedEnd = endS;
+  }
+  return { startS: snappedStart, endS: snappedEnd };
+}
+
 function textSnapAt(snapshot: CopilotSnapshot, index: number): CopilotTextSnapshotBar | null {
   return snapshot.text_bars[index] ?? null;
 }
@@ -410,6 +452,20 @@ export function applyCopilotOps(
   const allowedFamilies = new Set(ctx.snapshot.allowed_op_families);
   let nextSlots: DraftSlot[] | null = null;
   let workingSlots = ctx.slots;
+  // Any clip-timeline mutation this turn shifts the output timeline and stales
+  // every beat mark the snapshot carried, so snapping stops for later ops in
+  // the same bundle (the prompt forbids mixing the two; this enforces it).
+  let timelineMutated = false;
+  const beatMarksNow = (): number[] | undefined =>
+    timelineMutated ? undefined : ctx.snapshot.beat_marks;
+  // The validator's clampAtS runs BEFORE snapping, so a snap onto the terminal
+  // beat mark (== video end) could escape the end clamp and place an inaudible
+  // SFX at the exact last instant. Re-apply the clamp after snapping.
+  const snapAtS = (value: number): number => {
+    const snapped = snapToBeatMark(value, beatMarksNow());
+    const total = ctx.snapshot.total_duration_s;
+    return Number.isFinite(total) ? Math.min(snapped, Math.max(0, total - 0.1)) : snapped;
+  };
   let nextSfx: SoundEffectPlacement[] | undefined;
   let workingSfx = ctx.sfx ?? [];
   let nextOverlays: MediaOverlay[] | undefined;
@@ -535,9 +591,10 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "timing was changed after Nova read it"));
         continue;
       }
+      const span = snapSpanToBeatMarks(op.start_s, op.end_s, beatMarksNow());
       const next = applyTextTimingInput({
-        startS: op.start_s ?? bar.start_s,
-        endS: op.end_s ?? bar.end_s,
+        startS: span.startS ?? bar.start_s,
+        endS: span.endS ?? bar.end_s,
         videoDurationS,
       });
       textActions.push({ type: "PATCH_BAR", id: bar.id, patch: next });
@@ -547,9 +604,10 @@ export function applyCopilotOps(
         to: `${fmtSeconds(next.start_s)}-${fmtSeconds(next.end_s)}`,
       });
     } else if (op.op === "add_text") {
+      const addSpan = snapSpanToBeatMarks(op.start_s, op.end_s, beatMarksNow());
       const timing = applyTextTimingInput({
-        startS: op.start_s,
-        endS: op.end_s,
+        startS: addSpan.startS ?? op.start_s,
+        endS: addSpan.endS ?? op.end_s,
         videoDurationS,
       });
       const bar: TextElementBar = {
@@ -605,6 +663,7 @@ export function applyCopilotOps(
       const before = slotDuration(slots, grid, index);
       workingSlots = slots.map((s) => (s.key === slot.key ? { ...s, ...patch } : s));
       nextSlots = workingSlots;
+      timelineMutated = true;
       applied.push({ label: `Clip ${op.slot_index + 1}`, from: fmtSeconds(before), to: fmtSeconds(patch.durationS ?? before) });
     } else if (op.op === "set_clip_in") {
       const snap = slotSnapAt(ctx.snapshot, op.slot_index);
@@ -627,6 +686,7 @@ export function applyCopilotOps(
       });
       workingSlots = slots.map((s) => (s.key === slot.key ? { ...s, ...patch } : s));
       nextSlots = workingSlots;
+      timelineMutated = true;
       applied.push({ label: `Clip ${op.slot_index + 1} in`, from: fmtSeconds(slot.inS), to: fmtSeconds(patch.inS) });
     } else if (op.op === "reorder_clip") {
       const slots = currentSlots();
@@ -648,6 +708,7 @@ export function applyCopilotOps(
       sequentialSlotLayout(reordered, grid);
       workingSlots = reordered;
       nextSlots = reordered;
+      timelineMutated = true;
       applied.push({ label: "Clip order", from: `${op.from_index + 1}`, to: `${op.to_index + 1}` });
     } else if (op.op === "remove_clip") {
       const snap = slotSnapAt(ctx.snapshot, op.slot_index);
@@ -669,6 +730,7 @@ export function applyCopilotOps(
       }
       workingSlots = res.slots;
       nextSlots = res.slots;
+      timelineMutated = true;
       applied.push({ label: `Clip ${op.slot_index + 1}`, from: "present", to: "removed" });
     } else if (op.op === "split_clip") {
       const snap = slotSnapAt(ctx.snapshot, op.slot_index);
@@ -690,6 +752,7 @@ export function applyCopilotOps(
       }
       workingSlots = res.slots;
       nextSlots = res.slots;
+      timelineMutated = true;
       applied.push({ label: `Split clip ${op.slot_index + 1}`, from: "one clip", to: "two clips" });
     } else if (op.op === "add_sfx") {
       const snapCatalogEntry = ctx.snapshot.sfx?.catalog.find((effect) => effect.id === op.effect_id) ?? null;
@@ -700,18 +763,19 @@ export function applyCopilotOps(
       }
       const label = "name" in catalogEntry ? catalogEntry.name : snapCatalogEntry.name;
       const duration = catalogEntry.duration_s ?? snapCatalogEntry.duration_s ?? null;
+      const atS = snapAtS(op.at_s);
       const placement: SoundEffectPlacement = {
         id: ctx.makeSfxPlacementId?.() ?? defaultSfxPlacementId(),
         sound_effect_id: op.effect_id,
         src_gcs_path: "",
-        at_s: op.at_s,
+        at_s: atS,
         gain: op.gain,
         duration_s: duration,
         label,
       };
       workingSfx = [...currentSfx(), placement];
       nextSfx = workingSfx;
-      applied.push({ label: `Added "${label}"`, from: "none", to: fmtSeconds(op.at_s) });
+      applied.push({ label: `Added "${label}"`, from: "none", to: fmtSeconds(atS) });
     } else if (op.op === "patch_sfx") {
       const snap = sfxSnapAt(ctx.snapshot, op.sfx_index);
       const placements = currentSfx();
@@ -728,8 +792,9 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "sound placement changed after Nova read it"));
         continue;
       }
+      const snappedAtS = op.at_s === undefined ? undefined : snapAtS(op.at_s);
       const patch: Partial<SoundEffectPlacement> = {
-        ...(op.at_s !== undefined ? { at_s: op.at_s } : {}),
+        ...(snappedAtS !== undefined ? { at_s: snappedAtS } : {}),
         ...(op.gain !== undefined ? { gain: op.gain } : {}),
       };
       workingSfx = placements.map((sfx) => (sfx.id === placement.id ? { ...sfx, ...patch } : sfx));
@@ -738,7 +803,7 @@ export function applyCopilotOps(
         applied.push({
           label: field === "at_s" ? "Moved sound" : "Sound volume",
           from: field === "at_s" ? fmtSeconds(placement.at_s) : fmt(placement.gain),
-          to: field === "at_s" ? fmtSeconds(op.at_s ?? placement.at_s) : fmt(op.gain ?? placement.gain),
+          to: field === "at_s" ? fmtSeconds(snappedAtS ?? placement.at_s) : fmt(op.gain ?? placement.gain),
         });
       }
     } else if (op.op === "remove_sfx") {
@@ -765,7 +830,13 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "overlay changed after Nova read it"));
         continue;
       }
-      workingOverlays = overlays.map((overlay) => (overlay.id === card.id ? { ...overlay, ...op.patch } : overlay));
+      const overlaySpan = snapSpanToBeatMarks(op.patch.start_s, op.patch.end_s, beatMarksNow());
+      const overlayPatch = {
+        ...op.patch,
+        ...(overlaySpan.startS !== undefined ? { start_s: overlaySpan.startS } : {}),
+        ...(overlaySpan.endS !== undefined ? { end_s: overlaySpan.endS } : {}),
+      };
+      workingOverlays = overlays.map((overlay) => (overlay.id === card.id ? { ...overlay, ...overlayPatch } : overlay));
       nextOverlays = workingOverlays;
       applied.push({
         label: patchKeys.some((key) => key === "start_s" || key === "end_s") ? "Moved overlay" : "Overlay updated",
@@ -791,6 +862,7 @@ export function applyCopilotOps(
         continue;
       }
       const overlays = currentOverlays();
+      const addOverlaySpan = snapSpanToBeatMarks(op.start_s, op.end_s, beatMarksNow());
       const card: MediaOverlay = {
         id: ctx.makeOverlayId?.() ?? defaultOverlayId(),
         kind: asset.kind,
@@ -802,8 +874,8 @@ export function applyCopilotOps(
         y_frac: op.y_frac ?? 0.5,
         scale: op.scale ?? 0.35,
         display_mode: op.display_mode ?? "pip",
-        start_s: op.start_s,
-        end_s: op.end_s,
+        start_s: addOverlaySpan.startS ?? op.start_s,
+        end_s: addOverlaySpan.endS ?? op.end_s,
         z: overlays.length,
       };
       workingOverlays = [...overlays, card];

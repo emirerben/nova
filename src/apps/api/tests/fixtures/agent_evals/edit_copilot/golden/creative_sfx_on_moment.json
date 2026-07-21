@@ -1,0 +1,38 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v4",
+  "input": {
+    "utterance": "add a sound effect where it makes sense",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline", "sfx"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "lake day with the dog", "start_s": 0, "end_s": 2.4, "size_px": 72}],
+      "slots": [
+        {"output_start_s": 0, "output_end_s": 2.4, "duration_s": 2.4, "moment": "walking the dock"},
+        {"output_start_s": 2.4, "output_end_s": 4.8, "duration_s": 2.4, "moment": "dog leaps into the lake"}
+      ],
+      "total_duration_s": 4.8,
+      "beat_marks": [0, 0.6, 1.2, 1.8, 2.4, 3.0, 3.6, 4.2, 4.8],
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {"id": "sfx_splash", "name": "Splash", "duration_s": 0.7},
+          {"id": "sfx_whoosh", "name": "Whoosh", "duration_s": 0.4}
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"add_sfx\",\"effect_id\":\"sfx_splash\",\"at_s\":2.4,\"gain\":1}],\"confidence\":0.82,\"reply\":\"Dropped a splash right on the beat where the dog leaps in.\",\"suggestions\":[\"Add a whoosh on the run-up\",\"Lower the splash volume\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {"op": "add_sfx", "effect_id": "sfx_splash", "at_s": 2.4, "gain": 1}
+    ],
+    "confidence": 0.82,
+    "reply": "Dropped a splash right on the beat where the dog leaps in.",
+    "suggestions": ["Add a whoosh on the run-up", "Lower the splash volume"],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "SFX chosen from catalog by slot moment, placed on the matching beat mark"}
+}

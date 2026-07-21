@@ -5,6 +5,7 @@
  */
 
 import {
+  beatMarks,
   beatsForWindowSeconds,
   fieldsDiffer,
   type DraftSlot,
@@ -129,5 +130,58 @@ describe("fieldsDiffer", () => {
     const a = slot({ durationBeats: null, inS: 0, durationS: 2.0 });
     const b = slot({ durationBeats: null, inS: 0.5, durationS: 1.5 });
     expect(fieldsDiffer(a, b)).toBe(true); // counts as 1 via countEdits
+  });
+});
+
+// ── beatMarks ─────────────────────────────────────────────────────────────────
+
+describe("beatMarks", () => {
+  it("returns [] for an empty grid", () => {
+    expect(beatMarks([slot({ durationBeats: null, durationS: 3 })], [])).toEqual([]);
+  });
+
+  it("projects beat-bearing slots into output-timeline seconds", () => {
+    // Slot A consumes beats 0..2 (0, 0.5, 1.2); slot C beats 2..5 from a fresh
+    // output start after the non-beat slot B.
+    const slots = [
+      slot({ key: "a", durationBeats: 2 }),
+      slot({ key: "b", durationBeats: null, durationS: 2.0 }),
+      slot({ key: "c", durationBeats: 3 }),
+    ];
+    // A: startS 0 → marks 0, 0.5, 1.2
+    // B: footage-trimmed → no marks, offset does not advance
+    // C: startS 3.2, offset 2 → marks 3.2, 3.2+0.4, 3.2+1.3, 3.2+1.8
+    expect(beatMarks(slots, GRID)).toEqual([0, 0.5, 1.2, 3.2, 3.6, 4.5, 5.0]);
+  });
+
+  it("collapses the shared boundary between adjacent beat slots", () => {
+    const slots = [slot({ key: "a", durationBeats: 2 }), slot({ key: "c", durationBeats: 3 })];
+    // A ends at 1.2; C starts at 1.2 — the shared mark appears once.
+    expect(beatMarks(slots, GRID)).toEqual([0, 0.5, 1.2, 1.6, 2.5, 3.0]);
+  });
+
+  it("skips removed slots entirely", () => {
+    const slots = [
+      slot({ key: "a", durationBeats: 2 }),
+      slot({ key: "r", durationBeats: 4, removed: true }),
+      slot({ key: "c", durationBeats: 3 }),
+    ];
+    // Removed slot contributes nothing and does not advance offset/startS.
+    expect(beatMarks(slots, GRID)).toEqual([0, 0.5, 1.2, 1.6, 2.5, 3.0]);
+  });
+
+  it("emits no marks when every slot is footage-trimmed", () => {
+    const slots = [
+      slot({ key: "a", durationBeats: null, durationS: 2 }),
+      slot({ key: "b", durationBeats: null, durationS: 3 }),
+    ];
+    expect(beatMarks(slots, GRID)).toEqual([]);
+  });
+
+  it("clamps beat walks that overrun the grid tail", () => {
+    // 3 stamps → at most 2 beats servable; slot asks for 5.
+    const shortGrid = [0, 0.5, 1.0];
+    const slots = [slot({ key: "a", durationBeats: 5 })];
+    expect(beatMarks(slots, shortGrid)).toEqual([0, 0.5, 1.0]);
   });
 });

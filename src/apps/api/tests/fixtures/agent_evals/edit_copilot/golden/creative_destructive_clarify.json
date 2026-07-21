@@ -1,0 +1,35 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v4",
+  "input": {
+    "utterance": "clean this up, get rid of the clutter",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline", "sfx"],
+      "has_narrated_captions": false,
+      "text_bars": [
+        {"text": "pov: sunday reset", "start_s": 0, "end_s": 2.4, "size_px": 72},
+        {"text": "everything in its place", "start_s": 2.4, "end_s": 4.8, "size_px": 54},
+        {"text": "watch till the end", "start_s": 4.8, "end_s": 7.2, "size_px": 48}
+      ],
+      "slots": [
+        {"output_start_s": 0, "output_end_s": 2.4, "duration_s": 2.4, "moment": "opening the curtains"},
+        {"output_start_s": 2.4, "output_end_s": 4.8, "duration_s": 2.4, "moment": "folding laundry"},
+        {"output_start_s": 4.8, "output_end_s": 7.2, "duration_s": 2.4, "moment": "lighting a candle"}
+      ],
+      "total_duration_s": 7.2,
+      "beat_marks": [0, 0.6, 1.2, 1.8, 2.4, 3.0, 3.6, 4.2, 4.8, 5.4, 6.0, 6.6, 7.2],
+      "sfx": {"placements": [], "catalog": [{"id": "sfx_pop", "name": "Pop", "duration_s": 0.2}]}
+    }
+  },
+  "raw_text": "{\"intent\":\"clarify\",\"ops\":[],\"confidence\":0.5,\"reply\":\"Cleaning up likely means removing some of the three text lines - which should go, or should I just simplify their styling?\",\"suggestions\":[\"Remove the last line\",\"Simplify the styling\"],\"needs_clarification\":true}",
+  "output": {
+    "intent": "clarify",
+    "ops": [],
+    "confidence": 0.5,
+    "reply": "Cleaning up likely means removing some of the three text lines - which should go, or should I just simplify their styling?",
+    "suggestions": ["Remove the last line", "Simplify the styling"],
+    "needs_clarification": true
+  },
+  "meta": {"source": "hand_authored_golden", "case": "aesthetic ask over a populated draft that implies destruction still clarifies under v4"}
+}

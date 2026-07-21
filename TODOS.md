@@ -8,6 +8,23 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Edit copilot creative capabilities — deferred lanes (from copilot-creative PR)
+
+### In-montage visual effects for generative renders (transitions / zoom / speed ramps)
+**What:** Give the copilot (and the editor) real render-time visual effects at moments: xfade transitions between generative montage slots, punch-in/zoom on a moment, speed ramps. `pipeline/transitions.py` (`join_with_transitions`) and `pipeline/interstitials.py` exist but are NOT wired into `tasks/generative_build.py` (montage passes `interstitials=[]` and never calls transitions); `speed_factor` exists in the music recipe but the montage path applies no speed ramp. There is no zoom/punch-in module at all.
+**Why:** "Add visual effects to moments that need it" currently means media overlays / fullscreen cutaways / text effects only. Transition-and-motion language is the visible gap between Nova's output and hand-made TikToks.
+**How:** Wire `join_with_transitions` into the generative assembly behind a flag; add a per-slot `effects` list to `user_timeline`/`ai_timeline` (e.g. `{"kind":"punch_in","at_s":...}`) honored at render; then expose as new copilot render-ops (they need re-render, so they join `_RENDER_OPS`, not the instant lane). Mind the encoder policy (final encodes ≥ `preset=fast`) and the Celery time-limit budget.
+**Effort:** L (CC: multi-day — new render surface + flags + parity tests)
+**Priority:** P2
+**Depends on:** copilot-creative PR (beat marks give the ops their timing vocabulary)
+
+### Server-side beat-driven SFX auto-suggestion
+**What:** Extend the `build_suggestions`-style auto-placement engine (`services/overlay_autoplace.py`) to propose SFX placements on beat marks near high-energy moments, so the editor (and a copilot accept-suggestion flow) can offer one-tap sound accents.
+**Why:** The copilot now places SFX on beats when asked; proactive suggestions close the loop for users who don't ask.
+**Effort:** M (CC: ~half day)
+**Priority:** P3
+**Depends on:** SOUND_EFFECTS_ENABLED rollout state
+
 ## Editor virtual preview — follow-ups (from v0.7.30.1)
 
 ### T-VPM-1 — Music preview shorter than the edited cut ends silently

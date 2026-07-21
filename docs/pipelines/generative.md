@@ -129,6 +129,32 @@ AI's assembly decisions, not pixels.
   enforces the API's 50-element / 500-character limits before mutating the timeline,
   so rejected drafts never create empty or unsavable bars.
 
+### Edit-copilot beat marks (creative direction)
+
+The chat edit copilot sees and honors the music's beat grid (v0.11.4.0):
+
+- **Snapshot contract:** `buildCopilotSnapshot` ships `beat_marks` — the beat grid
+  projected into assembled-output seconds by `beatMarks()` in
+  `src/apps/web/src/app/generative/timeline-math.ts` (grid variants only; removed
+  and footage-trimmed slots contribute no marks). Capped by endpoint-preserving
+  even sampling, never truncation: `COPILOT_BEAT_MARKS_MAX = 60`, re-sampled to 30
+  when the snapshot exceeds its byte budget — first/last marks always survive so
+  late-video beats stay addressable. Renderer-side mirror: `_BEAT_MARKS_SHOWN_MAX`
+  in `app/agents/edit_copilot.py` (MUSIC BEAT MARKS prompt section; non-finite /
+  overflow values filtered before rendering).
+- **Client-side snapping:** beat fidelity is not prompt-only. `applyCopilotOps`
+  snaps model-proposed text/SFX/overlay timings within `BEAT_SNAP_EPSILON_S =
+  0.12` s onto the nearest mark (`src/apps/web/src/lib/edit-copilot/apply-ops.ts`);
+  farther timings pass through as deliberate non-beat placements. A span whose
+  edges would collapse onto one mark keeps its raw end, and snapped SFX re-clamp
+  below `total_duration_s - 0.1` so the terminal beat mark can't place an
+  inaudible accent at the video's last instant.
+- **Stale-marks rule:** any clip-timeline mutation in a bundle disables snapping
+  for the bundle's later ops — the timeline shift stales every snapshot mark.
+  Prompt v4 (`EDIT_COPILOT_PROMPT_VERSION = 2026-07-21-v4`) forbids mixing
+  beat-sync and clip re-cuts in one reply; the client enforces it. Creative
+  bundles carry up to `_MAX_OPS = 12` ops.
+
 ### Video-length song windows
 
 Beat-synced `song_text` and `song_lyrics` variants can move an exact-video-duration
