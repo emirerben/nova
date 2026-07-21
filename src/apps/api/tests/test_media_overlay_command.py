@@ -567,3 +567,32 @@ class TestPassBudgetDeadlineClamp:
         monkeypatch.setattr(mo.time, "monotonic", lambda: 1000.0)
         with pytest.raises(mo.MediaOverlayError, match="task deadline"):
             mo._resolve_pass_budget(True, 1000.0 + mo._DEADLINE_FLOOR_S - 1)
+
+
+class TestLoopedImageInputBound:
+    """Prod job 4010a394 (2026-07-21): unbounded -loop 1 image inputs made
+    ffmpeg rescale every pool image across the ENTIRE base — 8 cards on a 90s
+    clip crossed the 600s PIP timeout on shared CPUs and the visuals pass
+    failed open. Every looped image input must carry a -t bound at the card's
+    window end."""
+
+    def test_image_input_bounded_to_card_window_end(self):
+        cmd = _build([_card_img(start_s=2.0, end_s=7.5)], ["/tmp/img.jpg"], [432])
+        i = cmd.index("-loop")
+        assert cmd[i : i + 4] == ["-loop", "1", "-t", "7.500"]
+        assert cmd[i + 4] == "-i"
+
+    def test_video_input_has_no_loop_or_t_bound(self):
+        cmd = _build([_card_video()], ["/tmp/clip.mp4"], [432])
+        assert "-loop" not in cmd
+        assert "-t" not in cmd
+
+    def test_equal_duplicate_cards_use_positional_paths(self):
+        # Two EQUAL cards (same asset + geometry, different local files) must
+        # consume their own positional paths — cards.index() collapsed both
+        # onto the first path before the fix.
+        a = _card_img(start_s=1.0, end_s=4.0)
+        b = _card_img(start_s=1.0, end_s=4.0)
+        cmd = _build([a, b], ["/tmp/first.jpg", "/tmp/second.jpg"], [432, 432])
+        assert cmd.count("/tmp/first.jpg") == 1
+        assert cmd.count("/tmp/second.jpg") == 1

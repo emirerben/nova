@@ -169,12 +169,20 @@ def build_media_overlay_command(
     ordered = sorted(enumerate(cards), key=lambda t: (t[1].z, t[0]))
 
     inputs: list[str] = ["-i", base_video]
-    for _, card in ordered:
-        idx = cards.index(card)
-        local = card_local_paths[idx]
+    for orig_idx, card in ordered:
+        # orig_idx (not cards.index) — two EQUAL cards (same asset + geometry,
+        # a real compiler output when one pool image backs two time windows)
+        # would both resolve cards.index to the FIRST card's paths.
+        local = card_local_paths[orig_idx]
         if is_image_file(local) or local.endswith((".jpg", ".jpeg", ".png")):
-            # Static image: supply infinite frames with -loop 1.
-            inputs += ["-loop", "1", "-i", local]
+            # Static image: -loop 1 supplies frames; -t bounds the looped
+            # source to the card's visible window. WITHOUT the bound the loop
+            # is infinite and ffmpeg decodes+rescales the full-resolution image
+            # for EVERY base frame — 8 multi-megapixel pool images on a 90s
+            # clip crossed the 600s PIP timeout on shared Fly CPUs (prod job
+            # 4010a394, 2026-07-21) and the whole visuals pass failed open.
+            # Measured 4.6x faster with the bound; output byte-identical.
+            inputs += ["-loop", "1", "-t", f"{max(0.1, float(card.end_s)):.3f}", "-i", local]
         else:
             # Video card: no -loop; tpad clone handles the freeze-last-frame.
             inputs += ["-i", local]

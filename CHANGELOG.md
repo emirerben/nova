@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.6.0] — 2026-07-21
+
+### Fixed
+- **Smart Captions visuals now reliably reach the rendered video.** Adding several photos to a video no longer times out the visual composition step — each image is processed only for the moment it appears on screen instead of the full video length, cutting composition time several-fold. Videos that previously shipped without their flag, player, or product images now include them.
+
 ## [0.11.5.0] — 2026-07-21
 
 ### Fixed
