@@ -30,6 +30,11 @@ docs/pipelines/generative.md "Speech map + SFX auto-suggestions". Remaining foll
 **How:** Read `variant.pending_sfx_suggestions` (already typed in plan-api.ts), render a suggestion row in `SfxLane.tsx`, accept = append to `sfxPlacements` via the existing reducer; no new backend.
 **Effort:** S-M (CC: ~2-3h) **Priority:** P2 **Depends on:** SFX_AUTOPLACE_ENABLED rollout
 
+### SFX/speech review deferrals (from the word-level sound design review, 2026-07-21)
+**What:** Five non-blocking findings deferred at diff review: (1) `overlay_transcript` stale-write race — the SFX/overlay tasks read the variant unlocked, run minutes of Whisper/LLM, then blind-write; a mid-flight re-render persists words for the old video (pre-existing pattern, now three writers — fix = render-generation check at persist). (2) `sfx_autoplace_attempted` marker is permanent — a broker blip/Gemini 429 after commit means that render generation never gets suggestions and in-place re-renders don't re-arm (matches overlay-chain posture). (3) speech_map/hash recomputed per status poll — persist once per render generation if polling cost ever shows up in profiles. (4) `contains_voice` NULL fails open for unanalyzed legacy effects — analysis backfill tightens. (5) `resolve_sfx_suggestions` ignores existing manual SoundEffectPlacements when spacing (suggestion can land within 1.5s of a manual pin). Plus two test gaps: role_tags route-level serialization test, clipDirty→speechMap gating extraction+test in EditorShell.
+**Why:** Each is real but low-probability/advisory-only under the dark flag; recorded so the flag-flip review re-weighs them.
+**Effort:** S each **Priority:** P3 **Depends on:** SFX_AUTOPLACE_ENABLED flip decision
+
 ### Speech map for montage variants without persisted words
 **What:** Variants with a matched song and no editorial sequence have no word source → no speech_map. Add an opt-in bounded Whisper pass (task context, persist to `overlay_transcript`) so speech-synced copilot edits work there too.
 **Why:** "Place a sound at the pause" fails honestly (model says no speech data) on music-first montages even when there is audible speech under the track.

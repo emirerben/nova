@@ -823,10 +823,15 @@ export interface VariantSpeechMap {
  * hash — anything served is realizable as an ordinary add_sfx.
  */
 export interface PendingSfxSuggestion {
+  id?: string | null;
   effect_id: string;
+  /** Display name of the effect, resolved server-side. */
+  name?: string | null;
   at_s: number;
   gain?: number | null;
   reason?: string | null;
+  /** Mark-type provenance ("pause" | "word_start" | ...) — debug only. */
+  anchor?: string | null;
   transcript_hash?: string | null;
 }
 
@@ -1106,6 +1111,8 @@ export interface PlanItemVariant {
   // Absent when the variant has no persisted word-level speech source.
   speech_map?: VariantSpeechMap | null;
   // Advisory SFX placements from the auto sound-design pass (dark-flagged).
+  // null = freshness unverifiable right now (hold prior state); [] = verified,
+  // none fresh. Distinct on purpose.
   pending_sfx_suggestions?: PendingSfxSuggestion[] | null;
   // Subtitles on/off, independent of caption_cues length — off always yields the
   // caption-free burn on Apply. Null/absent on legacy variants ⇒ treat as enabled

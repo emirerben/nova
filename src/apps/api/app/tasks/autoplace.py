@@ -1332,6 +1332,12 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
             speech = speech_words_for_variant(variant)
             if speech is not None:
                 words, _source = speech
+            elif variant.get("music_track_id") is not None:
+                # Never Whisper over a song (garbage anchors) — the dispatch
+                # guard enforces this too, but redeliveries/manual invocations
+                # bypass it.
+                _record("sfx_autoplace_skipped", reason="music_variant", variant_id=variant_id)
+                return
             else:
                 whisper_words = transcribe_variant_video(variant)
                 if not whisper_words:
@@ -1378,6 +1384,7 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
             from app.agents._model_client import default_client  # noqa: PLC0415
             from app.agents._runtime import RunContext  # noqa: PLC0415
             from app.agents.sfx_placement import (  # noqa: PLC0415
+                _MAX_EFFECTS,
                 SfxCatalogEffect,
                 SfxPlacementAgent,
                 SfxPlacementInput,
@@ -1391,6 +1398,9 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
                     words=words,
                     pauses=speech_map["pauses"],
                     moments=moments,
+                    # Slice BEFORE constructing the input: the schema caps
+                    # effects at _MAX_EFFECTS and an oversized glossary would
+                    # fail Pydantic validation and silently kill the task.
                     effects=[
                         SfxCatalogEffect(
                             effect_id=str(g["id"]),
@@ -1398,16 +1408,31 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
                             role_tags=list(g.get("role_tags") or []),
                             duration_s=g.get("duration_s"),
                         )
-                        for g in glossary
-                        if not g.get("contains_voice")
+                        for g in [x for x in glossary if not x.get("contains_voice")][:_MAX_EFFECTS]
                     ],
                     duration_s=duration_s,
                 ),
                 ctx=RunContext(job_id=job_id),
             )
-            transcript_hash = compute_transcript_hash(words, duration_s)
+            # Hash with the SAME duration input the read path will use
+            # (`variant_duration_s`, possibly None) — hashing the local
+            # fallback duration would mismatch the serializer's recompute and
+            # permanently stale-filter suggestions on duration-less variants.
+            transcript_hash = compute_transcript_hash(words, variant_duration_s(variant))
+            # The verbatim-copy discipline, enforced: at_s must land on a
+            # supplied mark (word start/end, pause start, moment edge) or the
+            # suggestion is dropped as an invented time.
+            allowed_marks = [w["s"] for w in speech_map["words"]]
+            allowed_marks += [w["e"] for w in speech_map["words"]]
+            allowed_marks += [pz["s"] for pz in speech_map["pauses"]]
+            for m in moments:
+                allowed_marks.extend((m["start_s"], m["end_s"]))
             suggestions = resolve_sfx_suggestions(
-                agent_out.placements, glossary, duration_s, transcript_hash
+                agent_out.placements,
+                glossary,
+                duration_s,
+                transcript_hash,
+                allowed_marks=allowed_marks,
             )
 
             # 5. Persist under the row lock; trace AFTER the lock releases

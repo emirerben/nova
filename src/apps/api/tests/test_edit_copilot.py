@@ -759,7 +759,7 @@ def test_format_snapshot_renders_speech_words_and_pauses() -> None:
     }
     rendered = _format_snapshot(snap)
     assert "SPEECH WORDS" in rendered
-    assert '"hello"@0.62-1.00' in rendered
+    assert "'hello'@0.62-1.00" in rendered  # repr-escaped word text
     assert "PAUSE MARKS" in rendered
     assert '1.00-1.50 (after "hello")' in rendered
     assert "0.00-0.62 (before speech starts)" in rendered
@@ -845,3 +845,38 @@ def test_prompt_version_bumped_for_speech_sync() -> None:
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
     assert EDIT_COPILOT_PROMPT_VERSION == "2026-07-21-v6"
+
+
+def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:
+    from app.agents.edit_copilot import (
+        _PAUSE_MARKS_SHOWN_MAX,
+        _SFX_SUGGESTIONS_SHOWN_MAX,
+        _SPEECH_WORDS_SHOWN_MAX,
+        _format_snapshot,
+    )
+
+    snap = _snapshot(allowed=["text", "style", "timeline", "sfx"])
+    snap["speech"] = {
+        "source": "caption_words",
+        "words": [
+            {"text": f"w{i}", "start_s": i * 0.5, "end_s": i * 0.5 + 0.3}
+            for i in range(_SPEECH_WORDS_SHOWN_MAX + 10)
+        ],
+        "pauses": [
+            {"start_s": i * 2.0 + 0.9, "end_s": i * 2.0 + 1.4, "after": f"w{i}"}
+            for i in range(_PAUSE_MARKS_SHOWN_MAX + 10)
+        ],
+    }
+    snap["sfx"] = {
+        "placements": [],
+        "catalog": [{"id": "fx", "name": "Click", "duration_s": 0.3}],
+        "suggestions": [
+            {"effect_id": "fx", "at_s": float(i + 1), "gain": 0.7, "reason": f"r{i}"}
+            for i in range(_SFX_SUGGESTIONS_SHOWN_MAX + 4)
+        ],
+    }
+    rendered = _format_snapshot(snap)
+    assert rendered.count("@") == _SPEECH_WORDS_SHOWN_MAX
+    # Pause entries render as "start-end (after ...)"; count the after-markers.
+    assert rendered.count("(after ") == _PAUSE_MARKS_SHOWN_MAX
+    assert rendered.count("effect_id=") == _SFX_SUGGESTIONS_SHOWN_MAX

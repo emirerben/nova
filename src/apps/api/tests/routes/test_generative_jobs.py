@@ -1780,7 +1780,9 @@ def _speech_job(extra_variant_fields: dict | None = None):
         ],
         **(extra_variant_fields or {}),
     }
-    return types.SimpleNamespace(id=uuid.uuid4(), assembly_plan={"variants": [variant]})
+    return types.SimpleNamespace(
+        id=uuid.uuid4(), content_plan_item_id=uuid.uuid4(), assembly_plan={"variants": [variant]}
+    )
 
 
 def test_variants_for_response_attaches_speech_map(monkeypatch):
@@ -1828,6 +1830,9 @@ def test_variants_for_response_filters_stale_sfx_suggestions(monkeypatch):
     )
 
     monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: "https://fresh.example/x")
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "sfx_autoplace_enabled", True)
     job = _speech_job()
     variant = job.assembly_plan["variants"][0]
     words, _src = speech_words_for_variant(variant)
@@ -1845,6 +1850,9 @@ def test_variants_for_response_drops_suggestions_without_speech_source(monkeypat
     import app.routes.generative_jobs as gj
 
     monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: "https://fresh.example/x")
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "sfx_autoplace_enabled", True)
     job = _speech_job()
     variant = job.assembly_plan["variants"][0]
     del variant["caption_cues"]
@@ -1852,5 +1860,31 @@ def test_variants_for_response_drops_suggestions_without_speech_source(monkeypat
         {"id": "s1", "effect_id": "fx", "at_s": 1.0, "transcript_hash": "h"}
     ]
     out = gj._variants_for_response(job)
-    # Freshness is unverifiable without a current speech source → serve none.
-    assert out[0]["pending_sfx_suggestions"] == []
+    # Freshness unverifiable without a current speech source → null (hold
+    # state), NOT [] (verified none) — the FE distinguishes the two.
+    assert out[0]["pending_sfx_suggestions"] is None
+
+
+def test_variants_for_response_kill_switch_stops_suggestion_exposure(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: "https://fresh.example/x")
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "sfx_autoplace_enabled", False)
+    job = _speech_job()
+    job.assembly_plan["variants"][0]["pending_sfx_suggestions"] = [
+        {"id": "s1", "effect_id": "fx", "at_s": 1.0, "transcript_hash": "h"}
+    ]
+    out = gj._variants_for_response(job)
+    assert out[0]["pending_sfx_suggestions"] is None
+
+
+def test_variants_for_response_public_job_gets_no_speech_map(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: "https://fresh.example/x")
+    job = _speech_job()
+    job.content_plan_item_id = None  # public generative job — no editor surface
+    out = gj._variants_for_response(job)
+    assert "speech_map" not in out[0]

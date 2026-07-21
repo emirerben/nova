@@ -19,7 +19,9 @@ import math
 
 PAUSE_MIN_GAP_S = 0.28
 LEADING_PAUSE_MIN_S = 0.5
-WORDS_CAP = 250
+# Matches every consumer's cap (snapshot.ts COPILOT_SPEECH_WORDS_MAX and
+# edit_copilot.py _SPEECH_WORDS_SHOWN_MAX) — larger would be pure wire weight.
+WORDS_CAP = 150
 PAUSES_CAP = 40
 _WORD_MAX_CHARS = 40
 _COORD_EPSILON_S = 0.75
@@ -65,6 +67,14 @@ def build_speech_map(
         gap = b["s"] - a["e"]
         if gap >= PAUSE_MIN_GAP_S:
             pauses.append({"s": a["e"], "e": b["s"], "after": a["w"]})
+    # Trailing silence: a punchline that ends the speech still needs a pause
+    # mark for its accent ("the accent lands at the pause right after it").
+    if duration_s is not None:
+        tail_gap = float(duration_s) - clean[-1]["e"]
+        if tail_gap >= PAUSE_MIN_GAP_S:
+            pauses.append(
+                {"s": clean[-1]["e"], "e": round(float(duration_s), 2), "after": clean[-1]["w"]}
+            )
     return {
         "source": source,
         "words": clean[:WORDS_CAP],

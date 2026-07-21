@@ -597,6 +597,32 @@ describe("buildCopilotSnapshot speech + SFX suggestions", () => {
     expect(snapshot.speech?.pauses.length).toBe(1);
   });
 
+  it("keeps pauses when words are dropped at the middle trim stage", () => {
+    // Sized so the head-capped words still blow the budget but the pause-only
+    // form fits: the section must survive with words=[] and pauses intact
+    // (pause-only placement stays possible; server renders the trimmed note).
+    const words = Array.from({ length: 150 }, (_, i) => ({
+      w: `word${i}-${"x".repeat(24)}`,
+      s: i * 0.4,
+      e: i * 0.4 + 0.3,
+    }));
+    const bigMap = { source: "caption_words", words, pauses: [{ s: 1.0, e: 1.5, after: "word2" }] };
+    const bars = Array.from({ length: 36 }, (_, i) =>
+      bar({ id: `bar-${i}`, text: `label ${i} ${"y".repeat(110)}` }),
+    );
+    const snapshot = buildCopilotSnapshot(
+      bars,
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      { speechMap: bigMap },
+    );
+    expect(snapshot.speech).toBeDefined();
+    expect(snapshot.speech?.words).toEqual([]);
+    expect(snapshot.speech?.pauses.length).toBe(1);
+  });
+
   it("drops the speech section entirely as the last speech trim stage", () => {
     // The rest of the snapshot alone exceeds the budget — every speech stage
     // fires and the section is removed rather than shipping a blown budget

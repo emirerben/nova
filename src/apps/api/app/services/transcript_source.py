@@ -3,11 +3,12 @@ and what hash identifies that state?" (plans/005, decisions 3A + outside-voice t
 
 Precedence:
   1. `variants[i]["transcript"]`   — persisted compact word records ({"word","start_s","end_s"})
-  2. word-timed caption cues       — (not yet persisted anywhere word-granular → skipped;
-                                      branch documented so PR-later can add it here, and ONLY here)
-  3. on-demand bounded Whisper     — the flagship talking-head-with-original-audio case has
-                                      neither 1 nor 2; transcribe once, persist to
-                                      `variants[i]["transcript"]` so it never re-runs
+     (then `overlay_transcript`, the matcher's run-once Whisper key)
+  2. word-timed caption cues       — `caption_cues[].words` (subtitled/narrated), via
+                                      `words_from_caption_cues`; consulted BEFORE Whisper
+  3. on-demand bounded Whisper     — talking-head-with-original-audio has neither 1 nor 2;
+                                      transcribe once, persist to
+                                      `variants[i]["overlay_transcript"]` so it never re-runs
   4. None                          — caller disables the feature for this variant
 
 The hash covers word texts + timings + variant duration. The matcher AND the
@@ -221,9 +222,14 @@ def transcript_source(
     `transcript` — review C19, see words_from_variant).
     """
     words = words_from_variant(variant)
-    # Branch 2 (word-timed caption cues) intentionally lands here when a
-    # word-granular persisted cue source exists. Do not add other lookups
-    # elsewhere — this module is the single source of truth.
+    # Branch 2: word-timed caption cues (subtitled/narrated). Consulted BEFORE
+    # Whisper so every consumer (overlay matcher, SFX suggestions, read-path
+    # staleness) derives the SAME words for the same variant state — a
+    # precedence divergence here mints transcript hashes that can never match
+    # the read path's recompute. Also skips a pointless ASR run: cue words ARE
+    # the render's Whisper words.
+    if words is None:
+        words = words_from_caption_cues(variant)
     if words is None and allow_whisper:
         words = transcribe_variant_video(variant)
     if not words:

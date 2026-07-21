@@ -41,14 +41,19 @@ class TestBuildSpeechMap:
         assert m["pauses"][0] == {"s": 0.0, "e": 0.8, "after": None}
         # Gap exactly at threshold counts; the 0.05s gap between "so"/"fast" does not.
         assert m["pauses"][1]["after"] == "hey"
-        assert len(m["pauses"]) == 2
+        # Trailing silence (2.2 → 30.0) is a pause too — end-of-speech accents
+        # need a mark ("punchline that ends the video").
+        assert m["pauses"][2] == {"s": 2.2, "e": 30.0, "after": "fast"}
+        assert len(m["pauses"]) == 3
 
     def test_short_leading_gap_is_not_a_pause(self) -> None:
         m = build_speech_map(
             [_w("hi", LEADING_PAUSE_MIN_S - 0.1, 1.0), _w("there", 1.05, 1.4)], 10.0, "x"
         )
         assert m is not None
-        assert m["pauses"] == []
+        # Only the trailing-silence pause remains — the short leading gap and
+        # the 0.05s inter-word gap don't qualify.
+        assert m["pauses"] == [{"s": 1.4, "e": 10.0, "after": "there"}]
 
     def test_coordinate_invariant_drops_out_of_range_words(self) -> None:
         m = build_speech_map(

@@ -105,3 +105,77 @@ def test_sorted_by_time_regardless_of_input_order() -> None:
         [_raw("fx_tick", 9.0), _raw("fx_click", 1.0)], GLOSSARY, 30.0, "h"
     )
     assert [s["at_s"] for s in out] == [1.0, 9.0]
+
+
+# ── boundary values (operator-flip guards) ──────────────────────────────────────
+
+
+def test_at_s_exactly_at_keepout_boundary_accepted() -> None:
+    out = resolve_sfx_suggestions([_raw("fx_click", 30.0 - END_KEEPOUT_S)], GLOSSARY, 30.0, "h")
+    assert len(out) == 1
+
+
+def test_spacing_exactly_at_min_accepted() -> None:
+    out = resolve_sfx_suggestions(
+        [_raw("fx_click", 1.0), _raw("fx_tick", 1.0 + MIN_SPACING_S)], GLOSSARY, 30.0, "h"
+    )
+    assert [s["effect_id"] for s in out] == ["fx_click", "fx_tick"]
+
+
+# ── SfxPlacementAgent.parse — LLM-output trust boundary ─────────────────────────
+
+
+def _agent_input():
+    from app.agents.sfx_placement import SfxCatalogEffect, SfxPlacementInput
+
+    return SfxPlacementInput(
+        words=[{"word": "hi", "start_s": 0.5, "end_s": 0.9}],
+        effects=[SfxCatalogEffect(effect_id="a", name="Click")],
+        duration_s=10.0,
+    )
+
+
+def test_parse_invalid_json_raises_schema_error() -> None:
+    import pytest
+
+    from app.agents._runtime import SchemaError
+    from app.agents.sfx_placement import SfxPlacementAgent
+
+    agent = SfxPlacementAgent.__new__(SfxPlacementAgent)
+    with pytest.raises(SchemaError):
+        agent.parse("not json", _agent_input())
+    with pytest.raises(SchemaError):
+        agent.parse('["a list, not an object"]', _agent_input())
+    with pytest.raises(SchemaError):
+        agent.parse('{"placements": "nope"}', _agent_input())
+
+
+def test_parse_drops_malformed_items_keeps_valid() -> None:
+    from app.agents.sfx_placement import SfxPlacementAgent
+
+    agent = SfxPlacementAgent.__new__(SfxPlacementAgent)
+    out = agent.parse(
+        '{"placements": [{"effect_id": "a", "at_s": 1.0}, {"at_s": "x"}, 5]}',
+        _agent_input(),
+    )
+    assert [p.effect_id for p in out.placements] == ["a"]
+
+
+def test_parse_coerces_unknown_anchor_to_pause() -> None:
+    from app.agents.sfx_placement import SfxPlacementAgent
+
+    agent = SfxPlacementAgent.__new__(SfxPlacementAgent)
+    out = agent.parse(
+        '{"placements": [{"effect_id": "a", "at_s": 1.0, "anchor": "banana"}]}',
+        _agent_input(),
+    )
+    assert out.placements[0].anchor == "pause"
+
+
+def test_suggestion_cap_mirrors_copilot_renderer() -> None:
+    # Mirrored literals coupled only by comments — pin them together so a
+    # one-sided edit fails loudly (snapshot.ts COPILOT_SFX_SUGGESTIONS_MAX is
+    # pinned by the web suite).
+    from app.agents.edit_copilot import _SFX_SUGGESTIONS_SHOWN_MAX
+
+    assert _SFX_SUGGESTIONS_SHOWN_MAX == MAX_SUGGESTIONS

@@ -401,7 +401,9 @@ def _format_snapshot(snapshot: dict) -> str:
             start = _safe_finite_float(w.get("start_s", w.get("s")))
             end = _safe_finite_float(w.get("end_s", w.get("e")))
             if text and start is not None and end is not None:
-                word_parts.append(f'"{text}"@{start:.2f}-{end:.2f}')
+                # repr-escaped like every other snapshot field — word text must
+                # not be able to terminate its own quoted span in the prompt.
+                word_parts.append(f"{text!r}@{start:.2f}-{end:.2f}")
         pause_parts: list[str] = []
         for p in pauses[:_PAUSE_MARKS_SHOWN_MAX]:
             if not isinstance(p, dict):

@@ -919,6 +919,14 @@ def _variants_for_response(job: Job) -> list[dict]:
     if changed:
         setattr(job, "_media_overlay_preview_backfilled", True)
 
+    from app.config import settings  # noqa: PLC0415
+    from app.services.speech_map import build_speech_map  # noqa: PLC0415
+    from app.services.transcript_source import (  # noqa: PLC0415
+        compute_transcript_hash,
+        speech_words_for_variant,
+        variant_duration_s,
+    )
+
     out: list[dict] = []
     for v in _variants_of(job):
         video_path = v.get("video_path")
@@ -1006,16 +1014,14 @@ def _variants_for_response(job: Job) -> list[dict]:
         # describe the persisted render's timeline. Pure arithmetic (≤250 words),
         # safe on every poll. None → key absent → the copilot honestly reports
         # no speech data for this variant.
-        from app.services.speech_map import build_speech_map  # noqa: PLC0415
-        from app.services.transcript_source import (  # noqa: PLC0415
-            compute_transcript_hash,
-            speech_words_for_variant,
-            variant_duration_s,
-        )
-
         speech_map = None
         speech_src = None
-        if v.get("video_path") and v.get("render_status") != "rendering":
+        # getattr: real Job rows always carry the column; test doubles may not.
+        if (
+            getattr(job, "content_plan_item_id", None) is not None  # plan-item editor only
+            and v.get("video_path")
+            and v.get("render_status") != "rendering"
+        ):
             speech_src = speech_words_for_variant(v)
             if speech_src is not None:
                 speech_map = build_speech_map(speech_src[0], variant_duration_s(v), speech_src[1])
@@ -1025,7 +1031,10 @@ def _variants_for_response(job: Job) -> list[dict]:
         # stale-filtered — a suggestion minted against different words/duration
         # (clip re-cuts, re-transcription) is dropped, not served.
         raw_sfx_suggestions = v.get("pending_sfx_suggestions")
-        if raw_sfx_suggestions:
+        if raw_sfx_suggestions and not settings.sfx_autoplace_enabled:
+            # Kill switch stops exposure too, not just dispatch.
+            v = {**v, "pending_sfx_suggestions": None}
+        elif raw_sfx_suggestions:
             if speech_map is not None and speech_src is not None:
                 current_hash = compute_transcript_hash(speech_src[0], variant_duration_s(v))
                 fresh_suggestions = [
@@ -1033,10 +1042,12 @@ def _variants_for_response(job: Job) -> list[dict]:
                     for s in raw_sfx_suggestions
                     if isinstance(s, dict) and s.get("transcript_hash") == current_hash
                 ]
+                v = {**v, "pending_sfx_suggestions": fresh_suggestions}
             else:
-                # No current speech source → cannot verify freshness → serve none.
-                fresh_suggestions = []
-            v = {**v, "pending_sfx_suggestions": fresh_suggestions}
+                # Freshness unverifiable right now (mid-re-render / source
+                # momentarily absent): serve null, NOT [] — the FE must be able
+                # to tell "verified, none fresh" from "unknown, hold state".
+                v = {**v, "pending_sfx_suggestions": None}
         # Drop server-only sequence internals from the polled payload: the full
         # per-word `transcript` and parallel `scenes` are read by the reburn path
         # from the persisted Job row, never by the FE. Returning them on every

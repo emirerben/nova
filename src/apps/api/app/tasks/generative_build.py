@@ -903,7 +903,10 @@ def _maybe_sfx_autoplace_after_finalize(job_id: str) -> None:
     from app.services.transcript_source import speech_words_for_variant  # noqa: PLC0415
     from app.tasks.autoplace import autoplace_sfx_suggestions  # noqa: PLC0415
 
-    if not _settings.sfx_autoplace_enabled:
+    # Dual-flag guard: suggestions are realized through the SOUND_EFFECTS
+    # write routes — with that lane off they'd be unrealizable ghosts (and
+    # would burn Whisper+Gemini per variant for nothing).
+    if not (_settings.sfx_autoplace_enabled and _settings.sound_effects_enabled):
         return
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
