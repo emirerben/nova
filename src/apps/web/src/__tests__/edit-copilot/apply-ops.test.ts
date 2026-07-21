@@ -492,6 +492,57 @@ describe("consolidateChips", () => {
   });
 });
 
+describe("meta-only captions (subtitled)", () => {
+  function subtitledCtx() {
+    const bars = [bar()];
+    const slots = [slot({ key: "a", slotId: "a", durationS: 21 })];
+    const captionMeta = { enabled: true, style: "sentence" as const, font: null, y_frac: 0.8 };
+    return {
+      bars,
+      slots,
+      snapshot: buildCopilotSnapshot(bars, slots, clips, { text_elements: true, timeline: true }, [], {
+        captionsPresent: true,
+        captionMeta,
+        captionCuesEditable: false,
+        captionTotalCues: 14,
+      }),
+      capabilities: { text_elements: true, timeline: true, split_clips: true },
+      captionMeta,
+      makeTextBarId: () => "new-text",
+      makeSlotKey: (s: DraftSlot) => `${s.key}-split`,
+    };
+  }
+
+  it("applies set_caption_meta style flips", () => {
+    const result = applyCopilotOps(
+      [{ op: "set_caption_meta", patch: { style: "word" } }],
+      subtitledCtx(),
+    );
+    expect(result.rejected).toEqual([]);
+    expect(result.captionMetaPatch).toMatchObject({ style: "word" });
+  });
+
+  it("rejects cue text/timing edits with a caption-editor redirect", () => {
+    const edit = applyCopilotOps(
+      [{ op: "edit_caption", cue_index: 0, text: "fixed" }],
+      subtitledCtx(),
+    );
+    expect(edit.textActions).toEqual([]);
+    expect(edit.rejected).toEqual([
+      expect.objectContaining({ detail: "Transcript edits are made in the caption editor." }),
+    ]);
+
+    const timing = applyCopilotOps(
+      [{ op: "set_caption_timing", cue_index: 0, start_s: 1.0 }],
+      subtitledCtx(),
+    );
+    expect(timing.textActions).toEqual([]);
+    expect(timing.rejected).toEqual([
+      expect.objectContaining({ detail: "Transcript edits are made in the caption editor." }),
+    ]);
+  });
+});
+
 describe("beat mark snapping", () => {
   const GRID = [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
 

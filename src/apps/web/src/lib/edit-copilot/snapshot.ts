@@ -173,6 +173,10 @@ export interface CopilotSnapshot {
   captions?: {
     total_cues: number;
     truncated: boolean;
+    /** false = meta-only captions (subtitled talk-to-camera): style/font/enabled/
+     * position apply via set_caption_meta, but cue text/timing edits belong to
+     * the Captions tab and no cues are listed. */
+    cues_editable: boolean;
     cues: CopilotCaptionCueSnapshot[];
     meta: CopilotCaptionMetaSnapshot;
   };
@@ -222,6 +226,11 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
   pendingSuggestions?: OverlaySuggestion[];
   captionCues?: CaptionCueLike[];
   captionMeta?: CopilotCaptionMetaSnapshot;
+  /** Default true. false = emit a meta-only captions section (no addressable
+   * cues) — used for subtitled variants whose transcript lives in the Captions
+   * tab. `captionTotalCues` supplies the real cue count for display. */
+  captionCuesEditable?: boolean;
+  captionTotalCues?: number;
   musicState?: {
     swappable: boolean;
     currentTrackId: string | null;
@@ -468,10 +477,16 @@ export function buildCopilotSnapshot(
       })),
     };
   }
-  if (allowed.has("caption") && options.captionMeta && captionCues.length > 0) {
+  const captionCuesEditable = options.captionCuesEditable !== false;
+  if (
+    allowed.has("caption") &&
+    options.captionMeta &&
+    (captionCues.length > 0 || !captionCuesEditable)
+  ) {
     snapshot.captions = {
-      total_cues: captionCues.length,
+      total_cues: options.captionTotalCues ?? captionCues.length,
       truncated: captionCues.length > 40,
+      cues_editable: captionCuesEditable,
       cues: captionCues.slice(0, 40).map((cue, index) => ({
         index,
         id: cue.id ?? `caption-${index}`,

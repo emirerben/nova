@@ -901,6 +901,10 @@ export function applyCopilotOps(
       }
       applied.push({ label: "Accepted overlay suggestion", from: "pending", to: snapSuggestion.reason || "accepted" });
     } else if (op.op === "edit_caption") {
+      if (ctx.snapshot.captions?.cues_editable === false) {
+        rejected.push(reject(op.op, labelForOp(op), "unsupported_field", "Transcript edits are made in the caption editor."));
+        continue;
+      }
       const snap = captionSnapAt(ctx.snapshot, op.cue_index);
       const bar = snap ? captionBarForSnap(ctx.bars, snap) : null;
       if (!snap || !bar) {
@@ -914,6 +918,10 @@ export function applyCopilotOps(
       textActions.push({ type: "EDIT_TEXT", id: bar.id, text: op.text });
       applied.push({ label: `Caption ${op.cue_index + 1} edited`, from: bar.text, to: op.text });
     } else if (op.op === "set_caption_timing") {
+      if (ctx.snapshot.captions?.cues_editable === false) {
+        rejected.push(reject(op.op, labelForOp(op), "unsupported_field", "Transcript edits are made in the caption editor."));
+        continue;
+      }
       const snap = captionSnapAt(ctx.snapshot, op.cue_index);
       const bar = snap ? captionBarForSnap(ctx.bars, snap) : null;
       if (!snap || !bar) {
