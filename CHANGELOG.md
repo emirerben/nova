@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0.0] - 2026-07-21
+
+### Added
+- **Text can now enter with the new Staggered slice animation.** Choose it in Nova's text animation picker to build every line character by character with a quick vertical rise and subtle alternating rotation, including emoji and accented characters as intact units.
+
+### Changed
+- Staggered slice previews now follow video playback smoothly in the editor and use the same deterministic timing and settled frame in production renders, including short overlays, multiline text, and text placed behind a subject.
+
 ## [0.11.8.0] — 2026-07-21
 
 ### Added
