@@ -7,11 +7,14 @@ mechanics (v0.11.0.0).
 ## Eligibility and capability
 
 `app/services/smart_captions.py` is the single server-authoritative resolver: a
-creator is eligible only when `SMART_CAPTIONS_ENABLED=true`,
+creator is eligible when `SMART_CAPTIONS_ENABLED=true`,
 `SUBTITLED_ARCHETYPE_ENABLED=true`, the plan item uses `edit_format="subtitled"`,
-and an enabled `CreatorStyleAssignment` pins a `preset_id`/`preset_version`. The
-browser persists intent but can never select a preset or bypass rollout gates.
-The same assignment row may carry `shadow_preset_id`/`shadow_preset_version`
+and either an enabled `CreatorStyleAssignment` pins a `preset_id`/`preset_version`
+or `SMART_CAPTIONS_DEFAULT_PRESET_ID`/`SMART_CAPTIONS_DEFAULT_PRESET_VERSION`
+configure a fleet-wide default for users without an assignment row. The browser
+persists intent but can never select a preset or bypass rollout gates. Assignment
+rows win over the default: they may pin a different reviewed preset, explicitly
+disable one account, or carry `shadow_preset_id`/`shadow_preset_version`
 (migration 0066; check-constrained to be set or null as a pair) — see the shadow
 canary section. Guard: `tests/smart_edit/test_capability.py`.
 

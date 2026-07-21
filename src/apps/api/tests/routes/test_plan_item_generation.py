@@ -600,11 +600,40 @@ def test_patch_smart_captions_uses_server_assignment(client: TestClient, monkeyp
 
     monkeypatch.setattr(settings, "smart_captions_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_id", "cigdem", raising=False)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_version", "v2", raising=False)
     user = _user()
     item, plan = _owned_item(user.id)
     item.edit_format = "subtitled"
     assignment = SimpleNamespace(enabled=True, preset_id="cigdem", preset_version="v1")
     db = _db_for(item, plan, assignment=assignment)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"smart_captions_enabled": True},
+    )
+
+    assert resp.status_code == 200
+    assert item.smart_captions_enabled is True
+    assert resp.json()["smart_captions_available"] is True
+    assert resp.json()["smart_captions_unavailable_reason"] is None
+
+
+def test_patch_smart_captions_defaults_available_without_assignment(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.config import settings  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "smart_captions_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_id", "cigdem", raising=False)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_version", "v2", raising=False)
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.edit_format = "subtitled"
+    db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
 
