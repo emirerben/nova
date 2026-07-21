@@ -19,6 +19,7 @@ const RECONCILE_TIMEOUT_MS = 3000;
 export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
   const [buffer, setBuffer] = useState("");
   const [mutState, setMutState] = useState<MutState>("idle");
+  const [mutError, setMutError] = useState("Couldn't save.");
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
@@ -58,9 +59,11 @@ export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
     if (!text) return;
     setBuffer("");
     setMutState("saving");
+    setMutError("Couldn't save.");
     try {
       await addIdea(plan.id, text);
       setMutState("idle");
+      setMutError("Couldn't save.");
       setAiError(null);
       await onRefresh();
     } catch {
@@ -72,6 +75,7 @@ export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
     if (deletePendingRef.current) return;
     deletePendingRef.current = true;
     setMutState("saving");
+    setMutError("Couldn't save.");
     try {
       await deleteIdea(itemId);
       onPlanChange({
@@ -79,7 +83,8 @@ export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
         items: (plan.items ?? []).filter((item) => item.id !== itemId),
       });
       setConfirmingId(null);
-    } catch {
+    } catch (err) {
+      setMutError(err instanceof Error ? err.message : "Couldn't save.");
       setMutState("error");
       deletePendingRef.current = false;
       return;
@@ -230,7 +235,7 @@ export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
         </div>
         {mutState === "error" && (
           <p className="text-[12px] leading-snug text-[#71717a]" role="alert">
-            Couldn&apos;t save.
+            {mutError}
           </p>
         )}
         {aiError && (

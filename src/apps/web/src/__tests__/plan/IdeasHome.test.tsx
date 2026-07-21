@@ -224,6 +224,47 @@ describe("IdeasHome", () => {
     },
   );
 
+  it("deletes a ready row after confirmation", async () => {
+    const onPlanChange = jest.fn();
+    const onRefresh = jest.fn().mockResolvedValue(undefined);
+    render(
+      <IdeasHome
+        plan={makePlan([makeItem({ id: "ready", idea: "Ready idea", status: "ready", position: 1 })])}
+        onRefresh={onRefresh}
+        onPlanChange={onPlanChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove idea: Ready idea" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(mockDeleteIdea).toHaveBeenCalledWith("ready"));
+    expect(onPlanChange).toHaveBeenCalledWith(expect.objectContaining({ items: [] }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/Delete idea\? It has a video/)).not.toBeInTheDocument();
+  });
+
+  it("shows the backend delete detail and leaves the row when delete fails", async () => {
+    mockDeleteIdea.mockRejectedValueOnce(new Error("Cannot delete an item with an active job."));
+    const onPlanChange = jest.fn();
+    render(
+      <IdeasHome
+        plan={makePlan([makeItem({ id: "ready", idea: "Ready idea", status: "ready", position: 1 })])}
+        onRefresh={jest.fn()}
+        onPlanChange={onPlanChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove idea: Ready idea" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Cannot delete an item with an active job.",
+    );
+    expect(onPlanChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Ready idea" })).toBeInTheDocument();
+  });
+
   it("does not report a completed delete as failed when refresh fails", async () => {
     const onPlanChange = jest.fn();
     const onRefresh = jest.fn().mockRejectedValue(new Error("refresh failed"));
