@@ -145,10 +145,10 @@ def _hints_for(words: list[str]) -> _SceneHints:
     )
 
 
-def _timeline(words: list[str], assets, hints):
+def _timeline(words: list[str], assets, hints, step: float = 0.42):
     from app.smart_edit.planner import _normalize_captions
 
-    normalized, baseline, _ = _normalize_captions(_cues(words), language="en")
+    normalized, baseline, _ = _normalize_captions(_cues(words, step), language="en")
     preset = load_preset("cigdem", "v2")
     return _semantic_timeline_v2(normalized, baseline, assets, preset, scene_hints=hints)
 
@@ -256,6 +256,40 @@ def test_chapter_absorbs_hint_match_from_overlapping_cue() -> None:
     chapter = next(c for c in semantic.candidates if c.sequence_number == 1)
     assert chapter.suggested_asset_anchor_word_ids.get("a-messi") == wid["Messi"]
     assert chapter.suggested_asset_anchor_word_ids.get("a-anderson") == wid["Anderson"]
+
+
+def test_hook_window_matches_are_not_duplicated_into_straddling_cues() -> None:
+    # A cue that straddles the hook boundary must not re-carry a hook-group
+    # match as its own visual — that rendered the same flag twice at once.
+    words = (
+        "welcome everyone Spain Argentina flags are cool right now we discuss "
+        "deeper things about clubs today"
+    ).split()
+    index = {tok: i for i, tok in enumerate(words)}
+    wid = {tok: f"w{i + 1:06d}" for i, tok in enumerate(words)}
+    assets = [_asset("a-spain", "flag of Spain"), _asset("a-arg", "flag of Argentina")]
+    hints = _SceneHints(
+        matches=[
+            (index["Spain"], "a-spain", wid["Spain"]),
+            (index["Argentina"], "a-arg", wid["Argentina"]),
+        ],
+        chapter_tags={},
+        role_tags={},
+    )
+
+    semantic = _timeline(words, assets, hints, step=1.0)
+
+    hook = next(c for c in semantic.candidates if c.role == "hook")
+    hook_end_index = int(hook.end_word_id[1:]) - 1
+    assert hook_end_index >= index["Argentina"], "scenario must keep flags in the hook"
+    assert {"a-spain", "a-arg"} <= set(hook.suggested_asset_ids)
+    for candidate in semantic.candidates:
+        if candidate.role == "hook":
+            continue
+        for asset_id, anchor in candidate.suggested_asset_anchor_word_ids.items():
+            assert int(anchor[1:]) - 1 > hook_end_index, (
+                f"hook-window match {asset_id}@{anchor} duplicated on {candidate.candidate_id}"
+            )
 
 
 # ── compile walls: hint anchors + truncation (run-3 chapter-loss report) ─────

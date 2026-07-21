@@ -1250,7 +1250,12 @@ def _semantic_timeline_v2(
             role = "example"
         elif any(folded.startswith(prefix) for prefix in _CONTEXT_PREFIXES) or pause_ms >= 1150:
             role = "context_shift"
-        asset_matches = _range_matches(min(cue_indexes), max(cue_indexes)) + [
+        # Start past the hook window: a straddling cue must not re-carry a
+        # hook-group match as its own visual — that rendered the same flag
+        # twice at once (2026-07-21 duplicate-Spain report).
+        asset_matches = _range_matches(
+            max(min(cue_indexes), hook_end_index + 1), max(cue_indexes)
+        ) + [
             match
             for match in _matching_assets(cue_words, assets, preset)
             if match[0] not in hinted_ids

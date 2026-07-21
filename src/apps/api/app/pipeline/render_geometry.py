@@ -373,6 +373,7 @@ def arbitrate_media_overlays(
     protected_regions = [ProtectedRegion.from_value(value) for value in protected_boxes]
     footprints_by_id = footprints_by_id or {}
     occupied: list[tuple[float, float, NormalizedBox]] = []
+    placed_assets: list[tuple[float, float, str]] = []
     candidates = (
         (0.2, 0.14),
         (0.8, 0.14),
@@ -398,6 +399,16 @@ def arbitrate_media_overlays(
             continue
         start_s = float(overlay.get("start_s") or 0.0)
         end_s = float(overlay.get("end_s") or float("inf"))
+        asset_key = str(overlay.get("src_gcs_path") or overlay.get("asset_id") or "")
+        if asset_key and any(
+            key == asset_key and start_s < placed_end and placed_start < end_s
+            for placed_start, placed_end, key in placed_assets
+        ):
+            # The same asset visible twice at once reads as a glitch, not a
+            # composition (2026-07-21 duplicate-Spain report) — whatever lane
+            # produced the second card, only the first placement renders.
+            receipts.append({"id": overlay.get("id"), "decision": "omitted_duplicate_asset"})
+            continue
         footprint = footprints_by_id.get(str(overlay.get("id")), MediaFootprint())
         collision_boxes = [
             *[region.box for region in protected_regions if region.overlaps(start_s, end_s)],
@@ -409,10 +420,18 @@ def arbitrate_media_overlays(
         ]
         accepted: dict[str, Any] | None = None
         original_x, original_y = _center_for_overlay(overlay)
+        # Try fallbacks nearest the card's assigned spot first: a top-left
+        # hook flag that cannot sit exactly there should slide down the LEFT
+        # edge, not teleport to whichever corner happens to be free — the
+        # planner's four-corner composition survives collisions that way.
+        ranked_candidates = sorted(
+            candidates,
+            key=lambda spot: (spot[0] - original_x) ** 2 + (spot[1] - original_y) ** 2,
+        )
         for shrink in (1.0, 0.85, 0.70, 0.55):
             for x_frac, y_frac in (
                 (original_x, original_y),
-                *candidates,
+                *ranked_candidates,
             ):
                 trial = {
                     **overlay,
@@ -442,6 +461,8 @@ def arbitrate_media_overlays(
         accepted["smart_layout_box"] = accepted_box.as_dict()
         resolved.append(accepted)
         occupied.append((start_s, end_s, accepted_box))
+        if asset_key:
+            placed_assets.append((start_s, end_s, asset_key))
         receipts.append(
             {
                 "id": overlay.get("id"),

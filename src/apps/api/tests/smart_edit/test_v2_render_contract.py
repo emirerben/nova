@@ -157,6 +157,53 @@ def test_lower_band_rescues_card_blocked_out_of_the_top() -> None:
     assert box.iou(protected[0]) <= 0.02
 
 
+def test_same_asset_never_renders_twice_at_once() -> None:
+    overlays = [
+        {
+            "id": card_id,
+            "display_mode": "pip",
+            "position": "custom",
+            "x_frac": x,
+            "y_frac": 0.8,
+            "scale": 0.25,
+            "start_s": 2.0,
+            "end_s": 9.0,
+            "src_gcs_path": "pool/spain-flag.png",
+        }
+        for card_id, x in (("hook-copy", 0.2), ("pair-copy", 0.8))
+    ]
+
+    resolved, receipts = arbitrate_media_overlays(overlays, protected_boxes=[])
+
+    assert len(resolved) == 1
+    assert receipts[1]["decision"] == "omitted_duplicate_asset"
+
+
+def test_displaced_card_stays_near_its_assigned_corner() -> None:
+    # Bottom-right card whose exact spot is blocked must slide within the
+    # right side, not teleport to the left — the four-corner composition
+    # depends on it.
+    protected = [NormalizedBox(0.55, 0.72, 1.0, 0.95)]
+    overlays = [
+        {
+            "id": "corner-card",
+            "display_mode": "pip",
+            "position": "custom",
+            "x_frac": 0.81,
+            "y_frac": 0.81,
+            "scale": 0.25,
+            "start_s": 0.0,
+            "end_s": 4.0,
+        }
+    ]
+
+    resolved, receipts = arbitrate_media_overlays(overlays, protected_boxes=protected)
+
+    assert receipts[0]["decision"] in {"moved", "shrunk"}
+    box = NormalizedBox(**resolved[0]["smart_layout_box"])
+    assert (box.left + box.right) / 2 > 0.5  # still on the right half
+
+
 def test_shared_geometry_keeps_simultaneous_cards_from_stacking() -> None:
     overlays = [
         {
