@@ -197,6 +197,25 @@ def test_hint_chapters_never_override_vocab_detected_markers() -> None:
     assert 2 in numbers  # the agent-only chapter is added
 
 
+def test_empty_agent_output_is_byte_identical_to_no_hints() -> None:
+    # Variance envelope: a run where the model matches NOTHING must produce
+    # exactly the timeline the deterministic path produces on its own.
+    words, assets = _english_scenario()
+    empty = _SceneHints(matches=[], chapter_tags={}, role_tags={})
+
+    with_empty = _timeline(words, assets, empty)
+    without = _timeline(words, assets, None)
+
+    assert with_empty.detected_chapters == without.detected_chapters
+    assert [
+        (c.candidate_id, c.role, c.suggested_asset_ids, c.suggested_asset_anchor_word_ids)
+        for c in with_empty.candidates
+    ] == [
+        (c.candidate_id, c.role, c.suggested_asset_ids, c.suggested_asset_anchor_word_ids)
+        for c in without.candidates
+    ]
+
+
 # ── badge hijack + chapter-cue absorption (2026-07-21 Messi/Anderson report) ─
 
 
