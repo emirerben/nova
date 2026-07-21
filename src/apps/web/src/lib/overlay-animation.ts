@@ -21,6 +21,175 @@ export interface AnimationState {
   showCursor: boolean;
 }
 
+export interface StaggeredSliceGlyphState {
+  grapheme: string;
+  opacity: number;
+  translateYEm: number;
+  rotateDeg: number;
+}
+
+export interface StaggeredSliceLineState {
+  text: string;
+  kind: "glyphs";
+  glyphs: StaggeredSliceGlyphState[];
+}
+
+export interface StaggeredSliceState {
+  lines: StaggeredSliceLineState[];
+  settled: boolean;
+  settleS: number;
+}
+
+const STAGGERED_SLICE_FIRST_WORD_END_S = 0.55;
+const STAGGERED_SLICE_REMAINDER_START_S = 0.95;
+const STAGGERED_SLICE_REMAINDER_END_S = 1.35;
+const STAGGERED_SLICE_LINES_START_S = 1.5;
+const STAGGERED_SLICE_LINE_STAGGER_S = 0.12;
+const STAGGERED_SLICE_LINE_GLYPH_STAGE_S = 0.35;
+const STAGGERED_SLICE_GLYPH_DURATION_S = 0.16;
+const STAGGERED_SLICE_MAX_SETTLE_S = 2.4;
+export const STAGGERED_SLICE_PREMOUNT_S = 0.35;
+const GRAPHEME_SEGMENTER =
+  typeof Intl !== "undefined" && "Segmenter" in Intl
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
+
+/**
+ * Keep the invisible preview node mounted across the effect's start boundary.
+ * Native video `timeupdate` can be ~265ms apart, so mounting only after start
+ * skips the earliest glyph frames even though the node animates smoothly once
+ * present.
+ */
+export function staggeredSlicePreviewVisibleAt(
+  tLocal: number,
+  durationS: number,
+  playing: boolean,
+): boolean {
+  return (
+    tLocal < Math.max(0.01, durationS) &&
+    (tLocal >= 0 || (playing && tLocal >= -STAGGERED_SLICE_PREMOUNT_S))
+  );
+}
+
+/** User-visible character segmentation shared with Python's regex `\X` path. */
+export function segmentGraphemes(text: string): string[] {
+  if (GRAPHEME_SEGMENTER) {
+    return Array.from(GRAPHEME_SEGMENTER.segment(text), ({ segment }) => segment);
+  }
+  return Array.from(text);
+}
+
+function staggeredSliceChoreographyS(text: string): number {
+  const lineCount = Math.max(1, normalizeAnimatedRevealText(text).split("\n").length);
+  if (lineCount === 1) return STAGGERED_SLICE_REMAINDER_END_S;
+  const lastLineStart =
+    STAGGERED_SLICE_LINES_START_S + Math.max(0, lineCount - 2) * STAGGERED_SLICE_LINE_STAGGER_S;
+  return lastLineStart + STAGGERED_SLICE_LINE_GLYPH_STAGE_S;
+}
+
+export function staggeredSliceSettleS(text: string): number {
+  return Math.min(STAGGERED_SLICE_MAX_SETTLE_S, staggeredSliceChoreographyS(text));
+}
+
+function staggeredSliceNominalTime(
+  tLocal: number,
+  durationS: number,
+  settleS: number,
+  choreographyS: number,
+): number {
+  const available = Math.max(0.01, Math.min(durationS, settleS));
+  const scale = available / choreographyS;
+  return Math.max(0, tLocal) / scale;
+}
+
+function timedProgress(t: number, start: number, duration: number): number {
+  return easeOutCubic((t - start) / Math.max(0.01, duration));
+}
+
+/** Deterministic motion model mirrored by `_staggered_slice_state` in Skia. */
+export function staggeredSliceStateAt(
+  text: string,
+  tLocal: number,
+  durationS: number,
+): StaggeredSliceState {
+  const normalized = normalizeAnimatedRevealText(text);
+  const logicalLines = normalized.split("\n");
+  const choreographyS = staggeredSliceChoreographyS(normalized);
+  const settleS = staggeredSliceSettleS(normalized);
+  const t = staggeredSliceNominalTime(tLocal, durationS, settleS, choreographyS);
+
+  const lines = logicalLines.map<StaggeredSliceLineState>((line, lineIndex) => {
+    if (lineIndex === 0) {
+      const glyphs = segmentGraphemes(line);
+      const firstSpace = glyphs.findIndex((glyph) => /^\s+$/.test(glyph));
+      const firstWordCount = firstSpace === -1 ? glyphs.length : firstSpace;
+      const remainderCount = Math.max(0, glyphs.length - firstWordCount);
+      const firstStagger =
+        firstWordCount <= 1
+          ? 0
+          : Math.min(
+              0.07,
+              (STAGGERED_SLICE_FIRST_WORD_END_S - STAGGERED_SLICE_GLYPH_DURATION_S) /
+                (firstWordCount - 1),
+            );
+      const remainderStagger =
+        remainderCount <= 1
+          ? 0
+          : (STAGGERED_SLICE_REMAINDER_END_S -
+              STAGGERED_SLICE_REMAINDER_START_S -
+              STAGGERED_SLICE_GLYPH_DURATION_S) /
+            (remainderCount - 1);
+
+      return {
+        text: line,
+        kind: "glyphs",
+        glyphs: glyphs.map((grapheme, glyphIndex) => {
+          const inFirstWord = glyphIndex < firstWordCount;
+          const start = inFirstWord
+            ? glyphIndex * firstStagger
+            : STAGGERED_SLICE_REMAINDER_START_S +
+              (glyphIndex - firstWordCount) * remainderStagger;
+          const progress = timedProgress(t, start, STAGGERED_SLICE_GLYPH_DURATION_S);
+          return {
+            grapheme,
+            opacity: progress,
+            translateYEm: 0.18 * (1 - progress),
+            rotateDeg: (glyphIndex % 2 === 0 ? -4 : 4) * (1 - progress),
+          };
+        }),
+      };
+    }
+
+    const lineStart =
+      STAGGERED_SLICE_LINES_START_S + (lineIndex - 1) * STAGGERED_SLICE_LINE_STAGGER_S;
+    const glyphs = segmentGraphemes(line);
+    const glyphStagger =
+      glyphs.length <= 1
+        ? 0
+        : (STAGGERED_SLICE_LINE_GLYPH_STAGE_S - STAGGERED_SLICE_GLYPH_DURATION_S) /
+          (glyphs.length - 1);
+    return {
+      text: line,
+      kind: "glyphs",
+      glyphs: glyphs.map((grapheme, glyphIndex) => {
+        const progress = timedProgress(
+          t,
+          lineStart + glyphIndex * glyphStagger,
+          STAGGERED_SLICE_GLYPH_DURATION_S,
+        );
+        return {
+          grapheme,
+          opacity: progress,
+          translateYEm: 0.18 * (1 - progress),
+          rotateDeg: (glyphIndex % 2 === 0 ? -4 : 4) * (1 - progress),
+        };
+      }),
+    };
+  });
+
+  return { lines, settled: t + 1e-9 >= choreographyS, settleS };
+}
+
 /** Mirror of _ease_out_cubic. t must be in [0,1]; clamped. */
 export function easeOutCubic(t: number): number {
   const tc = Math.max(0, Math.min(1, t));

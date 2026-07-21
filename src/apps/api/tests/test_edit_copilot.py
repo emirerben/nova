@@ -193,6 +193,22 @@ def test_copilot_bad_font_drops_and_caps_confidence() -> None:
     assert out.needs_clarification
 
 
+def test_copilot_accepts_staggered_slice_effect_and_catalogs_it() -> None:
+    from app.agents.edit_copilot import _effect_catalog
+
+    out = _parse(
+        [
+            {
+                "op": "patch_text_style",
+                "bar_index": 0,
+                "patch": {"effect": "staggered-slice"},
+            }
+        ]
+    )
+    assert out.ops[0]["patch"] == {"effect": "staggered-slice"}
+    assert "- staggered-slice" in _effect_catalog()
+
+
 def test_copilot_required_field_drop() -> None:
     out = _parse([{"op": "edit_text", "bar_index": 0}])
     assert out.ops == []

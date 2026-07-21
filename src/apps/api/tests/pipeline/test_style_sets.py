@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.pipeline.style_sets import (
+    _INTRO_ANIMATION_EFFECTS,
     STYLE_SETS_VERSION,
     VALID_STYLE_ROLES,
     get_style_set,
@@ -11,6 +12,15 @@ from app.pipeline.style_sets import (
     style_set_ids,
     validate_style_sets,
 )
+
+
+def test_staggered_slice_is_editor_selectable_but_not_a_style_default() -> None:
+    assert "staggered-slice" in _INTRO_ANIMATION_EFFECTS
+    assert all(
+        role.get("effect") != "staggered-slice"
+        for style_set_id in style_set_ids()
+        for role in get_style_set(style_set_id).get("roles", {}).values()
+    )
 
 
 def test_library_is_valid() -> None:

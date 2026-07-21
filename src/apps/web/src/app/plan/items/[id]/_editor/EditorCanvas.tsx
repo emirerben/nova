@@ -40,14 +40,17 @@ import {
   animationStateAt,
   normalizeAnimatedRevealText,
   sequenceOverlayFadeOutAlphaAt,
+  staggeredSlicePreviewVisibleAt,
 } from "@/lib/overlay-animation";
 import { INTRO_FONTS, MAX_INTRO_S, type OverlayCanvas } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
 import {
   TextElementOverlayContent,
+  textElementContentStyle,
   textElementWrapperStyle,
 } from "../components/TextElementOverlayLayer";
+import { StaggeredSliceText } from "@/components/variant-editor/StaggeredSliceText";
 import {
   clampMediaOverlayPosition,
   clampMediaOverlayScale,
@@ -135,6 +138,7 @@ export default function EditorCanvas({
   flashTextIds,
   flashOverlayIds,
   currentTime,
+  playing = false,
   masonryDurationS,
   zoomPct,
   tool,
@@ -173,6 +177,7 @@ export default function EditorCanvas({
   flashTextIds?: Set<string>;
   flashOverlayIds?: Set<string>;
   currentTime: number;
+  playing?: boolean;
   /** Current preview/render duration used by the masonry board pan. */
   masonryDurationS: number;
   zoomPct: number;
@@ -237,8 +242,16 @@ export default function EditorCanvas({
 
   // Elements visible at the playhead (the working bars' own timing).
   const visible = useMemo(
-    () => layouts.filter((l) => currentTime >= l.start_s && currentTime < l.end_s),
-    [layouts, currentTime],
+    () =>
+      layouts.filter((layout) => {
+        const tLocal = currentTime - layout.start_s;
+        const durationS = layout.end_s - layout.start_s;
+        if ((barById.get(layout.id)?.effect ?? "static") === "staggered-slice") {
+          return staggeredSlicePreviewVisibleAt(tLocal, durationS, playing);
+        }
+        return tLocal >= 0 && tLocal < durationS;
+      }),
+    [barById, currentTime, layouts, playing],
   );
   const visibleMediaOverlays = useMemo(
     () => visibleMediaOverlaysAtTime(mediaOverlays, currentTime, overlayPreviewUrls),
@@ -957,20 +970,38 @@ export default function EditorCanvas({
                         onFocusContent();
                       }}
                     >
-                      <TextElementOverlayContent
-                        layout={layout}
-                        fontSize={`${fontPx}px`}
-                        strokeWidth={strokePx > 0 ? `${strokePx}px` : null}
-                        canvasPixelCssSize={`${stageSize.h / canvas.h}px`}
-                        reserveText={
-                          usesFixedRevealLayout
-                            ? normalizeAnimatedRevealText(layout.text)
-                            : null
-                        }
-                        showCursor={animation.showCursor}
-                      >
-                        {animation.visibleText}
-                      </TextElementOverlayContent>
+                      {effect === "staggered-slice" ? (
+                        <StaggeredSliceText
+                          text={layout.text}
+                          tLocal={currentTime - layout.start_s}
+                          durationS={Math.min(
+                            MAX_INTRO_S,
+                            Math.max(0.01, layout.end_s - layout.start_s),
+                          )}
+                          playing={playing}
+                          style={textElementContentStyle({
+                            layout,
+                            fontSize: `${fontPx}px`,
+                            strokeWidth: strokePx > 0 ? `${strokePx}px` : null,
+                            canvasPixelCssSize: `${stageSize.h / canvas.h}px`,
+                          })}
+                        />
+                      ) : (
+                        <TextElementOverlayContent
+                          layout={layout}
+                          fontSize={`${fontPx}px`}
+                          strokeWidth={strokePx > 0 ? `${strokePx}px` : null}
+                          canvasPixelCssSize={`${stageSize.h / canvas.h}px`}
+                          reserveText={
+                            usesFixedRevealLayout
+                              ? normalizeAnimatedRevealText(layout.text)
+                              : null
+                          }
+                          showCursor={animation.showCursor}
+                        >
+                          {animation.visibleText}
+                        </TextElementOverlayContent>
+                      )}
 
                       {/* Hover ghost outline (1px zinc-400/60) */}
                       {isHovered && (

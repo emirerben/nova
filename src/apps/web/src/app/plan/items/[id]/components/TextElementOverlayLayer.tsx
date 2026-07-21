@@ -40,27 +40,20 @@ export function textElementWrapperStyle({
   };
 }
 
-export function TextElementOverlayContent({
+export function textElementContentStyle({
   layout,
   fontSize,
   strokeWidth,
   canvasPixelCssSize = `${100 / CANVAS_H}cqh`,
-  reserveText,
-  showCursor = false,
-  children,
 }: {
   layout: TextElementLayout;
   fontSize: string;
   strokeWidth?: string | null;
   /** CSS length occupied by one 1080x1920 renderer-canvas pixel. */
   canvasPixelCssSize?: string;
-  reserveText?: string | null;
-  showCursor?: boolean;
-  children?: ReactNode;
-}) {
+}): CSSProperties {
   const { family, weight, style } = resolveClusterCssFont(layout.fontFamily);
   const textAlign = layout.alignment;
-  const content = children ?? layout.text;
   const canvasPx = (pixels: number) => `calc(${pixels} * ${canvasPixelCssSize})`;
   const glowRgb = layout.glowColor?.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
   const glowShadows =
@@ -74,7 +67,7 @@ export function TextElementOverlayContent({
     !strokeWidth && layout.shadowEnabled
       ? `0 ${canvasPx(6)} ${canvasPx(12)} rgba(0, 0, 0, ${160 / 255})`
       : null;
-  const sharedStyle: CSSProperties = {
+  return {
     fontSize,
     fontFamily: family,
     fontWeight: weight,
@@ -93,6 +86,33 @@ export function TextElementOverlayContent({
       .join(", ") || undefined,
     padding: "0.08em 0.18em",
   };
+}
+
+export function TextElementOverlayContent({
+  layout,
+  fontSize,
+  strokeWidth,
+  canvasPixelCssSize = `${100 / CANVAS_H}cqh`,
+  reserveText,
+  showCursor = false,
+  children,
+}: {
+  layout: TextElementLayout;
+  fontSize: string;
+  strokeWidth?: string | null;
+  /** CSS length occupied by one 1080x1920 renderer-canvas pixel. */
+  canvasPixelCssSize?: string;
+  reserveText?: string | null;
+  showCursor?: boolean;
+  children?: ReactNode;
+}) {
+  const content = children ?? layout.text;
+  const sharedStyle = textElementContentStyle({
+    layout,
+    fontSize,
+    strokeWidth,
+    canvasPixelCssSize,
+  });
 
   if (reserveText != null && typeof content === "string" && reserveText.startsWith(content)) {
     const hiddenRemainder = reserveText.slice(content.length);

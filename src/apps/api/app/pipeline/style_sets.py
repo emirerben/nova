@@ -75,6 +75,7 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "karaoke-line",
         "lyric-line",
         "stream-in",
+        "staggered-slice",
     }
 )
 
@@ -91,6 +92,7 @@ _INTRO_ANIMATION_EFFECTS: frozenset[str] = frozenset(
         "bounce",
         "typewriter",
         "stream-in",
+        "staggered-slice",
         "none",
         "static",
     }

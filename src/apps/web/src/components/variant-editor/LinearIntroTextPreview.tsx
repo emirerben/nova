@@ -30,6 +30,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { animationStateAt, type AnimationState } from "@/lib/overlay-animation";
+import { StaggeredSliceText } from "@/components/variant-editor/StaggeredSliceText";
 import { CANVAS_W, MAX_INTRO_S, resolveCssFont } from "@/lib/overlay-constants";
 import {
   MAX_LINE_W_FRAC,
@@ -59,6 +60,7 @@ export function LinearIntroTextPreview({
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [playState, setPlayState] = useState<AnimationState | null>(null);
+  const [playTime, setPlayTime] = useState(0);
   const rafRef = useRef<number | null>(null);
   const playStartRef = useRef<number>(0);
 
@@ -131,6 +133,7 @@ export function LinearIntroTextPreview({
     const tick = (now: number) => {
       const tLocal = (now - playStartRef.current) / 1000;
       const state = animationStateAt(effect, tLocal, MAX_INTRO_S, currentText);
+      setPlayTime(tLocal);
       setPlayState(state);
       if (tLocal < MAX_INTRO_S) {
         rafRef.current = requestAnimationFrame(tick);
@@ -228,6 +231,46 @@ export function LinearIntroTextPreview({
   }
 
   const show = text.length > 0 || editable;
+  const effect = params.effect ?? "none";
+  const playbackTransform = (() => {
+    const anchorBase =
+      anchor === "left"
+        ? ""
+        : anchor === "right"
+          ? "translate(-100%, -50%)"
+          : "translate(-50%, -50%)";
+    const animParts: string[] = [];
+    if (playState && playState.scale !== 1.0) animParts.push(`scale(${playState.scale})`);
+    if (playState && playState.yTranslate !== 0)
+      animParts.push(`translateY(${playState.yTranslate * scale}px)`);
+    return [anchorBase, animParts.join(" ")].filter(Boolean).join(" ");
+  })();
+  const playbackStyle: React.CSSProperties = {
+    position: "absolute",
+    left: `${xFrac * 100}%`,
+    top: `${yFrac * 100}%`,
+    transform: playbackTransform,
+    maxWidth: `${MAX_LINE_W_FRAC * 100}%`,
+    width: "max-content",
+    textAlign: anchor === "left" ? "left" : anchor === "right" ? "right" : "center",
+    fontFamily: font.family,
+    fontWeight: font.weight,
+    fontSize: `${sizePx * scale}px`,
+    lineHeight: `${lineStepPx * scale}px`,
+    color,
+    textShadow: `0 ${6 * scale}px ${24 * scale}px rgba(0,0,0,0.63)`,
+    ...(strokePx > 0
+      ? {
+          WebkitTextStroke: `${strokePx}px rgba(0,0,0,0.9)`,
+          paintOrder: "stroke fill",
+        }
+      : {}),
+    opacity: playState?.alpha ?? 1,
+    pointerEvents: "none",
+    whiteSpace: "pre-wrap",
+    overflowWrap: "normal",
+    userSelect: "none",
+  };
 
   return (
     <div ref={containerRef} className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -286,49 +329,18 @@ export function LinearIntroTextPreview({
             }}
           />
           {/* Playback layer — non-editable overlay that runs the entrance animation */}
-          {isPlaying && playState !== null && (
+          {isPlaying && playState !== null && effect === "staggered-slice" && (
+            <StaggeredSliceText
+              text={text}
+              tLocal={playTime}
+              durationS={MAX_INTRO_S}
+              style={playbackStyle}
+            />
+          )}
+          {isPlaying && playState !== null && effect !== "staggered-slice" && (
             <div
               aria-hidden="true"
-              style={{
-                position: "absolute",
-                left: `${xFrac * 100}%`,
-                top: `${yFrac * 100}%`,
-                // Compose the anchor base transform with the animation scale + y-translate
-                transform: (() => {
-                  const anchorBase =
-                    anchor === "left"
-                      ? ""
-                      : anchor === "right"
-                        ? "translate(-100%, -50%)"
-                        : "translate(-50%, -50%)";
-                  const animParts: string[] = [];
-                  if (playState.scale !== 1.0) animParts.push(`scale(${playState.scale})`);
-                  if (playState.yTranslate !== 0)
-                    animParts.push(`translateY(${playState.yTranslate * scale}px)`);
-                  const animStr = animParts.join(" ");
-                  return [anchorBase, animStr].filter(Boolean).join(" ");
-                })(),
-                maxWidth: `${MAX_LINE_W_FRAC * 100}%`,
-                width: "max-content",
-                textAlign: anchor === "left" ? "left" : anchor === "right" ? "right" : "center",
-                fontFamily: font.family,
-                fontWeight: font.weight,
-                fontSize: `${sizePx * scale}px`,
-                lineHeight: `${lineStepPx * scale}px`,
-                color,
-                textShadow: `0 ${6 * scale}px ${24 * scale}px rgba(0,0,0,0.63)`,
-                ...(strokePx > 0
-                  ? {
-                      WebkitTextStroke: `${strokePx}px rgba(0,0,0,0.9)`,
-                      paintOrder: "stroke fill",
-                    }
-                  : {}),
-                opacity: playState.alpha,
-                pointerEvents: "none",
-                whiteSpace: "pre-wrap",
-                overflowWrap: "normal",
-                userSelect: "none",
-              }}
+              style={playbackStyle}
             >
               {playState.visibleText}
             </div>

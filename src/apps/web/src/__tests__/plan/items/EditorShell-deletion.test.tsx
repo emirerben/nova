@@ -48,26 +48,33 @@ jest.mock("@/lib/editor-commit", () => ({
   commitEditorSession: (...args: unknown[]) => mockCommitEditorSession(...args),
 }));
 
-jest.mock("@/app/plan/_components/useClipTimeline", () => ({
-  useClipTimeline: () => ({
-    state: {
-      grid: [],
-      clipDurations: {},
-      baseline: [],
-      slots: [],
-      past: [],
-      future: [],
-      clampNonce: 0,
-      clampedKey: null,
-    },
-    dispatch: jest.fn(),
-    clips: [],
-    windows: [],
-    totalS: 0,
-    loadState: "ready",
-    reload: jest.fn(),
-  }),
-}));
+jest.mock("@/app/plan/_components/useClipTimeline", () => {
+  const state = {
+    grid: [],
+    clipDurations: {},
+    baseline: [],
+    slots: [],
+    past: [],
+    future: [],
+    clampNonce: 0,
+    clampedKey: null,
+  };
+  const dispatch = jest.fn();
+  const clips: never[] = [];
+  const windows: never[] = [];
+  const reload = jest.fn();
+  return {
+    useClipTimeline: () => ({
+      state,
+      dispatch,
+      clips,
+      windows,
+      totalS: 0,
+      loadState: "ready",
+      reload,
+    }),
+  };
+});
 
 const EditorShell =
   require("@/app/plan/items/[id]/_editor/EditorShell").default as typeof import("@/app/plan/items/[id]/_editor/EditorShell").default;
@@ -227,5 +234,25 @@ describe("EditorShell linked text-card deletion", () => {
     expect(screen.queryByRole("button", { name: /Primary title/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Supporting title/ })).toBeNull();
   });
+});
 
+describe("EditorShell rendered playback state", () => {
+  it("stays playing when the rendered video emits time updates", async () => {
+    await renderShell(makeVariant([linkedText("title-1", "Card title")]));
+
+    const video = document.querySelector("video");
+    expect(video).not.toBeNull();
+
+    fireEvent.play(video as HTMLVideoElement);
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      value: 1.25,
+      writable: true,
+    });
+    fireEvent.timeUpdate(video as HTMLVideoElement);
+
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+  });
 });

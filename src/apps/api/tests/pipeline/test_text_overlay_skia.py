@@ -570,6 +570,118 @@ def test_animated_effects_all_produce_sequences(tmp_workdir):
         assert seq["n_frames"] > 1
 
 
+def test_staggered_slice_timing_model_matches_two_stage_contract():
+    text = "GOAL OF THE\nTOURNAMENT"
+    paused = tos._staggered_slice_state(text, 0.7, 4.0)
+    assert all(glyph.opacity == 1.0 for glyph in paused.lines[0].glyphs[:4])
+    assert all(glyph.opacity == 0.0 for glyph in paused.lines[0].glyphs[4:])
+    assert all(glyph.opacity == 0.0 for glyph in paused.lines[1].glyphs)
+
+    active = tos._staggered_slice_state(text, 1.6, 4.0)
+    assert any(glyph.opacity > 0.0 for glyph in active.lines[1].glyphs)
+    assert any(glyph.opacity < 1.0 for glyph in active.lines[1].glyphs)
+    assert any(glyph.translate_y_em > 0.0 for glyph in active.lines[1].glyphs)
+    assert any(glyph.rotate_deg < 0.0 for glyph in active.lines[1].glyphs)
+    assert any(glyph.rotate_deg > 0.0 for glyph in active.lines[1].glyphs)
+
+    settled = tos._staggered_slice_state(text, 1.85, 4.0)
+    assert settled.settled is True
+    assert all(glyph.opacity == 1.0 for glyph in settled.lines[1].glyphs)
+
+
+def test_staggered_slice_short_duration_compresses_and_graphemes_stay_atomic():
+    text = "e\u0301👩‍💻\nSECOND"
+    assert tos._segment_graphemes(text.split("\n")[0]) == ["e\u0301", "👩‍💻"]
+    assert tos._staggered_slice_state(text, 0.99, 1.0).settled is False
+    assert tos._staggered_slice_state(text, 1.0, 1.0).settled is True
+
+
+def test_staggered_slice_many_lines_compress_into_cap_without_snapping_last_line():
+    text = "\n".join(f"LINE {index}" for index in range(10))
+    assert tos._staggered_slice_settle_s(text) == 2.4
+    assert tos._staggered_slice_state(text, 2.39, 4.0).settled is False
+    settled = tos._staggered_slice_state(text, 2.4, 4.0)
+    assert settled.settled is True
+    assert all(glyph.opacity == 1.0 for glyph in settled.lines[-1].glyphs)
+
+
+def test_staggered_slice_draws_both_glyph_phases_without_layout_failure():
+    overlay = {
+        "text": "GOAL OF THE\nTOURNAMENT",
+        "start_s": 0.0,
+        "end_s": 4.0,
+        "position": "center",
+        "effect": "staggered-slice",
+        "font_family": "Inter",
+        "text_size_px": 118,
+        "text_color": "#FFFFFF",
+        "stroke_width": 2,
+        "letter_spacing": 0.03,
+        "line_spacing": 1.05,
+    }
+    glyph_frame = tos._draw_frame(overlay, 0.25, 4.0)
+    second_line_frame = tos._draw_frame(overlay, 1.65, 4.0)
+    settled_frame = tos._draw_frame(overlay, 2.0, 4.0)
+    assert glyph_frame.width() == tos.CANVAS_W
+    assert second_line_frame.height() == tos.CANVAS_H
+    assert settled_frame.width() == tos.CANVAS_W
+
+
+def test_staggered_slice_wrapped_rows_keep_their_logical_line_glyph_stage(monkeypatch):
+    overlay = {
+        "text": "TOP\nSECOND LINE WRAPS ACROSS MULTIPLE VISUAL ROWS",
+        "position": "center",
+        "effect": "staggered-slice",
+        "font_family": "Inter",
+        "text_size_px": 110,
+        "text_color": "#FFFFFF",
+        "max_width_frac": 0.28,
+        "preserve_font_size": True,
+    }
+    calls = []
+
+    def capture(_canvas, grapheme, _x, baseline_y, *_args, **_kwargs):
+        calls.append((grapheme, round(baseline_y, 3)))
+
+    monkeypatch.setattr(tos, "_draw_line_with_layers", capture)
+    surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
+    tos._draw_staggered_slice(surface.getCanvas(), overlay, 1.84, 4.0)
+
+    baselines = sorted({baseline_y for _, baseline_y in calls})
+    assert len(baselines) >= 3
+    later_rows = "".join(grapheme for grapheme, baseline_y in calls if baseline_y > baselines[0])
+    assert later_rows.replace(" ", "") == overlay["text"].split("\n", 1)[1].replace(" ", "")
+
+
+def test_staggered_slice_is_animated_and_links_settled_hold_frames():
+    overlay = {"text": "FIRST\nSECOND", "effect": "staggered-slice"}
+    assert tos._is_animated(overlay) is True
+    plan = tos._staggered_slice_hold_plan(overlay, 120, 1.0 / tos.FPS, 4.0)
+    assert plan is not None
+    render_indices, settled_idx, hold_indices = plan
+    assert settled_idx in render_indices
+    assert settled_idx == 56
+    assert hold_indices[0] == 57
+    assert hold_indices[-1] == 119
+
+
+def test_skia_validation_restores_explicit_newlines_after_ass_sanitization():
+    clamped = tos._validate_and_clamp(
+        {
+            "text": "FIRST\nSECOND",
+            "start_s": 0.0,
+            "end_s": 4.0,
+            "effect": "staggered-slice",
+        },
+        4.0,
+    )
+    assert clamped is not None
+    assert clamped["text"] == "FIRST\nSECOND"
+    plan = tos._staggered_slice_hold_plan(clamped, 120, 1.0 / tos.FPS, 4.0)
+    assert plan is not None
+    assert plan[1] == 56
+
+
 @pytest.mark.parametrize("effect", ["typewriter", "stream-in"])
 @pytest.mark.parametrize("text_anchor", ["left", "center", "right"])
 def test_reveal_effects_keep_full_wrapped_layout_geometry(effect, text_anchor):
