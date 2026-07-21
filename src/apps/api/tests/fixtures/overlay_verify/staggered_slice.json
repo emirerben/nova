@@ -1,0 +1,24 @@
+{
+  "overlays": [
+    {
+      "text": "GOAL OF THE\nTOURNAMENT",
+      "effect": "staggered-slice",
+      "font_family": "Inter",
+      "text_size_px": 118,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.43,
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "text_gradient": {
+        "colors": ["#FFFFFF", "#C7FF4A"],
+        "angle_deg": 0
+      },
+      "stroke_width": 2,
+      "shadow_enabled": true,
+      "letter_spacing": 0.03,
+      "line_spacing": 1.05,
+      "start_s": 0.0,
+      "end_s": 4.0
+    }
+  ]
+}

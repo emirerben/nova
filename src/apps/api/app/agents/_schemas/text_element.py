@@ -63,20 +63,21 @@ def _load_registry_font_names() -> frozenset[str]:
 
 _ALLOWED_FONTS: frozenset[str] = _LEGACY_FONT_ALIASES | _load_registry_font_names()
 
-# Allowed effects in this schema.  The burn dict supports more effects (e.g.
-# "pop-in", "typewriter") but the TextElement editor surface only exposes the
-# four effects that map cleanly to the Phase-0 burn-dict roles.  Unknown
-# effects from legacy burn dicts are coerced to "static" in the adapter.
+# Allowed effects in the shared TextElement editor glossary. Unknown effects
+# from legacy burn dicts are coerced to "static" in the adapter.
 _ALLOWED_EFFECTS: frozenset[str] = frozenset(
     {
         "static",
+        "none",
         "fade-in",
         "slide-up",
+        "slide-down",
         "karaoke-line",
         "pop-in",
         "scale-up",
         "typewriter",
         "stream-in",
+        "staggered-slice",
         "bounce",
         "slide-in",
     }
@@ -170,6 +171,7 @@ _BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
     "fade-in": "fade-in",
     "slide-up": "slide-up",
     "karaoke-line": "karaoke-line",
+    "staggered-slice": "staggered-slice",
 }
 
 # Map from burn-dict text_anchor value → TextElement alignment.
@@ -288,13 +290,16 @@ class TextElement(BaseModel):
     effect: (
         Literal[
             "static",
+            "none",
             "fade-in",
             "slide-up",
+            "slide-down",
             "karaoke-line",
             "pop-in",
             "scale-up",
             "typewriter",
             "stream-in",
+            "staggered-slice",
             "bounce",
             "slide-in",
         ]
