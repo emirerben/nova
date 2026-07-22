@@ -347,3 +347,103 @@ def test_caption_cue_words_roundtrip_exclude_none():
         words=[{"text": "a", "start_s": 0.0, "end_s": 0.5}],
     )
     assert word.model_dump(exclude_none=True)["words"][0]["text"] == "a"
+
+
+# ── Smart Captions v2 metadata round-trip ────────────────────────────────────
+#
+# The captions PATCH replaces the ENTIRE cue list with
+# `[CaptionCue.model_validate(c).model_dump(exclude_none=True) for c in cues]`
+# (persist_variant_captions + the editor-commit path), so editing ONE cue's text
+# round-trips EVERY cue through this model. Anything not whitelisted here is
+# permanently stripped from all cues on the first edit.
+
+
+def _smart_persisted_cue() -> dict:
+    """A cue as the Smart compiler persists it (chunk_words_into_cues fields +
+    compiler smart_style + prepare_smart_caption_cues render caches)."""
+    return {
+        "text": "sana bir sey gosterecegim",
+        "start_s": 1.0,
+        "end_s": 2.4,
+        "words": [
+            {"text": "sana", "start_s": 1.0, "end_s": 1.4, "timing_quality": "aligned"},
+            {"text": "bir", "start_s": 1.4, "end_s": 1.7, "timing_quality": "aligned"},
+            {"text": "sey", "start_s": 1.7, "end_s": 2.0, "timing_quality": "segment_estimate"},
+            {"text": "gosterecegim", "start_s": 2.0, "end_s": 2.4, "timing_quality": "aligned"},
+        ],
+        "smart_word_ids": ["w000001", "w000002", "w000003", "w000004"],
+        # context_shift is a SemanticRole but NOT a smart_style token — the two
+        # vocabularies differ, so this also pins that they stay distinct fields.
+        "smart_role": "context_shift",
+        "smart_style": "context",
+        "smart_render_lines": ["sana bir sey", "gosterecegim"],
+        "smart_render_font_size_px": 64,
+        "smart_render_box": {"x_px": 108, "y_px": 1150, "width_px": 864, "height_px": 210},
+    }
+
+
+def test_caption_cue_roundtrip_preserves_smart_metadata():
+    """Server-authored Smart provenance must survive the caption-edit round-trip.
+
+    smart_style is the ASS styling carrier at reburn; smart_role/smart_word_ids
+    are the planner's semantic provenance (plan 011 builds on this same
+    round-trip); words[].timing_quality is the chunker's alignment confidence.
+    The derived smart_render_* caches are deliberately dropped —
+    generate_ass_from_cues recomputes them from text + the pinned policy at
+    every burn, so persisting client-sent values would be dead weight.
+    """
+    from app.routes.generative_jobs import CaptionCue
+
+    dumped = CaptionCue.model_validate(_smart_persisted_cue()).model_dump(exclude_none=True)
+    assert dumped["smart_style"] == "context"
+    assert dumped["smart_role"] == "context_shift"
+    assert dumped["smart_word_ids"] == ["w000001", "w000002", "w000003", "w000004"]
+    assert [w["timing_quality"] for w in dumped["words"]] == [
+        "aligned",
+        "aligned",
+        "segment_estimate",
+        "aligned",
+    ]
+    assert "smart_render_lines" not in dumped
+    assert "smart_render_font_size_px" not in dumped
+    assert "smart_render_box" not in dumped
+
+
+def test_caption_cue_smart_word_ids_bounded():
+    """smart_word_ids is user input on the PATCH edge — enforce the same closed
+    format the smart_edit schemas use (w000001) and a hard count cap so the
+    debounced caption PATCH can't become an unbounded JSONB write surface."""
+    from pydantic import ValidationError
+
+    from app.routes.generative_jobs import CaptionCue
+
+    base = {"text": "x", "start_s": 0.0, "end_s": 1.0}
+    with pytest.raises(ValidationError):
+        CaptionCue.model_validate({**base, "smart_word_ids": ["not-a-word-id"]})
+    with pytest.raises(ValidationError):
+        CaptionCue.model_validate({**base, "smart_word_ids": [f"w{i:06d}" for i in range(101)]})
+    with pytest.raises(ValidationError):
+        CaptionCue.model_validate({**base, "smart_role": "not-a-role"})
+
+
+def test_caption_edit_roundtrip_keeps_smart_style_in_reburn_ass(tmp_path):
+    """End-to-end sentinel for the plan-011 review suspicion: edit ONE cue's
+    text, round-trip ALL cues through CaptionCue exactly as the captions PATCH
+    does, reburn — the untouched cue must keep its role styling in the ASS.
+    Guards the smart_style whitelist entry: removing it silently un-styles
+    every Smart caption on the first edit."""
+    from app.pipeline.captions import _SMART_CAPTION_TAGS, generate_ass_from_cues
+    from app.routes.generative_jobs import CaptionCue
+
+    stored = [
+        {**_smart_persisted_cue(), "smart_role": "hook", "smart_style": "hook"},
+        {**_smart_persisted_cue(), "start_s": 2.4, "end_s": 3.8, "text": "ilk adim"},
+    ]
+    edited = [dict(stored[0]), {**stored[1], "text": "ilk adim (duzeltildi)"}]
+    roundtripped = [CaptionCue.model_validate(c).model_dump(exclude_none=True) for c in edited]
+
+    out = tmp_path / "reburn.ass"
+    generate_ass_from_cues(roundtripped, str(out), font_name="TikTok Sans")
+    content = out.read_text(encoding="utf-8")
+    assert _SMART_CAPTION_TAGS["hook"] in content
+    assert _SMART_CAPTION_TAGS["context"] in content

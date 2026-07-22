@@ -49,6 +49,7 @@ from app.services.media_overlay_preview import (
     is_heif_overlay,
     nonblank_str,
 )
+from app.smart_edit.schemas import SemanticRole
 from app.storage import signed_get_url
 
 log = structlog.get_logger()
@@ -1236,6 +1237,14 @@ class CaptionWord(BaseModel):
     text: str
     start_s: float
     end_s: float
+    # Whisper-alignment confidence stamped by the Smart chunker (mirrors
+    # smart_edit.schemas.SmartWord.timing_quality — keep the literals in sync).
+    # Round-tripped provenance only; absent on plain narrated/subtitled cues.
+    timing_quality: Literal["aligned", "segment_estimate", "unsafe"] | None = None
+
+
+# Mirrors app/smart_edit/schemas._WORD_ID_RE ("w000001") — keep in sync.
+_SMART_WORD_ID_RE = re.compile(r"^w\d{6}$")
 
 
 class CaptionCue(BaseModel):
@@ -1260,12 +1269,36 @@ class CaptionCue(BaseModel):
     # Server-authored semantic role. Closed tokens compile to fixed ASS styles;
     # round-trip it through the editor so an unchanged cue keeps its Smart look.
     smart_style: Literal["hook", "context", "list_item", "example", "payoff", "cta"] | None = None
+    # Smart Captions v2 provenance. The captions PATCH replaces the ENTIRE cue
+    # list, so anything not whitelisted here is stripped from ALL cues on the
+    # first text edit. Not read at render time (smart_style above is the ASS
+    # styling carrier) but preserved for the planner lineage plan 011 extends.
+    # smart_role uses the smart_edit SemanticRole vocabulary — distinct from
+    # smart_style's ("context_shift" vs "context").
+    # The derived smart_render_* caches are deliberately NOT round-tripped:
+    # generate_ass_from_cues recomputes them from text + the pinned policy at
+    # every burn, so client-sent values would be dead weight.
+    smart_role: SemanticRole | None = None
+    smart_word_ids: list[str] | None = None
 
     @field_validator("words")
     @classmethod
     def _cap_words(cls, v: list[CaptionWord] | None) -> list[CaptionWord] | None:
         if v is not None and len(v) > 100:
             raise ValueError("Too many words on one caption line (max 100).")
+        return v
+
+    @field_validator("smart_word_ids")
+    @classmethod
+    def _cap_smart_word_ids(cls, v: list[str] | None) -> list[str] | None:
+        # User input on the PATCH edge — same cap as `words` (one id per word)
+        # and the closed w000001 format, so a forged PATCH can't stuff the JSONB.
+        if v is None:
+            return v
+        if len(v) > 100:
+            raise ValueError("Too many word ids on one caption line (max 100).")
+        if any(not _SMART_WORD_ID_RE.fullmatch(str(word_id)) for word_id in v):
+            raise ValueError("Invalid smart caption word id.")
         return v
 
 
