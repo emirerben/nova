@@ -240,6 +240,38 @@ def test_timeout_is_not_retried(tmp_path) -> None:
     assert run_mock.call_count == 1
 
 
+def test_multi_clip_conversion_preserves_index_mapping(tmp_path) -> None:
+    # Mixed batch: the in-place mutation must keep list indices aligned so
+    # downstream clip_id maps (built by index enumeration) stay correct.
+    big0 = tmp_path / "big0.mp4"
+    normal1 = tmp_path / "normal1.mp4"
+    big2 = tmp_path / "big2.mp4"
+    for f in (big0, normal1, big2):
+        f.write_bytes(b"x")
+    paths = [str(big0), str(normal1), str(big2)]
+    probe_map = {
+        str(big0): _probe(2160, 3840),
+        str(normal1): _probe(1080, 1920),
+        str(big2): _probe(3840, 2160),
+    }
+    new_probe = _probe(1080, 1920)
+
+    def _fake_run(cmd, **kwargs):
+        with open(cmd[-1], "wb") as fh:
+            fh.write(b"y")
+        return MagicMock(returncode=0)
+
+    converted = _run_guard(paths, probe_map, tmp_path, _fake_run, MagicMock(return_value=new_probe))
+
+    assert converted == 2
+    assert "guard_0_big0.mp4" in paths[0]
+    assert paths[1] == str(normal1)  # untouched, index preserved
+    assert "guard_2_big2.mp4" in paths[2]
+    assert set(probe_map) == set(paths)  # stale entries popped, no double-count
+    assert not big0.exists() and not big2.exists()
+    assert normal1.exists()
+
+
 def test_budget_exhaustion_skips_remaining_clips(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     # 20 heavy clips × serial re-encodes must not eat the orchestrator's
     # soft_time_limit — once the aggregate budget is spent, remaining clips
