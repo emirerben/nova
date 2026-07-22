@@ -429,6 +429,16 @@ class Job(Base):
     # and updated_at (any column write).
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # Liveness beacon ticked by the orchestrator's heartbeat thread every
+    # ~30s while a render runs (services/job_phases.job_heartbeat). The status
+    # route reports `retrying: true` when a non-terminal job's beacon goes
+    # stale — a silently OOM-killed worker otherwise looks identical to
+    # healthy progress for the full acks_late redelivery window (30+ min,
+    # 2026-07-21 incident, job e8173a25). Read-free UPDATEs by design: the
+    # heartbeat must never read-modify-write assembly_plan. (Each beat also
+    # refreshes updated_at via this model's onupdate — deliberate; see
+    # beat_heartbeat's docstring.)
+    worker_heartbeat_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()

@@ -358,8 +358,9 @@ export function EditPayoff({
 
   return (
     <div className="flex flex-col gap-6 py-4 animate-fade-up">
-      {/* Loading state expectation-setter */}
-      {!theaterIsTerminal && (
+      {/* Loading state expectation-setter — suppressed while retrying so
+          "About 90 seconds" never sits above the theater's recovery note. */}
+      {!theaterIsTerminal && !status?.retrying && (
         <p className="text-center text-xs text-[#a1a1aa]">
           About 90 seconds to render
         </p>
@@ -378,6 +379,7 @@ export function EditPayoff({
         isSuccess={theaterIsSuccess}
         receiptText={receiptText}
         variants={status?.variants ?? null}
+        retrying={status?.retrying ?? false}
         size="full"
         tone="light"
       >

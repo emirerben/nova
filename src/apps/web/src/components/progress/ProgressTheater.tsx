@@ -49,6 +49,13 @@ interface ProgressTheaterProps {
   /** Called when user requests retry. */
   onRetry?: () => void;
   /**
+   * True when the backend reports the render attempt died and is being
+   * automatically retried (stale worker heartbeat — see the generative
+   * status route's `retrying` field). Replaces the leave-note with honest
+   * recovery copy so a dead attempt doesn't masquerade as healthy progress.
+   */
+  retrying?: boolean;
+  /**
    * D13 layout mode.
    * - 'full': dedicated page-level layout (default).
    * - 'inline': compact status band only, no page-level wrapper.
@@ -90,6 +97,7 @@ export function ProgressTheater({
   receiptText = "Your edits are ready",
   variants,
   onRetry: _onRetry,
+  retrying = false,
   size = "full",
   children,
   tone = "dark",
@@ -139,15 +147,19 @@ export function ProgressTheater({
     ? Object.values(expectedPhaseMs).reduce((a, b) => a + b, 0)
     : null;
   const remainingMs = totalBaseline != null ? Math.max(0, totalBaseline - elapsedMs) : null;
-  const etaText = isTerminal ? null : etaLadder(remainingMs);
+  // While retrying, a confident "~N min left" directly contradicts the
+  // recovery note below it — the ETA baseline knows nothing about the dead
+  // attempt. Suppress the label; the bar itself stays.
+  const etaText = isTerminal || retrying ? null : etaLadder(remainingMs);
 
   // Stall copy for "leave this page" note.
   const tier = stallTier(
     elapsedMs,
     totalBaseline,
   );
-  const leaveNote =
-    tier >= 2
+  const leaveNote = retrying
+    ? "Hit a snag mid-render — retrying automatically. This can add a few minutes."
+    : tier >= 2
       ? "Taking a bit longer than expected — still working on it."
       : "You can leave this page — we'll keep rendering.";
 
@@ -218,9 +230,14 @@ export function ProgressTheater({
           )}
           {!isTerminal && (
             <p
+              // role="status": the retrying/stall copy swap is a stage-level
+              // state change — announce it once to screen readers instead of
+              // signaling recovery visually only.
+              role="status"
+              aria-live="polite"
               className={[
                 "text-xs",
-                tier >= 2
+                retrying || tier >= 2
                   ? (tone === "light" ? "text-lime-700" : "text-amber-400")
                   : (tone === "light" ? "text-[#a1a1aa]" : "text-zinc-600"),
               ].join(" ")}
