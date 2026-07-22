@@ -73,6 +73,28 @@ docs/pipelines/generative.md "Speech map + SFX auto-suggestions". Remaining foll
 **Effort:** M (CC: ~1h + parity checks)
 **Priority:** P2
 
+## Plan 011 — Smarter captions (deferrals from the 2026-07-22 eng review)
+
+### T-CAP011-1 — Emphasis styling lane for standalone cues
+**What:** Standalone emphasis cues ("Messi" alone) currently inherit generic role tags; add a dedicated style treatment (bigger size / color pop / preset token) driven by the persisted `smart_emphasis` cue field.
+**Why:** Plan 011 deliberately ships grouping without styling to keep the diff reviewable; the persisted `smart_emphasis` marker exists precisely so this lane has a stable source that survives user caption edits (the CaptionCue round-trip carries it — plan 011 finding ARCH-4).
+**How:** New preset token in `CaptionPolicy` + `_SMART_CAPTION_TAGS`-style ASS override keyed on `smart_emphasis`; renderer-parity rule applies (both first burn and reburn paths).
+**Context:** plans/011-smart-caption-contextual-cues.md "NOT in scope"; `smart_edit/captions.py` emits the field; `_burn_persisted_captions_onto_base` consumes cue fields at reburn.
+**Effort:** S-M (CC: ~1-2h) **Priority:** P2 **Depends on:** plan 011 PR-1 shipped + SMART_CAPTION_EMPHASIS_CUES_ENABLED validated in prod
+
+### T-CAP012-1 — Extract the merge-back pass out of build_semantic_caption_cues
+**What:** `build_semantic_caption_cues` (smart_edit/captions.py) grew to ~240 lines: span registration + the chunking loop + the ~55-line P0-2 stranded-marker merge-back (backward-fold + forward `pending_prefix`) + the trailing flush. Extract the merge-back into a focused helper (e.g. `_merge_stranded_markers(chunks, *, standalone_ranges, forced_breaks, policy, index_by_id)`) so the main function reads register → chunk → merge → emit and the merge rules get isolated unit tests.
+**Why:** Maintainability finding from the ship review (conf 6). The logic is correct and covered end-to-end, but the inline block is hard to follow and can't be unit-tested in isolation. Deferred from the ship PR to avoid a structural refactor at merge time.
+**How:** Pure extraction, no behavior change; keep the existing byte-identity + merge-back tests green. Related: the shared list-marker/function-word vocabulary is hand-mirrored across `_LONE_MARKER_TOKENS`, `_NAME_STOP`, and `compiler._KEYWORD_STOP` — consider a single `smart_edit` lexicon constant while in here.
+**Effort:** S (CC: ~45 min) **Priority:** P3 **Depends on:** nothing (safe anytime)
+
+### T-CAP011-2 — Per-anchor streaming face sampler
+**What:** `face_sampler_worker.py` emits JSON once at exit, so a subprocess timeout discards ALL partial anchor results. Stream one JSON line per anchor so timeouts keep completed samples.
+**Why:** Plan 011 scales the timeout with anchor count instead (sufficient for n≤14); streaming becomes worth it only if `caption_placement` receipts show meaningful timeout rates after the Fly flip.
+**How:** Worker prints per-anchor lines; `sample_face_regions` parses incrementally and keeps whatever arrived before the kill.
+**Context:** plans/011-smart-caption-contextual-cues.md "NOT in scope"; perf finding PERF-1 (all-or-nothing 2.0s timeout).
+**Effort:** S (CC: ~45 min) **Priority:** P3 **Depends on:** observed timeout receipts in /admin/jobs (don't build speculatively)
+
 ## Editor virtual preview — follow-ups (from v0.7.30.1)
 
 ### T-VPM-1 — Music preview shorter than the edited cut ends silently

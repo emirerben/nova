@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -148,6 +149,51 @@ def _typeface(font_family: str) -> skia.Typeface:
     return typeface or skia.Typeface.MakeDefault()
 
 
+# Line-layout penalties (plan 011, Feature B). All are inert unless the caller
+# passes keep_together pairs or penalize_widows — a bare measure_caption() is
+# byte-identical to the pre-feature scoring. OVERFLOW dominates the others so a
+# split that FITS always beats one that overflows at a given size (the shrink
+# loop's iteration count is unchanged); BREAK/WIDOW only reorder among fitting
+# splits. Pixel-scale base widths are < ~1100, so these magnitudes are decisive.
+_OVERFLOW_PENALTY = 1_000_000.0
+_BREAK_PENALTY = 1_000.0
+_WIDOW_PENALTY = 500.0
+_WIDOW_MAX_CHARS = 3
+
+
+def _valid_keep_together(
+    pairs: Sequence[tuple[int, int]] | None, word_count: int
+) -> list[tuple[int, int]]:
+    """Drop degenerate / out-of-range pairs (stale after a user cue-text edit)."""
+
+    if not pairs:
+        return []
+    valid: list[tuple[int, int]] = []
+    for pair in pairs:
+        try:
+            i, j = int(pair[0]), int(pair[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if 0 <= i < j <= word_count - 1:
+            valid.append((i, j))
+    return valid
+
+
+def _split_breaks_pair(split: int, pairs: list[tuple[int, int]]) -> bool:
+    """A break between word[split-1] and word[split] falls inside a kept pair."""
+
+    return any(i < split <= j for i, j in pairs)
+
+
+def _is_widow(lines: tuple[str, ...]) -> bool:
+    """A line is a lone short word while the cue has >= 3 words total."""
+
+    total = sum(len(line.split()) for line in lines)
+    if total < 3:
+        return False
+    return any(len(line.split()) == 1 and len(line.strip()) <= _WIDOW_MAX_CHARS for line in lines)
+
+
 def measure_caption(
     text: str,
     *,
@@ -157,14 +203,27 @@ def measure_caption(
     y_frac: float,
     max_lines: int,
     canvas: Canvas = PORTRAIT,
+    keep_together: Sequence[tuple[int, int]] | None = None,
+    penalize_widows: bool = False,
 ) -> TextMeasurement:
-    """Wrap with the production Skia typeface and return its normalized box."""
+    """Wrap with the production Skia typeface and return its normalized box.
+
+    ``keep_together`` pairs (cue-relative, inclusive word indexes) must not be
+    split across the two lines; ``penalize_widows`` discourages a lone short word
+    on its own line. Both are soft, fit-first preferences: a split that fits the
+    width always wins over one that overflows, so honoring them never forces an
+    extra shrink. When neither is supplied the scoring is byte-identical to the
+    pre-feature behavior (the ``SMART_CAPTION_LAYOUT_BALANCE_ENABLED`` /
+    emphasis kill switches).
+    """
 
     words = [word for word in text.split() if word]
     if not words:
         box = NormalizedBox(0.5, y_frac, 0.5, y_frac)
         return TextMeasurement(lines=(), font_size_px=font_size_px, box=box)
     max_width_px = canvas.width * width_frac
+    pairs = _valid_keep_together(keep_together, len(words))
+    apply_penalties = bool(pairs) or penalize_widows
     chosen_lines: tuple[str, ...] = (" ".join(words),)
     chosen_size = font_size_px
     for size in range(font_size_px, 35, -2):
@@ -176,7 +235,15 @@ def measure_caption(
             for split in range(1, len(words)):
                 lines = (" ".join(words[:split]), " ".join(words[split:]))
                 widths = [font.measureText(line) for line in lines]
-                candidates.append((max(widths) + abs(widths[0] - widths[1]) * 0.08, lines))
+                score = max(widths) + abs(widths[0] - widths[1]) * 0.08
+                if apply_penalties:
+                    if max(widths) > max_width_px:
+                        score += _OVERFLOW_PENALTY
+                    if pairs and _split_breaks_pair(split, pairs):
+                        score += _BREAK_PENALTY
+                    if penalize_widows and _is_widow(lines):
+                        score += _WIDOW_PENALTY
+                candidates.append((score, lines))
         _, lines = min(candidates, key=lambda candidate: candidate[0])
         widest = max(font.measureText(line) for line in lines)
         chosen_lines = lines

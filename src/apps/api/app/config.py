@@ -178,6 +178,42 @@ class Settings(BaseSettings):
     # false = pre-agent behavior byte-identically.
     smart_scene_matcher_enabled: bool = True
 
+    # Smarter captions (plans 011 + 012). Four flags: the two plan-011 kill
+    # switches (emphasis, layout) default OFF so a merge is a no-op until each is
+    # flipped Fly-first; the two plan-012 behavior flags (section heading,
+    # transcript cache) default ON — they refine pre-existing behavior and act as
+    # rollback levers rather than opt-in gates.
+    #
+    # EMPHASIS: gates the scene-matcher emphasis prompt block AND consumption of
+    # emphasis_spans in the caption chunker — contextual words-per-cue ("number
+    # one → Messi" shows Messi alone) plus emphasis-derived keep-together pairs.
+    # Off ⇒ the model never sees the emphasis task and cue chunking is
+    # byte-identical (the prompt block renders to ""); it is a real rollback, not
+    # a consumption veto. Requires smart_scene_matcher_enabled to do anything.
+    smart_caption_emphasis_cues_enabled: bool = False
+    # LAYOUT: gates the deterministic line-layout additions in measure_caption —
+    # the digit+word keep-together adjacency rule and the single-word widow
+    # penalty. Fully deterministic (no LLM), so it is verifiable offline and can
+    # ship ahead of the emphasis eval train. Off ⇒ line wrapping byte-identical
+    # for cues with no persisted emphasis keep-together pairs; a job planned
+    # while the emphasis flag was on keeps honoring its persisted pairs on reburn
+    # regardless of THIS flag (that is the emphasis dimension, not the layout one).
+    smart_caption_layout_balance_enabled: bool = False
+    # SECTION HEADING: the "number N" + keyword overlay lane the scene matcher
+    # emits for list items (plan 012 P1-3). Default ON (pre-existing behavior);
+    # rollback lever if the section overlay crowds the caption band. Off ⇒ the
+    # compiler emits no section number/keyword text elements; captions unaffected.
+    smart_caption_section_heading_enabled: bool = True
+    # TRANSCRIPT CACHE: content-addressed cache of the whisper transcript keyed by
+    # clip content hash (plan 012 P1-4). whisper-1 is non-deterministic, so this
+    # makes every re-render of the SAME clip reuse the identical word list —
+    # killing the "two renders of one clip caption differently" symptom. Fully
+    # fail-open (any GCS/hash error falls through to a live transcribe). Default
+    # ON; set false to always re-transcribe.
+    smart_caption_transcript_cache_enabled: bool = True
+    # (Face-aware caption placement — smart_caption_face_placement_enabled — lands
+    # with Feature C in its own PR.)
+
     # Kill switch for authored TextElements on subtitled variants. When False,
     # subtitled remains captions-only and the text-element routes/capabilities
     # reject it. When True, user-authored text is burned onto the caption-free

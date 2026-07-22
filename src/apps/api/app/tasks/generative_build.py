@@ -8137,7 +8137,10 @@ def _render_subtitled_variant(
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.reframe import reframe_and_export, resolve_output_fit  # noqa: PLC0415
     from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
-    from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+    from app.pipeline.transcribe import (  # noqa: PLC0415
+        transcribe_whisper,
+        transcribe_whisper_cached,
+    )
     from app.storage import upload_public_read  # noqa: PLC0415
 
     variant_id = spec["variant_id"]
@@ -8354,7 +8357,10 @@ def _render_subtitled_variant(
                 detected_lang = sc_language or detected_lang
                 cues = build_plain_cues(caption_words, attach_words=True)
             else:
-                transcript = transcribe_whisper(clip_path, language=None)
+                # Content-addressed cache: re-renders of the same clip reuse the
+                # identical transcript (plan 012 P1-4), so captions stop drifting
+                # run-to-run. Fail-open to a live transcribe on any cache error.
+                transcript = transcribe_whisper_cached(clip_path, language=None)
                 detected_lang = transcript.language or detected_lang
                 cues = build_plain_cues(transcript.words, attach_words=True)
             cues = correct_caption_cues(

@@ -64,3 +64,21 @@ def test_scene_matcher_eval(
             if tag["role"] == "list_item" and tag.get("sequence_number")
         )
         assert sequences == [1, 2], f"expected chapters [1, 2], got {sequences}"
+
+        # Emphasis contract (2026-07-22.2): each NAMED player is isolated as its
+        # own standalone caption — the founder's "show Messi alone" ask — and a
+        # full name stays together as ONE standalone span, never merged with the
+        # words around it or split across cues.
+        spans = result.output.get("emphasis_spans") or []
+        standalone = {tuple(span["word_ids"]) for span in spans if span.get("kind") == "standalone"}
+        assert ("w000023",) in standalone, "Messi must be a standalone caption"
+        assert ("w000034",) in standalone, "Mbappe must be a standalone caption"
+        assert ("w000027", "w000028") in standalone, (
+            "the full name 'Elliot Anderson' must be ONE standalone span, not split"
+        )
+        # No standalone span may overlap another (each names a distinct entity).
+        seen: set[str] = set()
+        for span in spans:
+            ids = set(span["word_ids"])
+            assert not (ids & seen), "emphasis spans must not overlap"
+            seen |= ids

@@ -78,6 +78,14 @@ failure or timeout ⇒ empty regions, never a hung render. Guards: the
 `test_shared_geometry_*` and `test_face_*` tests in
 `tests/smart_edit/test_v2_render_contract.py`.
 
+`measure_caption` also takes soft, fit-first line-layout preferences (plan 011,
+Feature B): `keep_together` word-index pairs that must not split across the two
+lines, and `penalize_widows` to discourage a lone short word (≤3 chars) on its
+own line. Overflow dominates both penalties, so a split that fits the width
+always wins over one that overflows — honoring a preference never forces an extra
+shrink. A bare `measure_caption` with neither supplied is byte-identical to the
+pre-feature scoring. Guard: `tests/pipeline/test_render_geometry.py`.
+
 ## Caption grammar
 
 `app/smart_edit/captions.py` + `prepare_smart_caption_cues` in
@@ -86,6 +94,59 @@ policy (measured two-line wrap, reburn-stable). Explicit user font/position edit
 survive Smart reburns; without edits the pinned preset policy stays
 authoritative. Caption-language changes on Smart variants are declined until a
 safe re-plan exists.
+
+### Contextual caption cues (plans 011 + 012)
+
+`build_semantic_caption_cues` groups words by MEANING instead of a fixed
+words-per-cue when the emphasis brain is on. The scene matcher emits
+`emphasis_spans` (`standalone` | `keep_together`), validated + budget-capped +
+gap-spaced in `planner._validate_emphasis_spans` (≤10 per video; standalone pops
+kept ≥1.5s apart so a spoken list does not strobe). A `standalone` span
+("number one … Messi") closes its own cue so the named entity shows alone —
+marked `smart_emphasis` and held to the `_STANDALONE_MIN_HOLD_S` (0.5s) display
+floor without overrunning the next cue or touching per-word `end_s`. A
+`keep_together` span never splits across cues or lines; multi-word spans of
+either kind surface to `measure_caption` as `smart_keep_together` line pairs. A
+semantic close (role change or authored-title boundary) ALWAYS wins over both —
+presentation may never own meaning.
+
+Reliability floors (plan 012, P0): an isolated cue that is purely a
+scene-matcher-confirmed named entity is promoted to `smart_emphasis` even when
+the LLM missed the standalone span (`_is_lone_name_cue`, keyed on the matcher's
+entity anchors); and a stranded lone list marker ("number", "and", "the") folds
+back into a neighboring cue instead of blinking as a one-word caption — never
+folding into or across a standalone/floor-name/boundary, and never stripping the
+emphasis off the name it sits beside. The section-heading keyword picker
+(`compiler._KEYWORD_STOP`) skips the same list markers so "number one Lionel
+Messi" surfaces "Lionel", not "number". The list-marker vocabulary is
+hand-mirrored across `captions._LONE_MARKER_TOKENS`, `captions._NAME_STOP`, and
+`compiler._KEYWORD_STOP` — keep them in sync.
+
+Line layout (`prepare_smart_caption_cues`): persisted emphasis pairs
+(`smart_keep_together`) are always honored; the deterministic digit+word rule
+(`digit_word_keep_together`, "1 Messi") and the widow penalty apply only under
+`SMART_CAPTION_LAYOUT_BALANCE_ENABLED`. All of the above is inert when no
+emphasis span / entity anchor is present, so a flag-off render is byte-identical
+(`SMART_CAPTION_EMPHASIS_CUES_ENABLED` / `SMART_CAPTION_LAYOUT_BALANCE_ENABLED` /
+`SMART_CAPTION_SECTION_HEADING_ENABLED`, all documented in `.env.example`).
+Guards: `tests/smart_edit/test_captions.py`,
+`tests/smart_edit/test_scene_matcher.py`,
+`tests/pipeline/test_smart_caption_prepare.py`,
+`tests/pipeline/test_render_geometry.py`.
+
+### Transcript determinism
+
+`transcribe_whisper_cached` in `app/pipeline/transcribe.py` (plan 012 P1-4):
+whisper-1 is non-deterministic, so re-rendering one clip could drop or split a
+proper noun differently each run and change the captions. The transcript is now
+content-addressed — cached in GCS under
+`transcript-cache/<version>/<sha256>_<lang>_<prompt>.json` keyed by the clip's
+content hash — so every re-render of the same clip reuses the identical word
+list. Fully fail-open: any hashing / storage error falls straight through to a
+live transcribe, and a cache-write failure never affects the returned result.
+The sole caller is `_render_subtitled_variant`. Gated by
+`SMART_CAPTION_TRANSCRIPT_CACHE_ENABLED` (default on). Guard:
+`tests/pipeline/test_transcript_cache.py`.
 
 ## Grounded caption correction
 
