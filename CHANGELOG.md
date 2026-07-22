@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.1.2] — 2026-07-22
+
+### Fixed
+- **Editing one Smart Caption line no longer wipes the styled look off every line.** The caption editor sends the whole cue list back on any edit, and the save model only kept `text`/`timings`/`smart_style` — so a creator fixing a single word silently stripped the Smart Captions v2 provenance (`smart_role`, per-word `timing_quality`, source word ids) from all cues. Those fields are now preserved on the round-trip. No visible styling regression exists today (role styling rides `smart_style`, which was already kept), but the dropped provenance is what plan 011's contextual-cue work reads, so this closes the gap before that lands.
+
+### Notes
+- The preserved fields are validated at the request edge: `smart_role` is pinned to the shared `SemanticRole` vocabulary (imported from `smart_edit.schemas`, so writer and validator can never drift), and `smart_word_ids` are bounded to ≤100 ids matching the closed `w000001` format — a forged caption PATCH can't stuff arbitrary JSONB. Guarded by round-trip + reburn tests in `tests/tasks/test_subtitled_retranscribe.py`.
+
 ## [0.12.1.1] — 2026-07-21
 
 ### Fixed
