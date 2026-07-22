@@ -272,6 +272,39 @@ class Settings(BaseSettings):
     # no in-flight job is mid-rendered with a switched-on flag.
     text_renderer_skia_enabled: bool = True
 
+    # Heavy-source downscale guard (2026-07-21 OOM incident, job e8173a25):
+    # a 170MB high-bitrate clip OOM-killed the worker mid-reframe. SDR sources
+    # whose SHORT edge exceeds `source_downscale_short_edge_max` are re-encoded
+    # once at ingest (bounded decoder threads, h264, never upscaled past the
+    # 1080x1920 cover scale) so every downstream per-slot reframe decodes a
+    # bounded intermediate instead of native 4K HEVC. HDR sources are excluded —
+    # the existing `_pretonemap_hdr_clips` pass already downscales those inside
+    # its zscale chain. Kill switch: SOURCE_DOWNSCALE_GUARD_ENABLED=false +
+    # worker restart → byte-identical to pre-guard behavior.
+    source_downscale_guard_enabled: bool = True
+    source_downscale_short_edge_max: int = 1920
+    # Decoder/encoder thread cap for the guard's own ffmpeg pass. Frame-threaded
+    # HEVC decode memory scales with thread count — the whole point of the guard
+    # is bounding peak RSS, so its own decode must not spike either.
+    source_downscale_ffmpeg_threads: int = 2
+
+    # Celery prefork child recycling (same incident): analyze_pool_asset bursts
+    # leave CLIP/torch/Whisper residency in the single long-lived child, which
+    # then stacks under the next render's ffmpeg peak. When a child's RSS
+    # exceeds this many KB after a task completes, Celery replaces it (fork from
+    # the parent keeps the prewarmed CLIP singleton via copy-on-write, so the
+    # replacement is cheap). 0 disables. Measured in KB (Celery convention).
+    worker_max_memory_per_child_kb: int = 3_145_728  # 3GB
+
+    # Render heartbeat (same incident, user-visible half): the orchestrator
+    # ticks jobs.worker_heartbeat_at every `interval` seconds; the status route
+    # reports `retrying: true` while a non-terminal job's heartbeat is older
+    # than `stale_after` (worker died silently; acks_late redelivery pending).
+    # stale_after = 5 missed beats — tolerates one slow/failed DB write without
+    # flapping the UI.
+    render_heartbeat_interval_s: int = 30
+    render_heartbeat_stale_after_s: int = 150
+
     # Dynamic crossfade scheduling for the line-style lyric overlay path
     # (`app.pipeline.lyric_injector._inject_line`). When True (default), the
     # scheduler matches per-pair crossfade durations, anchors actual emitted

@@ -81,9 +81,53 @@ above; v2 failures fail open to a standard subtitled render with receipts.
 - `src/apps/api/app/routes/generative_jobs.py` — job submission + status: `swap-song` /
   `retext` per-variant re-renders; `_variants_for_response` re-signs ready variant URLs
   from the persisted `video_path` key (`PLAYBACK_URL_TTL_MIN`). Reuses
-  `admin_music._validate_clip_path_prefixes` for the clip allowlist.
+  `admin_music._validate_clip_path_prefixes` for the clip allowlist. The status
+  response also carries `retrying` (computed at read time — see "Worker memory
+  guardrails + render liveness" below).
 - `src/apps/api/app/routes/admin_generative.py` — `GET /admin/generative` dashboard
   list.
+
+## Worker memory guardrails + render liveness (v0.12.2.0)
+
+Three mechanics from the 2026-07-21 worker OOM incident. Full narrative and
+rejected alternatives: `agents/DECISIONS.md` "[2026-07-21] Worker OOM
+mid-reframe". Env vars documented in `.env.example` (deliberately not
+CLAUDE.md — its size budget was full).
+
+- **Heavy-source downscale guard** — `downscale_oversized_sources` in
+  `app/pipeline/source_guard.py`, called from `_ingest_clips`,
+  `_prepare_timeline_assembly` (timeline re-renders decode the durable
+  originals), and the narrated bed-level reburn. SDR sources with short edge
+  > `SOURCE_DOWNSCALE_SHORT_EDGE_MAX` (1920) are re-encoded once at ingest
+  (decode threads capped at `SOURCE_DOWNSCALE_FFMPEG_THREADS`, never
+  upscaled, audio stream-copied with an AAC-transcode retry) so per-slot
+  reframes never decode native 4K HEVC. HDR clips are excluded
+  (`_pretonemap_hdr_clips` owns those), still images too. Whole-pass budget
+  `_GUARD_TOTAL_BUDGET_S = 900`; overflow and failed conversions keep the
+  original clip. Trace events on the `reframe` stage: `source_guard_downscaled`,
+  `source_guard_downscale_failed`, `source_guard_budget_exhausted`. Kill
+  switch: `SOURCE_DOWNSCALE_GUARD_ENABLED=false` + worker restart. Guards:
+  `tests/pipeline/test_source_guard.py`. Template/music ingest paths are NOT
+  wired yet (TODOS.md).
+- **Prefork child recycling + tmpfs sweep** — `worker_max_memory_per_child`
+  in `app/worker.py` (`WORKER_MAX_MEMORY_PER_CHILD_KB`, default 3GB,
+  0 disables; billiard compares lifetime PEAK RSS, recycles between tasks
+  only). A `task_prerun` hook sweeps orphaned `nova*` tmpdirs from RAM-backed
+  /tmp (`app/pipeline/tmp_sweep.py`; the 1850s age cutoff must stay above
+  every render `time_limit` and at or below the 1900s `visibility_timeout` —
+  pinned by `test_tmp_sweep_cutoff_stays_inside_redelivery_window`).
+- **`retrying` status flag** — `orchestrate_generative_job` wraps its body in
+  `job_phases.job_heartbeat`, ticking `jobs.worker_heartbeat_at` (migration
+  0068) every `RENDER_HEARTBEAT_INTERVAL_S` with the DB clock. The status
+  route's `_compute_retrying` reports `retrying: true` at read time while a
+  `processing`/`rendering` job's beacon is older than
+  `RENDER_HEARTBEAT_STALE_AFTER_S` but still inside the redelivery window
+  (visibility_timeout + stale + 300s slack — past it no retry can come and
+  the claim stops). NULL beacon never flags. ProgressTheater and EditPayoff
+  swap in recovery copy and hide the ETA while retrying. Variant re-render /
+  reburn tasks do NOT heartbeat (accepted gap, TODOS.md). Guards:
+  `tests/routes/test_generative_retrying.py`,
+  `src/apps/web/src/__tests__/progress/retrying.test.tsx`.
 
 ## Post-generation timeline editing (clip editor)
 

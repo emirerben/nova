@@ -37,6 +37,10 @@ Call from inside any `app/pipeline/*` module at any decision point. Stage bucket
 The `orientation` stage emits five events: `skipped`, `flag_stripped_no_rotation`,
 `flag_stripped_no_rotation_180`, `normalized`, `disabled_by_env`.
 
+The `reframe` stage also carries the heavy-source downscale guard's events
+(`app/pipeline/source_guard.py`, v0.12.2.0): `source_guard_downscaled`,
+`source_guard_downscale_failed`, `source_guard_budget_exhausted`.
+
 ## Template-scoped sibling
 
 `/admin/templates/{id}` has a "Debug" tab backed by `GET /admin/templates/{id}/debug`

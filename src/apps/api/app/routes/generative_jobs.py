@@ -369,6 +369,12 @@ class GenerativeJobStatusResponse(BaseModel):
     # spine_extraction_failed, flag_disabled, ...) — clients map the known ones to
     # specific copy and show a generic downgrade banner for anything else.
     archetype_fallback: ArchetypeFallbackOut | None = None
+    # True while a non-terminal job's worker heartbeat has gone stale — the
+    # render attempt died silently (OOM/SIGKILL) and Celery's acks_late
+    # redelivery hasn't resumed it yet (2026-07-21 incident, job e8173a25).
+    # Computed at READ time from jobs.worker_heartbeat_at, never persisted;
+    # flips back to false the moment the redelivered attempt starts beating.
+    retrying: bool = False
 
 
 class SwapSongRequest(BaseModel):
@@ -4805,6 +4811,52 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession) -> None
                 variant["music_preview_start_s"] = 0.0
 
 
+# Non-terminal statuses an orchestrate_generative_job run passes through while
+# its heartbeat thread is expected to be beating ("processing" → "rendering";
+# generative_build.py sets no others). Deliberately NOT "queued" (no attempt
+# has started — nothing to be stale) and not the terminal set (finished jobs
+# stop beating by design).
+_HEARTBEAT_LIVE_STATUSES = frozenset({"processing", "rendering"})
+
+# Past this beacon age no acks_late redelivery can still be pending
+# (visibility_timeout=1900s in worker.py, plus staleness slack) — a hard
+# time_limit SIGKILL ACKS the message (task_acks_on_failure_or_timeout default),
+# so "retrying automatically" would be a false promise forever. Beyond the
+# window we stop claiming a retry; the stale-job reaper owns the row from there.
+_RETRY_WINDOW_SLACK_S = 300
+
+
+def _compute_retrying(job: Job) -> bool:
+    """True when the job's render attempt died silently and awaits redelivery.
+
+    Read-time computation from `jobs.worker_heartbeat_at` (ticked ~30s by the
+    orchestrator's daemon thread). NULL beacon → no signal, never stale — this
+    keeps legacy rows and non-heartbeating orchestrators at `false` forever.
+    """
+    from datetime import UTC  # noqa: PLC0415
+
+    from app.config import settings  # noqa: PLC0415
+
+    beacon = getattr(job, "worker_heartbeat_at", None)
+    if job.status not in _HEARTBEAT_LIVE_STATUSES or beacon is None:
+        return False
+    age_s = (datetime.now(UTC) - beacon).total_seconds()
+    # Misconfiguration guard: if an operator raises the beat interval above the
+    # stale threshold, every healthy render would flap `retrying` between
+    # beats. Two missed beats is the floor for calling an attempt dead.
+    stale_after_s = max(
+        settings.render_heartbeat_stale_after_s,
+        2 * settings.render_heartbeat_interval_s,
+    )
+    from app.worker import celery_app  # noqa: PLC0415
+
+    visibility_timeout_s = int(
+        (celery_app.conf.broker_transport_options or {}).get("visibility_timeout", 1900)
+    )
+    retry_window_s = visibility_timeout_s + stale_after_s + _RETRY_WINDOW_SLACK_S
+    return stale_after_s < age_s <= retry_window_s
+
+
 @router.get("/{job_id}/status", response_model=GenerativeJobStatusResponse)
 async def get_generative_job_status(
     job_id: str,
@@ -4857,6 +4909,7 @@ async def get_generative_job_status(
         finished_at=job.finished_at,
         expected_phase_durations=baselines,
         archetype_fallback=archetype_fallback,
+        retrying=_compute_retrying(job),
     )
     if getattr(job, "_media_overlay_preview_backfilled", False):
         # `_variants_for_response` mutated an UNLOCKED snapshot of assembly_plan.

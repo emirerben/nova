@@ -2,13 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.12.1.2] — 2026-07-22
+## [0.12.2.1] — 2026-07-22
 
 ### Fixed
 - **Editing one Smart Caption line no longer wipes the styled look off every line.** The caption editor sends the whole cue list back on any edit, and the save model only kept `text`/`timings`/`smart_style` — so a creator fixing a single word silently stripped the Smart Captions v2 provenance (`smart_role`, per-word `timing_quality`, source word ids) from all cues. Those fields are now preserved on the round-trip. No visible styling regression exists today (role styling rides `smart_style`, which was already kept), but the dropped provenance is what plan 011's contextual-cue work reads, so this closes the gap before that lands.
 
 ### Notes
 - The preserved fields are validated at the request edge: `smart_role` is pinned to the shared `SemanticRole` vocabulary (imported from `smart_edit.schemas`, so writer and validator can never drift), and `smart_word_ids` are bounded to ≤100 ids matching the closed `w000001` format — a forged caption PATCH can't stuff arbitrary JSONB. Guarded by round-trip + reburn tests in `tests/tasks/test_subtitled_retranscribe.py`.
+
+## [0.12.2.0] — 2026-07-22
+
+### Fixed
+- **A heavy 4K upload can no longer crash the render worker mid-edit.** A 170MB high-bitrate clip OOM-killed the worker during reframing (prod job e8173a25): every variant re-decoded the full-resolution source while leftover AI-analysis models still occupied worker memory. Oversized SDR clips are now downscaled once at ingest with a bounded-memory pass (HDR clips already had their own) — on first renders, timeline re-renders, and narrated re-mixes alike — and the worker recycles its task process whenever residual memory from analysis bursts exceeds 3GB, so a render no longer starts on top of a ballooned process. The downscale pass has a hard time budget (many heavy clips can't stall a render), handles pro-camera audio formats, and a crashed attempt's leftover temp files are swept before the retry so the recovery run gets its full memory back. Kill switches: `SOURCE_DOWNSCALE_GUARD_ENABLED=false`, `WORKER_MAX_MEMORY_PER_CHILD_KB=0`.
+
+### Added
+- **You can now tell a crashed-and-recovering render apart from a healthy one.** When a render attempt dies silently, the job used to show normal "rendering" progress for the entire 30+ minute automatic-retry window. The worker now ticks a liveness heartbeat while rendering; once it goes quiet the progress view switches to "Hit a snag mid-render — retrying automatically," and flips back the moment the retried attempt picks up. The recovery state is honest end to end: the confident time estimate is hidden while retrying, the claim stops once no automatic retry can still be coming, screen readers announce the change, and the onboarding first-render screen shows it too.
 
 ## [0.12.1.1] — 2026-07-21
 
