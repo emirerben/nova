@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.3.0] — 2026-07-22
+
+### Added
+- **Smart Captions now decide how many words to show by meaning, and a named thing gets its own moment.** When you say "number one… Messi," the caption shows **Messi** alone — held a beat longer and marked for emphasis — instead of running on into "Messi he is." The scene matcher tags the salient named entities and the caption chunker gives each its own cue; a full name like "Elliot Anderson" stays together as one emphasized caption. Works in English and Turkish. Off by default behind `SMART_CAPTION_EMPHASIS_CUES_ENABLED` — a flag-off render is byte-identical.
+- **Multi-word captions wrap without orphans.** Deterministic line layout keeps a "number 1" pairing together on one line and stops a single word from being stranded alone on the second line. Off by default behind `SMART_CAPTION_LAYOUT_BALANCE_ENABLED`.
+
+### Fixed
+- **A bare "number", "and", or "the" no longer flashes as its own one-word caption.** When a name isolates onto its own cue, the leftover list marker now folds into a neighboring caption instead of blinking alone — and it can never strip the emphasis off the name it sits next to (an entity kept alone by Nova's own name detection gets the same protection as one the model marked).
+- **The chapter-number overlay shows the name, not the marker.** "Number one Lionel Messi" now surfaces "Lionel" on the section heading instead of "number." Rollback lever: `SMART_CAPTION_SECTION_HEADING_ENABLED`.
+- **The same clip captions the same way on every re-render.** Whisper is non-deterministic, so re-rendering one clip could drop or split a proper noun differently each run, changing the captions; transcripts are now cached by clip content so every re-render reuses the identical words. Fully fail-open — a cache miss or storage hiccup just re-transcribes, and it never fails a render. Rollback lever: `SMART_CAPTION_TRANSCRIPT_CACHE_ENABLED`.
+
 ## [0.12.2.0] — 2026-07-22
 
 ### Fixed
