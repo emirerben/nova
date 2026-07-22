@@ -846,9 +846,22 @@ export interface CaptionCue {
    * SAME words at their real times; when the user changes the text they no longer spell
    * the words and the server re-synthesizes them. Absent for sentence-style captions.
    */
-  words?: { text: string; start_s: number; end_s: number }[] | null;
+  words?: {
+    text: string;
+    start_s: number;
+    end_s: number;
+    /** Smart chunker alignment confidence — round-tripped untouched. */
+    timing_quality?: "aligned" | "segment_estimate" | "unsafe" | null;
+  }[] | null;
   /** Server-authored semantic style; preserved when an unchanged cue is applied. */
   smart_style?: "hook" | "context" | "list_item" | "example" | "payoff" | "cta" | null;
+  /**
+   * Smart Captions v2 provenance (planner role + source transcript word ids).
+   * The editor never reads these — it round-trips them untouched (spread) so a
+   * text edit doesn't strip them from the persisted cues.
+   */
+  smart_role?: "hook" | "context_shift" | "list_item" | "example" | "payoff" | "cta" | null;
+  smart_word_ids?: string[] | null;
 }
 
 /**
