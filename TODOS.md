@@ -59,6 +59,20 @@ docs/pipelines/generative.md "Speech map + SFX auto-suggestions". Remaining foll
 **How:** Extend `snapToBeatMark` machinery with a speech-mark candidate set; watch for double-snap conflicts with beat marks.
 **Effort:** S-M **Priority:** P3 **Depends on:** observed live failures (don't build speculatively)
 
+## OOM incident v0.12.2.0 — accepted gaps (from pre-merge review, 2026-07-22)
+
+### Variant-level render heartbeat (reburn/regen blindness)
+**What:** `regenerate_generative_variant` and the caption/bed reburn tasks don't heartbeat, and they run while `job.status` is terminal — so a worker killed mid-reburn leaves the variant at `render_status="rendering"` with no user-visible retrying signal until the boot-time reconciler. Needs a variant-level beacon (or per-variant staleness computed in `_variants_for_response`) + UI wiring.
+**Why:** The edit/re-render loop is the more common path than first renders; the v0.12.2.0 `retrying` flag only covers `orchestrate_generative_job`.
+**Effort:** M (CC: ~1-2h)
+**Priority:** P2
+
+### Heavy-source downscale guard for template/music ingest
+**What:** Wire `app/pipeline/source_guard.py` into the template and music orchestrators' clip-prep (see `agents/DECISIONS.md` 2026-07-21 entry; a session task chip also exists). Mind `normalize_orientation` ordering on the template path.
+**Why:** Same OOM class as prod job e8173a25 exists on those pipelines; only generative paths are guarded today.
+**Effort:** M (CC: ~1h + parity checks)
+**Priority:** P2
+
 ## Editor virtual preview — follow-ups (from v0.7.30.1)
 
 ### T-VPM-1 — Music preview shorter than the edited cut ends silently
