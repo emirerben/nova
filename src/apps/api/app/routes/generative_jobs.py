@@ -1286,6 +1286,14 @@ class CaptionCue(BaseModel):
     # every burn, so client-sent values would be dead weight.
     smart_role: SemanticRole | None = None
     smart_word_ids: list[str] | None = None
+    # Plan 011/012 provenance the whitelist above was written to be extended with:
+    # smart_emphasis marks a cue that was isolated as a named-entity moment (drives
+    # the standalone min-hold at plan time + the future styling lane), and
+    # smart_keep_together holds the line-layout adjacency pairs the reburn honors.
+    # Both must survive a caption text edit or the emphasis/layout look is silently
+    # lost on the FIRST edit (same trap #699 closed for smart_role/smart_word_ids).
+    smart_emphasis: bool | None = None
+    smart_keep_together: list[list[int]] | None = None
 
     @field_validator("words")
     @classmethod
@@ -1305,6 +1313,24 @@ class CaptionCue(BaseModel):
             raise ValueError("Too many word ids on one caption line (max 100).")
         if any(not _SMART_WORD_ID_RE.fullmatch(str(word_id)) for word_id in v):
             raise ValueError("Invalid smart caption word id.")
+        return v
+
+    @field_validator("smart_keep_together")
+    @classmethod
+    def _validate_keep_together(cls, v: list[list[int]] | None) -> list[list[int]] | None:
+        # Each pair is [start, end] cue-relative word offsets (0-based, start <= end).
+        # Bounded like `words` so a forged PATCH can't stuff arbitrary JSONB, and
+        # malformed pairs are rejected rather than silently poisoning the reburn.
+        if v is None:
+            return v
+        if len(v) > 100:
+            raise ValueError("Too many keep-together pairs on one caption line (max 100).")
+        for pair in v:
+            if len(pair) != 2 or not all(isinstance(n, int) for n in pair):
+                raise ValueError("Each keep-together entry must be a [start, end] pair.")
+            start, end = pair
+            if not (0 <= start <= end < 100):
+                raise ValueError("Keep-together offsets out of range.")
         return v
 
 

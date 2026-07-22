@@ -862,6 +862,14 @@ export interface CaptionCue {
    */
   smart_role?: "hook" | "context_shift" | "list_item" | "example" | "payoff" | "cta" | null;
   smart_word_ids?: string[] | null;
+  /**
+   * Plan 011/012 provenance, also round-tripped untouched via the spread:
+   * `smart_emphasis` marks a named-entity cue isolated for emphasis, and
+   * `smart_keep_together` holds the line-layout adjacency pairs the reburn honors.
+   * Stripping them on a text edit would silently lose the emphasis/layout look.
+   */
+  smart_emphasis?: boolean | null;
+  smart_keep_together?: number[][] | null;
 }
 
 /**

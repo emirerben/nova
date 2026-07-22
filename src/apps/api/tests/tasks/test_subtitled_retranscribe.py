@@ -376,6 +376,9 @@ def _smart_persisted_cue() -> dict:
         # vocabularies differ, so this also pins that they stay distinct fields.
         "smart_role": "context_shift",
         "smart_style": "context",
+        # Plan 011/012 provenance — must survive the edit round-trip too.
+        "smart_emphasis": True,
+        "smart_keep_together": [[0, 1]],
         "smart_render_lines": ["sana bir sey", "gosterecegim"],
         "smart_render_font_size_px": 64,
         "smart_render_box": {"x_px": 108, "y_px": 1150, "width_px": 864, "height_px": 210},
@@ -404,9 +407,26 @@ def test_caption_cue_roundtrip_preserves_smart_metadata():
         "segment_estimate",
         "aligned",
     ]
+    # plan 011/012 provenance survives too (added to the whitelist #699 built)
+    assert dumped["smart_emphasis"] is True
+    assert dumped["smart_keep_together"] == [[0, 1]]
     assert "smart_render_lines" not in dumped
     assert "smart_render_font_size_px" not in dumped
     assert "smart_render_box" not in dumped
+
+
+def test_caption_cue_rejects_malformed_keep_together():
+    """A forged PATCH can't stuff arbitrary JSONB via smart_keep_together."""
+    import pytest
+
+    from app.routes.generative_jobs import CaptionCue
+
+    base = {"text": "x", "start_s": 0.0, "end_s": 1.0}
+    for bad in ([[0, 1, 2]], [[1, 0]], [[0, 100]], [["a", "b"]], [[-1, 0]]):
+        with pytest.raises(ValueError):
+            CaptionCue(**base, smart_keep_together=bad)
+    # a well-formed pair is accepted
+    assert CaptionCue(**base, smart_keep_together=[[0, 2]]).smart_keep_together == [[0, 2]]
 
 
 def test_caption_cue_smart_word_ids_bounded():
