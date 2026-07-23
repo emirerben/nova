@@ -211,8 +211,15 @@ class Settings(BaseSettings):
     # fail-open (any GCS/hash error falls through to a live transcribe). Default
     # ON; set false to always re-transcribe.
     smart_caption_transcript_cache_enabled: bool = True
-    # (Face-aware caption placement — smart_caption_face_placement_enabled — lands
-    # with Feature C in its own PR.)
+    # FACE PLACEMENT: computes ONE static caption y_frac per video from sampled
+    # face boxes (plan 011 Feature C) so captions never sit on the speaker's face,
+    # then persists it so reburns/edits stay stable. Default OFF ⇒ current geometry,
+    # anchor set, and receipts byte-identical (render-only, no NEXT_PUBLIC twin —
+    # the position UI keeps working through the mirrored caption_margin_v). First
+    # render only; reburns/re-transcribes read the persisted policy and never
+    # recompute. Requires smart_scene_matcher_enabled (the master kill switch) to
+    # do anything, but is independent of the emphasis/layout flags.
+    smart_caption_face_placement_enabled: bool = False
 
     # Kill switch for authored TextElements on subtitled variants. When False,
     # subtitled remains captions-only and the text-element routes/capabilities

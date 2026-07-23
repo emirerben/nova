@@ -8087,6 +8087,216 @@ def _resolve_smart_music_treatment(
             pass
 
 
+# Feature C candidate ladder (plan 011 §Feature C). #0 is ALWAYS the preset y so a
+# well-framed video changes nothing; the rest are the discrete zones the caption
+# may move to. ONE static y per video — no per-scene motion (design discrete-zone
+# rule). #0 is prepended at call time from the resolved preset.
+_FACE_PLACEMENT_EXTRA_CANDIDATES: tuple[float, ...] = (0.62, 0.78, 0.55, 0.86)
+
+# Anchor budget. Both the sampler's frame-seek count and its timeout budget scale
+# with the anchor count, and the plan-derived anchors are bounded only by
+# MAX_SMART_EDIT_EVENTS (120) — without a cap a saturated plan would hand one
+# subprocess a ~45s budget. The two lanes are capped SEPARATELY so neither can
+# starve the other:
+#   * intent anchors (camera + media starts) cap at 12 — exactly the sampler's
+#     historical max_samples default, so card face-protection keeps parity with
+#     the pre-feature path even on a saturated plan;
+#   * the 8 evenly-spaced anchors ALWAYS survive, so the one permanent placement
+#     decision is never made from a front-loaded slice of the video.
+# Dedupe can only shrink the union, so 12 + 8 is a hard ceiling (timeout <= 8s).
+_FACE_PLACEMENT_MAX_INTENT_ANCHORS = 12
+_FACE_PLACEMENT_SPACED_ANCHORS = 8
+_FACE_PLACEMENT_MAX_ANCHORS = _FACE_PLACEMENT_MAX_INTENT_ANCHORS + _FACE_PLACEMENT_SPACED_ANCHORS
+
+
+def _evenly_spaced_anchors(duration_s: float, n: int = 8) -> list[float]:
+    """``n`` sample times centered in each 1/n bucket (avoids frame 0 and EOF)."""
+
+    if duration_s <= 0 or n <= 0:
+        return []
+    return [round(duration_s * (index + 0.5) / n, 3) for index in range(n)]
+
+
+def _dedupe_anchor_times(times: list[float], *, min_gap_s: float = 0.25) -> list[float]:
+    """Sorted, non-negative anchors with any within ``min_gap_s`` of a kept one dropped."""
+
+    kept: list[float] = []
+    for value in sorted(max(0.0, float(item)) for item in times):
+        if not kept or value - kept[-1] >= min_gap_s:
+            kept.append(value)
+    return kept
+
+
+def _smart_caption_protected_regions(
+    base: dict[str, Any], cues: list[dict[str, Any]]
+) -> tuple[list, list]:
+    """Caption + authored-title regions the media compositor must not cover.
+
+    Single owner of this construction: the face-placement pass (which needs the
+    title boxes to choose a y) and BOTH protected-box assembly branches read it,
+    so the three copies can no longer drift and `measure_text_overlay_box` — a
+    real Skia layout pass — runs once per render instead of twice.
+    """
+
+    from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion  # noqa: PLC0415
+    from app.pipeline.text_overlay_skia import measure_text_overlay_box  # noqa: PLC0415
+
+    caption_regions = [
+        ProtectedRegion(
+            start_s=float(cue.get("start_s") or 0.0),
+            end_s=float(cue.get("end_s") or 0.0),
+            box=NormalizedBox(**cue["smart_render_box"]),
+            kind="caption",
+        )
+        for cue in cues
+        if isinstance(cue.get("smart_render_box"), dict)
+    ]
+    title_regions = [
+        ProtectedRegion(
+            start_s=float(overlay.get("start_s") or 0.0),
+            end_s=float(overlay.get("end_s") or 0.0),
+            box=NormalizedBox(**measure_text_overlay_box(overlay)),
+            kind="title",
+        )
+        for overlay in _text_element_burn_dicts(base)
+    ]
+    return caption_regions, title_regions
+
+
+def _distinct_caption_probe_boxes(cues: list[dict[str, Any]]) -> list:
+    """Every DISTINCT measured cue box — the placement probe set.
+
+    NOT just the tallest: the overlap gate divides by the probe box's OWN area, so
+    no single cue is the universal worst case. Against a face band near the
+    caption's bottom edge a SHORT one-line cue reports far more coverage than a
+    tall two-line one (same intersection, smaller denominator), while a band
+    higher up only reaches the tall box. Deduped by measured size, and cheap —
+    ``max_lines`` is clamped to 1-2, so a video yields only a handful of shapes.
+    """
+
+    from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
+
+    seen: set[tuple[float, float]] = set()
+    boxes: list[NormalizedBox] = []
+    for cue in cues:
+        raw = cue.get("smart_render_box")
+        if not isinstance(raw, dict):
+            continue
+        box = NormalizedBox(**raw)
+        key = (round(box.height, 5), round(box.width, 5))
+        if key in seen:
+            continue
+        seen.add(key)
+        boxes.append(box)
+    # No cue carries a measured box (shouldn't happen post-compile) → a centered
+    # lower-third probe so the chooser still has a finite box to translate.
+    return boxes or [NormalizedBox(0.3, 0.58, 0.7, 0.705)]
+
+
+def _apply_face_aware_caption_placement(
+    *,
+    base: dict[str, Any],
+    cues: list[dict[str, Any]],
+    base_path: str,
+    smart_compiled: Any,
+    job_id: str,
+    variant_id: str,
+) -> tuple[list, dict[str, Any], list[dict[str, Any]]]:
+    """Choose ONE static caption y from sampled faces, persist it, re-measure cues.
+
+    Runs POST-reframe (faces can only be located on final geometry). Mutates
+    ``base``: ``smart_caption_policy['y_frac']`` and ``caption_margin_v`` follow the
+    chosen y (``caption_position_user_edited`` is deliberately NOT set — a first-
+    render placement, not a user edit), and ``smart_validation_receipts
+    ['caption_placement']`` records the decision. Returns the sampled faces (REUSED
+    for card arbitration so the subprocess never runs twice), the sampler receipt,
+    and the cues re-measured at the chosen y so protected boxes match the burned
+    captions (finding TEST-1). ``choose_caption_y_frac`` itself never raises; the
+    caller wraps this orchestration (ffprobe / sample / re-measure) fail-open.
+    """
+    from app.pipeline.captions import (  # noqa: PLC0415
+        prepare_smart_caption_cues,
+        y_frac_to_margin_v,
+    )
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+    from app.pipeline.render_geometry import (  # noqa: PLC0415
+        choose_caption_y_frac,
+        sample_face_regions,
+    )
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    policy = base["smart_caption_policy"]
+    preset_y = float(policy["y_frac"])
+    candidates = (preset_y, *_FACE_PLACEMENT_EXTRA_CANDIDATES)
+
+    # Anchor UNION on the RENDERED base duration (never the original clip — a
+    # silence-cut base is shorter, and seeking past its EOF yields undecodable
+    # frames): evenly-spaced ∪ camera-intent ∪ media-overlay starts, deduped.
+    base_duration = float(probe_video(base_path).duration_s)
+    intent_times = [float(intent.get("at_s") or 0.0) for intent in smart_compiled.camera_intents]
+    intent_times.extend(
+        float(event.get("start_s") or 0.0) for event in smart_compiled.media_overlays
+    )
+    # Each lane is capped on its OWN budget (see the constants): the intent lane
+    # can never grow past the sampler's historical 12, and the evenly-spaced lane
+    # always survives in full so a front-loaded plan can't reduce this permanent
+    # placement decision to a sample of the video's first few seconds.
+    intent_anchors = _dedupe_anchor_times(intent_times)[:_FACE_PLACEMENT_MAX_INTENT_ANCHORS]
+    anchors = _dedupe_anchor_times(
+        intent_anchors + _evenly_spaced_anchors(base_duration, n=_FACE_PLACEMENT_SPACED_ANCHORS)
+    )
+
+    # Timeout scales with the (now bounded) anchor count; streaming deferred —
+    # T-CAP011-2. max_samples matches the union so the cap above is the only limit.
+    face_regions, face_receipt = sample_face_regions(
+        base_path,
+        anchors,
+        max_samples=max(len(anchors), 1),
+        timeout_s=1.0 + 0.35 * len(anchors),
+        count_decoded=True,
+    )
+
+    _, title_boxes = _smart_caption_protected_regions(base, cues)
+
+    chosen_y, placement_receipt = choose_caption_y_frac(
+        face_regions,
+        face_receipt,
+        _distinct_caption_probe_boxes(cues),
+        title_boxes,
+        candidates,
+    )
+
+    # Re-measure ONLY so protected boxes match reality — the burn-time ASS geometry
+    # already follows the persisted policy y automatically. Done against a COPY of
+    # the policy, before anything on `base` is touched.
+    remeasured = prepare_smart_caption_cues(cues, {**policy, "y_frac": chosen_y})
+
+    record_pipeline_event(
+        "smart_captions",
+        "caption_placement_chosen",
+        {
+            "variant_id": variant_id,
+            "chosen_y_frac": chosen_y,
+            "preset_y_frac": preset_y,
+            "status": placement_receipt.get("status"),
+            "reason": placement_receipt.get("reason"),
+            "anchors": len(anchors),
+        },
+    )
+
+    # ── Commit. Every fallible step is already done, so `base` is mutated only on
+    # the success path and nothing below can raise. Mutating earlier would break
+    # the caller's fail-open contract: an exception after a partial write would
+    # burn captions at the chosen y while the protected boxes still described the
+    # preset-y band — precisely the phantom-band mismatch this feature prevents.
+    policy["y_frac"] = chosen_y
+    base["caption_margin_v"] = y_frac_to_margin_v(chosen_y)
+    if not isinstance(base.get("smart_validation_receipts"), dict):
+        base["smart_validation_receipts"] = {}
+    base["smart_validation_receipts"]["caption_placement"] = placement_receipt
+    return face_regions, face_receipt, remeasured
+
+
 def _render_subtitled_variant(
     *,
     job_id: str,
@@ -8742,6 +8952,43 @@ def _render_subtitled_variant(
                     "error": str(exc)[:160],
                 }
 
+        # ── Feature C: face-aware caption placement (plan 011 §Feature C) ─────
+        # BEFORE the caption burn (the ordering surgery): sample faces on the
+        # rendered base, move the caption band off the speaker's face, persist the
+        # chosen y, and re-measure cues so the protected boxes match the burn. The
+        # samples are reused for card arbitration below (never sampled twice).
+        # Fail-open — any error keeps the preset geometry. Flag off ⇒ this block is
+        # inert and the anchor set / receipts stay byte-identical.
+        face_regions_placed: list | None = None
+        face_receipt_placed: dict[str, Any] | None = None
+        if (
+            settings.smart_caption_face_placement_enabled
+            and smart_v2
+            and smart_compiled is not None
+            and isinstance(base.get("smart_caption_policy"), dict)
+            and cues
+        ):
+            try:
+                face_regions_placed, face_receipt_placed, cues = (
+                    _apply_face_aware_caption_placement(
+                        base=base,
+                        cues=cues,
+                        base_path=base_path,
+                        smart_compiled=smart_compiled,
+                        job_id=job_id,
+                        variant_id=variant_id,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 — fail open to preset geometry
+                face_regions_placed = None
+                face_receipt_placed = None
+                log.warning(
+                    "smart_caption_face_placement_failed_open",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(exc)[:300],
+                )
+
         final_path = os.path.join(variant_dir, "final.mp4")
         if getattr(settings, "subtitled_text_lane_enabled", False) or smart_compiled is not None:
             final_path = _compose_subtitled_final(
@@ -8870,38 +9117,33 @@ def _render_subtitled_variant(
             base["smart_validation_receipts"]["music_resolution"] = {"status": "disabled"}
 
         protected_boxes: list[dict[str, object]] = []
-        if smart_v2 and smart_compiled is not None and not smart_compiled.media_overlays:
+        if face_regions_placed is not None:
+            # Feature C already sampled faces on the anchor UNION (a superset of the
+            # camera/media times) BEFORE the caption burn and re-measured the cues
+            # at the chosen y. Reuse those faces for card arbitration — never re-run
+            # the subprocess — so card face-protection is coverage-identical-or-
+            # better (ARCH-2/TEST-2) and matches the burned caption band (TEST-1).
+            caption_regions, title_regions = _smart_caption_protected_regions(base, cues)
+            protected_boxes.extend(region.as_dict() for region in caption_regions)
+            protected_boxes.extend(region.as_dict() for region in title_regions)
+            protected_boxes.extend(region.as_dict() for region in face_regions_placed)
+            base["smart_validation_receipts"]["geometry_prepare"] = {
+                **(face_receipt_placed or {}),
+                "caption_boxes": len(caption_regions),
+                "title_boxes": len(base.get("text_elements") or []),
+                "protected_boxes": len(protected_boxes),
+                "source": "face_placement",
+            }
+        elif smart_v2 and smart_compiled is not None and not smart_compiled.media_overlays:
             # Nothing to arbitrate against — skip the face-sampler subprocess
             # (~2s of cv2 startup) and the box measurements entirely.
             base["smart_validation_receipts"]["geometry_prepare"] = {"status": "skipped_no_media"}
         elif smart_v2 and smart_compiled is not None:
-            from app.pipeline.render_geometry import (  # noqa: PLC0415
-                NormalizedBox,
-                ProtectedRegion,
-                sample_face_regions,
-            )
-            from app.pipeline.text_overlay_skia import measure_text_overlay_box  # noqa: PLC0415
+            from app.pipeline.render_geometry import sample_face_regions  # noqa: PLC0415
 
-            for cue in cues:
-                box = cue.get("smart_render_box")
-                if isinstance(box, dict):
-                    protected_boxes.append(
-                        ProtectedRegion(
-                            start_s=float(cue.get("start_s") or 0.0),
-                            end_s=float(cue.get("end_s") or 0.0),
-                            box=NormalizedBox(**box),
-                            kind="caption",
-                        ).as_dict()
-                    )
-            for overlay in _text_element_burn_dicts(base):
-                protected_boxes.append(
-                    ProtectedRegion(
-                        start_s=float(overlay.get("start_s") or 0.0),
-                        end_s=float(overlay.get("end_s") or 0.0),
-                        box=NormalizedBox(**measure_text_overlay_box(overlay)),
-                        kind="title",
-                    ).as_dict()
-                )
+            caption_regions, title_regions = _smart_caption_protected_regions(base, cues)
+            protected_boxes.extend(region.as_dict() for region in caption_regions)
+            protected_boxes.extend(region.as_dict() for region in title_regions)
             anchor_times = [
                 float(intent.get("at_s") or 0.0) for intent in smart_compiled.camera_intents
             ]
@@ -8912,7 +9154,7 @@ def _render_subtitled_variant(
             protected_boxes.extend(region.as_dict() for region in face_regions)
             base["smart_validation_receipts"]["geometry_prepare"] = {
                 **face_receipt,
-                "caption_boxes": sum(isinstance(cue.get("smart_render_box"), dict) for cue in cues),
+                "caption_boxes": len(caption_regions),
                 "title_boxes": len(base.get("text_elements") or []),
                 "protected_boxes": len(protected_boxes),
             }
@@ -9243,7 +9485,12 @@ def _resolve_caption_margin_v(variant: dict) -> int:
     old variants keep byte-identical ASS geometry. Valid persisted values are bounded
     to the UI/API's 0.30-0.90 y_frac range: round((1 - y_frac) * 1920).
     """
-    from app.pipeline.captions import SUBTITLED_CAPTION_MARGIN_V  # noqa: PLC0415
+    from app.pipeline.captions import (  # noqa: PLC0415
+        CAPTION_Y_FRAC_MAX,
+        CAPTION_Y_FRAC_MIN,
+        SUBTITLED_CAPTION_MARGIN_V,
+        y_frac_to_margin_v,
+    )
 
     raw = variant.get("caption_margin_v")
     if raw is None:
@@ -9252,8 +9499,10 @@ def _resolve_caption_margin_v(variant: dict) -> int:
         margin_v = int(raw)
     except (TypeError, ValueError):
         return SUBTITLED_CAPTION_MARGIN_V
-    min_margin = round((1.0 - 0.90) * 1920)
-    max_margin = round((1.0 - 0.30) * 1920)
+    # A higher y_frac sits lower on screen → a smaller MarginV, so the max y_frac
+    # bounds the min margin and vice versa.
+    min_margin = y_frac_to_margin_v(CAPTION_Y_FRAC_MAX)
+    max_margin = y_frac_to_margin_v(CAPTION_Y_FRAC_MIN)
     if min_margin <= margin_v <= max_margin:
         return margin_v
     return SUBTITLED_CAPTION_MARGIN_V
@@ -9306,7 +9555,9 @@ def _effective_smart_caption_policy(
     if variant.get("caption_font_user_edited"):
         policy["font_family"] = ass_font
     if variant.get("caption_position_user_edited") and margin_v is not None:
-        policy["y_frac"] = max(0.3, min(0.9, 1.0 - margin_v / 1920.0))
+        from app.pipeline.captions import margin_v_to_y_frac  # noqa: PLC0415
+
+        policy["y_frac"] = margin_v_to_y_frac(margin_v)
     return policy
 
 
@@ -10823,7 +11074,8 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "voiceover_caption_font": r.get("voiceover_caption_font"),
                     # subtitled caption position — MUST survive or a caption edit /
                     # language re-transcribe reburns at the legacy safe-zone instead
-                    # of the creator's chosen y position.
+                    # of the chosen y position (set by the creator's position edit OR
+                    # by face-aware placement on the first render).
                     "caption_margin_v": r.get("caption_margin_v"),
                     # subtitled caption language ("en"/"tr") — MUST survive so the editor
                     # chip shows it and the re-transcribe override reads the current one.
