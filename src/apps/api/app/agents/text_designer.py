@@ -36,6 +36,7 @@ _VALID_EFFECTS = (
     "bounce",
     "slide-in",
     "slide-up",
+    "giant-title-wipe",
     "static",
 )
 

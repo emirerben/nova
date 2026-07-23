@@ -911,6 +911,7 @@ class TestSecurityGuards:
             "slide-down",
             "karaoke-line",
             "staggered-slice",
+            "giant-title-wipe",
         ):
             elem = TextElement(text="test", start_s=0, end_s=1, effect=effect)
             assert elem.effect == effect
@@ -934,6 +935,25 @@ class TestSecurityGuards:
         }
         [elem] = text_elements_for_variant(variant)
         assert elem.effect == "staggered-slice"
+
+    def test_giant_title_wipe_roundtrips_to_the_burn_dict(self):
+        elem = TextElement(
+            text="GOAL OF THE\nTOURNAMENT",
+            start_s=0,
+            end_s=4,
+            effect="giant-title-wipe",
+        )
+        [overlay] = build_overlays_from_text_elements([elem], video_duration_s=4.0)
+        assert overlay["effect"] == "giant-title-wipe"
+
+    def test_giant_title_wipe_roundtrips_from_the_burn_dict(self):
+        variant = {
+            "intro_text": "GOAL OF THE\nTOURNAMENT",
+            "intro_effect": "giant-title-wipe",
+            "text_mode": "agent_text",
+        }
+        [elem] = text_elements_for_variant(variant)
+        assert elem.effect == "giant-title-wipe"
 
     def test_size_px_clamped_to_max_300(self):
         """size_px > 300 is silently clamped to 300 (A18 — Skia OOM guard)."""

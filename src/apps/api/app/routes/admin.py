@@ -343,6 +343,7 @@ OverlayEffect = Literal[
     "bounce",
     "slide-in",
     "slide-up",
+    "giant-title-wipe",
     "static",
     "none",
     "player-card",  # giant kit number + italic red name overlay

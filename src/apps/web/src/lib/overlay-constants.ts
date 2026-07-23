@@ -160,6 +160,7 @@ export const INTRO_ANIMATIONS: IntroAnimation[] = [
   { value: "typewriter", label: "Typewriter" },
   { value: "stream-in",  label: "Stream in"  },
   { value: "staggered-slice", label: "Staggered slice" },
+  { value: "giant-title-wipe", label: "Giant title wipe" },
   { value: "none",       label: "None"       },
 ];
 

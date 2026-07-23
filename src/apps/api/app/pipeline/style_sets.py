@@ -76,6 +76,7 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "lyric-line",
         "stream-in",
         "staggered-slice",
+        "giant-title-wipe",
     }
 )
 
@@ -93,6 +94,7 @@ _INTRO_ANIMATION_EFFECTS: frozenset[str] = frozenset(
         "typewriter",
         "stream-in",
         "staggered-slice",
+        "giant-title-wipe",
         "none",
         "static",
     }

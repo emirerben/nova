@@ -562,12 +562,59 @@ def test_animated_effects_all_produce_sequences(tmp_workdir):
         "text_size_px": 80,
         "text_color": "#FFFFFF",
     }
-    for effect in ("scale-up", "fade-in", "typewriter", "slide-up", "slide-down", "bounce"):
+    for effect in (
+        "scale-up",
+        "fade-in",
+        "typewriter",
+        "slide-up",
+        "slide-down",
+        "bounce",
+        "giant-title-wipe",
+    ):
         ov = {**base, "effect": effect}
         seq = tos._generate_overlay_sequence(ov, tmp_workdir, hash(effect) & 0xFF)
         assert seq is not None, f"{effect} returned None"
         assert seq["is_animated"] is True, f"{effect} not marked animated"
         assert seq["n_frames"] > 1
+
+
+def test_giant_title_wipe_scale_holds_then_crops_offscreen():
+    assert tos._giant_title_wipe_scale_at(0.0, 4.0) == pytest.approx(1.0)
+    assert tos._giant_title_wipe_scale_at(2.7, 4.0) == pytest.approx(1.0)
+    assert tos._giant_title_wipe_scale_at(2.8, 4.0) < 1.1
+    assert tos._giant_title_wipe_scale_at(3.1, 4.0) > 6.0
+    assert tos._giant_title_wipe_scale_at(4.0, 4.0) == pytest.approx(60.0)
+    assert tos._giant_title_wipe_alpha_at(3.7, 4.0) == pytest.approx(1.0)
+    assert tos._giant_title_wipe_alpha_at(3.93, 4.0) < 0.03
+    assert tos._giant_title_wipe_alpha_at(4.0, 4.0) == pytest.approx(0.0)
+    assert tos._giant_title_wipe_scale_origin() == pytest.approx((13.0, -80.0))
+
+
+def test_giant_title_wipe_draws_scaled_full_text():
+    overlay = {
+        "text": "GOAL OF THE\nTOURNAMENT",
+        "effect": "giant-title-wipe",
+        "position": "center",
+        "font_family": "Inter",
+        "text_size_px": 118,
+        "text_color": "#FFFFFF",
+    }
+    surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
+    calls = []
+
+    def capture(_canvas, text, _overlay, **kwargs):
+        calls.append((text, kwargs))
+
+    with mock.patch.object(tos, "_draw_centered_text", side_effect=capture):
+        tos._draw_with_animation(surface.getCanvas(), overlay, 3.1, 4.0)
+
+    assert calls == [("GOAL OF THE\nTOURNAMENT", mock.ANY)]
+    assert calls[0][1]["scale"] > 6.0
+    assert calls[0][1]["alpha"] == pytest.approx(1.0)
+    assert calls[0][1]["x_translate"] == pytest.approx(0.0)
+    assert calls[0][1]["y_translate"] == pytest.approx(0.0)
+    assert calls[0][1]["scale_origin_x"] == pytest.approx(13.0)
+    assert calls[0][1]["scale_origin_y"] == pytest.approx(-80.0)
 
 
 def test_staggered_slice_timing_model_matches_two_stage_contract():

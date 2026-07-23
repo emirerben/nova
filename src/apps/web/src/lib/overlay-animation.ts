@@ -15,6 +15,10 @@ export interface AnimationState {
   alpha: number;
   /** Vertical offset in canvas px (1080-wide). Positive = down. */
   yTranslate: number;
+  /** Horizontal scale origin offset from text anchor in canvas px. */
+  scaleOriginX: number;
+  /** Vertical scale origin offset from text anchor in canvas px. */
+  scaleOriginY: number;
   /** Visible text slice (typewriter / stream-in effects). */
   visibleText: string;
   /** Whether a zero-width streaming cursor should be drawn after visibleText. */
@@ -196,6 +200,13 @@ export function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - tc, 3);
 }
 
+/** Mirror of _ease_in_out_cubic. t must be in [0,1]; clamped. */
+export function easeInOutCubic(t: number): number {
+  const tc = Math.max(0, Math.min(1, t));
+  if (tc < 0.5) return 4 * Math.pow(tc, 3);
+  return 1 - Math.pow(-2 * tc + 2, 3) / 2;
+}
+
 /** Mirror of _clamped_keyframes_s + _pop_in_scale_at. */
 export function popInScaleAt(tLocal: number, durationS: number): number {
   // Python constants (verbatim):
@@ -214,6 +225,32 @@ export function popInScaleAt(tLocal: number, durationS: number): number {
     }
   }
   return KF_SCALES[KF_SCALES.length - 1];
+}
+
+/** Mirror of _giant_title_wipe_scale_at. Holds, then scales into a title wipe. */
+export function giantTitleWipeScaleAt(tLocal: number, durationS: number): number {
+  const holdUntil = Math.max(0, durationS) * 0.68;
+  const wipeFor = Math.max(0.01, Math.max(0, durationS) - holdUntil);
+  const progress = easeInOutCubic((tLocal - holdUntil) / wipeFor);
+  return 1.0 + (60.0 - 1.0) * progress;
+}
+
+/** Mirror of _giant_title_wipe_alpha_at. Removes the letter after passing through it. */
+export function giantTitleWipeAlphaAt(tLocal: number, durationS: number): number {
+  const holdUntil = Math.max(0, durationS) * 0.68;
+  const wipeFor = Math.max(0.01, Math.max(0, durationS) - holdUntil);
+  const wipeProgress = (tLocal - holdUntil) / wipeFor;
+  if (wipeProgress <= 0.8) return 1.0;
+  const fadeProgress = (wipeProgress - 0.8) / (1.0 - 0.8);
+  return 1.0 - easeOutCubic(fadeProgress);
+}
+
+/** Mirror of _giant_title_wipe_scale_origin. Offsets target the selected O counter. */
+export function giantTitleWipeScaleOrigin(): { scaleOriginX: number; scaleOriginY: number } {
+  return {
+    scaleOriginX: 13.0,
+    scaleOriginY: -80.0,
+  };
 }
 
 /** Mirror Skia's word-wrapper normalization for fixed-layout reveal effects. */
@@ -239,6 +276,8 @@ export function animationStateAt(
   let scale = 1.0;
   let alpha = 1.0;
   let yTranslate = 0.0;
+  let scaleOriginX = 0.0;
+  let scaleOriginY = 0.0;
   let visibleText = text;
   let showCursor = false;
 
@@ -288,10 +327,16 @@ export function animationStateAt(
       }
     }
     // else scale = 1.0 (identity)
+  } else if (effect === "giant-title-wipe") {
+    scale = giantTitleWipeScaleAt(tLocal, durationS);
+    alpha = giantTitleWipeAlphaAt(tLocal, durationS);
+    const origin = giantTitleWipeScaleOrigin();
+    scaleOriginX = origin.scaleOriginX;
+    scaleOriginY = origin.scaleOriginY;
   }
   // "none", "static", "karaoke-line", "lyric-line", "font-cycle", unknown → identity
 
-  return { scale, alpha, yTranslate, visibleText, showCursor };
+  return { scale, alpha, yTranslate, scaleOriginX, scaleOriginY, visibleText, showCursor };
 }
 
 /** Mirror of `_sequence_fade_out_alpha` in text_overlay_skia.py.

@@ -1,6 +1,8 @@
 import {
   animationStateAt,
   easeOutCubic,
+  giantTitleWipeAlphaAt,
+  giantTitleWipeScaleAt,
   normalizeAnimatedRevealText,
   popInScaleAt,
   sequenceFadeOutAlphaAt,
@@ -371,8 +373,47 @@ describe("animationStateAt — bounce", () => {
   });
 });
 
+describe("animationStateAt — giant-title-wipe", () => {
+  it("holds at normal scale through the opening title beat", () => {
+    expect(giantTitleWipeScaleAt(0, 4)).toBeCloseTo(1.0);
+    expect(giantTitleWipeScaleAt(2.7, 4)).toBeCloseTo(1.0);
+    expect(giantTitleWipeScaleAt(2.8, 4)).toBeLessThan(1.1);
+  });
+
+  it("rapidly scales into an oversized wipe after the hold", () => {
+    const ramp = animationStateAt("giant-title-wipe", 3.1, 4, TEXT);
+    expect(ramp.scale).toBeGreaterThan(6);
+    expect(ramp.alpha).toBeCloseTo(1.0);
+    expect(ramp.yTranslate).toBeCloseTo(0);
+    expect(ramp.scaleOriginX).toBeCloseTo(13.0);
+    expect(ramp.scaleOriginY).toBeCloseTo(-80.0);
+    expect(ramp.visibleText).toBe(TEXT);
+  });
+
+  it("ends inside the letter with no typography left over the content", () => {
+    expect(giantTitleWipeAlphaAt(3.7, 4)).toBeCloseTo(1.0);
+    expect(giantTitleWipeAlphaAt(3.93, 4)).toBeLessThan(0.03);
+    const end = animationStateAt("giant-title-wipe", 4, 4, TEXT);
+    expect(end.scale).toBeCloseTo(60.0);
+    expect(end.alpha).toBeCloseTo(0);
+    expect(end.yTranslate).toBeCloseTo(0);
+    expect(end.scaleOriginX).toBeCloseTo(13.0);
+    expect(end.scaleOriginY).toBeCloseTo(-80.0);
+  });
+});
+
 describe("non-text-reveal effects preserve visibleText", () => {
-  const nonReveal = ["fade-in", "scale-up", "slide-up", "slide-down", "pop-in", "bounce", "none", "static"];
+  const nonReveal = [
+    "fade-in",
+    "scale-up",
+    "slide-up",
+    "slide-down",
+    "pop-in",
+    "bounce",
+    "giant-title-wipe",
+    "none",
+    "static",
+  ];
   for (const effect of nonReveal) {
     it(`${effect} at t=0 has visibleText === full text`, () => {
       const s = animationStateAt(effect, 0, DUR, TEXT);

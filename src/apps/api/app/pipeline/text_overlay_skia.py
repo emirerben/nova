@@ -134,6 +134,11 @@ _POP_IN_KEYFRAMES_S = (0.0, 0.150, 0.250)
 _POP_IN_SCALES = (0.30, 1.15, 1.00)
 _POP_IN_MAX_SCALE = max(_POP_IN_SCALES)
 _POP_SUFFIX_MAX_LINES = 2
+_GIANT_TITLE_WIPE_HOLD_FRAC = 0.68
+_GIANT_TITLE_WIPE_END_SCALE = 60.0
+_GIANT_TITLE_WIPE_ALPHA_FADE_START_FRAC = 0.80
+_GIANT_TITLE_WIPE_TARGET_O_OFFSET_X = 13.0
+_GIANT_TITLE_WIPE_TARGET_O_OFFSET_Y = -80.0
 
 _STAGGERED_SLICE_FIRST_WORD_END_S = 0.55
 _STAGGERED_SLICE_REMAINDER_START_S = 0.95
@@ -179,6 +184,35 @@ def _staggered_slice_choreography_s(text: str) -> float:
         _STAGGERED_SLICE_LINES_START_S + max(0, line_count - 2) * _STAGGERED_SLICE_LINE_STAGGER_S
     )
     return last_line_start + _STAGGERED_SLICE_LINE_GLYPH_STAGE_S
+
+
+def _giant_title_wipe_scale_at(t_local: float, duration_s: float) -> float:
+    """Hold, then scale a title until it crops off-screen like a scene wipe."""
+    hold_until = max(0.0, duration_s) * _GIANT_TITLE_WIPE_HOLD_FRAC
+    wipe_for = max(0.01, max(0.0, duration_s) - hold_until)
+    progress = _ease_in_out_cubic((t_local - hold_until) / wipe_for)
+    return 1.0 + (_GIANT_TITLE_WIPE_END_SCALE - 1.0) * progress
+
+
+def _giant_title_wipe_alpha_at(t_local: float, duration_s: float) -> float:
+    """Once the camera is inside the O counter, leave only the content visible."""
+    hold_until = max(0.0, duration_s) * _GIANT_TITLE_WIPE_HOLD_FRAC
+    wipe_for = max(0.01, max(0.0, duration_s) - hold_until)
+    wipe_progress = (t_local - hold_until) / wipe_for
+    if wipe_progress <= _GIANT_TITLE_WIPE_ALPHA_FADE_START_FRAC:
+        return 1.0
+    fade_progress = (wipe_progress - _GIANT_TITLE_WIPE_ALPHA_FADE_START_FRAC) / (
+        1.0 - _GIANT_TITLE_WIPE_ALPHA_FADE_START_FRAC
+    )
+    return 1.0 - _ease_out_cubic(fade_progress)
+
+
+def _giant_title_wipe_scale_origin() -> tuple[float, float]:
+    """Scale around the target O counter instead of sliding the title toward it."""
+    return (
+        _GIANT_TITLE_WIPE_TARGET_O_OFFSET_X,
+        _GIANT_TITLE_WIPE_TARGET_O_OFFSET_Y,
+    )
 
 
 def _staggered_slice_settle_s(text: str) -> float:
@@ -1118,7 +1152,10 @@ def _draw_centered_text(
     color_override: int | None = None,
     alpha: float = 1.0,
     scale: float = 1.0,
+    x_translate: float = 0.0,
     y_translate: float = 0.0,
+    scale_origin_x: float = 0.0,
+    scale_origin_y: float = 0.0,
     layout_text: str | None = None,
     show_cursor: bool = False,
 ) -> None:
@@ -1126,8 +1163,8 @@ def _draw_centered_text(
     shadow + optional stroke + fill. Mirrors Pillow's _draw_text_png layout:
     multi-line vertical centering, 0.9*CANVAS_W word-wrap, auto-shrink.
 
-    Effect transforms (alpha, scale, y_translate) are applied via a canvas
-    matrix so glyph metrics are not perturbed.
+    Effect transforms (alpha, scale, translate, origin offset) are applied via
+    a canvas matrix so glyph metrics are not perturbed.
     """
     if not text and not show_cursor:
         return
@@ -1198,13 +1235,15 @@ def _draw_centered_text(
         )
 
     canvas.save()
-    # Center transform on anchor for scale + translate
+    # Center transform on anchor unless an effect supplies a different focal point.
     rotation_deg = _finite_float(overlay.get("rotation_deg"), 0.0)
-    canvas.translate(cx, cy + y_translate)
+    origin_x = cx + scale_origin_x
+    origin_y = cy + scale_origin_y
+    canvas.translate(origin_x + x_translate, origin_y + y_translate)
     if rotation_deg:
         canvas.rotate(rotation_deg)
     canvas.scale(scale, scale)
-    canvas.translate(-cx, -cy)
+    canvas.translate(-origin_x, -origin_y)
 
     for i, line in enumerate(lines):
         baseline_y = first_baseline + i * block["line_step"]
@@ -1219,6 +1258,7 @@ def _draw_centered_text(
         draw_kwargs: dict[str, Any] = {"shader": gradient_shader}
         if letter_spacing_px != 0.0:
             draw_kwargs["letter_spacing_px"] = letter_spacing_px
+        draw_kwargs["layer_alpha"] = alpha
         draw_kwargs.update(_resolve_glow_kwargs(overlay, alpha))
         draw_line = draw_lines[i]
         if draw_line:
@@ -1273,6 +1313,7 @@ def _draw_line_with_layers(
     *,
     shader: Any = None,
     letter_spacing_px: float = 0.0,
+    layer_alpha: float = 1.0,
     glow_rgb: tuple[int, int, int] | None = None,
     glow_strength: float = 0.0,
 ) -> None:
@@ -1291,7 +1332,7 @@ def _draw_line_with_layers(
         r, g, b = glow_rgb
         glow_strength = max(0.0, min(1.0, glow_strength))
         for sigma, base_alpha in ((8.0, 120.0), (20.0, 220.0)):
-            glow_alpha = _clamp_byte(base_alpha * glow_strength)
+            glow_alpha = _clamp_byte(base_alpha * glow_strength * layer_alpha)
             if glow_alpha <= 0:
                 continue
             glow_paint = skia.Paint(
@@ -1316,7 +1357,7 @@ def _draw_line_with_layers(
     if stroke_px > 0:
         stroke_paint = skia.Paint(
             AntiAlias=True,
-            Color=skia.ColorSetARGB(230, 0, 0, 0),
+            Color=skia.ColorSetARGB(_clamp_byte(230 * layer_alpha), 0, 0, 0),
             Style=skia.Paint.kStroke_Style,
             StrokeWidth=stroke_px * 2.0,
             StrokeJoin=skia.Paint.kRound_Join,
@@ -1545,6 +1586,13 @@ def _select_cycle_font(overlay: dict, t_local: float, duration_s: float) -> str 
 def _ease_out_cubic(t: float) -> float:
     t = max(0.0, min(1.0, t))
     return 1.0 - (1.0 - t) ** 3
+
+
+def _ease_in_out_cubic(t: float) -> float:
+    t = max(0.0, min(1.0, t))
+    if t < 0.5:
+        return 4.0 * t**3
+    return 1.0 - ((-2.0 * t + 2.0) ** 3) / 2.0
 
 
 def _clamped_keyframes_s(keyframes_s: tuple[float, ...], duration_s: float) -> tuple[float, ...]:
@@ -1883,6 +1931,9 @@ def _draw_with_animation(
     scale = 1.0
     alpha = 1.0
     y_translate = 0.0
+    x_translate = 0.0
+    scale_origin_x = 0.0
+    scale_origin_y = 0.0
     visible_text = text
     show_cursor = False
 
@@ -1945,6 +1996,10 @@ def _draw_with_animation(
                 scale = 0.90 + 0.10 * ((p - 0.72) / 0.28)
         else:
             scale = 1.0
+    elif effect == "giant-title-wipe":
+        scale = _giant_title_wipe_scale_at(t_local, duration_s)
+        alpha = _giant_title_wipe_alpha_at(t_local, duration_s)
+        scale_origin_x, scale_origin_y = _giant_title_wipe_scale_origin()
     elif effect == "lyric-line":
         alpha = _lyric_line_alpha(overlay, t_local, duration_s)
     elif effect not in ("none", "static"):
@@ -1967,7 +2022,10 @@ def _draw_with_animation(
         render_canvas=render_canvas,
         alpha=alpha,
         scale=scale,
+        x_translate=x_translate,
         y_translate=y_translate,
+        scale_origin_x=scale_origin_x,
+        scale_origin_y=scale_origin_y,
         layout_text=reveal_text if effect in ("typewriter", "stream-in") else None,
         show_cursor=show_cursor,
     )
@@ -1986,6 +2044,7 @@ _ANIMATED_EFFECTS_SKIA = {
     "slide-down",
     "pop-in",
     "bounce",
+    "giant-title-wipe",
     "staggered-slice",
     "karaoke-line",
     # lyric-line must be animated to honor fade_in_ms / fade_out_ms. Without

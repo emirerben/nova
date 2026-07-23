@@ -890,6 +890,7 @@ export interface TextElement {
     | "typewriter"
     | "stream-in"
     | "staggered-slice"
+    | "giant-title-wipe"
     | "bounce"
     | "slide-in"
     | null;

@@ -958,6 +958,11 @@ export default function EditorCanvas({
                         transform: `${baseStyle.transform ?? ""} translateY(${
                           (animation.yTranslate / canvas.h) * stageSize.h
                         }px) scale(${animation.scale})`,
+                        transformOrigin: `calc(50% + ${
+                          (animation.scaleOriginX / canvas.w) * stageSize.w
+                        }px) calc(50% + ${
+                          (animation.scaleOriginY / canvas.h) * stageSize.h
+                        }px)`,
                       }}
                       onPointerDown={(e) => onOverlayPointerDown(e, layout.id)}
                       onPointerMove={onPointerMove}
