@@ -1275,11 +1275,13 @@ def _coerce_caption_meta_patch(patch: dict, state: _ParseState) -> dict:
                 state.invalid_value()
                 return {}
         elif key == "y_frac":
+            from app.pipeline.captions import clamp_caption_y_frac  # noqa: PLC0415
+
             num = _as_float(value)
             if num is None:
                 state.invalid_value()
                 return {}
-            out[key] = max(0.30, min(0.90, num))
+            out[key] = clamp_caption_y_frac(num)
     return out
 
 

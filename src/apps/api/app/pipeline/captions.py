@@ -244,6 +244,37 @@ def build_word_cues(words: list[Word], offset_s: float = 0.0) -> list[dict]:
 # the first burn and the reburn MUST pass the same value or edited captions jump.
 SUBTITLED_CAPTION_MARGIN_V = 384
 
+# Portrait canvas height; the single divisor every y_frac ↔ MarginV conversion
+# uses. Kept local (not imported from canvas) so this module stays dependency-light.
+_CANVAS_HEIGHT_PX = 1920
+
+# Caption vertical position band (top-origin fraction). The UI/API expose
+# 0.30–0.90; every persisted or derived caption y_frac funnels through the three
+# helpers below, and the 0.30–0.90 clamp + the (1 - y) * 1920 arithmetic live ONLY
+# here — killing the six historical inline copies that could silently drift apart
+# (plan 011 Feature C, finding QUAL-1).
+CAPTION_Y_FRAC_MIN = 0.30
+CAPTION_Y_FRAC_MAX = 0.90
+
+
+def clamp_caption_y_frac(y_frac: float) -> float:
+    """Clamp a caption y_frac (top-origin fraction) to the shared 0.30–0.90 band."""
+
+    return max(CAPTION_Y_FRAC_MIN, min(CAPTION_Y_FRAC_MAX, float(y_frac)))
+
+
+def y_frac_to_margin_v(y_frac: float) -> int:
+    """Convert a top-origin caption y_frac to an ASS bottom MarginV (Alignment 2)."""
+
+    return round((1.0 - y_frac) * _CANVAS_HEIGHT_PX)
+
+
+def margin_v_to_y_frac(margin_v: float) -> float:
+    """Invert :func:`y_frac_to_margin_v`, clamped back into the shared band."""
+
+    return clamp_caption_y_frac(1.0 - margin_v / float(_CANVAS_HEIGHT_PX))
+
+
 # Kria lime accent (#84cc16) as an ASS inline colour (AABBGGRR, opaque). Used to pop
 # the currently-spoken word in the word-by-word subtitled look — NOT the yellow-karaoke
 # cliché (SecondaryColour sweep). See DESIGN.md §9 "one accent per surface".
@@ -290,7 +321,7 @@ class SmartCaptionRenderPolicy:
             # field/section metacharacters — persisted JSONB is re-trusted here.
             font_family=re.sub(r"[,{}\[\]\r\n]", "", str(value["font_family"])).strip(),
             font_size_px=max(36, min(96, int(value["font_size_px"]))),
-            y_frac=max(0.3, min(0.9, float(value["y_frac"]))),
+            y_frac=clamp_caption_y_frac(value["y_frac"]),
             width_frac=max(0.4, min(0.95, float(value["width_frac"]))),
             max_lines=max(1, min(2, int(value["max_lines"]))),
             color=str(value["color"]),
@@ -794,7 +825,7 @@ def _ass_color_tag(value: str) -> str:
 
 def _ass_header_smart(policy: SmartCaptionRenderPolicy) -> str:
     margin_h = round(1080 * (1.0 - policy.width_frac) / 2)
-    margin_v = round(1920 * (1.0 - policy.y_frac))
+    margin_v = y_frac_to_margin_v(policy.y_frac)
     return (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"

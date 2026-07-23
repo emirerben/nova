@@ -301,8 +301,12 @@ class GenerativeVariant(BaseModel):
     # re-transcription. None on legacy variants predating this field; the editor
     # treats missing as enabled (matches the render-time default of True).
     captions_enabled: bool | None = None
-    # User-pinned independent overrides (decoupled from style_set_id).
-    # null when not pinned; the renderer uses the style-set value.
+    # Independent caption position override (decoupled from style_set_id); null
+    # means the renderer uses the style-set value. Written EITHER by a creator
+    # position edit (which also sets caption_position_user_edited) OR by the
+    # render worker's face-aware placement, which mirrors its chosen y here
+    # WITHOUT the user-edited flag — so a non-null value does not imply the
+    # creator pinned it. Only caption_position_user_edited means "user pinned".
     caption_margin_v: int | None = None
     intro_font_family: str | None = None
     intro_effect: str | None = None
@@ -1360,7 +1364,9 @@ class CaptionPositionRequest(BaseModel):
 
     @property
     def caption_margin_v(self) -> int:
-        return round((1.0 - self.y_frac) * 1920)
+        from app.pipeline.captions import y_frac_to_margin_v  # noqa: PLC0415
+
+        return y_frac_to_margin_v(self.y_frac)
 
 
 class CaptionStyleRequest(BaseModel):
@@ -4145,7 +4151,9 @@ def prepare_editor_commit(
             # committed font and the edit silently no-ops on Smart Captions.
             caption_meta_patch["caption_font_user_edited"] = True
         if meta.y_frac is not None:
-            caption_meta_patch["caption_margin_v"] = round((1.0 - meta.y_frac) * 1920)
+            from app.pipeline.captions import y_frac_to_margin_v  # noqa: PLC0415
+
+            caption_meta_patch["caption_margin_v"] = y_frac_to_margin_v(meta.y_frac)
             caption_meta_patch["caption_position_user_edited"] = True
 
     resolved_slots: list[dict] | None = None
