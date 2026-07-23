@@ -13,6 +13,7 @@ def sample(video_path: str, anchors: list[float]) -> dict:
     capture = cv2.VideoCapture(video_path)
     samples: list[dict] = []
     attempted = 0
+    decoded = 0
     try:
         cascade_path = os.path.join(
             cv2.data.haarcascades,
@@ -24,7 +25,12 @@ def sample(video_path: str, anchors: list[float]) -> dict:
             capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, at_s) * 1000)
             ok, frame = capture.read()
             if not ok:
+                # Seek landed past a real EOF (e.g. a silence-cut base) or hit a
+                # corrupt frame — NOT a decodable anchor. Reporting decoded lets
+                # the placement chooser use it as the coverage denominator instead
+                # of attempted (plan 011 Feature C — silence-cut safe).
                 continue
+            decoded += 1
             height, width = frame.shape[:2]
             scale = min(1.0, 480.0 / max(width, height))
             small = cv2.resize(frame, None, fx=scale, fy=scale)
@@ -47,7 +53,7 @@ def sample(video_path: str, anchors: list[float]) -> dict:
             )
     finally:
         capture.release()
-    return {"attempted": attempted, "samples": samples}
+    return {"attempted": attempted, "decoded": decoded, "samples": samples}
 
 
 def main() -> int:

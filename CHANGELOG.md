@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.5.0] — 2026-07-23
+
+### Added
+- **Smart Captions now avoid sitting on the speaker's face.** Nova samples faces across the rendered clip and, when a face consistently occupies the caption band, moves the whole caption up or down to a clear spot — one steady position for the video, chosen once on the first render and kept stable across edits and re-renders. A well-framed clip is left exactly where it was. The move only fires when the caption would genuinely cover the face (measured as the share of the caption box the face covers, not a diluted overlap ratio), and it checks every caption shape in the video, so a short one-line caption can't slip onto a face that a taller one cleared. Only a face that keeps recurring counts, so a single stray detection can't drag captions around. If nothing safe exists, it prefers a spot that still clears the platform UI over one that merely misses the face. Works with or without visual cards, in English and Turkish. Off by default behind `SMART_CAPTION_FACE_PLACEMENT_ENABLED` — a flag-off render is byte-identical in geometry and receipts. If face detection times out, errors, or finds nothing, the caption simply stays at its preset spot and the reason is recorded for the admin job view.
+
+### Changed
+- **One source of truth for caption vertical position.** Every place that converted a caption's `y_frac` to an ASS margin (and back) now goes through shared helpers, so the seven former inline copies of that arithmetic can no longer drift apart. No behavior change — the conversions are byte-identical.
+
 ## [0.12.3.0] — 2026-07-22
 
 ### Added
