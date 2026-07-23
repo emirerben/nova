@@ -1,0 +1,43 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-21-v6",
+  "input": {
+    "utterance": "add the fah sound after the punchline",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "sfx"],
+      "has_narrated_captions": true,
+      "text_bars": [],
+      "slots": [],
+      "total_duration_s": 0,
+      "speech": {
+        "source": "caption_words",
+        "words": [
+          {"text": "brand", "start_s": 44.9, "end_s": 45.3},
+          {"text": "personality", "start_s": 45.4, "end_s": 46.1}
+        ],
+        "pauses": [
+          {"start_s": 46.1, "end_s": 47.0, "after": "personality"}
+        ]
+      },
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {"id": "sfx_fah", "name": "Fah", "duration_s": 0.6, "role_tags": ["comedic_sting"]}
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"add_sfx\",\"effect_id\":\"sfx_fah\",\"at_s\":46.22,\"gain\":0.8}],\"confidence\":0.82,\"reply\":\"Placed the Fah right after 'personality' lands, at the pause (46.22s).\",\"suggestions\":[\"Lower the volume\",\"Move it to the pause start (46.10s)\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {"op": "add_sfx", "effect_id": "sfx_fah", "at_s": 46.22, "gain": 0.8}
+    ],
+    "confidence": 0.82,
+    "reply": "Placed the Fah right after 'personality' lands, at the pause (46.22s).",
+    "suggestions": ["Lower the volume", "Move it to the pause start (46.10s)"],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "REGRESSION (prod 2026-07-21): slot-less subtitled variant reports total_duration_s 0 — the coerce step must treat that as unknown duration and preserve at_s, not clamp every placement to 0.0s"}
+}

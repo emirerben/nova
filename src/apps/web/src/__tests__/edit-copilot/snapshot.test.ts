@@ -647,3 +647,36 @@ describe("buildCopilotSnapshot speech + SFX suggestions", () => {
     expect(snapshot.speech).toBeUndefined();
   });
 });
+
+describe("slot-less duration fallback", () => {
+  it("uses videoDurationS when the variant has no clip slots", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [],
+      [],
+      { text_elements: true, timeline: true },
+      [],
+      { videoDurationS: 82.4 },
+    );
+    expect(snapshot.total_duration_s).toBe(82.4);
+    // Longer-than-cap subtitled videos have zero remaining budget, never negative.
+    expect(snapshot.remaining_duration_s).toBe(0);
+  });
+
+  it("prefers the slot-layout total when slots exist", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      { videoDurationS: 82.4 },
+    );
+    expect(snapshot.total_duration_s).toBe(3);
+  });
+
+  it("stays 0 when neither slots nor a video duration exist", () => {
+    const snapshot = buildCopilotSnapshot([bar()], [], [], { text_elements: true, timeline: true }, []);
+    expect(snapshot.total_duration_s).toBe(0);
+  });
+});

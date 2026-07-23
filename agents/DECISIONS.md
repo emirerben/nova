@@ -299,3 +299,99 @@ killable without silencing the other. Off: new renders resolve no treatment and 
 skip re-mixing the bed, but persisted `smart_music_treatment` state is never deleted,
 so re-enabling restores creators' saved mixes (same preserve-on-rollback rule the SFX
 lane follows).
+
+## [2026-07-21] Worker OOM mid-reframe + 30-min silent redelivery gap (prod job e8173a25)
+
+**Incident:** a 170MB / 134s high-bitrate clip OOM-killed worker 6e826515c714e8 during
+`reframe_and_export` (last log `reframe_filter_chain` 18:26:17Z, silent death, fresh
+Celery boot 18:31:41Z). Compounding: 7 `analyze_pool_asset` tasks had just run on the
+same worker, leaving CLIP/torch/Whisper residency in the single long-lived prefork
+child (concurrency=1) for the ffmpeg peak to stack on. acks_late +
+visibility_timeout=1900s redelivered at 18:56:57Z and attempt 2 finished cleanly — so
+recovery worked, but the user stared at healthy-looking "rendering" for 30+ minutes.
+
+**Three-part fix (this entry is the narrative; invariants live in the guard tests):**
+
+1. **Heavy-source downscale guard** — `app/pipeline/source_guard.py`, wired into
+   `_ingest_clips` (generative_build.py). SDR sources with short edge > 1920px are
+   re-encoded ONCE at ingest (2-thread decode cap, h264 crf16/fast, cover-scale of
+   1080x1920, never upscaled, audio stream-copied, original deleted from tmpfs), so
+   every downstream per-slot reframe decodes a bounded intermediate instead of native
+   4K HEVC — and Gemini uploads shrink too. HDR is excluded: `_pretonemap_hdr_clips`
+   already downscales HDR inside its zscale chain, and an 8-bit re-encode here would
+   destroy its input. Still images excluded (image_clip owns those). Kill switch:
+   `SOURCE_DOWNSCALE_GUARD_ENABLED=false` + worker restart (byte-identical off).
+   Guards: `tests/pipeline/test_source_guard.py`. Template/music ingest paths NOT
+   wired yet — follow-up if the class recurs there.
+
+2. **Prefork child recycling** — `worker_max_memory_per_child` in `app/worker.py`
+   (`WORKER_MAX_MEMORY_PER_CHILD_KB`, default 3GB, 0 disables). Recycles the child
+   BETWEEN tasks once RSS exceeds the threshold; the replacement forks from the parent
+   and keeps the prewarmed CLIP singleton via copy-on-write. A dedicated queue/machine
+   for analysis tasks was rejected: concurrency=1 already serializes execution — the
+   problem was residual memory, not co-execution. Guards:
+   `tests/tasks/test_worker_memory_recycle.py` (conf carries the value; threshold
+   stays under the fly.toml worker VM size).
+
+3. **User-visible retrying state** — `jobs.worker_heartbeat_at` (migration 0068) is
+   ticked ~30s by a daemon thread (`job_phases.job_heartbeat`, column-only UPDATE by
+   design — it must never read-modify-write assembly_plan) wrapped around
+   `orchestrate_generative_job`. The status route computes `retrying: true` at READ
+   time when a processing/rendering job's beacon is older than
+   `RENDER_HEARTBEAT_STALE_AFTER_S` (150s); the redelivered attempt's synchronous
+   entry beat clears it immediately. ProgressTheater swaps the leave-note for honest
+   recovery copy. NULL beacon never flags (legacy rows / non-heartbeating
+   orchestrators). Guards: `tests/routes/test_generative_retrying.py`,
+   `src/apps/web/src/__tests__/progress/retrying.test.tsx`.
+
+**Env vars (not in CLAUDE.md — its 38k budget was full at the time):**
+`SOURCE_DOWNSCALE_GUARD_ENABLED` / `SOURCE_DOWNSCALE_SHORT_EDGE_MAX` /
+`SOURCE_DOWNSCALE_FFMPEG_THREADS`, `WORKER_MAX_MEMORY_PER_CHILD_KB`,
+`RENDER_HEARTBEAT_INTERVAL_S` / `RENDER_HEARTBEAT_STALE_AFTER_S`. Apply on Fly:
+`fly secrets set <VAR>=<val> --app nova-video` + `fly machine restart <id>` (worker).
+
+### [2026-07-22] Pre-merge review hardening of the OOM fixes (same branch)
+
+/review (7 specialists + red team + adversarial) confirmed the design and
+forced these changes before merge — all shipped in the same PR:
+
+- **Guard aggregate budget:** per-clip timeouts alone let 20 heavy clips ×
+  serial re-encodes eat the orchestrator's soft_time_limit (the d30c61fe
+  serial-preprocessing class). `_GUARD_TOTAL_BUDGET_S=900` now bounds the
+  whole pass; overflow clips keep originals + trace event. Serial stays
+  deliberate — parallel conversions would double the peak memory the guard
+  exists to bound.
+- **Guard coverage widened:** `_prepare_timeline_assembly` (timeline re-render
+  decodes durable ORIGINALS — would have reproduced the incident verbatim) and
+  the bed-level reburn now run the guard too. AAC-transcode retry when `-c:a
+  copy` can't mux into .mp4 (PCM/.mov, Opus) — the silent-skip class. Failure
+  branch now emits a pipeline-trace event + deletes the partial tmpfs file.
+- **tmpfs orphan sweep:** a SIGKILL'd child's TemporaryDirectory survives on
+  RAM-backed /tmp into the redelivered attempt (invisible to
+  worker_max_memory_per_child — not process RSS). `task_prerun` →
+  `app/pipeline/tmp_sweep.py` sweeps nova* dirs older than 1850s; the cutoff
+  invariant (> every render time_limit 1800, ≤ visibility_timeout 1900) is
+  pinned by `test_tmp_sweep_cutoff_stays_inside_redelivery_window`.
+- **Heartbeat honesty:** beacon written with `func.now()` (DB clock — worker/API
+  VM skew shifted the 150s window); `retrying` now has an UPPER bound
+  (visibility_timeout + stale + 300s slack) because a hard-time_limit SIGKILL
+  ACKS the message and no redelivery ever comes — past the window the reaper
+  owns the row. Threshold floors at 2× beat interval (misconfig guard).
+  Beats also refresh `updated_at` via the model's onupdate — documented as
+  deliberate, not a leak.
+- **worker_max_memory_per_child semantics:** billiard compares lifetime PEAK
+  RSS (ru_maxrss), not current residency — one >3GB spike recycles the child
+  even if freed. Deliberate, but validate in prod via billiard's "child
+  process exceeding memory limit" log line; every-task recycling ⇒ raise it.
+- **Frontend:** EditPayoff (onboarding) was a missed ProgressTheater call site
+  — a dead first-render attempt showed "About 90 seconds" indefinitely; ETA
+  label suppressed while retrying; recovery note is an aria-live status
+  region; contradictory static reassurance lines gated off while retrying.
+
+**Known accepted gaps (documented, not fixed):** variant re-render/reburn tasks
+(`regenerate_generative_variant`, caption/bed reburns) do NOT heartbeat and run
+while job.status is terminal, so a dead re-render attempt still shows
+render_status="rendering" until the boot-time variant reconciler — a
+variant-level beacon is future work. Template/music ingest paths still lack the
+downscale guard (separate task chip). Guard conversions re-run on every
+swap-song/retext regen (clip_metas re-analysis already does; cacheable later).

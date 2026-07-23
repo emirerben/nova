@@ -896,3 +896,13 @@ def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:
     # Pause entries render as "start-end (after ...)"; count the after-markers.
     assert rendered.count("(after ") == _PAUSE_MARKS_SHOWN_MAX
     assert rendered.count("effect_id=") == _SFX_SUGGESTIONS_SHOWN_MAX
+
+
+def test_copilot_sfx_at_s_not_zeroed_when_total_duration_unknown() -> None:
+    # Regression: slot-less subtitled variants report total_duration_s 0 — the
+    # coerce step used to clamp every at_s to min(at_s, max(0, -0.1)) = 0.0,
+    # placing all SFX at second 0 regardless of the model's requested times.
+    snap = _full_snapshot()
+    snap["total_duration_s"] = 0
+    out = _parse([{"op": "add_sfx", "effect_id": "pop", "at_s": 46.22, "gain": 0.7}], snapshot=snap)
+    assert out.ops[0]["at_s"] == 46.22

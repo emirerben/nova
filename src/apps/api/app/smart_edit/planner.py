@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.agents.smart_edit_planner import (
@@ -979,6 +979,12 @@ class _SceneHints:
     matches: list[tuple[int, str, str]]
     chapter_tags: dict[int, int]
     role_tags: dict[int, SemanticRole]
+    # Validated emphasis spans (plan 011, Feature A): (kind, [word_id, ...]) where
+    # kind is "standalone" | "keep_together". Populated only when
+    # smart_caption_emphasis_cues_enabled; empty otherwise so the chunker path is
+    # byte-identical. Word IDs are guaranteed to exist in the transcript; standalone
+    # spans are already spaced by the min-gap rule and the whole set is budget-capped.
+    emphasis_spans: list[tuple[str, list[str]]] = field(default_factory=list)
 
     @property
     def hinted_asset_ids(self) -> set[str]:
@@ -1048,6 +1054,62 @@ def _semantic_hook_end_index_v2(
     return min(cap_index, len(words) - 1)
 
 
+# Emphasis-span consumption budget (plan 011, Feature A). The parser already
+# caps raw output at 16 and enforces existence/contiguity/no-overlap; here we
+# tighten to the prompt's stated per-video budget and space standalone pops so a
+# rapid run of them cannot strobe. The 1.5s gap is deliberately below a spoken
+# list's 2-3s item cadence, so "number one … Messi, number two … Ronaldo" keeps
+# every item — the 4s gate an earlier draft used would have dropped items 2+.
+_EMPHASIS_MAX_SPANS = 10
+_EMPHASIS_MIN_STANDALONE_GAP_MS = 1500
+
+
+def _validate_emphasis_spans(
+    spans: list[Any],
+    words: list[SmartWord],
+    index_by_id: dict[str, int],
+    *,
+    enabled: bool,
+) -> tuple[list[tuple[str, list[str]]], int]:
+    """Space + budget the parser's emphasis spans; fail-soft per span.
+
+    Returns (kept, dropped). When the flag is off (or there is nothing to do)
+    this returns ([], 0) so the chunker path stays byte-identical. Ordering is by
+    the span's first spoken word so the gap rule is deterministic; a dropped span
+    never affects the others.
+    """
+
+    if not enabled or not spans:
+        return [], 0
+    start_ms_by_id = {word.word_id: word.start_ms for word in words}
+    ordered: list[tuple[int, Any]] = []
+    for span in spans:
+        span_ids = list(getattr(span, "word_ids", []) or [])
+        if not span_ids or any(word_id not in index_by_id for word_id in span_ids):
+            continue
+        ordered.append((index_by_id[span_ids[0]], span))
+    ordered.sort(key=lambda item: item[0])
+
+    kept: list[tuple[str, list[str]]] = []
+    dropped = 0
+    last_standalone_start: int | None = None
+    for _, span in ordered:
+        if len(kept) >= _EMPHASIS_MAX_SPANS:
+            dropped += 1
+            continue
+        if span.kind == "standalone":
+            start = start_ms_by_id.get(span.word_ids[0], 0)
+            if (
+                last_standalone_start is not None
+                and start - last_standalone_start < _EMPHASIS_MIN_STANDALONE_GAP_MS
+            ):
+                dropped += 1
+                continue
+            last_standalone_start = start
+        kept.append((span.kind, list(span.word_ids)))
+    return kept, dropped
+
+
 def _run_scene_matcher(
     words: list[SmartWord],
     assets: list[SmartPlannerAsset],
@@ -1102,12 +1164,25 @@ def _run_scene_matcher(
                 chapter_tags[index] = tag.sequence_number
             elif tag.role in {"context_shift", "payoff", "cta"}:
                 role_tags[index] = tag.role
-        hints = _SceneHints(matches=matches, chapter_tags=chapter_tags, role_tags=role_tags)
+        emphasis_spans, emphasis_dropped = _validate_emphasis_spans(
+            output.emphasis_spans,
+            words,
+            index_by_id,
+            enabled=bool(getattr(settings, "smart_caption_emphasis_cues_enabled", False)),
+        )
+        hints = _SceneHints(
+            matches=matches,
+            chapter_tags=chapter_tags,
+            role_tags=role_tags,
+            emphasis_spans=emphasis_spans,
+        )
         return hints, {
             "status": "ok",
             "matches": len(matches),
             "chapter_tags": len(chapter_tags),
             "role_tags": len(role_tags),
+            "emphasis_spans": len(emphasis_spans),
+            "emphasis_dropped": emphasis_dropped,
         }
     except Exception as exc:  # noqa: BLE001 — advisory brain, never blocks a render
         return None, {"status": "failed_open", "error_class": type(exc).__name__}
@@ -1743,11 +1818,25 @@ def plan_smart_captions(
             preset,
             scene_hints=scene_hints,
         )
+        emphasis = scene_hints.emphasis_spans if scene_hints else []
+        standalone_spans = [ids for kind, ids in emphasis if kind == "standalone"]
+        keep_together_spans = [ids for kind, ids in emphasis if kind == "keep_together"]
+        # Entity anchors (plan 012 P0-1 floor): the scene matcher's confirmed
+        # named-entity words. Only supplied when the emphasis feature is on, so a
+        # flag-off render stays byte-identical.
+        from app.config import settings as _settings  # noqa: PLC0415
+
+        entity_anchor_word_ids: set[str] | None = None
+        if getattr(_settings, "smart_caption_emphasis_cues_enabled", False) and scene_hints:
+            entity_anchor_word_ids = {anchor for _, _, anchor in scene_hints.matches}
         smart_cues = build_semantic_caption_cues(
             normalized_words,
             preset.caption,
             role_by_word_id=semantic.role_by_word_id,
             boundary_after_word_ids=semantic.boundary_after_word_ids,
+            standalone_spans=standalone_spans,
+            keep_together_spans=keep_together_spans,
+            entity_anchor_word_ids=entity_anchor_word_ids,
         )
         baseline = _baseline_from_semantic_cues(smart_cues)
         if not baseline:

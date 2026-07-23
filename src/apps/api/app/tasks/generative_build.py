@@ -54,7 +54,13 @@ from app.schemas.montage_preset import (
     is_collage_montage_preset,
 )
 from app.services.generative_jobs import CONTENT_PLAN_PRIMARY_VARIANT_POLICY
-from app.services.job_phases import mark_failed_phase, mark_finished, mark_started, record_phase
+from app.services.job_phases import (
+    job_heartbeat,
+    mark_failed_phase,
+    mark_finished,
+    mark_started,
+    record_phase,
+)
 from app.worker import celery_app
 
 
@@ -165,7 +171,10 @@ def orchestrate_generative_job(self, job_id: str) -> None:
 
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
-    with pipeline_trace_for(job_id):
+    # job_heartbeat: liveness beacon for the status route's `retrying` flag —
+    # a silently killed attempt stops beating, and the redelivered attempt's
+    # first beat clears the stale state (2026-07-21 OOM, job e8173a25).
+    with pipeline_trace_for(job_id), job_heartbeat(job_id):
         mark_started(job_id)
         try:
             _run_generative_job(job_id)
@@ -1069,6 +1078,15 @@ def _ingest_clips(
 
     local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
     probe_map = _probe_clips(local_clip_paths)
+    # Heavy-source guard (2026-07-21 OOM): oversized SDR clips are downscaled
+    # ONCE here — before Gemini upload (smaller upload) and before any variant
+    # reframe (bounded decode). Mutates local_clip_paths/probe_map in place so
+    # the clip_id maps below point at the intermediates. HDR clips pass through
+    # untouched (the pre-tonemap pass owns those). Best-effort: a failed
+    # conversion keeps the original.
+    from app.pipeline.source_guard import downscale_oversized_sources  # noqa: PLC0415
+
+    downscale_oversized_sources(local_clip_paths, probe_map, tmpdir, job_id=job_id)
     if skip_analysis:
         return {
             "clip_metas": [],
@@ -3541,6 +3559,12 @@ def _prepare_timeline_assembly(
     used_indices = sorted({r[0] for r in resolved})
     local_paths = _download_clips_parallel([clip_paths_gcs[i] for i in used_indices], tmpdir)
     probe_map = _probe_clips(local_paths)
+    # Heavy-source guard (2026-07-21 OOM): timeline re-renders decode the
+    # DURABLE ORIGINALS — an un-guarded re-render of a 4K job reproduces the
+    # exact incident. Same in-place mutation contract as _ingest_clips.
+    from app.pipeline.source_guard import downscale_oversized_sources  # noqa: PLC0415
+
+    downscale_oversized_sources(local_paths, probe_map, tmpdir, job_id=job_id)
     clip_id_to_local = {f"clip_{i}": path for i, path in zip(used_indices, local_paths)}
     clip_id_to_gcs = {f"clip_{i}": gcs for i, gcs in enumerate(clip_paths_gcs)}
 
@@ -8113,7 +8137,10 @@ def _render_subtitled_variant(
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.reframe import reframe_and_export, resolve_output_fit  # noqa: PLC0415
     from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
-    from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+    from app.pipeline.transcribe import (  # noqa: PLC0415
+        transcribe_whisper,
+        transcribe_whisper_cached,
+    )
     from app.storage import upload_public_read  # noqa: PLC0415
 
     variant_id = spec["variant_id"]
@@ -8330,7 +8357,10 @@ def _render_subtitled_variant(
                 detected_lang = sc_language or detected_lang
                 cues = build_plain_cues(caption_words, attach_words=True)
             else:
-                transcript = transcribe_whisper(clip_path, language=None)
+                # Content-addressed cache: re-renders of the same clip reuse the
+                # identical transcript (plan 012 P1-4), so captions stop drifting
+                # run-to-run. Fail-open to a live transcribe on any cache error.
+                transcript = transcribe_whisper_cached(clip_path, language=None)
                 detected_lang = transcript.language or detected_lang
                 cues = build_plain_cues(transcript.words, attach_words=True)
             cues = correct_caption_cues(
@@ -9729,6 +9759,22 @@ def _run_reburn_narrated_bed_level(
         from app.storage import download_to_file  # noqa: PLC0415
 
         local_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
+        # Heavy-source guard (2026-07-21 OOM): the bed-level reburn re-decodes
+        # the durable originals through the narrated spine render — probe +
+        # downscale here so a 4K job's reburn can't reproduce the incident.
+        # Best-effort as a UNIT: this path never probed before, so a probe
+        # failure must skip the guard (originals kept), not newly fail the task.
+        try:
+            from app.pipeline.source_guard import downscale_oversized_sources  # noqa: PLC0415
+            from app.tasks.template_orchestrate import _probe_clips  # noqa: PLC0415
+
+            downscale_oversized_sources(
+                local_paths, _probe_clips(local_paths), tmpdir, job_id=job_id
+            )
+        except Exception as exc:  # noqa: BLE001 — guard is an optimization here
+            log.warning(
+                "bed_level_reburn_source_guard_skipped", job_id=job_id, error=str(exc)[:160]
+            )
         clip_id_to_local = {f"clip_{i}": path for i, path in enumerate(local_paths)}
         voiceover_local = os.path.join(tmpdir, "voiceover_src")
         download_to_file(voiceover_gcs_path, voiceover_local)

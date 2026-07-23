@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.3.0] — 2026-07-22
+
+### Added
+- **Smart Captions now decide how many words to show by meaning, and a named thing gets its own moment.** When you say "number one… Messi," the caption shows **Messi** alone — held a beat longer and marked for emphasis — instead of running on into "Messi he is." The scene matcher tags the salient named entities and the caption chunker gives each its own cue; a full name like "Elliot Anderson" stays together as one emphasized caption. Works in English and Turkish. Off by default behind `SMART_CAPTION_EMPHASIS_CUES_ENABLED` — a flag-off render is byte-identical.
+- **Multi-word captions wrap without orphans.** Deterministic line layout keeps a "number 1" pairing together on one line and stops a single word from being stranded alone on the second line. Off by default behind `SMART_CAPTION_LAYOUT_BALANCE_ENABLED`.
+
+### Fixed
+- **A bare "number", "and", or "the" no longer flashes as its own one-word caption.** When a name isolates onto its own cue, the leftover list marker now folds into a neighboring caption instead of blinking alone — and it can never strip the emphasis off the name it sits next to (an entity kept alone by Nova's own name detection gets the same protection as one the model marked).
+- **The chapter-number overlay shows the name, not the marker.** "Number one Lionel Messi" now surfaces "Lionel" on the section heading instead of "number." Rollback lever: `SMART_CAPTION_SECTION_HEADING_ENABLED`.
+- **The same clip captions the same way on every re-render.** Whisper is non-deterministic, so re-rendering one clip could drop or split a proper noun differently each run, changing the captions; transcripts are now cached by clip content so every re-render reuses the identical words. Fully fail-open — a cache miss or storage hiccup just re-transcribes, and it never fails a render. Rollback lever: `SMART_CAPTION_TRANSCRIPT_CACHE_ENABLED`.
+## [0.12.2.1] — 2026-07-22
+
+### Fixed
+- **Editing one Smart Caption line no longer wipes the styled look off every line.** The caption editor sends the whole cue list back on any edit, and the save model only kept `text`/`timings`/`smart_style` — so a creator fixing a single word silently stripped the Smart Captions v2 provenance (`smart_role`, per-word `timing_quality`, source word ids) from all cues. Those fields are now preserved on the round-trip. No visible styling regression exists today (role styling rides `smart_style`, which was already kept), but the dropped provenance is what plan 011's contextual-cue work reads, so this closes the gap before that lands.
+
+### Notes
+- The preserved fields are validated at the request edge: `smart_role` is pinned to the shared `SemanticRole` vocabulary (imported from `smart_edit.schemas`, so writer and validator can never drift), and `smart_word_ids` are bounded to ≤100 ids matching the closed `w000001` format — a forged caption PATCH can't stuff arbitrary JSONB. Guarded by round-trip + reburn tests in `tests/tasks/test_subtitled_retranscribe.py`.
+
+## [0.12.2.0] — 2026-07-22
+
+### Fixed
+- **A heavy 4K upload can no longer crash the render worker mid-edit.** A 170MB high-bitrate clip OOM-killed the worker during reframing (prod job e8173a25): every variant re-decoded the full-resolution source while leftover AI-analysis models still occupied worker memory. Oversized SDR clips are now downscaled once at ingest with a bounded-memory pass (HDR clips already had their own) — on first renders, timeline re-renders, and narrated re-mixes alike — and the worker recycles its task process whenever residual memory from analysis bursts exceeds 3GB, so a render no longer starts on top of a ballooned process. The downscale pass has a hard time budget (many heavy clips can't stall a render), handles pro-camera audio formats, and a crashed attempt's leftover temp files are swept before the retry so the recovery run gets its full memory back. Kill switches: `SOURCE_DOWNSCALE_GUARD_ENABLED=false`, `WORKER_MAX_MEMORY_PER_CHILD_KB=0`.
+
+### Added
+- **You can now tell a crashed-and-recovering render apart from a healthy one.** When a render attempt dies silently, the job used to show normal "rendering" progress for the entire 30+ minute automatic-retry window. The worker now ticks a liveness heartbeat while rendering; once it goes quiet the progress view switches to "Hit a snag mid-render — retrying automatically," and flips back the moment the retried attempt picks up. The recovery state is honest end to end: the confident time estimate is hidden while retrying, the claim stops once no automatic retry can still be coming, screen readers announce the change, and the onboarding first-render screen shows it too.
+
+## [0.12.1.1] — 2026-07-21
+
+### Fixed
+- **Copilot sound effects no longer pile up at 0:00 on talk-to-camera videos.** On subtitled videos (which have no clip timeline) every placement time was clamped against a zero video length, so "place the sound at the pauses" put all sounds at the very start regardless of the times Nova announced. Placement times now clamp against the real video duration, and the copilot sees the true length instead of 0.
+
 ## [0.12.1.0] — 2026-07-21
 
 ### Added

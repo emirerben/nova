@@ -4,7 +4,10 @@ WHISPER_BACKEND=openai-api  — default/prod; processes 10-min audio in ~30-60s
 WHISPER_BACKEND=local       — dev only; faster-whisper on CPU (too slow for prod SLA)
 """
 
+import hashlib
+import json
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -14,6 +17,10 @@ import structlog
 from app.config import settings
 
 log = structlog.get_logger()
+
+# Bumped when the cached transcript shape or the transcription contract changes,
+# so a stale cache from an older code version is never reused.
+_TRANSCRIPT_CACHE_VERSION = "v1"
 
 LOW_CONFIDENCE_THRESHOLD = 0.6
 LOW_SPEECH_RATIO_THRESHOLD = 0.10  # <10% of words above threshold → ASR fallback
@@ -117,6 +124,7 @@ def transcribe(
             from app.pipeline.agents.gemini_analyzer import (
                 transcribe as gemini_transcribe,  # noqa: PLC0415
             )
+
             # Attach local path for Whisper fallback inside gemini_analyzer
             file_ref._local_path = video_path  # type: ignore[attr-defined]
             result = gemini_transcribe(file_ref, job_id=job_id)
@@ -128,6 +136,108 @@ def transcribe(
             log.warning("gemini_transcribe_failed_falling_back", error=str(exc))
 
     return transcribe_whisper(video_path, language=language, verbatim_prompt=verbatim_prompt)
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _transcript_to_json(transcript: Transcript) -> bytes:
+    return json.dumps(
+        {
+            "words": [
+                {"text": w.text, "start_s": w.start_s, "end_s": w.end_s, "confidence": w.confidence}
+                for w in transcript.words
+            ],
+            "full_text": transcript.full_text,
+            "low_confidence": transcript.low_confidence,
+            "language": transcript.language,
+        }
+    ).encode("utf-8")
+
+
+def _transcript_from_json(raw: bytes) -> Transcript:
+    data = json.loads(raw)
+    return Transcript(
+        words=[
+            Word(
+                text=str(w["text"]),
+                start_s=float(w["start_s"]),
+                end_s=float(w["end_s"]),
+                confidence=float(w.get("confidence", 1.0)),
+            )
+            for w in data.get("words", [])
+        ],
+        full_text=str(data.get("full_text", "")),
+        low_confidence=bool(data.get("low_confidence", False)),
+        language=str(data.get("language", "")),
+    )
+
+
+def transcribe_whisper_cached(
+    clip_path: str,
+    *,
+    language: str | None = None,
+    verbatim_prompt: str | None = None,
+) -> Transcript:
+    """Content-addressed transcript cache (plan 012 P1-4).
+
+    whisper-1 is non-deterministic — the same audio yields different words across
+    renders (a dropped proper noun, a split enumeration). Keying the transcript
+    by the clip's content hash means every re-render of the SAME clip reuses the
+    identical word list, which kills the "two renders differ" symptom. Fully
+    fail-open: any hashing / GCS error falls straight through to a live
+    transcription, and a cache write failure never affects the returned result.
+    Gated by ``smart_caption_transcript_cache_enabled`` (default on).
+    """
+
+    if not getattr(settings, "smart_caption_transcript_cache_enabled", True):
+        return transcribe_whisper(clip_path, language=language, verbatim_prompt=verbatim_prompt)
+    try:
+        digest = _sha256_file(clip_path)
+    except OSError:
+        return transcribe_whisper(clip_path, language=language, verbatim_prompt=verbatim_prompt)
+
+    # digest is a sha256 hex string; sanitize the caller-supplied language to a
+    # short alpha token so an unexpected value can never shape the GCS object key
+    # (defense-in-depth — today's sole caller passes None → "auto").
+    lang_key = re.sub(r"[^a-z]", "", (language or "auto").lower())[:8] or "auto"
+    # verbatim_prompt biases the whisper output, so it is part of the cache
+    # identity: two different prompts on the SAME clip bytes must not collide on
+    # one entry (today's sole caller passes None → the stable "noprompt" slot).
+    prompt_key = "noprompt"
+    if verbatim_prompt:
+        prompt_key = hashlib.sha256(verbatim_prompt.encode()).hexdigest()[:12]
+    object_path = (
+        f"transcript-cache/{_TRANSCRIPT_CACHE_VERSION}/{digest}_{lang_key}_{prompt_key}.json"
+    )
+    try:
+        from app.storage import download_to_file, object_exists  # noqa: PLC0415
+
+        if object_exists(object_path):
+            with tempfile.NamedTemporaryFile(suffix=".json", delete=True) as tmp:
+                download_to_file(object_path, tmp.name)
+                transcript = _transcript_from_json(open(tmp.name, "rb").read())  # noqa: SIM115
+            log.info("transcript_cache_hit", object_path=object_path, words=len(transcript.words))
+            return transcript
+    except Exception as exc:  # noqa: BLE001 — cache read is best-effort
+        log.warning("transcript_cache_read_failed", error=str(exc))
+
+    transcript = transcribe_whisper(clip_path, language=language, verbatim_prompt=verbatim_prompt)
+    try:
+        from app.storage import upload_bytes_public_read  # noqa: PLC0415
+
+        upload_bytes_public_read(
+            _transcript_to_json(transcript), object_path, content_type="application/json"
+        )
+        log.info("transcript_cache_store", object_path=object_path, words=len(transcript.words))
+    except Exception as exc:  # noqa: BLE001 — cache write is best-effort
+        log.warning("transcript_cache_write_failed", error=str(exc))
+    return transcript
 
 
 def transcribe_whisper(
@@ -175,11 +285,15 @@ def _extract_audio(video_path: str, audio_path: str) -> None:
     """Extract audio track to WAV using FFmpeg. Never shell=True."""
     cmd = [
         "ffmpeg",
-        "-i", video_path,
-        "-vn",                   # no video
-        "-acodec", "pcm_s16le",  # PCM WAV
-        "-ar", "16000",          # 16kHz (Whisper native)
-        "-ac", "1",              # mono
+        "-i",
+        video_path,
+        "-vn",  # no video
+        "-acodec",
+        "pcm_s16le",  # PCM WAV
+        "-ar",
+        "16000",  # 16kHz (Whisper native)
+        "-ac",
+        "1",  # mono
         "-y",
         audio_path,
     ]
@@ -328,19 +442,19 @@ def _transcribe_local(
         text_parts.append(segment.text)
         if segment.words:
             for w in segment.words:
-                words.append(Word(
-                    text=w.word,
-                    start_s=w.start,
-                    end_s=w.end,
-                    confidence=w.probability,
-                ))
+                words.append(
+                    Word(
+                        text=w.word,
+                        start_s=w.start,
+                        end_s=w.end,
+                        confidence=w.probability,
+                    )
+                )
     # faster-whisper segments expose the same avg_logprob/no_speech_prob signals.
     _apply_segment_signals(words, seen_segments)
 
     detected = _normalize_lang(getattr(info, "language", "") or lang or "")
-    transcript = Transcript(
-        words=words, full_text=" ".join(text_parts).strip(), language=detected
-    )
+    transcript = Transcript(words=words, full_text=" ".join(text_parts).strip(), language=detected)
     _mark_low_confidence(transcript)
     log.info("whisper_local_done", word_count=len(words), low_confidence=transcript.low_confidence)
     return transcript

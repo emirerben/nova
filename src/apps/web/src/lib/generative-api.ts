@@ -154,6 +154,9 @@ export interface GenerativeJobStatus {
   started_at?: string | null;
   finished_at?: string | null;
   expected_phase_durations?: Record<string, number> | null;
+  /** True while the render attempt died silently and is awaiting automatic
+   *  retry (stale worker heartbeat). Optional — older API builds omit it. */
+  retrying?: boolean;
 }
 
 /** Terminal statuses the poller should stop on. */

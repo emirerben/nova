@@ -49,6 +49,7 @@ from app.services.media_overlay_preview import (
     is_heif_overlay,
     nonblank_str,
 )
+from app.smart_edit.schemas import SemanticRole
 from app.storage import signed_get_url
 
 log = structlog.get_logger()
@@ -368,6 +369,12 @@ class GenerativeJobStatusResponse(BaseModel):
     # spine_extraction_failed, flag_disabled, ...) — clients map the known ones to
     # specific copy and show a generic downgrade banner for anything else.
     archetype_fallback: ArchetypeFallbackOut | None = None
+    # True while a non-terminal job's worker heartbeat has gone stale — the
+    # render attempt died silently (OOM/SIGKILL) and Celery's acks_late
+    # redelivery hasn't resumed it yet (2026-07-21 incident, job e8173a25).
+    # Computed at READ time from jobs.worker_heartbeat_at, never persisted;
+    # flips back to false the moment the redelivered attempt starts beating.
+    retrying: bool = False
 
 
 class SwapSongRequest(BaseModel):
@@ -1236,6 +1243,14 @@ class CaptionWord(BaseModel):
     text: str
     start_s: float
     end_s: float
+    # Whisper-alignment confidence stamped by the Smart chunker (mirrors
+    # smart_edit.schemas.SmartWord.timing_quality — keep the literals in sync).
+    # Round-tripped provenance only; absent on plain narrated/subtitled cues.
+    timing_quality: Literal["aligned", "segment_estimate", "unsafe"] | None = None
+
+
+# Mirrors app/smart_edit/schemas._WORD_ID_RE ("w000001") — keep in sync.
+_SMART_WORD_ID_RE = re.compile(r"^w\d{6}$")
 
 
 class CaptionCue(BaseModel):
@@ -1260,12 +1275,62 @@ class CaptionCue(BaseModel):
     # Server-authored semantic role. Closed tokens compile to fixed ASS styles;
     # round-trip it through the editor so an unchanged cue keeps its Smart look.
     smart_style: Literal["hook", "context", "list_item", "example", "payoff", "cta"] | None = None
+    # Smart Captions v2 provenance. The captions PATCH replaces the ENTIRE cue
+    # list, so anything not whitelisted here is stripped from ALL cues on the
+    # first text edit. Not read at render time (smart_style above is the ASS
+    # styling carrier) but preserved for the planner lineage plan 011 extends.
+    # smart_role uses the smart_edit SemanticRole vocabulary — distinct from
+    # smart_style's ("context_shift" vs "context").
+    # The derived smart_render_* caches are deliberately NOT round-tripped:
+    # generate_ass_from_cues recomputes them from text + the pinned policy at
+    # every burn, so client-sent values would be dead weight.
+    smart_role: SemanticRole | None = None
+    smart_word_ids: list[str] | None = None
+    # Plan 011/012 provenance the whitelist above was written to be extended with:
+    # smart_emphasis marks a cue that was isolated as a named-entity moment (drives
+    # the standalone min-hold at plan time + the future styling lane), and
+    # smart_keep_together holds the line-layout adjacency pairs the reburn honors.
+    # Both must survive a caption text edit or the emphasis/layout look is silently
+    # lost on the FIRST edit (same trap #699 closed for smart_role/smart_word_ids).
+    smart_emphasis: bool | None = None
+    smart_keep_together: list[list[int]] | None = None
 
     @field_validator("words")
     @classmethod
     def _cap_words(cls, v: list[CaptionWord] | None) -> list[CaptionWord] | None:
         if v is not None and len(v) > 100:
             raise ValueError("Too many words on one caption line (max 100).")
+        return v
+
+    @field_validator("smart_word_ids")
+    @classmethod
+    def _cap_smart_word_ids(cls, v: list[str] | None) -> list[str] | None:
+        # User input on the PATCH edge — same cap as `words` (one id per word)
+        # and the closed w000001 format, so a forged PATCH can't stuff the JSONB.
+        if v is None:
+            return v
+        if len(v) > 100:
+            raise ValueError("Too many word ids on one caption line (max 100).")
+        if any(not _SMART_WORD_ID_RE.fullmatch(str(word_id)) for word_id in v):
+            raise ValueError("Invalid smart caption word id.")
+        return v
+
+    @field_validator("smart_keep_together")
+    @classmethod
+    def _validate_keep_together(cls, v: list[list[int]] | None) -> list[list[int]] | None:
+        # Each pair is [start, end] cue-relative word offsets (0-based, start <= end).
+        # Bounded like `words` so a forged PATCH can't stuff arbitrary JSONB, and
+        # malformed pairs are rejected rather than silently poisoning the reburn.
+        if v is None:
+            return v
+        if len(v) > 100:
+            raise ValueError("Too many keep-together pairs on one caption line (max 100).")
+        for pair in v:
+            if len(pair) != 2 or not all(isinstance(n, int) for n in pair):
+                raise ValueError("Each keep-together entry must be a [start, end] pair.")
+            start, end = pair
+            if not (0 <= start <= end < 100):
+                raise ValueError("Keep-together offsets out of range.")
         return v
 
 
@@ -4772,6 +4837,52 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession) -> None
                 variant["music_preview_start_s"] = 0.0
 
 
+# Non-terminal statuses an orchestrate_generative_job run passes through while
+# its heartbeat thread is expected to be beating ("processing" → "rendering";
+# generative_build.py sets no others). Deliberately NOT "queued" (no attempt
+# has started — nothing to be stale) and not the terminal set (finished jobs
+# stop beating by design).
+_HEARTBEAT_LIVE_STATUSES = frozenset({"processing", "rendering"})
+
+# Past this beacon age no acks_late redelivery can still be pending
+# (visibility_timeout=1900s in worker.py, plus staleness slack) — a hard
+# time_limit SIGKILL ACKS the message (task_acks_on_failure_or_timeout default),
+# so "retrying automatically" would be a false promise forever. Beyond the
+# window we stop claiming a retry; the stale-job reaper owns the row from there.
+_RETRY_WINDOW_SLACK_S = 300
+
+
+def _compute_retrying(job: Job) -> bool:
+    """True when the job's render attempt died silently and awaits redelivery.
+
+    Read-time computation from `jobs.worker_heartbeat_at` (ticked ~30s by the
+    orchestrator's daemon thread). NULL beacon → no signal, never stale — this
+    keeps legacy rows and non-heartbeating orchestrators at `false` forever.
+    """
+    from datetime import UTC  # noqa: PLC0415
+
+    from app.config import settings  # noqa: PLC0415
+
+    beacon = getattr(job, "worker_heartbeat_at", None)
+    if job.status not in _HEARTBEAT_LIVE_STATUSES or beacon is None:
+        return False
+    age_s = (datetime.now(UTC) - beacon).total_seconds()
+    # Misconfiguration guard: if an operator raises the beat interval above the
+    # stale threshold, every healthy render would flap `retrying` between
+    # beats. Two missed beats is the floor for calling an attempt dead.
+    stale_after_s = max(
+        settings.render_heartbeat_stale_after_s,
+        2 * settings.render_heartbeat_interval_s,
+    )
+    from app.worker import celery_app  # noqa: PLC0415
+
+    visibility_timeout_s = int(
+        (celery_app.conf.broker_transport_options or {}).get("visibility_timeout", 1900)
+    )
+    retry_window_s = visibility_timeout_s + stale_after_s + _RETRY_WINDOW_SLACK_S
+    return stale_after_s < age_s <= retry_window_s
+
+
 @router.get("/{job_id}/status", response_model=GenerativeJobStatusResponse)
 async def get_generative_job_status(
     job_id: str,
@@ -4824,6 +4935,7 @@ async def get_generative_job_status(
         finished_at=job.finished_at,
         expected_phase_durations=baselines,
         archetype_fallback=archetype_fallback,
+        retrying=_compute_retrying(job),
     )
     if getattr(job, "_media_overlay_preview_backfilled", False):
         # `_variants_for_response` mutated an UNLOCKED snapshot of assembly_plan.

@@ -62,6 +62,40 @@ _KEYWORD_STOP = {
     "da",
     "bu",
     "su",
+    # English list markers + function words (plan 012 P1-3): keeps the section
+    # heading from picking a marker ("number") instead of the topic/name. This
+    # set is compiler-local (planner._KEYWORD_STOP is a separate constant), so
+    # asset matching stays byte-identical.
+    "number",
+    "no",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "first",
+    "second",
+    "third",
+    "fourth",
+    "fifth",
+    "next",
+    "last",
+    "the",
+    "a",
+    "an",
+    "and",
+    "of",
+    "to",
+    "is",
+    "are",
+    "my",
+    "this",
+    "that",
 }
 _ROLE_OFFSETS_MS = {
     "chapter_number_pop": -50,
@@ -292,7 +326,13 @@ def compile_smart_plan(
                         target_cue["smart_style"] = style
             elif isinstance(lane, TextLane):
                 start_s = event.active_start_ms / 1000
-                if lane.token == "section_heading" and lane.sequence_number:
+                from app.config import settings as _settings  # noqa: PLC0415
+
+                if (
+                    lane.token == "section_heading"
+                    and lane.sequence_number
+                    and _settings.smart_caption_section_heading_enabled
+                ):
                     number_style = preset.text_styles["section_number"]
                     keyword_style = preset.text_styles["section_keyword"]
                     number_end = start_s + number_style.duration_s

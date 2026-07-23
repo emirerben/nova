@@ -299,27 +299,77 @@ class SmartCaptionRenderPolicy:
         )
 
 
+# A bare cardinal/ordinal token ("1", "1.", "2)") — the digit-adjacency rule
+# keeps it glued to the word it labels so a number never dangles at a line break.
+_DIGIT_TOKEN_RE = re.compile(r"^\d{1,3}[.)]?$")
+
+
+def digit_word_keep_together(words: list[str]) -> list[tuple[int, int]]:
+    """Deterministic line-layout hint: keep a number with the word it labels.
+
+    Pairs a short digit token with the following non-numeric word ("1 Messi",
+    "3 million") so the number cannot be split onto its own line. Conservative
+    and language-agnostic — never spans more than two words. Single owner of the
+    digit+word adjacency predicate (plan 011, Feature B).
+    """
+
+    pairs: list[tuple[int, int]] = []
+    for i in range(len(words) - 1):
+        if _DIGIT_TOKEN_RE.match(words[i]) and not _DIGIT_TOKEN_RE.match(words[i + 1]):
+            pairs.append((i, i + 1))
+    return pairs
+
+
+def _cue_keep_together_pairs(cue: dict[str, Any]) -> list[tuple[int, int]]:
+    """Read the chunker's persisted cue-relative keep-together pairs, if any."""
+
+    pairs: list[tuple[int, int]] = []
+    persisted = cue.get("smart_keep_together")
+    if isinstance(persisted, list):
+        for pair in persisted:
+            try:
+                pairs.append((int(pair[0]), int(pair[1])))
+            except (TypeError, ValueError, IndexError):
+                continue
+    return pairs
+
+
 def prepare_smart_caption_cues(
     cues: list[dict[str, Any]],
     policy_value: SmartCaptionRenderPolicy | dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Attach renderer-measured wrapping/box metadata without changing cue text."""
+    """Attach renderer-measured wrapping/box metadata without changing cue text.
 
+    Line layout honors two keep-together sources (plan 011, Feature B):
+    persisted emphasis pairs (``smart_keep_together``, present only when the
+    emphasis brain ran) are always respected; the deterministic digit+word rule
+    and the widow penalty apply only under ``SMART_CAPTION_LAYOUT_BALANCE_ENABLED``.
+    With neither present the wrapping is byte-identical to the pre-feature output.
+    """
+
+    from app.config import settings  # noqa: PLC0415
     from app.pipeline.render_geometry import measure_caption  # noqa: PLC0415
 
     policy = SmartCaptionRenderPolicy.from_value(policy_value)
     if policy is None:
         return [dict(cue) for cue in cues]
+    layout_on = bool(getattr(settings, "smart_caption_layout_balance_enabled", False))
     prepared: list[dict[str, Any]] = []
     for source in cues:
         cue = dict(source)
+        text = str(cue.get("text") or "")
+        pairs = _cue_keep_together_pairs(cue)
+        if layout_on:
+            pairs.extend(digit_word_keep_together(text.split()))
         measurement = measure_caption(
-            str(cue.get("text") or ""),
+            text,
             font_family=policy.font_family,
             font_size_px=policy.font_size_px,
             width_frac=policy.width_frac,
             y_frac=policy.y_frac,
             max_lines=policy.max_lines,
+            keep_together=pairs or None,
+            penalize_widows=layout_on,
         )
         cue["smart_render_lines"] = list(measurement.lines)
         cue["smart_render_font_size_px"] = measurement.font_size_px

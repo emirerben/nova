@@ -450,3 +450,174 @@ def test_planner_module_exports_scene_hint_surface() -> None:
     assert hasattr(planner_mod, "_SceneHints")
     with pytest.raises(TypeError):
         _SceneHints()  # frozen dataclass with required fields
+
+
+# ── emphasis spans: fail-soft parsing (plan 011, Feature A) ───────────────────
+
+
+def test_emphasis_span_fail_soft_per_item() -> None:
+    inp = _input(["Bir", "numara", "Messi", "iki", "Ronaldo", "harika"], [])
+    raw = json.dumps(
+        {
+            "matches": [],
+            "cue_tags": [{"anchor_word_id": "w000002", "role": "list_item", "sequence_number": 1}],
+            "emphasis_spans": [
+                {"word_ids": ["w000003"], "kind": "standalone"},  # Messi — valid
+                {"word_ids": ["w000001", "w000002"], "kind": "keep_together"},  # valid pair
+                {"word_ids": ["w000003", "w000004"], "kind": "keep_together"},  # overlaps -> drop
+                {
+                    "word_ids": ["w000005", "w000004"],
+                    "kind": "keep_together",
+                },  # non-contiguous -> drop
+                {"word_ids": ["w999999"], "kind": "standalone"},  # unknown word -> drop
+                {"word_ids": ["w000006"], "kind": "loud"},  # bad kind -> drop
+                {"word_ids": [], "kind": "standalone"},  # empty -> drop
+                "not-a-dict",  # junk -> drop
+            ],
+        }
+    )
+    out = _agent().parse(raw, inp)
+    # matches + cue_tags are untouched by malformed emphasis items.
+    assert out.matches == []
+    assert len(out.cue_tags) == 1 and out.cue_tags[0].role == "list_item"
+    kept = [(s.word_ids, s.kind) for s in out.emphasis_spans]
+    assert kept == [(["w000003"], "standalone"), (["w000001", "w000002"], "keep_together")]
+
+
+def test_emphasis_malformed_field_never_touches_other_output() -> None:
+    inp = _input(["a", "b", "c"], [])
+    raw = json.dumps(
+        {
+            "matches": [],
+            "cue_tags": [{"anchor_word_id": "w000002", "role": "payoff"}],
+            "emphasis_spans": "garbage",
+        }
+    )
+    out = _agent().parse(raw, inp)
+    assert len(out.cue_tags) == 1
+    assert out.emphasis_spans == []
+
+
+# ── emphasis prompt gating (byte-identical off, present on) ────────────────────
+
+
+def test_render_prompt_gates_emphasis_block_on_flag(monkeypatch) -> None:
+    inp = _input(["Bir", "numara", "Messi"], [])
+    agent = _agent()
+
+    monkeypatch.setattr(settings, "smart_caption_emphasis_cues_enabled", False, raising=False)
+    off = agent.render_prompt(inp)
+    assert "emphasis_spans" not in off
+    assert "EMPHASIS SPANS" not in off
+
+    monkeypatch.setattr(settings, "smart_caption_emphasis_cues_enabled", True, raising=False)
+    on = agent.render_prompt(inp)
+    assert '"emphasis_spans"' in on
+    assert "## EMPHASIS SPANS" in on
+    assert on.index("## EMPHASIS SPANS") < on.index("## Inputs")
+
+
+# ── emphasis span budgeting + spacing (plan 011, Feature A) ────────────────────
+
+
+def _emphasis_words(count: int, *, step_ms: int) -> list:
+    from app.smart_edit.schemas import SmartWord
+
+    words = []
+    for i in range(count):
+        word_id = f"w{i + 1:06d}"
+        words.append(
+            SmartWord(
+                word_id=word_id,
+                spoken_text="w",
+                display_text="w",
+                normalized_text="w",
+                start_ms=i * step_ms,
+                end_ms=i * step_ms + 100,
+                timing_quality="aligned",
+                display_alignment=[word_id],
+            )
+        )
+    return words
+
+
+def test_validate_emphasis_spans_disabled_is_noop() -> None:
+    from app.agents.scene_matcher import EmphasisSpan
+    from app.smart_edit.planner import _validate_emphasis_spans
+
+    words = _emphasis_words(3, step_ms=1000)
+    index_by_id = {w.word_id: i for i, w in enumerate(words)}
+    spans = [EmphasisSpan(word_ids=["w000001"], kind="standalone")]
+    kept, dropped = _validate_emphasis_spans(spans, words, index_by_id, enabled=False)
+    assert kept == [] and dropped == 0
+
+
+def test_validate_emphasis_spans_spaces_standalone_starts() -> None:
+    from app.agents.scene_matcher import EmphasisSpan
+    from app.smart_edit.planner import _validate_emphasis_spans
+
+    words = _emphasis_words(6, step_ms=1000)  # starts at 0,1000,2000,...
+    index_by_id = {w.word_id: i for i, w in enumerate(words)}
+    # standalone at 0ms, 1000ms (too close), 2000ms (>=1500 from the kept 0ms).
+    spans = [
+        EmphasisSpan(word_ids=["w000001"], kind="standalone"),
+        EmphasisSpan(word_ids=["w000002"], kind="standalone"),
+        EmphasisSpan(word_ids=["w000003"], kind="standalone"),
+    ]
+    kept, dropped = _validate_emphasis_spans(spans, words, index_by_id, enabled=True)
+    assert [k[1][0] for k in kept] == ["w000001", "w000003"]
+    assert dropped == 1
+
+
+def test_validate_emphasis_spans_keeps_close_list_cadence() -> None:
+    # A real spoken list delivers items ~2s apart — none must be dropped.
+    from app.agents.scene_matcher import EmphasisSpan
+    from app.smart_edit.planner import _validate_emphasis_spans
+
+    words = _emphasis_words(6, step_ms=2000)
+    index_by_id = {w.word_id: i for i, w in enumerate(words)}
+    spans = [EmphasisSpan(word_ids=[f"w{i:06d}"], kind="standalone") for i in (1, 3, 5)]
+    kept, dropped = _validate_emphasis_spans(spans, words, index_by_id, enabled=True)
+    assert len(kept) == 3 and dropped == 0
+
+
+def test_validate_emphasis_spans_budget_caps_total() -> None:
+    from app.agents.scene_matcher import EmphasisSpan
+    from app.smart_edit.planner import _EMPHASIS_MAX_SPANS, _validate_emphasis_spans
+
+    words = _emphasis_words(30, step_ms=100)
+    index_by_id = {w.word_id: i for i, w in enumerate(words)}
+    # keep_together spans (no gap rule) so only the budget bounds them.
+    spans = [EmphasisSpan(word_ids=[f"w{i:06d}"], kind="keep_together") for i in range(1, 20)]
+    kept, dropped = _validate_emphasis_spans(spans, words, index_by_id, enabled=True)
+    assert len(kept) == _EMPHASIS_MAX_SPANS
+    assert dropped == 19 - _EMPHASIS_MAX_SPANS
+
+
+def test_validate_emphasis_spans_gap_boundary_is_inclusive() -> None:
+    # Strict < 1500ms drop: two standalones exactly 1500ms apart are BOTH kept.
+    from app.agents.scene_matcher import EmphasisSpan
+    from app.smart_edit.planner import _validate_emphasis_spans
+
+    words = _emphasis_words(4, step_ms=1500)  # starts 0, 1500, 3000, 4500
+    index_by_id = {w.word_id: i for i, w in enumerate(words)}
+    spans = [
+        EmphasisSpan(word_ids=["w000001"], kind="standalone"),  # 0ms
+        EmphasisSpan(word_ids=["w000002"], kind="standalone"),  # 1500ms exactly
+    ]
+    kept, dropped = _validate_emphasis_spans(spans, words, index_by_id, enabled=True)
+    assert len(kept) == 2 and dropped == 0
+
+
+def test_validate_emphasis_spans_exactly_at_budget_keeps_all() -> None:
+    from app.agents.scene_matcher import EmphasisSpan
+    from app.smart_edit.planner import _EMPHASIS_MAX_SPANS, _validate_emphasis_spans
+
+    words = _emphasis_words(_EMPHASIS_MAX_SPANS + 2, step_ms=100)
+    index_by_id = {w.word_id: i for i, w in enumerate(words)}
+    spans = [
+        EmphasisSpan(word_ids=[f"w{i:06d}"], kind="keep_together")
+        for i in range(1, _EMPHASIS_MAX_SPANS + 1)
+    ]
+    kept, dropped = _validate_emphasis_spans(spans, words, index_by_id, enabled=True)
+    assert len(kept) == _EMPHASIS_MAX_SPANS and dropped == 0

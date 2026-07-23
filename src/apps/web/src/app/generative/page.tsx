@@ -315,6 +315,7 @@ export default function GenerativePage() {
             isSuccess={theaterIsSuccess}
             receiptText={receiptText}
             variants={status?.variants ?? null}
+            retrying={status?.retrying ?? false}
             size="full"
             tone="light"
           >

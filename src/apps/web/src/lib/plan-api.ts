@@ -846,9 +846,30 @@ export interface CaptionCue {
    * SAME words at their real times; when the user changes the text they no longer spell
    * the words and the server re-synthesizes them. Absent for sentence-style captions.
    */
-  words?: { text: string; start_s: number; end_s: number }[] | null;
+  words?: {
+    text: string;
+    start_s: number;
+    end_s: number;
+    /** Smart chunker alignment confidence — round-tripped untouched. */
+    timing_quality?: "aligned" | "segment_estimate" | "unsafe" | null;
+  }[] | null;
   /** Server-authored semantic style; preserved when an unchanged cue is applied. */
   smart_style?: "hook" | "context" | "list_item" | "example" | "payoff" | "cta" | null;
+  /**
+   * Smart Captions v2 provenance (planner role + source transcript word ids).
+   * The editor never reads these — it round-trips them untouched (spread) so a
+   * text edit doesn't strip them from the persisted cues.
+   */
+  smart_role?: "hook" | "context_shift" | "list_item" | "example" | "payoff" | "cta" | null;
+  smart_word_ids?: string[] | null;
+  /**
+   * Plan 011/012 provenance, also round-tripped untouched via the spread:
+   * `smart_emphasis` marks a named-entity cue isolated for emphasis, and
+   * `smart_keep_together` holds the line-layout adjacency pairs the reburn honors.
+   * Stripping them on a text edit would silently lose the emphasis/layout look.
+   */
+  smart_emphasis?: boolean | null;
+  smart_keep_together?: number[][] | null;
 }
 
 /**
@@ -1715,6 +1736,9 @@ export interface PlanItemJobStatus {
    *  Mirrors ArchetypeFallbackOut in routes/generative_jobs.py — the single TS
    *  definition lives in plan-generate-gate.ts. */
   archetype_fallback?: ArchetypeFallback | null;
+  /** True while the render attempt died silently and is awaiting automatic
+   *  retry (stale worker heartbeat). Optional — older API builds omit it. */
+  retrying?: boolean;
 }
 
 export async function getPlanItemJobStatus(jobId: string): Promise<PlanItemJobStatus> {

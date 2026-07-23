@@ -178,6 +178,42 @@ class Settings(BaseSettings):
     # false = pre-agent behavior byte-identically.
     smart_scene_matcher_enabled: bool = True
 
+    # Smarter captions (plans 011 + 012). Four flags: the two plan-011 kill
+    # switches (emphasis, layout) default OFF so a merge is a no-op until each is
+    # flipped Fly-first; the two plan-012 behavior flags (section heading,
+    # transcript cache) default ON — they refine pre-existing behavior and act as
+    # rollback levers rather than opt-in gates.
+    #
+    # EMPHASIS: gates the scene-matcher emphasis prompt block AND consumption of
+    # emphasis_spans in the caption chunker — contextual words-per-cue ("number
+    # one → Messi" shows Messi alone) plus emphasis-derived keep-together pairs.
+    # Off ⇒ the model never sees the emphasis task and cue chunking is
+    # byte-identical (the prompt block renders to ""); it is a real rollback, not
+    # a consumption veto. Requires smart_scene_matcher_enabled to do anything.
+    smart_caption_emphasis_cues_enabled: bool = False
+    # LAYOUT: gates the deterministic line-layout additions in measure_caption —
+    # the digit+word keep-together adjacency rule and the single-word widow
+    # penalty. Fully deterministic (no LLM), so it is verifiable offline and can
+    # ship ahead of the emphasis eval train. Off ⇒ line wrapping byte-identical
+    # for cues with no persisted emphasis keep-together pairs; a job planned
+    # while the emphasis flag was on keeps honoring its persisted pairs on reburn
+    # regardless of THIS flag (that is the emphasis dimension, not the layout one).
+    smart_caption_layout_balance_enabled: bool = False
+    # SECTION HEADING: the "number N" + keyword overlay lane the scene matcher
+    # emits for list items (plan 012 P1-3). Default ON (pre-existing behavior);
+    # rollback lever if the section overlay crowds the caption band. Off ⇒ the
+    # compiler emits no section number/keyword text elements; captions unaffected.
+    smart_caption_section_heading_enabled: bool = True
+    # TRANSCRIPT CACHE: content-addressed cache of the whisper transcript keyed by
+    # clip content hash (plan 012 P1-4). whisper-1 is non-deterministic, so this
+    # makes every re-render of the SAME clip reuse the identical word list —
+    # killing the "two renders of one clip caption differently" symptom. Fully
+    # fail-open (any GCS/hash error falls through to a live transcribe). Default
+    # ON; set false to always re-transcribe.
+    smart_caption_transcript_cache_enabled: bool = True
+    # (Face-aware caption placement — smart_caption_face_placement_enabled — lands
+    # with Feature C in its own PR.)
+
     # Kill switch for authored TextElements on subtitled variants. When False,
     # subtitled remains captions-only and the text-element routes/capabilities
     # reject it. When True, user-authored text is burned onto the caption-free
@@ -271,6 +307,39 @@ class Settings(BaseSettings):
     # libass path instantly. The kill switch is read per render call —
     # no in-flight job is mid-rendered with a switched-on flag.
     text_renderer_skia_enabled: bool = True
+
+    # Heavy-source downscale guard (2026-07-21 OOM incident, job e8173a25):
+    # a 170MB high-bitrate clip OOM-killed the worker mid-reframe. SDR sources
+    # whose SHORT edge exceeds `source_downscale_short_edge_max` are re-encoded
+    # once at ingest (bounded decoder threads, h264, never upscaled past the
+    # 1080x1920 cover scale) so every downstream per-slot reframe decodes a
+    # bounded intermediate instead of native 4K HEVC. HDR sources are excluded —
+    # the existing `_pretonemap_hdr_clips` pass already downscales those inside
+    # its zscale chain. Kill switch: SOURCE_DOWNSCALE_GUARD_ENABLED=false +
+    # worker restart → byte-identical to pre-guard behavior.
+    source_downscale_guard_enabled: bool = True
+    source_downscale_short_edge_max: int = 1920
+    # Decoder/encoder thread cap for the guard's own ffmpeg pass. Frame-threaded
+    # HEVC decode memory scales with thread count — the whole point of the guard
+    # is bounding peak RSS, so its own decode must not spike either.
+    source_downscale_ffmpeg_threads: int = 2
+
+    # Celery prefork child recycling (same incident): analyze_pool_asset bursts
+    # leave CLIP/torch/Whisper residency in the single long-lived child, which
+    # then stacks under the next render's ffmpeg peak. When a child's RSS
+    # exceeds this many KB after a task completes, Celery replaces it (fork from
+    # the parent keeps the prewarmed CLIP singleton via copy-on-write, so the
+    # replacement is cheap). 0 disables. Measured in KB (Celery convention).
+    worker_max_memory_per_child_kb: int = 3_145_728  # 3GB
+
+    # Render heartbeat (same incident, user-visible half): the orchestrator
+    # ticks jobs.worker_heartbeat_at every `interval` seconds; the status route
+    # reports `retrying: true` while a non-terminal job's heartbeat is older
+    # than `stale_after` (worker died silently; acks_late redelivery pending).
+    # stale_after = 5 missed beats — tolerates one slow/failed DB write without
+    # flapping the UI.
+    render_heartbeat_interval_s: int = 30
+    render_heartbeat_stale_after_s: int = 150
 
     # Dynamic crossfade scheduling for the line-style lyric overlay path
     # (`app.pipeline.lyric_injector._inject_line`). When True (default), the

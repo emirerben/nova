@@ -1,6 +1,6 @@
 {
  "agent": "nova.compose.scene_matcher",
- "prompt_version": "2026-07-21.1",
+ "prompt_version": "2026-07-22.2",
  "input": {
   "words": [
    {
@@ -245,7 +245,7 @@
   ],
   "language": "en"
  },
- "raw_text": "{\"matches\": [{\"asset_id\": \"a-spain\", \"anchor_word_id\": \"w000010\", \"confidence\": \"high\", \"reason\": \"word names the country of the flag\"}, {\"asset_id\": \"a-arg\", \"anchor_word_id\": \"w000019\", \"confidence\": \"high\", \"reason\": \"country name\"}, {\"asset_id\": \"a-eng\", \"anchor_word_id\": \"w000025\", \"confidence\": \"high\", \"reason\": \"country name\"}, {\"asset_id\": \"a-fra\", \"anchor_word_id\": \"w000031\", \"confidence\": \"high\", \"reason\": \"country name\"}, {\"asset_id\": \"a-messi\", \"anchor_word_id\": \"w000023\", \"confidence\": \"high\", \"reason\": \"Argentina #10 with trophy is Messi\"}, {\"asset_id\": \"a-mbappe\", \"anchor_word_id\": \"w000033\", \"confidence\": \"medium\", \"reason\": \"epithet refers to the France attacker in the pool\"}, {\"asset_id\": \"a-ander\", \"anchor_word_id\": \"w000028\", \"confidence\": \"high\", \"reason\": \"named England midfielder\"}], \"cue_tags\": [{\"anchor_word_id\": \"w000009\", \"role\": \"list_item\", \"sequence_number\": 1, \"reason\": \"number one\"}, {\"anchor_word_id\": \"w000018\", \"role\": \"list_item\", \"sequence_number\": 2, \"reason\": \"number two\"}, {\"anchor_word_id\": \"w000038\", \"role\": \"cta\", \"reason\": \"follow ask\"}]}",
+ "raw_text": "{\"matches\": [{\"asset_id\": \"a-spain\", \"anchor_word_id\": \"w000010\", \"confidence\": \"high\", \"reason\": \"word names the country of the flag\"}, {\"asset_id\": \"a-arg\", \"anchor_word_id\": \"w000019\", \"confidence\": \"high\", \"reason\": \"country name\"}, {\"asset_id\": \"a-eng\", \"anchor_word_id\": \"w000025\", \"confidence\": \"high\", \"reason\": \"country name\"}, {\"asset_id\": \"a-fra\", \"anchor_word_id\": \"w000031\", \"confidence\": \"high\", \"reason\": \"country name\"}, {\"asset_id\": \"a-messi\", \"anchor_word_id\": \"w000023\", \"confidence\": \"high\", \"reason\": \"Argentina #10 with trophy is Messi\"}, {\"asset_id\": \"a-mbappe\", \"anchor_word_id\": \"w000033\", \"confidence\": \"medium\", \"reason\": \"epithet refers to the France attacker in the pool\"}, {\"asset_id\": \"a-ander\", \"anchor_word_id\": \"w000028\", \"confidence\": \"high\", \"reason\": \"named England midfielder\"}], \"cue_tags\": [{\"anchor_word_id\": \"w000009\", \"role\": \"list_item\", \"sequence_number\": 1, \"reason\": \"number one\"}, {\"anchor_word_id\": \"w000018\", \"role\": \"list_item\", \"sequence_number\": 2, \"reason\": \"number two\"}, {\"anchor_word_id\": \"w000038\", \"role\": \"cta\", \"reason\": \"follow ask\"}], \"emphasis_spans\": [{\"word_ids\": [\"w000023\"], \"kind\": \"standalone\"}, {\"word_ids\": [\"w000027\", \"w000028\"], \"kind\": \"standalone\"}, {\"word_ids\": [\"w000034\"], \"kind\": \"standalone\"}]}",
  "output": {
   "matches": [
    {
@@ -309,6 +309,27 @@
     "role": "cta",
     "sequence_number": null,
     "reason": "follow ask"
+   }
+  ],
+  "emphasis_spans": [
+   {
+    "word_ids": [
+     "w000023"
+    ],
+    "kind": "standalone"
+   },
+   {
+    "word_ids": [
+     "w000027",
+     "w000028"
+    ],
+    "kind": "standalone"
+   },
+   {
+    "word_ids": [
+     "w000034"
+    ],
+    "kind": "standalone"
    }
   ]
  },

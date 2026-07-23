@@ -177,3 +177,14 @@ describe("edit-copilot extended op validation", () => {
       .toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
   });
 });
+
+describe("clampAtS with unknown duration", () => {
+  it("keeps at_s when total_duration_s is 0 (slot-less subtitled variant)", () => {
+    const zeroTotal: CopilotValidationSnapshot = { ...validationSnapshot, total_duration_s: 0 };
+    const res = validateCopilotOp(
+      { op: "add_sfx", effect_id: "fx", at_s: 46.22, gain: 0.7 },
+      zeroTotal,
+    );
+    expect(res).toMatchObject({ ok: true, op: { at_s: 46.22 } });
+  });
+});

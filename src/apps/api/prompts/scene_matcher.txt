@@ -23,7 +23,7 @@ Return STRICT JSON (no markdown fences, no commentary):
     {"anchor_word_id": "<word_id from words>",
      "role": "list_item" | "context_shift" | "payoff" | "cta",
      "sequence_number": <int, only for list_item>, "reason": "<short>"}
-  ]
+  ]$emphasis_schema
 }
 
 ## MATCHES — the rules that make you smart
@@ -69,7 +69,7 @@ Tag using MEANING, not keywords. Work in whatever language the transcript is.
 Do NOT tag ordinary sentences. An 80-word video typically has 2-6 tags, not
 20. Never tag the very first words as anything (the hook is handled
 elsewhere).
-
+$emphasis_rules
 ## Inputs
 
 words:
