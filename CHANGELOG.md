@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.4.0] — 2026-07-23
+
+### Added
+- **Text can now become a scene transition with the Giant title wipe animation.** Choose `Giant title wipe` in the text animation picker to hold a bold title, then smoothly zoom through the center of the target O until the footage fills the frame and no word remains over the content. The editor preview and Skia renderer share the same timing model, with backend schema/allowlist coverage so saved text elements round-trip safely.
+
 ## [0.12.3.0] — 2026-07-22
 
 ### Added
