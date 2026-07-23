@@ -1148,3 +1148,54 @@ def test_caption_reburn_with_lanes_real_chain_ends_ready_with_effects(monkeypatc
     assert v["output_url"] == "https://signed/with-sfx"
     assert v["pre_media_overlay_video_path"] == f"{new_video}_pre_overlay"
     assert v["pre_sfx_video_path"] == f"{new_video}_pre_sfx"
+
+
+# ── Feature C: placement is decided ONCE, on the first render ─────────────────
+
+
+@pytest.mark.parametrize("path", ["caption_reburn", "retranscribe"])
+def test_caption_terminals_never_recompute_face_placement(monkeypatch, path):
+    """Plan 011 Feature C precedence: reburns and re-transcribes read the
+    PERSISTED policy. If a terminal ever re-ran the sampler, a second opinion on
+    a different frame could silently move captions out from under the creator."""
+    from app.pipeline import render_geometry as rg
+    from app.pipeline.captions import y_frac_to_margin_v
+
+    def _boom_sampler(*a, **k):
+        raise AssertionError("sample_face_regions must NOT run on a caption terminal")
+
+    def _boom_chooser(*a, **k):
+        raise AssertionError("choose_caption_y_frac must NOT run on a caption terminal")
+
+    monkeypatch.setattr(rg, "sample_face_regions", _boom_sampler, raising=False)
+    monkeypatch.setattr(rg, "choose_caption_y_frac", _boom_chooser, raising=False)
+    monkeypatch.setattr(gb.settings, "smart_caption_face_placement_enabled", True, raising=False)
+
+    chosen_y = 0.55
+    policy = {
+        "font_family": "Montserrat Bold",
+        "font_size_px": 64,
+        "y_frac": chosen_y,
+        "width_frac": 0.88,
+        "max_lines": 2,
+        "color": "#FFFFFF",
+        "stroke_color": "#000000",
+        "stroke_width": 8,
+    }
+    variant = _lane_variant(
+        path,
+        smart_caption_policy=dict(policy),
+        caption_margin_v=y_frac_to_margin_v(chosen_y),
+        smart_validation_receipts={"caption_placement": {"status": "moved"}},
+    )
+
+    job, _seen = _run_path(monkeypatch, path, variant)
+
+    v = job.assembly_plan["variants"][0]
+    # The face-chosen position survives the re-render untouched…
+    assert v["smart_caption_policy"]["y_frac"] == pytest.approx(chosen_y)
+    assert v["caption_margin_v"] == y_frac_to_margin_v(chosen_y)
+    # …and was never re-derived (the boom-stubs above would have fired).
+    assert v["smart_validation_receipts"]["caption_placement"]["status"] == "moved"
+    # A first-render placement must never masquerade as a creator pin.
+    assert v.get("caption_position_user_edited") is not True
