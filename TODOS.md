@@ -75,6 +75,13 @@ docs/pipelines/generative.md "Speech map + SFX auto-suggestions". Remaining foll
 
 ## Plan 011 — Smarter captions (deferrals from the 2026-07-22 eng review)
 
+### T-CAP011-3 — Prod-image parity render before the face-placement flag flip
+**What:** Run `make local-render` on a TR and an EN talking-head fixture plus `make verify-overlays`, and confirm captions sit clear of the speaker's face, before `SMART_CAPTION_FACE_PLACEMENT_ENABLED` is flipped on Fly.
+**Why:** Feature C shipped with the flag OFF (a byte-identical no-op), so this is a pre-FLIP gate, not a pre-merge one — plan 011 §Rollout sequences it exactly this way. It could not run on the authoring machine (no Docker), and the Skia/FFmpeg/font stack only matches production inside the prod image.
+**How:** `make local-render CLIP=<talking_head.mp4> TEMPLATE=<cigdem uuid> MODE=generative`, then `make verify-overlays`; read `.overlay-verify/report.json` + `montage.png`. Then flip the flag and watch `caption_placement` receipts in `/admin/jobs` (`reason` enum distribution, anchor counts, timeout rate — a real timeout rate is the trigger for T-CAP011-2).
+**Context:** plans/011-smart-caption-contextual-cues.md §Feature C + §Rollout; `docs/pipelines/smart-captions.md` "Face-aware caption placement".
+**Effort:** S (CC: ~30 min, needs Docker) **Priority:** P1 **Depends on:** Feature C merged (this PR)
+
 ### T-CAP011-1 — Emphasis styling lane for standalone cues
 **What:** Standalone emphasis cues ("Messi" alone) currently inherit generic role tags; add a dedicated style treatment (bigger size / color pop / preset token) driven by the persisted `smart_emphasis` cue field.
 **Why:** Plan 011 deliberately ships grouping without styling to keep the diff reviewable; the persisted `smart_emphasis` marker exists precisely so this lane has a stable source that survives user caption edits (the CaptionCue round-trip carries it — plan 011 finding ARCH-4).
@@ -90,7 +97,7 @@ docs/pipelines/generative.md "Speech map + SFX auto-suggestions". Remaining foll
 
 ### T-CAP011-2 — Per-anchor streaming face sampler
 **What:** `face_sampler_worker.py` emits JSON once at exit, so a subprocess timeout discards ALL partial anchor results. Stream one JSON line per anchor so timeouts keep completed samples.
-**Why:** Plan 011 scales the timeout with anchor count instead (sufficient for n≤14); streaming becomes worth it only if `caption_placement` receipts show meaningful timeout rates after the Fly flip.
+**Why:** Plan 011 scales the timeout with anchor count instead, and the shipped code caps the anchor union at 20 (12 intent + 8 evenly-spaced, `_FACE_PLACEMENT_MAX_ANCHORS`) so the budget tops out around 8s; streaming becomes worth it only if `caption_placement` receipts show meaningful timeout rates after the Fly flip.
 **How:** Worker prints per-anchor lines; `sample_face_regions` parses incrementally and keeps whatever arrived before the kill.
 **Context:** plans/011-smart-caption-contextual-cues.md "NOT in scope"; perf finding PERF-1 (all-or-nothing 2.0s timeout).
 **Effort:** S (CC: ~45 min) **Priority:** P3 **Depends on:** observed timeout receipts in /admin/jobs (don't build speculatively)
