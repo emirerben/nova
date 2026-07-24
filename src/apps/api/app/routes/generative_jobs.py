@@ -1660,11 +1660,13 @@ def _mark_variant_rendering(job: Job, variant_id: str) -> str:
     its terminal write (and its old-blob deletes, OV-4).
     """
     render_gen_id = uuid.uuid4().hex
+    render_enqueued_at = datetime.utcnow().isoformat() + "Z"
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
             v["render_generation_id"] = render_gen_id
+            v["render_enqueued_at"] = render_enqueued_at
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     return render_gen_id

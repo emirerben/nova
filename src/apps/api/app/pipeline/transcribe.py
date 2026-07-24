@@ -196,11 +196,19 @@ def transcribe_whisper_cached(
     """
 
     if not getattr(settings, "smart_caption_transcript_cache_enabled", True):
-        return transcribe_whisper(clip_path, language=language, verbatim_prompt=verbatim_prompt)
+        transcript = transcribe_whisper(
+            clip_path, language=language, verbatim_prompt=verbatim_prompt
+        )
+        setattr(transcript, "cache_status", "disabled")
+        return transcript
     try:
         digest = _sha256_file(clip_path)
     except OSError:
-        return transcribe_whisper(clip_path, language=language, verbatim_prompt=verbatim_prompt)
+        transcript = transcribe_whisper(
+            clip_path, language=language, verbatim_prompt=verbatim_prompt
+        )
+        setattr(transcript, "cache_status", "hash_failed")
+        return transcript
 
     # digest is a sha256 hex string; sanitize the caller-supplied language to a
     # short alpha token so an unexpected value can never shape the GCS object key
@@ -222,12 +230,14 @@ def transcribe_whisper_cached(
             with tempfile.NamedTemporaryFile(suffix=".json", delete=True) as tmp:
                 download_to_file(object_path, tmp.name)
                 transcript = _transcript_from_json(open(tmp.name, "rb").read())  # noqa: SIM115
+            setattr(transcript, "cache_status", "hit")
             log.info("transcript_cache_hit", object_path=object_path, words=len(transcript.words))
             return transcript
     except Exception as exc:  # noqa: BLE001 — cache read is best-effort
         log.warning("transcript_cache_read_failed", error=str(exc))
 
     transcript = transcribe_whisper(clip_path, language=language, verbatim_prompt=verbatim_prompt)
+    setattr(transcript, "cache_status", "miss")
     try:
         from app.storage import upload_bytes_public_read  # noqa: PLC0415
 

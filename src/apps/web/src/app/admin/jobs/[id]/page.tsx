@@ -73,6 +73,7 @@ const STAGE_COLOR: Record<string, string> = {
   audio_mix: "bg-blue-600/70",
   assembly: "bg-zinc-600/70",
   orientation: "bg-orange-600/70",
+  render_stage: "bg-indigo-600/70",
 };
 
 export default function JobDebugPage({
@@ -178,7 +179,10 @@ export default function JobDebugPage({
               {tab === "timeline" && <Timeline data={data} />}
               {tab === "recipe" && <RecipeTab data={data} />}
               {tab === "trace" && (
-                <TraceTab events={(data.job.pipeline_trace ?? []) as PipelineTraceEvent[]} />
+                <TraceTab
+                  events={(data.job.pipeline_trace ?? []) as PipelineTraceEvent[]}
+                  summary={data.render_summary ?? null}
+                />
               )}
               {tab === "raw" && <RawTab data={data} />}
             </div>
@@ -576,19 +580,29 @@ function RecipeTab({ data }: { data: JobDebugResponse }): JSX.Element {
   );
 }
 
-function TraceTab({ events }: { events: PipelineTraceEvent[] }): JSX.Element {
+function TraceTab({
+  events,
+  summary,
+}: {
+  events: PipelineTraceEvent[];
+  summary: JobDebugResponse["render_summary"] | null;
+}): JSX.Element {
   if (events.length === 0) {
     return (
-      <div className="rounded border border-zinc-800 px-4 py-8 text-center text-sm text-zinc-500">
-        No pipeline events captured. Either this job pre-dates the trace
-        feature, or no recorded decision points fired.
+      <div className="space-y-3">
+        <RenderSummaryPanel summary={summary ?? null} />
+        <div className="rounded border border-zinc-800 px-4 py-8 text-center text-sm text-zinc-500">
+          No pipeline events captured. Either this job pre-dates the trace
+          feature, or no recorded decision points fired.
+        </div>
       </div>
     );
   }
   // Sort by ts to recover wall-clock order regardless of DB interleaving.
   const sorted = [...events].sort((a, b) => a.ts.localeCompare(b.ts));
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
+      <RenderSummaryPanel summary={summary ?? null} />
       {sorted.map((ev, i) => {
         const color = STAGE_COLOR[ev.stage] ?? "bg-zinc-600/70";
         return (
@@ -611,6 +625,122 @@ function TraceTab({ events }: { events: PipelineTraceEvent[] }): JSX.Element {
       })}
     </div>
   );
+}
+
+function RenderSummaryPanel({
+  summary,
+}: {
+  summary: JobDebugResponse["render_summary"] | null;
+}): JSX.Element | null {
+  if (!summary) return null;
+  const cacheRows = Object.entries(summary.cache ?? {});
+  return (
+    <div className="rounded border border-zinc-800 bg-zinc-950 px-4 py-3">
+      <div className="mb-3 flex flex-wrap items-baseline gap-3">
+        <div className="text-xs uppercase tracking-wider text-zinc-500">
+          Render summary
+        </div>
+        {summary.trace_id && (
+          <code className="text-[11px] text-zinc-500">{summary.trace_id}</code>
+        )}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <SummaryMetric label="Queue" value={formatDurationMs(summary.total_queue_ms)} />
+        <SummaryMetric
+          label="Processing"
+          value={formatDurationMs(summary.total_processing_ms)}
+        />
+        <SummaryMetric label="Agent work" value={formatDurationMs(summary.agent_work_ms)} />
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <SummaryList
+          title="Slowest stages"
+          empty="No render-stage timings yet."
+          rows={(summary.slowest_stages ?? []).map((stage) => ({
+            key: `${stage.stage}-${stage.variant_id ?? ""}-${stage.elapsed_ms}`,
+            label: stage.stage,
+            value: formatDurationMs(stage.elapsed_ms),
+          }))}
+        />
+        <SummaryList
+          title="Repeated stages"
+          empty="No repeated stages."
+          rows={(summary.repeated_stages ?? []).map((stage) => ({
+            key: stage.stage,
+            label: stage.stage,
+            value: `${stage.count}x`,
+          }))}
+        />
+        <SummaryList
+          title="Retries"
+          empty="No retries or failed retryable stages."
+          rows={(summary.retries ?? []).map((retry, idx) => ({
+            key: `${retry.stage}-${idx}`,
+            label: retry.stage,
+            value: retry.status ?? "retry",
+          }))}
+        />
+        <SummaryList
+          title="Cache"
+          empty="No cache events."
+          rows={cacheRows.map(([name, counts]) => ({
+            key: name,
+            label: name,
+            value: Object.entries(counts)
+              .map(([status, count]) => `${status}: ${count}`)
+              .join(", "),
+          }))}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SummaryMetric({ label, value }: { label: string; value: string }): JSX.Element {
+  return (
+    <div className="rounded border border-zinc-800 bg-zinc-900/50 px-3 py-2">
+      <div className="text-[11px] uppercase tracking-wider text-zinc-500">{label}</div>
+      <div className="mt-1 text-sm font-medium text-zinc-100">{value}</div>
+    </div>
+  );
+}
+
+function SummaryList({
+  title,
+  empty,
+  rows,
+}: {
+  title: string;
+  empty: string;
+  rows: Array<{ key: string; label: string; value: string }>;
+}): JSX.Element {
+  return (
+    <div>
+      <div className="mb-1 text-[11px] uppercase tracking-wider text-zinc-500">{title}</div>
+      {rows.length === 0 ? (
+        <div className="text-xs text-zinc-600">{empty}</div>
+      ) : (
+        <div className="space-y-1">
+          {rows.map((row) => (
+            <div key={row.key} className="flex items-baseline gap-3 text-xs">
+              <span className="truncate text-zinc-300">{row.label}</span>
+              <span className="ml-auto whitespace-nowrap text-zinc-500">{row.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatDurationMs(value: number | null | undefined): string {
+  if (value == null) return "n/a";
+  if (value < 1000) return `${Math.round(value)} ms`;
+  const seconds = value / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return `${minutes}m ${rest}s`;
 }
 
 function RawTab({ data }: { data: JobDebugResponse }): JSX.Element {

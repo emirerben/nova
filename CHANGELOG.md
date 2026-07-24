@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.7.0] — 2026-07-24
+
+### Added
+- **Render jobs now explain where the time went.** Nova records content-safe stage timings for generative and subtitled renders, including queueing, asset loading, preprocessing, AI/transcription work, caption and effect preparation, composition, frame rendering, encoding, uploads, retries, and cache hits or misses. Admin job debug now shows a readable render summary before the raw trace, with total queue time, total processing time, slowest stages, repeated stages, retry behavior, and cache behavior. A read-only baseline script can summarize an exported admin debug payload or reachable job without exposing transcripts, prompts, signed URLs, or media content.
+
 ## [0.12.6.0] — 2026-07-24
 
 ### Added

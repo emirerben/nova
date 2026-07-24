@@ -19,6 +19,8 @@ from app.services.pipeline_trace import (
     current_pipeline_job_id,
     pipeline_trace_for,
     record_pipeline_event,
+    record_render_stage,
+    render_stage_timer,
 )
 
 
@@ -122,3 +124,47 @@ def test_nested_contexts_restore_outer():
             assert current_pipeline_job_id() == str(b)
         assert current_pipeline_job_id() == str(a)
     assert current_pipeline_job_id() is None
+
+
+def test_record_render_stage_sanitizes_payload():
+    engine, captured = _fake_engine_capturing()
+    j = uuid.uuid4()
+    with patch("app.database.sync_engine", engine):
+        with pipeline_trace_for(j):
+            record_render_stage(
+                "transcription",
+                elapsed_ms=123,
+                trace_id="trace-a",
+                variant_id="subtitled",
+                cache={
+                    "name": "transcript",
+                    "status": "hit",
+                    "signed_url": "https://secret",
+                    "prompt_text": "do not persist",
+                },
+                counts={"word_count": 42, "caption_text": "secret words"},
+            )
+    assert len(captured) == 1
+    event_json = captured[0]["event_json"]
+    assert "render_stage" in event_json
+    assert "transcription" in event_json
+    assert "trace-a" in event_json
+    assert "word_count" in event_json
+    assert "signed_url" not in event_json
+    assert "prompt_text" not in event_json
+    assert "secret words" not in event_json
+
+
+def test_render_stage_timer_records_failure_then_reraises():
+    engine, captured = _fake_engine_capturing()
+    j = uuid.uuid4()
+    with patch("app.database.sync_engine", engine):
+        with pipeline_trace_for(j):
+            with pytest.raises(RuntimeError):
+                with render_stage_timer("base_reframe_encode", trace_id="trace-b"):
+                    raise RuntimeError("boom")
+    assert len(captured) == 1
+    event_json = captured[0]["event_json"]
+    assert "base_reframe_encode" in event_json
+    assert "failed" in event_json
+    assert "RuntimeError" in event_json
