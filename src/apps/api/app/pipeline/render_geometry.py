@@ -65,6 +65,23 @@ class NormalizedBox:
         union = self.area + other.area - intersection
         return intersection / union if union > 0 else 0.0
 
+    def intersection_area(self, other: NormalizedBox) -> float:
+        width = max(0.0, min(self.right, other.right) - max(self.left, other.left))
+        height = max(0.0, min(self.bottom, other.bottom) - max(self.top, other.top))
+        return width * height
+
+    def coverage_by(self, other: NormalizedBox) -> float:
+        """Fraction of THIS box's area that ``other`` covers (0 when this is empty).
+
+        The caption-placement overlap metric (plan 011 Feature C, finding OV-6):
+        unlike IoU, the denominator is fixed at the caption box's own area, so a
+        larger face band can only INCREASE the reported overlap — it can never
+        inflate the tolerance and certify a caption "clear" while it's on the face.
+        """
+
+        area = self.area
+        return self.intersection_area(other) / area if area > 0 else 0.0
+
     def as_dict(self) -> dict[str, float]:
         return {
             "left": round(self.left, 5),
@@ -316,8 +333,15 @@ def sample_face_regions(
     *,
     max_samples: int = 12,
     timeout_s: float = 2.0,
+    count_decoded: bool = False,
 ) -> tuple[list[ProtectedRegion], dict[str, Any]]:
-    """Sample faces in a killable subprocess so the wall-clock budget is real."""
+    """Sample faces in a killable subprocess so the wall-clock budget is real.
+
+    ``count_decoded`` (default off ⇒ every legacy caller's receipt is byte-
+    identical) adds a ``decoded`` field — the number of anchors that produced a
+    decodable frame — which the caption-placement chooser uses as its coverage
+    denominator (plan 011 Feature C).
+    """
 
     started = time.monotonic()
     anchors = sorted({max(0.0, float(value)) for value in anchor_times_s})[:max_samples]
@@ -346,11 +370,15 @@ def sample_face_regions(
         }
     regions: list[ProtectedRegion] = []
     attempted = len(anchors)
+    decoded: int | None = None
     worker_error: str | None = None
     if result.returncode == 0:
         try:
             payload = json.loads(result.stdout)
             attempted = int(payload.get("attempted") or attempted)
+            raw_decoded = payload.get("decoded")
+            if raw_decoded is not None:
+                decoded = int(raw_decoded)
             for sample in payload.get("samples") or []:
                 at_s = max(0.0, float(sample["at_s"]))
                 box = _face_protection_box(NormalizedBox(**sample["box"]))
@@ -377,9 +405,220 @@ def sample_face_regions(
         "elapsed_ms": elapsed_ms,
         "timed_out": False,
     }
+    if count_decoded:
+        # Fall back to attempted when a legacy worker image doesn't report it
+        # (anchors on the rendered base ⇒ attempted == decodable in that case).
+        receipt["decoded"] = decoded if decoded is not None else attempted
     if worker_error is not None:
         receipt["worker_error"] = worker_error
     return regions, receipt
+
+
+# ── Face-aware caption placement (plan 011 Feature C) ────────────────────────
+# Platform UI chrome the caption band must clear (TikTok/Reels/Shorts own the top
+# and bottom edges). A candidate whose translated caption box crosses either safe
+# edge is rejected even if it clears every face/title box.
+# NOTE the coupling: the bottom edge equals captions.CAPTION_Y_FRAC_MAX, and a
+# candidate's box bottom IS its (already clamped) y_frac, so the bottom check is
+# currently a tautology and only the TOP edge can reject. That is deliberate
+# belt-and-braces — if either constant is ever changed independently the check
+# starts biting, which is why it is written out rather than dropped.
+_CAPTION_TOP_SAFE_FRAC = 0.10
+_CAPTION_BOTTOM_SAFE_FRAC = 0.90
+# A candidate is "clear" when the caption box's own area is ≤ 5% covered by the
+# face band / a title box (coverage-fraction, NOT IoU — finding OV-6). 5% matches
+# the design doc's face-overlap spike policy.
+_FACE_OVERLAP_MAX_COVERAGE = 0.05
+# The dominant face band only exists when the SAME face recurs on ≥ 60% of
+# decodable frames; below that it flickers in and out and isn't worth moving
+# captions for.
+_DOMINANT_FACE_MIN_PRESENCE = 0.60
+# Fewer than three decodable anchors is too little signal — keep the preset.
+_MIN_USABLE_ANCHORS = 3
+# Two detections belong to the same face when their boxes overlap this much.
+# Haar occasionally fires once on background texture; a blind union of every
+# detection would let that single spurious box inflate the band across half the
+# frame and drag the caption off a face that never moved.
+_FACE_CLUSTER_MIN_IOU = 0.30
+
+
+def _union_box(boxes: list[NormalizedBox]) -> NormalizedBox:
+    return NormalizedBox(
+        min(box.left for box in boxes),
+        min(box.top for box in boxes),
+        max(box.right for box in boxes),
+        max(box.bottom for box in boxes),
+    )
+
+
+def _dominant_face_cluster(boxes: list[NormalizedBox]) -> list[NormalizedBox]:
+    """Largest group of mutually-overlapping detections — the recurring face.
+
+    The design reads "union of padded face boxes PRESENT ON ≥ 60% of anchors":
+    the band is built from the box that keeps showing up, not from every box the
+    detector ever emitted. Greedy single-link grouping against each cluster's
+    running union; ties resolve to the earliest cluster so the result is
+    deterministic.
+    """
+
+    clusters: list[list[NormalizedBox]] = []
+    for box in boxes:
+        for cluster in clusters:
+            if _union_box(cluster).iou(box) >= _FACE_CLUSTER_MIN_IOU:
+                cluster.append(box)
+                break
+        else:
+            clusters.append([box])
+    return max(clusters, key=len) if clusters else []
+
+
+def _translate_box_to_y(box: NormalizedBox, y_frac: float) -> NormalizedBox:
+    """Move a caption box so its BOTTOM edge sits at ``y_frac``; size unchanged.
+
+    Wrapping/shrinking is y-independent, so the probe box is measured ONCE and
+    only arithmetically translated per candidate (plan 011 Feature C).
+    """
+
+    height = box.height
+    return NormalizedBox(box.left, max(0.0, y_frac - height), box.right, min(1.0, y_frac))
+
+
+def choose_caption_y_frac(
+    face_regions: list[ProtectedRegion],
+    face_receipt: dict[str, Any],
+    caption_probe_boxes: Sequence[NormalizedBox],
+    title_boxes: list[ProtectedRegion],
+    candidates: tuple[float, ...],
+) -> tuple[float, dict[str, Any]]:
+    """Pick ONE static caption y_frac that keeps the band off the speaker's face.
+
+    Pure and FAIL-OPEN — never raises. ``candidates[0]`` is the preset and is
+    always tried first, so a well-framed video changes nothing. The overlap gate
+    is COVERAGE-FRACTION (intersection ÷ caption-box area ≤ 5%), NOT IoU: IoU's
+    denominator grows with the face-band size and would invert the incentive
+    (finding OV-6). ``caption_probe_boxes`` carries EVERY distinct measured cue
+    shape and a candidate must clear the gate for all of them — see the comment
+    at the evaluation loop for why no single box is the worst case. Every receipt
+    embeds the raw sampler receipt under
+    ``face_sampler`` so a structurally broken cv2 worker is distinguishable from a
+    genuinely well-framed clip in /admin/jobs (finding QUAL-2). On any of
+    no-face / timeout / error / < 3 usable anchors the preset is returned with a
+    ``reason`` in ``{no_face, sampler_timeout, sampler_error, insufficient_anchors}``;
+    when a real band exists but no candidate is both clear and chrome-safe, the
+    least-overlap candidate is returned with ``status == "best_effort"``.
+    """
+
+    from app.pipeline.captions import clamp_caption_y_frac  # noqa: PLC0415
+
+    ladder = tuple(clamp_caption_y_frac(value) for value in candidates) or (0.705,)
+    preset_y = ladder[0]
+
+    def _preset(reason: str, **extra: Any) -> tuple[float, dict[str, Any]]:
+        receipt: dict[str, Any] = {
+            "status": "preset",
+            "reason": reason,
+            "chosen_y_frac": preset_y,
+            "preset_y_frac": preset_y,
+            "candidates": list(ladder),
+            "face_sampler": dict(face_receipt),
+        }
+        receipt.update(extra)
+        return preset_y, receipt
+
+    if face_receipt.get("timed_out"):
+        return _preset("sampler_timeout")
+    if face_receipt.get("worker_error"):
+        return _preset("sampler_error")
+    raw_decoded = face_receipt.get("decoded")
+    if raw_decoded is not None:
+        decoded = int(raw_decoded)
+    else:
+        decoded = int(face_receipt.get("attempted") or 0)
+    if decoded < _MIN_USABLE_ANCHORS:
+        return _preset("insufficient_anchors", decoded=decoded)
+    if not face_regions:
+        return _preset("no_face", decoded=decoded)
+    # Presence counts the RECURRING face, not every detection: a lone spurious
+    # box must not certify a "dominant" band, and must not widen one either.
+    cluster = _dominant_face_cluster([region.box for region in face_regions])
+    presence = len(cluster) / decoded
+    if presence < _DOMINANT_FACE_MIN_PRESENCE:
+        return _preset(
+            "no_face",
+            decoded=decoded,
+            face_presence=round(presence, 3),
+            detections=len(face_regions),
+        )
+
+    band = _union_box(cluster)
+    protected = [band, *[title.box for title in title_boxes]]
+
+    # EVERY distinct cue shape is probed, not just the tallest. The gate divides by
+    # the probe's OWN area, so no single cue is the universal worst case: against a
+    # face band near the caption's bottom edge a SHORT one-line cue reports far more
+    # coverage than a tall two-line one, while a band higher up only collides with
+    # the tall box — and the true maximum can fall at an intermediate height. A
+    # candidate must therefore clear the gate for ALL shapes.
+    probes = list(caption_probe_boxes) or [NormalizedBox(0.3, 0.58, 0.7, 0.705)]
+
+    evaluated: list[dict[str, Any]] = []
+    for index, y_frac in enumerate(ladder):
+        translated = [_translate_box_to_y(probe, y_frac) for probe in probes]
+        coverage = round(
+            max(
+                (box.coverage_by(area) for box in translated for area in protected),
+                default=0.0,
+            ),
+            5,
+        )
+        clears_chrome = all(
+            box.top >= _CAPTION_TOP_SAFE_FRAC and box.bottom <= _CAPTION_BOTTOM_SAFE_FRAC
+            for box in translated
+        )
+        evaluated.append({"y_frac": y_frac, "coverage": coverage, "clears_chrome": clears_chrome})
+        if coverage <= _FACE_OVERLAP_MAX_COVERAGE and clears_chrome:
+            return y_frac, {
+                "status": "well_framed" if index == 0 else "moved",
+                "chosen_y_frac": y_frac,
+                "preset_y_frac": preset_y,
+                "candidate_index": index,
+                "candidates": list(ladder),
+                "coverage": coverage,
+                "face_band": band.as_dict(),
+                "face_presence": round(presence, 3),
+                "decoded": decoded,
+                "evaluated": evaluated,
+                "face_sampler": dict(face_receipt),
+            }
+
+    # No candidate is both clear and chrome-safe → least-overlap fallback.
+    # Chrome-safety is the PRIMARY key, not a tiebreak: a caption pushed off the
+    # top edge or under the platform UI is unreadable, which is strictly worse
+    # than one that merely overlaps the face. Ranking coverage first would let a
+    # candidate the chrome gate just rejected win on a low face-overlap score —
+    # incoherent, since the same function already deemed that position unsafe.
+    # Only if NO candidate clears chrome does coverage alone decide.
+    best = min(
+        range(len(ladder)),
+        key=lambda i: (
+            0 if evaluated[i]["clears_chrome"] else 1,
+            evaluated[i]["coverage"],
+            i,
+        ),
+    )
+    return ladder[best], {
+        "status": "best_effort",
+        "chosen_y_frac": ladder[best],
+        "preset_y_frac": preset_y,
+        "candidate_index": best,
+        "candidates": list(ladder),
+        "coverage": evaluated[best]["coverage"],
+        "face_band": band.as_dict(),
+        "face_presence": round(presence, 3),
+        "decoded": decoded,
+        "evaluated": evaluated,
+        "face_sampler": dict(face_receipt),
+    }
 
 
 def media_dimensions(path: str) -> tuple[int, int]:

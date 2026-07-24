@@ -134,6 +134,62 @@ Guards: `tests/smart_edit/test_captions.py`,
 `tests/pipeline/test_smart_caption_prepare.py`,
 `tests/pipeline/test_render_geometry.py`.
 
+### Face-aware caption placement (plan 011, Feature C)
+
+`choose_caption_y_frac` (`app/pipeline/render_geometry.py`) picks **one static
+caption `y_frac` per video** so the band never sits on the speaker's face, on the
+first render only. Orchestrated by `_apply_face_aware_caption_placement`
+(`app/tasks/generative_build.py`) POST-reframe — faces can only be located on
+final geometry — and BEFORE the caption burn, which is the ordering surgery this
+feature required.
+
+- **Anchors:** the union of 8 evenly-spaced times on the RENDERED base duration
+  (never the original clip — a silence-cut base is shorter and seeking past its
+  EOF yields undecodable frames) ∪ camera-intent times ∪ media-overlay starts,
+  deduped within ±0.25s. Each lane has its OWN budget
+  (`_FACE_PLACEMENT_MAX_INTENT_ANCHORS = 12`, matching the sampler's historical
+  `max_samples` default so card face-protection keeps parity, plus 8 evenly-spaced
+  that always survive) so neither can starve the other and a saturated plan
+  (`MAX_SMART_EDIT_EVENTS = 120`) cannot inflate the sampler's frame-seek count or
+  timeout. Samples are taken ONCE and reused for card arbitration.
+- **Dominant face band:** the union of padded face boxes, only when faces appear on
+  ≥60% of anchors that produced a **decodable** frame (the sampler reports
+  `decoded` under `count_decoded=True`; the denominator is decodable, not
+  attempted, so silence-cut bases stay honest). <3 usable anchors ⇒ preset.
+- **Overlap gate is COVERAGE-FRACTION, not IoU** (`NormalizedBox.coverage_by`):
+  `intersection ÷ caption-box area ≤ 5%`. IoU's denominator grows with the face
+  band, which would inflate tolerance and certify a caption "clear" while it sits
+  on the face. Candidate #0 is always the preset, so a well-framed video changes
+  nothing. If no candidate is both clear and chrome-safe, the least-covered
+  **chrome-safe** candidate wins (`status: best_effort`) — chrome-safety ranks
+  ahead of coverage, because a caption under the platform UI is worse than one
+  overlapping a face.
+- **Probe set = EVERY distinct cue box** (`_distinct_caption_probe_boxes`), not
+  just the tallest. Because the gate divides by the probe's own area, no single
+  cue is the universal worst case: against a band near the caption's bottom edge
+  a short one-line cue reports far more coverage than a tall two-line one (same
+  intersection, smaller denominator), and the true maximum can fall at an
+  intermediate height. A candidate must clear the gate for ALL shapes. Cheap —
+  `max_lines` is clamped to 1-2. Boxes are measured once and translated
+  arithmetically per candidate (wrap/shrink is y-independent).
+- **Persistence:** the chosen y is written to `smart_caption_policy["y_frac"]` and
+  mirrored to `caption_margin_v` (so the position UI tracks it) but deliberately
+  does NOT set `caption_position_user_edited` — a non-null `caption_margin_v` no
+  longer implies the creator pinned it. Precedence:
+  `caption_position_user_edited` > face-chosen > preset. Reburns and
+  re-transcribes read the persisted policy and never recompute.
+- **Fail-open, never raises.** The receipt (`smart_validation_receipts
+  .caption_placement`) carries a `reason` enum — `no_face | sampler_timeout |
+  sampler_error | insufficient_anchors` — plus the embedded raw sampler receipt,
+  so a broken cv2 worker image is distinguishable from well-framed clips in
+  `/admin/jobs`. `base` is mutated only after every fallible step succeeds, so a
+  mid-flight error truly leaves the preset geometry intact.
+- **Kill switch:** `SMART_CAPTION_FACE_PLACEMENT_ENABLED=false` (default) ⇒
+  geometry, the sampler's anchor-list argument, and receipts byte-identical.
+  Render-only; no `NEXT_PUBLIC` twin. Guards:
+  `tests/pipeline/test_render_geometry.py` (chooser matrix) +
+  `tests/smart_edit/test_v2_render_contract.py` (flag gate, anchor union, cap).
+
 ### Transcript determinism
 
 `transcribe_whisper_cached` in `app/pipeline/transcribe.py` (plan 012 P1-4):
