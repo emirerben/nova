@@ -311,7 +311,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                     "id": str(asset.id),
                     "gcs_path": asset.gcs_path,
                     "kind": asset.kind,
-                    "user_context": asset.user_context,
+                    "user_context": getattr(asset, "user_context", None),
                     "analysis": asset.analysis or {},
                 }
                 for asset in db.execute(
@@ -1021,7 +1021,7 @@ def match_overlay_suggestions(
                         "source_filename": a.source_filename,
                         "duration_s": a.duration_s,
                         "aspect": a.aspect,
-                        "user_context": a.user_context,
+                        "user_context": getattr(a, "user_context", None),
                         "analysis": a.analysis or {},
                     }
                     for a in db.execute(

@@ -7737,7 +7737,7 @@ def _load_smart_caption_assets(job_id: str) -> list[dict[str, Any]]:
                 "source_filename": row.source_filename,
                 "duration_s": row.duration_s,
                 "aspect": row.aspect,
-                "user_context": row.user_context,
+                "user_context": getattr(row, "user_context", None),
                 "analysis": row.analysis or {},
             }
             for row in rows

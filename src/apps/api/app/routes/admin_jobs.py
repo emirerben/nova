@@ -328,7 +328,9 @@ async def list_jobs(
         AdminJobListItem(
             job_id=str(j.id),
             content_plan_item_id=(
-                str(j.content_plan_item_id) if j.content_plan_item_id is not None else None
+                str(content_plan_item_id)
+                if (content_plan_item_id := getattr(j, "content_plan_item_id", None)) is not None
+                else None
             ),
             job_type=j.job_type,
             mode=j.mode,
@@ -634,7 +636,9 @@ async def get_job_debug(
         id=str(job.id),
         user_id=str(job.user_id),
         content_plan_item_id=(
-            str(job.content_plan_item_id) if job.content_plan_item_id is not None else None
+            str(content_plan_item_id)
+            if (content_plan_item_id := getattr(job, "content_plan_item_id", None)) is not None
+            else None
         ),
         status=job.status,
         job_type=job.job_type,

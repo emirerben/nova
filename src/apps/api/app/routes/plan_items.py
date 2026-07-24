@@ -2501,7 +2501,7 @@ async def editor_commit_item(
                 "status": row.status,
                 "gcs_path": row.gcs_path,
                 "kind": row.kind,
-                "user_context": row.user_context,
+                "user_context": getattr(row, "user_context", None),
             }
             for row in rows
         }
@@ -3393,6 +3393,8 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
     analysis = asset.analysis or {}
     if not isinstance(analysis, dict):
         analysis = {}
+    raw_context = getattr(asset, "user_context", None)
+    user_context = raw_context if isinstance(raw_context, str) else None
     display_url: str | None = None
     try:
         display_url = storage.signed_get_url(asset.gcs_path, expiration_minutes=60)
@@ -3407,7 +3409,7 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         kind=asset.kind,
         status=asset.status,
         source_filename=asset.source_filename,
-        user_context=asset.user_context,
+        user_context=user_context,
         duration_s=asset.duration_s,
         aspect=asset.aspect,
         width=analysis.get("width"),
