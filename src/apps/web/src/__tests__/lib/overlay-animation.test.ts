@@ -384,23 +384,23 @@ describe("themeTransitionStateAt — giant-title-wipe", () => {
   });
 
   it("rapidly scales into an oversized wipe after the hold", () => {
-    const ramp = themeTransitionStateAt({ type: "giant-title-wipe" }, 3.1, 4);
+    const ramp = themeTransitionStateAt({ type: "giant-title-wipe" }, 3.1, 4, "CENTER TEXT");
     expect(ramp.scale).toBeGreaterThan(5.5);
     expect(ramp.alpha).toBeCloseTo(1.0);
     expect(ramp.yTranslate).toBeCloseTo(0);
-    expect(ramp.scaleOriginX).toBeCloseTo(0);
+    expect(ramp.scaleOriginX).not.toBeCloseTo(0);
     expect(ramp.scaleOriginY).toBeCloseTo(0);
     expect(ramp.visibleText).toBe("");
   });
 
-  it("ends inside the letter with no typography left over the content", () => {
+  it("ends with no typography left over the content", () => {
     expect(giantTitleWipeAlphaAt(3.7, 4)).toBeCloseTo(1.0);
     expect(giantTitleWipeAlphaAt(3.93, 4)).toBeLessThan(0.03);
-    const end = themeTransitionStateAt({ type: "giant-title-wipe" }, 4, 4);
+    const end = themeTransitionStateAt({ type: "giant-title-wipe" }, 4, 4, "CENTER TEXT");
     expect(end.scale).toBeCloseTo(60.0);
     expect(end.alpha).toBeCloseTo(0);
     expect(end.yTranslate).toBeCloseTo(0);
-    expect(end.scaleOriginX).toBeCloseTo(0);
+    expect(end.scaleOriginX).not.toBeCloseTo(0);
     expect(end.scaleOriginY).toBeCloseTo(0);
   });
 
@@ -419,8 +419,16 @@ describe("themeTransitionStateAt — giant-title-wipe", () => {
       4,
       "CENTER TEXT",
     );
-    expect(missing.scaleOriginX).toBeCloseTo(0);
+    expect(missing.scaleOriginX).not.toBeCloseTo(0);
     expect(missing.scaleOriginY).toBeCloseTo(0);
+    const singleWord = themeTransitionStateAt(
+      { type: "giant-title-wipe" },
+      3.1,
+      4,
+      "CENTE",
+    );
+    expect(singleWord.scaleOriginX).not.toBeCloseTo(0);
+    expect(singleWord.scaleOriginY).toBeCloseTo(0);
   });
 
   it("leaves text effects independent so they can compose", () => {

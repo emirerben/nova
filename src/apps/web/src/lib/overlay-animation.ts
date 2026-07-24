@@ -302,22 +302,48 @@ export function giantTitleWipeScaleOrigin(
   targetGlyph?: string | null,
 ): { scaleOriginX: number; scaleOriginY: number } {
   const target = targetGlyph?.trim().slice(0, 1);
-  if (!target) return { scaleOriginX: 0.0, scaleOriginY: 0.0 };
-
   const lines = normalizeAnimatedRevealText(text).split("\n");
-  const targetKey = target.toLocaleLowerCase();
-  const lineIndex = lines.findIndex((line) => line.toLocaleLowerCase().includes(targetKey));
-  if (lineIndex < 0) return { scaleOriginX: 0.0, scaleOriginY: 0.0 };
-
-  const line = lines[lineIndex];
-  const glyphIndex = line.toLocaleLowerCase().indexOf(targetKey);
   const longestLineLen = Math.max(1, ...lines.map((candidate) => candidate.length));
-  const lineOffset = (glyphIndex + 0.5 - line.length / 2) / longestLineLen;
-  const verticalOffset = lineIndex + 0.5 - lines.length / 2;
-  return {
-    scaleOriginX: lineOffset * 900.0,
-    scaleOriginY: verticalOffset * 170.0,
+  const originFor = (lineIndex: number, charCenterIndex: number) => {
+    const line = lines[lineIndex] ?? "";
+    const lineOffset = (charCenterIndex - line.length / 2) / longestLineLen;
+    const verticalOffset = lineIndex + 0.5 - lines.length / 2;
+    return {
+      scaleOriginX: lineOffset * 900.0,
+      scaleOriginY: verticalOffset * 170.0,
+    };
   };
+
+  if (target) {
+    const targetKey = target.toLocaleLowerCase();
+    const lineIndex = lines.findIndex((line) => line.toLocaleLowerCase().includes(targetKey));
+    if (lineIndex >= 0) {
+      const glyphIndex = lines[lineIndex].toLocaleLowerCase().indexOf(targetKey);
+      return originFor(lineIndex, glyphIndex + 0.5);
+    }
+  }
+
+  const gaps: Array<{ score: number; lineIndex: number; charCenterIndex: number; word: boolean }> = [];
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    if (!line) continue;
+    for (let index = 0; index < line.length; index += 1) {
+      const word = /\s/.test(line[index]);
+      const charCenterIndex = word ? index + 0.5 : index + 1;
+      if (!word && index >= line.length - 1) continue;
+      const xScore = charCenterIndex - line.length / 2;
+      const yScore = (lineIndex + 0.5 - lines.length / 2) * 2.0;
+      gaps.push({
+        score: xScore * xScore + yScore * yScore,
+        lineIndex,
+        charCenterIndex,
+        word,
+      });
+    }
+  }
+  const preferred = gaps.filter((gap) => gap.word);
+  const gap = (preferred.length ? preferred : gaps).sort((a, b) => a.score - b.score)[0];
+  return gap ? originFor(gap.lineIndex, gap.charCenterIndex) : { scaleOriginX: 0.0, scaleOriginY: 0.0 };
 }
 
 function identityAnimationState(text: string): AnimationState {

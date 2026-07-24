@@ -226,13 +226,11 @@ def _giant_title_wipe_scale_origin(
     *,
     render_canvas: Canvas = PORTRAIT,
 ) -> tuple[float, float]:
-    """Scale around the requested glyph center, or the title center by default."""
+    """Scale around the requested glyph, or the nearest readable text gap."""
     if overlay is None:
         return (0.0, 0.0)
 
     target = _giant_title_wipe_target_glyph(overlay)
-    if not target:
-        return (0.0, 0.0)
 
     text = _normalize_reveal_text(_overlay_text(overlay))
     if not text:
@@ -253,7 +251,7 @@ def _giant_title_wipe_scale_origin(
     if not lines:
         return (0.0, 0.0)
 
-    target_key = target.casefold()
+    target_key = target.casefold() if target else None
     letter_spacing_px = letter_spacing_em * size
     block = _measure_block(
         font,
@@ -266,21 +264,42 @@ def _giant_title_wipe_scale_origin(
     block_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
     first_baseline = block_top + block["ascent_offset"]
     metrics = font.getMetrics()
+    gap_candidates: list[tuple[float, float, float, bool]] = []
 
     for line_index, line in enumerate(lines):
         graphemes = _segment_graphemes(line)
+        if not graphemes:
+            continue
+        line_w = block["widths"][line_index]
+        line_x = _anchored_left_x(anchor, cx, line_w)
+        baseline_y = first_baseline + line_index * block["line_step"]
+        glyph_center_y = baseline_y + (metrics.fAscent + metrics.fDescent) / 2.0
         prefix = ""
-        for grapheme in graphemes:
-            if grapheme.casefold().startswith(target_key):
-                line_w = block["widths"][line_index]
-                line_x = _anchored_left_x(anchor, cx, line_w)
+        for index, grapheme in enumerate(graphemes):
+            if target_key and grapheme.casefold().startswith(target_key):
                 prefix_w = _measure_line(font, prefix, letter_spacing_px) if prefix else 0.0
                 glyph_w = _measure_line(font, grapheme, letter_spacing_px)
                 glyph_center_x = line_x + prefix_w + glyph_w / 2.0
-                baseline_y = first_baseline + line_index * block["line_step"]
-                glyph_center_y = baseline_y + (metrics.fAscent + metrics.fDescent) / 2.0
                 return (glyph_center_x - cx, glyph_center_y - cy)
+
+            prefix_w = _measure_line(font, prefix, letter_spacing_px) if prefix else 0.0
+            glyph_w = _measure_line(font, grapheme, letter_spacing_px)
+            if grapheme.isspace():
+                gap_x = line_x + prefix_w + glyph_w / 2.0
+                score = (gap_x - cx) ** 2 + (glyph_center_y - cy) ** 2
+                gap_candidates.append((score, gap_x - cx, glyph_center_y - cy, True))
+            elif index < len(graphemes) - 1:
+                gap_x = line_x + prefix_w + glyph_w + letter_spacing_px / 2.0
+                score = (gap_x - cx) ** 2 + (glyph_center_y - cy) ** 2
+                gap_candidates.append((score, gap_x - cx, glyph_center_y - cy, False))
             prefix += grapheme
+
+    if gap_candidates:
+        preferred = [candidate for candidate in gap_candidates if candidate[3]]
+        _score, x_offset, y_offset, _is_word_gap = min(
+            preferred or gap_candidates, key=lambda candidate: candidate[0]
+        )
+        return (x_offset, y_offset)
 
     return (0.0, 0.0)
 

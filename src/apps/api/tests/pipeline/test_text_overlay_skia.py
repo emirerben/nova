@@ -595,27 +595,33 @@ def test_giant_title_wipe_scale_holds_then_crops_offscreen():
     assert tos._giant_title_wipe_scale_origin() == pytest.approx((0.0, 0.0))
 
 
-def test_giant_title_wipe_origin_defaults_to_center_and_targets_requested_glyph():
+def test_giant_title_wipe_origin_defaults_to_nearest_gap_and_targets_requested_glyph():
     base = {
         "text": "GOAL OF THE\nTOURNAMENT",
         "position": "center",
         "font_family": "Inter",
         "text_size_px": 118,
     }
-    assert tos._giant_title_wipe_scale_origin(
+    default_origin = tos._giant_title_wipe_scale_origin(
         {**base, "theme_transition": {"type": "giant-title-wipe"}}
-    ) == pytest.approx((0.0, 0.0))
+    )
+    assert default_origin != pytest.approx((0.0, 0.0))
     target_origin = tos._giant_title_wipe_scale_origin(
         {**base, "theme_transition": {"type": "giant-title-wipe", "target_glyph": "O"}}
     )
-    assert target_origin != pytest.approx((0.0, 0.0))
-    assert tos._giant_title_wipe_scale_origin(
+    assert target_origin != pytest.approx(default_origin)
+    missing_target_origin = tos._giant_title_wipe_scale_origin(
         {
             **base,
             "text": "CENTER TEXT",
             "theme_transition": {"type": "giant-title-wipe", "target_glyph": "O"},
         }
-    ) == pytest.approx((0.0, 0.0))
+    )
+    assert missing_target_origin != pytest.approx((0.0, 0.0))
+    single_word_origin = tos._giant_title_wipe_scale_origin(
+        {**base, "text": "CENTER", "theme_transition": {"type": "giant-title-wipe"}}
+    )
+    assert single_word_origin != pytest.approx((0.0, 0.0))
 
 
 def test_giant_title_wipe_theme_transition_wraps_text_effect():
