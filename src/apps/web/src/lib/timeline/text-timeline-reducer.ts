@@ -42,6 +42,8 @@ export interface TextElementBar {
   glow_color?: string | null;
   glow_strength?: number | null;
   effect?: string;
+  /** Theme/scene transition layer, independent from the text animation effect. */
+  theme_transition?: { type: "giant-title-wipe"; target_glyph?: string | null } | null;
   /** Optional renderer fade tail in milliseconds. Editorial sequence blocks
    * stay fully opaque until this final window, then use the Skia quadratic
    * fade curve. */

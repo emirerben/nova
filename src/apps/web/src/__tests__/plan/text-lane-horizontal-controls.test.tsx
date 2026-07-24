@@ -46,13 +46,42 @@ function latestBar(onChange: jest.Mock): TextElementBar {
 }
 
 describe("TextLane horizontal controls", () => {
-  it("offers and applies the shared staggered-slice animation", async () => {
+  it("offers and applies the shared Staggered slice animation", async () => {
     const onChange = renderLane(makeBar({ effect: "static" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Staggered slice" }));
 
     await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
     expect(latestBar(onChange).effect).toBe("staggered-slice");
+  });
+
+  it("offers Giant title wipe as a theme transition, not a text effect", async () => {
+    const onChange = renderLane(makeBar({ effect: "staggered-slice" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Giant title wipe" }));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    expect(latestBar(onChange).effect).toBe("staggered-slice");
+    expect(latestBar(onChange).theme_transition).toEqual({ type: "giant-title-wipe" });
+  });
+
+  it("lets Giant title wipe optionally target a specified glyph", async () => {
+    const onChange = renderLane(
+      makeBar({
+        effect: "staggered-slice",
+        theme_transition: { type: "giant-title-wipe" },
+      }),
+    );
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Target glyph" }), {
+      target: { value: "O" },
+    });
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    expect(latestBar(onChange).theme_transition).toEqual({
+      type: "giant-title-wipe",
+      target_glyph: "O",
+    });
   });
 
   it("does not create history entries when the active choices are clicked", () => {

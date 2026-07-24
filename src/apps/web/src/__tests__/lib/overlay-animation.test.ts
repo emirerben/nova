@@ -1,6 +1,9 @@
 import {
   animationStateAt,
   easeOutCubic,
+  giantTitleWipeAlphaAt,
+  giantTitleWipeScaleAt,
+  motionCubicBezier,
   normalizeAnimatedRevealText,
   popInScaleAt,
   sequenceFadeOutAlphaAt,
@@ -9,6 +12,7 @@ import {
   staggeredSliceSettleS,
   staggeredSlicePreviewVisibleAt,
   staggeredSliceStateAt,
+  themeTransitionStateAt,
 } from "@/lib/overlay-animation";
 
 describe("easeOutCubic", () => {
@@ -371,8 +375,82 @@ describe("animationStateAt — bounce", () => {
   });
 });
 
+describe("themeTransitionStateAt — giant-title-wipe", () => {
+  it("holds at normal scale through the opening title beat", () => {
+    expect(giantTitleWipeScaleAt(0, 4)).toBeCloseTo(1.0);
+    expect(giantTitleWipeScaleAt(2.7, 4)).toBeCloseTo(1.0);
+    expect(motionCubicBezier(0.5, 0.76, 0.0, 0.24, 1.0)).toBeCloseTo(0.5);
+    expect(giantTitleWipeScaleAt(2.8, 4)).toBeLessThan(1.2);
+  });
+
+  it("rapidly scales into an oversized wipe after the hold", () => {
+    const ramp = themeTransitionStateAt({ type: "giant-title-wipe" }, 3.1, 4, "CENTER TEXT");
+    expect(ramp.scale).toBeGreaterThan(5.5);
+    expect(ramp.alpha).toBeCloseTo(1.0);
+    expect(ramp.yTranslate).toBeCloseTo(0);
+    expect(ramp.scaleOriginX).not.toBeCloseTo(0);
+    expect(ramp.scaleOriginY).toBeCloseTo(0);
+    expect(ramp.visibleText).toBe("");
+  });
+
+  it("ends with no typography left over the content", () => {
+    expect(giantTitleWipeAlphaAt(3.7, 4)).toBeCloseTo(1.0);
+    expect(giantTitleWipeAlphaAt(3.93, 4)).toBeLessThan(0.03);
+    const end = themeTransitionStateAt({ type: "giant-title-wipe" }, 4, 4, "CENTER TEXT");
+    expect(end.scale).toBeCloseTo(60.0);
+    expect(end.alpha).toBeCloseTo(0);
+    expect(end.yTranslate).toBeCloseTo(0);
+    expect(end.scaleOriginX).not.toBeCloseTo(0);
+    expect(end.scaleOriginY).toBeCloseTo(0);
+  });
+
+  it("targets a requested glyph only when that glyph exists", () => {
+    const target = themeTransitionStateAt(
+      { type: "giant-title-wipe", target_glyph: "O" },
+      3.1,
+      4,
+      "GOAL OF THE\nTOURNAMENT",
+    );
+    expect(target.scaleOriginX).not.toBeCloseTo(0);
+    expect(target.scaleOriginY).not.toBeCloseTo(0);
+    const missing = themeTransitionStateAt(
+      { type: "giant-title-wipe", target_glyph: "O" },
+      3.1,
+      4,
+      "CENTER TEXT",
+    );
+    expect(missing.scaleOriginX).not.toBeCloseTo(0);
+    expect(missing.scaleOriginY).toBeCloseTo(0);
+    const singleWord = themeTransitionStateAt(
+      { type: "giant-title-wipe" },
+      3.1,
+      4,
+      "CENTE",
+    );
+    expect(singleWord.scaleOriginX).not.toBeCloseTo(0);
+    expect(singleWord.scaleOriginY).toBeCloseTo(0);
+  });
+
+  it("leaves text effects independent so they can compose", () => {
+    const textEffect = animationStateAt("staggered-slice", 3.1, 4, TEXT);
+    const transition = themeTransitionStateAt({ type: "giant-title-wipe" }, 3.1, 4);
+    expect(textEffect.scale).toBeCloseTo(1.0);
+    expect(textEffect.visibleText).toBe(TEXT);
+    expect(transition.scale).toBeGreaterThan(5.5);
+  });
+});
+
 describe("non-text-reveal effects preserve visibleText", () => {
-  const nonReveal = ["fade-in", "scale-up", "slide-up", "slide-down", "pop-in", "bounce", "none", "static"];
+  const nonReveal = [
+    "fade-in",
+    "scale-up",
+    "slide-up",
+    "slide-down",
+    "pop-in",
+    "bounce",
+    "none",
+    "static",
+  ];
   for (const effect of nonReveal) {
     it(`${effect} at t=0 has visibleText === full text`, () => {
       const s = animationStateAt(effect, 0, DUR, TEXT);

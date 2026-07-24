@@ -45,6 +45,7 @@ import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
@@ -134,6 +135,10 @@ _POP_IN_KEYFRAMES_S = (0.0, 0.150, 0.250)
 _POP_IN_SCALES = (0.30, 1.15, 1.00)
 _POP_IN_MAX_SCALE = max(_POP_IN_SCALES)
 _POP_SUFFIX_MAX_LINES = 2
+_GIANT_TITLE_WIPE_HOLD_FRAC = 0.68
+_GIANT_TITLE_WIPE_END_SCALE = 60.0
+_GIANT_TITLE_WIPE_ALPHA_FADE_START_FRAC = 0.80
+_GIANT_TITLE_WIPE_SCALE_EASE = (0.76, 0.0, 0.24, 1.0)
 
 _STAGGERED_SLICE_FIRST_WORD_END_S = 0.55
 _STAGGERED_SLICE_REMAINDER_START_S = 0.95
@@ -179,6 +184,174 @@ def _staggered_slice_choreography_s(text: str) -> float:
         _STAGGERED_SLICE_LINES_START_S + max(0, line_count - 2) * _STAGGERED_SLICE_LINE_STAGGER_S
     )
     return last_line_start + _STAGGERED_SLICE_LINE_GLYPH_STAGE_S
+
+
+def _giant_title_wipe_scale_at(t_local: float, duration_s: float) -> float:
+    """Hold, then scale a title until it crops off-screen like a scene wipe."""
+    hold_until = max(0.0, duration_s) * _GIANT_TITLE_WIPE_HOLD_FRAC
+    wipe_for = max(0.01, max(0.0, duration_s) - hold_until)
+    progress = _motion_cubic_bezier(
+        (t_local - hold_until) / wipe_for,
+        *_GIANT_TITLE_WIPE_SCALE_EASE,
+    )
+    return 1.0 + (_GIANT_TITLE_WIPE_END_SCALE - 1.0) * progress
+
+
+def _giant_title_wipe_alpha_at(t_local: float, duration_s: float) -> float:
+    """Once the camera is inside the O counter, leave only the content visible."""
+    hold_until = max(0.0, duration_s) * _GIANT_TITLE_WIPE_HOLD_FRAC
+    wipe_for = max(0.01, max(0.0, duration_s) - hold_until)
+    wipe_progress = (t_local - hold_until) / wipe_for
+    if wipe_progress <= _GIANT_TITLE_WIPE_ALPHA_FADE_START_FRAC:
+        return 1.0
+    fade_progress = (wipe_progress - _GIANT_TITLE_WIPE_ALPHA_FADE_START_FRAC) / (
+        1.0 - _GIANT_TITLE_WIPE_ALPHA_FADE_START_FRAC
+    )
+    return 1.0 - _ease_out_cubic(fade_progress)
+
+
+def _giant_title_wipe_target_glyph(overlay: dict) -> str | None:
+    raw = overlay.get("theme_transition")
+    if not isinstance(raw, dict):
+        return None
+    target = raw.get("target_glyph")
+    if target is None:
+        return None
+    target_s = str(target).strip()
+    return target_s[:1] or None
+
+
+def _giant_title_wipe_scale_origin(
+    overlay: dict | None = None,
+    *,
+    render_canvas: Canvas = PORTRAIT,
+) -> tuple[float, float]:
+    """Scale around the requested glyph, or the nearest readable text gap."""
+    if overlay is None:
+        return (0.0, 0.0)
+
+    target = _giant_title_wipe_target_glyph(overlay)
+
+    text = _normalize_reveal_text(_overlay_text(overlay))
+    if not text:
+        return (0.0, 0.0)
+
+    typeface = _typeface_for_overlay(overlay)
+    letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
+    max_width = _overlay_max_width_px(overlay, render_canvas)
+    initial_size = _resolve_font_size_px(overlay)
+    if overlay.get("preserve_font_size"):
+        font, size, lines = _wrap_at_fixed_size(
+            text, typeface, initial_size, max_width, letter_spacing_em
+        )
+    else:
+        font, size, lines = _shrink_to_fit(
+            text, typeface, initial_size, max_width, letter_spacing_em
+        )
+    if not lines:
+        return (0.0, 0.0)
+
+    target_key = target.casefold() if target else None
+    letter_spacing_px = letter_spacing_em * size
+    block = _measure_block(
+        font,
+        lines,
+        line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=letter_spacing_px,
+    )
+    cx, cy = _resolve_anchor(overlay, render_canvas)
+    anchor = _resolve_text_anchor(overlay)
+    block_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
+    first_baseline = block_top + block["ascent_offset"]
+    metrics = font.getMetrics()
+    gap_candidates: list[tuple[float, float, float, bool]] = []
+
+    for line_index, line in enumerate(lines):
+        graphemes = _segment_graphemes(line)
+        if not graphemes:
+            continue
+        line_w = block["widths"][line_index]
+        line_x = _anchored_left_x(anchor, cx, line_w)
+        baseline_y = first_baseline + line_index * block["line_step"]
+        glyph_center_y = baseline_y + (metrics.fAscent + metrics.fDescent) / 2.0
+        prefix = ""
+        for index, grapheme in enumerate(graphemes):
+            if target_key and grapheme.casefold().startswith(target_key):
+                prefix_w = _measure_line(font, prefix, letter_spacing_px) if prefix else 0.0
+                glyph_w = _measure_line(font, grapheme, letter_spacing_px)
+                glyph_center_x = line_x + prefix_w + glyph_w / 2.0
+                return (glyph_center_x - cx, glyph_center_y - cy)
+
+            prefix_w = _measure_line(font, prefix, letter_spacing_px) if prefix else 0.0
+            glyph_w = _measure_line(font, grapheme, letter_spacing_px)
+            if grapheme.isspace():
+                gap_x = line_x + prefix_w + glyph_w / 2.0
+                score = (gap_x - cx) ** 2 + (glyph_center_y - cy) ** 2
+                gap_candidates.append((score, gap_x - cx, glyph_center_y - cy, True))
+            elif index < len(graphemes) - 1:
+                gap_x = line_x + prefix_w + glyph_w + letter_spacing_px / 2.0
+                score = (gap_x - cx) ** 2 + (glyph_center_y - cy) ** 2
+                gap_candidates.append((score, gap_x - cx, glyph_center_y - cy, False))
+            prefix += grapheme
+
+    if gap_candidates:
+        preferred = [candidate for candidate in gap_candidates if candidate[3]]
+        _score, x_offset, y_offset, _is_word_gap = min(
+            preferred or gap_candidates, key=lambda candidate: candidate[0]
+        )
+        return (x_offset, y_offset)
+
+    return (0.0, 0.0)
+
+
+def _theme_transition_type(overlay: dict) -> str | None:
+    raw = overlay.get("theme_transition")
+    if isinstance(raw, dict):
+        transition_type = str(raw.get("type") or "").strip()
+    elif isinstance(raw, str):
+        transition_type = raw.strip()
+    else:
+        return None
+    if transition_type == "giant-title-wipe":
+        return transition_type
+    if transition_type:
+        log.warning("skia_unknown_theme_transition_static_fallback", type=transition_type)
+    return None
+
+
+@contextmanager
+def _theme_transition_canvas(
+    canvas: skia.Canvas,
+    overlay: dict,
+    t_local: float,
+    duration_s: float,
+    *,
+    render_canvas: Canvas = PORTRAIT,
+):
+    """Apply scene-transition transforms around the entire text-effect draw."""
+    if _theme_transition_type(overlay) != "giant-title-wipe":
+        yield
+        return
+
+    scale = _giant_title_wipe_scale_at(t_local, duration_s)
+    alpha = _giant_title_wipe_alpha_at(t_local, duration_s)
+    scale_origin_x, scale_origin_y = _giant_title_wipe_scale_origin(
+        overlay, render_canvas=render_canvas
+    )
+    cx, cy = _resolve_anchor(overlay, render_canvas)
+    origin_x = cx + scale_origin_x
+    origin_y = cy + scale_origin_y
+
+    canvas.save()
+    canvas.saveLayerAlpha(None, _clamp_byte(255 * alpha))
+    canvas.translate(origin_x, origin_y)
+    canvas.scale(scale, scale)
+    canvas.translate(-origin_x, -origin_y)
+    try:
+        yield
+    finally:
+        canvas.restore()
+        canvas.restore()
 
 
 def _staggered_slice_settle_s(text: str) -> float:
@@ -1118,7 +1291,10 @@ def _draw_centered_text(
     color_override: int | None = None,
     alpha: float = 1.0,
     scale: float = 1.0,
+    x_translate: float = 0.0,
     y_translate: float = 0.0,
+    scale_origin_x: float = 0.0,
+    scale_origin_y: float = 0.0,
     layout_text: str | None = None,
     show_cursor: bool = False,
 ) -> None:
@@ -1126,8 +1302,8 @@ def _draw_centered_text(
     shadow + optional stroke + fill. Mirrors Pillow's _draw_text_png layout:
     multi-line vertical centering, 0.9*CANVAS_W word-wrap, auto-shrink.
 
-    Effect transforms (alpha, scale, y_translate) are applied via a canvas
-    matrix so glyph metrics are not perturbed.
+    Effect transforms (alpha, scale, translate, origin offset) are applied via
+    a canvas matrix so glyph metrics are not perturbed.
     """
     if not text and not show_cursor:
         return
@@ -1198,13 +1374,15 @@ def _draw_centered_text(
         )
 
     canvas.save()
-    # Center transform on anchor for scale + translate
+    # Center transform on anchor unless an effect supplies a different focal point.
     rotation_deg = _finite_float(overlay.get("rotation_deg"), 0.0)
-    canvas.translate(cx, cy + y_translate)
+    origin_x = cx + scale_origin_x
+    origin_y = cy + scale_origin_y
+    canvas.translate(origin_x + x_translate, origin_y + y_translate)
     if rotation_deg:
         canvas.rotate(rotation_deg)
     canvas.scale(scale, scale)
-    canvas.translate(-cx, -cy)
+    canvas.translate(-origin_x, -origin_y)
 
     for i, line in enumerate(lines):
         baseline_y = first_baseline + i * block["line_step"]
@@ -1219,6 +1397,7 @@ def _draw_centered_text(
         draw_kwargs: dict[str, Any] = {"shader": gradient_shader}
         if letter_spacing_px != 0.0:
             draw_kwargs["letter_spacing_px"] = letter_spacing_px
+        draw_kwargs["layer_alpha"] = alpha
         draw_kwargs.update(_resolve_glow_kwargs(overlay, alpha))
         draw_line = draw_lines[i]
         if draw_line:
@@ -1273,6 +1452,7 @@ def _draw_line_with_layers(
     *,
     shader: Any = None,
     letter_spacing_px: float = 0.0,
+    layer_alpha: float = 1.0,
     glow_rgb: tuple[int, int, int] | None = None,
     glow_strength: float = 0.0,
 ) -> None:
@@ -1291,7 +1471,7 @@ def _draw_line_with_layers(
         r, g, b = glow_rgb
         glow_strength = max(0.0, min(1.0, glow_strength))
         for sigma, base_alpha in ((8.0, 120.0), (20.0, 220.0)):
-            glow_alpha = _clamp_byte(base_alpha * glow_strength)
+            glow_alpha = _clamp_byte(base_alpha * glow_strength * layer_alpha)
             if glow_alpha <= 0:
                 continue
             glow_paint = skia.Paint(
@@ -1316,7 +1496,7 @@ def _draw_line_with_layers(
     if stroke_px > 0:
         stroke_paint = skia.Paint(
             AntiAlias=True,
-            Color=skia.ColorSetARGB(230, 0, 0, 0),
+            Color=skia.ColorSetARGB(_clamp_byte(230 * layer_alpha), 0, 0, 0),
             Style=skia.Paint.kStroke_Style,
             StrokeWidth=stroke_px * 2.0,
             StrokeJoin=skia.Paint.kRound_Join,
@@ -1545,6 +1725,57 @@ def _select_cycle_font(overlay: dict, t_local: float, duration_s: float) -> str 
 def _ease_out_cubic(t: float) -> float:
     t = max(0.0, min(1.0, t))
     return 1.0 - (1.0 - t) ** 3
+
+
+def _ease_in_out_cubic(t: float) -> float:
+    t = max(0.0, min(1.0, t))
+    if t < 0.5:
+        return 4.0 * t**3
+    return 1.0 - ((-2.0 * t + 2.0) ** 3) / 2.0
+
+
+def _motion_cubic_bezier(t: float, x1: float, y1: float, x2: float, y2: float) -> float:
+    """Evaluate a Motion/CSS cubic-bezier easing curve at progress t."""
+    target_x = max(0.0, min(1.0, t))
+    if target_x <= 0.0:
+        return 0.0
+    if target_x >= 1.0:
+        return 1.0
+
+    def sample(axis_1: float, axis_2: float, u: float) -> float:
+        inv = 1.0 - u
+        return 3.0 * axis_1 * inv * inv * u + 3.0 * axis_2 * inv * u * u + u**3
+
+    def sample_x(u: float) -> float:
+        return sample(x1, x2, u)
+
+    def sample_y(u: float) -> float:
+        return sample(y1, y2, u)
+
+    def sample_x_derivative(u: float) -> float:
+        inv = 1.0 - u
+        return 3.0 * x1 * inv * inv + 6.0 * (x2 - x1) * inv * u + 3.0 * (1.0 - x2) * u * u
+
+    u = target_x
+    for _ in range(8):
+        error = sample_x(u) - target_x
+        if abs(error) < 1e-6:
+            return sample_y(u)
+        derivative = sample_x_derivative(u)
+        if abs(derivative) < 1e-6:
+            break
+        u = max(0.0, min(1.0, u - error / derivative))
+
+    lower = 0.0
+    upper = 1.0
+    u = target_x
+    for _ in range(12):
+        if sample_x(u) < target_x:
+            lower = u
+        else:
+            upper = u
+        u = (lower + upper) / 2.0
+    return sample_y(u)
 
 
 def _clamped_keyframes_s(keyframes_s: tuple[float, ...], duration_s: float) -> tuple[float, ...]:
@@ -1883,6 +2114,9 @@ def _draw_with_animation(
     scale = 1.0
     alpha = 1.0
     y_translate = 0.0
+    x_translate = 0.0
+    scale_origin_x = 0.0
+    scale_origin_y = 0.0
     visible_text = text
     show_cursor = False
 
@@ -1967,7 +2201,10 @@ def _draw_with_animation(
         render_canvas=render_canvas,
         alpha=alpha,
         scale=scale,
+        x_translate=x_translate,
         y_translate=y_translate,
+        scale_origin_x=scale_origin_x,
+        scale_origin_y=scale_origin_y,
         layout_text=reveal_text if effect in ("typewriter", "stream-in") else None,
         show_cursor=show_cursor,
     )
@@ -2001,6 +2238,8 @@ _ANIMATED_EFFECTS_SKIA = {
 
 def _is_animated(overlay: dict) -> bool:
     effect = overlay.get("effect", "none")
+    if _theme_transition_type(overlay) == "giant-title-wipe":
+        return True
     # pop-in with pop_animated_suffix is animated even if base effect is "pop-in";
     # plain pop-in without suffix is also animated.
     if effect in _ANIMATED_EFFECTS_SKIA:
@@ -2029,40 +2268,47 @@ def _draw_overlay_on_canvas(
     """
     effect = overlay.get("effect", "none")
 
-    if effect == "player-card":
-        # Out of scope for Skia migration — classic templates only.
-        raise NotImplementedError(
-            "Skia renderer does not support effect='player-card'; this overlay "
-            "must route through Pillow + libass. Classic templates only."
-        )
+    with _theme_transition_canvas(
+        canvas, overlay, t_local, duration_s, render_canvas=render_canvas
+    ):
+        if effect == "player-card":
+            # Out of scope for Skia migration — classic templates only.
+            raise NotImplementedError(
+                "Skia renderer does not support effect='player-card'; this overlay "
+                "must route through Pillow + libass. Classic templates only."
+            )
 
-    if effect == "font-cycle":
-        font_name = _select_cycle_font(overlay, t_local, duration_s)
-        font = skia.Font(_typeface_for_overlay(overlay, font_name_override=font_name))
-        font.setSize(_resolve_font_size_px(overlay))
-        font.setSubpixel(True)
-        _draw_centered_text(
-            canvas,
-            _overlay_text(overlay),
-            overlay,
-            render_canvas=render_canvas,
-            font_override=font,
-        )
-    elif effect == "karaoke-line":
-        _draw_karaoke_line(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
-    elif effect == "pop-in" and overlay.get("pop_animated_suffix"):
-        _draw_pop_in_with_suffix(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
-    elif effect == "staggered-slice":
-        _draw_staggered_slice(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
-    elif _is_animated(overlay):
-        # `lyric-line` is in this branch because its fade_in_ms / fade_out_ms
-        # are honored per-frame in `_draw_with_animation`. `_overlay_text`
-        # still resolves `display_text` (the Layer 2 finalizer's truncated
-        # partial line) when present — the alpha multiplies on top of that.
-        _draw_with_animation(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
-    else:
-        # Static effects render at full opacity throughout [start_s, end_s].
-        _draw_centered_text(canvas, _overlay_text(overlay), overlay, render_canvas=render_canvas)
+        if effect == "font-cycle":
+            font_name = _select_cycle_font(overlay, t_local, duration_s)
+            font = skia.Font(_typeface_for_overlay(overlay, font_name_override=font_name))
+            font.setSize(_resolve_font_size_px(overlay))
+            font.setSubpixel(True)
+            _draw_centered_text(
+                canvas,
+                _overlay_text(overlay),
+                overlay,
+                render_canvas=render_canvas,
+                font_override=font,
+            )
+        elif effect == "karaoke-line":
+            _draw_karaoke_line(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
+        elif effect == "pop-in" and overlay.get("pop_animated_suffix"):
+            _draw_pop_in_with_suffix(
+                canvas, overlay, t_local, duration_s, render_canvas=render_canvas
+            )
+        elif effect == "staggered-slice":
+            _draw_staggered_slice(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
+        elif _is_animated(overlay):
+            # `lyric-line` is in this branch because its fade_in_ms / fade_out_ms
+            # are honored per-frame in `_draw_with_animation`. `_overlay_text`
+            # still resolves `display_text` (the Layer 2 finalizer's truncated
+            # partial line) when present — the alpha multiplies on top of that.
+            _draw_with_animation(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
+        else:
+            # Static effects render at full opacity throughout [start_s, end_s].
+            _draw_centered_text(
+                canvas, _overlay_text(overlay), overlay, render_canvas=render_canvas
+            )
 
 
 def _draw_frame(
@@ -2243,6 +2489,8 @@ def _staggered_slice_hold_plan(
     overlay: dict, n_render: int, frame_dur: float, duration_s: float
 ) -> tuple[list[int], int, list[int]] | None:
     if overlay.get("effect") != "staggered-slice" or n_render <= 1:
+        return None
+    if _theme_transition_type(overlay) is not None:
         return None
     settle_s = min(duration_s, _staggered_slice_settle_s(_overlay_text(overlay)))
     settled_idx = min(n_render - 1, int(math.ceil(settle_s / frame_dur - 1e-9)))

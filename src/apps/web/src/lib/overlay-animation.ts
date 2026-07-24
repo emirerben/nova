@@ -15,10 +15,19 @@ export interface AnimationState {
   alpha: number;
   /** Vertical offset in canvas px (1080-wide). Positive = down. */
   yTranslate: number;
+  /** Horizontal scale origin offset from text anchor in canvas px. */
+  scaleOriginX: number;
+  /** Vertical scale origin offset from text anchor in canvas px. */
+  scaleOriginY: number;
   /** Visible text slice (typewriter / stream-in effects). */
   visibleText: string;
   /** Whether a zero-width streaming cursor should be drawn after visibleText. */
   showCursor: boolean;
+}
+
+export interface ThemeTransition {
+  type?: string | null;
+  target_glyph?: string | null;
 }
 
 export interface StaggeredSliceGlyphState {
@@ -196,6 +205,56 @@ export function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - tc, 3);
 }
 
+/** Mirror of _ease_in_out_cubic. t must be in [0,1]; clamped. */
+export function easeInOutCubic(t: number): number {
+  const tc = Math.max(0, Math.min(1, t));
+  if (tc < 0.5) return 4 * Math.pow(tc, 3);
+  return 1 - Math.pow(-2 * tc + 2, 3) / 2;
+}
+
+/** Mirror of _motion_cubic_bezier. */
+export function motionCubicBezier(
+  t: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): number {
+  const targetX = Math.max(0, Math.min(1, t));
+  if (targetX <= 0) return 0;
+  if (targetX >= 1) return 1;
+
+  const sample = (axis1: number, axis2: number, u: number): number => {
+    const inv = 1 - u;
+    return 3 * axis1 * inv * inv * u + 3 * axis2 * inv * u * u + Math.pow(u, 3);
+  };
+  const sampleX = (u: number): number => sample(x1, x2, u);
+  const sampleY = (u: number): number => sample(y1, y2, u);
+  const sampleXDerivative = (u: number): number => {
+    const inv = 1 - u;
+    return 3 * x1 * inv * inv + 6 * (x2 - x1) * inv * u + 3 * (1 - x2) * u * u;
+  };
+
+  let u = targetX;
+  for (let i = 0; i < 8; i += 1) {
+    const error = sampleX(u) - targetX;
+    if (Math.abs(error) < 1e-6) return sampleY(u);
+    const derivative = sampleXDerivative(u);
+    if (Math.abs(derivative) < 1e-6) break;
+    u = Math.max(0, Math.min(1, u - error / derivative));
+  }
+
+  let lower = 0;
+  let upper = 1;
+  u = targetX;
+  for (let i = 0; i < 12; i += 1) {
+    if (sampleX(u) < targetX) lower = u;
+    else upper = u;
+    u = (lower + upper) / 2;
+  }
+  return sampleY(u);
+}
+
 /** Mirror of _clamped_keyframes_s + _pop_in_scale_at. */
 export function popInScaleAt(tLocal: number, durationS: number): number {
   // Python constants (verbatim):
@@ -214,6 +273,113 @@ export function popInScaleAt(tLocal: number, durationS: number): number {
     }
   }
   return KF_SCALES[KF_SCALES.length - 1];
+}
+
+/** Mirror of _giant_title_wipe_scale_at. Holds, then scales into a title wipe. */
+export function giantTitleWipeScaleAt(tLocal: number, durationS: number): number {
+  const holdUntil = Math.max(0, durationS) * 0.68;
+  const wipeFor = Math.max(0.01, Math.max(0, durationS) - holdUntil);
+  const progress = motionCubicBezier((tLocal - holdUntil) / wipeFor, 0.76, 0.0, 0.24, 1.0);
+  return 1.0 + (60.0 - 1.0) * progress;
+}
+
+/** Mirror of _giant_title_wipe_alpha_at. Removes the letter after passing through it. */
+export function giantTitleWipeAlphaAt(tLocal: number, durationS: number): number {
+  const holdUntil = Math.max(0, durationS) * 0.68;
+  const wipeFor = Math.max(0.01, Math.max(0, durationS) - holdUntil);
+  const wipeProgress = (tLocal - holdUntil) / wipeFor;
+  if (wipeProgress <= 0.8) return 1.0;
+  const fadeProgress = (wipeProgress - 0.8) / (1.0 - 0.8);
+  return 1.0 - easeOutCubic(fadeProgress);
+}
+
+/**
+ * Approximate mirror of _giant_title_wipe_scale_origin. The Skia renderer uses
+ * exact font metrics; the CSS preview uses this stable text-based estimate.
+ */
+export function giantTitleWipeScaleOrigin(
+  text = "",
+  targetGlyph?: string | null,
+): { scaleOriginX: number; scaleOriginY: number } {
+  const target = targetGlyph?.trim().slice(0, 1);
+  const lines = normalizeAnimatedRevealText(text).split("\n");
+  const longestLineLen = Math.max(1, ...lines.map((candidate) => candidate.length));
+  const originFor = (lineIndex: number, charCenterIndex: number) => {
+    const line = lines[lineIndex] ?? "";
+    const lineOffset = (charCenterIndex - line.length / 2) / longestLineLen;
+    const verticalOffset = lineIndex + 0.5 - lines.length / 2;
+    return {
+      scaleOriginX: lineOffset * 900.0,
+      scaleOriginY: verticalOffset * 170.0,
+    };
+  };
+
+  if (target) {
+    const targetKey = target.toLocaleLowerCase();
+    const lineIndex = lines.findIndex((line) => line.toLocaleLowerCase().includes(targetKey));
+    if (lineIndex >= 0) {
+      const glyphIndex = lines[lineIndex].toLocaleLowerCase().indexOf(targetKey);
+      return originFor(lineIndex, glyphIndex + 0.5);
+    }
+  }
+
+  const gaps: Array<{ score: number; lineIndex: number; charCenterIndex: number; word: boolean }> = [];
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    if (!line) continue;
+    for (let index = 0; index < line.length; index += 1) {
+      const word = /\s/.test(line[index]);
+      const charCenterIndex = word ? index + 0.5 : index + 1;
+      if (!word && index >= line.length - 1) continue;
+      const xScore = charCenterIndex - line.length / 2;
+      const yScore = (lineIndex + 0.5 - lines.length / 2) * 2.0;
+      gaps.push({
+        score: xScore * xScore + yScore * yScore,
+        lineIndex,
+        charCenterIndex,
+        word,
+      });
+    }
+  }
+  const preferred = gaps.filter((gap) => gap.word);
+  const gap = (preferred.length ? preferred : gaps).sort((a, b) => a.score - b.score)[0];
+  return gap ? originFor(gap.lineIndex, gap.charCenterIndex) : { scaleOriginX: 0.0, scaleOriginY: 0.0 };
+}
+
+function identityAnimationState(text: string): AnimationState {
+  return {
+    scale: 1.0,
+    alpha: 1.0,
+    yTranslate: 0.0,
+    scaleOriginX: 0.0,
+    scaleOriginY: 0.0,
+    visibleText: text,
+    showCursor: false,
+  };
+}
+
+/**
+ * Theme-transition layer, independent from text entrance `effect`.
+ * Mirror of text_overlay_skia._theme_transition_canvas.
+ */
+export function themeTransitionStateAt(
+  themeTransition: ThemeTransition | string | null | undefined,
+  tLocal: number,
+  durationS: number,
+  text = "",
+): AnimationState {
+  const transitionType =
+    typeof themeTransition === "string" ? themeTransition : themeTransition?.type;
+  const state = identityAnimationState("");
+  if (transitionType !== "giant-title-wipe") return state;
+  state.scale = giantTitleWipeScaleAt(tLocal, durationS);
+  state.alpha = giantTitleWipeAlphaAt(tLocal, durationS);
+  const targetGlyph =
+    typeof themeTransition === "string" ? null : themeTransition?.target_glyph;
+  const origin = giantTitleWipeScaleOrigin(text, targetGlyph);
+  state.scaleOriginX = origin.scaleOriginX;
+  state.scaleOriginY = origin.scaleOriginY;
+  return state;
 }
 
 /** Mirror Skia's word-wrapper normalization for fixed-layout reveal effects. */
@@ -236,11 +402,8 @@ export function animationStateAt(
   durationS: number,
   text: string,
 ): AnimationState {
-  let scale = 1.0;
-  let alpha = 1.0;
-  let yTranslate = 0.0;
-  let visibleText = text;
-  let showCursor = false;
+  let { scale, alpha, yTranslate, scaleOriginX, scaleOriginY, visibleText, showCursor } =
+    identityAnimationState(text);
 
   if (effect === "scale-up") {
     const window = durationS > 0.6 ? 0.6 : Math.max(durationS, 0.01);
@@ -291,7 +454,7 @@ export function animationStateAt(
   }
   // "none", "static", "karaoke-line", "lyric-line", "font-cycle", unknown → identity
 
-  return { scale, alpha, yTranslate, visibleText, showCursor };
+  return { scale, alpha, yTranslate, scaleOriginX, scaleOriginY, visibleText, showCursor };
 }
 
 /** Mirror of `_sequence_fade_out_alpha` in text_overlay_skia.py.

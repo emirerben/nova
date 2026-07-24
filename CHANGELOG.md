@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [0.12.6.0] — 2026-07-24
 
 ### Added
+- **Text can now drive a theme transition with the Giant title wipe.** Choose `Giant title wipe` from the new Theme transition control to hold a bold title, then smoothly zoom through a visual gap near the title center until the footage fills the frame and no word remains over the content. The text Effect control stays independent, so the wipe can combine with entrances like `Staggered slice`. Users can optionally set a target glyph, such as `O`, to dive through that character; if the character is not present, Nova falls back to the nearest word gap, then the nearest letter gap, instead of focusing on a text stroke. The editor preview and Skia renderer share the same Motion-style cubic-bezier timing model, with backend schema coverage so saved text elements round-trip safely.
+- **Nova now has a repo-local Motion.dev skill.** Use `$motion-dev` for Motion-inspired animation tuning, especially when browser previews need deterministic parity with Skia or another non-browser renderer.
 - **Video and AI wait states now use Nova's Beam loading treatment.** Rendering tiles, plan hero re-renders, style/chat thinking states, and template-job loading screens get a shared perimeter beam with a soft edge glow instead of bare spinners or isolated dots. The beam is local CSS, not a new dependency; it animates around the full frame, preserves the old video playback under re-render overlays, and falls back to a static subtle border for reduced-motion users.
 
 ## [0.12.5.0] — 2026-07-23

@@ -41,6 +41,7 @@ import {
   normalizeAnimatedRevealText,
   sequenceOverlayFadeOutAlphaAt,
   staggeredSlicePreviewVisibleAt,
+  themeTransitionStateAt,
 } from "@/lib/overlay-animation";
 import { INTRO_FONTS, MAX_INTRO_S, type OverlayCanvas } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
@@ -924,6 +925,12 @@ export default function EditorCanvas({
                     Math.min(MAX_INTRO_S, Math.max(0.01, layout.end_s - layout.start_s)),
                     layout.text,
                   );
+                  const transition = themeTransitionStateAt(
+                    bar?.theme_transition,
+                    Math.max(0, currentTime - layout.start_s),
+                    Math.min(MAX_INTRO_S, Math.max(0.01, layout.end_s - layout.start_s)),
+                    layout.text,
+                  );
                   const fadeOutAlpha = sequenceOverlayFadeOutAlphaAt(
                     bar?.role,
                     effect,
@@ -954,10 +961,17 @@ export default function EditorCanvas({
                       }`}
                       style={{
                         ...baseStyle,
-                        opacity: animation.alpha * fadeOutAlpha,
+                        opacity: animation.alpha * transition.alpha * fadeOutAlpha,
                         transform: `${baseStyle.transform ?? ""} translateY(${
                           (animation.yTranslate / canvas.h) * stageSize.h
-                        }px) scale(${animation.scale})`,
+                        }px) scale(${animation.scale * transition.scale})`,
+                        transformOrigin: `calc(50% + ${
+                          ((transition.scaleOriginX || animation.scaleOriginX) / canvas.w) *
+                          stageSize.w
+                        }px) calc(50% + ${
+                          ((transition.scaleOriginY || animation.scaleOriginY) / canvas.h) *
+                          stageSize.h
+                        }px)`,
                       }}
                       onPointerDown={(e) => onOverlayPointerDown(e, layout.id)}
                       onPointerMove={onPointerMove}

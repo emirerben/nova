@@ -935,6 +935,43 @@ class TestSecurityGuards:
         [elem] = text_elements_for_variant(variant)
         assert elem.effect == "staggered-slice"
 
+    def test_giant_title_wipe_transition_combines_with_text_effect_in_burn_dict(self):
+        elem = TextElement(
+            text="GOAL OF THE\nTOURNAMENT",
+            start_s=0,
+            end_s=4,
+            effect="staggered-slice",
+            theme_transition={"type": "giant-title-wipe"},
+        )
+        [overlay] = build_overlays_from_text_elements([elem], video_duration_s=4.0)
+        assert overlay["effect"] == "staggered-slice"
+        assert overlay["theme_transition"] == {"type": "giant-title-wipe"}
+
+    def test_giant_title_wipe_transition_roundtrips_from_the_burn_dict(self):
+        elem = _burn_dict_to_text_element(
+            {
+                "text": "GOAL OF THE\nTOURNAMENT",
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "effect": "giant-title-wipe",
+            }
+        )
+        assert elem is not None
+        assert elem.effect == "static"
+        assert elem.theme_transition is not None
+        assert elem.theme_transition.type == "giant-title-wipe"
+
+    def test_legacy_giant_title_wipe_effect_migrates_to_theme_transition(self):
+        elem = TextElement(
+            text="GOAL OF THE\nTOURNAMENT",
+            start_s=0,
+            end_s=4,
+            effect="giant-title-wipe",
+        )
+        assert elem.effect == "static"
+        assert elem.theme_transition is not None
+        assert elem.theme_transition.type == "giant-title-wipe"
+
     def test_size_px_clamped_to_max_300(self):
         """size_px > 300 is silently clamped to 300 (A18 — Skia OOM guard)."""
         elem = TextElement(text="test", start_s=0, end_s=1, size_px=9999)

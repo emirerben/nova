@@ -28,7 +28,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 log = logging.getLogger(__name__)
 
@@ -192,6 +192,32 @@ _ADAPTER_HOLD_TO_END_S: float = 3600.0
 # ---------------------------------------------------------------------------
 
 
+class ThemeTransition(BaseModel):
+    """Transition-layer animation that can compose with a text effect."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    type: Literal["giant-title-wipe"] = Field(
+        description="Theme/scene transition applied to the whole title layer."
+    )
+    target_glyph: str | None = Field(
+        default=None,
+        max_length=4,
+        description=(
+            "Optional glyph to dive through. When omitted or not present in the "
+            "title, the transition focuses the center of the title block."
+        ),
+    )
+
+    @field_validator("target_glyph", mode="before")
+    @classmethod
+    def _coerce_target_glyph(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s[:4] or None
+
+
 class TextElement(BaseModel):
     """One timed text block in the editorial/authoring layer.
 
@@ -308,6 +334,13 @@ class TextElement(BaseModel):
         default="static",
         description="Animation effect.",
     )
+    theme_transition: ThemeTransition | None = Field(
+        default=None,
+        description=(
+            "Theme/scene transition layer applied independently from `effect`, "
+            "so titles can combine entrance text animations with a transition wipe."
+        ),
+    )
     text_case: Literal["none", "upper", "lower", "title"] | None = Field(
         default=None,
         description=(
@@ -392,6 +425,19 @@ class TextElement(BaseModel):
     # ------------------------------------------------------------------
     # Validators
     # ------------------------------------------------------------------
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_giant_title_wipe_effect(cls, data: object) -> object:
+        """Draft/back-compat adapter: old effect value becomes a transition."""
+        if not isinstance(data, dict):
+            return data
+        if data.get("effect") != "giant-title-wipe":
+            return data
+        migrated = dict(data)
+        migrated["effect"] = "static"
+        migrated.setdefault("theme_transition", {"type": "giant-title-wipe"})
+        return migrated
 
     @field_validator("id", mode="before")
     @classmethod
@@ -688,9 +734,16 @@ def _burn_dict_to_text_element(
     text_anchor = str(burn_dict.get("text_anchor") or "center")
     alignment = _ANCHOR_TO_ALIGNMENT.get(text_anchor, "center")
 
-    # effect: coerce to allowed set
+    # effect: coerce to allowed text-effect set. Legacy burn dicts may still
+    # carry the transition id in `effect`; expose that as theme_transition.
     raw_effect = str(burn_dict.get("effect") or "static")
     effect = _BURN_EFFECT_TO_TEXT_ELEMENT.get(raw_effect, "static")
+    raw_theme_transition = burn_dict.get("theme_transition")
+    theme_transition: dict | None = (
+        raw_theme_transition if isinstance(raw_theme_transition, dict) else None
+    )
+    if raw_effect == "giant-title-wipe" and theme_transition is None:
+        theme_transition = {"type": "giant-title-wipe"}
 
     # fade_out_ms / word_timings
     fade_out_ms = burn_dict.get("fade_out_ms")
@@ -730,6 +783,7 @@ def _burn_dict_to_text_element(
             max_width_frac=max_width_frac,
             alignment=alignment,  # type: ignore[arg-type]
             effect=effect,  # type: ignore[arg-type]
+            theme_transition=theme_transition,
             fade_out_ms=fade_out_ms,
             word_timings=word_timings,
             source_params=source_params,

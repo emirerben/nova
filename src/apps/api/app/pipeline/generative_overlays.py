@@ -926,12 +926,18 @@ def build_overlays_from_text_elements(
         # getattr: Lane E's TextElement.behind_subject field may not be on disk
         # yet (concurrent lane) — absent field reads as False, byte-identical.
         elem_behind_subject = bool(getattr(elem, "behind_subject", False))
+        elem_theme_transition = getattr(elem, "theme_transition", None)
 
         def attach_glow(overlay: dict) -> None:
             if elem.glow_color is not None:
                 overlay["glow_color"] = elem.glow_color
             if elem.glow_strength is not None:
                 overlay["glow_strength"] = elem.glow_strength
+
+        def attach_theme_transition(overlay: dict) -> None:
+            if elem_theme_transition is None:
+                return
+            overlay["theme_transition"] = elem_theme_transition.model_dump(exclude_none=True)
 
         def attach_text_element_layout_contract(overlay: dict) -> None:
             """Keep authored horizontal alignment independent from vertical placement.
@@ -944,6 +950,7 @@ def build_overlays_from_text_elements(
             if independent_box_alignment:
                 overlay["vertical_anchor"] = "center"
             attach_glow(overlay)
+            attach_theme_transition(overlay)
 
         # text_case: transform the display text AND any stored karaoke word
         # timings (their `text` keys are what _draw_karaoke_line burns).
@@ -958,7 +965,7 @@ def build_overlays_from_text_elements(
         # ── reveal_s: produce [reveal, hold] pair (directly authored only) ───
         # Adapter-sourced elements never set reveal_s (legacy burn dicts don't
         # carry it); those come back as two pre-split TextElements already.
-        if elem.reveal_s is not None and effect != "static":
+        if elem.reveal_s is not None and effect != "static" and elem_theme_transition is None:
             reveal_end = min(max(0.0, float(elem.reveal_s)), elem.end_s)
 
             reveal = build_intro_overlay(
