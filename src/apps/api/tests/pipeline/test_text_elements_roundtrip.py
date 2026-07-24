@@ -945,7 +945,7 @@ class TestSecurityGuards:
         )
         [overlay] = build_overlays_from_text_elements([elem], video_duration_s=4.0)
         assert overlay["effect"] == "staggered-slice"
-        assert overlay["theme_transition"] == {"type": "giant-title-wipe", "target_glyph": "O"}
+        assert overlay["theme_transition"] == {"type": "giant-title-wipe"}
 
     def test_giant_title_wipe_transition_roundtrips_from_the_burn_dict(self):
         elem = _burn_dict_to_text_element(

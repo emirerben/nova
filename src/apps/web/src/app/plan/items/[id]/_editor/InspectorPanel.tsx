@@ -1161,9 +1161,30 @@ function TextInspector({
                 <option key={transition.value} value={transition.value}>
                   {transition.label}
                 </option>
-              ))}
+                ))}
             </select>
           </label>
+          {bar.theme_transition?.type === "giant-title-wipe" && (
+            <label className="mt-3 block text-[12px] font-semibold text-[#3f3f46]">
+              Target glyph
+              <input
+                aria-label="Target glyph"
+                type="text"
+                maxLength={1}
+                value={bar.theme_transition.target_glyph ?? ""}
+                onChange={(e) =>
+                  onPatch({
+                    theme_transition: {
+                      type: "giant-title-wipe",
+                      target_glyph: e.target.value.slice(0, 1) || null,
+                    },
+                  })
+                }
+                placeholder="center"
+                className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500/60 focus:outline-none"
+              />
+            </label>
+          )}
         </>
       )}
 

@@ -293,11 +293,30 @@ export function giantTitleWipeAlphaAt(tLocal: number, durationS: number): number
   return 1.0 - easeOutCubic(fadeProgress);
 }
 
-/** Mirror of _giant_title_wipe_scale_origin. Offsets target the selected O counter. */
-export function giantTitleWipeScaleOrigin(): { scaleOriginX: number; scaleOriginY: number } {
+/**
+ * Approximate mirror of _giant_title_wipe_scale_origin. The Skia renderer uses
+ * exact font metrics; the CSS preview uses this stable text-based estimate.
+ */
+export function giantTitleWipeScaleOrigin(
+  text = "",
+  targetGlyph?: string | null,
+): { scaleOriginX: number; scaleOriginY: number } {
+  const target = targetGlyph?.trim().slice(0, 1);
+  if (!target) return { scaleOriginX: 0.0, scaleOriginY: 0.0 };
+
+  const lines = normalizeAnimatedRevealText(text).split("\n");
+  const targetKey = target.toLocaleLowerCase();
+  const lineIndex = lines.findIndex((line) => line.toLocaleLowerCase().includes(targetKey));
+  if (lineIndex < 0) return { scaleOriginX: 0.0, scaleOriginY: 0.0 };
+
+  const line = lines[lineIndex];
+  const glyphIndex = line.toLocaleLowerCase().indexOf(targetKey);
+  const longestLineLen = Math.max(1, ...lines.map((candidate) => candidate.length));
+  const lineOffset = (glyphIndex + 0.5 - line.length / 2) / longestLineLen;
+  const verticalOffset = lineIndex + 0.5 - lines.length / 2;
   return {
-    scaleOriginX: 13.0,
-    scaleOriginY: -80.0,
+    scaleOriginX: lineOffset * 900.0,
+    scaleOriginY: verticalOffset * 170.0,
   };
 }
 
@@ -321,6 +340,7 @@ export function themeTransitionStateAt(
   themeTransition: ThemeTransition | string | null | undefined,
   tLocal: number,
   durationS: number,
+  text = "",
 ): AnimationState {
   const transitionType =
     typeof themeTransition === "string" ? themeTransition : themeTransition?.type;
@@ -328,7 +348,9 @@ export function themeTransitionStateAt(
   if (transitionType !== "giant-title-wipe") return state;
   state.scale = giantTitleWipeScaleAt(tLocal, durationS);
   state.alpha = giantTitleWipeAlphaAt(tLocal, durationS);
-  const origin = giantTitleWipeScaleOrigin();
+  const targetGlyph =
+    typeof themeTransition === "string" ? null : themeTransition?.target_glyph;
+  const origin = giantTitleWipeScaleOrigin(text, targetGlyph);
   state.scaleOriginX = origin.scaleOriginX;
   state.scaleOriginY = origin.scaleOriginY;
   return state;

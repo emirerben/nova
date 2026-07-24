@@ -139,8 +139,6 @@ _GIANT_TITLE_WIPE_HOLD_FRAC = 0.68
 _GIANT_TITLE_WIPE_END_SCALE = 60.0
 _GIANT_TITLE_WIPE_ALPHA_FADE_START_FRAC = 0.80
 _GIANT_TITLE_WIPE_SCALE_EASE = (0.76, 0.0, 0.24, 1.0)
-_GIANT_TITLE_WIPE_TARGET_O_OFFSET_X = 13.0
-_GIANT_TITLE_WIPE_TARGET_O_OFFSET_Y = -80.0
 
 _STAGGERED_SLICE_FIRST_WORD_END_S = 0.55
 _STAGGERED_SLICE_REMAINDER_START_S = 0.95
@@ -212,12 +210,79 @@ def _giant_title_wipe_alpha_at(t_local: float, duration_s: float) -> float:
     return 1.0 - _ease_out_cubic(fade_progress)
 
 
-def _giant_title_wipe_scale_origin() -> tuple[float, float]:
-    """Scale around the target O counter instead of sliding the title toward it."""
-    return (
-        _GIANT_TITLE_WIPE_TARGET_O_OFFSET_X,
-        _GIANT_TITLE_WIPE_TARGET_O_OFFSET_Y,
+def _giant_title_wipe_target_glyph(overlay: dict) -> str | None:
+    raw = overlay.get("theme_transition")
+    if not isinstance(raw, dict):
+        return None
+    target = raw.get("target_glyph")
+    if target is None:
+        return None
+    target_s = str(target).strip()
+    return target_s[:1] or None
+
+
+def _giant_title_wipe_scale_origin(
+    overlay: dict | None = None,
+    *,
+    render_canvas: Canvas = PORTRAIT,
+) -> tuple[float, float]:
+    """Scale around the requested glyph center, or the title center by default."""
+    if overlay is None:
+        return (0.0, 0.0)
+
+    target = _giant_title_wipe_target_glyph(overlay)
+    if not target:
+        return (0.0, 0.0)
+
+    text = _normalize_reveal_text(_overlay_text(overlay))
+    if not text:
+        return (0.0, 0.0)
+
+    typeface = _typeface_for_overlay(overlay)
+    letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
+    max_width = _overlay_max_width_px(overlay, render_canvas)
+    initial_size = _resolve_font_size_px(overlay)
+    if overlay.get("preserve_font_size"):
+        font, size, lines = _wrap_at_fixed_size(
+            text, typeface, initial_size, max_width, letter_spacing_em
+        )
+    else:
+        font, size, lines = _shrink_to_fit(
+            text, typeface, initial_size, max_width, letter_spacing_em
+        )
+    if not lines:
+        return (0.0, 0.0)
+
+    target_key = target.casefold()
+    letter_spacing_px = letter_spacing_em * size
+    block = _measure_block(
+        font,
+        lines,
+        line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=letter_spacing_px,
     )
+    cx, cy = _resolve_anchor(overlay, render_canvas)
+    anchor = _resolve_text_anchor(overlay)
+    block_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
+    first_baseline = block_top + block["ascent_offset"]
+    metrics = font.getMetrics()
+
+    for line_index, line in enumerate(lines):
+        graphemes = _segment_graphemes(line)
+        prefix = ""
+        for grapheme in graphemes:
+            if grapheme.casefold().startswith(target_key):
+                line_w = block["widths"][line_index]
+                line_x = _anchored_left_x(anchor, cx, line_w)
+                prefix_w = _measure_line(font, prefix, letter_spacing_px) if prefix else 0.0
+                glyph_w = _measure_line(font, grapheme, letter_spacing_px)
+                glyph_center_x = line_x + prefix_w + glyph_w / 2.0
+                baseline_y = first_baseline + line_index * block["line_step"]
+                glyph_center_y = baseline_y + (metrics.fAscent + metrics.fDescent) / 2.0
+                return (glyph_center_x - cx, glyph_center_y - cy)
+            prefix += grapheme
+
+    return (0.0, 0.0)
 
 
 def _theme_transition_type(overlay: dict) -> str | None:
@@ -251,7 +316,9 @@ def _theme_transition_canvas(
 
     scale = _giant_title_wipe_scale_at(t_local, duration_s)
     alpha = _giant_title_wipe_alpha_at(t_local, duration_s)
-    scale_origin_x, scale_origin_y = _giant_title_wipe_scale_origin()
+    scale_origin_x, scale_origin_y = _giant_title_wipe_scale_origin(
+        overlay, render_canvas=render_canvas
+    )
     cx, cy = _resolve_anchor(overlay, render_canvas)
     origin_x = cx + scale_origin_x
     origin_y = cy + scale_origin_y

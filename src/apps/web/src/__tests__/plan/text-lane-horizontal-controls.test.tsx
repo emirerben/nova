@@ -65,6 +65,25 @@ describe("TextLane horizontal controls", () => {
     expect(latestBar(onChange).theme_transition).toEqual({ type: "giant-title-wipe" });
   });
 
+  it("lets Giant title wipe optionally target a specified glyph", async () => {
+    const onChange = renderLane(
+      makeBar({
+        effect: "staggered-slice",
+        theme_transition: { type: "giant-title-wipe" },
+      }),
+    );
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Target glyph" }), {
+      target: { value: "O" },
+    });
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    expect(latestBar(onChange).theme_transition).toEqual({
+      type: "giant-title-wipe",
+      target_glyph: "O",
+    });
+  });
+
   it("does not create history entries when the active choices are clicked", () => {
     const onChange = renderLane(makeBar());
 

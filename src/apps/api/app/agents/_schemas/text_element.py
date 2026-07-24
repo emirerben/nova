@@ -201,18 +201,21 @@ class ThemeTransition(BaseModel):
         description="Theme/scene transition applied to the whole title layer."
     )
     target_glyph: str | None = Field(
-        default="O",
+        default=None,
         max_length=4,
-        description="Glyph counter to dive through; v1 renderer targets the O center.",
+        description=(
+            "Optional glyph to dive through. When omitted or not present in the "
+            "title, the transition focuses the center of the title block."
+        ),
     )
 
     @field_validator("target_glyph", mode="before")
     @classmethod
     def _coerce_target_glyph(cls, v: object) -> str | None:
         if v is None:
-            return "O"
+            return None
         s = str(v).strip()
-        return s[:4] or "O"
+        return s[:4] or None
 
 
 class TextElement(BaseModel):

@@ -929,6 +929,7 @@ export default function EditorCanvas({
                     bar?.theme_transition,
                     Math.max(0, currentTime - layout.start_s),
                     Math.min(MAX_INTRO_S, Math.max(0.01, layout.end_s - layout.start_s)),
+                    layout.text,
                   );
                   const fadeOutAlpha = sequenceOverlayFadeOutAlphaAt(
                     bar?.role,

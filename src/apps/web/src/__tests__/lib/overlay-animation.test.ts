@@ -388,8 +388,8 @@ describe("themeTransitionStateAt — giant-title-wipe", () => {
     expect(ramp.scale).toBeGreaterThan(5.5);
     expect(ramp.alpha).toBeCloseTo(1.0);
     expect(ramp.yTranslate).toBeCloseTo(0);
-    expect(ramp.scaleOriginX).toBeCloseTo(13.0);
-    expect(ramp.scaleOriginY).toBeCloseTo(-80.0);
+    expect(ramp.scaleOriginX).toBeCloseTo(0);
+    expect(ramp.scaleOriginY).toBeCloseTo(0);
     expect(ramp.visibleText).toBe("");
   });
 
@@ -400,8 +400,27 @@ describe("themeTransitionStateAt — giant-title-wipe", () => {
     expect(end.scale).toBeCloseTo(60.0);
     expect(end.alpha).toBeCloseTo(0);
     expect(end.yTranslate).toBeCloseTo(0);
-    expect(end.scaleOriginX).toBeCloseTo(13.0);
-    expect(end.scaleOriginY).toBeCloseTo(-80.0);
+    expect(end.scaleOriginX).toBeCloseTo(0);
+    expect(end.scaleOriginY).toBeCloseTo(0);
+  });
+
+  it("targets a requested glyph only when that glyph exists", () => {
+    const target = themeTransitionStateAt(
+      { type: "giant-title-wipe", target_glyph: "O" },
+      3.1,
+      4,
+      "GOAL OF THE\nTOURNAMENT",
+    );
+    expect(target.scaleOriginX).not.toBeCloseTo(0);
+    expect(target.scaleOriginY).not.toBeCloseTo(0);
+    const missing = themeTransitionStateAt(
+      { type: "giant-title-wipe", target_glyph: "O" },
+      3.1,
+      4,
+      "CENTER TEXT",
+    );
+    expect(missing.scaleOriginX).toBeCloseTo(0);
+    expect(missing.scaleOriginY).toBeCloseTo(0);
   });
 
   it("leaves text effects independent so they can compose", () => {

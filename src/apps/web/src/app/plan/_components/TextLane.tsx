@@ -982,6 +982,27 @@ function TextPropertyPanel({
             );
           })}
         </div>
+        {bar.theme_transition?.type === "giant-title-wipe" && (
+          <label className="mt-2 block text-[10px] text-zinc-500 uppercase tracking-wide">
+            Target glyph
+            <input
+              type="text"
+              value={bar.theme_transition.target_glyph ?? ""}
+              onChange={(e) =>
+                patch({
+                  theme_transition: {
+                    type: "giant-title-wipe",
+                    target_glyph: e.target.value.slice(0, 1) || null,
+                  },
+                })
+              }
+              maxLength={1}
+              placeholder="center"
+              className="mt-1 h-8 w-full rounded border border-zinc-200 bg-zinc-50 px-2 text-xs normal-case tracking-normal text-zinc-900 placeholder-zinc-400 focus:border-amber-400 focus:outline-none"
+              aria-label="Target glyph"
+            />
+          </label>
+        )}
       </div>
 
       {/* Font — rendered in their own typeface as preview */}
