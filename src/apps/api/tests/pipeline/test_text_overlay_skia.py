@@ -581,8 +581,9 @@ def test_animated_effects_all_produce_sequences(tmp_workdir):
 def test_giant_title_wipe_scale_holds_then_crops_offscreen():
     assert tos._giant_title_wipe_scale_at(0.0, 4.0) == pytest.approx(1.0)
     assert tos._giant_title_wipe_scale_at(2.7, 4.0) == pytest.approx(1.0)
-    assert tos._giant_title_wipe_scale_at(2.8, 4.0) < 1.1
-    assert tos._giant_title_wipe_scale_at(3.1, 4.0) > 6.0
+    assert tos._motion_cubic_bezier(0.5, 0.76, 0.0, 0.24, 1.0) == pytest.approx(0.5)
+    assert tos._giant_title_wipe_scale_at(2.8, 4.0) < 1.2
+    assert tos._giant_title_wipe_scale_at(3.1, 4.0) > 5.5
     assert tos._giant_title_wipe_scale_at(4.0, 4.0) == pytest.approx(60.0)
     assert tos._giant_title_wipe_alpha_at(3.7, 4.0) == pytest.approx(1.0)
     assert tos._giant_title_wipe_alpha_at(3.93, 4.0) < 0.03
@@ -609,7 +610,7 @@ def test_giant_title_wipe_draws_scaled_full_text():
         tos._draw_with_animation(surface.getCanvas(), overlay, 3.1, 4.0)
 
     assert calls == [("GOAL OF THE\nTOURNAMENT", mock.ANY)]
-    assert calls[0][1]["scale"] > 6.0
+    assert calls[0][1]["scale"] > 5.5
     assert calls[0][1]["alpha"] == pytest.approx(1.0)
     assert calls[0][1]["x_translate"] == pytest.approx(0.0)
     assert calls[0][1]["y_translate"] == pytest.approx(0.0)

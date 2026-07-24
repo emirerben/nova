@@ -3,6 +3,7 @@ import {
   easeOutCubic,
   giantTitleWipeAlphaAt,
   giantTitleWipeScaleAt,
+  motionCubicBezier,
   normalizeAnimatedRevealText,
   popInScaleAt,
   sequenceFadeOutAlphaAt,
@@ -377,12 +378,13 @@ describe("animationStateAt — giant-title-wipe", () => {
   it("holds at normal scale through the opening title beat", () => {
     expect(giantTitleWipeScaleAt(0, 4)).toBeCloseTo(1.0);
     expect(giantTitleWipeScaleAt(2.7, 4)).toBeCloseTo(1.0);
-    expect(giantTitleWipeScaleAt(2.8, 4)).toBeLessThan(1.1);
+    expect(motionCubicBezier(0.5, 0.76, 0.0, 0.24, 1.0)).toBeCloseTo(0.5);
+    expect(giantTitleWipeScaleAt(2.8, 4)).toBeLessThan(1.2);
   });
 
   it("rapidly scales into an oversized wipe after the hold", () => {
     const ramp = animationStateAt("giant-title-wipe", 3.1, 4, TEXT);
-    expect(ramp.scale).toBeGreaterThan(6);
+    expect(ramp.scale).toBeGreaterThan(5.5);
     expect(ramp.alpha).toBeCloseTo(1.0);
     expect(ramp.yTranslate).toBeCloseTo(0);
     expect(ramp.scaleOriginX).toBeCloseTo(13.0);

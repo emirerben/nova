@@ -207,6 +207,49 @@ export function easeInOutCubic(t: number): number {
   return 1 - Math.pow(-2 * tc + 2, 3) / 2;
 }
 
+/** Mirror of _motion_cubic_bezier. */
+export function motionCubicBezier(
+  t: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): number {
+  const targetX = Math.max(0, Math.min(1, t));
+  if (targetX <= 0) return 0;
+  if (targetX >= 1) return 1;
+
+  const sample = (axis1: number, axis2: number, u: number): number => {
+    const inv = 1 - u;
+    return 3 * axis1 * inv * inv * u + 3 * axis2 * inv * u * u + Math.pow(u, 3);
+  };
+  const sampleX = (u: number): number => sample(x1, x2, u);
+  const sampleY = (u: number): number => sample(y1, y2, u);
+  const sampleXDerivative = (u: number): number => {
+    const inv = 1 - u;
+    return 3 * x1 * inv * inv + 6 * (x2 - x1) * inv * u + 3 * (1 - x2) * u * u;
+  };
+
+  let u = targetX;
+  for (let i = 0; i < 8; i += 1) {
+    const error = sampleX(u) - targetX;
+    if (Math.abs(error) < 1e-6) return sampleY(u);
+    const derivative = sampleXDerivative(u);
+    if (Math.abs(derivative) < 1e-6) break;
+    u = Math.max(0, Math.min(1, u - error / derivative));
+  }
+
+  let lower = 0;
+  let upper = 1;
+  u = targetX;
+  for (let i = 0; i < 12; i += 1) {
+    if (sampleX(u) < targetX) lower = u;
+    else upper = u;
+    u = (lower + upper) / 2;
+  }
+  return sampleY(u);
+}
+
 /** Mirror of _clamped_keyframes_s + _pop_in_scale_at. */
 export function popInScaleAt(tLocal: number, durationS: number): number {
   // Python constants (verbatim):
@@ -231,7 +274,7 @@ export function popInScaleAt(tLocal: number, durationS: number): number {
 export function giantTitleWipeScaleAt(tLocal: number, durationS: number): number {
   const holdUntil = Math.max(0, durationS) * 0.68;
   const wipeFor = Math.max(0.01, Math.max(0, durationS) - holdUntil);
-  const progress = easeInOutCubic((tLocal - holdUntil) / wipeFor);
+  const progress = motionCubicBezier((tLocal - holdUntil) / wipeFor, 0.76, 0.0, 0.24, 1.0);
   return 1.0 + (60.0 - 1.0) * progress;
 }
 

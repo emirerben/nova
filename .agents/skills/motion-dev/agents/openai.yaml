@@ -1,0 +1,4 @@
+interface:
+  display_name: "Motion Dev"
+  short_description: "Motion.dev animation patterns for UI and video previews"
+  default_prompt: "Use $motion-dev to design a polished animation and keep frontend preview math aligned with renderer output."

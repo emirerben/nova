@@ -137,6 +137,7 @@ _POP_SUFFIX_MAX_LINES = 2
 _GIANT_TITLE_WIPE_HOLD_FRAC = 0.68
 _GIANT_TITLE_WIPE_END_SCALE = 60.0
 _GIANT_TITLE_WIPE_ALPHA_FADE_START_FRAC = 0.80
+_GIANT_TITLE_WIPE_SCALE_EASE = (0.76, 0.0, 0.24, 1.0)
 _GIANT_TITLE_WIPE_TARGET_O_OFFSET_X = 13.0
 _GIANT_TITLE_WIPE_TARGET_O_OFFSET_Y = -80.0
 
@@ -190,7 +191,10 @@ def _giant_title_wipe_scale_at(t_local: float, duration_s: float) -> float:
     """Hold, then scale a title until it crops off-screen like a scene wipe."""
     hold_until = max(0.0, duration_s) * _GIANT_TITLE_WIPE_HOLD_FRAC
     wipe_for = max(0.01, max(0.0, duration_s) - hold_until)
-    progress = _ease_in_out_cubic((t_local - hold_until) / wipe_for)
+    progress = _motion_cubic_bezier(
+        (t_local - hold_until) / wipe_for,
+        *_GIANT_TITLE_WIPE_SCALE_EASE,
+    )
     return 1.0 + (_GIANT_TITLE_WIPE_END_SCALE - 1.0) * progress
 
 
@@ -1593,6 +1597,50 @@ def _ease_in_out_cubic(t: float) -> float:
     if t < 0.5:
         return 4.0 * t**3
     return 1.0 - ((-2.0 * t + 2.0) ** 3) / 2.0
+
+
+def _motion_cubic_bezier(t: float, x1: float, y1: float, x2: float, y2: float) -> float:
+    """Evaluate a Motion/CSS cubic-bezier easing curve at progress t."""
+    target_x = max(0.0, min(1.0, t))
+    if target_x <= 0.0:
+        return 0.0
+    if target_x >= 1.0:
+        return 1.0
+
+    def sample(axis_1: float, axis_2: float, u: float) -> float:
+        inv = 1.0 - u
+        return 3.0 * axis_1 * inv * inv * u + 3.0 * axis_2 * inv * u * u + u**3
+
+    def sample_x(u: float) -> float:
+        return sample(x1, x2, u)
+
+    def sample_y(u: float) -> float:
+        return sample(y1, y2, u)
+
+    def sample_x_derivative(u: float) -> float:
+        inv = 1.0 - u
+        return 3.0 * x1 * inv * inv + 6.0 * (x2 - x1) * inv * u + 3.0 * (1.0 - x2) * u * u
+
+    u = target_x
+    for _ in range(8):
+        error = sample_x(u) - target_x
+        if abs(error) < 1e-6:
+            return sample_y(u)
+        derivative = sample_x_derivative(u)
+        if abs(derivative) < 1e-6:
+            break
+        u = max(0.0, min(1.0, u - error / derivative))
+
+    lower = 0.0
+    upper = 1.0
+    u = target_x
+    for _ in range(12):
+        if sample_x(u) < target_x:
+            lower = u
+        else:
+            upper = u
+        u = (lower + upper) / 2.0
+    return sample_y(u)
 
 
 def _clamped_keyframes_s(keyframes_s: tuple[float, ...], duration_s: float) -> tuple[float, ...]:
