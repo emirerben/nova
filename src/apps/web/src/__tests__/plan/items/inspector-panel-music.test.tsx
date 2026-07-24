@@ -22,6 +22,8 @@ const track: MusicTrackSummary = {
 
 function renderMusicInspector(overrides = {}) {
   const onPickMusic = jest.fn();
+  const onPatchBackgroundMusic = jest.fn();
+  const onRemoveBackgroundMusic = jest.fn();
   render(
     <InspectorPanel
       selection={{ kind: "music", id: "bed" }}
@@ -53,6 +55,8 @@ function renderMusicInspector(overrides = {}) {
       currentMusicTrackId="track-1"
       musicEditable
       onPickMusic={onPickMusic}
+      onPatchBackgroundMusic={onPatchBackgroundMusic}
+      onRemoveBackgroundMusic={onRemoveBackgroundMusic}
       onPatchMix={noop}
       smartPlaceAvailable={false}
       onClose={noop}
@@ -60,7 +64,7 @@ function renderMusicInspector(overrides = {}) {
       {...overrides}
     />,
   );
-  return { onPickMusic };
+  return { onPickMusic, onPatchBackgroundMusic, onRemoveBackgroundMusic };
 }
 
 describe("InspectorPanel music bed", () => {
@@ -72,5 +76,35 @@ describe("InspectorPanel music bed", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /New Song/i }));
     expect(onPickMusic).toHaveBeenCalledWith("track-2");
+  });
+
+  it("edits background music trim, mute, volume, and removal", () => {
+    const { onPatchBackgroundMusic, onRemoveBackgroundMusic } = renderMusicInspector({
+      currentMusicTrackId: "track-2",
+      backgroundMusic: {
+        track_id: "track-2",
+        enabled: true,
+        start_s: 2,
+        end_s: 10,
+        gain_db: -20,
+        muted: false,
+      },
+      backgroundMusicTrackDurationS: 30,
+    });
+
+    fireEvent.click(screen.getByLabelText("Mute"));
+    expect(onPatchBackgroundMusic).toHaveBeenCalledWith({ muted: true });
+
+    fireEvent.change(screen.getByLabelText("Volume"), { target: { value: "-12" } });
+    expect(onPatchBackgroundMusic).toHaveBeenCalledWith({ gain_db: -12 });
+
+    fireEvent.change(screen.getByLabelText("Trim start"), { target: { value: "4" } });
+    expect(onPatchBackgroundMusic).toHaveBeenCalledWith({ start_s: 4, end_s: 10 });
+
+    fireEvent.change(screen.getByLabelText("Trim end"), { target: { value: "12" } });
+    expect(onPatchBackgroundMusic).toHaveBeenCalledWith({ end_s: 12 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(onRemoveBackgroundMusic).toHaveBeenCalled();
   });
 });

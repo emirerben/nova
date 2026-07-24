@@ -1220,7 +1220,7 @@ function SoundsDrawer({
       <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Music</p>
       {!musicEditable ? (
         <div className="mb-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
-          This edit has no swappable song.
+          Music cannot be edited for this version.
         </div>
       ) : musicLoading ? (
         <div className="mb-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
