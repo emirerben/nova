@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.6.0] — 2026-07-24
+
+### Added
+- **Video and AI wait states now use Nova's Beam loading treatment.** Rendering tiles, plan hero re-renders, style/chat thinking states, and template-job loading screens get a shared perimeter beam with a soft edge glow instead of bare spinners or isolated dots. The beam is local CSS, not a new dependency; it animates around the full frame, preserves the old video playback under re-render overlays, and falls back to a static subtle border for reduced-motion users.
+
 ## [0.12.5.0] — 2026-07-23
 
 ### Added
