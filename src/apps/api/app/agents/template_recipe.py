@@ -44,7 +44,6 @@ _VALID_OVERLAY_EFFECTS = {
     "bounce",
     "slide-in",
     "slide-up",
-    "giant-title-wipe",
     "static",
 }
 _VALID_OVERLAY_POSITIONS = {"center", "top", "bottom"}

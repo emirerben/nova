@@ -45,6 +45,7 @@ import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
@@ -217,6 +218,54 @@ def _giant_title_wipe_scale_origin() -> tuple[float, float]:
         _GIANT_TITLE_WIPE_TARGET_O_OFFSET_X,
         _GIANT_TITLE_WIPE_TARGET_O_OFFSET_Y,
     )
+
+
+def _theme_transition_type(overlay: dict) -> str | None:
+    raw = overlay.get("theme_transition")
+    if isinstance(raw, dict):
+        transition_type = str(raw.get("type") or "").strip()
+    elif isinstance(raw, str):
+        transition_type = raw.strip()
+    else:
+        return None
+    if transition_type == "giant-title-wipe":
+        return transition_type
+    if transition_type:
+        log.warning("skia_unknown_theme_transition_static_fallback", type=transition_type)
+    return None
+
+
+@contextmanager
+def _theme_transition_canvas(
+    canvas: skia.Canvas,
+    overlay: dict,
+    t_local: float,
+    duration_s: float,
+    *,
+    render_canvas: Canvas = PORTRAIT,
+):
+    """Apply scene-transition transforms around the entire text-effect draw."""
+    if _theme_transition_type(overlay) != "giant-title-wipe":
+        yield
+        return
+
+    scale = _giant_title_wipe_scale_at(t_local, duration_s)
+    alpha = _giant_title_wipe_alpha_at(t_local, duration_s)
+    scale_origin_x, scale_origin_y = _giant_title_wipe_scale_origin()
+    cx, cy = _resolve_anchor(overlay, render_canvas)
+    origin_x = cx + scale_origin_x
+    origin_y = cy + scale_origin_y
+
+    canvas.save()
+    canvas.saveLayerAlpha(None, _clamp_byte(255 * alpha))
+    canvas.translate(origin_x, origin_y)
+    canvas.scale(scale, scale)
+    canvas.translate(-origin_x, -origin_y)
+    try:
+        yield
+    finally:
+        canvas.restore()
+        canvas.restore()
 
 
 def _staggered_slice_settle_s(text: str) -> float:
@@ -2044,10 +2093,6 @@ def _draw_with_animation(
                 scale = 0.90 + 0.10 * ((p - 0.72) / 0.28)
         else:
             scale = 1.0
-    elif effect == "giant-title-wipe":
-        scale = _giant_title_wipe_scale_at(t_local, duration_s)
-        alpha = _giant_title_wipe_alpha_at(t_local, duration_s)
-        scale_origin_x, scale_origin_y = _giant_title_wipe_scale_origin()
     elif effect == "lyric-line":
         alpha = _lyric_line_alpha(overlay, t_local, duration_s)
     elif effect not in ("none", "static"):
@@ -2092,7 +2137,6 @@ _ANIMATED_EFFECTS_SKIA = {
     "slide-down",
     "pop-in",
     "bounce",
-    "giant-title-wipe",
     "staggered-slice",
     "karaoke-line",
     # lyric-line must be animated to honor fade_in_ms / fade_out_ms. Without
@@ -2108,6 +2152,8 @@ _ANIMATED_EFFECTS_SKIA = {
 
 def _is_animated(overlay: dict) -> bool:
     effect = overlay.get("effect", "none")
+    if _theme_transition_type(overlay) == "giant-title-wipe":
+        return True
     # pop-in with pop_animated_suffix is animated even if base effect is "pop-in";
     # plain pop-in without suffix is also animated.
     if effect in _ANIMATED_EFFECTS_SKIA:
@@ -2136,40 +2182,47 @@ def _draw_overlay_on_canvas(
     """
     effect = overlay.get("effect", "none")
 
-    if effect == "player-card":
-        # Out of scope for Skia migration — classic templates only.
-        raise NotImplementedError(
-            "Skia renderer does not support effect='player-card'; this overlay "
-            "must route through Pillow + libass. Classic templates only."
-        )
+    with _theme_transition_canvas(
+        canvas, overlay, t_local, duration_s, render_canvas=render_canvas
+    ):
+        if effect == "player-card":
+            # Out of scope for Skia migration — classic templates only.
+            raise NotImplementedError(
+                "Skia renderer does not support effect='player-card'; this overlay "
+                "must route through Pillow + libass. Classic templates only."
+            )
 
-    if effect == "font-cycle":
-        font_name = _select_cycle_font(overlay, t_local, duration_s)
-        font = skia.Font(_typeface_for_overlay(overlay, font_name_override=font_name))
-        font.setSize(_resolve_font_size_px(overlay))
-        font.setSubpixel(True)
-        _draw_centered_text(
-            canvas,
-            _overlay_text(overlay),
-            overlay,
-            render_canvas=render_canvas,
-            font_override=font,
-        )
-    elif effect == "karaoke-line":
-        _draw_karaoke_line(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
-    elif effect == "pop-in" and overlay.get("pop_animated_suffix"):
-        _draw_pop_in_with_suffix(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
-    elif effect == "staggered-slice":
-        _draw_staggered_slice(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
-    elif _is_animated(overlay):
-        # `lyric-line` is in this branch because its fade_in_ms / fade_out_ms
-        # are honored per-frame in `_draw_with_animation`. `_overlay_text`
-        # still resolves `display_text` (the Layer 2 finalizer's truncated
-        # partial line) when present — the alpha multiplies on top of that.
-        _draw_with_animation(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
-    else:
-        # Static effects render at full opacity throughout [start_s, end_s].
-        _draw_centered_text(canvas, _overlay_text(overlay), overlay, render_canvas=render_canvas)
+        if effect == "font-cycle":
+            font_name = _select_cycle_font(overlay, t_local, duration_s)
+            font = skia.Font(_typeface_for_overlay(overlay, font_name_override=font_name))
+            font.setSize(_resolve_font_size_px(overlay))
+            font.setSubpixel(True)
+            _draw_centered_text(
+                canvas,
+                _overlay_text(overlay),
+                overlay,
+                render_canvas=render_canvas,
+                font_override=font,
+            )
+        elif effect == "karaoke-line":
+            _draw_karaoke_line(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
+        elif effect == "pop-in" and overlay.get("pop_animated_suffix"):
+            _draw_pop_in_with_suffix(
+                canvas, overlay, t_local, duration_s, render_canvas=render_canvas
+            )
+        elif effect == "staggered-slice":
+            _draw_staggered_slice(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
+        elif _is_animated(overlay):
+            # `lyric-line` is in this branch because its fade_in_ms / fade_out_ms
+            # are honored per-frame in `_draw_with_animation`. `_overlay_text`
+            # still resolves `display_text` (the Layer 2 finalizer's truncated
+            # partial line) when present — the alpha multiplies on top of that.
+            _draw_with_animation(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
+        else:
+            # Static effects render at full opacity throughout [start_s, end_s].
+            _draw_centered_text(
+                canvas, _overlay_text(overlay), overlay, render_canvas=render_canvas
+            )
 
 
 def _draw_frame(
@@ -2350,6 +2403,8 @@ def _staggered_slice_hold_plan(
     overlay: dict, n_render: int, frame_dur: float, duration_s: float
 ) -> tuple[list[int], int, list[int]] | None:
     if overlay.get("effect") != "staggered-slice" or n_render <= 1:
+        return None
+    if _theme_transition_type(overlay) is not None:
         return None
     settle_s = min(duration_s, _staggered_slice_settle_s(_overlay_text(overlay)))
     settled_idx = min(n_render - 1, int(math.ceil(settle_s / frame_dur - 1e-9)))

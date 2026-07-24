@@ -911,10 +911,13 @@ export interface TextElement {
     | "typewriter"
     | "stream-in"
     | "staggered-slice"
-    | "giant-title-wipe"
     | "bounce"
     | "slide-in"
     | null;
+  theme_transition?: {
+    type: "giant-title-wipe";
+    target_glyph?: string | null;
+  } | null;
   /** Display-case transform, resolved at compile/layout time (T11 slice;
    * parity fixture tests/fixtures/text-element-parity/text_case.json). */
   text_case?: "none" | "upper" | "lower" | "title" | null;

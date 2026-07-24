@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.12.6.0] — 2026-07-24
 
 ### Added
-- **Text can now become a scene transition with the Giant title wipe animation.** Choose `Giant title wipe` in the text animation picker to hold a bold title, then smoothly zoom through the center of the target O until the footage fills the frame and no word remains over the content. The editor preview and Skia renderer share the same Motion-style cubic-bezier timing model, with backend schema/allowlist coverage so saved text elements round-trip safely.
+- **Text can now drive a theme transition with the Giant title wipe.** Choose `Giant title wipe` from the new Theme transition control to hold a bold title, then smoothly zoom through the center of the target O until the footage fills the frame and no word remains over the content. The text Effect control stays independent, so the wipe can combine with entrances like `Staggered slice`. The editor preview and Skia renderer share the same Motion-style cubic-bezier timing model, with backend schema coverage so saved text elements round-trip safely.
 - **Nova now has a repo-local Motion.dev skill.** Use `$motion-dev` for Motion-inspired animation tuning, especially when browser previews need deterministic parity with Skia or another non-browser renderer.
 
 ## [0.12.5.0] — 2026-07-23

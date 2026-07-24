@@ -24,7 +24,7 @@ import {
   type TextElementBar,
 } from "@/lib/timeline/text-timeline-reducer";
 import { Playhead } from "@/lib/timeline/Playhead";
-import { INTRO_ANIMATIONS, INTRO_FONTS } from "@/lib/overlay-constants";
+import { INTRO_ANIMATIONS, INTRO_FONTS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
 import {
   inferTextBoxPosition,
   resolveTextElementYFrac,
@@ -582,6 +582,10 @@ const PANEL_EFFECTS: Array<{ label: string; value: string }> = [
   ...INTRO_ANIMATIONS,
   { label: "Karaoke", value: "karaoke-line" },
 ];
+const PANEL_THEME_TRANSITIONS: Array<{ label: string; value: string }> = [
+  { label: "None", value: "none" },
+  ...THEME_TRANSITIONS,
+];
 
 /**
  * Full font list — derived from INTRO_FONTS (overlay-constants.ts, all
@@ -945,6 +949,38 @@ function TextPropertyPanel({
               {opt.label}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Theme transition */}
+      <div>
+        <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
+          Theme transition
+        </label>
+        <div className="flex flex-wrap gap-1">
+          {PANEL_THEME_TRANSITIONS.map((opt) => {
+            const active = (bar.theme_transition?.type ?? "none") === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() =>
+                  patch({
+                    theme_transition:
+                      opt.value === "none" ? null : { type: "giant-title-wipe" },
+                  })
+                }
+                aria-pressed={active}
+                className={`min-h-11 rounded px-2 py-1 text-[10px] transition-colors sm:min-h-0 ${
+                  active
+                    ? "bg-lime-400 text-black font-semibold"
+                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 

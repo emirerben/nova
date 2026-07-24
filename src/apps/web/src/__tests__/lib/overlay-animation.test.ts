@@ -12,6 +12,7 @@ import {
   staggeredSliceSettleS,
   staggeredSlicePreviewVisibleAt,
   staggeredSliceStateAt,
+  themeTransitionStateAt,
 } from "@/lib/overlay-animation";
 
 describe("easeOutCubic", () => {
@@ -374,7 +375,7 @@ describe("animationStateAt — bounce", () => {
   });
 });
 
-describe("animationStateAt — giant-title-wipe", () => {
+describe("themeTransitionStateAt — giant-title-wipe", () => {
   it("holds at normal scale through the opening title beat", () => {
     expect(giantTitleWipeScaleAt(0, 4)).toBeCloseTo(1.0);
     expect(giantTitleWipeScaleAt(2.7, 4)).toBeCloseTo(1.0);
@@ -383,24 +384,32 @@ describe("animationStateAt — giant-title-wipe", () => {
   });
 
   it("rapidly scales into an oversized wipe after the hold", () => {
-    const ramp = animationStateAt("giant-title-wipe", 3.1, 4, TEXT);
+    const ramp = themeTransitionStateAt({ type: "giant-title-wipe" }, 3.1, 4);
     expect(ramp.scale).toBeGreaterThan(5.5);
     expect(ramp.alpha).toBeCloseTo(1.0);
     expect(ramp.yTranslate).toBeCloseTo(0);
     expect(ramp.scaleOriginX).toBeCloseTo(13.0);
     expect(ramp.scaleOriginY).toBeCloseTo(-80.0);
-    expect(ramp.visibleText).toBe(TEXT);
+    expect(ramp.visibleText).toBe("");
   });
 
   it("ends inside the letter with no typography left over the content", () => {
     expect(giantTitleWipeAlphaAt(3.7, 4)).toBeCloseTo(1.0);
     expect(giantTitleWipeAlphaAt(3.93, 4)).toBeLessThan(0.03);
-    const end = animationStateAt("giant-title-wipe", 4, 4, TEXT);
+    const end = themeTransitionStateAt({ type: "giant-title-wipe" }, 4, 4);
     expect(end.scale).toBeCloseTo(60.0);
     expect(end.alpha).toBeCloseTo(0);
     expect(end.yTranslate).toBeCloseTo(0);
     expect(end.scaleOriginX).toBeCloseTo(13.0);
     expect(end.scaleOriginY).toBeCloseTo(-80.0);
+  });
+
+  it("leaves text effects independent so they can compose", () => {
+    const textEffect = animationStateAt("staggered-slice", 3.1, 4, TEXT);
+    const transition = themeTransitionStateAt({ type: "giant-title-wipe" }, 3.1, 4);
+    expect(textEffect.scale).toBeCloseTo(1.0);
+    expect(textEffect.visibleText).toBe(TEXT);
+    expect(transition.scale).toBeGreaterThan(5.5);
   });
 });
 
@@ -412,7 +421,6 @@ describe("non-text-reveal effects preserve visibleText", () => {
     "slide-down",
     "pop-in",
     "bounce",
-    "giant-title-wipe",
     "none",
     "static",
   ];

@@ -46,16 +46,23 @@ function latestBar(onChange: jest.Mock): TextElementBar {
 }
 
 describe("TextLane horizontal controls", () => {
-  it.each([
-    ["Staggered slice", "staggered-slice"],
-    ["Giant title wipe", "giant-title-wipe"],
-  ])("offers and applies the shared %s animation", async (label, effect) => {
+  it("offers and applies the shared Staggered slice animation", async () => {
     const onChange = renderLane(makeBar({ effect: "static" }));
 
-    fireEvent.click(screen.getByRole("button", { name: label }));
+    fireEvent.click(screen.getByRole("button", { name: "Staggered slice" }));
 
     await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
-    expect(latestBar(onChange).effect).toBe(effect);
+    expect(latestBar(onChange).effect).toBe("staggered-slice");
+  });
+
+  it("offers Giant title wipe as a theme transition, not a text effect", async () => {
+    const onChange = renderLane(makeBar({ effect: "staggered-slice" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Giant title wipe" }));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    expect(latestBar(onChange).effect).toBe("staggered-slice");
+    expect(latestBar(onChange).theme_transition).toEqual({ type: "giant-title-wipe" });
   });
 
   it("does not create history entries when the active choices are clicked", () => {

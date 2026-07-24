@@ -25,6 +25,11 @@ export interface AnimationState {
   showCursor: boolean;
 }
 
+export interface ThemeTransition {
+  type?: string | null;
+  target_glyph?: string | null;
+}
+
 export interface StaggeredSliceGlyphState {
   grapheme: string;
   opacity: number;
@@ -296,6 +301,39 @@ export function giantTitleWipeScaleOrigin(): { scaleOriginX: number; scaleOrigin
   };
 }
 
+function identityAnimationState(text: string): AnimationState {
+  return {
+    scale: 1.0,
+    alpha: 1.0,
+    yTranslate: 0.0,
+    scaleOriginX: 0.0,
+    scaleOriginY: 0.0,
+    visibleText: text,
+    showCursor: false,
+  };
+}
+
+/**
+ * Theme-transition layer, independent from text entrance `effect`.
+ * Mirror of text_overlay_skia._theme_transition_canvas.
+ */
+export function themeTransitionStateAt(
+  themeTransition: ThemeTransition | string | null | undefined,
+  tLocal: number,
+  durationS: number,
+): AnimationState {
+  const transitionType =
+    typeof themeTransition === "string" ? themeTransition : themeTransition?.type;
+  const state = identityAnimationState("");
+  if (transitionType !== "giant-title-wipe") return state;
+  state.scale = giantTitleWipeScaleAt(tLocal, durationS);
+  state.alpha = giantTitleWipeAlphaAt(tLocal, durationS);
+  const origin = giantTitleWipeScaleOrigin();
+  state.scaleOriginX = origin.scaleOriginX;
+  state.scaleOriginY = origin.scaleOriginY;
+  return state;
+}
+
 /** Mirror Skia's word-wrapper normalization for fixed-layout reveal effects. */
 export function normalizeAnimatedRevealText(text: string): string {
   return text
@@ -316,13 +354,8 @@ export function animationStateAt(
   durationS: number,
   text: string,
 ): AnimationState {
-  let scale = 1.0;
-  let alpha = 1.0;
-  let yTranslate = 0.0;
-  let scaleOriginX = 0.0;
-  let scaleOriginY = 0.0;
-  let visibleText = text;
-  let showCursor = false;
+  let { scale, alpha, yTranslate, scaleOriginX, scaleOriginY, visibleText, showCursor } =
+    identityAnimationState(text);
 
   if (effect === "scale-up") {
     const window = durationS > 0.6 ? 0.6 : Math.max(durationS, 0.01);
@@ -370,12 +403,6 @@ export function animationStateAt(
       }
     }
     // else scale = 1.0 (identity)
-  } else if (effect === "giant-title-wipe") {
-    scale = giantTitleWipeScaleAt(tLocal, durationS);
-    alpha = giantTitleWipeAlphaAt(tLocal, durationS);
-    const origin = giantTitleWipeScaleOrigin();
-    scaleOriginX = origin.scaleOriginX;
-    scaleOriginY = origin.scaleOriginY;
   }
   // "none", "static", "karaoke-line", "lyric-line", "font-cycle", unknown → identity
 

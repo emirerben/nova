@@ -569,13 +569,17 @@ def test_animated_effects_all_produce_sequences(tmp_workdir):
         "slide-up",
         "slide-down",
         "bounce",
-        "giant-title-wipe",
     ):
         ov = {**base, "effect": effect}
         seq = tos._generate_overlay_sequence(ov, tmp_workdir, hash(effect) & 0xFF)
         assert seq is not None, f"{effect} returned None"
         assert seq["is_animated"] is True, f"{effect} not marked animated"
         assert seq["n_frames"] > 1
+    ov = {**base, "effect": "static", "theme_transition": {"type": "giant-title-wipe"}}
+    seq = tos._generate_overlay_sequence(ov, tmp_workdir, 250)
+    assert seq is not None
+    assert seq["is_animated"] is True
+    assert seq["n_frames"] > 1
 
 
 def test_giant_title_wipe_scale_holds_then_crops_offscreen():
@@ -591,31 +595,22 @@ def test_giant_title_wipe_scale_holds_then_crops_offscreen():
     assert tos._giant_title_wipe_scale_origin() == pytest.approx((13.0, -80.0))
 
 
-def test_giant_title_wipe_draws_scaled_full_text():
+def test_giant_title_wipe_theme_transition_wraps_text_effect():
     overlay = {
         "text": "GOAL OF THE\nTOURNAMENT",
-        "effect": "giant-title-wipe",
+        "effect": "staggered-slice",
+        "theme_transition": {"type": "giant-title-wipe"},
         "position": "center",
         "font_family": "Inter",
         "text_size_px": 118,
         "text_color": "#FFFFFF",
     }
     surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
-    calls = []
-
-    def capture(_canvas, text, _overlay, **kwargs):
-        calls.append((text, kwargs))
-
-    with mock.patch.object(tos, "_draw_centered_text", side_effect=capture):
-        tos._draw_with_animation(surface.getCanvas(), overlay, 3.1, 4.0)
-
-    assert calls == [("GOAL OF THE\nTOURNAMENT", mock.ANY)]
-    assert calls[0][1]["scale"] > 5.5
-    assert calls[0][1]["alpha"] == pytest.approx(1.0)
-    assert calls[0][1]["x_translate"] == pytest.approx(0.0)
-    assert calls[0][1]["y_translate"] == pytest.approx(0.0)
-    assert calls[0][1]["scale_origin_x"] == pytest.approx(13.0)
-    assert calls[0][1]["scale_origin_y"] == pytest.approx(-80.0)
+    assert tos._is_animated(overlay) is True
+    assert tos._staggered_slice_hold_plan(overlay, 120, 1.0 / tos.FPS, 4.0) is None
+    with mock.patch.object(tos, "_draw_staggered_slice") as draw_staggered:
+        tos._draw_overlay_on_canvas(surface.getCanvas(), overlay, 3.1, 4.0)
+    draw_staggered.assert_called_once()
 
 
 def test_staggered_slice_timing_model_matches_two_stage_contract():

@@ -18,7 +18,7 @@ export type MediaType = (typeof MEDIA_TYPE_OPTIONS)[number];
 
 export const OVERLAY_EFFECT_OPTIONS = [
   "pop-in", "fade-in", "scale-up", "font-cycle", "typewriter",
-  "glitch", "bounce", "slide-in", "slide-up", "giant-title-wipe", "static", "none",
+  "glitch", "bounce", "slide-in", "slide-up", "static", "none",
 ] as const;
 export type OverlayEffect = (typeof OVERLAY_EFFECT_OPTIONS)[number];
 

@@ -38,7 +38,7 @@ describe("edit-copilot op contract fixtures", () => {
 });
 
 describe("edit-copilot extended op validation", () => {
-  it.each(["staggered-slice", "giant-title-wipe"])(
+  it.each(["staggered-slice"])(
     "accepts the editor-directed %s effect",
     (effect) => {
       expect(
