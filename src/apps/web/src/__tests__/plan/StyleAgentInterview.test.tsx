@@ -83,8 +83,29 @@ describe("StyleAgentInterview — load and greeting", () => {
       new Promise((resolve) => setTimeout(() => resolve(makeStartResponse()), 9999)) as never,
     );
 
-    render(<StyleAgentInterview />);
+    const { container } = render(<StyleAgentInterview />);
     expect(screen.getByText(/Loading your style/)).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /Loading your style/i })).toBeInTheDocument();
+    expect(container.querySelector(".beam-loader")).toHaveAttribute("data-mode", "line");
+  });
+
+  it("test_thinking_state_is_accessible: pending turn announces Kria is thinking", async () => {
+    mockStart.mockResolvedValue(makeStartResponse());
+    mockTurn.mockResolvedValue(new Promise(() => {}) as never);
+
+    await act(async () => {
+      render(<StyleAgentInterview />);
+    });
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, { target: { value: "make it calmer" } });
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+    });
+
+    expect(screen.getByRole("status", { name: /Kria is thinking/i })).toBeInTheDocument();
+    expect(screen.getByText(/Thinking/i)).toBeInTheDocument();
   });
 });
 

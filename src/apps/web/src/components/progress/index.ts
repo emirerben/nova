@@ -3,6 +3,7 @@
  */
 
 export { ProgressTheater } from "./ProgressTheater";
+export { BeamLoader } from "./BeamLoader";
 export { PhaseChipRow } from "./PhaseChipRow";
 export { StatusHeadline } from "./StatusHeadline";
 export { EtaBar } from "./EtaBar";
