@@ -167,7 +167,7 @@ describe("buildEditorCommitRequest", () => {
       title: "",
       orientationDirty: false,
       orientation: "landscape",
-      variant: { render_generation_id: "gen-current", music_track_id: "track-current" },
+      variant: { render_generation_id: "gen-current" },
     });
     expect(clean.orientation).toBeUndefined();
 
@@ -322,7 +322,7 @@ describe("buildEditorCommitRequest", () => {
       musicTrackId: "track-new",
       titleDirty: false,
       title: "",
-      variant: { render_generation_id: "gen-current", music_track_id: "track-current" },
+      variant: { render_generation_id: "gen-current" },
     });
 
     expect(body.music_track_id).toBe("track-new");
@@ -330,30 +330,36 @@ describe("buildEditorCommitRequest", () => {
     expect(body.base_generation).toBe("gen-current");
   });
 
-  it("stages background music separately for no-song variants", () => {
+  it("sends background music only as an explicitly dirty audio section", () => {
     const body = buildEditorCommitRequest({
       elements: [element],
       textDirty: false,
       timelineDirty: false,
       slots: [],
-      musicDirty: true,
-      musicTrackId: "track-bed",
-      backgroundMusicLevel: 0.3,
+      backgroundMusicDirty: true,
+      backgroundMusic: {
+        track_id: "bed-new",
+        enabled: true,
+        start_s: 2.5,
+        end_s: 12,
+        gain_db: -16,
+        muted: false,
+      },
       titleDirty: false,
       title: "",
-      variant: {
-        render_generation_id: "gen-current",
-        music_track_id: null,
-        background_music: null,
-      },
+      variant: { render_generation_id: "gen-current" },
     });
 
-    expect(body.music_track_id).toBeUndefined();
     expect(body.background_music).toEqual({
-      track_id: "track-bed",
-      start_s: 0,
-      level: 0.3,
+      track_id: "bed-new",
+      enabled: true,
+      start_s: 2.5,
+      end_s: 12,
+      gain_db: -16,
+      muted: false,
     });
+    expect(body.music_track_id).toBeUndefined();
+    expect(body.timeline_slots).toBeUndefined();
   });
 
   it("atomically preserves unsaved timeline edits with a song window", () => {

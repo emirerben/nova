@@ -1109,6 +1109,20 @@ export interface PlanItemVariant {
    */
   music_preview_url?: string | null;
   music_preview_start_s?: number | null;
+  background_music?: {
+    track_id: string;
+    title: string;
+    artist?: string | null;
+    preview_url: string;
+    src_gcs_path: string;
+    start_s: number;
+    end_s: number;
+    duration_s: number;
+    track_duration_s: number;
+    gain_db: number;
+    muted: boolean;
+    enabled: boolean;
+  } | null;
   style_set_id: string | null;
   // Agent-decided (or user-pinned) intro size — drives the ±size stepper.
   intro_text_size_px: number | null;
@@ -1231,16 +1245,6 @@ export interface PlanItemVariant {
   pre_overlay_video_url?: string | null;
   /** Sound-effect placements applied as the outermost audio layer. */
   sound_effects?: SoundEffectPlacement[] | null;
-  /** User-authored background music bed for no-song variants. */
-  background_music?: {
-    track_id?: string | null;
-    track_title?: string | null;
-    artist?: string | null;
-    start_s?: number | null;
-    level?: number | null;
-  } | null;
-  /** Renderer treatment derived from background_music; persisted for fast audio passes. */
-  background_music_treatment?: Record<string, unknown> | null;
   /** GCS key of the clean (sfx-free) variant before the first SFX apply-pass. */
   pre_sfx_video_path?: string | null;
   /**

@@ -16,6 +16,13 @@ All notable changes to this project will be documented in this file.
 - **Persisted sound effects preview on editor open.** Existing glossary and uploaded SFX placements now load signed preview URLs without waiting for the Sounds drawer.
 - **The timeline no longer shows a music bed for videos with no music.** Music rows are based on an actual matched song, voiceover bed, or background music state instead of incidental mix metadata.
 
+## [0.12.6.1] — 2026-07-24
+
+### Fixed
+- **Editor audio is now canonical across preview, save, reload, and export.** Automatically generated sound effects collapse only when they are the same effect at nearly identical timestamps, while manual and intentionally layered effects stay intact. The editor preview now honors the same SFX start time, trim window, duration, and gain data that the render pass uses.
+- **Background music is now a real editable audio lane.** The timeline only shows music when a valid playable music bed exists, and creators can add, replace, trim, remove, mute, and adjust music volume without changing a song/lyrics variant's song identity.
+- **Music and SFX edits now save through audio-only rendering.** Audio timeline edits persist atomically, avoid stale draft objects across variant switches or reloads, and rerun only the minimum audio mix/render work instead of transcription, planning, visual matching, captions, or unrelated AI steps.
+
 ## [0.12.6.0] — 2026-07-24
 
 ### Added

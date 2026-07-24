@@ -3793,7 +3793,9 @@ def _run_regenerate_variant(
         and text_behind_subject is None
         and orientation_override is None
     )
-    if _is_sfx_only and _settings_sfx.sound_effects_enabled:
+    if _is_sfx_only and (
+        _settings_sfx.sound_effects_enabled or _settings_sfx.smart_music_bed_enabled
+    ):
         _run_sfx_pass(
             job_id=job_id,
             variant_id=variant_id,
