@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.7.0] — 2026-07-24
+
+### Added
+- **Uploaded visuals can now carry creator-written context.** Each visual in the plan-item pool and editor drawer has separate `You` and `Nova` descriptions, so creators can tell Nova what a niche screenshot, product, meme, or reference actually means without overwriting Nova's own analysis. That creator context is stored separately, takes priority during overlay placement, wishlist filtering, visual-treatment planning, and smart-edit asset matching, and can be edited later to re-match visuals without re-analyzing files, moving manually placed visuals, or rerunning unrelated generation. Web-assisted recognition stays out of this release: it could help public logos or famous references, but the privacy, provenance, latency, and noisy-source risks make creator context the safer first solution.
+
 ## [0.12.6.0] — 2026-07-24
 
 ### Added

@@ -75,6 +75,7 @@ export default function ToolDrawer({
   onAddTextCard,
   onAddVisualBlockText,
   onSelectVisualBlockText,
+  onSaveVisualAssetContext,
   onPatchVisualBlock,
   onDuplicateVisualBlock,
   onDeleteVisualBlock,
@@ -133,6 +134,7 @@ export default function ToolDrawer({
   onAddTextCard?: (preset: "card" | "quote" | "statistic" | "transition") => void;
   onAddVisualBlockText?: (blockId: string) => void;
   onSelectVisualBlockText?: (textId: string) => void;
+  onSaveVisualAssetContext?: (asset: PoolAsset, userContext: string) => void | Promise<void>;
   onPatchVisualBlock?: (id: string, patch: Partial<VisualBlock>) => void;
   onDuplicateVisualBlock?: (id: string) => void;
   onDeleteVisualBlock?: (id: string) => void;
@@ -361,6 +363,7 @@ export default function ToolDrawer({
           onAddTextCard={onAddTextCard}
           onAddBlockText={onAddVisualBlockText}
           onSelectBlockText={onSelectVisualBlockText}
+          onSaveAssetContext={onSaveVisualAssetContext}
           onPatchBlock={onPatchVisualBlock}
           onDuplicateBlock={onDuplicateVisualBlock}
           onDeleteBlock={onDeleteVisualBlock}
@@ -403,6 +406,7 @@ function VisualsDrawer({
   onAddTextCard,
   onAddBlockText,
   onSelectBlockText,
+  onSaveAssetContext,
   onPatchBlock,
   onDuplicateBlock,
   onDeleteBlock,
@@ -424,6 +428,7 @@ function VisualsDrawer({
   onAddTextCard?: (preset: "card" | "quote" | "statistic" | "transition") => void;
   onAddBlockText?: (blockId: string) => void;
   onSelectBlockText?: (textId: string) => void;
+  onSaveAssetContext?: (asset: PoolAsset, userContext: string) => void | Promise<void>;
   onPatchBlock?: (id: string, patch: Partial<VisualBlock>) => void;
   onDuplicateBlock?: (id: string) => void;
   onDeleteBlock?: (id: string) => void;
@@ -516,12 +521,12 @@ function VisualsDrawer({
           {ready.map((asset) => {
             const selected = selectedAssetIds.includes(asset.id);
             return (
-              <button
+              <VisualAssetButton
                 key={asset.id}
-                type="button"
-                aria-label={`Select ${asset.source_filename || asset.kind}`}
-                aria-pressed={selected}
-                onClick={() =>
+                asset={asset}
+                selected={selected}
+                selectedIndex={selectedAssetIds.indexOf(asset.id)}
+                onSelect={() =>
                   setSelectedAssetIds((current) =>
                     selected
                       ? current.filter((id) => id !== asset.id)
@@ -530,29 +535,8 @@ function VisualsDrawer({
                         : current,
                   )
                 }
-                className={`relative aspect-[9/12] overflow-hidden rounded-lg border-2 ${
-                  selected ? "border-lime-500" : "border-transparent"
-                } focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500`}
-              >
-                {asset.display_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={asset.display_url} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <span className="flex h-full items-center justify-center bg-zinc-100 text-[10px] text-zinc-500">
-                    {asset.kind}
-                  </span>
-                )}
-                {selected && (
-                  <span className="absolute right-1 top-1 rounded-full bg-lime-500 px-1.5 text-[10px] font-bold text-black">
-                    {selectedAssetIds.indexOf(asset.id) + 1}
-                  </span>
-                )}
-                {asset.source_type === "extracted_frame" && (
-                  <span className="absolute bottom-1 left-1 right-1 truncate rounded bg-black/70 px-1 py-0.5 text-[8px] font-semibold text-white">
-                    Extracted frame
-                  </span>
-                )}
-              </button>
+                onSaveContext={onSaveAssetContext}
+              />
             );
           })}
         </div>
@@ -1190,6 +1174,127 @@ function VisualsDrawer({
           </p>
         )}
       </section>
+    </div>
+  );
+}
+
+function VisualAssetButton({
+  asset,
+  selected,
+  selectedIndex,
+  onSelect,
+  onSaveContext,
+}: {
+  asset: PoolAsset;
+  selected: boolean;
+  selectedIndex: number;
+  onSelect: () => void;
+  onSaveContext?: (asset: PoolAsset, userContext: string) => void | Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(asset.user_context ?? "");
+  const [saving, setSaving] = useState(false);
+  const novaLine = asset.nova_description ?? asset.nova_on_screen_text ?? null;
+
+  useEffect(() => {
+    setDraft(asset.user_context ?? "");
+  }, [asset.user_context]);
+
+  async function save() {
+    if (!onSaveContext) return;
+    setSaving(true);
+    try {
+      await onSaveContext(asset, draft);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-1.5">
+      <button
+        type="button"
+        aria-label={`Select ${asset.source_filename || asset.kind}`}
+        aria-pressed={selected}
+        onClick={onSelect}
+        className={`relative aspect-[9/12] w-full overflow-hidden rounded-md border-2 ${
+          selected ? "border-lime-500" : "border-transparent"
+        } focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500`}
+      >
+        {asset.display_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={asset.display_url} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span className="flex h-full items-center justify-center bg-zinc-100 text-[10px] text-zinc-500">
+            {asset.kind}
+          </span>
+        )}
+        {selected && (
+          <span className="absolute right-1 top-1 rounded-full bg-lime-500 px-1.5 text-[10px] font-bold text-black">
+            {selectedIndex + 1}
+          </span>
+        )}
+        {asset.source_type === "extracted_frame" && (
+          <span className="absolute bottom-1 left-1 right-1 truncate rounded bg-black/70 px-1 py-0.5 text-[8px] font-semibold text-white">
+            Extracted frame
+          </span>
+        )}
+      </button>
+      <div className="mt-1.5 space-y-1 text-[10px] leading-snug">
+        <div>
+          <div className="flex items-center justify-between gap-1">
+            <span className="font-semibold text-[#3f3f46]">You</span>
+            {onSaveContext && !editing && (
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="min-h-7 text-lime-700 underline underline-offset-2"
+              >
+                {asset.user_context ? "Edit" : "Add"}
+              </button>
+            )}
+          </div>
+          {editing ? (
+            <div className="space-y-1">
+              <textarea
+                rows={3}
+                maxLength={500}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                className="w-full resize-none rounded-md border border-zinc-200 px-1.5 py-1 text-[11px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                placeholder="Context for matching"
+              />
+              <div className="flex justify-end gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraft(asset.user_context ?? "");
+                    setEditing(false);
+                  }}
+                  className="min-h-7 px-1 text-[#71717a]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={save}
+                  className="min-h-7 rounded bg-[#0c0c0e] px-1.5 font-semibold text-white disabled:opacity-50"
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="line-clamp-2 text-[#71717a]">{asset.user_context || "No context yet"}</p>
+          )}
+        </div>
+        <div>
+          <span className="font-semibold text-[#3f3f46]">Nova</span>
+          <p className="line-clamp-2 text-[#71717a]">{novaLine || "Analysis pending"}</p>
+        </div>
+      </div>
     </div>
   );
 }

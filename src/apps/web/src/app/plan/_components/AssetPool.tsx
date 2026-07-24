@@ -27,6 +27,7 @@ import {
   registerPoolAsset,
   requestPoolAssetUploadUrls,
   sha256HexOfFile,
+  updatePoolAssetContext,
   uploadToGcs,
   type PoolAsset,
 } from "@/lib/plan-api";
@@ -82,6 +83,7 @@ export default function AssetPool({
   attachedPaths,
   onUseInEdit,
   attachBusy = false,
+  onAssetContextUpdated,
 }: {
   itemId: string;
   /** gcs_paths already attached as clips — flips a promoted tile to "In edit ✓". */
@@ -93,6 +95,8 @@ export default function AssetPool({
    *  a full-set replace, so concurrent writers silently drop each other's clips —
    *  promotion is disabled until the other write settles. */
   attachBusy?: boolean;
+  /** Context edits clear pending AI suggestions; parent clears lifted local rows. */
+  onAssetContextUpdated?: (asset: PoolAsset) => void;
 }) {
   const enabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true";
 
@@ -284,6 +288,22 @@ export default function AssetPool({
     [onUseInEdit],
   );
 
+  const handleSaveContext = useCallback(
+    async (asset: PoolAsset, userContext: string) => {
+      try {
+        const updated = await updatePoolAssetContext(itemId, asset.id, userContext || null);
+        listEpoch.current += 1;
+        setAssets((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+        onAssetContextUpdated?.(updated);
+        showNotice(userContext.trim() ? "Context saved — re-match visuals when ready" : "Context cleared");
+      } catch (err) {
+        if (isUnavailableError(err)) setUnavailable(true);
+        else setUploadError(err instanceof Error ? err.message : "Couldn't save context");
+      }
+    },
+    [itemId, onAssetContextUpdated, showNotice],
+  );
+
   if (!enabled) return null;
 
   const count = assets.length;
@@ -370,6 +390,7 @@ export default function AssetPool({
                     onUseInEdit={
                       onUseInEdit && asset.gcs_path ? () => handleUseInEdit(asset) : undefined
                     }
+                    onSaveContext={(userContext) => handleSaveContext(asset, userContext)}
                     promoting={promotingId === asset.id}
                     promotionDisabled={attachBusy || promotingId !== null}
                   />
@@ -426,6 +447,7 @@ function AssetTile({
   onRemove,
   inEdit = false,
   onUseInEdit,
+  onSaveContext,
   promoting = false,
   promotionDisabled = false,
 }: {
@@ -433,12 +455,30 @@ function AssetTile({
   onRemove: () => void;
   inEdit?: boolean;
   onUseInEdit?: () => void | Promise<void>;
+  onSaveContext: (userContext: string) => void | Promise<void>;
   /** THIS tile's promotion is in flight — shows "Adding…" instead of the button. */
   promoting?: boolean;
   /** ANY attach writer is busy (another promotion or a clip upload) — disables the button. */
   promotionDisabled?: boolean;
 }) {
   const label = asset.source_filename ?? "this file";
+  const [editingContext, setEditingContext] = useState(false);
+  const [draftContext, setDraftContext] = useState(asset.user_context ?? "");
+  const [savingContext, setSavingContext] = useState(false);
+
+  useEffect(() => {
+    setDraftContext(asset.user_context ?? "");
+  }, [asset.user_context]);
+
+  async function saveContext() {
+    setSavingContext(true);
+    try {
+      await onSaveContext(draftContext);
+      setEditingContext(false);
+    } finally {
+      setSavingContext(false);
+    }
+  }
 
   if (asset.status === "failed") {
     return (
@@ -460,46 +500,105 @@ function AssetTile({
   // Detected brand identities (analysis v5) ride the subject line's title
   // attribute — enough to verify detection without new tile chrome.
   const brands = asset.brands ?? [];
+  const novaLine = asset.nova_description ?? asset.nova_on_screen_text ?? null;
 
   return (
-    <li className="group relative aspect-square overflow-hidden rounded-lg border border-zinc-200 bg-white">
-      {busy || !asset.display_url ? (
-        <div className="absolute inset-0 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
-      ) : asset.kind === "video" ? (
-        <video src={asset.display_url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
-      ) : (
-        // eslint-disable-next-line @next/next/no-img-element -- signed GCS thumbnail, not an optimizable static asset
-        <img src={asset.display_url} alt={asset.subject ?? label} className="h-full w-full object-cover" />
-      )}
-      {/* bg-white/95 (not /85): the lime-700 action text must hold the 4.5:1
-          contrast floor even over dark video frames (DESIGN.md §8). */}
-      <span className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-1 bg-white/95 px-1.5 py-1 text-[12px] text-[#71717a]">
-        <span
-          className="truncate"
-          title={!busy && brands.length > 0 ? `Brands: ${brands.join(", ")}` : undefined}
-        >
-          {busy ? "Analyzing…" : (asset.subject ?? asset.kind)}
-        </span>
-        {/* "Use in edit" — video assets only: promotes the pool object to a real
-            clip (B-roll / spine candidate). Images stay overlay-only in v1. */}
-        {onUseInEdit && asset.kind === "video" && !busy && (
-          inEdit ? (
-            <span className="shrink-0 text-lime-700">In edit ✓</span>
-          ) : promoting ? (
-            <span className="shrink-0 text-lime-700">Adding…</span>
-          ) : (
-            <button
-              type="button"
-              onClick={onUseInEdit}
-              disabled={promotionDisabled}
-              aria-label={`Use ${label} in the edit`}
-              className="-my-1 flex min-h-11 min-w-11 shrink-0 items-center px-1 text-lime-700 underline underline-offset-2 transition-colors hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-lime-700 sm:min-h-[28px] sm:min-w-[28px]"
-            >
-              Use in edit
-            </button>
-          )
+    <li className="group relative overflow-hidden rounded-lg border border-zinc-200 bg-white">
+      <div className="relative aspect-square overflow-hidden">
+        {busy || !asset.display_url ? (
+          <div className="absolute inset-0 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+        ) : asset.kind === "video" ? (
+          <video src={asset.display_url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element -- signed GCS thumbnail, not an optimizable static asset
+          <img src={asset.display_url} alt={asset.subject ?? label} className="h-full w-full object-cover" />
         )}
-      </span>
+        {/* bg-white/95 (not /85): the lime-700 action text must hold the 4.5:1
+            contrast floor even over dark video frames (DESIGN.md §8). */}
+        <span className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-1 bg-white/95 px-1.5 py-1 text-[12px] text-[#71717a]">
+          <span
+            className="truncate"
+            title={!busy && brands.length > 0 ? `Brands: ${brands.join(", ")}` : undefined}
+          >
+            {busy ? "Analyzing…" : (asset.subject ?? asset.kind)}
+          </span>
+          {/* "Use in edit" — video assets only: promotes the pool object to a real
+              clip (B-roll / spine candidate). Images stay overlay-only in v1. */}
+          {onUseInEdit && asset.kind === "video" && !busy && (
+            inEdit ? (
+              <span className="shrink-0 text-lime-700">In edit ✓</span>
+            ) : promoting ? (
+              <span className="shrink-0 text-lime-700">Adding…</span>
+            ) : (
+              <button
+                type="button"
+                onClick={onUseInEdit}
+                disabled={promotionDisabled}
+                aria-label={`Use ${label} in the edit`}
+                className="-my-1 flex min-h-11 min-w-11 shrink-0 items-center px-1 text-lime-700 underline underline-offset-2 transition-colors hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-lime-700 sm:min-h-[28px] sm:min-w-[28px]"
+              >
+                Use in edit
+              </button>
+            )
+          )}
+        </span>
+      </div>
+      <div className="space-y-1.5 px-2 py-2 text-[11px] leading-snug">
+        <div>
+          <div className="mb-0.5 flex items-center justify-between gap-2">
+            <span className="font-semibold text-[#3f3f46]">You</span>
+            {!busy && !editingContext && (
+              <button
+                type="button"
+                onClick={() => setEditingContext(true)}
+                className="min-h-7 shrink-0 text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+              >
+                {asset.user_context ? "Edit" : "Add context"}
+              </button>
+            )}
+          </div>
+          {editingContext ? (
+            <div className="space-y-1.5">
+              <textarea
+                value={draftContext}
+                maxLength={500}
+                rows={3}
+                onChange={(event) => setDraftContext(event.target.value)}
+                className="w-full resize-none rounded-md border border-zinc-200 px-2 py-1.5 text-[12px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                placeholder="What should Nova know about this visual?"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftContext(asset.user_context ?? "");
+                    setEditingContext(false);
+                  }}
+                  className="min-h-8 px-2 text-[11px] text-[#71717a] hover:text-[#0c0c0e]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={savingContext}
+                  onClick={saveContext}
+                  className="min-h-8 rounded-md bg-[#0c0c0e] px-2 text-[11px] font-semibold text-white disabled:opacity-50"
+                >
+                  {savingContext ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="line-clamp-2 text-[#71717a]">
+              {asset.user_context || "No context yet"}
+            </p>
+          )}
+        </div>
+        <div>
+          <span className="font-semibold text-[#3f3f46]">Nova</span>
+          <p className="line-clamp-2 text-[#71717a]">{novaLine || "Analysis pending"}</p>
+        </div>
+      </div>
       <button
         type="button"
         onClick={onRemove}

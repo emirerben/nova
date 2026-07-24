@@ -38,6 +38,7 @@ _MAX_WORDS = 1200
 class PlacementAsset(BaseModel):
     asset_id: str
     kind: str = "image"  # "image" | "video"
+    user_context: str = ""
     subject: str = ""
     description: str = ""
     on_screen_text: str = ""
@@ -100,7 +101,9 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
         # 1.1.0 (plan 009): rule 5 rewritten — "full" is a real cover-crop
         # takeover with its own grammar (1.5-4s, never in hook/intro, max 2);
         # assets_payload gains aspect + pixel dims.
-        prompt_version="1.1.0",
+        # 1.2.0: asset payload gains creator-authored user_context, which takes
+        # semantic priority over Nova-generated description fields.
+        prompt_version="1.2.0",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -126,6 +129,7 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
             {
                 "asset_id": a.asset_id,
                 "kind": a.kind,
+                "user_context": _sanitize_text(a.user_context),
                 "subject": _sanitize_text(a.subject),
                 "description": _sanitize_text(a.description),
                 "on_screen_text": _sanitize_text(a.on_screen_text),

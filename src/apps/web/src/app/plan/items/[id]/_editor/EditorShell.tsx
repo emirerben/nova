@@ -36,6 +36,7 @@ import {
   requestOverlayUploadUrls,
   requestPoolAssetUploadUrls,
   sha256HexOfFile,
+  updatePoolAssetContext,
   uploadToGcs,
   type MediaOverlay,
   type OverlaySuggestion,
@@ -1676,6 +1677,15 @@ export default function EditorShell({
         });
     },
     [itemId],
+  );
+
+  const handleSavePoolAssetContext = useCallback(
+    async (asset: PoolAsset, userContext: string) => {
+      const updated = await updatePoolAssetContext(itemId, asset.id, userContext || null);
+      setPoolAssets((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+      overlaySuggestions.clearLocal();
+    },
+    [itemId, overlaySuggestions],
   );
 
   const sampleWord = useMemo(() => {
@@ -4220,6 +4230,7 @@ export default function EditorShell({
               onAddTextCard={addTextCard}
               onAddVisualBlockText={addVisualBlockText}
               onSelectVisualBlockText={selectText}
+              onSaveVisualAssetContext={handleSavePoolAssetContext}
               onPatchVisualBlock={patchVisualBlock}
               onDuplicateVisualBlock={duplicateVisualBlock}
               onDeleteVisualBlock={deleteVisualBlock}
@@ -4282,6 +4293,7 @@ export default function EditorShell({
               onAddTextCard={addTextCard}
               onAddVisualBlockText={addVisualBlockText}
               onSelectVisualBlockText={selectText}
+              onSaveVisualAssetContext={handleSavePoolAssetContext}
               onPatchVisualBlock={patchVisualBlock}
               onDuplicateVisualBlock={duplicateVisualBlock}
               onDeleteVisualBlock={deleteVisualBlock}

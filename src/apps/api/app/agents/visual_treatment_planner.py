@@ -14,6 +14,7 @@ from app.pipeline.prompt_loader import load_prompt
 class VisualTreatmentAsset(BaseModel):
     asset_id: str
     kind: Literal["image", "video"]
+    user_context: str = ""
     subject: str = ""
     description: str = ""
     on_screen_text: str = ""
@@ -69,7 +70,7 @@ class VisualTreatmentPlannerAgent(Agent[VisualTreatmentPlannerInput, VisualTreat
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.visual_treatment_planner",
         prompt_id="visual_treatment_planner",
-        prompt_version="2026-07-18.3",
+        prompt_version="2026-07-24.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

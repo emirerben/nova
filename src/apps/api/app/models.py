@@ -906,6 +906,10 @@ class PlanItemAsset(Base):
     aspect: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Persisted analysis output (image_metadata / clip_metadata agents, PR1a).
     analysis: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Creator-authored context about what this visual represents. Kept separate
+    # from Nova's generated analysis so matching can prefer user intent without
+    # rewriting AI metadata.
+    user_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     # uploaded | analyzing | ready | failed
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="uploaded")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())

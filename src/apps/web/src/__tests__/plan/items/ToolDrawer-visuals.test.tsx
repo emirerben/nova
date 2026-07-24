@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom";
 import type { ComponentProps } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import ToolDrawer from "@/app/plan/items/[id]/_editor/ToolDrawer";
 import type { PoolAsset, VisualBlock } from "@/lib/plan-api";
 
@@ -12,6 +12,9 @@ const assets: PoolAsset[] = [0, 1, 2].map((index) => ({
   duration_s: null,
   aspect: 0.5625,
   subject: `Frame ${index}`,
+  user_context: "",
+  nova_description: `Nova frame ${index}`,
+  nova_on_screen_text: null,
   display_url: `https://signed/frame-${index}.jpg`,
   deduped: false,
   gcs_path: `users/u/plan/i/pool/frame-${index}.jpg`,
@@ -56,6 +59,28 @@ describe("ToolDrawer visual blocks", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add montage (3)" }));
 
     expect(onAddMontage).toHaveBeenCalledWith(["asset-0", "asset-1", "asset-2"]);
+  });
+
+  it("shows source-labeled asset context and saves creator edits", async () => {
+    const onSaveVisualAssetContext = jest.fn();
+    renderVisuals({ onSaveVisualAssetContext });
+
+    expect(screen.getAllByText("You")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("Nova")[0]).toBeInTheDocument();
+    expect(screen.getByText("Nova frame 0")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Add" })[0]);
+    fireEvent.change(screen.getByPlaceholderText("Context for matching"), {
+      target: { value: "Use this when I mention onboarding" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    expect(onSaveVisualAssetContext).toHaveBeenCalledWith(
+      assets[0],
+      "Use this when I mention onboarding",
+    );
   });
 
   it("exposes card background, transition, duplication, and audio controls", () => {

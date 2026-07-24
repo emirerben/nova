@@ -1908,6 +1908,13 @@ export default function PlanItemPage() {
                 attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
                 onUseInEdit={promotePoolAsset}
                 attachBusy={uploading || uploaderBusy}
+                onAssetContextUpdated={(updated) => {
+                  overlaySuggestions.setRows([]);
+                  overlaySuggestions.setKeptIds(new Set());
+                  setSuggestionPoolAssets((prev) =>
+                    prev.map((asset) => (asset.id === updated.id ? updated : asset)),
+                  );
+                }}
               />
             )}
 
