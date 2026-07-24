@@ -167,7 +167,7 @@ describe("buildEditorCommitRequest", () => {
       title: "",
       orientationDirty: false,
       orientation: "landscape",
-      variant: { render_generation_id: "gen-current" },
+      variant: { render_generation_id: "gen-current", music_track_id: "track-current" },
     });
     expect(clean.orientation).toBeUndefined();
 
@@ -322,12 +322,38 @@ describe("buildEditorCommitRequest", () => {
       musicTrackId: "track-new",
       titleDirty: false,
       title: "",
-      variant: { render_generation_id: "gen-current" },
+      variant: { render_generation_id: "gen-current", music_track_id: "track-current" },
     });
 
     expect(body.music_track_id).toBe("track-new");
     expect(body.timeline_slots).toBeUndefined();
     expect(body.base_generation).toBe("gen-current");
+  });
+
+  it("stages background music separately for no-song variants", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      musicDirty: true,
+      musicTrackId: "track-bed",
+      backgroundMusicLevel: 0.3,
+      titleDirty: false,
+      title: "",
+      variant: {
+        render_generation_id: "gen-current",
+        music_track_id: null,
+        background_music: null,
+      },
+    });
+
+    expect(body.music_track_id).toBeUndefined();
+    expect(body.background_music).toEqual({
+      track_id: "track-bed",
+      start_s: 0,
+      level: 0.3,
+    });
   });
 
   it("atomically preserves unsaved timeline edits with a song window", () => {

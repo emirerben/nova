@@ -1882,7 +1882,11 @@ def _run_media_overlay_pass(
         from app.config import settings as _settings_ov  # noqa: PLC0415
 
         will_reapply_sfx = (
-            bool(existing.get("smart_music_treatment")) and _settings_ov.smart_music_bed_enabled
+            (
+                bool(existing.get("background_music_treatment"))
+                or bool(existing.get("smart_music_treatment"))
+            )
+            and _settings_ov.smart_music_bed_enabled
         ) or (bool(existing.get("sound_effects")) and _settings_ov.sound_effects_enabled)
 
         # ── Clear path: remove all cards ──────────────────────────────────────
@@ -2206,7 +2210,13 @@ def _will_reapply_media_layers(variant: dict) -> bool:
     ready/failed, so a poll never observes an effect-less "ready"."""
     return (
         (bool(variant.get("media_overlays")) and settings.media_overlays_enabled)
-        or (bool(variant.get("smart_music_treatment")) and settings.smart_music_bed_enabled)
+        or (
+            (
+                bool(variant.get("background_music_treatment"))
+                or bool(variant.get("smart_music_treatment"))
+            )
+            and settings.smart_music_bed_enabled
+        )
         or (bool(variant.get("sound_effects")) and settings.sound_effects_enabled)
     )
 
@@ -2390,9 +2400,10 @@ def _reapply_persisted_sfx_if_any(
             sfx_raw = (
                 existing.get("sound_effects") or [] if _settings_sfx.sound_effects_enabled else []
             )
-            music_active = bool(existing.get("smart_music_treatment")) and getattr(
-                _settings_sfx, "smart_music_bed_enabled", True
-            )
+            music_active = (
+                bool(existing.get("background_music_treatment"))
+                or bool(existing.get("smart_music_treatment"))
+            ) and getattr(_settings_sfx, "smart_music_bed_enabled", True)
             if not sfx_raw and not music_active:
                 return False
             # pre_sfx_video_path must now point to the newly composited overlay video
@@ -2544,7 +2555,10 @@ def _run_sfx_pass(
         # Kill switch: with the bed disabled the treatment stays persisted (so
         # re-enabling restores it) but this pass mixes as if it were absent.
         music_treatment = (
-            existing.get("smart_music_treatment") if settings.smart_music_bed_enabled else None
+            existing.get("background_music_treatment")
+            or existing.get("smart_music_treatment")
+            if settings.smart_music_bed_enabled
+            else None
         )
 
         # ── Clear path: remove all effects ───────────────────────────────────
@@ -7724,6 +7738,7 @@ def _load_smart_caption_assets(job_id: str) -> list[dict[str, Any]]:
                 "source_filename": row.source_filename,
                 "duration_s": row.duration_s,
                 "aspect": row.aspect,
+                "user_context": row.user_context,
                 "analysis": row.analysis or {},
             }
             for row in rows

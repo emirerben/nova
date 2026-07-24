@@ -24,6 +24,7 @@ import {
   changePlanItemStyle,
   getPlanItem,
   getPlanItemJobStatus,
+  getSfxAudioUrl,
   deletePoolAsset,
   editPlanItemVariant,
   getLyricSeeds,
@@ -520,10 +521,11 @@ function OrientationToggle({
 
 /** The Captions-tab deep link — shared by the read-only banner and the
  * text-locked notice so both surfaces point at the same target identically. */
-function CaptionsTabLink({ itemId }: { itemId: string }) {
+function CaptionsTabLink({ itemId, variantId }: { itemId: string; variantId?: string | null }) {
+  const href = `/plan/items/${itemId}?tab=captions${variantId ? `&variant=${encodeURIComponent(variantId)}` : ""}`;
   return (
     <a
-      href={`/plan/items/${itemId}`}
+      href={href}
       className="font-semibold underline decoration-zinc-300 underline-offset-4 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
     >
       Open the item page Captions tab
@@ -787,10 +789,10 @@ export default function EditorShell({
   const [musicTracksLoaded, setMusicTracksLoaded] = useState(false);
   const [musicTracksLoading, setMusicTracksLoading] = useState(false);
   const [selectedMusicTrackId, setSelectedMusicTrackId] = useState<string | null>(
-    variant?.music_track_id ?? null,
+    variant?.music_track_id ?? variant?.background_music?.track_id ?? null,
   );
   const [musicStartS, setMusicStartS] = useState<number>(
-    variant?.music_preview_start_s ?? 0,
+    variant?.music_preview_start_s ?? variant?.background_music?.start_s ?? 0,
   );
   const [musicDirty, setMusicDirty] = useState(false);
   const musicHydratedVariantIdRef = useRef<string | null>(null);
@@ -820,10 +822,17 @@ export default function EditorShell({
     const changedVariant = musicHydratedVariantIdRef.current !== nextVariantId;
     if (!changedVariant && musicDirty) return;
     musicHydratedVariantIdRef.current = nextVariantId;
-    setSelectedMusicTrackId(variant?.music_track_id ?? null);
-    setMusicStartS(variant?.music_preview_start_s ?? 0);
+    setSelectedMusicTrackId(variant?.music_track_id ?? variant?.background_music?.track_id ?? null);
+    setMusicStartS(variant?.music_preview_start_s ?? variant?.background_music?.start_s ?? 0);
     setMusicDirty(false);
-  }, [musicDirty, variant?.variant_id, variant?.music_track_id, variant?.music_preview_start_s]);
+  }, [
+    musicDirty,
+    variant?.variant_id,
+    variant?.music_track_id,
+    variant?.background_music?.track_id,
+    variant?.background_music?.start_s,
+    variant?.music_preview_start_s,
+  ]);
   const slots = localSlots ?? clip.state.slots;
   const reloadClipTimeline = clip.reload;
   const clipDirty = useMemo(
@@ -903,7 +912,8 @@ export default function EditorShell({
     capabilities.overlays === false &&
     capabilities.visual_blocks !== true &&
     capabilities.orientation?.editable !== true &&
-    capabilities.music_window?.editable !== true;
+    capabilities.music_window?.editable !== true &&
+    capabilities.background_music !== true;
   const readOnlyReason = editorReasonCopy(capabilities?.reason);
   // Text-elements gate (plan 010 OV-1): once sfx/overlays flip true on
   // subtitled variants the shell is editable, but on-video text still lives
@@ -1029,6 +1039,20 @@ export default function EditorShell({
       ? state.bars
       : state.bars.filter((bar) => !isLyricBar(bar));
   }, [lyricBarsAvailable, lyricsEnabled, lyricsOptionalActive, state.bars]);
+  const subtitledCaptionTimelineBars = useMemo<TextElementBar[]>(() => {
+    if (variant?.resolved_archetype !== "subtitled") return [];
+    return (variant.caption_cues ?? []).map((cue, index) => ({
+      id: `subtitled-caption-${index}`,
+      text: cue.text,
+      start_s: cue.start_s,
+      end_s: cue.end_s,
+      role: "narrated_caption",
+    }));
+  }, [variant?.caption_cues, variant?.resolved_archetype]);
+  const timelineTextBars = useMemo(
+    () => [...visibleTextBars, ...subtitledCaptionTimelineBars],
+    [subtitledCaptionTimelineBars, visibleTextBars],
+  );
   const lyricLineOverrides = useMemo(
     () =>
       lyricBarsAvailable
@@ -1167,7 +1191,13 @@ export default function EditorShell({
     setVirtualMusicUnavailable(true);
   }, [refreshMusicTracks]);
 
-  const effectiveMusicTrackId = selectedMusicTrackId ?? variant?.music_track_id ?? null;
+  const effectiveMusicTrackId =
+    musicDirty
+      ? selectedMusicTrackId
+      : selectedMusicTrackId ??
+        variant?.music_track_id ??
+        variant?.background_music?.track_id ??
+        null;
   const virtualMusicTrack = effectiveMusicTrackId
     ? musicTracks.find((track) => track.id === effectiveMusicTrackId) ?? null
     : null;
@@ -1221,7 +1251,11 @@ export default function EditorShell({
   const virtualPreviewRequested =
     (clipDirty || musicWindowDirty) && !virtualFallback && clip.loadState === "ready";
   const musicPreviewRequested = musicWindowDirty || virtualPreviewRequested;
-  const effectiveMusicTitle = virtualMusicTrack?.title ?? variant?.track_title ?? "Music";
+  const effectiveMusicTitle =
+    virtualMusicTrack?.title ??
+    variant?.track_title ??
+    variant?.background_music?.track_title ??
+    "Music";
   // Fallback for tracks the public gallery doesn't list (the matcher considers
   // unpublished tracks): the status response carries a fresh-signed preview URL
   // for the variant's OWN matched track. Only valid while the effective track
@@ -1513,7 +1547,10 @@ export default function EditorShell({
   }, []);
 
   useEffect(() => {
-    if ((activeTool !== "sounds" && activeTool !== "nova") || sfxGlossaryEffects.length > 0) {
+    if (
+      (activeTool !== "sounds" && activeTool !== "nova" && localSfx.length === 0) ||
+      sfxGlossaryEffects.length > 0
+    ) {
       return;
     }
     let cancelled = false;
@@ -1531,7 +1568,45 @@ export default function EditorShell({
     return () => {
       cancelled = true;
     };
-  }, [activeTool, sfxGlossaryEffects.length]);
+  }, [activeTool, localSfx.length, sfxGlossaryEffects.length]);
+
+  useEffect(() => {
+    if (localSfx.length === 0) return;
+    let cancelled = false;
+    const missingUserPaths = Array.from(
+      new Set(
+        localSfx
+          .map((placement) => placement.src_gcs_path ?? "")
+          .filter((path) => path.startsWith("users/") && !localSfxAudioUrls[path]),
+      ),
+    );
+    if (missingUserPaths.length === 0) return;
+    void Promise.all(
+      missingUserPaths.map(async (path) => {
+        try {
+          const url = await getSfxAudioUrl(itemId, path);
+          return { path, url };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((rows) => {
+      if (cancelled) return;
+      setLocalSfxAudioUrls((current) => {
+        const next = { ...current };
+        let changed = false;
+        for (const row of rows) {
+          if (!row || next[row.path] === row.url) continue;
+          next[row.path] = row.url;
+          changed = true;
+        }
+        return changed ? next : current;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId, localSfx, localSfxAudioUrls]);
 
   const musicPickerShouldLoad =
     (!!variant?.music_track_id ||
@@ -1898,20 +1973,37 @@ export default function EditorShell({
 
   const pickMusicTrack = useCallback(
     (trackId: string) => {
-      if (readOnly || !variant?.music_track_id) return;
+      if (!variant) return;
+      if (readOnly || (!variant.music_track_id && capabilities?.background_music !== true)) return;
       if (trackId === selectedMusicTrackId) return;
       history.record();
       setSelectedMusicTrackId(trackId);
       const selectedTrack = musicTracks.find((track) => track.id === trackId);
       const nextStartS = selectedTrack?.preview_start_s ?? 0;
       setMusicStartS(nextStartS);
+      const baselineTrackId = variant.music_track_id ?? variant.background_music?.track_id ?? null;
+      const baselineStartS =
+        variant.music_preview_start_s ?? variant.background_music?.start_s ?? 0;
       setMusicDirty(
-        trackId !== variant.music_track_id ||
-          Math.abs(nextStartS - (variant.music_preview_start_s ?? 0)) > 0.005,
+        trackId !== baselineTrackId || Math.abs(nextStartS - baselineStartS) > 0.005,
       );
     },
-    [history, musicTracks, readOnly, selectedMusicTrackId, variant],
+    [capabilities?.background_music, history, musicTracks, readOnly, selectedMusicTrackId, variant],
   );
+
+  const removeMusicTrack = useCallback(() => {
+    if (readOnly || !selectedMusicTrackId || !variant) return;
+    if (!variant.music_track_id && capabilities?.background_music !== true) return;
+    history.record();
+    setSelectedMusicTrackId(null);
+    setMusicDirty(!!variant.music_track_id || !!variant.background_music?.track_id);
+  }, [
+    capabilities?.background_music,
+    history,
+    readOnly,
+    selectedMusicTrackId,
+    variant,
+  ]);
 
   const patchMusicStart = useCallback(
     (startS: number) => {
@@ -2926,6 +3018,8 @@ export default function EditorShell({
     visibleTextBars,
     title,
     toolDisabledReasons,
+    variant?.base_video_path,
+    variant?.caption_cues?.length,
     variant?.music_track_id,
     variant?.intro_layout,
     variant?.intro_mode,
@@ -3454,6 +3548,7 @@ export default function EditorShell({
         mixLevel,
         musicDirty,
         musicTrackId: selectedMusicTrackId,
+        backgroundMusicLevel: variant.background_music?.level ?? 0.22,
         musicWindow:
           commitMusicWindow && musicAlignment
             ? { startS: songWindowState.startS, alignment: musicAlignment }
@@ -3740,14 +3835,21 @@ export default function EditorShell({
   }
 
   const isVoiceoverVariant = variant.variant_id.startsWith("voiceover");
-  const musicSwapEditable = !!variant.music_track_id && !readOnly;
-  const hasSoundBed = !!effectiveMusicTrackId || isVoiceoverVariant || mixLevel != null;
+  const backgroundMusicEditable = capabilities?.background_music === true && !readOnly;
+  const musicSwapEditable = (!!variant.music_track_id || backgroundMusicEditable) && !readOnly;
+  const hasSoundBed = !!effectiveMusicTrackId || isVoiceoverVariant;
   const soundBedLabel = isVoiceoverVariant
     ? effectiveMusicTrackId
       ? `Voiceover + ${effectiveMusicTitle}`
       : "Voiceover"
-    : effectiveMusicTitle;
-  const soundLaneTitle = isVoiceoverVariant ? "Voiceover bed" : "Music + effects";
+    : effectiveMusicTrackId
+      ? effectiveMusicTitle
+      : "Background";
+  const soundLaneTitle = effectiveMusicTrackId
+    ? "Music + effects"
+    : isVoiceoverVariant
+      ? "Voiceover bed"
+      : "Sound effects";
   const hasUnbakedSfx = sfxDirty || localSfx.length > 0;
   const clipPreviewHint = (() => {
     if (!virtualPreviewActive) return "Clip changes preview after Save";
@@ -3837,7 +3939,7 @@ export default function EditorShell({
       selectElement(kind, id);
     },
     onClear: clear,
-    textBars: visibleTextBars,
+    textBars: timelineTextBars,
     readOnly,
     onRecordTimelineEdit: recordTimelineDrag,
     onPreviewTextTiming: previewTextTiming,
@@ -4207,6 +4309,7 @@ export default function EditorShell({
               currentMusicTrackId={selectedMusicTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
+              onRemoveMusic={removeMusicTrack}
               musicWindow={musicWindowControl}
               overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
@@ -4269,6 +4372,7 @@ export default function EditorShell({
               currentMusicTrackId={selectedMusicTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
+              onRemoveMusic={removeMusicTrack}
               musicWindow={musicWindowControl}
               overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
@@ -4409,6 +4513,7 @@ export default function EditorShell({
           currentMusicTrackId={selectedMusicTrackId}
           musicEditable={musicSwapEditable}
           onPickMusic={pickMusicTrack}
+          onRemoveMusic={removeMusicTrack}
           musicWindow={musicWindowControl}
           onPatchMix={patchMixLevel}
           smartPlaceAvailable={
@@ -4566,7 +4671,7 @@ export default function EditorShell({
             {(readOnlyReason === CAPTIONS_TAB_REASON || isCaptionEdit) && (
               <>
                 {" "}
-                <CaptionsTabLink itemId={itemId} />
+                <CaptionsTabLink itemId={itemId} variantId={variant.variant_id} />
               </>
             )}
           </div>
@@ -4588,7 +4693,7 @@ export default function EditorShell({
               // Caption archetype (with base video): captions live in the Captions
               // tab regardless of text_elements, so always show the reason + link.
               <>
-                {CAPTIONS_TAB_REASON}. <CaptionsTabLink itemId={itemId} />
+                {CAPTIONS_TAB_REASON}. <CaptionsTabLink itemId={itemId} variantId={variant.variant_id} />
               </>
             ) : (
               // Non-caption text lock (e.g. lyrics_sync): keep the reason-driven
@@ -4598,7 +4703,7 @@ export default function EditorShell({
                 {textElementsLockedCopy(capabilities) === CAPTIONS_TAB_REASON && (
                   <>
                     {" "}
-                    <CaptionsTabLink itemId={itemId} />
+                    <CaptionsTabLink itemId={itemId} variantId={variant.variant_id} />
                   </>
                 )}
               </>

@@ -145,6 +145,7 @@ export default function InspectorPanel({
   musicEditable = false,
   onPatchMix,
   onPickMusic,
+  onRemoveMusic,
   musicWindow,
   smartPlaceAvailable = false,
   onSmartPlace,
@@ -191,6 +192,7 @@ export default function InspectorPanel({
   musicEditable?: boolean;
   onPatchMix?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  onRemoveMusic?: () => void;
   musicWindow?: SongWindowControl;
   smartPlaceAvailable?: boolean;
   onSmartPlace?: () => void;
@@ -280,6 +282,7 @@ export default function InspectorPanel({
           currentMusicTrackId={currentMusicTrackId}
           musicEditable={musicEditable}
           onPickMusic={onPickMusic}
+          onRemoveMusic={onRemoveMusic}
           musicWindow={musicWindow}
           onPatch={onPatchMix}
           onClose={onClose}
@@ -313,6 +316,7 @@ function MixInspector({
   musicEditable,
   onPatch,
   onPickMusic,
+  onRemoveMusic,
   musicWindow,
   onClose,
 }: {
@@ -325,6 +329,7 @@ function MixInspector({
   musicEditable: boolean;
   onPatch?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  onRemoveMusic?: () => void;
   musicWindow?: SongWindowControl;
   onClose: () => void;
 }) {
@@ -344,6 +349,15 @@ function MixInspector({
             </div>
           ) : (
             <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+              {currentMusicTrackId && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveMusic?.()}
+                  className="flex min-h-10 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                >
+                  Remove music
+                </button>
+              )}
               {musicTracks.map((track) => {
                 const selected = track.id === currentMusicTrackId;
                 return (

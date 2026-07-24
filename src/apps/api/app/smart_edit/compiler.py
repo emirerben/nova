@@ -504,6 +504,25 @@ def compile_smart_plan(
                     }
                 )
             elif isinstance(lane, CameraLane):
+                has_title_lane = any(
+                    getattr(other, "kind", None) == "text"
+                    and getattr(other, "token", None) in {"section_heading", "context_title"}
+                    for other in event.lanes
+                )
+                if event.role == "list_item" and has_title_lane:
+                    omissions.append(
+                        {"event_id": event.event_id, "reason": "camera_suppressed_for_title"}
+                    )
+                    continue
+                end_s = min(
+                    event.active_end_ms / 1000,
+                    event.active_start_ms / 1000 + 1.2,
+                )
+                if event.role == "list_item" and end_s - (event.active_start_ms / 1000) < 0.6:
+                    omissions.append(
+                        {"event_id": event.event_id, "reason": "camera_window_too_short"}
+                    )
+                    continue
                 camera_intents.append(
                     {
                         "event_id": event.event_id,
@@ -512,10 +531,7 @@ def compile_smart_plan(
                         "intensity_token": lane.intensity_token,
                         "at_s": event.active_start_ms / 1000,
                         "start_s": event.active_start_ms / 1000,
-                        "end_s": min(
-                            event.active_end_ms / 1000,
-                            event.active_start_ms / 1000 + 0.8,
-                        ),
+                        "end_s": end_s,
                     }
                 )
             elif isinstance(lane, AudioTreatmentLane):
@@ -717,6 +733,8 @@ def resolve_sfx_placements(
 ) -> list[dict[str, Any]]:
     """Resolve role intents to audited library assets with role-specific spacing."""
 
+    from app.services.sfx_spacing import normalize_auto_sfx_placements  # noqa: PLC0415
+
     preset = load_preset(preset_id, preset_version)
     glossary = _clean_sfx_rows(glossary)
     placements: list[dict[str, Any]] = []
@@ -749,4 +767,4 @@ def resolve_sfx_placements(
         last_by_role[role] = at_s
         if len(placements) >= 48:
             break
-    return placements
+    return normalize_auto_sfx_placements(placements)

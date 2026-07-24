@@ -95,6 +95,13 @@ export interface EditorCommitRequest {
     start_s: number;
     alignment: "preserve_cuts" | "resync_beats";
   };
+  /** Background music bed for no-song variants. Omit when untouched. */
+  background_music?: {
+    track_id?: string | null;
+    remove?: boolean;
+    start_s?: number;
+    level?: number;
+  };
   /** Full replacement sound-effect placement list. Omit when untouched. */
   sound_effects?: SoundEffectPlacement[];
   /** Full replacement media-overlay card list. Omit when untouched. */
@@ -135,6 +142,7 @@ export interface EditorCommitResponse {
     timeline?: boolean;
     mix?: boolean;
     music?: boolean;
+    background_music?: boolean;
     sound_effects?: boolean;
     media_overlays?: boolean;
     visual_blocks?: boolean;
@@ -157,6 +165,11 @@ export interface EditorCommitVariantBaseline {
   render_generation_id?: string | null;
   render_finished_at?: string | null;
   music_track_id?: string | null;
+  background_music?: {
+    track_id?: string | null;
+    start_s?: number | null;
+    level?: number | null;
+  } | null;
   editor_capabilities?: {
     mix?: boolean;
   } | null;
@@ -191,6 +204,7 @@ export function buildEditorCommitRequest({
   musicDirty = false,
   musicTrackId,
   musicWindow,
+  backgroundMusicLevel,
   sfxDirty = false,
   soundEffects = [],
   overlaysDirty = false,
@@ -222,6 +236,7 @@ export function buildEditorCommitRequest({
     startS: number;
     alignment: "preserve_cuts" | "resync_beats";
   };
+  backgroundMusicLevel?: number | null;
   sfxDirty?: boolean;
   soundEffects?: SoundEffectPlacement[];
   overlaysDirty?: boolean;
@@ -240,6 +255,11 @@ export function buildEditorCommitRequest({
   const mixEditable = variant.editor_capabilities?.mix !== false;
   const normalizedMix =
     mixLevel == null ? null : Math.max(0, Math.min(1, Number(mixLevel)));
+  const baselineBackgroundTrackId = variant.background_music?.track_id ?? null;
+  const normalizedBackgroundLevel = Math.max(
+    0,
+    Math.min(1, Number(backgroundMusicLevel ?? variant.background_music?.level ?? 0.22)),
+  );
   // An accepted suggestion the user later undid (its card is no longer in the
   // staged overlay list) must NOT be resolved server-side — filter against the
   // overlays actually being sent. Ids ride ONLY with the media_overlays
@@ -282,12 +302,22 @@ export function buildEditorCommitRequest({
       ? { music_level: normalizedMix }
       : undefined,
     music_track_id:
-      musicDirty && musicTrackId !== variant.music_track_id
+      musicDirty && variant.music_track_id && musicTrackId !== variant.music_track_id
         ? musicTrackId ?? null
         : undefined,
     music_window: musicWindow
       ? { start_s: musicWindow.startS, alignment: musicWindow.alignment }
       : undefined,
+    background_music:
+      musicDirty && !variant.music_track_id && musicTrackId !== baselineBackgroundTrackId
+        ? musicTrackId
+          ? {
+              track_id: musicTrackId,
+              start_s: musicWindow?.startS ?? 0,
+              level: normalizedBackgroundLevel,
+            }
+          : { remove: true }
+        : undefined,
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
     visual_blocks: visualBlocksDirty ? visualBlocks : undefined,
@@ -339,6 +369,8 @@ const TIMELINE_ERROR_MESSAGES: Record<string, string> = {
     "Beat timing is unavailable for this song, so its section cannot be changed.",
   linear_timeline_unavailable:
     "This older edit cannot preserve its cuts. Choose Re-sync to beats instead.",
+  background_music_song_variant:
+    "This version already uses a song. Choose a no-song edit to add background music.",
 };
 
 type TimelineOutOfBoundsDetail = {

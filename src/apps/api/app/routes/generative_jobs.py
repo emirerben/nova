@@ -247,6 +247,8 @@ class GenerativeVariant(BaseModel):
     video_path: str | None = None
     music_track_id: str | None = None
     track_title: str | None = None
+    background_music: dict | None = None
+    background_music_treatment: dict | None = None
     # Fresh-signed preview URL (+ best-section offset) for the variant's matched
     # track, minted on every status read. The editor's virtual preview cannot
     # rely on the public /music-tracks gallery for this: the generative matcher
@@ -622,6 +624,13 @@ class EditorCommitMusicWindow(BaseModel):
         return value
 
 
+class EditorCommitBackgroundMusic(BaseModel):
+    track_id: str | None = None
+    remove: bool = False
+    start_s: float = Field(0.0, ge=0.0)
+    level: float = Field(0.22, ge=0.0, le=1.0)
+
+
 class EditorCommitCaptionMeta(BaseModel):
     enabled: bool | None = None
     style: Literal["sentence", "word"] | None = None
@@ -645,6 +654,7 @@ class EditorCommitRequest(BaseModel):
     mix: EditorCommitMix | None = None
     music_track_id: str | None = None
     music_window: EditorCommitMusicWindow | None = None
+    background_music: EditorCommitBackgroundMusic | None = None
     lyrics: LyricsSectionRequest | None = None
     orientation: str | None = None
     sound_effects: list[dict] | None = None
@@ -677,6 +687,7 @@ class EditorCommitSections(BaseModel):
     timeline: bool
     mix: bool
     music: bool
+    background_music: bool = False
     lyrics: bool
     orientation: bool = False
     sound_effects: bool
@@ -3410,6 +3421,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 or str(variant.get("variant_id") or "").startswith("voiceover")
             )
         ),
+        "background_music": (
+            variant.get("music_track_id") is None
+            and variant.get("text_mode") != "lyrics"
+            and bool(variant.get("video_path"))
+        ),
         "sfx": sfx_reason is None,
         "overlays": overlays_reason is None,
         "visual_blocks": visual_blocks_reason is None,
@@ -4010,6 +4026,7 @@ def prepare_editor_commit(
     *,
     user_id: str | None = None,
     music_track: MusicTrack | None = None,
+    background_music_track: MusicTrack | None = None,
     visual_assets: dict[str, dict] | None = None,
 ) -> dict:
     """Validate ALL sections, compare the baseline, then stage ONE atomic write.
@@ -4042,6 +4059,7 @@ def prepare_editor_commit(
         and payload.mix is None
         and payload.music_track_id is None
         and payload.music_window is None
+        and payload.background_music is None
         and payload.lyrics is None
         and payload.orientation is None
         and payload.sound_effects is None
@@ -4251,6 +4269,80 @@ def prepare_editor_commit(
         )
         music_window_video_duration_s = video_duration_s
 
+    background_music_patch: dict | None = None
+    if payload.background_music is not None:
+        bg = payload.background_music
+        if variant.get("music_track_id") is not None or variant.get("text_mode") == "lyrics":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "background_music_song_variant"},
+            )
+        if not variant.get("video_path"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "video_duration_unknown"},
+            )
+        if bg.remove:
+            background_music_patch = {"background_music": None, "background_music_treatment": None}
+        else:
+            if not bg.track_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "music_track_unavailable"},
+                )
+            track = background_music_track
+            if (
+                track is None
+                or str(track.id) != str(bg.track_id)
+                or track.analysis_status != "ready"
+                or not track.audio_gcs_path
+                or track.published_at is None
+                or track.archived_at is not None
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "music_track_unavailable"},
+                )
+            video_duration_s = visual_block_variant_duration(variant)
+            track_duration_s = _track_duration(track)
+            if video_duration_s <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "video_duration_unknown"},
+                )
+            if track_duration_s <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "track_duration_unknown"},
+                )
+            if track_duration_s + _MUSIC_WINDOW_EPSILON_S < video_duration_s:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "song_shorter_than_video"},
+                )
+            start_s = min(float(bg.start_s), max(0.0, track_duration_s - video_duration_s))
+            level = max(0.0, min(1.0, float(bg.level)))
+            gain_db = -36.0 + (level * 36.0)
+            end_s = min(track_duration_s, start_s + video_duration_s)
+            background_music_patch = {
+                "background_music": {
+                    "track_id": str(track.id),
+                    "track_title": track.title,
+                    "artist": track.artist,
+                    "start_s": round(start_s, 3),
+                    "level": round(level, 3),
+                },
+                "background_music_treatment": {
+                    "track_id": str(track.id),
+                    "src_gcs_path": track.audio_gcs_path,
+                    "section_start_s": round(start_s, 3),
+                    "section_end_s": round(end_s, 3),
+                    "gain_db": round(gain_db, 2),
+                    "speech_duck_db": -12.0,
+                    "final_lufs": -14.0,
+                },
+            }
+
     validated_lyrics: dict | None = None
     if payload.lyrics is not None:
         lyric_payload: dict = {}
@@ -4441,6 +4533,7 @@ def prepare_editor_commit(
         or payload.mix is not None
         or payload.music_track_id is not None
         or payload.music_window is not None
+        or background_music_patch is not None
         or validated_lyrics is not None
         or validated_orientation is not None
         or validated_sfx is not None
@@ -4503,6 +4596,12 @@ def prepare_editor_commit(
                 }
             else:
                 updated.pop("user_timeline", None)
+        if background_music_patch is not None:
+            if background_music_patch["background_music"] is None:
+                updated.pop("background_music", None)
+                updated.pop("background_music_treatment", None)
+            else:
+                updated.update(background_music_patch)
         if validated_lyrics is not None:
             if "enabled" in payload.lyrics.model_fields_set:
                 updated["lyrics_enabled"] = bool(validated_lyrics["enabled"])
@@ -4563,6 +4662,7 @@ def prepare_editor_commit(
         "visual_blocks_override": validated_visual_blocks,
         "orientation_override": validated_orientation,
         "new_track_id": payload.music_track_id,
+        "background_music_changed": background_music_patch is not None,
         "music_window_alignment": (
             payload.music_window.alignment if payload.music_window is not None else None
         ),
@@ -4579,6 +4679,7 @@ def prepare_editor_commit(
             "timeline": payload.timeline_slots is not None,
             "mix": payload.mix is not None,
             "music": payload.music_track_id is not None or payload.music_window is not None,
+            "background_music": background_music_patch is not None,
             "lyrics": payload.lyrics is not None,
             "orientation": payload.orientation is not None,
             # validated_* (not raw payload presence) so an ignored empty-list
@@ -4641,12 +4742,14 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         sections.get("sound_effects") is True
         or sections.get("media_overlays") is True
         or sections.get("visual_blocks") is True
+        or sections.get("background_music") is True
     ) and not (
         sections.get("text_elements") is True
         or sections.get("caption_meta") is True
         or sections.get("timeline") is True
         or sections.get("mix") is True
         or sections.get("orientation") is True
+        or sections.get("music") is True
     )
     if (
         lane_only_commit
@@ -4699,8 +4802,8 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         # Overlay pass is outer-video, then the worker's terminal hook reapplies the
         # just-persisted SFX if this same commit also changed sound_effects.
         kwargs["media_overlays_override"] = prep["media_overlays_override"]
-    elif prep["sfx_override"] is not None:
-        kwargs["sfx_override"] = prep["sfx_override"]
+    elif prep["sfx_override"] is not None or sections.get("background_music") is True:
+        kwargs["sfx_override"] = prep["sfx_override"] or []
     is_reburn_only = (
         prep["timeline_override"] is None
         and prep["mix_override"] is None
@@ -4710,6 +4813,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         and sections.get("lyrics") is not True
         and prep.get("music_window_alignment") is None
         and sections.get("visual_blocks") is not True
+        and sections.get("music") is not True
     )
     apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}
     if is_reburn_only:
@@ -4817,6 +4921,12 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession) -> None
     from app.routes.music import _preview_audio_url  # noqa: PLC0415
 
     track_ids = {v.get("music_track_id") for v in variants if v.get("music_track_id")}
+    track_ids.update(
+        (v.get("background_music") or {}).get("track_id")
+        for v in variants
+        if isinstance(v.get("background_music"), dict)
+        and (v.get("background_music") or {}).get("track_id")
+    )
     if not track_ids:
         return
     try:
@@ -4841,6 +4951,19 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession) -> None
                     else _recommended_music_start(track, video_duration_s)
                 )
                 variant["music_preview_start_s"] = round(start_s, 2)
+            except (TypeError, ValueError):
+                variant["music_preview_start_s"] = 0.0
+            continue
+        bg = (
+            variant.get("background_music")
+            if isinstance(variant.get("background_music"), dict)
+            else None
+        )
+        bg_track = tracks.get((bg or {}).get("track_id") or "")
+        if bg_track is not None:
+            variant["music_preview_url"] = _preview_audio_url(bg_track.audio_gcs_path)
+            try:
+                variant["music_preview_start_s"] = round(float(bg.get("start_s") or 0.0), 2)
             except (TypeError, ValueError):
                 variant["music_preview_start_s"] = 0.0
 
