@@ -373,6 +373,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "camera_effects": False,
     }
 
     # Exactly ONE render kick, carrying the new token + the timeline override.
@@ -466,6 +467,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "camera_effects": False,
     }
 
     calls: list[dict] = []
@@ -1916,6 +1918,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "camera_effects": False,
         "title": True,
     }
     v = job.assembly_plan["variants"][0]
@@ -2487,6 +2490,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "sfx": True,
         "overlays": True,
         "visual_blocks": False,
+        "camera_effects": False,
         "background_music": False,
         # _arm leaves overlay_autoplace_enabled at its default (False).
         "suggestions": False,
@@ -2494,6 +2498,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "sfx_reason": None,
         "overlays_reason": None,
         "visual_blocks_reason": "visual_blocks_disabled",
+        "camera_effects_reason": "unsupported_archetype",
         "suggestions_reason": "autoplace_disabled",
         "lyrics": {
             "editable": False,
