@@ -75,7 +75,7 @@ import { sfxNeedsBake, sfxPersistDirty } from "@/lib/sfx-dirty";
 import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
-import { ProgressTheater, ShimmerSweep } from "@/components/progress";
+import { BeamLoader, ProgressTheater, ShimmerSweep } from "@/components/progress";
 import { StableVideo } from "@/components/StableVideo";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
@@ -4088,14 +4088,22 @@ function Hero({
       {/* While a re-render runs, keep old video playing under a gentle overlay.
           pointer-events-none ensures the video controls beneath remain usable. */}
       {rendering && variant.output_url && (
-        <div className="pointer-events-none absolute inset-0" role="status" aria-label="Rendering new version">
-          <div className="absolute inset-0 bg-white/25" />
-          <ShimmerSweep tone="light" />
-          <HeroRenderingLabel
-            startedAt={variant.render_started_at ?? null}
-            action={renderingAction}
-          />
-        </div>
+        <BeamLoader
+          tone="light"
+          mode="frame"
+          strength="medium"
+          ariaLabel="Rendering new version"
+          className="pointer-events-none absolute inset-0 rounded-xl"
+        >
+          <div className="relative h-full w-full">
+            <div className="absolute inset-0 bg-white/25" />
+            <ShimmerSweep tone="light" />
+            <HeroRenderingLabel
+              startedAt={variant.render_started_at ?? null}
+              action={renderingAction}
+            />
+          </div>
+        </BeamLoader>
       )}
       {/* "✓ Updated" confirmation — flashes for 4 s when the new video swaps in. */}
       {showUpdatedCue && !rendering && variant.output_url && (

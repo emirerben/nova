@@ -17,6 +17,7 @@ import {
   PHASE_LABEL,
   PHASE_ORDER,
 } from "@/lib/template-job-phases";
+import { BeamLoader } from "@/components/progress";
 
 // User-facing copy per structured failure reason. Keep these short and
 // actionable — they replace "Something went wrong" for failures the API
@@ -119,7 +120,17 @@ function ProgressScreen({ job }: { job: TemplateJobStatusResponse | null }) {
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4">
       <div className="w-full max-w-md flex flex-col items-center gap-6">
-        <div className="w-10 h-10 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
+        <BeamLoader
+          tone="dark"
+          mode="pulse"
+          strength="medium"
+          ariaLabel={label}
+          className="h-12 w-12 rounded-full bg-zinc-950"
+        >
+          <div className="flex h-12 w-12 items-center justify-center">
+            <span className="h-2 w-2 rounded-full bg-amber-300" />
+          </div>
+        </BeamLoader>
         <p className="text-zinc-200 text-base text-center">{label}</p>
 
         {/* Bar */}
@@ -411,9 +422,17 @@ function SideBySideComparison({
             <div>
               <p className="text-xs text-zinc-500 mb-1">Original Template</p>
               {loading ? (
-                <div className="h-48 bg-zinc-900 rounded-lg flex items-center justify-center">
-                  <div className="w-6 h-6 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
-                </div>
+                <BeamLoader
+                  tone="dark"
+                  mode="frame"
+                  strength="subtle"
+                  ariaLabel="Loading original template"
+                  className="h-48 rounded-lg bg-zinc-900"
+                >
+                  <div className="flex h-48 items-center justify-center">
+                    <span className="h-2 w-2 rounded-full bg-amber-300" />
+                  </div>
+                </BeamLoader>
               ) : templateUrl ? (
                 <video
                   ref={templateVideoRef}

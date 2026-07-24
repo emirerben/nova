@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { BeamLoader } from "@/components/progress";
 import type { ContentPlan, PlanItem, PlanItemStatus } from "@/lib/plan-api";
 import { addIdea, deleteIdea, generateIdeasWithAI } from "@/lib/plan-api";
 
@@ -291,13 +292,18 @@ function GeneratingLedgerRow() {
       aria-live="polite"
       className="grid min-h-[48px] grid-cols-[1fr_auto] items-start gap-3 border-t border-zinc-100 py-2.5 min-[380px]:grid-cols-[2rem_1fr_auto]"
     >
-      <span
-        aria-hidden
-        className="relative mt-1 hidden h-2 w-2 min-[380px]:flex"
+      <BeamLoader
+        tone="light"
+        mode="pulse"
+        className="mt-0.5 hidden h-5 w-5 rounded-full min-[380px]:block"
       >
-        <span className="absolute inline-flex h-full w-full rounded-full bg-lime-600 opacity-60 motion-safe:animate-ping" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-lime-600" />
-      </span>
+        <span
+          aria-hidden
+          className="flex h-5 w-5 items-center justify-center"
+        >
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-lime-600" />
+        </span>
+      </BeamLoader>
       <div className="flex min-w-0 flex-col gap-2">
         <div className="h-4 w-2/3 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
         <span className="text-[12px] text-[#71717a]">Kria is writing an idea…</span>
@@ -411,13 +417,19 @@ function StatusSlot({
   }
   if (status === "generating" || status === "rerolling") {
     return (
-      <span className="flex items-center gap-2 whitespace-nowrap text-[12px] text-[#71717a]">
-        Rendering…
-        <span className="relative flex h-2 w-2" aria-hidden>
-          <span className="absolute inline-flex h-full w-full rounded-full bg-lime-600 opacity-60 motion-safe:animate-ping" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-lime-600" />
+      <BeamLoader
+        tone="light"
+        mode="line"
+        ariaLabel="Rendering"
+        className="inline-block rounded-full"
+      >
+        <span className="flex items-center gap-2 whitespace-nowrap px-2 py-1 text-[12px] text-[#71717a]">
+          Rendering…
+          <span className="relative flex h-2 w-2" aria-hidden>
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-lime-600" />
+          </span>
         </span>
-      </span>
+      </BeamLoader>
     );
   }
   if (status === "failed") {

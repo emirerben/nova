@@ -50,6 +50,18 @@
   --stagger-stagger: 40ms;
   --stagger-blur: 3px;
   --stagger-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Nova Beam loader: decorative perimeter motion for video/AI wait states. */
+  --beam-rotate-dur: 1.96s;
+  --beam-line-dur: 3.1s;
+  --beam-pulse-dur: 2.3s;
+  --beam-ease: linear;
+}
+
+@property --beam-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -68,6 +80,180 @@
   50% {
     transform: scale(1.02);
     opacity: 0.85;
+  }
+}
+
+@keyframes beam-rotate {
+  to {
+    --beam-angle: 1turn;
+  }
+}
+
+@keyframes beam-breathe {
+  0%, 100% {
+    opacity: var(--beam-pulse-min);
+  }
+  50% {
+    opacity: var(--beam-pulse-max);
+  }
+}
+
+@keyframes beam-line-sweep {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(360%);
+  }
+}
+
+.beam-loader {
+  --beam-angle: 0deg;
+  --beam-main: rgba(101, 163, 13, 0.72);
+  --beam-soft: rgba(132, 204, 22, 0.34);
+  --beam-empty: rgba(132, 204, 22, 0);
+  --beam-opacity: 0.42;
+  --beam-bloom-opacity: 0.12;
+  --beam-pulse-min: 0.18;
+  --beam-pulse-max: 0.42;
+  --beam-stroke-width: 1px;
+  --beam-bloom-width: 8px;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.beam-loader[data-tone="dark"] {
+  --beam-main: rgba(251, 191, 36, 0.66);
+  --beam-soft: rgba(217, 119, 6, 0.32);
+  --beam-empty: rgba(251, 191, 36, 0);
+}
+
+.beam-loader[data-strength="medium"] {
+  --beam-opacity: 0.58;
+  --beam-bloom-opacity: 0.18;
+  --beam-pulse-max: 0.56;
+}
+
+.beam-loader__content {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.beam-loader__beam,
+.beam-loader__bloom,
+.beam-loader__line {
+  position: absolute;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.beam-loader__beam {
+  z-index: 3;
+  inset: 0;
+  padding: var(--beam-stroke-width);
+  opacity: 0;
+  background:
+    conic-gradient(
+      from var(--beam-angle),
+      var(--beam-empty) 0deg,
+      var(--beam-empty) 244deg,
+      var(--beam-soft) 286deg,
+      var(--beam-main) 314deg,
+      var(--beam-soft) 338deg,
+      var(--beam-empty) 360deg
+    );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.beam-loader__bloom {
+  z-index: 2;
+  inset: calc(var(--beam-bloom-width) * -0.5);
+  padding: var(--beam-bloom-width);
+  opacity: 0;
+  background:
+    conic-gradient(
+      from var(--beam-angle),
+      var(--beam-empty) 0deg,
+      var(--beam-empty) 244deg,
+      var(--beam-soft) 286deg,
+      var(--beam-main) 314deg,
+      var(--beam-soft) 338deg,
+      var(--beam-empty) 360deg
+    );
+  filter: blur(7px);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.beam-loader__line {
+  z-index: 3;
+  left: -42%;
+  bottom: 0;
+  width: 42%;
+  height: var(--beam-stroke-width);
+  opacity: 0;
+  background:
+    linear-gradient(90deg, transparent, var(--beam-main), var(--beam-soft), transparent);
+}
+
+.beam-loader[data-active="true"][data-mode="frame"] .beam-loader__beam {
+  opacity: var(--beam-opacity);
+  animation: beam-rotate var(--beam-rotate-dur) var(--beam-ease) infinite;
+}
+
+.beam-loader[data-active="true"][data-mode="frame"] .beam-loader__bloom {
+  opacity: var(--beam-bloom-opacity);
+  animation: beam-rotate var(--beam-rotate-dur) var(--beam-ease) infinite;
+}
+
+.beam-loader[data-active="true"][data-mode="line"] .beam-loader__line {
+  opacity: var(--beam-opacity);
+  animation: beam-line-sweep var(--beam-line-dur) var(--beam-ease) infinite;
+  will-change: transform;
+}
+
+.beam-loader[data-active="true"][data-mode="pulse"] .beam-loader__beam {
+  background:
+    linear-gradient(var(--beam-main), var(--beam-main)) padding-box,
+    linear-gradient(90deg, var(--beam-soft), var(--beam-main), var(--beam-soft)) border-box;
+  opacity: var(--beam-pulse-min);
+  animation: beam-breathe var(--beam-pulse-dur) ease-in-out infinite;
+  will-change: opacity;
+}
+
+.beam-loader[data-active="true"][data-mode="pulse"] .beam-loader__bloom {
+  background:
+    linear-gradient(90deg, var(--beam-soft), var(--beam-main), var(--beam-soft));
+  opacity: var(--beam-bloom-opacity);
+  animation: beam-breathe var(--beam-pulse-dur) ease-in-out infinite;
+  will-change: opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .beam-loader__beam,
+  .beam-loader__bloom,
+  .beam-loader__line {
+    animation: none !important;
+  }
+
+  .beam-loader[data-active="true"] .beam-loader__beam {
+    opacity: calc(var(--beam-opacity) * 0.7);
+  }
+
+  .beam-loader[data-active="true"] .beam-loader__bloom,
+  .beam-loader[data-active="true"] .beam-loader__line {
+    opacity: 0;
   }
 }
 

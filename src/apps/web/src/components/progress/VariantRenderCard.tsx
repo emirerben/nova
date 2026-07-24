@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { StableVideo } from "../StableVideo";
+import { BeamLoader } from "./BeamLoader";
 import { errorCopy, variantDisplayName } from "./constants";
 import { formatElapsed } from "./logic";
 
@@ -96,46 +97,56 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark
 
       {/* t-skel: stacks skeleton + content layers; .is-revealed cross-blurs between them.
           The arrive ring (D12) is also applied here so it frames the whole card. */}
-      <div
+      <BeamLoader
+        tone={tone}
+        mode="frame"
+        active={render_status !== "ready"}
+        strength={render_status === "rendering" ? "medium" : "subtle"}
         className={[
-          `t-skel aspect-[9/16] w-full overflow-hidden rounded-lg ${bodyClass}`,
-          revealed ? "is-revealed" : "",
+          "aspect-[9/16] w-full rounded-lg",
           arrivedOnce ? `ring-2 ${ringClass}` : "",
-        ]
-          .filter(Boolean)
-          .join(" ")}
+        ].filter(Boolean).join(" ")}
       >
-        {/* Skeleton layer: looping shimmer + status text (pending or rendering).
-            ShimmerSweep's animate-shimmer already loops — we don't use is-pulsing
-            (one-shot) since renders can take 60s+. */}
-        <div className="t-skel-skeleton">
-          <ShimmerSweep tone={tone} />
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-            {render_status === "rendering" ? (
-              <RenderingStatus
-                startedAt={render_started_at ?? null}
-                tone={tone}
-                onRetry={onRetry}
-              />
-            ) : (
-              <PendingStatus tone={tone} />
-            )}
+        <div
+          className={[
+            `t-skel h-full w-full overflow-hidden rounded-lg ${bodyClass}`,
+            revealed ? "is-revealed" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
+          {/* Skeleton layer: looping shimmer + status text (pending or rendering).
+              ShimmerSweep's animate-shimmer already loops — we don't use is-pulsing
+              (one-shot) since renders can take 60s+. */}
+          <div className="t-skel-skeleton">
+            <ShimmerSweep tone={tone} />
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+              {render_status === "rendering" ? (
+                <RenderingStatus
+                  startedAt={render_started_at ?? null}
+                  tone={tone}
+                  onRetry={onRetry}
+                />
+              ) : (
+                <PendingStatus tone={tone} />
+              )}
+            </div>
+          </div>
+
+          {/* Content layer: ready state with video.
+              Invisible (opacity 0, blurred) until .is-revealed flips it visible.
+              Uses StableVideo so re-signed URLs (new ?X-Goog-Signature every 2s poll)
+              don't restart playback. */}
+          <div className="t-skel-content">
+            <ReadyCardInner
+              outputUrl={output_url ?? null}
+              renderFinishedAt={render_finished_at ?? null}
+              displayName={displayName}
+              tone={tone}
+            />
           </div>
         </div>
-
-        {/* Content layer: ready state with video.
-            Invisible (opacity 0, blurred) until .is-revealed flips it visible.
-            Uses StableVideo so re-signed URLs (new ?X-Goog-Signature every 2s poll)
-            don't restart playback. */}
-        <div className="t-skel-content">
-          <ReadyCardInner
-            outputUrl={output_url ?? null}
-            renderFinishedAt={render_finished_at ?? null}
-            displayName={displayName}
-            tone={tone}
-          />
-        </div>
-      </div>
+      </BeamLoader>
 
       {/* Download / Share actions shown below the card after reveal */}
       {revealed && output_url && (
