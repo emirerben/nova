@@ -6,10 +6,9 @@
  *     shell, a preset pick (the one add-text path the disabled rail can't
  *     block) adds NO bar and surfaces the honest toast — and the toast
  *     container is a polite live region (DESIGN.md §7 D17).
- *  2. Captions-tab notice: the deep-link pointer the read-only banner used to
- *     carry renders as a quiet notice line when textElementsLocked, in both
- *     the full and the light layout; absent when text is editable and when
- *     the whole shell is read-only (the banner owns the link there).
+ *  2. Text-lock notice: non-caption text locks render a quiet notice line in
+ *     both the full and light layouts; caption archetypes expose editable cue
+ *     rows directly instead of linking out to another tab.
  *  3. Light-layout empty-state "Add text" CTA does not render when
  *     textElementsLocked.
  */
@@ -324,15 +323,15 @@ describe("EditorShell — add-text path on a text-locked shell (OV-1)", () => {
   });
 });
 
-describe("EditorShell — Captions-tab notice (discoverability, plan 010 review)", () => {
-  it("renders the quiet notice with the Captions-tab deep link when textElementsLocked (full layout)", async () => {
+describe("EditorShell — text-lock notice", () => {
+  it("renders the quiet notice without a Captions-tab link when textElementsLocked (full layout)", async () => {
     await renderShell(makeVariant(TEXT_LOCKED_CAPABILITIES));
 
     const notice = screen.getByTestId("captions-tab-notice");
     expect(notice).toHaveTextContent(CAPTIONS_TAB_REASON);
-    const link = screen.getByRole("link", { name: "Open the item page Captions tab" });
-    expect(link).toHaveAttribute("href", "/plan/items/item-1?tab=captions&variant=var-sub");
-    expect(notice.contains(link)).toBe(true);
+    expect(
+      screen.queryByRole("link", { name: "Open the item page Captions tab" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the notice in the light layout too", async () => {
@@ -343,8 +342,8 @@ describe("EditorShell — Captions-tab notice (discoverability, plan 010 review)
       CAPTIONS_TAB_REASON,
     );
     expect(
-      screen.getByRole("link", { name: "Open the item page Captions tab" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("link", { name: "Open the item page Captions tab" }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not render the notice when text is editable", async () => {
@@ -358,10 +357,9 @@ describe("EditorShell — Captions-tab notice (discoverability, plan 010 review)
   it("does not double up when the whole shell is read-only (the banner owns the link)", async () => {
     await renderShell(makeVariant(READ_ONLY_CAPABILITIES));
     expect(screen.queryByTestId("captions-tab-notice")).toBeNull();
-    // The read-only banner still carries the same deep link.
     expect(
-      screen.getByRole("link", { name: "Open the item page Captions tab" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("link", { name: "Open the item page Captions tab" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -563,12 +561,10 @@ describe("EditorShell — masonry smart placement history", () => {
   });
 });
 
-// Regression guard (caption-edit discoverability): once SUBTITLED_TEXT_LANE_ENABLED
-// ships, the backend sets text_elements=true for subtitled variants while their
-// captions still live in the Captions tab. A signpost gated on text_elements===false
-// would silently vanish for the exact archetype that needs it — so it must key off
-// the archetype (+ base video) via isCaptionArchetype instead.
-describe("EditorShell — Captions signpost keys off archetype, not text_elements", () => {
+// Regression guard (caption-edit discoverability): subtitled caption cues are
+// now real editor rows. They should not produce the obsolete Captions-tab
+// signpost regardless of the optional styled-text lane flag.
+describe("EditorShell — caption archetypes edit cue rows directly", () => {
   const CAPTION_TEXT_LANE_ON: EditorCapabilities = {
     text_elements: true, // styled-text lane enabled (flag rolled forward)
     timeline: true,
@@ -590,24 +586,26 @@ describe("EditorShell — Captions signpost keys off archetype, not text_element
       style_set_id: null,
       intro_text_size_px: null,
       text_elements: [],
+      caption_cues: [{ text: "Editable caption cue", start_s: 0, end_s: 1 }],
       resolved_archetype: "subtitled",
       editor_capabilities: capabilities,
     } as unknown as PlanItemVariant;
   }
 
-  it("shows the Captions-tab notice for a subtitled variant even when text_elements is TRUE", async () => {
+  it("does not show a Captions-tab notice for a subtitled variant when text_elements is TRUE", async () => {
     await renderShell(makeCaptionVariant(CAPTION_TEXT_LANE_ON));
-    const notice = screen.getByTestId("captions-tab-notice");
-    expect(notice).toHaveTextContent(CAPTIONS_TAB_REASON);
+    expect(screen.queryByTestId("captions-tab-notice")).toBeNull();
+    expect(screen.getAllByText("Editable caption cue").length).toBeGreaterThan(0);
     expect(
-      screen.getByRole("link", { name: "Open the item page Captions tab" }),
-    ).toHaveAttribute("href", "/plan/items/item-1?tab=captions&variant=var-sub");
+      screen.queryByRole("link", { name: "Open the item page Captions tab" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("still shows the notice when text_elements is false, given a base video", async () => {
+  it("still omits the notice when text_elements is false, given a base video", async () => {
     await renderShell(
       makeCaptionVariant({ ...CAPTION_TEXT_LANE_ON, text_elements: false }),
     );
-    expect(screen.getByTestId("captions-tab-notice")).toHaveTextContent(CAPTIONS_TAB_REASON);
+    expect(screen.queryByTestId("captions-tab-notice")).toBeNull();
+    expect(screen.getAllByText("Editable caption cue").length).toBeGreaterThan(0);
   });
 });

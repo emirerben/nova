@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-07-21-v5",
+  "prompt_version": "2026-07-24-v7",
   "input": {
     "utterance": "fix the typo in the second caption",
     "prior_turns": [],
@@ -13,20 +13,23 @@
       "captions": {
         "total_cues": 14,
         "truncated": false,
-        "cues_editable": false,
-        "cues": [],
+        "cues_editable": true,
+        "cues": [
+          {"index": 0, "id": "caption-0", "text": "first caption is fine", "start_s": 0, "end_s": 1.2},
+          {"index": 1, "id": "caption-1", "text": "second capshun has typo", "start_s": 1.2, "end_s": 2.4}
+        ],
         "meta": {"enabled": true, "style": "sentence", "font": "TikTok Sans Bold", "y_frac": 0.8}
       }
     }
   },
-  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.85,\"reply\":\"Caption text is edited in the caption editor - I can change the style, font, or position from here.\",\"suggestions\":[\"Word-by-word captions\",\"Move the captions up\"],\"needs_clarification\":false}",
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"edit_caption\",\"cue_index\":1,\"text\":\"second caption has typo\"}],\"confidence\":0.86,\"reply\":\"Fixed the typo in the second caption.\",\"suggestions\":[\"Move captions lower\",\"Make captions word-by-word\"],\"needs_clarification\":false}",
   "output": {
-    "intent": "reject",
-    "ops": [],
-    "confidence": 0.85,
-    "reply": "Caption text is edited in the caption editor - I can change the style, font, or position from here.",
-    "suggestions": ["Word-by-word captions", "Move the captions up"],
+    "intent": "edit",
+    "ops": [{"op": "edit_caption", "cue_index": 1, "text": "second caption has typo"}],
+    "confidence": 0.86,
+    "reply": "Fixed the typo in the second caption.",
+    "suggestions": ["Move captions lower", "Make captions word-by-word"],
     "needs_clarification": false
   },
-  "meta": {"source": "hand_authored_golden", "case": "subtitled meta-only captions: transcript edits still redirect to the caption editor"}
+  "meta": {"source": "hand_authored_golden", "case": "subtitled editable captions: transcript cue edits emit edit_caption"}
 }

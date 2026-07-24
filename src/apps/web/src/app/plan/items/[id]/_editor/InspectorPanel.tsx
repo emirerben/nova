@@ -123,7 +123,6 @@ export default function InspectorPanel({
   tab,
   sampleWord,
   appliedPresetId,
-  captionsTabHref,
   contentRef,
   onEditText,
   onPatch,
@@ -167,12 +166,6 @@ export default function InspectorPanel({
   tab: InspectorTab;
   sampleWord: string | null;
   appliedPresetId: string | null;
-  /**
-   * When set (a caption archetype whose captions are edited on the item page),
-   * the empty inspector state becomes a caption-specific CTA linking here
-   * instead of the generic "Select anything to edit it". Null on normal edits.
-   */
-  captionsTabHref?: string | null;
   /** Exposed so double-click-on-canvas can focus + select-all (plan §5). */
   contentRef: React.RefObject<HTMLTextAreaElement>;
   onEditText: (text: string) => void;
@@ -222,26 +215,9 @@ export default function InspectorPanel({
         />
       ) : selection === null ? (
         <div className="flex flex-1 items-start justify-center px-6 pt-16">
-          {captionsTabHref ? (
-            // Caption archetype: this shell can't edit caption text — point the
-            // user at the Captions tab instead of the generic empty state, which
-            // otherwise reads as "editing is broken" (the reported bug).
-            <div className="text-center" data-testid="inspector-captions-cta">
-              <p className="font-display text-[16px] leading-relaxed text-[#71717a]">
-                Captions are edited on the item page.
-              </p>
-              <a
-                href={captionsTabHref}
-                className="mt-2 inline-block text-[13px] font-semibold text-[#0c0c0e] underline decoration-zinc-300 underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-              >
-                Edit captions →
-              </a>
-            </div>
-          ) : (
-            <p className="font-display text-[16px] leading-relaxed text-[#71717a]">
-              Select anything to edit it
-            </p>
-          )}
+          <p className="font-display text-[16px] leading-relaxed text-[#71717a]">
+            Select anything to edit it
+          </p>
         </div>
       ) : selection.kind === "text" && bar ? (
         <TextInspector

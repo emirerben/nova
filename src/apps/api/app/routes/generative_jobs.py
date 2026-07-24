@@ -1448,11 +1448,11 @@ CAPTION_EDIT_ARCHETYPES = frozenset({"narrated", "subtitled"})
 # Compat alias — import the public name; kept so pre-rename importers don't break.
 _CAPTION_EDIT_ARCHETYPES = CAPTION_EDIT_ARCHETYPES
 
-# Single copy for every "captions own this surface" capability reason / 422 detail.
+# Single copy for every caption-archetype capability reason / 422 detail.
 # EditorShell string-compares this exact copy (CAPTIONS_TAB_REASON in
-# editor-capabilities.ts) to route users to the Captions tab — byte-stable
+# editor-capabilities.ts) for disabled-state copy — byte-stable
 # contract; never reword without updating the frontend constant in lockstep.
-CAPTION_TAB_COPY = "Captions for this edit are managed in the Captions tab"
+CAPTION_TAB_COPY = "Captions can be selected and edited in this editor"
 
 
 def _text_elements_allowed(variant: dict) -> bool:
@@ -3489,8 +3489,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     timeline_ok = timeline_reason is None
     archetype = variant.get("resolved_archetype")
     # Decoupled from _text_elements_allowed (#625): the styled-text lane can
-    # unlock text tools while CAPTIONS still live in the Captions tab — the
-    # reason sentence describes the captions surface, not the text lock.
+    # unlock text tools while caption cue edits remain a separate caption_cues
+    # section.
     caption_reason = CAPTION_TAB_COPY if archetype == "subtitled" else None
     from app.config import settings  # noqa: PLC0415
 
@@ -4265,9 +4265,7 @@ def prepare_editor_commit(
 
     validated_caption_cues: list[dict] | None = None
     if payload.caption_cues is not None:
-        if variant.get("resolved_archetype") != "narrated" or not _is_editable_caption_variant(
-            variant
-        ):
+        if not _is_editable_caption_variant(variant):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{CAPTION_TAB_COPY}.",
@@ -4279,9 +4277,7 @@ def prepare_editor_commit(
     caption_meta_patch: dict | None = None
     if payload.caption_meta is not None:
         # Meta toggles (style/font/enabled/position) are accepted for BOTH caption
-        # archetypes — the fields and the reburn task are shared, and the copilot's
-        # set_caption_meta rides this path for subtitled variants. Transcript-cue
-        # edits on subtitled variants remain owned by the Captions tab.
+        # archetypes — the fields and the reburn task are shared.
         if not _is_editable_caption_variant(variant):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

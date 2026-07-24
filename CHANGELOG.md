@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.9.0] — 2026-07-24
+
+### Fixed
+- **Captions, Smart titles, and user text now edit from one editor timeline.** Subtitled caption cues load as caption bars while Smart titles and user-added text load as separate text bars, so every visible word can be selected, adjusted, saved, previewed, and re-rendered without sending creators to a missing Captions tab.
+- **Smart title words no longer duplicate or get overwritten by following captions.** Caption cue metadata, transcript words, Smart Caption provenance, and suppression fields are preserved on save, while preview and final render now read the same working caption/title sources.
+- **Regeneration, variant switching, and Copilot caption edits keep text stable.** The editor reseeds captions and titles from persisted `caption_cues` plus `text_elements` once per active variant, avoids projected caption duplicates, and allows subtitled caption cue edits through the normal commit/reburn path.
+
 ## [0.12.8.0] — 2026-07-24
 
 ### Added

@@ -522,14 +522,14 @@ describe("meta-only captions (subtitled)", () => {
     expect(result.captionMetaPatch).toMatchObject({ style: "word" });
   });
 
-  it("rejects cue text/timing edits with a caption-editor redirect", () => {
+  it("rejects cue text/timing edits when no editable cue list is present", () => {
     const edit = applyCopilotOps(
       [{ op: "edit_caption", cue_index: 0, text: "fixed" }],
       subtitledCtx(),
     );
     expect(edit.textActions).toEqual([]);
     expect(edit.rejected).toEqual([
-      expect.objectContaining({ detail: "Transcript edits are made in the caption editor." }),
+      expect.objectContaining({ detail: "This draft has caption settings but no editable cue list." }),
     ]);
 
     const timing = applyCopilotOps(
@@ -538,7 +538,7 @@ describe("meta-only captions (subtitled)", () => {
     );
     expect(timing.textActions).toEqual([]);
     expect(timing.rejected).toEqual([
-      expect.objectContaining({ detail: "Transcript edits are made in the caption editor." }),
+      expect.objectContaining({ detail: "This draft has caption settings but no editable cue list." }),
     ]);
   });
 });
