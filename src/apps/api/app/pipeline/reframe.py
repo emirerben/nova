@@ -955,7 +955,7 @@ def _build_video_filter(
     # V2 semantic camera treatment is part of this existing intermediate
     # reframe encode. It changes only pixels inside bounded event windows;
     # duration, frame rate, audio, and transcript timestamps stay untouched.
-    valid_pulses: list[tuple[float, float]] = []
+    valid_pulses: list[tuple[float, float, float, str]] = []
     for pulse in semantic_crop_pulses or []:
         try:
             start = max(0.0, float(pulse["start_s"]))
@@ -964,13 +964,26 @@ def _build_video_filter(
             continue
         if pulse.get("token") != "semantic_crop_pulse" or end <= start:
             continue
-        valid_pulses.append((start, end))
+        try:
+            intensity = float(pulse.get("intensity", 0.04))
+        except (TypeError, ValueError):
+            intensity = 0.04
+        intensity = max(0.0, min(0.08, intensity))
+        easing = str(pulse.get("easing") or "sine_pulse")
+        if easing != "sine_pulse":
+            easing = "sine_pulse"
+        valid_pulses.append((start, end, intensity, easing))
     if valid_pulses:
-        enabled = "+".join(f"between(t,{start:.3f},{end:.3f})" for start, end in valid_pulses)
-        amount = f"min(1,{enabled})"
+        pulse_terms = []
+        for start, end, intensity, _easing in valid_pulses:
+            duration = max(0.001, end - start)
+            pulse_terms.append(
+                f"{intensity:.4f}*between(t,{start:.3f},{end:.3f})"
+                f"*pow(sin(PI*(t-{start:.3f})/{duration:.3f}),2)"
+            )
+        amount = f"min(0.12,{'+'.join(pulse_terms)})"
         filters.append(
-            f"scale=w='trunc(iw*(1+0.08*({amount}))/2)*2':"
-            f"h='trunc(ih*(1+0.08*({amount}))/2)*2':eval=frame"
+            f"scale=w='trunc(iw*(1+({amount}))/2)*2':h='trunc(ih*(1+({amount}))/2)*2':eval=frame"
         )
         filters.append(f"crop={ow}:{oh}:(iw-{ow})/2:(ih-{oh})/2")
     # 2. Color grading (applied before darkening so darkened areas have the grade)

@@ -24,6 +24,7 @@ import {
   useState,
 } from "react";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
+import type { CameraEffect } from "@/lib/plan-api";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import {
   fitPxPerSecond,
@@ -128,6 +129,12 @@ export interface EditorTimelineBodyProps {
     patch: Pick<EditorVisualBlockBar, "start_s" | "end_s">,
   ) => void;
 
+  cameraEffects?: CameraEffect[];
+  onPreviewCameraTiming?: (
+    id: string,
+    patch: Pick<CameraEffect, "start_s" | "end_s">,
+  ) => void;
+
   slots: DraftSlot[];
   clipReadOnly?: boolean;
   clipDisabledReason?: string | null;
@@ -219,6 +226,15 @@ type ActiveDrag =
       pxPerSecond: number;
       origin: Pick<EditorVisualBlockBar, "start_s" | "end_s">;
       active: boolean;
+    }
+  | {
+      kind: "camera";
+      id: string;
+      handle: "left" | "right" | "body";
+      startTimelineX: number;
+      pxPerSecond: number;
+      origin: Pick<CameraEffect, "start_s" | "end_s">;
+      active: boolean;
     };
 
 export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
@@ -240,6 +256,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     visualBlocks,
     showVisualBlocks = true,
     onPreviewVisualTiming,
+    cameraEffects = [],
+    onPreviewCameraTiming,
     slots,
     clipReadOnly = false,
     clipDisabledReason,
@@ -424,6 +442,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const visualLane = deriveLaneRows(visualBlocks, {
     baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX,
   });
+  const cameraLane = deriveLaneRows(cameraEffects, {
+    baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
+  });
   const sfxLane = deriveLaneRows(sfx, {
     baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
   });
@@ -435,6 +456,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     { label: "Text", heightPx: textLane.totalHeightPx },
     ...(showVisualBlocks
       ? [{ label: "Visuals", heightPx: visualLane.totalHeightPx }]
+      : []),
+    ...(cameraEffects.length > 0
+      ? [{ label: "Camera", heightPx: cameraLane.totalHeightPx }]
       : []),
     { label: "Video", heightPx: 48 },
     { label: "Sound", heightPx: soundLaneHeight },
@@ -580,6 +604,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       }
       if (active.kind === "visual") {
         onPreviewVisualTiming?.(active.id, next);
+      } else if (active.kind === "camera") {
+        onPreviewCameraTiming?.(active.id, next);
       } else {
         onPreviewOverlayTiming?.(active.id, next);
       }
@@ -704,6 +730,26 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
       origin: { start_s: block.start_s, end_s: block.end_s },
+      active: false,
+    };
+  }
+
+  function startCameraDrag(e: React.PointerEvent<HTMLElement>, effect: CameraEffect) {
+    if (readOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    dragRef.current = {
+      kind: "camera",
+      id: effect.id,
+      handle: resolveBarDragHandle({
+        localX: e.clientX - rect.left,
+        width: rect.width,
+      }),
+      startTimelineX: pointerTimelineX(e.clientX),
+      pxPerSecond: pps,
+      origin: { start_s: effect.start_s, end_s: effect.end_s },
       active: false,
     };
   }
@@ -1006,6 +1052,53 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   )
                 )}
               </LaneTrack>}
+
+              {cameraEffects.length > 0 && (
+                <LaneTrack
+                  trackW={trackW}
+                  heightPx={cameraLane.totalHeightPx}
+                  testId="editor-camera-lane"
+                >
+                  <Playline px={playheadPx} />
+                  {cameraLane.rows.map(
+                    ({ item: effect, rowIndex, topPx, heightPx }) => {
+                      const left = secondsToPx(effect.start_s, pps);
+                      const width = Math.max(
+                        8,
+                        secondsToPx(effect.end_s - effect.start_s, pps),
+                      );
+                      const selected = isSel("camera", effect.id);
+                      return (
+                        <BarButton
+                          key={effect.id}
+                          left={left}
+                          width={width}
+                          top={topPx}
+                          height={heightPx}
+                          selected={selected}
+                          ringCls={ringCls}
+                          ariaLabel={`Camera focus, ${formatTimecode(effect.start_s)}–${formatTimecode(effect.end_s)}`}
+                          onSelect={() => onSelect("camera", effect.id)}
+                          dataKind="camera"
+                          dataId={effect.id}
+                          dataRowIndex={rowIndex}
+                          onPointerDown={(event) => startCameraDrag(event, effect)}
+                          onPointerMove={(event) => updateDrag(event.clientX)}
+                          onPointerUp={(event) => finishDrag(event, "camera", effect.id)}
+                          onPointerCancel={cancelDrag}
+                          suppressClickRef={suppressClickRef}
+                          showTrimHandles
+                          className="border border-sky-200 bg-sky-50 text-sky-800"
+                        >
+                          <span className="pointer-events-none truncate px-2 text-[10px] font-semibold">
+                            Focus
+                          </span>
+                        </BarButton>
+                      );
+                    },
+                  )}
+                </LaneTrack>
+              )}
 
               {/* ── Video lane (Clips + filmstrip) ── */}
               <LaneTrack trackW={trackW} heightPx={TEXT_LANE_BASE_HEIGHT_PX}>

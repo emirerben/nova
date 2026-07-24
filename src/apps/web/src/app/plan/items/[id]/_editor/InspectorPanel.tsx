@@ -48,7 +48,12 @@ import {
 import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { formatTimecode } from "@/lib/timeline/time-format";
-import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
+import type { CameraEffect, MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
+import {
+  CAMERA_EFFECT_MAX_DURATION_S,
+  CAMERA_EFFECT_MAX_INTENSITY,
+  CAMERA_EFFECT_MIN_DURATION_S,
+} from "@/lib/camera-effects";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { EditorSelection } from "./useEditorSelection";
@@ -119,6 +124,7 @@ export default function InspectorPanel({
   clipTiming,
   sfx,
   overlay,
+  cameraEffect,
   tab,
   sampleWord,
   appliedPresetId,
@@ -138,6 +144,8 @@ export default function InspectorPanel({
   onPreviewOverlay,
   onRecordOverlay,
   onDeleteOverlay,
+  onPatchCameraEffect,
+  onDeleteCameraEffect,
   mixLevel,
   mixEditable,
   mixLabel,
@@ -159,6 +167,7 @@ export default function InspectorPanel({
   clipTiming: InspectorClipTiming | null;
   sfx: SoundEffectPlacement | null;
   overlay: MediaOverlay | null;
+  cameraEffect: CameraEffect | null;
   tab: InspectorTab;
   sampleWord: string | null;
   appliedPresetId: string | null;
@@ -184,6 +193,8 @@ export default function InspectorPanel({
   onPreviewOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
   onRecordOverlay: () => void;
   onDeleteOverlay: (id: string) => void;
+  onPatchCameraEffect: (id: string, patch: Partial<CameraEffect>) => void;
+  onDeleteCameraEffect: (id: string) => void;
   mixLevel?: number | null;
   mixEditable?: boolean;
   mixLabel?: string;
@@ -270,6 +281,13 @@ export default function InspectorPanel({
           onPreview={onPreviewOverlay}
           onRecord={onRecordOverlay}
           onDelete={onDeleteOverlay}
+          onClose={onClose}
+        />
+      ) : selection.kind === "camera" && cameraEffect ? (
+        <CameraInspector
+          effect={cameraEffect}
+          onPatch={onPatchCameraEffect}
+          onDelete={onDeleteCameraEffect}
           onClose={onClose}
         />
       ) : selection.kind === "music" ? (
@@ -648,6 +666,107 @@ function PercentNumberInput({
         <span className="pl-1 text-[11px] text-[#71717a]">%</span>
       </div>
     </label>
+  );
+}
+
+function CameraInspector({
+  effect,
+  onPatch,
+  onDelete,
+  onClose,
+}: {
+  effect: CameraEffect;
+  onPatch: (id: string, patch: Partial<CameraEffect>) => void;
+  onDelete: (id: string) => void;
+  onClose: () => void;
+}) {
+  const duration = Math.max(
+    CAMERA_EFFECT_MIN_DURATION_S,
+    Math.min(CAMERA_EFFECT_MAX_DURATION_S, effect.end_s - effect.start_s),
+  );
+  const intensityPct = Math.round(
+    Math.max(0, Math.min(CAMERA_EFFECT_MAX_INTENSITY, effect.intensity)) * 100,
+  );
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-[18px] text-[#0c0c0e]">Camera</h2>
+        <CloseX onClose={onClose} />
+      </div>
+      <p className="mt-1 text-[12px] text-[#71717a]">Focus pulse</p>
+
+      <TimingSection label="Timing">
+        <TimingNumberInput
+          label="Start"
+          value={effect.start_s}
+          min={0}
+          onChange={(value) =>
+            onPatch(effect.id, {
+              start_s: Math.max(0, value),
+              end_s: Math.max(0, value) + duration,
+            })
+          }
+        />
+        <TimingNumberInput
+          label="End"
+          value={effect.end_s}
+          min={effect.start_s + CAMERA_EFFECT_MIN_DURATION_S}
+          onChange={(value) =>
+            onPatch(effect.id, {
+              end_s: Math.max(effect.start_s + CAMERA_EFFECT_MIN_DURATION_S, value),
+            })
+          }
+        />
+      </TimingSection>
+
+      <div className="mt-3 border-b border-zinc-100 pb-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[13px] font-bold text-[#0c0c0e]">Duration</span>
+          <span className="text-[12px] tabular-nums text-[#71717a]">
+            {duration.toFixed(1)}s
+          </span>
+        </div>
+        <input
+          type="range"
+          aria-label="Camera focus duration"
+          min={CAMERA_EFFECT_MIN_DURATION_S}
+          max={CAMERA_EFFECT_MAX_DURATION_S}
+          step={0.1}
+          value={duration}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            if (Number.isFinite(next)) {
+              onPatch(effect.id, { end_s: effect.start_s + next });
+            }
+          }}
+          className="w-full accent-[#0c0c0e]"
+        />
+      </div>
+
+      <div className="mt-3 border-b border-zinc-100 pb-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[13px] font-bold text-[#0c0c0e]">Intensity</span>
+          <span className="text-[12px] tabular-nums text-[#71717a]">{intensityPct}%</span>
+        </div>
+        <input
+          type="range"
+          aria-label="Camera focus intensity"
+          min={0}
+          max={Math.round(CAMERA_EFFECT_MAX_INTENSITY * 100)}
+          step={1}
+          value={intensityPct}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            if (Number.isFinite(next)) {
+              onPatch(effect.id, { intensity: next / 100 });
+            }
+          }}
+          className="w-full accent-[#0c0c0e]"
+        />
+      </div>
+
+      <DangerButton onClick={() => onDelete(effect.id)}>Delete camera effect</DangerButton>
+    </div>
   );
 }
 

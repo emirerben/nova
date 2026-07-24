@@ -7810,6 +7810,9 @@ def _compile_smart_caption_render_plan(
         smart_plan.caption_cues,
         assets_by_id=assets_by_id,
     )
+    from app.pipeline.camera_effects import camera_effects_from_intents  # noqa: PLC0415
+
+    camera_effects = camera_effects_from_intents(getattr(compiled, "camera_intents", []))
     return compiled, {
         "smart_captions_applied": True,
         "smart_edit_document": smart_plan.document.model_dump(mode="json"),
@@ -7824,6 +7827,7 @@ def _compile_smart_caption_render_plan(
         },
         "media_overlays": compiled.media_overlays or None,
         "boundary_effects": compiled.boundary_effects or None,
+        "camera_effects": camera_effects or None,
         "text_elements": compiled.text_elements,
         "text_elements_user_edited": True,
         "text_elements_materialized_from": "smart_captions",
@@ -8233,7 +8237,9 @@ def _apply_face_aware_caption_placement(
     # silence-cut base is shorter, and seeking past its EOF yields undecodable
     # frames): evenly-spaced ∪ camera-intent ∪ media-overlay starts, deduped.
     base_duration = float(probe_video(base_path).duration_s)
-    intent_times = [float(intent.get("at_s") or 0.0) for intent in smart_compiled.camera_intents]
+    intent_times = [
+        float(intent.get("at_s") or 0.0) for intent in getattr(smart_compiled, "camera_intents", [])
+    ]
     intent_times.extend(
         float(event.get("start_s") or 0.0) for event in smart_compiled.media_overlays
     )
@@ -8441,6 +8447,7 @@ def _render_subtitled_variant(
         "smart_audio_receipt": None,
         "smart_shadow_comparison": None,
         "boundary_effects": None,
+        "camera_effects": None,
         "text_elements_materialized_from": None,
         # Silence-cut summary {removed, time_saved_s, version} (plans/010) — set
         # only when the stage ran to a plan; drives the admin cut-plan viewer.
@@ -8615,11 +8622,23 @@ def _render_subtitled_variant(
                 "keep_segments": sc_plan.keep_segments,
                 "keep_segments_punch_in": KEEP_SEGMENTS_PUNCH_IN,
             }
-        if smart_compiled is not None and smart_compiled.camera_intents and not sc_apply:
-            reframe_kwargs["semantic_crop_pulses"] = smart_compiled.camera_intents
-        elif smart_compiled is not None and smart_compiled.camera_intents:
+        camera_intents = (
+            getattr(smart_compiled, "camera_intents", []) if smart_compiled is not None else []
+        )
+        if camera_intents and not sc_apply:
+            from app.pipeline.camera_effects import camera_effects_from_intents  # noqa: PLC0415
+
+            base["camera_effects"] = (
+                camera_effects_from_intents(
+                    camera_intents,
+                    existing_effects=base.get("camera_effects"),
+                    duration_s=float(probe.duration_s),
+                )
+                or None
+            )
+        elif camera_intents:
             base["smart_validation_receipts"]["camera_render"] = {
-                "requested": len(smart_compiled.camera_intents),
+                "requested": len(camera_intents),
                 "applied": 0,
                 "status": "omitted_silence_cut_timeline_unmapped",
                 "full_video_encode_count": 1,
@@ -8627,11 +8646,7 @@ def _render_subtitled_variant(
         # Cut-output reuse (7A): a sibling variant may have already paid for the
         # cut encode of this exact clip — copy it instead of re-running ffmpeg.
         cut_reused = False
-        if (
-            sc_apply
-            and silence_cut_cache is not None
-            and "semantic_crop_pulses" not in reframe_kwargs
-        ):
+        if sc_apply and silence_cut_cache is not None:
             cached_cut = sc_entry.get("cut_video_path")
             if cached_cut and os.path.exists(cached_cut):
                 shutil.copy2(cached_cut, base_path)
@@ -8650,31 +8665,6 @@ def _render_subtitled_variant(
                     **reframe_kwargs,
                 )
             except Exception as exc:
-                if reframe_kwargs.pop("semantic_crop_pulses", None) is not None:
-                    if os.path.exists(base_path):
-                        os.remove(base_path)
-                    try:
-                        reframe_and_export(
-                            clip_path,
-                            0.0,
-                            float(probe.duration_s),
-                            aspect,
-                            None,
-                            base_path,
-                            output_fit=fit,
-                            has_audio=probe.has_audio,
-                            **reframe_kwargs,
-                        )
-                        base["smart_validation_receipts"]["camera_render"] = {
-                            "requested": len(smart_compiled.camera_intents),
-                            "applied": 0,
-                            "status": "retry_without_camera",
-                            "error": str(exc)[:160],
-                            "full_video_encode_count": 1,
-                        }
-                        exc = None
-                    except Exception as retry_exc:  # noqa: BLE001
-                        exc = retry_exc
                 # exc now holds the still-unrecovered failure: the original when
                 # no camera retry ran, the retry error when it also failed, or
                 # None when the camera-less retry succeeded.
@@ -8719,17 +8709,7 @@ def _render_subtitled_variant(
                         has_audio=probe.has_audio,
                     )
             else:
-                if (
-                    smart_compiled is not None
-                    and smart_compiled.camera_intents
-                    and "semantic_crop_pulses" in reframe_kwargs
-                ):
-                    base["smart_validation_receipts"]["camera_render"] = {
-                        "requested": len(smart_compiled.camera_intents),
-                        "applied": len(smart_compiled.camera_intents),
-                        "status": "applied_in_reframe",
-                        "full_video_encode_count": 1,
-                    }
+                pass
         if not os.path.exists(base_path) or os.path.getsize(base_path) == 0:
             raise RuntimeError("subtitled base render produced empty output")
         if smart_v2 and sc_apply_failed:
@@ -8763,9 +8743,10 @@ def _render_subtitled_variant(
                     if smart_compiled is not None:
                         cues = smart_compiled.caption_cues
                         base.update(smart_state)
-                        if smart_compiled.camera_intents:
+                        replanned_camera_intents = getattr(smart_compiled, "camera_intents", [])
+                        if replanned_camera_intents:
                             base["smart_validation_receipts"]["camera_render"] = {
-                                "requested": len(smart_compiled.camera_intents),
+                                "requested": len(replanned_camera_intents),
                                 "applied": 0,
                                 "status": "omitted_after_silence_cut_retry",
                                 "full_video_encode_count": 1,
@@ -8952,6 +8933,46 @@ def _render_subtitled_variant(
                     "error": str(exc)[:160],
                 }
 
+        caption_base_path = base_path
+        camera_render_applied = False
+        if base.get("camera_effects"):
+            try:
+                camera_base_path = os.path.join(variant_dir, "base_with_camera.mp4")
+                reframe_and_export(
+                    base_path,
+                    0.0,
+                    float(probe.duration_s),
+                    aspect,
+                    None,
+                    camera_base_path,
+                    output_fit="crop",
+                    has_audio=probe.has_audio,
+                    semantic_crop_pulses=base["camera_effects"],
+                    **_canvas_kwargs(canvas_for_orientation(base.get("orientation"))),
+                )
+                caption_base_path = camera_base_path
+                camera_render_applied = True
+                base["smart_validation_receipts"]["camera_render"] = {
+                    "requested": len(base["camera_effects"]),
+                    "applied": len(base["camera_effects"]),
+                    "status": "applied",
+                    "full_video_encode_count": 1,
+                }
+            except Exception as exc:  # noqa: BLE001 — camera emphasis fails open
+                log.warning(
+                    "smart_camera_effects_failed_open",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(exc)[:300],
+                )
+                base["smart_validation_receipts"]["camera_render"] = {
+                    "requested": len(base.get("camera_effects") or []),
+                    "applied": 0,
+                    "status": "failed_open",
+                    "error": str(exc)[:160],
+                    "full_video_encode_count": 0,
+                }
+
         # ── Feature C: face-aware caption placement (plan 011 §Feature C) ─────
         # BEFORE the caption burn (the ordering surgery): sample faces on the
         # rendered base, move the caption band off the speaker's face, persist the
@@ -8973,7 +8994,7 @@ def _render_subtitled_variant(
                     _apply_face_aware_caption_placement(
                         base=base,
                         cues=cues,
-                        base_path=base_path,
+                        base_path=caption_base_path,
                         smart_compiled=smart_compiled,
                         job_id=job_id,
                         variant_id=variant_id,
@@ -8992,7 +9013,7 @@ def _render_subtitled_variant(
         final_path = os.path.join(variant_dir, "final.mp4")
         if getattr(settings, "subtitled_text_lane_enabled", False) or smart_compiled is not None:
             final_path = _compose_subtitled_final(
-                base_path,
+                caption_base_path,
                 {
                     **base,
                     "caption_cues": cues or None,
@@ -9019,11 +9040,11 @@ def _render_subtitled_variant(
                         else {}
                     ),
                 )
-            burn_captions_on_video(base_path, ass_path, FONTS_DIR, final_path)
+            burn_captions_on_video(caption_base_path, ass_path, FONTS_DIR, final_path)
         else:
             # No detectable speech → ship the clean clip; the UI shows the empty-caption
             # state. NOT a failure — a caption-less talking clip is still valid output.
-            shutil.copy2(base_path, final_path)
+            shutil.copy2(caption_base_path, final_path)
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError("subtitled variant produced empty output")
 
@@ -9145,12 +9166,13 @@ def _render_subtitled_variant(
             protected_boxes.extend(region.as_dict() for region in caption_regions)
             protected_boxes.extend(region.as_dict() for region in title_regions)
             anchor_times = [
-                float(intent.get("at_s") or 0.0) for intent in smart_compiled.camera_intents
+                float(intent.get("at_s") or 0.0)
+                for intent in getattr(smart_compiled, "camera_intents", [])
             ]
             anchor_times.extend(
                 float(event.get("start_s") or 0.0) for event in smart_compiled.media_overlays
             )
-            face_regions, face_receipt = sample_face_regions(base_path, anchor_times)
+            face_regions, face_receipt = sample_face_regions(caption_base_path, anchor_times)
             protected_boxes.extend(region.as_dict() for region in face_regions)
             base["smart_validation_receipts"]["geometry_prepare"] = {
                 **face_receipt,
@@ -9344,7 +9366,7 @@ def _render_subtitled_variant(
             base["smart_validation_receipts"]["performance"] = {
                 "wall_time_ms": round((time.monotonic() - smart_render_started) * 1000),
                 "reframe_full_video_encode_count": 1,
-                "camera_additional_full_video_encodes": 0,
+                "camera_additional_full_video_encodes": 1 if camera_render_applied else 0,
                 "audio_video_codec": "copy" if sound_effects or music_treatment else None,
                 "peak_rss_platform_units": peak_rss,
             }
@@ -9377,6 +9399,7 @@ def _render_subtitled_variant(
             "smart_audio_receipt": base["smart_audio_receipt"],
             "smart_shadow_comparison": base["smart_shadow_comparison"],
             "boundary_effects": base["boundary_effects"],
+            "camera_effects": base["camera_effects"],
             "text_elements": base.get("text_elements"),
             "text_elements_user_edited": base.get("text_elements_user_edited"),
             "text_elements_materialized_from": base.get("text_elements_materialized_from"),
@@ -9465,6 +9488,58 @@ def reburn_narrated_captions(
                     expected_render_gen_id=render_gen_id,
                     outcome="caption_reburn_failed",
                 )
+
+
+@celery_app.task(
+    name="rerender_caption_camera_effects",
+    bind=True,
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,
+    max_retries=7,
+    soft_time_limit=1740,
+    time_limit=1800,
+)
+def rerender_caption_camera_effects(
+    self, job_id: str, variant_id: str, render_gen_id: str | None = None
+) -> None:
+    """Rebuild a caption variant's clean base after editable camera-effect changes."""
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    terminal_state = {"accepted": False}
+    with pipeline_trace_for(job_id):
+        try:
+            _run_rerender_caption_camera_effects(
+                job_id,
+                variant_id,
+                render_gen_id=render_gen_id,
+                terminal_state=terminal_state,
+            )
+        except OperationalError:
+            raise
+        except Exception as exc:
+            log.error(
+                "caption_camera_rerender_failed",
+                job_id=job_id,
+                variant_id=variant_id,
+                error=str(exc)[:MAX_ERROR_DETAIL_LEN],
+                exc_info=True,
+            )
+            _update_variant_entry(
+                job_id,
+                variant_id,
+                {
+                    "render_status": "failed" if terminal_state["accepted"] else "ready",
+                    "render_error": str(exc)[:500],
+                },
+                expected_render_gen_id=render_gen_id,
+                outcome=(
+                    "caption_camera_rerender_failed_post_swap"
+                    if terminal_state["accepted"]
+                    else "caption_camera_rerender_failed"
+                ),
+            )
 
 
 # Archetypes whose editable caption cues may be reburned onto a caption-free base.
@@ -9724,6 +9799,152 @@ def _burn_persisted_captions_onto_base(
             **({"smart_policy": smart_policy} if smart_policy is not None else {}),
         )
     burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
+
+
+def _run_rerender_caption_camera_effects(
+    job_id: str,
+    variant_id: str,
+    render_gen_id: str | None = None,
+    terminal_state: dict | None = None,
+) -> None:
+    from app.pipeline.camera_effects import normalize_camera_effects  # noqa: PLC0415
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+    from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
+    from app.storage import (  # noqa: PLC0415
+        delete_object_best_effort,
+        download_to_file,
+        upload_public_read,
+    )
+
+    reapply_deadline = (
+        time.monotonic() + _CAPTION_TASK_SOFT_TIME_LIMIT_S - _REAPPLY_DEADLINE_MARGIN_S
+    )
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            log.error("caption_camera_rerender_job_not_found", job_id=job_id)
+            return
+        variants = (job.assembly_plan or {}).get("variants") or []
+        variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
+    if variant is None:
+        raise ValueError(f"variant {variant_id} not found on job {job_id}")
+    if variant.get("resolved_archetype") != "subtitled":
+        raise ValueError(f"variant {variant_id} is not a subtitled variant")
+    rank = variant.get("rank") or 1
+    old_video_path = variant.get("video_path")
+    old_base_path = variant.get("base_video_path")
+    if not old_base_path:
+        raise ValueError(f"variant {variant_id} has no clean base video")
+
+    if not _update_variant_entry(
+        job_id,
+        variant_id,
+        {"render_status": "rendering"},
+        expected_render_gen_id=render_gen_id,
+        outcome="caption_camera_rerender_start",
+    ):
+        return
+
+    with tempfile.TemporaryDirectory(prefix="nova_caption_camera_") as tmpdir:
+        new_base_local = os.path.join(tmpdir, "clean_base.mp4")
+        download_to_file(str(old_base_path), new_base_local)
+        probe = probe_video(new_base_local)
+        aspect = "16:9" if variant.get("orientation") == "landscape" else "9:16"
+        effects = normalize_camera_effects(
+            variant.get("camera_effects") or [],
+            duration_s=float(probe.duration_s),
+        )
+
+        caption_base_local = new_base_local
+        if effects:
+            caption_base_local = os.path.join(tmpdir, "camera_base.mp4")
+            reframe_and_export(
+                new_base_local,
+                0.0,
+                float(probe.duration_s),
+                aspect,
+                None,
+                caption_base_local,
+                output_fit="crop",
+                has_audio=probe.has_audio,
+                semantic_crop_pulses=effects,
+                **_canvas_kwargs(canvas_for_orientation(variant.get("orientation"))),
+            )
+        fresh_variant = {
+            **variant,
+            "camera_effects": effects or None,
+            "base_video_path": None,
+        }
+        if _should_compose_subtitled_final(fresh_variant):
+            final_local = _compose_subtitled_final(caption_base_local, fresh_variant, tmpdir)
+        else:
+            final_local = os.path.join(tmpdir, "out.mp4")
+            _burn_persisted_captions_onto_base(
+                caption_base_local, final_local, fresh_variant, tmpdir
+            )
+
+        suffix = uuid.uuid4().hex[:8]
+        new_video_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_camera_{suffix}.mp4"
+        output_url = upload_public_read(final_local, new_video_gcs)
+        duration_s = _rendered_duration_s(final_local)
+
+    will_reapply = _will_reapply_media_layers(
+        _fresh_variant_snapshot(job_id, variant_id) or variant
+    )
+    patch: dict[str, Any] = {
+        "video_path": new_video_gcs,
+        "output_url": output_url,
+        "base_video_path": old_base_path,
+        "camera_effects": effects or None,
+        "pre_media_overlay_video_path": None,
+        "pre_sfx_video_path": None,
+        "visual_blocks_base_path": None,
+        "visual_blocks_cache_stale": False,
+    }
+    if duration_s is not None:
+        patch["duration_s"] = duration_s
+    if will_reapply:
+        patch["render_status"] = "rendering"
+    else:
+        patch["render_status"] = "ready"
+        patch["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+    if not _update_variant_entry(
+        job_id,
+        variant_id,
+        patch,
+        expected_render_gen_id=render_gen_id,
+        outcome="caption_camera_rerender",
+    ):
+        delete_object_best_effort(new_video_gcs)
+        return
+    if terminal_state is not None:
+        terminal_state["accepted"] = True
+    _free_retired_visual_blocks_base(variant, None)
+    _free_retired_media_snapshots(variant, (patch.get("video_path"), patch.get("base_video_path")))
+    if old_video_path and old_video_path != new_video_gcs:
+        delete_object_best_effort(old_video_path)
+    if will_reapply and not _reapply_user_media_layers(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=render_gen_id,
+        deadline_monotonic=reapply_deadline,
+    ):
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            {
+                "render_status": "ready",
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            },
+            expected_render_gen_id=render_gen_id,
+            outcome="caption_camera_rerender_reapply_noop",
+        )
+    log.info(
+        "caption_camera_rerender_done",
+        job_id=job_id,
+        variant_id=variant_id,
+        effects=len(effects),
+    )
 
 
 def _run_reburn_narrated_captions(

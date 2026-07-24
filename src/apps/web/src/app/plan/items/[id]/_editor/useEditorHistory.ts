@@ -24,7 +24,12 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import type { MediaOverlay, SoundEffectPlacement, VisualBlock } from "@/lib/plan-api";
+import type {
+  CameraEffect,
+  MediaOverlay,
+  SoundEffectPlacement,
+  VisualBlock,
+} from "@/lib/plan-api";
 import type { CaptionMetaPatch } from "@/lib/edit-copilot/ops";
 import type { CopilotCaptionMetaSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -42,6 +47,7 @@ export interface EditorDocument {
   sfx?: SoundEffectPlacement[];
   overlays?: MediaOverlay[];
   visualBlocks?: VisualBlock[];
+  cameraEffects?: CameraEffect[];
   captionMeta?: CopilotCaptionMetaSnapshot | null;
   captionMetaDirty?: boolean;
   captionMetaPatch?: CaptionMetaPatch;

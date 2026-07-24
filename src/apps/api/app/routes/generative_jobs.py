@@ -650,6 +650,7 @@ class EditorCommitRequest(BaseModel):
     sound_effects: list[dict] | None = None
     media_overlays: list[dict] | None = None
     visual_blocks: list[dict] | None = None
+    camera_effects: list[dict] | None = None
     title: str | None = Field(None, max_length=300)
     base_generation: str = ""
     # AI-suggestion resolution metadata, NOT a section: envelope ids from
@@ -682,6 +683,7 @@ class EditorCommitSections(BaseModel):
     sound_effects: bool
     media_overlays: bool
     visual_blocks: bool
+    camera_effects: bool = False
     title: bool
 
 
@@ -3413,11 +3415,32 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "sfx": sfx_reason is None,
         "overlays": overlays_reason is None,
         "visual_blocks": visual_blocks_reason is None,
+        "camera_effects": (
+            effects_reason is None
+            and variant.get("resolved_archetype") == "subtitled"
+            and bool(variant.get("base_video_path"))
+        ),
         "suggestions": suggestions_reason is None,
         "reason": caption_reason or timeline_reason,
         "sfx_reason": sfx_reason,
         "overlays_reason": overlays_reason,
         "visual_blocks_reason": visual_blocks_reason,
+        "camera_effects_reason": (
+            effects_reason
+            if effects_reason is not None
+            else (
+                None
+                if (
+                    variant.get("resolved_archetype") == "subtitled"
+                    and variant.get("base_video_path")
+                )
+                else (
+                    "unsupported_archetype"
+                    if variant.get("resolved_archetype") != "subtitled"
+                    else "no_clean_base"
+                )
+            )
+        ),
         "suggestions_reason": suggestions_reason,
         "lyrics": _lyrics_capabilities(variant),
         "orientation": {
@@ -4047,6 +4070,7 @@ def prepare_editor_commit(
         and payload.sound_effects is None
         and payload.media_overlays is None
         and payload.visual_blocks is None
+        and payload.camera_effects is None
         and payload.title is None
     ):
         raise HTTPException(
@@ -4406,6 +4430,42 @@ def prepare_editor_commit(
                         detail="Visual block assets must be ready assets owned by this plan item.",
                     )
 
+    validated_camera_effects: list[dict] | None = None
+    if payload.camera_effects is not None:
+        from app.pipeline.camera_effects import normalize_camera_effects  # noqa: PLC0415
+
+        if variant.get("resolved_archetype") != "subtitled":
+            if not payload.camera_effects:
+                log.debug(
+                    "editor_commit_ignored_empty_section",
+                    section="camera_effects",
+                    job_id=str(job.id),
+                    variant_id=variant_id,
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Camera effects are editable on subtitled variants.",
+                )
+        elif not variant.get("base_video_path"):
+            if not payload.camera_effects:
+                log.debug(
+                    "editor_commit_ignored_empty_section",
+                    section="camera_effects",
+                    job_id=str(job.id),
+                    variant_id=variant_id,
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Camera effects require a clean base video.",
+                )
+        else:
+            validated_camera_effects = normalize_camera_effects(
+                payload.camera_effects,
+                duration_s=visual_block_variant_duration(variant),
+            )
+
     if payload.visual_blocks is not None or payload.text_elements is not None:
         from app.agents._schemas.visual_block import (  # noqa: PLC0415
             validate_visual_block_text_links,
@@ -4446,6 +4506,7 @@ def prepare_editor_commit(
         or validated_sfx is not None
         or validated_overlays is not None
         or validated_visual_blocks is not None
+        or validated_camera_effects is not None
     )
     new_gen = uuid.uuid4().hex if has_render_section else None
 
@@ -4520,6 +4581,8 @@ def prepare_editor_commit(
             # the replacement. The stale bit prevents reuse; retaining the key
             # lets the winning render free it without a pre-render delete race.
             updated["visual_blocks_cache_stale"] = True
+        if validated_camera_effects is not None:
+            updated["camera_effects"] = validated_camera_effects or None
         if payload.accepted_suggestion_ids:
             # Accepted AI suggestions became cards in the media_overlays section;
             # drop their envelopes in the SAME atomic write. Unknown ids no-op
@@ -4561,6 +4624,7 @@ def prepare_editor_commit(
         "sfx_override": validated_sfx,
         "media_overlays_override": validated_overlays,
         "visual_blocks_override": validated_visual_blocks,
+        "camera_effects_override": validated_camera_effects,
         "orientation_override": validated_orientation,
         "new_track_id": payload.music_track_id,
         "music_window_alignment": (
@@ -4588,6 +4652,7 @@ def prepare_editor_commit(
             "sound_effects": validated_sfx is not None,
             "media_overlays": validated_overlays is not None,
             "visual_blocks": validated_visual_blocks is not None,
+            "camera_effects": validated_camera_effects is not None,
         },
     }
 
@@ -4625,6 +4690,19 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     # top. Legacy variants without a cached base fall through to the fast pass.
     sections = prep["sections"]
     if (
+        sections.get("camera_effects") is True
+        and prep.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES
+        and prep.get("has_caption_base")
+    ):
+        from app.tasks.generative_build import rerender_caption_camera_effects  # noqa: PLC0415
+
+        rerender_caption_camera_effects.apply_async(
+            args=[job_id, variant_id],
+            kwargs={"render_gen_id": prep["generation"]},
+            queue="overlay-jobs",
+        )
+        return
+    if (
         sections.get("visual_blocks") is True
         and prep.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES
         and prep.get("has_caption_base")
@@ -4641,6 +4719,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         sections.get("sound_effects") is True
         or sections.get("media_overlays") is True
         or sections.get("visual_blocks") is True
+        or sections.get("camera_effects") is True
     ) and not (
         sections.get("text_elements") is True
         or sections.get("caption_meta") is True
@@ -4680,6 +4759,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         or prep.get("orientation_override") is not None
         or prep.get("text_requires_full_render") is True
         or prep["sections"].get("visual_blocks") is True
+        or prep["sections"].get("camera_effects") is True
         or sections.get("lyrics") is True
         or prep.get("music_window_alignment") is not None
     )
@@ -4710,6 +4790,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         and sections.get("lyrics") is not True
         and prep.get("music_window_alignment") is None
         and sections.get("visual_blocks") is not True
+        and sections.get("camera_effects") is not True
     )
     apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}
     if is_reburn_only:
