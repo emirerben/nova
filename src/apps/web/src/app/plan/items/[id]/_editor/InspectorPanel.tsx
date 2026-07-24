@@ -22,6 +22,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   INTRO_ANIMATIONS,
   INTRO_FONTS,
+  THEME_TRANSITIONS,
   resolveCssFont,
 } from "@/lib/overlay-constants";
 import {
@@ -75,6 +76,7 @@ const EDITABLE_ROW_FIELDS = new Set([
   "font_family",
   "size_px",
   "effect",
+  "theme_transition",
   "color",
   "shadow_enabled",
   "stroke_width",
@@ -1134,25 +1136,70 @@ function TextInspector({
       )}
 
       {!isLyric && (
-        <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
-          Animation
-          <select
-            aria-label="Animation"
-            value={bar.effect ?? "none"}
-            onChange={(e) => onPatch({ effect: e.target.value })}
-            className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
-          >
-            {/* Preserve an effect value outside the picker list (e.g. "static"). */}
-            {bar.effect && !INTRO_ANIMATIONS.some((a) => a.value === bar.effect) && (
-              <option value={bar.effect}>{bar.effect}</option>
-            )}
-            {INTRO_ANIMATIONS.map((a) => (
-              <option key={a.value} value={a.value}>
-                {a.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <>
+          <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
+            Animation
+            <select
+              aria-label="Animation"
+              value={bar.effect ?? "none"}
+              onChange={(e) => onPatch({ effect: e.target.value })}
+              className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+            >
+              {/* Preserve an effect value outside the picker list (e.g. "static"). */}
+              {bar.effect && !INTRO_ANIMATIONS.some((a) => a.value === bar.effect) && (
+                <option value={bar.effect}>{bar.effect}</option>
+              )}
+              {INTRO_ANIMATIONS.map((a) => (
+                <option key={a.value} value={a.value}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="mt-3 block text-[12px] font-semibold text-[#3f3f46]">
+            Theme transition
+            <select
+              aria-label="Theme transition"
+              value={bar.theme_transition?.type ?? "none"}
+              onChange={(e) =>
+                onPatch({
+                  theme_transition:
+                    e.target.value === "none" ? null : { type: "giant-title-wipe" },
+                })
+              }
+              className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+            >
+              <option value="none">None</option>
+              {THEME_TRANSITIONS.map((transition) => (
+                <option key={transition.value} value={transition.value}>
+                  {transition.label}
+                </option>
+                ))}
+            </select>
+          </label>
+          {bar.theme_transition?.type === "giant-title-wipe" && (
+            <label className="mt-3 block text-[12px] font-semibold text-[#3f3f46]">
+              Target glyph
+              <input
+                aria-label="Target glyph"
+                type="text"
+                maxLength={1}
+                value={bar.theme_transition.target_glyph ?? ""}
+                onChange={(e) =>
+                  onPatch({
+                    theme_transition: {
+                      type: "giant-title-wipe",
+                      target_glyph: e.target.value.slice(0, 1) || null,
+                    },
+                  })
+                }
+                placeholder="center"
+                className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500/60 focus:outline-none"
+              />
+            </label>
+          )}
+        </>
       )}
 
       {/* Style */}

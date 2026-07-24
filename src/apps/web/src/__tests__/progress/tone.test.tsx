@@ -134,6 +134,11 @@ describe("PhaseChipRow tone contract", () => {
 import { VariantRenderCard } from "@/components/progress/VariantRenderCard";
 
 const PENDING_VARIANT = { variant_id: "song_lyrics", render_status: null };
+const READY_VARIANT = {
+  variant_id: "song_lyrics",
+  render_status: "ready",
+  output_url: "https://cdn.example.com/video.mp4",
+};
 
 describe("VariantRenderCard tone contract", () => {
   it("test_variant_render_card_light_uses_zinc100_body: pending card body is zinc-100 in light mode", () => {
@@ -150,6 +155,39 @@ describe("VariantRenderCard tone contract", () => {
     );
     const divs = Array.from(container.querySelectorAll("div"));
     expect(divs.some((el) => el.className.includes("bg-zinc-900"))).toBe(true);
+  });
+
+  it("test_variant_render_card_pending_uses_beam_loader: pending tile gets light beam wrapper", () => {
+    const { container } = render(
+      <VariantRenderCard variant={PENDING_VARIANT} isNewlyReady={false} tone="light" />
+    );
+    const beam = container.querySelector(".beam-loader");
+    expect(beam).not.toBeNull();
+    expect(beam).toHaveAttribute("data-tone", "light");
+    expect(beam).toHaveAttribute("data-mode", "frame");
+    expect(beam).toHaveAttribute("data-strength", "subtle");
+  });
+
+  it("test_variant_render_card_rendering_uses_medium_beam: active rendering is more prominent", () => {
+    const { container } = render(
+      <VariantRenderCard
+        variant={{ ...PENDING_VARIANT, render_status: "rendering" }}
+        isNewlyReady={false}
+      />
+    );
+    const beam = container.querySelector(".beam-loader");
+    expect(beam).not.toBeNull();
+    expect(beam).toHaveAttribute("data-tone", "dark");
+    expect(beam).toHaveAttribute("data-strength", "medium");
+  });
+
+  it("test_variant_render_card_ready_disables_beam_motion: ready video card keeps static frame only", () => {
+    const { container } = render(
+      <VariantRenderCard variant={READY_VARIANT} isNewlyReady={false} />
+    );
+    const beam = container.querySelector(".beam-loader");
+    expect(beam).not.toBeNull();
+    expect(beam).toHaveAttribute("data-active", "false");
   });
 });
 

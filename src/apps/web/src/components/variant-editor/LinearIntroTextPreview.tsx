@@ -250,6 +250,12 @@ export function LinearIntroTextPreview({
     left: `${xFrac * 100}%`,
     top: `${yFrac * 100}%`,
     transform: playbackTransform,
+    transformOrigin:
+      playState !== null
+        ? `calc(50% + ${playState.scaleOriginX * scale}px) calc(50% + ${
+            playState.scaleOriginY * scale
+          }px)`
+        : "50% 50%",
     maxWidth: `${MAX_LINE_W_FRAC * 100}%`,
     width: "max-content",
     textAlign: anchor === "left" ? "left" : anchor === "right" ? "right" : "center",

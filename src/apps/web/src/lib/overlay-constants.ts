@@ -163,6 +163,15 @@ export const INTRO_ANIMATIONS: IntroAnimation[] = [
   { value: "none",       label: "None"       },
 ];
 
+export interface ThemeTransitionOption {
+  value: string;
+  label: string;
+}
+
+export const THEME_TRANSITIONS: ThemeTransitionOption[] = [
+  { value: "giant-title-wipe", label: "Giant title wipe" },
+];
+
 /**
  * Live (non-deprecated) fonts from the registry for the instant-editor Font picker.
  * Derived from FONT_REGISTRY so every entry is guaranteed to have a bundled

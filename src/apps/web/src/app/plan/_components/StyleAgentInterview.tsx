@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { BeamLoader } from "@/components/progress";
 import { styleAgentStart, styleAgentTurn, NotAuthenticatedError } from "@/lib/plan-api";
 
 type Phase = "loading" | "chat" | "thinking" | "error";
@@ -109,10 +110,17 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
 
   if (phase === "loading") {
     return (
-      <div className="flex items-center gap-2 py-10">
-        <span className="h-1.5 w-1.5 motion-safe:animate-ping rounded-full bg-lime-600" />
-        <span className="text-sm text-[#71717a]">Loading your style…</span>
-      </div>
+      <BeamLoader
+        tone="light"
+        mode="line"
+        ariaLabel="Loading your style"
+        className="inline-block rounded-full"
+      >
+        <div className="flex items-center gap-2 px-3 py-2">
+          <span className="h-1.5 w-1.5 motion-safe:animate-ping rounded-full bg-lime-600" />
+          <span className="text-sm text-[#71717a]">Loading your style…</span>
+        </div>
+      </BeamLoader>
     );
   }
 
@@ -160,14 +168,17 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
 
       {/* Thinking dot */}
       {phase === "thinking" && (
-        <div
-          className="mt-5 flex items-center gap-2"
-          role="status"
-          aria-label="Kria is thinking"
+        <BeamLoader
+          tone="light"
+          mode="line"
+          ariaLabel="Kria is thinking"
+          className="mt-5 inline-block rounded-full"
         >
-          <span className="h-1.5 w-1.5 motion-safe:animate-ping rounded-full bg-lime-600" />
-          <span className="text-sm text-[#71717a]">Thinking…</span>
-        </div>
+          <div className="flex items-center gap-2 px-3 py-2">
+            <span className="h-1.5 w-1.5 motion-safe:animate-ping rounded-full bg-lime-600" />
+            <span className="text-sm text-[#71717a]">Thinking…</span>
+          </div>
+        </BeamLoader>
       )}
 
       {/* Error state */}

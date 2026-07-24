@@ -562,12 +562,84 @@ def test_animated_effects_all_produce_sequences(tmp_workdir):
         "text_size_px": 80,
         "text_color": "#FFFFFF",
     }
-    for effect in ("scale-up", "fade-in", "typewriter", "slide-up", "slide-down", "bounce"):
+    for effect in (
+        "scale-up",
+        "fade-in",
+        "typewriter",
+        "slide-up",
+        "slide-down",
+        "bounce",
+    ):
         ov = {**base, "effect": effect}
         seq = tos._generate_overlay_sequence(ov, tmp_workdir, hash(effect) & 0xFF)
         assert seq is not None, f"{effect} returned None"
         assert seq["is_animated"] is True, f"{effect} not marked animated"
         assert seq["n_frames"] > 1
+    ov = {**base, "effect": "static", "theme_transition": {"type": "giant-title-wipe"}}
+    seq = tos._generate_overlay_sequence(ov, tmp_workdir, 250)
+    assert seq is not None
+    assert seq["is_animated"] is True
+    assert seq["n_frames"] > 1
+
+
+def test_giant_title_wipe_scale_holds_then_crops_offscreen():
+    assert tos._giant_title_wipe_scale_at(0.0, 4.0) == pytest.approx(1.0)
+    assert tos._giant_title_wipe_scale_at(2.7, 4.0) == pytest.approx(1.0)
+    assert tos._motion_cubic_bezier(0.5, 0.76, 0.0, 0.24, 1.0) == pytest.approx(0.5)
+    assert tos._giant_title_wipe_scale_at(2.8, 4.0) < 1.2
+    assert tos._giant_title_wipe_scale_at(3.1, 4.0) > 5.5
+    assert tos._giant_title_wipe_scale_at(4.0, 4.0) == pytest.approx(60.0)
+    assert tos._giant_title_wipe_alpha_at(3.7, 4.0) == pytest.approx(1.0)
+    assert tos._giant_title_wipe_alpha_at(3.93, 4.0) < 0.03
+    assert tos._giant_title_wipe_alpha_at(4.0, 4.0) == pytest.approx(0.0)
+    assert tos._giant_title_wipe_scale_origin() == pytest.approx((0.0, 0.0))
+
+
+def test_giant_title_wipe_origin_defaults_to_nearest_gap_and_targets_requested_glyph():
+    base = {
+        "text": "GOAL OF THE\nTOURNAMENT",
+        "position": "center",
+        "font_family": "Inter",
+        "text_size_px": 118,
+    }
+    default_origin = tos._giant_title_wipe_scale_origin(
+        {**base, "theme_transition": {"type": "giant-title-wipe"}}
+    )
+    assert default_origin != pytest.approx((0.0, 0.0))
+    target_origin = tos._giant_title_wipe_scale_origin(
+        {**base, "theme_transition": {"type": "giant-title-wipe", "target_glyph": "O"}}
+    )
+    assert target_origin != pytest.approx(default_origin)
+    missing_target_origin = tos._giant_title_wipe_scale_origin(
+        {
+            **base,
+            "text": "CENTER TEXT",
+            "theme_transition": {"type": "giant-title-wipe", "target_glyph": "O"},
+        }
+    )
+    assert missing_target_origin != pytest.approx((0.0, 0.0))
+    single_word_origin = tos._giant_title_wipe_scale_origin(
+        {**base, "text": "CENTER", "theme_transition": {"type": "giant-title-wipe"}}
+    )
+    assert single_word_origin != pytest.approx((0.0, 0.0))
+
+
+def test_giant_title_wipe_theme_transition_wraps_text_effect():
+    overlay = {
+        "text": "GOAL OF THE\nTOURNAMENT",
+        "effect": "staggered-slice",
+        "theme_transition": {"type": "giant-title-wipe"},
+        "position": "center",
+        "font_family": "Inter",
+        "text_size_px": 118,
+        "text_color": "#FFFFFF",
+    }
+    surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
+    assert tos._is_animated(overlay) is True
+    assert tos._staggered_slice_hold_plan(overlay, 120, 1.0 / tos.FPS, 4.0) is None
+    with mock.patch.object(tos, "_draw_staggered_slice") as draw_staggered:
+        tos._draw_overlay_on_canvas(surface.getCanvas(), overlay, 3.1, 4.0)
+    draw_staggered.assert_called_once()
 
 
 def test_staggered_slice_timing_model_matches_two_stage_contract():
