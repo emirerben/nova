@@ -1579,11 +1579,9 @@ def _capture_render_tasks(monkeypatch) -> tuple[list[dict], list[dict]]:
 
 
 @pytest.mark.parametrize(("archetype", "section"), [("subtitled", "overlays"), ("narrated", "sfx")])
-def test_caption_variant_lane_only_commit_enqueues_reburn(monkeypatch, archetype, section):
-    """An SFX/overlay-only Save on a caption variant must ride the caption reburn
-    + reapply chain (queue overlay-jobs, generation attached) — the fast pass
-    composites onto the CURRENT video and would silently drop an in-flight
-    caption edit it supersedes."""
+def test_ready_caption_variant_lane_only_commit_uses_fast_lane(monkeypatch, archetype, section):
+    """A ready/stable caption variant can apply outer SFX/overlay lanes without
+    re-burning captions from the base."""
     _arm(monkeypatch)
     job = _job(
         variant_id=archetype,
@@ -1602,20 +1600,56 @@ def test_caption_variant_lane_only_commit_enqueues_reburn(monkeypatch, archetype
     reburn_calls, regen_calls = _capture_render_tasks(monkeypatch)
     gj.enqueue_editor_commit_render(str(job.id), archetype, prep)
 
-    assert regen_calls == []
-    assert reburn_calls == [
-        {
-            "args": [str(job.id), archetype],
-            "kwargs": {"render_gen_id": prep["generation"]},
-            "queue": "overlay-jobs",
-        }
-    ]
+    assert reburn_calls == []
+    assert len(regen_calls) == 1
+    assert regen_calls[0]["args"] == [str(job.id), archetype]
+    assert regen_calls[0]["queue"] == "overlay-jobs"
+    assert regen_calls[0]["kwargs"]["render_gen_id"] == prep["generation"]
+    if section == "overlays":
+        assert regen_calls[0]["kwargs"]["media_overlays_override"][0]["id"] == "ov-1"
+    else:
+        assert regen_calls[0]["kwargs"]["sfx_override"][0]["id"] == "sfx-1"
     # The commit itself persisted the lane atomically — the reburn reads it back.
     v = job.assembly_plan["variants"][0]
     if section == "overlays":
         assert v["media_overlays"][0]["id"] == "ov-1"
     else:
         assert v["sound_effects"][0]["id"] == "sfx-1"
+
+
+def test_inflight_caption_variant_lane_only_commit_enqueues_reburn(monkeypatch):
+    """If a caption render is in flight, lane-only Save stays conservative so it
+    cannot finalize over stale caption pixels."""
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        render_status="rendering",
+        render_generation_id="tok-live",
+        mix=1.0,
+    )
+    prep = gj.prepare_editor_commit(
+        job,
+        "subtitled",
+        _commit_req(
+            media_overlays=[dict(_R2_OVERLAYS[0])],
+            base_generation="tok-live",
+        ),
+        user_id="u123",
+    )
+    reburn_calls, regen_calls = _capture_render_tasks(monkeypatch)
+    gj.enqueue_editor_commit_render(str(job.id), "subtitled", prep)
+
+    assert regen_calls == []
+    assert reburn_calls == [
+        {
+            "args": [str(job.id), "subtitled"],
+            "kwargs": {"render_gen_id": prep["generation"]},
+            "queue": "overlay-jobs",
+        }
+    ]
 
 
 def test_caption_variant_lane_commit_without_base_falls_back_to_fast_pass(monkeypatch):

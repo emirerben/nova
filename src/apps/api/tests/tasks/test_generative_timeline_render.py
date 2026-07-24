@@ -801,6 +801,87 @@ def test_collage_lyrics_swap_is_not_audio_only(preset: str) -> None:
     assert gb._is_collage_audio_only_swap_eligible(variant, "t2") is False
 
 
+def test_preserve_cuts_music_window_uses_audio_only_path(monkeypatch):
+    slots = [_tl_slot(1, in_s=2.0, duration_s=1.0)]
+    variant = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="agent_text",
+        music_track_id="t1",
+        music_start_s=8.0,
+        music_window_video_duration_s=1.0,
+        video_path=f"generative-jobs/{JOB_ID}/variant_1_song_text.mp4",
+        base_video_path=f"generative-jobs/{JOB_ID}/base_1_song_text.mp4",
+        user_timeline={"slots": slots, "beat_grid": [0.0, 0.5, 1.0]},
+    )
+    _job, updates, _dl = _regen_setup(monkeypatch, variants=[variant], track=_track("t1"))
+
+    called = {"audio_swap": False}
+
+    def _audio_swap(**kw):
+        called["audio_swap"] = True
+        assert kw["existing"]["music_start_s"] == 8.0
+        assert kw["track"].id == "t1"
+        return True
+
+    monkeypatch.setattr(gb, "_run_music_window_audio_only_swap", _audio_swap, raising=False)
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("ingest should be skipped")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb,
+        "_render_generative_variant",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("full render should be skipped")),
+        raising=False,
+    )
+
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "song_text",
+        None,
+        None,
+        False,
+        timeline_override=slots,
+        force_full_render=True,
+    )
+
+    assert called["audio_swap"] is True
+    assert updates == [{"render_status": "rendering", "ok": False, "error": None}]
+
+
+def test_music_window_audio_only_rejects_lyrics_and_changed_cuts():
+    slots = [_tl_slot(1, in_s=2.0, duration_s=1.0)]
+    variant = _existing_variant(
+        variant_id="song_text",
+        text_mode="agent_text",
+        video_path="v.mp4",
+        base_video_path="b.mp4",
+        user_timeline={"slots": slots},
+    )
+
+    assert (
+        gb._is_music_window_audio_only_swap_eligible(
+            existing={**variant, "text_mode": "lyrics"},
+            track=_track("t1"),
+            music_window_alignment="preserve_cuts",
+            timeline_override=slots,
+        )
+        is False
+    )
+    assert (
+        gb._is_music_window_audio_only_swap_eligible(
+            existing=variant,
+            track=_track("t1"),
+            music_window_alignment="preserve_cuts",
+            timeline_override=[_tl_slot(1, in_s=3.0, duration_s=1.0)],
+        )
+        is False
+    )
+
+
 def test_swap_song_clears_user_timeline_and_takes_fresh_match(monkeypatch):
     """M1: swap-song means a NEW beat grid — the user's cut no longer lines up.
     The persisted user_timeline is REMOVED from the variant entry, the override

@@ -34,7 +34,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import is_dataclass, replace
+from dataclasses import asdict, is_dataclass, replace
 from datetime import datetime
 from itertools import cycle
 from typing import Any
@@ -60,6 +60,7 @@ from app.services.job_phases import (
     mark_finished,
     mark_started,
     record_phase,
+    record_sub_phase,
 )
 from app.worker import celery_app
 
@@ -78,6 +79,9 @@ def _rendered_duration_s(path: str) -> float | None:
 log = structlog.get_logger()
 
 MAX_ERROR_DETAIL_LEN = 2000
+_CLIP_METADATA_CACHE_VERSION = 1
+_PREPROCESSED_SOURCE_CACHE_VERSION = 1
+_HDR_PRETONEMAP_CACHE_VERSION = 1
 # Caps the hero intro's reveal/animation window (NOT its display time — the intro is
 # held statically for the whole video). A long beat-1 slot shouldn't stretch the
 # word-by-word reveal across the entire first clip; it finishes revealing within this
@@ -143,6 +147,287 @@ _NO_RERUN_STATUSES = frozenset(
 # _reburn_text_on_base early branch (user-authored text_elements) is bypassed.
 # Apply: fly secrets set TEXT_ELEMENTS_ENABLED=false --app nova-video + worker restart.
 _TEXT_ELEMENTS_ENABLED = os.getenv("TEXT_ELEMENTS_ENABLED", "true").lower() != "false"
+
+
+def _elapsed_ms(t0: float) -> int:
+    return int((time.monotonic() - t0) * 1000)
+
+
+def _record_render_subphase(
+    job_id: str | uuid.UUID | None,
+    parent: str,
+    name: str,
+    t0: float,
+    *,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    if job_id is None:
+        return
+    record_sub_phase(job_id, parent, name, elapsed_ms=_elapsed_ms(t0), detail=detail)
+
+
+def _cache_fingerprint(clip_paths: list[str]) -> dict[str, Any]:
+    return {
+        "clip_paths": list(clip_paths),
+        "source_downscale_guard_enabled": bool(settings.source_downscale_guard_enabled),
+        "source_downscale_short_edge_max": int(settings.source_downscale_short_edge_max),
+        "orientation_normalize_enabled": bool(
+            getattr(settings, "orientation_normalize_enabled", True)
+        ),
+    }
+
+
+def _read_all_candidates(job_id: str | uuid.UUID | None) -> dict[str, Any]:
+    if job_id is None:
+        return {}
+    try:
+        job_uuid = uuid.UUID(str(job_id))
+    except (ValueError, TypeError):
+        return {}
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, job_uuid)
+            return dict(job.all_candidates or {}) if job is not None else {}
+    except Exception as exc:  # noqa: BLE001 - cache is best-effort
+        log.warning("generative_cache_read_failed", job_id=str(job_id), error=str(exc))
+        return {}
+
+
+def _merge_all_candidates(job_id: str | uuid.UUID | None, patch: dict[str, Any]) -> None:
+    if job_id is None:
+        return
+    try:
+        job_uuid = uuid.UUID(str(job_id))
+    except (ValueError, TypeError):
+        return
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, job_uuid, with_for_update=True)
+            if job is None:
+                return
+            job.all_candidates = {**(job.all_candidates or {}), **patch}
+            db.commit()
+    except Exception as exc:  # noqa: BLE001 - cache is best-effort
+        log.warning("generative_cache_write_failed", job_id=str(job_id), error=str(exc))
+
+
+def _clip_meta_to_cache(meta: Any) -> dict[str, Any]:
+    if is_dataclass(meta):
+        return asdict(meta)
+    if hasattr(meta, "model_dump"):
+        return meta.model_dump()
+    return {
+        "clip_id": getattr(meta, "clip_id", ""),
+        "transcript": getattr(meta, "transcript", ""),
+        "hook_text": getattr(meta, "hook_text", ""),
+        "hook_score": float(getattr(meta, "hook_score", 0.0) or 0.0),
+        "best_moments": list(getattr(meta, "best_moments", []) or []),
+        "detected_subject": getattr(meta, "detected_subject", ""),
+        "analysis_degraded": bool(getattr(meta, "analysis_degraded", False)),
+        "failed": bool(getattr(meta, "failed", False)),
+        "clip_path": getattr(meta, "clip_path", ""),
+        "text_safe_zone": getattr(meta, "text_safe_zone", None),
+        "visual_density": float(getattr(meta, "visual_density", 5.0) or 5.0),
+    }
+
+
+def _clip_meta_from_cache(raw: dict[str, Any]) -> Any:
+    from app.pipeline.agents.gemini_analyzer import ClipMeta  # noqa: PLC0415
+
+    allowed = {
+        "clip_id",
+        "transcript",
+        "hook_text",
+        "hook_score",
+        "best_moments",
+        "detected_subject",
+        "analysis_degraded",
+        "failed",
+        "clip_path",
+        "text_safe_zone",
+        "visual_density",
+    }
+    payload = {k: raw.get(k) for k in allowed if k in raw}
+    return ClipMeta(**payload)
+
+
+def _load_clip_metadata_cache(job_id: str, clip_paths_gcs: list[str]) -> list[Any] | None:
+    cache = _read_all_candidates(job_id).get("clip_metadata_cache")
+    if not isinstance(cache, dict):
+        return None
+    if cache.get("version") != _CLIP_METADATA_CACHE_VERSION:
+        return None
+    if cache.get("fingerprint") != _cache_fingerprint(clip_paths_gcs):
+        return None
+    raw_metas = cache.get("clip_metas")
+    if not isinstance(raw_metas, list) or len(raw_metas) != len(clip_paths_gcs):
+        return None
+    try:
+        return [_clip_meta_from_cache(m) for m in raw_metas if isinstance(m, dict)]
+    except Exception as exc:  # noqa: BLE001 - cache hit may never break render
+        log.warning("clip_metadata_cache_decode_failed", job_id=job_id, error=str(exc))
+        return None
+
+
+def _store_clip_metadata_cache(
+    job_id: str, clip_paths_gcs: list[str], clip_metas: list[Any]
+) -> None:
+    _merge_all_candidates(
+        job_id,
+        {
+            "clip_metadata_cache": {
+                "version": _CLIP_METADATA_CACHE_VERSION,
+                "fingerprint": _cache_fingerprint(clip_paths_gcs),
+                "clip_metas": [_clip_meta_to_cache(meta) for meta in clip_metas],
+            }
+        },
+    )
+
+
+def _load_preprocessed_source_cache(job_id: str, clip_paths_gcs: list[str]) -> list[str] | None:
+    cache = _read_all_candidates(job_id).get("preprocessed_source_cache")
+    if not isinstance(cache, dict):
+        return None
+    if cache.get("version") != _PREPROCESSED_SOURCE_CACHE_VERSION:
+        return None
+    if cache.get("fingerprint") != _cache_fingerprint(clip_paths_gcs):
+        return None
+    paths = cache.get("processed_clip_paths")
+    if not isinstance(paths, list) or len(paths) != len(clip_paths_gcs):
+        return None
+    return [str(path) for path in paths]
+
+
+def _store_preprocessed_source_cache(
+    job_id: str, clip_paths_gcs: list[str], local_clip_paths: list[str]
+) -> None:
+    try:
+        from app.storage import upload_public_read  # noqa: PLC0415
+
+        processed_paths: list[str] = []
+        for i, local_path in enumerate(local_clip_paths):
+            ext = os.path.splitext(local_path)[1] or ".mp4"
+            dst = f"generative-jobs/{job_id}/preprocessed/{i:03d}{ext}"
+            upload_public_read(local_path, dst)
+            processed_paths.append(dst)
+    except Exception as exc:  # noqa: BLE001 - cache is best-effort
+        log.warning("preprocessed_source_cache_store_failed", job_id=job_id, error=str(exc))
+        return
+    _merge_all_candidates(
+        job_id,
+        {
+            "preprocessed_source_cache": {
+                "version": _PREPROCESSED_SOURCE_CACHE_VERSION,
+                "fingerprint": _cache_fingerprint(clip_paths_gcs),
+                "processed_clip_paths": processed_paths,
+            }
+        },
+    )
+
+
+def _pretonemap_fingerprint(clip_id_to_local: dict[str, str], probe_map: dict) -> dict[str, Any]:
+    clips: list[dict[str, Any]] = []
+    for clip_id, local_path in clip_id_to_local.items():
+        probe = probe_map.get(local_path)
+        clips.append(
+            {
+                "clip_id": clip_id,
+                "duration_s": round(float(getattr(probe, "duration_s", 0.0) or 0.0), 3),
+                "width": int(getattr(probe, "width", 0) or 0),
+                "height": int(getattr(probe, "height", 0) or 0),
+                "color_trc": getattr(probe, "color_trc", None),
+            }
+        )
+    return {
+        "clips": clips,
+        "zscale_pipeline": _ZSCALE_SDR_PIPELINE_CACHE_KEY,
+    }
+
+
+def _safe_cache_token(value: str) -> str:
+    token = "".join(ch if ch.isalnum() else "_" for ch in str(value))
+    return token[:80] or "clip"
+
+
+_ZSCALE_SDR_PIPELINE_CACHE_KEY = "zscale-sdr-v1-crf16-fast-bt709"
+
+
+def _load_hdr_pretonemap_cache(
+    job_id: str | None,
+    clip_id_to_local: dict[str, str],
+    probe_map: dict,
+    tmpdir: str,
+    *,
+    signature: dict[str, Any],
+    hdr_clip_ids: set[str],
+) -> int:
+    if job_id is None or not hdr_clip_ids:
+        return 0
+    cache = _read_all_candidates(job_id).get("hdr_pretonemap_cache")
+    if not isinstance(cache, dict):
+        return 0
+    if cache.get("version") != _HDR_PRETONEMAP_CACHE_VERSION:
+        return 0
+    if cache.get("fingerprint") != signature:
+        return 0
+    paths_by_clip = cache.get("processed_by_clip_id")
+    if not isinstance(paths_by_clip, dict) or not hdr_clip_ids.issubset(paths_by_clip):
+        return 0
+    try:
+        from app.storage import download_to_file  # noqa: PLC0415
+        from app.tasks.template_orchestrate import _probe_clips  # noqa: PLC0415
+
+        downloaded: dict[str, str] = {}
+        for clip_id in sorted(hdr_clip_ids):
+            local_path = os.path.join(tmpdir, f"cached_sdr_{_safe_cache_token(clip_id)}.mp4")
+            download_to_file(str(paths_by_clip[clip_id]), local_path)
+            downloaded[clip_id] = local_path
+        reprobed = _probe_clips(list(downloaded.values()))
+    except Exception as exc:  # noqa: BLE001 - cache hit must never break render
+        log.warning("hdr_pretonemap_cache_load_failed", job_id=job_id, error=str(exc))
+        return 0
+
+    for clip_id, local_path in downloaded.items():
+        probe = reprobed.get(local_path)
+        if probe is None:
+            return 0
+        probe_map[local_path] = probe
+        clip_id_to_local[clip_id] = local_path
+    return len(downloaded)
+
+
+def _store_hdr_pretonemap_cache(
+    job_id: str | None,
+    *,
+    signature: dict[str, Any],
+    converted: list[tuple[str, str, Any]],
+) -> None:
+    if job_id is None or not converted:
+        return
+    try:
+        from app.storage import upload_public_read  # noqa: PLC0415
+
+        processed_by_clip_id: dict[str, str] = {}
+        for i, (clip_id, local_path, _probe) in enumerate(converted):
+            dst = (
+                f"generative-jobs/{job_id}/preprocessed/"
+                f"hdr_{i:03d}_{_safe_cache_token(clip_id)}.mp4"
+            )
+            upload_public_read(local_path, dst)
+            processed_by_clip_id[clip_id] = dst
+    except Exception as exc:  # noqa: BLE001 - cache is best-effort
+        log.warning("hdr_pretonemap_cache_store_failed", job_id=job_id, error=str(exc))
+        return
+    _merge_all_candidates(
+        job_id,
+        {
+            "hdr_pretonemap_cache": {
+                "version": _HDR_PRETONEMAP_CACHE_VERSION,
+                "fingerprint": signature,
+                "processed_by_clip_id": processed_by_clip_id,
+            }
+        },
+    )
 
 
 @celery_app.task(
@@ -356,6 +641,8 @@ def _run_generative_job(job_id: str) -> None:
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
 
+    analyze_t0 = time.monotonic()
+
     # Durable per-job source copies (clip timeline editor). User uploads under
     # the 24h-lifecycle prefixes are snapshot to `generative-jobs/{job_id}/sources/`
     # BEFORE ingest, so a timeline edit days later can still re-render from the
@@ -505,6 +792,7 @@ def _run_generative_job(job_id: str) -> None:
         # cancel_futures=True) so the exception propagates immediately. Python can't
         # kill a running ffmpeg thread, but each tonemap holds its own 600s timeout
         # and the failing task's worker is recycled, so the orphan is bounded.
+        match_phase_t0 = time.monotonic()
         pool = ThreadPoolExecutor(max_workers=3)
         try:
             prework_started = time.monotonic()
@@ -513,6 +801,7 @@ def _run_generative_job(job_id: str) -> None:
             )
             fut_text = pool.submit(_text_then_style)
             fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
+            tonemap_t0 = time.monotonic()
             n_tonemapped = fut_tonemap.result()
             record_render_stage(
                 "preprocessing_hdr_tonemap",
@@ -520,6 +809,14 @@ def _run_generative_job(job_id: str) -> None:
                 trace_id=render_trace_id,
                 counts={"clips_converted": n_tonemapped},
             )
+            _record_render_subphase(
+                job_id,
+                "match_song",
+                "hdr_pretonemap",
+                tonemap_t0,
+                detail={"clips_converted": n_tonemapped},
+            )
+            text_t0 = time.monotonic()
             agent_text, agent_form, style_set_id = fut_text.result()
             record_render_stage(
                 "ai_text_and_style",
@@ -527,12 +824,27 @@ def _run_generative_job(job_id: str) -> None:
                 trace_id=render_trace_id,
                 counts={"has_text": bool(agent_text)},
             )
+            _record_render_subphase(
+                job_id,
+                "match_song",
+                "text_and_style",
+                text_t0,
+                detail={"has_text": bool(agent_text), "style_set_id": style_set_id},
+            )
+            match_t0 = time.monotonic()
             best_track = fut_match.result()
             record_render_stage(
                 "audio_match",
                 elapsed_ms=int((time.monotonic() - prework_started) * 1000),
                 trace_id=render_trace_id,
                 counts={"matched": best_track is not None},
+            )
+            _record_render_subphase(
+                job_id,
+                "match_song",
+                "music_matcher",
+                match_t0,
+                detail={"track_id": best_track.id if best_track else None},
             )
         except BaseException:
             pool.shutdown(wait=False, cancel_futures=True)
@@ -562,8 +874,20 @@ def _run_generative_job(job_id: str) -> None:
                 pass
 
         # Phase transition: clip analysis + song match are both complete.
-        record_phase(job_id, "analyze_clips", next_phase="match_song")
-        record_phase(job_id, "match_song", next_phase="render_variants")
+        match_done_t = time.monotonic()
+        record_phase(
+            job_id,
+            "analyze_clips",
+            elapsed_ms=int((match_phase_t0 - analyze_t0) * 1000),
+            next_phase="match_song",
+        )
+        record_phase(
+            job_id,
+            "match_song",
+            elapsed_ms=int((match_done_t - match_phase_t0) * 1000),
+            next_phase="render_variants",
+        )
+        render_variants_t0 = time.monotonic()
 
         # [Phase 4/5] Resolve the archetype against the footage, then render its
         # variant set. Default-safe: montage (today's path) unless the plan declares
@@ -888,14 +1212,20 @@ def _run_generative_job(job_id: str) -> None:
                 )
             results = _render_spec_set(fallback_specs, None)
 
-    record_phase(job_id, "render_variants", next_phase="finalize")
-    record_phase(job_id, "finalize")
+    record_phase(
+        job_id,
+        "render_variants",
+        elapsed_ms=_elapsed_ms(render_variants_t0),
+        next_phase="finalize",
+    )
+    finalize_t0 = time.monotonic()
     with render_stage_timer(
         "finalize",
         trace_id=render_trace_id,
         counts={"variant_count": len(results)},
     ):
         _finalize_job(job_id, results)
+    record_phase(job_id, "finalize", elapsed_ms=_elapsed_ms(finalize_t0))
     # Overlay autoplace chain (plan 007, D2-B). MUST run AFTER _finalize_job —
     # finalize rebuilds every variant entry from the in-memory results whitelist,
     # so anything the match/apply tasks wrote mid-render would be stripped
@@ -1142,17 +1472,62 @@ def _ingest_clips(
     def _clip_id_for(ref: object | None, idx: int) -> str:
         return ref.name if ref is not None else f"clip_{idx}"
 
-    local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
-    probe_map = _probe_clips(local_clip_paths)
-    # Heavy-source guard (2026-07-21 OOM): oversized SDR clips are downscaled
-    # ONCE here — before Gemini upload (smaller upload) and before any variant
-    # reframe (bounded decode). Mutates local_clip_paths/probe_map in place so
-    # the clip_id maps below point at the intermediates. HDR clips pass through
-    # untouched (the pre-tonemap pass owns those). Best-effort: a failed
-    # conversion keeps the original.
-    from app.pipeline.source_guard import downscale_oversized_sources  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-    downscale_oversized_sources(local_clip_paths, probe_map, tmpdir, job_id=job_id)
+    download_t0 = time.monotonic()
+    cached_sources = _load_preprocessed_source_cache(job_id, clip_paths_gcs)
+    source_paths_to_download = cached_sources or clip_paths_gcs
+    local_clip_paths = _download_clips_parallel(source_paths_to_download, tmpdir)
+    _record_render_subphase(
+        job_id,
+        "analyze_clips",
+        "ingest_download",
+        download_t0,
+        detail={"clips": len(local_clip_paths), "preprocessed_cache_hit": bool(cached_sources)},
+    )
+    if cached_sources:
+        record_pipeline_event(
+            "ingest",
+            "preprocessed_sources_reused",
+            {"clips": len(cached_sources)},
+        )
+
+    probe_t0 = time.monotonic()
+    probe_map = _probe_clips(local_clip_paths)
+    _record_render_subphase(
+        job_id,
+        "analyze_clips",
+        "ingest_probe",
+        probe_t0,
+        detail={"clips": len(probe_map)},
+    )
+    if not cached_sources:
+        # Heavy-source guard (2026-07-21 OOM): oversized SDR clips are downscaled
+        # ONCE here — before Gemini upload (smaller upload) and before any variant
+        # reframe (bounded decode). Mutates local_clip_paths/probe_map in place so
+        # the clip_id maps below point at the intermediates. HDR clips pass through
+        # untouched (the pre-tonemap pass owns those). Best-effort: a failed
+        # conversion keeps the original.
+        from app.pipeline.source_guard import downscale_oversized_sources  # noqa: PLC0415
+
+        before_guard = list(local_clip_paths)
+        guard_t0 = time.monotonic()
+        downscale_oversized_sources(local_clip_paths, probe_map, tmpdir, job_id=job_id)
+        changed = before_guard != local_clip_paths
+        _record_render_subphase(
+            job_id,
+            "analyze_clips",
+            "source_guard",
+            guard_t0,
+            detail={"changed": changed},
+        )
+        if changed:
+            _store_preprocessed_source_cache(job_id, clip_paths_gcs, local_clip_paths)
+            record_pipeline_event(
+                "ingest",
+                "preprocessed_sources_stored",
+                {"clips": len(local_clip_paths)},
+            )
     if skip_analysis:
         return {
             "clip_metas": [],
@@ -1163,9 +1538,45 @@ def _ingest_clips(
             },
             "hero": None,
         }
+    cached_metas = _load_clip_metadata_cache(job_id, clip_paths_gcs)
+    if cached_metas:
+        record_pipeline_event(
+            "ingest",
+            "clip_metadata_cache_hit",
+            {"clips": len(cached_metas)},
+        )
+        for i, meta in enumerate(cached_metas):
+            if i < len(local_clip_paths):
+                meta.clip_path = local_clip_paths[i]
+        local_by_id = {
+            str(getattr(meta, "clip_id", f"clip_{i}")): local_clip_paths[i]
+            for i, meta in enumerate(cached_metas)
+            if i < len(local_clip_paths)
+        }
+        gcs_by_id = {
+            str(getattr(meta, "clip_id", f"clip_{i}")): clip_paths_gcs[i]
+            for i, meta in enumerate(cached_metas)
+            if i < len(clip_paths_gcs)
+        }
+        return {
+            "clip_metas": cached_metas,
+            "probe_map": probe_map,
+            "clip_id_to_gcs": gcs_by_id,
+            "clip_id_to_local": local_by_id,
+            "hero": max(cached_metas, key=lambda m: float(getattr(m, "hook_score", 0.0) or 0.0)),
+        }
+    record_pipeline_event("ingest", "clip_metadata_cache_miss", {"clips": len(clip_paths_gcs)})
+    analysis_t0 = time.monotonic()
     file_refs = _upload_clips_parallel(local_clip_paths)
     clip_metas, failed_count = _analyze_clips_parallel(
         file_refs, local_clip_paths, probe_map, job_id=job_id
+    )
+    _record_render_subphase(
+        job_id,
+        "analyze_clips",
+        "clip_metadata",
+        analysis_t0,
+        detail={"clips": len(clip_metas), "failed": failed_count},
     )
     total = len(clip_metas) + failed_count
     if total == 0 or len(clip_metas) == 0 or failed_count > total * (1.0 - min_success_fraction):
@@ -1173,6 +1584,7 @@ def _ingest_clips(
             f"{failed_count}/{total} clips failed clip_metadata — aborting "
             f"(min_success_fraction={min_success_fraction})"
         )
+    _store_clip_metadata_cache(job_id, clip_paths_gcs, clip_metas)
     return {
         "clip_metas": clip_metas,
         "probe_map": probe_map,
@@ -1352,6 +1764,22 @@ def _pretonemap_hdr_clips(
     ]
     if not hdr_clips:
         return 0
+    signature = _pretonemap_fingerprint(clip_id_to_local, probe_map)
+    cached_count = _load_hdr_pretonemap_cache(
+        job_id,
+        clip_id_to_local,
+        probe_map,
+        tmpdir,
+        signature=signature,
+        hdr_clip_ids={clip_id for _idx, clip_id, _path in hdr_clips},
+    )
+    if cached_count:
+        record_pipeline_event(
+            "reframe",
+            "hdr_pretonemap_cache_hit",
+            {"clips": cached_count},
+        )
+        return cached_count
 
     def _convert_one(idx: int, clip_id: str, local_path: str):
         sdr_path = os.path.join(tmpdir, f"sdr_{idx}_{os.path.basename(local_path)}")
@@ -1428,6 +1856,7 @@ def _pretonemap_hdr_clips(
                 )
 
     # Mutate the shared maps on the calling thread, after all conversions joined.
+    _store_hdr_pretonemap_cache(job_id, signature=signature, converted=results)
     for clip_id, sdr_path, probe in results:
         probe_map[sdr_path] = probe
         clip_id_to_local[clip_id] = sdr_path
@@ -1741,6 +2170,7 @@ def _mux_track_audio_preserve_video(
     output_gcs_path: str,
     tmpdir: str,
     label: str,
+    audio_start_offset_s: float | None = None,
 ) -> str:
     """Replace a finished video's audio with ``track`` while stream-copying video."""
     import subprocess  # noqa: PLC0415
@@ -1763,7 +2193,10 @@ def _mux_track_audio_preserve_video(
 
     audio_dur = _probe_duration(audio_local)
     cfg = track.track_config or {}
-    safe_offset = max(0.0, float(cfg.get("best_start_s", 0.0) or 0.0))
+    requested_offset = (
+        audio_start_offset_s if audio_start_offset_s is not None else cfg.get("best_start_s", 0.0)
+    )
+    safe_offset = max(0.0, float(requested_offset or 0.0))
     if audio_dur > 0 and safe_offset > 0:
         safe_offset = min(safe_offset, max(0.0, audio_dur - 5.0))
 
@@ -1797,11 +2230,9 @@ def _mux_track_audio_preserve_video(
     result = subprocess.run(cmd, capture_output=True, timeout=180, check=False)
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", "replace")[-800:]
-        raise RuntimeError(
-            f"masonry audio-only song swap failed (rc={result.returncode}): {stderr}"
-        )
+        raise RuntimeError(f"audio-only song swap failed (rc={result.returncode}): {stderr}")
     if not os.path.exists(out_local) or os.path.getsize(out_local) == 0:
-        raise RuntimeError("masonry audio-only song swap produced empty output")
+        raise RuntimeError("audio-only song swap produced empty output")
     return upload_public_read(out_local, output_gcs_path, content_type="video/mp4")
 
 
@@ -1874,6 +2305,128 @@ def _run_masonry_audio_only_song_swap(
     return True
 
 
+def _slot_signature(slot: dict) -> dict[str, Any]:
+    return {
+        key: slot.get(key)
+        for key in (
+            "slot_id",
+            "clip_index",
+            "source_gcs_path",
+            "in_s",
+            "duration_s",
+            "duration_beats",
+            "removed",
+        )
+    }
+
+
+def _same_rendered_slots(left: list[dict] | None, right: list[dict] | None) -> bool:
+    if left is None or right is None or len(left) != len(right):
+        return False
+    return [_slot_signature(s) for s in left] == [_slot_signature(s) for s in right]
+
+
+def _is_music_window_audio_only_swap_eligible(
+    *,
+    existing: dict,
+    track: MusicTrack | None,
+    music_window_alignment: str | None,
+    timeline_override: list[dict] | None,
+) -> bool:
+    """True when a song-window edit can preserve already-rendered visuals."""
+    if music_window_alignment != "preserve_cuts":
+        return False
+    if existing.get("variant_id") != "song_text":
+        return False
+    if existing.get("text_mode") == "lyrics":
+        return False
+    if track is None or track.analysis_status != "ready" or not track.audio_gcs_path:
+        return False
+    if not existing.get("video_path") or not existing.get("base_video_path"):
+        return False
+    rendered_slots = (existing.get("user_timeline") or {}).get("slots") or (
+        existing.get("ai_timeline") or {}
+    ).get("slots")
+    if timeline_override is not None and not _same_rendered_slots(
+        timeline_override, rendered_slots
+    ):
+        return False
+    return True
+
+
+def _run_music_window_audio_only_swap(
+    *,
+    job_id: str,
+    variant_id: str,
+    existing: dict,
+    track: MusicTrack,
+    expected_render_gen_id: str | None = None,
+) -> bool:
+    """Fast music-window edit: keep video frames/cuts, replace only the audio bed."""
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    token = uuid.uuid4().hex
+    music_start_s = max(0.0, float(existing.get("music_start_s", 0.0) or 0.0))
+    path_fields = (
+        "video_path",
+        "base_video_path",
+        "pre_media_overlay_video_path",
+        "pre_sfx_video_path",
+    )
+    patch: dict[str, Any] = {
+        "music_track_id": track.id,
+        "track_title": track.title,
+        "ok": True,
+        "error": None,
+        "render_error": None,
+        "render_status": "ready",
+        "render_finished_at": datetime.utcnow().isoformat() + "Z",
+    }
+    with tempfile.TemporaryDirectory(prefix="nova_music_window_audio_swap_") as tmpdir:
+        for field in path_fields:
+            source_gcs = existing.get(field)
+            if not source_gcs:
+                continue
+            out_gcs = (
+                f"generative-jobs/{job_id}/music-window-audio/{variant_id}_{token}_{field}.mp4"
+            )
+            signed_url = _mux_track_audio_preserve_video(
+                video_gcs_path=source_gcs,
+                track=track,
+                output_gcs_path=out_gcs,
+                tmpdir=tmpdir,
+                label=field,
+                audio_start_offset_s=music_start_s,
+            )
+            patch[field] = out_gcs
+            if field == "video_path":
+                patch["output_url"] = signed_url
+
+    if "video_path" not in patch or "output_url" not in patch:
+        raise ValueError("music-window audio-only swap missing current video_path")
+
+    if not _update_variant_entry(
+        job_id,
+        variant_id,
+        patch,
+        expected_render_gen_id=expected_render_gen_id,
+        outcome="music_window_audio_swap",
+    ):
+        return False
+
+    record_pipeline_event(
+        "audio_mix",
+        "music_window_audio_only_swap",
+        {"variant_id": variant_id, "track_id": track.id, "music_start_s": music_start_s},
+    )
+    _reapply_persisted_sfx_if_any(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=expected_render_gen_id,
+    )
+    return True
+
+
 def _run_media_overlay_pass(
     *,
     job_id: str,
@@ -1906,6 +2459,7 @@ def _run_media_overlay_pass(
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
     from app.storage import copy_object  # noqa: PLC0415
 
+    pass_t0 = time.monotonic()
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=expected_render_gen_id is not None)
         if job is None:
@@ -1999,7 +2553,11 @@ def _run_media_overlay_pass(
 
             flag_modified(job, "assembly_plan")
             db.commit()
-            record_pipeline_event("media_overlay", "cards_cleared", {"variant_id": variant_id})
+            record_pipeline_event(
+                "media_overlay",
+                "cards_cleared",
+                {"variant_id": variant_id, "elapsed_ms": _elapsed_ms(pass_t0)},
+            )
             # Terminal hook: re-apply persisted SFX on top of the restored clean variant.
             sfx_owned = _reapply_persisted_sfx_if_any(
                 job_id=job_id,
@@ -2077,7 +2635,11 @@ def _run_media_overlay_pass(
 
             flag_modified(job, "assembly_plan")
             db.commit()
-            record_pipeline_event("media_overlay", "apply_failed", {"error": str(exc)[:200]})
+            record_pipeline_event(
+                "media_overlay",
+                "apply_failed",
+                {"error": str(exc)[:200], "elapsed_ms": _elapsed_ms(pass_t0)},
+            )
             return
 
         # Re-read FRESH under a row lock before writing back (plan 009 E5): the
@@ -2137,6 +2699,7 @@ def _run_media_overlay_pass(
                 "variant_id": variant_id,
                 "card_count": len(cards),
                 "stale_write_skipped": stale_write_skipped,
+                "elapsed_ms": _elapsed_ms(pass_t0),
             },
         )
         # Terminal hook: re-apply persisted SFX on top of the newly composited video.
@@ -2601,6 +3164,7 @@ def _run_sfx_pass(
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
     from app.storage import copy_object  # noqa: PLC0415
 
+    pass_t0 = time.monotonic()
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=expected_render_gen_id is not None)
         if job is None:
@@ -2664,7 +3228,11 @@ def _run_sfx_pass(
 
             flag_modified(job, "assembly_plan")
             db.commit()
-            record_pipeline_event("sound_effects", "effects_cleared", {"variant_id": variant_id})
+            record_pipeline_event(
+                "sound_effects",
+                "effects_cleared",
+                {"variant_id": variant_id, "elapsed_ms": _elapsed_ms(pass_t0)},
+            )
             return
 
         # ── Apply path: mix effects onto the clean base ───────────────────────
@@ -2743,7 +3311,11 @@ def _run_sfx_pass(
 
             flag_modified(job, "assembly_plan")
             db.commit()
-            record_pipeline_event("sound_effects", "apply_failed", {"error": str(exc)[:200]})
+            record_pipeline_event(
+                "sound_effects",
+                "apply_failed",
+                {"error": str(exc)[:200], "elapsed_ms": _elapsed_ms(pass_t0)},
+            )
             return
 
         for v in variants:
@@ -2784,7 +3356,11 @@ def _run_sfx_pass(
         record_pipeline_event(
             "sound_effects",
             "effects_applied",
-            {"variant_id": variant_id, "effect_count": len(placements)},
+            {
+                "variant_id": variant_id,
+                "effect_count": len(placements),
+                "elapsed_ms": _elapsed_ms(pass_t0),
+            },
         )
 
 
@@ -4342,6 +4918,56 @@ def _run_regenerate_variant(
             track = db.get(MusicTrack, track_id)
         if track is None or track.analysis_status != "ready" or not track.audio_gcs_path:
             raise ValueError(f"Track {track_id} is not available for re-render")
+
+    music_window_audio_only = (
+        music_window_alignment == "preserve_cuts"
+        and override_text is None
+        and not remove_text
+        and style_set_id is None
+        and size_override_px is None
+        and mix_override is None
+        and layout_override is None
+        and font_family_override is None
+        and effect_override is None
+        and text_color_override is None
+        and cluster_hero_font_override is None
+        and cluster_body_font_override is None
+        and cluster_accent_font_override is None
+        and cluster_hero_size_px_override is None
+        and cluster_body_size_px_override is None
+        and cluster_accent_size_px_override is None
+        and media_overlays_override is None
+        and sfx_override is None
+        and intro_start_s_override is None
+        and intro_end_s_override is None
+        and text_behind_subject is None
+        and orientation_override is None
+    )
+    if music_window_audio_only and _is_music_window_audio_only_swap_eligible(
+        existing=existing,
+        track=track,
+        music_window_alignment=music_window_alignment,
+        timeline_override=timeline_override,
+    ):
+        try:
+            completed = _run_music_window_audio_only_swap(
+                job_id=job_id,
+                variant_id=variant_id,
+                existing=existing,
+                track=track,
+                expected_render_gen_id=render_gen_id,
+            )
+            if completed:
+                return
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "music_window_audio_only_swap_fallback_full_render",
+                job_id=job_id,
+                variant_id=variant_id,
+                error=str(exc),
+                exc_info=True,
+            )
 
     with tempfile.TemporaryDirectory(prefix="nova_generative_re_") as tmpdir:
         # ── Timeline-override assembly (clip timeline editor) ─────────────────
@@ -6293,7 +6919,9 @@ def _render_generative_variant(
         # reader treats `variant.get("lyrics_baked") is False` as "new model"
         # and anything else (True/None/absent) as "legacy baked".
         base["lyrics_baked"] = False
+    variant_t0 = time.monotonic()
     try:
+        plan_t0 = time.monotonic()
         beats: list[float] = []
         effective_music_window: dict[str, Any] | None = None
         voiceover_local: str | None = None
@@ -6499,6 +7127,13 @@ def _render_generative_variant(
             except TemplateMismatchError as exc:
                 raise ValueError(f"{exc.code}: {exc.message}") from exc
             steps = assembly_plan.steps
+        _record_render_subphase(
+            job_id,
+            "render_variants",
+            "variant_plan",
+            plan_t0,
+            detail={"variant_id": variant_id, "track_id": track_id},
+        )
 
         # After the matcher runs, check whether any assigned clips were left
         # unplaced (residual: song window physically too short, or footage that
@@ -6548,6 +7183,7 @@ def _render_generative_variant(
         # still needs this pass because it derives its audio bed from source clips.
         skip_classic_assembly_for_masonry_song = masonry_requested and track is not None
         classic_assembly_done = False
+        assembly_t0 = time.monotonic()
 
         def _assemble_classic_montage() -> None:
             nonlocal classic_assembly_done
@@ -6641,6 +7277,17 @@ def _render_generative_variant(
                 )
                 if not classic_assembly_done:
                     _assemble_classic_montage()
+        _record_render_subphase(
+            job_id,
+            "render_variants",
+            "variant_assembly",
+            assembly_t0,
+            detail={
+                "variant_id": variant_id,
+                "masonry": masonry_applied,
+                "classic": classic_assembly_done,
+            },
+        )
 
         # ai_timeline persistence (clip timeline editor): rewritten on every
         # FRESH montage assembly (first render, swap-song, mix re-render), so
@@ -6680,6 +7327,7 @@ def _render_generative_variant(
         # For agent_text variants this becomes the cached base.
         audio_mixed_path = os.path.join(variant_dir, "audio_mixed.mp4")
         final_path = os.path.join(variant_dir, "final.mp4")
+        audio_t0 = time.monotonic()
         if voiceover_gcs_path:
             # Voiceover variants: the user's voice is the bed. voiceover_only ducks the
             # footage audio under the voice; voiceover_music drops a matched track low
@@ -6728,6 +7376,20 @@ def _render_generative_variant(
             # Original-audio variant: KEEP the clips' source audio — skip the mix.
             # `_assemble_clips` already muxed source audio into assembled.mp4.
             audio_mixed_path = assembled_path
+        _record_render_subphase(
+            job_id,
+            "render_variants",
+            "variant_audio_mix",
+            audio_t0,
+            detail={
+                "variant_id": variant_id,
+                "mode": (
+                    "voiceover"
+                    if voiceover_gcs_path
+                    else ("music" if track is not None else "original")
+                ),
+            },
+        )
 
         if not os.path.exists(audio_mixed_path) or os.path.getsize(audio_mixed_path) == 0:
             raise RuntimeError(f"variant {variant_id} produced empty audio-mixed output")
@@ -6750,7 +7412,15 @@ def _render_generative_variant(
                 f"base_{rank}_{variant_id}.mp4",
                 spec.get("storage_generation"),
             )
+            base_upload_t0 = time.monotonic()
             base_url_unused = upload_public_read(audio_mixed_path, base_gcs)  # noqa: F841
+            _record_render_subphase(
+                job_id,
+                "render_variants",
+                "variant_base_upload",
+                base_upload_t0,
+                detail={"variant_id": variant_id},
+            )
             base["base_video_path"] = base_gcs
             log.info(
                 "generative_base_uploaded",
@@ -6930,6 +7600,7 @@ def _render_generative_variant(
                 # quote (persisted carry or just authored) survives a static
                 # fallback so a later eligible render re-times it LLM-free.
 
+            text_burn_t0 = time.monotonic()
             if sequence_result is not None:
                 overlays, sequence_persist = sequence_result
                 base.update(sequence_persist)
@@ -6968,6 +7639,13 @@ def _render_generative_variant(
                         f"{variant_id}; failing the render instead of shipping a "
                         "textless video"
                     )
+            _record_render_subphase(
+                job_id,
+                "render_variants",
+                "variant_text_burn",
+                text_burn_t0,
+                detail={"variant_id": variant_id, "mode": base.get("intro_mode")},
+            )
         else:
             if text_mode == "lyrics" or lyrics_rendered:
                 base_gcs = _variant_storage_key(
@@ -6975,7 +7653,15 @@ def _render_generative_variant(
                     f"base_{rank}_{variant_id}.mp4",
                     spec.get("storage_generation"),
                 )
+                base_upload_t0 = time.monotonic()
                 base_url_unused = upload_public_read(audio_mixed_path, base_gcs)  # noqa: F841
+                _record_render_subphase(
+                    job_id,
+                    "render_variants",
+                    "variant_base_upload",
+                    base_upload_t0,
+                    detail={"variant_id": variant_id},
+                )
                 base["base_video_path"] = base_gcs
                 log.info(
                     "generative_base_uploaded",
@@ -7007,8 +7693,23 @@ def _render_generative_variant(
             f"variant_{rank}_{variant_id}.mp4",
             spec.get("storage_generation"),
         )
+        output_upload_t0 = time.monotonic()
         output_url = upload_public_read(final_path, output_gcs)
+        _record_render_subphase(
+            job_id,
+            "render_variants",
+            "variant_output_upload",
+            output_upload_t0,
+            detail={"variant_id": variant_id},
+        )
         log.info("generative_variant_uploaded", job_id=job_id, variant_id=variant_id)
+        _record_render_subphase(
+            job_id,
+            "render_variants",
+            "variant_total",
+            variant_t0,
+            detail={"variant_id": variant_id, "ok": True},
+        )
         return {
             **base,
             "ok": True,
@@ -7029,6 +7730,13 @@ def _render_generative_variant(
             variant_id=variant_id,
             error=err,
             exc_info=True,
+        )
+        _record_render_subphase(
+            job_id,
+            "render_variants",
+            "variant_total",
+            variant_t0,
+            detail={"variant_id": variant_id, "ok": False, "error": err},
         )
         return {
             **base,
