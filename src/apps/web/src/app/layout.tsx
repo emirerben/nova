@@ -15,6 +15,24 @@ export const metadata: Metadata = {
     url: CANONICAL_WEB_ORIGIN,
     siteName: BRAND_NAME,
   },
+  icons: {
+    // Lime tile for light browser chrome, white tile + lime fan for dark.
+    // Browsers without media support on <link rel="icon"> fall back to the last
+    // matching entry; the plain lime tile is listed first as the default.
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      {
+        url: "/favicon.svg",
+        type: "image/svg+xml",
+        media: "(prefers-color-scheme: light)",
+      },
+      {
+        url: "/favicon-white.svg",
+        type: "image/svg+xml",
+        media: "(prefers-color-scheme: dark)",
+      },
+    ],
+  },
 };
 
 export const viewport: Viewport = {

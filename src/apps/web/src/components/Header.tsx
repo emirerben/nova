@@ -6,6 +6,7 @@ import { signIn, signOut, useSession } from "next-auth/react";
 import { useEffect, useRef, useState } from "react";
 
 import { BRAND_NAME } from "@/lib/brand";
+import KriaMark from "@/components/KriaMark";
 import { resetPersona } from "@/lib/plan-api";
 
 export default function Header() {
@@ -59,8 +60,11 @@ export default function Header() {
         <Link
           href="/"
           aria-label={`${BRAND_NAME} — home`}
-          className={`font-semibold tracking-tight ${isLight ? "text-[#0c0c0e]" : "text-white"}`}
+          className={`flex items-center gap-2 font-semibold tracking-tight ${isLight ? "text-[#0c0c0e]" : "text-white"}`}
         >
+          <KriaMark
+            className={`h-[22px] w-auto ${isLight ? "text-lime-600" : "text-white"}`}
+          />
           {BRAND_NAME}
         </Link>
         <nav className="flex items-center gap-2 sm:gap-4">
