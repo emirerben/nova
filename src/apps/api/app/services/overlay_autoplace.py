@@ -591,6 +591,7 @@ def filter_wishlist_against_assets(wishlist: list[str], assets: list[dict]) -> l
                     analysis.get("subject"),
                     analysis.get("description"),
                     analysis.get("on_screen_text"),
+                    asset.get("user_context"),
                     asset.get("source_filename", "").rsplit(".", 1)[0].replace("-", " "),
                 )
             )
@@ -638,6 +639,7 @@ def heuristic_match(
                 analysis.get("subject"),
                 analysis.get("description"),
                 analysis.get("on_screen_text"),
+                asset.get("user_context"),
                 asset.get("source_filename", "").rsplit(".", 1)[0].replace("-", " "),
             )
         )

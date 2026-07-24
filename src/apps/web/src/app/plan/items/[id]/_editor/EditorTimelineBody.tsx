@@ -623,6 +623,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   ) {
     if (readOnly) return;
     if (bar.role === "lyric_line") return;
+    if (bar.id.startsWith("subtitled-caption-")) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -941,7 +942,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                         );
                         const selected = isSel("text", b.id);
                         const flashing = flashIds?.has(b.id) ?? false;
-                        const locked = b.role === "lyric_line";
+                        const captionLocked = b.id.startsWith("subtitled-caption-");
+                        const locked = b.role === "lyric_line" || captionLocked;
                         return (
                           <BarButton
                             key={b.id}
@@ -966,14 +968,22 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             className="bg-[#0c0c0e] text-white"
                           >
                             <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
-                              <span className="font-semibold">{locked ? "L" : "T"}</span>
+                              <span className="font-semibold">
+                                {captionLocked ? "C" : locked ? "L" : "T"}
+                              </span>
                               <span className="truncate">
                                 {b.text || "Text"}
                               </span>
                               {locked && (
                                 <span
-                                  aria-label="Lyric timing locked"
-                                  title="Lyric timing is locked to the vocal"
+                                  aria-label={
+                                    captionLocked ? "Caption timing locked" : "Lyric timing locked"
+                                  }
+                                  title={
+                                    captionLocked
+                                      ? "Caption timing is edited from the Captions tab"
+                                      : "Lyric timing is locked to the vocal"
+                                  }
                                   className="shrink-0 rounded border border-white/30 px-1 text-[9px] opacity-90"
                                 >
                                   {"\u{1F512}"}

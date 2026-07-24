@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import {
+  barsToCaptionCues,
   deriveLaneRows,
   deriveTextLaneRows,
   seedBarsFromVariant,
@@ -12,7 +13,7 @@ import {
   undoSnapshot,
   type EditorDocument,
 } from "@/app/plan/items/[id]/_editor/useEditorHistory";
-import type { MediaOverlay, PlanItemVariant, SoundEffectPlacement } from "@/lib/plan-api";
+import type { CaptionCue, MediaOverlay, PlanItemVariant, SoundEffectPlacement } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 const SFX_SUB_LANE_BASE_HEIGHT_PX = 32;
@@ -183,7 +184,7 @@ describe("seedBarsFromVariant", () => {
     ]);
   });
 
-  it("uses subtitled text_elements instead of caption cues for the text lane", () => {
+  it("loads subtitled caption cues and Smart title text as separate timeline bars", () => {
     const variant = {
       variant_id: "subtitled",
       resolved_archetype: "subtitled",
@@ -202,7 +203,78 @@ describe("seedBarsFromVariant", () => {
     } as unknown as PlanItemVariant;
 
     expect(seedBarsFromVariant(variant)).toEqual([
+      expect.objectContaining({
+        id: "caption-0",
+        text: "caption words",
+        role: "narrated_caption",
+      }),
       expect.objectContaining({ id: "title", text: "Big title", role: "generative_intro" }),
+    ]);
+  });
+
+  it("ignores projected caption text_elements when real caption cues are loaded", () => {
+    const variant = {
+      variant_id: "subtitled",
+      resolved_archetype: "subtitled",
+      caption_cues: [{ text: "real cue", start_s: 0, end_s: 1 }],
+      text_elements: [
+        {
+          id: "projected-caption",
+          text: "duplicate cue",
+          start_s: 0,
+          end_s: 1,
+          role: "generative_sequence",
+          source_params: { source: "caption_cue" },
+        },
+        {
+          id: "smart-title",
+          text: "Smart title",
+          start_s: 0,
+          end_s: 2,
+          role: "generative_intro",
+        },
+      ],
+    } as unknown as PlanItemVariant;
+
+    expect(seedBarsFromVariant(variant).map((bar) => bar.id)).toEqual([
+      "caption-0",
+      "smart-title",
+    ]);
+  });
+});
+
+describe("barsToCaptionCues", () => {
+  it("preserves original cue words and Smart Caption metadata", () => {
+    const original: CaptionCue = {
+      text: "old words",
+      start_s: 0,
+      end_s: 1,
+      words: [{ text: "old", start_s: 0, end_s: 0.4 }],
+      smart_role: "hook",
+      smart_word_ids: ["w1"],
+      smart_keep_together: [[0, 1]],
+    };
+
+    expect(
+      barsToCaptionCues(
+        [
+          {
+            id: "caption-0",
+            role: "narrated_caption",
+            text: "edited words",
+            start_s: 0.1,
+            end_s: 1.2,
+          },
+        ],
+        new Map([["caption-0", original]]),
+      ),
+    ).toEqual([
+      {
+        ...original,
+        text: "edited words",
+        start_s: 0.1,
+        end_s: 1.2,
+      },
     ]);
   });
 });

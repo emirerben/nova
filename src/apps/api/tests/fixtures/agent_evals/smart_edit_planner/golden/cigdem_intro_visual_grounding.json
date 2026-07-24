@@ -40,11 +40,11 @@
       }
     ],
     "assets": [
-      {"asset_id": "asset_selocan", "kind": "image", "subject": "Selocan mascot family", "filename": "selocan.png"},
-      {"asset_id": "asset_robots", "kind": "image", "subject": "Çelik and Çeliknaz robot couple", "filename": "robots_wedding.png"},
-      {"asset_id": "asset_pinar_sheep", "kind": "image", "subject": "Pınar Beyaz sheep mascot", "filename": "pinar_beyaz_sheep.png"},
-      {"asset_id": "asset_selpak_elephant", "kind": "image", "subject": "Selpak elephant mascot", "filename": "selpak_elephant.png"},
-      {"asset_id": "asset_cocacola_bear", "kind": "image", "subject": "Coca Cola polar bear", "filename": "cocacola_bear.png"}
+      {"asset_id": "asset_selocan", "kind": "image", "subject": "Selocan mascot family", "filename": "selocan.png", "user_context": "Turkcell's old Selocan characters mentioned in the opening list."},
+      {"asset_id": "asset_robots", "kind": "image", "subject": "Çelik and Çeliknaz robot couple", "filename": "robots_wedding.png", "user_context": "Çelik Çeliknaz nostalgia reference, not a generic robot wedding."},
+      {"asset_id": "asset_pinar_sheep", "kind": "image", "subject": "Pınar Beyaz sheep mascot", "filename": "pinar_beyaz_sheep.png", "user_context": "Pınar Beyaz mascot from Turkish grocery campaigns."},
+      {"asset_id": "asset_selpak_elephant", "kind": "image", "subject": "Selpak elephant mascot", "filename": "selpak_elephant.png", "user_context": "Selpak elephant brand mascot named in the transcript."},
+      {"asset_id": "asset_cocacola_bear", "kind": "image", "subject": "Coca Cola polar bear", "filename": "cocacola_bear.png", "user_context": "Coca-Cola polar bear example at the end of the hook."}
     ],
     "preset_id": "cigdem",
     "preset_version": "v1",
@@ -84,6 +84,6 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "notes": "Pins the Çiğdem intro contract: word-level asset anchors, candidate-derived sequence number, unknown asset rejection, and non-vocal SFX allowlist."
+    "notes": "Pins the Çiğdem intro contract: word-level asset anchors, creator-authored asset context in input, candidate-derived sequence number, unknown asset rejection, and non-vocal SFX allowlist."
   }
 }

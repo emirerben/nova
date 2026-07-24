@@ -27,6 +27,7 @@ import {
   registerPoolAsset,
   requestPoolAssetUploadUrls,
   sha256HexOfFile,
+  updatePoolAssetContext,
   uploadToGcs,
   type PoolAsset,
 } from "@/lib/plan-api";
@@ -267,6 +268,14 @@ export default function AssetPool({
     [itemId],
   );
 
+  const handleSaveContext = useCallback(
+    async (asset: PoolAsset, userContext: string) => {
+      const updated = await updatePoolAssetContext(itemId, asset.id, userContext.trim() || null);
+      setAssets((prev) => prev.map((candidate) => (candidate.id === updated.id ? updated : candidate)));
+    },
+    [itemId],
+  );
+
   // Set lookup: the tile grid re-renders on every job-status poll tick, so keep
   // the per-tile membership check O(1) instead of O(attached) per asset.
   const attached = useMemo(() => new Set(attachedPaths ?? []), [attachedPaths]);
@@ -370,6 +379,7 @@ export default function AssetPool({
                     onUseInEdit={
                       onUseInEdit && asset.gcs_path ? () => handleUseInEdit(asset) : undefined
                     }
+                    onSaveContext={(userContext) => handleSaveContext(asset, userContext)}
                     promoting={promotingId === asset.id}
                     promotionDisabled={attachBusy || promotingId !== null}
                   />
@@ -426,6 +436,7 @@ function AssetTile({
   onRemove,
   inEdit = false,
   onUseInEdit,
+  onSaveContext,
   promoting = false,
   promotionDisabled = false,
 }: {
@@ -433,12 +444,34 @@ function AssetTile({
   onRemove: () => void;
   inEdit?: boolean;
   onUseInEdit?: () => void | Promise<void>;
+  onSaveContext: (userContext: string) => void | Promise<void>;
   /** THIS tile's promotion is in flight — shows "Adding…" instead of the button. */
   promoting?: boolean;
   /** ANY attach writer is busy (another promotion or a clip upload) — disables the button. */
   promotionDisabled?: boolean;
 }) {
   const label = asset.source_filename ?? "this file";
+  const [contextOpen, setContextOpen] = useState(false);
+  const [contextDraft, setContextDraft] = useState(asset.user_context ?? "");
+  const [contextSaving, setContextSaving] = useState(false);
+  const [contextError, setContextError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setContextDraft(asset.user_context ?? "");
+  }, [asset.user_context]);
+
+  const saveContext = async () => {
+    setContextSaving(true);
+    setContextError(null);
+    try {
+      await onSaveContext(contextDraft);
+      setContextOpen(false);
+    } catch (err) {
+      setContextError(err instanceof Error ? err.message : "Couldn't save");
+    } finally {
+      setContextSaving(false);
+    }
+  };
 
   if (asset.status === "failed") {
     return (
@@ -499,7 +532,49 @@ function AssetTile({
             </button>
           )
         )}
+        {!busy && (
+          <button
+            type="button"
+            onClick={() => setContextOpen(true)}
+            className="-my-1 flex min-h-11 min-w-11 shrink-0 items-center px-1 text-[#3f3f46] underline underline-offset-2 transition-colors hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-[28px] sm:min-w-[28px]"
+          >
+            {asset.user_context ? "Edit note" : "Add note"}
+          </button>
+        )}
       </span>
+      {contextOpen && (
+        <div className="absolute inset-0 z-10 flex flex-col gap-2 bg-white/95 p-2">
+          <textarea
+            value={contextDraft}
+            onChange={(event) => setContextDraft(event.target.value.slice(0, 500))}
+            maxLength={500}
+            autoFocus
+            className="min-h-0 flex-1 resize-none rounded border border-zinc-200 bg-white p-2 text-[12px] text-[#0c0c0e] outline-none focus:border-lime-500"
+            placeholder="What should Nova know?"
+          />
+          {contextError && <p className="text-[12px] text-[#3f3f46]">{contextError}</p>}
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setContextDraft(asset.user_context ?? "");
+                setContextOpen(false);
+              }}
+              className="min-h-9 px-2 text-[12px] text-[#71717a] underline underline-offset-2"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveContext()}
+              disabled={contextSaving}
+              className="min-h-9 rounded border border-zinc-200 bg-[#0c0c0e] px-3 text-[12px] text-white disabled:opacity-50"
+            >
+              {contextSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      )}
       <button
         type="button"
         onClick={onRemove}

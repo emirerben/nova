@@ -41,6 +41,7 @@ from app.services.queue_state import (
     get_queue_position,
     get_queue_snapshot,
 )
+from app.services.render_summary import build_render_summary
 
 log = structlog.get_logger()
 
@@ -74,6 +75,7 @@ CONTEXT_RUNS_CAP = 200
 
 class AdminJobListItem(BaseModel):
     job_id: str
+    content_plan_item_id: str | None
     job_type: str
     mode: str | None
     status: str
@@ -123,6 +125,7 @@ class JobClipPayload(BaseModel):
 class JobPayload(BaseModel):
     id: str
     user_id: str
+    content_plan_item_id: str | None
     status: str
     job_type: str
     mode: str | None
@@ -174,6 +177,21 @@ class JobRuntimePayload(BaseModel):
     queue_position: int | None
 
 
+class RenderTimingStagePayload(BaseModel):
+    name: str
+    elapsed_ms: int | None
+    source: str
+    details: Any | None = None
+
+
+class RenderTimingBreakdownPayload(BaseModel):
+    queue_wait_ms: int | None
+    processing_ms: int | None
+    total_ms: int | None
+    stages: list[RenderTimingStagePayload]
+    repeated_work: list[str]
+
+
 class JobDebugResponse(BaseModel):
     job: JobPayload
     job_clips: list[JobClipPayload]
@@ -190,6 +208,8 @@ class JobDebugResponse(BaseModel):
     track_agent_runs_has_more: bool
     context_runs_cap: int
     runtime: JobRuntimePayload
+    render_summary: Any = None
+    render_timing: RenderTimingBreakdownPayload
 
 
 class CancelJobResponse(BaseModel):
@@ -234,6 +254,7 @@ JobTypeFilter = Literal["all", "music", "template", "auto_music", "generative", 
 async def list_jobs(
     job_type: JobTypeFilter = Query("all"),
     status_filter: str | None = Query(None, alias="status"),
+    content_plan_item_id: str | None = Query(None),
     only_failures: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -263,6 +284,14 @@ async def list_jobs(
         base = base.where(Job.job_type == job_type)
     if status_filter:
         base = base.where(Job.status == status_filter)
+    if content_plan_item_id:
+        try:
+            base = base.where(Job.content_plan_item_id == uuid.UUID(content_plan_item_id))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid content_plan_item_id: {exc}",
+            ) from exc
     if only_failures:
         base = base.where(Job.status.like("%_failed"))
 
@@ -300,6 +329,11 @@ async def list_jobs(
     items = [
         AdminJobListItem(
             job_id=str(j.id),
+            content_plan_item_id=(
+                str(content_plan_item_id)
+                if (content_plan_item_id := getattr(j, "content_plan_item_id", None)) is not None
+                else None
+            ),
             job_type=j.job_type,
             mode=j.mode,
             status=j.status,
@@ -335,6 +369,111 @@ def _time_in_processing_s(job: Job, now: datetime) -> float | None:
     if started.tzinfo is None:
         started = started.replace(tzinfo=UTC)
     return (now - started).total_seconds()
+
+
+def _elapsed_ms(start: datetime | None, end: datetime | None) -> int | None:
+    if start is None or end is None:
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+    return max(0, int((end - start).total_seconds() * 1000))
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        text_value = str(value)
+        if text_value.endswith("Z"):
+            text_value = text_value[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text_value)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    except (TypeError, ValueError):
+        return None
+
+
+def _render_timing_breakdown(job: Job, runs: list[AgentRun]) -> RenderTimingBreakdownPayload:
+    stages: list[RenderTimingStagePayload] = []
+    repeated_work: list[str] = []
+
+    for entry in job.phase_log or []:
+        if not isinstance(entry, dict):
+            continue
+        stages.append(
+            RenderTimingStagePayload(
+                name=str(entry.get("name") or "phase"),
+                elapsed_ms=entry.get("elapsed_ms"),
+                source="phase_log",
+                details={
+                    "t_offset_ms": entry.get("t_offset_ms"),
+                    "ts": entry.get("ts"),
+                },
+            )
+        )
+
+    agent_total_ms = sum(int(r.latency_ms or 0) for r in runs)
+    if agent_total_ms:
+        stages.append(
+            RenderTimingStagePayload(
+                name="agent_runs_total",
+                elapsed_ms=agent_total_ms,
+                source="agent_run",
+                details={"count": len(runs)},
+            )
+        )
+    agent_counts: dict[str, int] = {}
+    for run in runs:
+        agent_counts[run.agent_name] = agent_counts.get(run.agent_name, 0) + 1
+    for name, count in sorted(agent_counts.items()):
+        if count > 1:
+            repeated_work.append(f"agent:{name} ran {count} times")
+
+    variants = (
+        (job.assembly_plan or {}).get("variants") if isinstance(job.assembly_plan, dict) else []
+    )
+    for variant in variants or []:
+        if not isinstance(variant, dict):
+            continue
+        started = _parse_iso_datetime(variant.get("render_started_at"))
+        finished = _parse_iso_datetime(variant.get("render_finished_at"))
+        elapsed = _elapsed_ms(started, finished)
+        if elapsed is not None:
+            stages.append(
+                RenderTimingStagePayload(
+                    name=f"variant:{variant.get('variant_id') or 'unknown'}",
+                    elapsed_ms=elapsed,
+                    source="assembly_plan.variants",
+                    details={
+                        "render_status": variant.get("render_status"),
+                        "smart_receipts": sorted(
+                            (variant.get("smart_validation_receipts") or {}).keys()
+                        )
+                        if isinstance(variant.get("smart_validation_receipts"), dict)
+                        else [],
+                    },
+                )
+            )
+
+    phase_counts: dict[str, int] = {}
+    for stage in stages:
+        if stage.source != "phase_log":
+            continue
+        phase_counts[stage.name] = phase_counts.get(stage.name, 0) + 1
+    for name, count in sorted(phase_counts.items()):
+        if count > 1:
+            repeated_work.append(f"phase:{name} recorded {count} times")
+
+    return RenderTimingBreakdownPayload(
+        queue_wait_ms=_elapsed_ms(job.created_at, job.started_at),
+        processing_ms=_elapsed_ms(job.started_at, job.finished_at),
+        total_ms=_elapsed_ms(job.created_at, job.finished_at),
+        stages=stages,
+        repeated_work=repeated_work,
+    )
 
 
 # ── un-reap ──────────────────────────────────────────────────────────────────
@@ -498,6 +637,11 @@ async def get_job_debug(
     job_payload = JobPayload(
         id=str(job.id),
         user_id=str(job.user_id),
+        content_plan_item_id=(
+            str(content_plan_item_id)
+            if (content_plan_item_id := getattr(job, "content_plan_item_id", None)) is not None
+            else None
+        ),
         status=job.status,
         job_type=job.job_type,
         mode=job.mode,
@@ -556,6 +700,8 @@ async def get_job_debug(
         track_agent_runs_has_more=track_agent_runs_has_more,
         context_runs_cap=CONTEXT_RUNS_CAP,
         runtime=runtime,
+        render_summary=build_render_summary(job, runs),
+        render_timing=_render_timing_breakdown(job, runs),
     )
 
 

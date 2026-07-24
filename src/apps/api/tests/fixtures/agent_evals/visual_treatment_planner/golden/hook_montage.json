@@ -9,9 +9,9 @@
       {"word": "everything", "start_s": 1.1, "end_s": 1.6}
     ],
     "assets": [
-      {"asset_id": "a1", "kind": "image", "subject": "first archival photo"},
-      {"asset_id": "a2", "kind": "image", "subject": "second archival photo"},
-      {"asset_id": "a3", "kind": "video", "subject": "third archival clip"}
+      {"asset_id": "a1", "kind": "image", "subject": "first archival photo", "user_context": "Creator says this is the first moment in the three-part hook."},
+      {"asset_id": "a2", "kind": "image", "subject": "second archival photo", "user_context": "Creator says this is the second moment, visually similar to a1."},
+      {"asset_id": "a3", "kind": "video", "subject": "third archival clip", "user_context": "Creator says this clip should land on the final spoken beat."}
     ],
     "duration_s": 24.0,
     "beat_timestamps_s": [0.0, 0.48, 0.96, 1.44],
@@ -23,5 +23,5 @@
       {"kind": "montage", "purpose": "hook", "start_s": 0.0, "end_s": 1.6, "asset_ids": ["a1", "a2", "a3"], "text": null, "rationale": "Three source-backed images compress the spoken hook on beat accents.", "confidence": "high"}
     ]
   },
-  "meta": {"source": "hand_authored_golden", "notes": "Hook montage with three real assets."}
+  "meta": {"source": "hand_authored_golden", "notes": "Hook montage with three real assets and creator-authored disambiguation context."}
 }

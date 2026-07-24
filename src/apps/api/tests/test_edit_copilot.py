@@ -245,6 +245,7 @@ def test_format_snapshot_renders_meta_only_captions() -> None:
     }
     rendered = _format_snapshot(snap)
     assert "meta-only captions: 14 transcript cues" in rendered
+    assert "not available in this draft" in rendered
     assert "set_caption_meta" in rendered
 
     editable = _snapshot(allowed=["text", "style", "caption"])
@@ -855,12 +856,12 @@ def test_format_snapshot_renders_sfx_roles_and_suggestions() -> None:
     assert "roles=" not in plain_line
 
 
-def test_prompt_version_bumped_for_speech_sync() -> None:
-    # The prompt-change rule: speech-sync shipped in v6 — a regression to v5
+def test_prompt_version_bumped_for_subtitled_caption_edits() -> None:
+    # The prompt-change rule: subtitled cue edits shipped in v7 — a regression
     # means the prompt edit and version constant diverged.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-07-21-v6"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-07-24-v7"
 
 
 def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:

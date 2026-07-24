@@ -41,6 +41,7 @@ class PlacementAsset(BaseModel):
     subject: str = ""
     description: str = ""
     on_screen_text: str = ""
+    user_context: str = ""
     brands: list[str] = Field(default_factory=list)
     duration_s: float | None = None
     aspect: float | None = None  # width / height
@@ -129,6 +130,7 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
                 "subject": _sanitize_text(a.subject),
                 "description": _sanitize_text(a.description),
                 "on_screen_text": _sanitize_text(a.on_screen_text),
+                "user_context": _sanitize_text(a.user_context),
                 "brands": [_sanitize_text(b) for b in a.brands[:10]],
                 "duration_s": a.duration_s,
                 # Plan 009: the model was guessing landscape-ness — slot "full"

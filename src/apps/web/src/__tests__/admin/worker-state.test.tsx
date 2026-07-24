@@ -230,6 +230,81 @@ describe("Cancel button visibility tracks status", () => {
   });
 });
 
+describe("Render summary", () => {
+  it("renders render timing summary on the Pipeline Trace tab", async () => {
+    mockGetDebug.mockResolvedValue({
+      ...buildDebugResponse({
+        status: "variants_ready",
+        runtime: { state: "not_found", worker: null },
+      }),
+      job: {
+        ...baseJob,
+        status: "variants_ready",
+        pipeline_trace: [
+          {
+            ts: "2026-07-24T10:00:00Z",
+            stage: "render_stage",
+            event: "upload",
+            data: { stage: "upload", elapsed_ms: 500, status: "ok" },
+          },
+        ],
+      },
+      render_summary: {
+        trace_id: "trace-ui",
+        total_queue_ms: 10_000,
+        total_processing_ms: 70_000,
+        agent_work_ms: null,
+        slowest_stages: [{ stage: "transcription", elapsed_ms: 40_000, status: "ok" }],
+        repeated_stages: [{ stage: "upload", count: 2 }],
+        retries: [{ stage: "base_reframe_encode", status: "failed", retry: {} }],
+        cache: { transcript: { hit: 1 } },
+        attempts: [],
+      },
+    });
+    render(<JobDebugPage params={{ id: baseJob.id }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Pipeline Trace/i }));
+
+    expect(await screen.findByText("Render summary")).toBeInTheDocument();
+    expect(screen.getByText("trace-ui")).toBeInTheDocument();
+    expect(screen.getByText("transcription")).toBeInTheDocument();
+    expect(screen.getByText("hit: 1")).toBeInTheDocument();
+    expect(screen.getByText("2x")).toBeInTheDocument();
+  });
+
+  it("renders a derived render summary even when raw trace events are empty", async () => {
+    mockGetDebug.mockResolvedValue({
+      ...buildDebugResponse({
+        status: "variants_ready",
+        runtime: { state: "not_found", worker: null },
+      }),
+      job: {
+        ...baseJob,
+        status: "variants_ready",
+        pipeline_trace: [],
+      },
+      render_summary: {
+        trace_id: null,
+        total_queue_ms: 4_000,
+        total_processing_ms: 12_000,
+        agent_work_ms: null,
+        slowest_stages: [],
+        repeated_stages: [],
+        retries: [],
+        cache: {},
+        attempts: [],
+      },
+    });
+    render(<JobDebugPage params={{ id: baseJob.id }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Pipeline Trace/i }));
+
+    expect(await screen.findByText("Render summary")).toBeInTheDocument();
+    expect(screen.getByText("4.0 s")).toBeInTheDocument();
+    expect(screen.getByText(/No pipeline events captured/i)).toBeInTheDocument();
+  });
+});
+
 describe("Cancel confirmation flow", () => {
   it("first click reveals confirm; confirm POSTs to adminCancelJob and refetches", async () => {
     mockGetDebug.mockResolvedValue(
