@@ -49,6 +49,25 @@ export function isLyricBar(bar: TextElementBar | TextElement | null | undefined)
   return bar?.role === "lyric_line";
 }
 
+export function isCaptionBar(bar: TextElementBar | null | undefined): boolean {
+  return bar?.role === "narrated_caption";
+}
+
+function captionBarId(index: number): string {
+  return `caption-${index}`;
+}
+
+function captionIndexFromBarId(id: string): number | null {
+  const match = id.match(/^caption-(\d+)$/);
+  if (!match) return null;
+  const index = Number(match[1]);
+  return Number.isFinite(index) ? index : null;
+}
+
+function isCaptionCueProjection(bar: TextElementBar): boolean {
+  return bar.source_params?.source === "caption_cue";
+}
+
 /** UI-only row assignment: current ordered bars map to compacted rows. */
 export function deriveLaneRows<T>(
   orderedItems: T[],
@@ -130,7 +149,7 @@ export function convertCaptionCues(
   cues: CaptionCue[] | null | undefined,
 ): TextElementBar[] {
   return (cues ?? []).map((c, i) => ({
-    id: `caption-${i}`,
+    id: captionBarId(i),
     text: c.text,
     start_s: c.start_s,
     end_s: c.end_s,
@@ -171,16 +190,18 @@ export function seedBarsFromVariant(
   const includeLyrics = opts.includeLyrics ?? true;
   const filterLyrics = (bars: TextElementBar[]) =>
     includeLyrics ? bars : bars.filter((bar) => !isLyricBar(bar));
+  const textBars = filterLyrics(convertApiTextElements(variant.text_elements)).filter(
+    (bar) => !isCaptionCueProjection(bar),
+  );
+  const captionBars = convertCaptionCues(variant.caption_cues);
+  if (captionBars.length) return [...captionBars, ...textBars];
   if (variant.text_elements_user_edited) {
-    return filterLyrics(convertApiTextElements(variant.text_elements));
+    return textBars;
   }
-  if (variant.resolved_archetype !== "subtitled" && variant.caption_cues?.length)
-    return convertCaptionCues(variant.caption_cues);
-  if (variant.text_elements?.length)
-    return filterLyrics(convertApiTextElements(variant.text_elements));
+  if (textBars.length) return textBars;
   if (variant.scene_timings?.length)
     return convertSceneTimings(variant.scene_timings);
-  return filterLyrics(convertApiTextElements(variant.text_elements));
+  return textBars;
 }
 
 /**
@@ -347,11 +368,19 @@ function barsToTextElementsInternal(
     });
 }
 
-/** Working narrated-caption bars -> API CaptionCue[] for the full-editor Save. */
-export function barsToCaptionCues(bars: TextElementBar[]): CaptionCue[] {
+/** Working caption bars -> API CaptionCue[] for the full-editor Save. */
+export function barsToCaptionCues(
+  bars: TextElementBar[],
+  originalById: ReadonlyMap<string, CaptionCue> = new Map(),
+): CaptionCue[] {
   return bars
-    .filter((bar) => bar.role === "narrated_caption")
+    .filter(isCaptionBar)
     .map((bar) => ({
+      ...(originalById.get(bar.id) ??
+        (captionIndexFromBarId(bar.id) != null
+          ? originalById.get(captionBarId(captionIndexFromBarId(bar.id) as number))
+          : undefined) ??
+        {}),
       text: bar.text,
       start_s: bar.start_s,
       end_s: bar.end_s,

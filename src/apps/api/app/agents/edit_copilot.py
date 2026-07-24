@@ -25,7 +25,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-07-21-v6"
+EDIT_COPILOT_PROMPT_VERSION = "2026-07-24-v7"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -352,7 +352,7 @@ def _format_snapshot(snapshot: dict) -> str:
     else:
         lines.append("(none visible to copilot)")
     if has_captions:
-        lines.append("Note: narrated captions exist but are edited in the caption editor.")
+        lines.append("Note: caption cue text/timing uses the CAPTIONS section below.")
 
     lines.append("\nCLIP SLOTS (indices are authoritative for this turn):")
     if slots:
@@ -571,9 +571,9 @@ def _format_snapshot(snapshot: dict) -> str:
         if not cues_editable:
             lines.append(
                 f"meta-only captions: {total_cues} transcript cues exist but their text "
-                "and timing are edited in the caption editor — never emit edit_caption "
-                "or set_caption_timing here. set_caption_meta (style/font/enabled/"
-                "y_frac) DOES apply."
+                "and timing are not available in this draft — never emit "
+                "edit_caption or set_caption_timing here. set_caption_meta "
+                "(style/font/enabled/y_frac) DOES apply."
             )
         if truncated:
             lines.append(

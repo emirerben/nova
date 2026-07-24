@@ -36,6 +36,7 @@ import {
   MAX_WIDTH_FRAC_MIN,
   resolveTextElementYFrac,
 } from "@/lib/overlay-layout";
+import { isCaptionBar } from "./editor-bars";
 import {
   animationStateAt,
   normalizeAnimatedRevealText,
@@ -262,25 +263,32 @@ export default function EditorCanvas({
   const visibleCaption = useMemo(() => {
     if (
       !captionPreviewUsesCleanBase ||
-      variant.resolved_archetype !== "subtitled" ||
+      (variant.resolved_archetype !== "subtitled" &&
+        variant.resolved_archetype !== "narrated") ||
       variant.captions_enabled === false ||
-      !variant.caption_cues?.length
+      !bars.some(isCaptionBar)
     ) {
       return null;
     }
-    const cue = variant.caption_cues.find(
+    const bar = bars.filter(isCaptionBar).find(
       (candidate) => currentTime >= candidate.start_s && currentTime < candidate.end_s,
     );
-    if (!cue) return null;
-    if (variant.voiceover_caption_style === "word" && cue.words?.length) {
+    if (!bar) return null;
+    const cueIndex = Number(bar.id.match(/^caption-(\d+)$/)?.[1]);
+    const originalCue = Number.isFinite(cueIndex) ? variant.caption_cues?.[cueIndex] : null;
+    if (
+      variant.voiceover_caption_style === "word" &&
+      originalCue?.words?.length &&
+      originalCue.text === bar.text
+    ) {
       return (
-        cue.words.find(
+        originalCue.words.find(
           (word) => currentTime >= word.start_s && currentTime < word.end_s,
         )?.text ?? null
       );
     }
-    return cue.text;
-  }, [captionPreviewUsesCleanBase, currentTime, variant]);
+    return bar.text;
+  }, [bars, captionPreviewUsesCleanBase, currentTime, variant]);
   const captionFontFamily = useMemo(() => {
     const selected = INTRO_FONTS.find((font) => font.name === variant.voiceover_caption_font);
     return selected?.cssFamily ?? "'TikTok Sans', 'Inter', system-ui, sans-serif";

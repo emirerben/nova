@@ -129,6 +129,32 @@ describe("buildEditorCommitRequest", () => {
     });
   });
 
+  it("can send text_elements and caption_cues in the same commit", () => {
+    const cue = {
+      text: "Edited caption",
+      start_s: 0,
+      end_s: 1.2,
+      words: [{ text: "Original", start_s: 0, end_s: 0.4 }],
+      smart_role: "hook" as const,
+      smart_word_ids: ["w1"],
+    };
+
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      captionCues: [cue],
+      textDirty: true,
+      captionDirty: true,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+
+    expect(body.text_elements).toEqual([element]);
+    expect(body.caption_cues).toEqual([cue]);
+  });
+
   it("omits lyrics unless dirty and emits toggle-off when requested", () => {
     const clean = buildEditorCommitRequest({
       elements: [],

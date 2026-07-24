@@ -688,7 +688,7 @@ export function validateCopilotOp(
         return reject("missing_required", "edit_caption requires cue_index and text", opName);
       }
       if (snapshot?.captions?.cues_editable === false) {
-        return reject("invalid_index", "Transcript edits are made in the caption editor.", opName);
+        return reject("invalid_index", "This draft has caption settings but no editable cue list.", opName);
       }
       if (!hasIndex(snapshot, "caption", raw.cue_index)) {
         return reject("invalid_index", "cue_index must point into snapshot caption cues", opName);
@@ -702,7 +702,7 @@ export function validateCopilotOp(
         return reject("missing_required", "set_caption_timing requires cue_index", opName);
       }
       if (snapshot?.captions?.cues_editable === false) {
-        return reject("invalid_index", "Transcript edits are made in the caption editor.", opName);
+        return reject("invalid_index", "This draft has caption settings but no editable cue list.", opName);
       }
       if (!hasIndex(snapshot, "caption", raw.cue_index)) {
         return reject("invalid_index", "cue_index must point into snapshot caption cues", opName);

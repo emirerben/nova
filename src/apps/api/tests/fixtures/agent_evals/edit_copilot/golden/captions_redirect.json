@@ -12,7 +12,7 @@
       "total_duration_s": 6
     }
   },
-  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.92,\"reply\":\"Captions are edited in the caption editor. I can help with the visible hook text here.\",\"suggestions\":[\"Rewrite the hook\",\"Make text smaller\"],\"needs_clarification\":false}",
-  "output": {"intent": "reject", "ops": [], "confidence": 0.92, "reply": "Captions are edited in the caption editor. I can help with the visible hook text here.", "suggestions": ["Rewrite the hook", "Make text smaller"], "needs_clarification": false},
+  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.92,\"reply\":\"Select a caption cue in the editor timeline to edit it. I can help with the visible hook text here.\",\"suggestions\":[\"Rewrite the hook\",\"Make text smaller\"],\"needs_clarification\":false}",
+  "output": {"intent": "reject", "ops": [], "confidence": 0.92, "reply": "Select a caption cue in the editor timeline to edit it. I can help with the visible hook text here.", "suggestions": ["Rewrite the hook", "Make text smaller"], "needs_clarification": false},
   "meta": {"source": "hand_authored_golden", "case": "caption redirect with has_narrated_captions"}
 }

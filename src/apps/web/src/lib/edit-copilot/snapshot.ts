@@ -218,7 +218,7 @@ export interface CopilotSnapshot {
     truncated: boolean;
     /** false = meta-only captions (subtitled talk-to-camera): style/font/enabled/
      * position apply via set_caption_meta, but cue text/timing edits belong to
-     * the Captions tab and no cues are listed. */
+     * the current draft and no cues are listed. */
     cues_editable: boolean;
     cues: CopilotCaptionCueSnapshot[];
     meta: CopilotCaptionMetaSnapshot;
@@ -278,8 +278,7 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
   captionCues?: CaptionCueLike[];
   captionMeta?: CopilotCaptionMetaSnapshot;
   /** Default true. false = emit a meta-only captions section (no addressable
-   * cues) — used for subtitled variants whose transcript lives in the Captions
-   * tab. `captionTotalCues` supplies the real cue count for display. */
+   * cues). `captionTotalCues` supplies the real cue count for display. */
   captionCuesEditable?: boolean;
   captionTotalCues?: number;
   musicState?: {

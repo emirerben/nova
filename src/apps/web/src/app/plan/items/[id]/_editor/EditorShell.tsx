@@ -42,6 +42,7 @@ import {
   type PlanItem,
   type PlanItemVariant,
   type PoolAsset,
+  type CaptionCue,
   type SoundEffectPlacement,
   type TextElement,
   type VisualBlock,
@@ -92,13 +93,13 @@ import {
   barsToPreviewTextElements,
   barsToTextElements,
   buildLyricLineOverrides,
+  isCaptionBar,
   isLyricBar,
   seedBarsFromLyricSeeds,
   seedBarsFromVariant,
 } from "./editor-bars";
 import { isCaptionArchetype } from "@/lib/variant-editor/eligibility";
 import {
-  CAPTIONS_TAB_REASON,
   computeToolDisabledReasons,
   editorReasonCopy,
   isElementsLyricsModel,
@@ -518,19 +519,6 @@ function OrientationToggle({
   );
 }
 
-/** The Captions-tab deep link — shared by the read-only banner and the
- * text-locked notice so both surfaces point at the same target identically. */
-function CaptionsTabLink({ itemId }: { itemId: string }) {
-  return (
-    <a
-      href={`/plan/items/${itemId}`}
-      className="font-semibold underline decoration-zinc-300 underline-offset-4 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-    >
-      Open the item page Captions tab
-    </a>
-  );
-}
-
 export default function EditorShell({
   itemId,
   variantParam,
@@ -588,6 +576,7 @@ export default function EditorShell({
   // Originals by id — Save merges bar edits OVER these so fields the editor
   // doesn't model (reveal_s, word_timings, …) survive untouched.
   const originalsRef = useRef<Map<string, TextElement>>(new Map());
+  const captionOriginalsRef = useRef<Map<string, CaptionCue>>(new Map());
   const seededVariantIdRef = useRef<string | null>(null);
   // Conflict-tile Reload: the refetched variant must replace working state in
   // sections the user hasn't touched (an AI auto-apply or another tab moved
@@ -619,6 +608,7 @@ export default function EditorShell({
   const [mixLevel, setMixLevel] = useState<number | null>(null);
   const [mixDirty, setMixDirty] = useState(false);
   const [textDirty, setTextDirty] = useState(false);
+  const [captionDirty, setCaptionDirty] = useState(false);
   const [lyricsEnabled, setLyricsEnabled] = useState(false);
   const [orientation, setOrientation] = useState<EditorOrientation>("portrait");
   const [titleDirty, setTitleDirty] = useState(false);
@@ -667,17 +657,20 @@ export default function EditorShell({
     conflictReseedRef.current = false;
     seededVariantIdRef.current = variant.variant_id;
     const sections = computeReseedSections(
-      { textDirty, sfxDirty, overlaysDirty, mixDirty },
+      { textDirty: textDirty || captionDirty, sfxDirty, overlaysDirty, mixDirty },
       conflictReseed,
     );
     // Visual blocks and their linked TextElements are one atomic document. On
     // a baseline conflict, preserve or reload them together so neither half can
     // point at state from the other tab.
     const keepCoupledVisualDocument =
-      conflictReseed && (visualBlocksDirty || textDirty);
+      conflictReseed && (visualBlocksDirty || textDirty || captionDirty);
     if (sections.text && !keepCoupledVisualDocument) {
       originalsRef.current = new Map(
         (variant.text_elements ?? []).map((el) => [el.id, el]),
+      );
+      captionOriginalsRef.current = new Map(
+        (variant.caption_cues ?? []).map((cue, index) => [`caption-${index}`, cue]),
       );
       dispatch({
         type: "RESET",
@@ -692,6 +685,7 @@ export default function EditorShell({
       });
       setLyricsEnabled(lyricsFeatureAvailable && persistedLyricsEnabled(variant));
       setTextDirty(false);
+      setCaptionDirty(false);
     }
     if (sections.sfx) {
       setLocalSfx((variant.sound_effects ?? []).map((p) => ({ ...p })));
@@ -906,20 +900,16 @@ export default function EditorShell({
     capabilities.music_window?.editable !== true;
   const readOnlyReason = editorReasonCopy(capabilities?.reason);
   // Text-elements gate (plan 010 OV-1): once sfx/overlays flip true on
-  // subtitled variants the shell is editable, but on-video text still lives
-  // in the Captions tab — every add-text path must stay blocked.
+  // subtitled variants the shell is editable, but optional authored text still
+  // respects the rollout flag. Caption cue bars remain directly editable.
   const textElementsLocked =
     !readOnly && capabilities?.text_elements === false && !lyricsFeatureAvailable;
   // Legacy lyrics variants still use the old whole-style-set route when the
   // frontend lyrics editor is off. With the new gate on, projected lyric bars
   // are edited locally and saved through editor-commit's `lyrics` section.
   const isLyrics = variant?.text_mode === "lyrics";
-  // Caption archetypes edit captions in the item-page Captions tab, not this
-  // shell. Keyed off the archetype (+ base video) via isCaptionArchetype, NOT
-  // capabilities.text_elements — that flips to `true` for subtitled once
-  // SUBTITLED_TEXT_LANE_ENABLED ships, at which point a text_elements===false
-  // gate would silently drop the Captions signpost for the exact archetype that
-  // needs it. See isCaptionArchetype / DECISIONS (caption-edit discoverability).
+  // Caption archetypes seed caption cues into the same visible timeline as
+  // Smart titles/user text, while persisting through caption_cues.
   const isCaptionEdit = !!variant && isCaptionArchetype(variant);
   // ANY server timeline ineligibility locks the clip lane — a reason-whitelist
   // here let lyrics_sync (and any future reason) edit clips freely in the UI
@@ -998,7 +988,10 @@ export default function EditorShell({
       setCaptionMetaDirty(doc.captionMetaDirty ?? false);
       setCaptionMetaPatch(doc.captionMetaPatch ?? {});
       setTitle(doc.title);
-      setTextDirty(true);
+      setTextDirty(
+        doc.bars.some((bar) => !isCaptionBar(bar) && (lyricsOptionalActive || !isLyricBar(bar))),
+      );
+      setCaptionDirty(doc.bars.some(isCaptionBar));
       // Sections the active variant can't accept (e.g. visual_blocks on a
       // lyrics variant, sfx/overlays gated off) ride along in the undo
       // snapshot as an untouched echo — don't blanket-dirty them, or the next
@@ -1016,7 +1009,7 @@ export default function EditorShell({
         setInspectorTab("basic");
       }
     },
-    [state.bars, select, variant, capabilities],
+    [state.bars, select, variant, capabilities, lyricsOptionalActive],
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
@@ -1748,7 +1741,11 @@ export default function EditorShell({
       if (readOnly) return;
       const target = state.bars.find((bar) => bar.id === id);
       history.record();
-      if (lyricsOptionalActive || !isLyricBar(target)) setTextDirty(true);
+      if (isCaptionBar(target)) {
+        setCaptionDirty(true);
+      } else if (lyricsOptionalActive || !isLyricBar(target)) {
+        setTextDirty(true);
+      }
       dispatch({ type: "PATCH_BAR", id, patch });
     },
     [readOnly, state.bars, lyricsOptionalActive, history],
@@ -2407,7 +2404,8 @@ export default function EditorShell({
   const restyleAll = useCallback(
     (styleSet: GenerativeStyleSet) => {
       if (readOnly) return;
-      if (visibleTextBars.length === 0) {
+      const targetBars = visibleTextBars.filter((bar) => !isCaptionBar(bar));
+      if (targetBars.length === 0) {
         setToast("Add text first, then apply a style.");
         return;
       }
@@ -2420,10 +2418,10 @@ export default function EditorShell({
         effect: styleSet.effect ?? styleSet.intro?.effect ?? undefined,
       };
       history.record();
-      if (lyricsOptionalActive || visibleTextBars.some((bar) => !isLyricBar(bar))) {
+      if (lyricsOptionalActive || targetBars.some((bar) => !isLyricBar(bar))) {
         setTextDirty(true);
       }
-      visibleTextBars.forEach((b) => dispatch({ type: "PATCH_BAR", id: b.id, patch }));
+      targetBars.forEach((b) => dispatch({ type: "PATCH_BAR", id: b.id, patch }));
       setAppliedStyleSetId(styleSet.id);
     },
     [readOnly, visibleTextBars, lyricsOptionalActive, history],
@@ -2813,21 +2811,19 @@ export default function EditorShell({
       if (tool === "visuals") return VISUAL_BLOCKS_UI_ENABLED;
       return true;
     });
-    // Narrated: cues live as editor bars — full caption editing. Subtitled:
-    // transcript cues are owned by the Captions tab, but the copilot still gets
-    // a META-ONLY captions section (style/font/enabled/position via
-    // set_caption_meta) so "make the captions word by word" works in chat.
-    const captionCuesEditable = variant?.resolved_archetype !== "subtitled";
+    // Caption archetypes with a caption-free base can reburn cue text/timing
+    // directly from this editor. Without the base, keep the copilot to
+    // metadata-only caption controls so Save doesn't promise a 422ing edit.
+    const captionCuesEditable =
+      !!variant &&
+      isCaptionArchetype(variant) &&
+      !!variant.base_video_path &&
+      captionMeta != null;
     const captionsPresent =
       captionMeta != null &&
-      (variant?.resolved_archetype === "narrated"
-        ? visibleTextBars.some((bar) => bar.role === "narrated_caption")
-        : variant?.resolved_archetype === "subtitled" &&
-          (variant?.caption_cues?.length ?? 0) > 0 &&
-          // Matches the server's _is_editable_caption_variant predicate — a
-          // subtitled variant without the caption-free base can't reburn, so
-          // don't offer a captions section whose Save would 422.
-          !!variant?.base_video_path);
+      (captionCuesEditable
+        ? visibleTextBars.some(isCaptionBar)
+        : !!variant && isCaptionArchetype(variant) && (variant.caption_cues?.length ?? 0) > 0);
     const musicSwappable = !!variant?.music_track_id && !readOnly;
     const mixAllowed = capabilities?.mix !== false && mixLevel !== undefined;
     const introText = variant?.intro_text?.trim() ?? "";
@@ -2926,17 +2922,7 @@ export default function EditorShell({
     visibleTextBars,
     title,
     toolDisabledReasons,
-    variant?.music_track_id,
-    variant?.intro_layout,
-    variant?.intro_mode,
-    variant?.intro_text,
-    variant?.pending_sfx_suggestions,
-    variant?.render_status,
-    variant?.resolved_archetype,
-    variant?.sequence_synced,
-    variant?.speech_map,
-    variant?.text_elements_user_edited,
-    variant?.text_mode,
+    variant,
   ]);
 
   const applyCopilotDraftOps = useCallback(
@@ -3055,12 +3041,16 @@ export default function EditorShell({
       const beforeSfxIds = new Set(localSfx.map((sfx) => sfx.id));
       const beforeOverlayById = new Map(localOverlays.map((overlay) => [overlay.id, overlay]));
       result.textActions.forEach((action) => dispatch(action));
+      if (result.textActions.some((action) => "id" in action && isCaptionBar(state.bars.find((bar) => bar.id === action.id)))) {
+        setCaptionDirty(true);
+      }
       if (
         lyricsOptionalActive ||
         result.textActions.some((action) => {
           if (action.type === "ADD_TEXT") return true;
           if (!("id" in action)) return false;
-          return !isLyricBar(state.bars.find((bar) => bar.id === action.id));
+          const bar = state.bars.find((candidate) => candidate.id === action.id);
+          return !isCaptionBar(bar) && !isLyricBar(bar);
         })
       ) {
         setTextDirty(true);
@@ -3189,7 +3179,8 @@ export default function EditorShell({
         return;
       }
       history.record();
-      setTextDirty(true);
+      if (isCaptionBar(selected)) setCaptionDirty(true);
+      else setTextDirty(true);
       dispatch({ type: "DELETE_BAR", id: selection.id });
       clear();
     } else if (selection.kind === "clip" && !clipEditingLocked) {
@@ -3241,7 +3232,8 @@ export default function EditorShell({
         return;
       }
       history.record();
-      setTextDirty(true);
+      if (isCaptionBar(bar)) setCaptionDirty(true);
+      else setTextDirty(true);
       dispatch({
         type: "SPLIT_BAR",
         id: selection.id,
@@ -3300,7 +3292,8 @@ export default function EditorShell({
       const start_s = nudgeBarStart(bar, deltaS, previewDuration);
       if (start_s === bar.start_s) return;
       history.record();
-      setTextDirty(true);
+      if (isCaptionBar(bar)) setCaptionDirty(true);
+      else setTextDirty(true);
       dispatch({ type: "MOVE_BAR", id: bar.id, start_s });
     },
     [history, previewDuration, readOnly, selection, selectedBar],
@@ -3430,7 +3423,7 @@ export default function EditorShell({
     setSaveState("saving");
     setSaveMessage(null);
     try {
-      const captionCues = barsToCaptionCues(state.bars);
+      const captionCues = barsToCaptionCues(state.bars, captionOriginalsRef.current);
       const lyricsRequest: EditorCommitLyricsRequest = {
         ...(lyricsEnabled !== persistedLyricsEnabled(variant) ? { enabled: lyricsEnabled } : {}),
         ...(lyricOverridesDirty ? { line_overrides: lyricLineOverrides } : {}),
@@ -3445,8 +3438,8 @@ export default function EditorShell({
         }),
         captionCues,
         captionMeta: captionMetaPatch,
-        textDirty: textDirty && captionCues.length === 0,
-        captionDirty: textDirty && captionCues.length > 0,
+        textDirty,
+        captionDirty,
         captionMetaDirty,
         timelineDirty,
         slots,
@@ -3494,6 +3487,7 @@ export default function EditorShell({
       clearDraft();
       setDraftDoc(null);
       setTextDirty(false);
+      setCaptionDirty(false);
       setSfxDirty(false);
       setOverlaysDirty(false);
       setVisualBlocksDirty(false);
@@ -3544,6 +3538,7 @@ export default function EditorShell({
     captionMetaDirty,
     captionMetaPatch,
     textDirty,
+    captionDirty,
     lyricsDirty,
     orientationDirty,
     orientation,
@@ -4366,23 +4361,19 @@ export default function EditorShell({
 	          clipTiming={selectedClip}
 	          sfx={selectedSfx}
 	          overlay={selectedOverlay}
-	          tab={inspectorTab}
+          tab={inspectorTab}
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
-          captionsTabHref={
-            // CTA only when on-video text genuinely can't be edited here — once
-            // SUBTITLED_TEXT_LANE_ENABLED ships (text_elements true) the styled-text
-            // lane is editable in this shell, so keep the generic empty state and
-            // don't mask it. The signpost notice stays archetype-gated (captions
-            // always live in the Captions tab).
-            textElementsLocked && isCaptionEdit ? `/plan/items/${itemId}` : null
-          }
           contentRef={contentRef}
           onEditText={(text) => {
-          if (selectedBar && !readOnly) {
+            if (selectedBar && !readOnly) {
               // Coalesce keystrokes on one bar into a single undo step.
               history.record(`text:${selectedBar.id}`);
-              if (lyricsOptionalActive || !isLyricBar(selectedBar)) setTextDirty(true);
+              if (isCaptionBar(selectedBar)) {
+                setCaptionDirty(true);
+              } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
+                setTextDirty(true);
+              }
               dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
             }
           }}
@@ -4521,7 +4512,11 @@ export default function EditorShell({
         onEditText={(text) => {
           if (selectedBar && !readOnly) {
             history.record(`text:${selectedBar.id}`);
-            if (lyricsOptionalActive || !isLyricBar(selectedBar)) setTextDirty(true);
+            if (isCaptionBar(selectedBar)) {
+              setCaptionDirty(true);
+            } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
+              setTextDirty(true);
+            }
             dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
           }
         }}
@@ -4563,46 +4558,19 @@ export default function EditorShell({
         <div className="absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
           <div className="rounded-lg border border-zinc-200 bg-white/95 px-4 py-2.5 text-center text-[12px] text-[#3f3f46] shadow-sm">
             This version can&apos;t be edited. {readOnlyReason}
-            {(readOnlyReason === CAPTIONS_TAB_REASON || isCaptionEdit) && (
-              <>
-                {" "}
-                <CaptionsTabLink itemId={itemId} />
-              </>
-            )}
           </div>
         </div>
       )}
 
-      {/* ── Captions-tab pointer (plan 010 review round) ── Post-lift subtitled
-             shells are editable (no read-only banner), but on-video text still
-             lives in the Captions tab — keep the deep-link discoverable. Quiet
-             notice line (DESIGN.md §2 tokens), outside the layout branches so
-             both the full editor and the light layout show it. */}
-      {(textElementsLocked || (!readOnly && isCaptionEdit)) && (
+      {/* Optional authored text can stay flag-locked while caption cue rows are
+          selected and edited directly in the timeline. */}
+      {textElementsLocked && !isCaptionEdit && (
         <div className="absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
           <div
             data-testid="captions-tab-notice"
             className="rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-center text-[12px] text-[#3f3f46] shadow-sm"
           >
-            {!readOnly && isCaptionEdit ? (
-              // Caption archetype (with base video): captions live in the Captions
-              // tab regardless of text_elements, so always show the reason + link.
-              <>
-                {CAPTIONS_TAB_REASON}. <CaptionsTabLink itemId={itemId} />
-              </>
-            ) : (
-              // Non-caption text lock (e.g. lyrics_sync): keep the reason-driven
-              // copy, appending the link only when the reason is the caption one.
-              <>
-                {textElementsLockedCopy(capabilities)}.
-                {textElementsLockedCopy(capabilities) === CAPTIONS_TAB_REASON && (
-                  <>
-                    {" "}
-                    <CaptionsTabLink itemId={itemId} />
-                  </>
-                )}
-              </>
-            )}
+            {textElementsLockedCopy(capabilities)}.
           </div>
         </div>
       )}

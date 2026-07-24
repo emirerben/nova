@@ -47,12 +47,12 @@ const variant = {
   montage_preset_rendered: "masonry",
 } as unknown as PlanItemVariant;
 
-function canvas(currentTime: number, currentVariant = variant) {
+function canvas(currentTime: number, currentVariant = variant, currentBars = [bar]) {
   return (
     <EditorCanvas
       variant={currentVariant}
       elements={[element]}
-      bars={[bar]}
+      bars={currentBars}
       selectedTextId={null}
       currentTime={currentTime}
       masonryDurationS={8}
@@ -214,29 +214,37 @@ describe("EditorCanvas masonry board motion", () => {
 });
 
 describe("EditorCanvas subtitled preview", () => {
-  it("keeps the caption-free base editable while showing the active persisted cue", () => {
+  it("keeps the caption-free base editable while showing the active working cue", () => {
     const subtitled = {
       ...variant,
       resolved_archetype: "subtitled",
       base_video_url: "https://example.com/caption-free-base.mp4",
       captions_enabled: true,
       caption_cues: [
-        { text: "Bağırsak karakterinin oyuncağını", start_s: 1, end_s: 2.5 },
+        { text: "Stale persisted caption", start_s: 1, end_s: 2.5 },
       ],
     } as unknown as PlanItemVariant;
+    const captionBar: TextElementBar = {
+      id: "caption-0",
+      text: "Edited working caption",
+      start_s: 1,
+      end_s: 2.5,
+      role: "narrated_caption",
+    };
 
-    const view = render(canvas(1.5, subtitled));
+    const view = render(canvas(1.5, subtitled, [bar, captionBar]));
 
     expect(
-      view.getByText("Bağırsak karakterinin oyuncağını").closest("[data-caption-preview]"),
+      view.getByText("Edited working caption").closest("[data-caption-preview]"),
     ).toHaveAttribute("data-caption-preview", "true");
+    expect(view.queryByText("Stale persisted caption")).not.toBeInTheDocument();
     expect(view.container.querySelector("video")).toHaveAttribute(
       "src",
       "https://example.com/caption-free-base.mp4",
     );
 
-    view.rerender(canvas(3, subtitled));
-    expect(view.queryByText("Bağırsak karakterinin oyuncağını")).not.toBeInTheDocument();
+    view.rerender(canvas(3, subtitled, [bar, captionBar]));
+    expect(view.queryByText("Edited working caption")).not.toBeInTheDocument();
   });
 
   it("does not show cues when captions are disabled", () => {
@@ -248,7 +256,10 @@ describe("EditorCanvas subtitled preview", () => {
       caption_cues: [{ text: "Hidden caption", start_s: 1, end_s: 2.5 }],
     } as unknown as PlanItemVariant;
 
-    const view = render(canvas(1.5, subtitled));
+    const view = render(canvas(1.5, subtitled, [
+      bar,
+      { id: "caption-0", text: "Hidden caption", start_s: 1, end_s: 2.5, role: "narrated_caption" },
+    ]));
 
     expect(view.queryByText("Hidden caption")).not.toBeInTheDocument();
   });
@@ -263,7 +274,10 @@ describe("EditorCanvas subtitled preview", () => {
       caption_cues: [{ text: "Already burned", start_s: 1, end_s: 2.5 }],
     } as unknown as PlanItemVariant;
 
-    const view = render(canvas(1.5, subtitled));
+    const view = render(canvas(1.5, subtitled, [
+      bar,
+      { id: "caption-0", text: "Already burned", start_s: 1, end_s: 2.5, role: "narrated_caption" },
+    ]));
 
     expect(view.queryByText("Already burned")).not.toBeInTheDocument();
     expect(view.container.querySelector("video")).toHaveAttribute(

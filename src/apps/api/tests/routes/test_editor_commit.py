@@ -483,6 +483,91 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
     ]
 
 
+def test_subtitled_caption_commit_persists_metadata_and_reburns_caption_task(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        caption_cues=[
+            {
+                "text": "Old line",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "words": [{"text": "Old", "start_s": 0.0, "end_s": 0.4}],
+                "smart_role": "hook",
+                "smart_word_ids": ["w000001"],
+            }
+        ],
+        mix=None,
+    )
+    cues = [
+        {
+            "text": "Updated line",
+            "start_s": 0.1,
+            "end_s": 1.2,
+            "words": [{"text": "Old", "start_s": 0.0, "end_s": 0.4}],
+            "smart_role": "hook",
+            "smart_word_ids": ["w000001"],
+        }
+    ]
+
+    prep = gj.prepare_editor_commit(job, "subtitled", _commit_req(caption_cues=cues))
+
+    v = job.assembly_plan["variants"][0]
+    assert v["caption_cues"] == cues
+    assert v["render_generation_id"] == prep["generation"]
+    assert v["render_status"] == "rendering"
+    assert prep["sections"]["caption_cues"] is True
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        REBURN_NARRATED,
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "subtitled", prep)
+    assert calls == [
+        {
+            "args": [str(job.id), "subtitled"],
+            "kwargs": {"render_gen_id": prep["generation"]},
+            "queue": "overlay-jobs",
+        }
+    ]
+
+
+def test_subtitled_mixed_caption_and_text_commit_persists_both(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "subtitled_text_lane_enabled", True, raising=False)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        caption_cues=[{"text": "Old caption", "start_s": 0.0, "end_s": 1.0}],
+        mix=None,
+    )
+    caption_cues = [{"text": "Edited caption", "start_s": 0.0, "end_s": 1.0}]
+    text_elements = [{**_VALID_ELEMENT, "id": "smart-title", "text": "Edited smart title"}]
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "subtitled",
+        _commit_req(caption_cues=caption_cues, text_elements=text_elements),
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["caption_cues"] == caption_cues
+    assert v["text_elements"][0]["id"] == "smart-title"
+    assert v["text_elements"][0]["text"] == "Edited smart title"
+    assert v["text_elements_user_edited"] is True
+    assert prep["sections"]["caption_cues"] is True
+    assert prep["sections"]["text_elements"] is True
+
+
 def test_narrated_caption_meta_commit_persists_and_reburns_caption_task(monkeypatch):
     _arm(monkeypatch)
     job = _job(
@@ -556,8 +641,7 @@ def test_narrated_caption_meta_font_null_resets_when_font_set(monkeypatch):
 
 def test_subtitled_caption_meta_commit_persists_and_reburns_caption_task(monkeypatch):
     """Meta toggles (style/font/enabled/position) work on subtitled variants —
-    the copilot's set_caption_meta rides this path. Transcript cues stay owned
-    by the Captions tab."""
+    the copilot's set_caption_meta rides this path."""
     _arm(monkeypatch)
     job = _job(
         variant_id="subtitled",
@@ -2370,9 +2454,9 @@ def test_capabilities_subtitled_caption_archetype_text_elements_on(monkeypatch):
     )
     caps = _caps(job, "subtitled")
     assert caps["text_elements"] is True
-    # The reason sentence still points at the Captions tab — the text lane
-    # unlocks text tools, not the captions surface (#625 × plan 010).
-    assert caps["reason"] == "Captions for this edit are managed in the Captions tab"
+    # The reason sentence remains caption-specific even when the optional
+    # styled-text lane unlocks text tools (#625 × plan 010).
+    assert caps["reason"] == "Captions can be selected and edited in this editor"
     # Plan 010: manual SFX/overlay lanes are open on caption archetypes.
     assert caps["sfx"] is True
     assert caps["overlays"] is True
@@ -2591,8 +2675,8 @@ def test_commit_keeps_envelope_when_accepted_card_not_committed(monkeypatch):
 
 def test_caption_tab_copy_literal_is_byte_stable():
     """The FE string-compares this sentence (CAPTIONS_TAB_REASON in
-    editor-capabilities.ts) to decide whether to render the Captions-tab deep
-    link. Rewording EITHER side silently drops the link — this pin makes the
-    backend half of the contract fail loudly instead. Mirror pin lives in
+    editor-capabilities.ts). Rewording EITHER side silently drifts the editor's
+    disabled-state copy — this pin makes the backend half of the contract fail
+    loudly instead. Mirror pin lives in
     src/apps/web/src/__tests__/plan/items/editor-capabilities.test.tsx."""
-    assert gj.CAPTION_TAB_COPY == "Captions for this edit are managed in the Captions tab"
+    assert gj.CAPTION_TAB_COPY == "Captions can be selected and edited in this editor"
