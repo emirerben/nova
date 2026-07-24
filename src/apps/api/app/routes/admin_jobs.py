@@ -429,9 +429,7 @@ def _render_timing_breakdown(job: Job, runs: list[AgentRun]) -> RenderTimingBrea
             repeated_work.append(f"agent:{name} ran {count} times")
 
     variants = (
-        (job.assembly_plan or {}).get("variants")
-        if isinstance(job.assembly_plan, dict)
-        else []
+        (job.assembly_plan or {}).get("variants") if isinstance(job.assembly_plan, dict) else []
     )
     for variant in variants or []:
         if not isinstance(variant, dict):

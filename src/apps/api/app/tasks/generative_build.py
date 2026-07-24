@@ -2555,8 +2555,7 @@ def _run_sfx_pass(
         # Kill switch: with the bed disabled the treatment stays persisted (so
         # re-enabling restores it) but this pass mixes as if it were absent.
         music_treatment = (
-            existing.get("background_music_treatment")
-            or existing.get("smart_music_treatment")
+            existing.get("background_music_treatment") or existing.get("smart_music_treatment")
             if settings.smart_music_bed_enabled
             else None
         )
