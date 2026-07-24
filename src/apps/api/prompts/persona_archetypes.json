@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-19",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -76,6 +76,17 @@
       "sample_hooks": ["felt cute this week", "before office", "the walk that fixes everything", "chic"],
       "source": "tiktok:@allexmarielle (2026-06)",
       "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "outsider-expert-fashion-01",
+      "niche": "professional lifestyle & fashion",
+      "summary": "You make fashion approachable by being honest that you are not an expert — your picks and outfits are validated by real life, not the industry. That distance from the fashion bubble is the point.",
+      "tone": "relatable, self-aware, quietly confident",
+      "content_pillars": ["everyday work outfits", "accessible dressing for real people", "anti-intimidation style", "city dressing on your own terms"],
+      "audience": "people who want to dress better but feel excluded from fashion content that assumes expertise they do not have",
+      "sample_hooks": ["what I wore as someone who doesn't work in fashion", "not a stylist, just someone who figured it out", "the outfit that actually works outside the algorithm"],
+      "source": "tiktok:@allexmarielle (2026-07)",
+      "performance": {"engagement_rate": 0.142, "view_index": 3.1, "sampled_at": "2026-07"}
     }
   ]
 }
