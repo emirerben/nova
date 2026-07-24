@@ -37,6 +37,7 @@ import {
   requestPoolAssetUploadUrls,
   sha256HexOfFile,
   uploadToGcs,
+  type CameraEffect,
   type MediaOverlay,
   type OverlaySuggestion,
   type PlanItem,
@@ -46,6 +47,7 @@ import {
   type TextElement,
   type VisualBlock,
 } from "@/lib/plan-api";
+import { normalizeCameraEffect } from "@/lib/camera-effects";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { canvasForOrientation } from "@/lib/overlay-constants";
@@ -602,6 +604,7 @@ export default function EditorShell({
   const [localSfxAudioUrls, setLocalSfxAudioUrls] = useState<Record<string, string>>({});
   const [localOverlays, setLocalOverlays] = useState<MediaOverlay[]>([]);
   const [localVisualBlocks, setLocalVisualBlocks] = useState<VisualBlock[]>([]);
+  const [localCameraEffects, setLocalCameraEffects] = useState<CameraEffect[]>([]);
   // AI-suggestion provenance (Overlays drawer): accepted envelope id + the
   // overlay card id it staged. Kept OFF the MediaOverlay objects — the save
   // filters these against the staged overlay ids, so an undone accept is
@@ -616,6 +619,7 @@ export default function EditorShell({
   const [sfxDirty, setSfxDirty] = useState(false);
   const [overlaysDirty, setOverlaysDirty] = useState(false);
   const [visualBlocksDirty, setVisualBlocksDirty] = useState(false);
+  const [cameraEffectsDirty, setCameraEffectsDirty] = useState(false);
   const [mixLevel, setMixLevel] = useState<number | null>(null);
   const [mixDirty, setMixDirty] = useState(false);
   const [textDirty, setTextDirty] = useState(false);
@@ -675,6 +679,7 @@ export default function EditorShell({
     // point at state from the other tab.
     const keepCoupledVisualDocument =
       conflictReseed && (visualBlocksDirty || textDirty);
+    const keepCameraEffects = conflictReseed && cameraEffectsDirty;
     if (sections.text && !keepCoupledVisualDocument) {
       originalsRef.current = new Map(
         (variant.text_elements ?? []).map((el) => [el.id, el]),
@@ -711,6 +716,12 @@ export default function EditorShell({
     if (!keepCoupledVisualDocument) {
       setLocalVisualBlocks((variant.visual_blocks ?? []).map((block) => ({ ...block })));
       setVisualBlocksDirty(false);
+    }
+    if (!keepCameraEffects) {
+      setLocalCameraEffects(
+        (variant.camera_effects ?? []).map((effect) => normalizeCameraEffect({ ...effect })),
+      );
+      setCameraEffectsDirty(false);
     }
     if (sections.titleAndStyle) setTitleDirty(false);
     const keepLocalOrientation =
@@ -902,6 +913,7 @@ export default function EditorShell({
     capabilities.sfx === false &&
     capabilities.overlays === false &&
     capabilities.visual_blocks !== true &&
+    capabilities.camera_effects !== true &&
     capabilities.orientation?.editable !== true &&
     capabilities.music_window?.editable !== true;
   const readOnlyReason = editorReasonCopy(capabilities?.reason);
@@ -941,6 +953,7 @@ export default function EditorShell({
       sfx: localSfx,
       overlays: localOverlays,
       visualBlocks: localVisualBlocks,
+      cameraEffects: localCameraEffects,
       captionMeta,
       captionMetaDirty,
       captionMetaPatch,
@@ -961,6 +974,7 @@ export default function EditorShell({
       localSfx,
       localOverlays,
       localVisualBlocks,
+      localCameraEffects,
       captionMeta,
       captionMetaDirty,
       captionMetaPatch,
@@ -985,6 +999,7 @@ export default function EditorShell({
       setLocalSfx(doc.sfx ?? []);
       setLocalOverlays(doc.overlays ?? []);
       setLocalVisualBlocks(doc.visualBlocks ?? []);
+      setLocalCameraEffects(doc.cameraEffects ?? []);
       setVideoMuted(doc.videoMuted);
       setSoundMuted(doc.soundMuted);
       setMixLevel(doc.mixLevel ?? null);
@@ -1007,6 +1022,7 @@ export default function EditorShell({
       if (capabilities?.sfx !== false) setSfxDirty(true);
       if (capabilities?.overlays !== false) setOverlaysDirty(true);
       if (capabilities?.visual_blocks !== false) setVisualBlocksDirty(true);
+      if (capabilities?.camera_effects !== false) setCameraEffectsDirty(true);
       setTitleDirty(true);
       // Undo of a delete (or redo of an add) resurrects a bar → re-select it
       // (plan §5 — the one selection rule that reaches into undo).
@@ -1052,7 +1068,12 @@ export default function EditorShell({
   // A redo-only stack is clean only when the original baseline is still
   // reachable; after the bounded stack evicts it, empty `past` remains dirty.
   const dirty =
-    !history.isAtBaseline || musicDirty || captionMetaDirty || lyricsDirty || orientationDirty;
+    !history.isAtBaseline ||
+    musicDirty ||
+    captionMetaDirty ||
+    lyricsDirty ||
+    orientationDirty ||
+    cameraEffectsDirty;
 
   // ── Save / cancel state ─────────────────────────────────────────────────────
   // saveState: idle → saving → {conflict | error | partial} (all preserve
@@ -1134,6 +1155,14 @@ export default function EditorShell({
         ? (localOverlays.find((o) => o.id === selection.id) ?? null)
         : null,
     [localOverlays, selection],
+  );
+
+  const selectedCameraEffect = useMemo(
+    () =>
+      selection?.kind === "camera"
+        ? (localCameraEffects.find((effect) => effect.id === selection.id) ?? null)
+        : null,
+    [localCameraEffects, selection],
   );
 
   const handleVirtualSourceError = useCallback(() => {
@@ -2116,6 +2145,48 @@ export default function EditorShell({
       setOverlaysDirty(true);
     },
     [readOnly],
+  );
+
+  const previewCameraTiming = useCallback(
+    (id: string, patch: Pick<CameraEffect, "start_s" | "end_s">) => {
+      if (readOnly || capabilities?.camera_effects === false) return;
+      setLocalCameraEffects((effects) =>
+        effects.map((effect) =>
+          effect.id === id
+            ? normalizeCameraEffect({ ...effect, ...patch, source: "user" })
+            : effect,
+        ),
+      );
+      setCameraEffectsDirty(true);
+    },
+    [capabilities?.camera_effects, readOnly],
+  );
+
+  const patchCameraEffect = useCallback(
+    (id: string, patch: Partial<CameraEffect>) => {
+      if (readOnly || capabilities?.camera_effects === false) return;
+      history.record();
+      setLocalCameraEffects((effects) =>
+        effects.map((effect) =>
+          effect.id === id
+            ? normalizeCameraEffect({ ...effect, ...patch, source: "user" })
+            : effect,
+        ),
+      );
+      setCameraEffectsDirty(true);
+    },
+    [capabilities?.camera_effects, history, readOnly],
+  );
+
+  const deleteCameraEffect = useCallback(
+    (id: string) => {
+      if (readOnly || capabilities?.camera_effects === false) return;
+      history.record();
+      setLocalCameraEffects((effects) => effects.filter((effect) => effect.id !== id));
+      setCameraEffectsDirty(true);
+      clear();
+    },
+    [capabilities?.camera_effects, clear, history, readOnly],
   );
 
   const previewVisualTiming = useCallback(
@@ -3209,6 +3280,8 @@ export default function EditorShell({
     } else if (selection.kind === "visual") {
       deleteVisualBlock(selection.id);
       clear();
+    } else if (selection.kind === "camera") {
+      deleteCameraEffect(selection.id);
     }
   }, [
     clipEditingLocked,
@@ -3220,6 +3293,7 @@ export default function EditorShell({
     removeSfx,
     removeOverlay,
     deleteVisualBlock,
+    deleteCameraEffect,
     state.bars,
   ]);
 
@@ -3325,7 +3399,8 @@ export default function EditorShell({
     (selection?.kind === "clip" && !clipEditingLocked && activeSlotCount(slots) > 1) ||
     selection?.kind === "sfx" ||
     selection?.kind === "overlay" ||
-    selection?.kind === "visual";
+    selection?.kind === "visual" ||
+    selection?.kind === "camera";
 
   // ── Keyboard: Escape ladder + Delete with focus guard (plan §5/§9) ──────────
   useEffect(() => {
@@ -3464,6 +3539,8 @@ export default function EditorShell({
         mediaOverlays: localOverlays,
         visualBlocksDirty,
         visualBlocks: localVisualBlocks,
+        cameraEffectsDirty,
+        cameraEffects: localCameraEffects,
         // Filtered against the staged overlay ids inside the builder — an
         // accepted suggestion the user undid must not be resolved.
         acceptedSuggestions,
@@ -3497,6 +3574,7 @@ export default function EditorShell({
       setSfxDirty(false);
       setOverlaysDirty(false);
       setVisualBlocksDirty(false);
+      setCameraEffectsDirty(false);
       setTitleDirty(false);
       setMixDirty(false);
       setMusicDirty(false);
@@ -3557,6 +3635,8 @@ export default function EditorShell({
     localOverlays,
     visualBlocksDirty,
     localVisualBlocks,
+    cameraEffectsDirty,
+    localCameraEffects,
     acceptedSuggestions,
     titleDirty,
     history,
@@ -3850,6 +3930,11 @@ export default function EditorShell({
     showVisualBlocks:
       VISUAL_BLOCKS_UI_ENABLED && capabilities?.visual_blocks !== false,
     onPreviewVisualTiming: previewVisualTiming,
+    cameraEffects:
+      capabilities?.camera_effects === false
+        ? []
+        : localCameraEffects.map((effect) => normalizeCameraEffect(effect)),
+    onPreviewCameraTiming: previewCameraTiming,
     slots,
     clipReadOnly: clipEditingLocked,
     clipDisabledReason,
@@ -4127,6 +4212,7 @@ export default function EditorShell({
             elements={previewElements}
             bars={visibleTextBars}
             visualBlocks={localVisualBlocks}
+            cameraEffects={localCameraEffects}
             visualAssets={poolAssets}
             mediaOverlays={localOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
@@ -4197,11 +4283,11 @@ export default function EditorShell({
               onSmartPlaceAll={applySmartPlacement}
               smartPlaceAllAvailable={smartPlaceAllAvailable}
               onPickPreset={pickPreset}
-	              appliedStyleSetId={appliedStyleSetId}
-	              onRestyleAll={onRestyleAll}
-	              sfxEffects={sfxGlossaryEffects}
-	              sfxLoading={sfxGlossaryLoading}
-	              onAddSfx={addSfxFromGlossary}
+              appliedStyleSetId={appliedStyleSetId}
+              onRestyleAll={onRestyleAll}
+              sfxEffects={sfxGlossaryEffects}
+              sfxLoading={sfxGlossaryLoading}
+              onAddSfx={addSfxFromGlossary}
               musicTracks={musicTracks}
               musicLoading={musicTracksLoading}
               currentMusicTrackId={selectedMusicTrackId}
@@ -4209,8 +4295,8 @@ export default function EditorShell({
               onPickMusic={pickMusicTrack}
               musicWindow={musicWindowControl}
               overlayUploading={overlayUploading}
-	              onOverlayUpload={handleOverlayUpload}
-	              overlaySuggestions={overlaySuggestionsNode}
+              onOverlayUpload={handleOverlayUpload}
+              overlaySuggestions={overlaySuggestionsNode}
               visualBlocks={localVisualBlocks}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
@@ -4241,8 +4327,8 @@ export default function EditorShell({
                 onUndo: history.undo,
                 onClearRestoredInput: copilot.clearRestoredInput,
               }}
-	              onClose={() => setActiveTool(null)}
-	            />
+              onClose={() => setActiveTool(null)}
+            />
           ) : (
             <div />
           ))}
@@ -4330,6 +4416,7 @@ export default function EditorShell({
             elements={previewElements}
             bars={visibleTextBars}
             visualBlocks={localVisualBlocks}
+            cameraEffects={localCameraEffects}
             visualAssets={poolAssets}
             mediaOverlays={localOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
@@ -4361,12 +4448,13 @@ export default function EditorShell({
           />
         </div>
         <InspectorPanel
-	          selection={selection}
-	          bar={selectedBar}
-	          clipTiming={selectedClip}
-	          sfx={selectedSfx}
-	          overlay={selectedOverlay}
-	          tab={inspectorTab}
+          selection={selection}
+          bar={selectedBar}
+          clipTiming={selectedClip}
+          sfx={selectedSfx}
+          overlay={selectedOverlay}
+          cameraEffect={selectedCameraEffect}
+          tab={inspectorTab}
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
           captionsTabHref={
@@ -4379,7 +4467,7 @@ export default function EditorShell({
           }
           contentRef={contentRef}
           onEditText={(text) => {
-          if (selectedBar && !readOnly) {
+            if (selectedBar && !readOnly) {
               // Coalesce keystrokes on one bar into a single undo step.
               history.record(`text:${selectedBar.id}`);
               if (lyricsOptionalActive || !isLyricBar(selectedBar)) setTextDirty(true);
@@ -4392,15 +4480,17 @@ export default function EditorShell({
           onSetTextBoxPosition={setSelectedTextBoxPosition}
           boxPositionXFrac={selectedTextBoxScreenXFrac}
           onPatchTextTiming={patchSelectedTextTiming}
-	          onPatchClipTiming={patchSelectedClipTiming}
-	          onPreviewClipTiming={previewSelectedClipTiming}
-	          onRecordClipTiming={recordTimelineDrag}
-	          onPatchSfx={patchSfx}
-	          onDeleteSfx={removeSfx}
-	          onPatchOverlay={patchOverlay}
-	          onPreviewOverlay={previewOverlayPatch}
-	          onRecordOverlay={recordTimelineDrag}
-	          onDeleteOverlay={removeOverlay}
+          onPatchClipTiming={patchSelectedClipTiming}
+          onPreviewClipTiming={previewSelectedClipTiming}
+          onRecordClipTiming={recordTimelineDrag}
+          onPatchSfx={patchSfx}
+          onDeleteSfx={removeSfx}
+          onPatchOverlay={patchOverlay}
+          onPreviewOverlay={previewOverlayPatch}
+          onRecordOverlay={recordTimelineDrag}
+          onDeleteOverlay={removeOverlay}
+          onPatchCameraEffect={patchCameraEffect}
+          onDeleteCameraEffect={deleteCameraEffect}
           mixLevel={mixLevel}
           mixEditable={capabilities?.mix !== false && mixLevel != null}
           mixLabel={soundBedLabel}
@@ -4415,7 +4505,7 @@ export default function EditorShell({
             !!selectedBar && !readOnly && (isMasonryVariant(variant) || !!smartPlacementCandidate)
           }
           onSmartPlace={applySelectedSmartPlacement}
-	          onClose={clear}
+          onClose={clear}
           onPickPreset={pickPreset}
         />
         <InspectorRail

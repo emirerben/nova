@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.7.0] — 2026-07-24
+
+### Added
+- **Smart Caption list-title camera focus is now editable instead of hidden.** List-title emphasis is materialized as first-class `camera_effects` with stable IDs, source metadata, timing, intensity, and easing; the editor shows them as Focus chips on the timeline with duration and intensity controls, and the preview applies the same smooth sine-pulse curve as the renderer to the base video only.
+
+### Fixed
+- **Generated list titles no longer flash with a hard zoom jump.** The old hidden semantic crop pulse produced an abrupt 8% focus window around list titles. Generated pulses now default to a smoother 1.2s / 4% curve, render without instant start/end jumps, preserve captions and overlays above the camera-treated base, and regeneration full-replaces AI-origin effects by stable event IDs without duplicating user edits.
+
 ## [0.12.6.0] — 2026-07-24
 
 ### Added

@@ -20,6 +20,7 @@
 import {
   NotAuthenticatedError,
   type MediaOverlay,
+  type CameraEffect,
   type CaptionCue,
   type SoundEffectPlacement,
   type TextElement,
@@ -101,6 +102,8 @@ export interface EditorCommitRequest {
   media_overlays?: MediaOverlay[];
   /** Full replacement visual-block list. Omit when untouched. */
   visual_blocks?: VisualBlock[];
+  /** Full replacement scene camera-effect list. Omit when untouched. */
+  camera_effects?: CameraEffect[];
   /** Working-state title. Omit when untouched; null clears. */
   title?: string | null;
   /** Lyrics editor state. Omit when untouched; any presence triggers full render. */
@@ -138,6 +141,7 @@ export interface EditorCommitResponse {
     sound_effects?: boolean;
     media_overlays?: boolean;
     visual_blocks?: boolean;
+    camera_effects?: boolean;
     title?: boolean;
     lyrics?: boolean;
     orientation?: boolean;
@@ -197,6 +201,8 @@ export function buildEditorCommitRequest({
   mediaOverlays = [],
   visualBlocksDirty = false,
   visualBlocks = [],
+  cameraEffectsDirty = false,
+  cameraEffects = [],
   acceptedSuggestions = [],
   titleDirty = true,
   title,
@@ -228,6 +234,8 @@ export function buildEditorCommitRequest({
   mediaOverlays?: MediaOverlay[];
   visualBlocksDirty?: boolean;
   visualBlocks?: VisualBlock[];
+  cameraEffectsDirty?: boolean;
+  cameraEffects?: CameraEffect[];
   acceptedSuggestions?: AcceptedSuggestionRef[];
   titleDirty?: boolean;
   title: string;
@@ -291,6 +299,7 @@ export function buildEditorCommitRequest({
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
     visual_blocks: visualBlocksDirty ? visualBlocks : undefined,
+    camera_effects: cameraEffectsDirty ? cameraEffects : undefined,
     accepted_suggestion_ids: acceptedIds.length > 0 ? acceptedIds : undefined,
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,
     lyrics: lyricsDirty ? lyrics : undefined,

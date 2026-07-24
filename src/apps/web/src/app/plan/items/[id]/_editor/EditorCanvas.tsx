@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CameraEffect,
   MediaOverlay,
   PlanItemVariant,
   PoolAsset,
@@ -26,6 +27,7 @@ import type {
   TextElement,
   VisualBlock,
 } from "@/lib/plan-api";
+import { cameraScaleAt } from "@/lib/camera-effects";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import {
   resolveTextElementsLayout,
@@ -129,6 +131,7 @@ export default function EditorCanvas({
   bars,
   mediaOverlays = [],
   visualBlocks = [],
+  cameraEffects = [],
   visualAssets = [],
   overlayPreviewUrls = {},
   suggestedOverlayIds,
@@ -166,6 +169,7 @@ export default function EditorCanvas({
   bars: TextElementBar[];
   mediaOverlays?: MediaOverlay[];
   visualBlocks?: VisualBlock[];
+  cameraEffects?: CameraEffect[];
   visualAssets?: PoolAsset[];
   overlayPreviewUrls?: Record<string, string>;
   /** Overlay ids that came from ✓-accepted AI suggestions — dashed ✦
@@ -700,6 +704,12 @@ export default function EditorCanvas({
   // centered 16:9 composition the server will produce on Save. Portrait keeps
   // its historical contain behavior.
   const videoFitClass = canvas.w > canvas.h ? "object-cover" : "object-contain";
+  const cameraScale = cameraScaleAt(cameraEffects, currentTime);
+  const cameraTransform = {
+    transform: `scale(${cameraScale})`,
+    transformOrigin: "50% 50%",
+    zIndex: EDITOR_STAGE_Z.video,
+  };
 
   return (
     <div
@@ -745,7 +755,7 @@ export default function EditorCanvas({
                     `pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`,
                     virtualPreview.activeDeck === "a" ? "opacity-100" : "opacity-0",
                   ].join(" ")}
-                  style={{ zIndex: EDITOR_STAGE_Z.video }}
+                  style={cameraTransform}
                 />
                 <video
                   {...virtualVideoBProps}
@@ -754,7 +764,7 @@ export default function EditorCanvas({
                     `pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`,
                     virtualPreview.activeDeck === "b" ? "opacity-100" : "opacity-0",
                   ].join(" ")}
-                  style={{ zIndex: EDITOR_STAGE_Z.video }}
+                  style={cameraTransform}
                 />
                 {virtualMusicAudioProps && (
                   <audio
@@ -772,7 +782,7 @@ export default function EditorCanvas({
                 playsInline
                 preload="auto"
                 className={`pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`}
-                style={{ zIndex: EDITOR_STAGE_Z.video }}
+                style={cameraTransform}
                 onTimeUpdate={(e) => onTimeUpdate((e.target as HTMLVideoElement).currentTime)}
                 onLoadedMetadata={(e) => {
                   const d = (e.target as HTMLVideoElement).duration;

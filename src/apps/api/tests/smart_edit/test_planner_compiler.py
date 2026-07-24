@@ -12,6 +12,7 @@ from app.agents.smart_edit_planner import (
     SmartPlannerCandidate,
     SmartPlannerProposal,
 )
+from app.pipeline.camera_effects import camera_effects_from_intents
 from app.smart_edit.compiler import compile_smart_plan, resolve_sfx_placements
 from app.smart_edit.planner import _merge_agent_with_guards, plan_smart_captions
 from app.smart_edit.presets import load_preset
@@ -114,6 +115,66 @@ def test_turkish_talking_head_compiles_semantic_caption_number_title_and_sfx_lan
             "intensity": 1.0,
         }
     ]
+
+
+def test_camera_intents_materialize_stable_editable_effects_without_duplicates() -> None:
+    intent = {
+        "event_id": "event-list-1",
+        "role": "list_item",
+        "token": "semantic_crop_pulse",
+        "at_s": 3.0,
+        "start_s": 3.0,
+        "end_s": 3.8,
+    }
+
+    generated_only = camera_effects_from_intents([intent], duration_s=12.0)
+    assert generated_only == [
+        {
+            "id": "camera-event-list-1",
+            "token": "semantic_crop_pulse",
+            "start_s": 3.0,
+            "end_s": 4.2,
+            "intensity": 0.04,
+            "easing": "sine_pulse",
+            "source": "smart_captions",
+            "event_id": "event-list-1",
+            "role": "list_item",
+        }
+    ]
+
+    effects = camera_effects_from_intents(
+        [intent, dict(intent)],
+        existing_effects=[
+            {
+                "id": "camera-event-list-1",
+                "event_id": "event-list-1",
+                "role": "list_item",
+                "start_s": 3.1,
+                "end_s": 4.0,
+                "intensity": 0.02,
+                "easing": "sine_pulse",
+                "source": "user",
+            },
+            {
+                "id": "user-camera",
+                "start_s": 8.0,
+                "end_s": 8.7,
+                "intensity": 0.02,
+                "easing": "sine_pulse",
+                "source": "user",
+            },
+        ],
+        duration_s=12.0,
+    )
+
+    assert [effect["id"] for effect in effects] == ["camera-event-list-1", "user-camera"]
+    edited = effects[0]
+    assert edited["source"] == "user"
+    assert edited["role"] == "list_item"
+    assert edited["start_s"] == pytest.approx(3.1)
+    assert edited["end_s"] == pytest.approx(4.0)
+    assert edited["intensity"] == pytest.approx(0.02)
+    assert edited["easing"] == "sine_pulse"
 
 
 def test_smart_sfx_never_falls_back_to_unrelated_voice_clip() -> None:

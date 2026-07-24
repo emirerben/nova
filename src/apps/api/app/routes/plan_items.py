@@ -2544,6 +2544,7 @@ async def editor_commit_item(
             sound_effects=prep["sections"]["sound_effects"],
             media_overlays=prep["sections"]["media_overlays"],
             visual_blocks=prep["sections"]["visual_blocks"],
+            camera_effects=prep["sections"].get("camera_effects", False),
             title=cleaned_title is not None,
         ),
     )
