@@ -9874,6 +9874,8 @@ def _run_rerender_caption_camera_effects(
             **variant,
             "camera_effects": effects or None,
             "base_video_path": None,
+            "media_overlays": variant.get("media_overlays"),
+            "pre_media_overlay_video_path": variant.get("pre_media_overlay_video_path"),
         }
         if _should_compose_subtitled_final(fresh_variant):
             final_local = _compose_subtitled_final(caption_base_local, fresh_variant, tmpdir)
