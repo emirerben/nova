@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Kria favicon: lime fan on white tile. -->
+  <defs>
+    <mask id="favw-behind-mid-and-front">
+      <rect x="-70" y="-110" width="150" height="140" fill="#fff"/>
+      <rect x="-22" y="-79" width="48" height="78" rx="13" fill="#000"/>
+      <rect x="-22" y="-79" width="48" height="78" rx="13" fill="#000" transform="rotate(24)"/>
+    </mask>
+    <mask id="favw-behind-front">
+      <rect x="-70" y="-110" width="150" height="140" fill="#fff"/>
+      <rect x="-22" y="-79" width="48" height="78" rx="13" fill="#000" transform="rotate(24)"/>
+    </mask>
+  </defs>
+  <rect width="100" height="100" rx="22" fill="#ffffff"/>
+  <g fill="#65a30d" transform="translate(48.8,76) scale(0.62)">
+    <g mask="url(#favw-behind-mid-and-front)">
+      <rect x="-19" y="-76" width="42" height="72" rx="10" transform="rotate(-24)"/>
+    </g>
+    <g mask="url(#favw-behind-front)">
+      <rect x="-19" y="-76" width="42" height="72" rx="10"/>
+    </g>
+    <path fill-rule="evenodd" transform="rotate(24)"
+      d="M-9 -76 h22 a10 10 0 0 1 10 10 v52 a10 10 0 0 1 -10 10 h-22 a10 10 0 0 1 -10 -10 v-52 a10 10 0 0 1 10 -10 Z"/>
+  </g>
+</svg>
