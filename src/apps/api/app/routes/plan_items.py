@@ -2458,6 +2458,7 @@ async def editor_commit_item(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
 
     selected_music_track = None
+    selected_background_music_track = None
     if commit_body.music_track_id is not None:
         selected_music_track = (
             await db.execute(select(MusicTrack).where(MusicTrack.id == commit_body.music_track_id))
@@ -2477,6 +2478,27 @@ async def editor_commit_item(
                     select(MusicTrack).where(MusicTrack.id == locked_variant.get("music_track_id"))
                 )
             ).scalar_one_or_none()
+    if (
+        commit_body.background_music is not None
+        and not commit_body.background_music.remove
+        and commit_body.background_music.track_id
+    ):
+        selected_background_music_track = (
+            await db.execute(
+                select(MusicTrack).where(MusicTrack.id == commit_body.background_music.track_id)
+            )
+        ).scalar_one_or_none()
+
+    selected_background_music_track = None
+    if (
+        commit_body.background_music is not None
+        and commit_body.background_music.track_id is not None
+    ):
+        selected_background_music_track = (
+            await db.execute(
+                select(MusicTrack).where(MusicTrack.id == commit_body.background_music.track_id)
+            )
+        ).scalar_one_or_none()
 
     visual_assets: dict[str, dict] | None = None
     if commit_body.visual_blocks is not None:
@@ -2490,6 +2512,7 @@ async def editor_commit_item(
                 "status": row.status,
                 "gcs_path": row.gcs_path,
                 "kind": row.kind,
+                "user_context": getattr(row, "user_context", None),
             }
             for row in rows
         }
@@ -2500,6 +2523,7 @@ async def editor_commit_item(
         commit_body,
         user_id=str(user.id),
         music_track=selected_music_track,
+        background_music_track=selected_background_music_track,
         visual_assets=visual_assets,
     )
 
@@ -2539,6 +2563,7 @@ async def editor_commit_item(
             timeline=prep["sections"]["timeline"],
             mix=prep["sections"]["mix"],
             music=prep["sections"]["music"],
+            background_music=prep["sections"]["background_music"],
             lyrics=prep["sections"]["lyrics"],
             orientation=prep["sections"]["orientation"],
             sound_effects=prep["sections"]["sound_effects"],
@@ -3239,6 +3264,7 @@ async def transcript_recorded(
 # Objects land under the persistent users/{uid}/plan/{item_id}/pool/ prefix.
 
 _MAX_POOL_ASSETS = 20  # plan 005 finding 9: cap + dedupe keep analysis spend bounded
+_MAX_POOL_CONTEXT_CHARS = 500
 
 
 def _require_autoplace() -> None:
@@ -3328,6 +3354,11 @@ class RegisterAssetBody(BaseModel):
     content_type: str
     content_hash: str | None = None
     source_filename: str | None = None
+    user_context: str | None = Field(default=None, max_length=_MAX_POOL_CONTEXT_CHARS)
+
+
+class PatchAssetContextBody(BaseModel):
+    user_context: str | None = Field(default=None, max_length=_MAX_POOL_CONTEXT_CHARS)
 
 
 class PoolAssetOut(BaseModel):
@@ -3335,6 +3366,7 @@ class PoolAssetOut(BaseModel):
     kind: str
     status: str
     source_filename: str | None
+    user_context: str | None = None
     duration_s: float | None
     aspect: float | None
     # Pixel dims (plan 009 E1) — from the ANALYSIS_VERSION-3 analysis JSONB;
@@ -3361,10 +3393,19 @@ class PoolAssetOut(BaseModel):
     source_timestamp_s: float | None = None
 
 
+def _clean_pool_asset_context(value: str | None) -> str | None:
+    cleaned = _sanitize_text(str(value or "")).strip()
+    if not cleaned:
+        return None
+    return cleaned[:_MAX_POOL_CONTEXT_CHARS]
+
+
 def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
     analysis = asset.analysis or {}
     if not isinstance(analysis, dict):
         analysis = {}
+    raw_context = getattr(asset, "user_context", None)
+    user_context = raw_context if isinstance(raw_context, str) else None
     display_url: str | None = None
     try:
         display_url = storage.signed_get_url(asset.gcs_path, expiration_minutes=60)
@@ -3379,6 +3420,7 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         kind=asset.kind,
         status=asset.status,
         source_filename=asset.source_filename,
+        user_context=user_context,
         duration_s=asset.duration_s,
         aspect=asset.aspect,
         width=analysis.get("width"),
@@ -3430,6 +3472,11 @@ async def register_pool_asset(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            cleaned_context = _clean_pool_asset_context(body.user_context)
+            if body.user_context is not None and existing.user_context != cleaned_context:
+                existing.user_context = cleaned_context
+                await db.commit()
+                await db.refresh(existing)
             return _asset_out(existing, deduped=True)
     count = int(
         (
@@ -3452,6 +3499,7 @@ async def register_pool_asset(
         kind=_asset_kind_for_content_type(body.content_type),
         content_hash=body.content_hash,
         source_filename=body.source_filename,
+        user_context=_clean_pool_asset_context(body.user_context),
         status="uploaded",
     )
     db.add(asset)
@@ -3613,6 +3661,37 @@ async def list_pool_assets(
         .all()
     )
     return PoolAssetsResponse(assets=[_asset_out(a) for a in assets])
+
+
+@router.patch("/{item_id}/assets/{asset_id}", response_model=PoolAssetOut)
+async def update_pool_asset_context(
+    item_id: str,
+    asset_id: str,
+    body: PatchAssetContextBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PoolAssetOut:
+    _require_asset_pool()
+    item = await _load_owned_item(item_id, user.id, db)
+    try:
+        aid = uuid.UUID(asset_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+    asset = (
+        await db.execute(
+            select(PlanItemAsset).where(
+                PlanItemAsset.id == aid,
+                PlanItemAsset.plan_item_id == item.id,
+                PlanItemAsset.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    asset.user_context = _clean_pool_asset_context(body.user_context)
+    await db.commit()
+    await db.refresh(asset)
+    return _asset_out(asset)
 
 
 @router.delete("/{item_id}/assets/{asset_id}")

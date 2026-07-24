@@ -360,6 +360,60 @@ class TestJobDebug:
         assert body["track_agent_runs"] == []
         assert body["job_clips"] == []
         assert body["job"]["pipeline_trace"] is None
+        assert body["render_summary"] is None
+
+    def test_debug_payload_includes_render_summary(self, client):
+        created = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
+        j = _job_row(
+            created_at=created,
+            started_at=created,
+            finished_at=created,
+            pipeline_trace=[
+                {
+                    "ts": "2026-07-24T10:00:00+00:00",
+                    "stage": "render_stage",
+                    "event": "upload",
+                    "data": {
+                        "trace_id": "trace-admin",
+                        "stage": "upload",
+                        "elapsed_ms": 500,
+                        "status": "ok",
+                    },
+                }
+            ],
+        )
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+
+            async def _gen():
+                db = AsyncMock()
+                job_res = MagicMock()
+                job_res.scalar_one_or_none.return_value = j
+                clips_res = MagicMock()
+                clips_res.scalars.return_value.all.return_value = []
+                mt_res = MagicMock()
+                mt_res.scalar_one_or_none.return_value = None
+                runs_res = MagicMock()
+                runs_res.scalars.return_value.all.return_value = []
+                track_runs_res = MagicMock()
+                track_runs_res.scalars.return_value.all.return_value = []
+                db.execute = AsyncMock(
+                    side_effect=[job_res, clips_res, mt_res, runs_res, track_runs_res]
+                )
+                yield db
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.get(
+                    f"/admin/jobs/{j.id}/debug",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 200
+        body = res.json()
+        assert body["render_summary"]["trace_id"] == "trace-admin"
+        assert body["render_summary"]["slowest_stages"][0]["stage"] == "upload"
 
     def test_template_and_track_agent_runs_returned(self, client):
         """When the job links to a template AND a track that both have

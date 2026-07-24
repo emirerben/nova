@@ -356,6 +356,38 @@ describe("buildEditorCommitRequest", () => {
     expect(body.base_generation).toBe("gen-current");
   });
 
+  it("sends background music only as an explicitly dirty audio section", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      backgroundMusicDirty: true,
+      backgroundMusic: {
+        track_id: "bed-new",
+        enabled: true,
+        start_s: 2.5,
+        end_s: 12,
+        gain_db: -16,
+        muted: false,
+      },
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+
+    expect(body.background_music).toEqual({
+      track_id: "bed-new",
+      enabled: true,
+      start_s: 2.5,
+      end_s: 12,
+      gain_db: -16,
+      muted: false,
+    });
+    expect(body.music_track_id).toBeUndefined();
+    expect(body.timeline_slots).toBeUndefined();
+  });
+
   it("atomically preserves unsaved timeline edits with a song window", () => {
     const body = buildEditorCommitRequest({
       elements: [element],

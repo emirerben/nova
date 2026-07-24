@@ -50,6 +50,7 @@ import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
+import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { EditorSelection } from "./useEditorSelection";
 import type { InspectorTab } from "./InspectorRail";
@@ -144,8 +145,12 @@ export default function InspectorPanel({
   musicLoading = false,
   currentMusicTrackId = null,
   musicEditable = false,
+  backgroundMusic = null,
+  backgroundMusicTrackDurationS = null,
   onPatchMix,
   onPickMusic,
+  onPatchBackgroundMusic,
+  onRemoveBackgroundMusic,
   musicWindow,
   smartPlaceAvailable = false,
   onSmartPlace,
@@ -184,8 +189,12 @@ export default function InspectorPanel({
   musicLoading?: boolean;
   currentMusicTrackId?: string | null;
   musicEditable?: boolean;
+  backgroundMusic?: EditorCommitBackgroundMusic | null;
+  backgroundMusicTrackDurationS?: number | null;
   onPatchMix?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
+  onRemoveBackgroundMusic?: () => void;
   musicWindow?: SongWindowControl;
   smartPlaceAvailable?: boolean;
   onSmartPlace?: () => void;
@@ -257,7 +266,11 @@ export default function InspectorPanel({
           musicLoading={musicLoading}
           currentMusicTrackId={currentMusicTrackId}
           musicEditable={musicEditable}
+          backgroundMusic={backgroundMusic}
+          backgroundMusicTrackDurationS={backgroundMusicTrackDurationS}
           onPickMusic={onPickMusic}
+          onPatchBackgroundMusic={onPatchBackgroundMusic}
+          onRemoveBackgroundMusic={onRemoveBackgroundMusic}
           musicWindow={musicWindow}
           onPatch={onPatchMix}
           onClose={onClose}
@@ -289,8 +302,12 @@ function MixInspector({
   musicLoading,
   currentMusicTrackId,
   musicEditable,
+  backgroundMusic,
+  backgroundMusicTrackDurationS,
   onPatch,
   onPickMusic,
+  onPatchBackgroundMusic,
+  onRemoveBackgroundMusic,
   musicWindow,
   onClose,
 }: {
@@ -301,12 +318,37 @@ function MixInspector({
   musicLoading: boolean;
   currentMusicTrackId: string | null;
   musicEditable: boolean;
+  backgroundMusic?: EditorCommitBackgroundMusic | null;
+  backgroundMusicTrackDurationS?: number | null;
   onPatch?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
+  onRemoveBackgroundMusic?: () => void;
   musicWindow?: SongWindowControl;
   onClose: () => void;
 }) {
   const safeLevel = Math.max(0, Math.min(1, level ?? 0));
+  const hasBackgroundMusic = !!backgroundMusic?.track_id && backgroundMusic.enabled !== false;
+  const bedMuted = Boolean(backgroundMusic?.muted);
+  const gainDb = Math.max(-40, Math.min(0, backgroundMusic?.gain_db ?? -18));
+  const trimStartS = Math.max(0, backgroundMusic?.start_s ?? 0);
+  const trimEndS =
+    typeof backgroundMusic?.end_s === "number" && Number.isFinite(backgroundMusic.end_s)
+      ? Math.max(trimStartS, backgroundMusic.end_s)
+      : backgroundMusicTrackDurationS != null
+        ? Math.max(trimStartS, backgroundMusicTrackDurationS)
+        : trimStartS;
+  const clampTrimStart = (value: number) => {
+    const maxStart =
+      backgroundMusicTrackDurationS != null
+        ? Math.max(0, backgroundMusicTrackDurationS - 0.1)
+        : Number.POSITIVE_INFINITY;
+    return Math.max(0, Math.min(maxStart, value));
+  };
+  const clampTrimEnd = (value: number) => {
+    const maxEnd = backgroundMusicTrackDurationS ?? Number.POSITIVE_INFINITY;
+    return Math.max(trimStartS + 0.1, Math.min(maxEnd, value));
+  };
   return (
     <div className="px-5 pt-5">
       <div className="flex items-center justify-between">
@@ -363,13 +405,74 @@ function MixInspector({
           )
         ) : (
           <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
-            This edit has no swappable song.
+            Music cannot be edited for this version.
           </p>
         )}
       </div>
       {musicWindow && (
         <div className="mt-4">
           <SongWindowSelector {...musicWindow} />
+        </div>
+      )}
+      {hasBackgroundMusic && (
+        <div className="mt-4 border-t border-zinc-200 pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[12px] font-semibold text-[#3f3f46]">Background bed</p>
+            <button
+              type="button"
+              onClick={onRemoveBackgroundMusic}
+              className="min-h-9 rounded-lg border border-zinc-200 px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              Remove
+            </button>
+          </div>
+          <label className="mt-3 flex min-h-11 items-center justify-between rounded-lg border border-zinc-200 px-3 text-[13px] text-[#3f3f46]">
+            Mute
+            <input
+              type="checkbox"
+              checked={bedMuted}
+              onChange={(event) => onPatchBackgroundMusic?.({ muted: event.target.checked })}
+              className="h-4 w-4 accent-lime-500"
+            />
+          </label>
+          <div className="mt-4">
+            <div className="flex items-center justify-between text-[12px] font-semibold text-[#3f3f46]">
+              <label htmlFor="editor-background-music-volume">Volume</label>
+              <span>{Math.round(((gainDb + 40) / 40) * 100)}%</span>
+            </div>
+            <input
+              id="editor-background-music-volume"
+              type="range"
+              min={-40}
+              max={0}
+              step={0.5}
+              value={gainDb}
+              onChange={(event) =>
+                onPatchBackgroundMusic?.({ gain_db: Number(event.target.value) })
+              }
+              className="mt-2 h-11 w-full cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            />
+          </div>
+          <FieldNumber
+            label="Trim start"
+            value={trimStartS}
+            min={0}
+            step={0.1}
+            onCommit={(value) => {
+              const nextStart = clampTrimStart(value);
+              onPatchBackgroundMusic?.({
+                start_s: nextStart,
+                end_s: Math.max(nextStart + 0.1, trimEndS),
+              });
+            }}
+          />
+          <FieldNumber
+            label="Trim end"
+            value={trimEndS}
+            min={0.1}
+            step={0.1}
+            onCommit={(value) => onPatchBackgroundMusic?.({ end_s: clampTrimEnd(value) })}
+          />
         </div>
       )}
       {editable ? (

@@ -898,6 +898,9 @@ class PlanItemAsset(Base):
     # server-side on register. Dedupe key within one plan item.
     content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Creator-authored hint for niche uploads. Kept separate from analysis so
+    # machine-detected subject/brands stay auditable and re-analysis can change.
+    user_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Server-side ffprobe results (PR1a wires probing for video assets). The matcher
     # never trusts client-probed values.
     duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)

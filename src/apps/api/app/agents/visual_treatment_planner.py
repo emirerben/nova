@@ -17,6 +17,7 @@ class VisualTreatmentAsset(BaseModel):
     subject: str = ""
     description: str = ""
     on_screen_text: str = ""
+    user_context: str = ""
 
 
 class VisualTreatmentPlannerInput(BaseModel):

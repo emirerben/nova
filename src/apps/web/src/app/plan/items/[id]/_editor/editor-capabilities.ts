@@ -128,7 +128,11 @@ export function computeToolDisabledReasons({
   // Sounds also owns the song-window selector. Keep the drawer reachable when
   // that capability exists, even if SFX are disabled or the selector itself
   // needs to explain a short-song/timing-metadata disabled state.
-  if (capabilities?.sfx === false && capabilities.music_window == null) {
+  if (
+    capabilities?.sfx === false &&
+    capabilities.music_window == null &&
+    capabilities.background_music !== true
+  ) {
     out.sounds = editorReasonCopy(
       capabilities.sfx_reason ?? "sound effects aren't available for this edit",
     );

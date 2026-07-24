@@ -161,6 +161,8 @@ describe("serializeDraft / deserializeDraft", () => {
       musicTrackId: undefined,
       musicDirty: false,
       musicStartS: null,
+      backgroundMusic: null,
+      backgroundMusicDirty: false,
       lyricsEnabled: undefined,
       orientation: "landscape",
     });
@@ -226,6 +228,8 @@ describe("serializeDraft / deserializeDraft", () => {
       musicTrackId: undefined,
       musicDirty: false,
       musicStartS: null,
+      backgroundMusic: null,
+      backgroundMusicDirty: false,
       lyricsEnabled: undefined,
       orientation: "portrait",
       title: "",
@@ -259,6 +263,37 @@ describe("serializeDraft / deserializeDraft", () => {
     );
     expect(parsed?.doc.musicStartS).toBe(14.5);
     expect(parsed?.doc.musicDirty).toBe(true);
+  });
+
+  it("preserves background music edits in draft recovery", () => {
+    const parsed = deserializeDraft(
+      serializeDraft(
+        "item-1",
+        "job-1",
+        "v1",
+        "gen-1",
+        doc([], {
+          backgroundMusic: {
+            track_id: "bed-1",
+            enabled: true,
+            start_s: 2.5,
+            end_s: 11,
+            gain_db: -16,
+            muted: true,
+          },
+          backgroundMusicDirty: true,
+        }),
+      ),
+    );
+    expect(parsed?.doc.backgroundMusic).toEqual({
+      track_id: "bed-1",
+      enabled: true,
+      start_s: 2.5,
+      end_s: 11,
+      gain_db: -16,
+      muted: true,
+    });
+    expect(parsed?.doc.backgroundMusicDirty).toBe(true);
   });
 
   it("keys drafts per plan item and variant id", () => {

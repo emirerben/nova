@@ -204,7 +204,11 @@ def orchestrate_generative_job(self, job_id: str) -> None:
 
 
 def _run_generative_job(job_id: str) -> None:
-    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+    from app.services.pipeline_trace import (  # noqa: PLC0415
+        record_pipeline_event,
+        record_render_stage,
+        render_stage_timer,
+    )
 
     # Skia kill-switch guard. Agent-text + karaoke reveals have NO Pillow equivalent;
     # if the renderer falls back to Pillow+libass the overlays render wrong or drop.
@@ -221,6 +225,7 @@ def _run_generative_job(job_id: str) -> None:
 
     # Phase: analyze_clips — covers download + probe + Gemini + clip_metadata.
     record_phase(job_id, "queued", next_phase="analyze_clips")
+    render_trace_id = uuid.uuid4().hex
 
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
@@ -357,7 +362,12 @@ def _run_generative_job(job_id: str) -> None:
     # original bytes. Strictly order-preserving 1:1 — _resolve_narrative_order
     # slices the first N keys of clip_id_to_gcs, so clip_paths order is
     # load-bearing. Best-effort: on any copy failure ALL original paths are kept.
-    clip_paths_gcs = _persist_durable_sources(job_id, clip_paths_gcs)
+    with render_stage_timer(
+        "asset_persist_durable_sources",
+        trace_id=render_trace_id,
+        counts={"clip_count": len(clip_paths_gcs)},
+    ):
+        clip_paths_gcs = _persist_durable_sources(job_id, clip_paths_gcs)
 
     # ignore_cleanup_errors: on a soft-time-limit abort, an orphaned pre-tonemap
     # ffmpeg thread (outer pool shutdown wait=False) may still be writing sdr_*
@@ -378,9 +388,17 @@ def _run_generative_job(job_id: str) -> None:
             and edit_format in NARRATED_EDIT_FORMATS
             and bool(voiceover_gcs_path)
         )
-        ingest = _ingest_clips(
-            clip_paths_gcs, tmpdir, job_id=job_id, skip_analysis=_skip_clip_analysis
-        )
+        with render_stage_timer(
+            "asset_loading_and_preprocess",
+            trace_id=render_trace_id,
+            counts={
+                "clip_count": len(clip_paths_gcs),
+                "skip_analysis": _skip_clip_analysis,
+            },
+        ):
+            ingest = _ingest_clips(
+                clip_paths_gcs, tmpdir, job_id=job_id, skip_analysis=_skip_clip_analysis
+            )
         clip_metas = ingest["clip_metas"]
         clip_id_to_gcs = ingest["clip_id_to_gcs"]
         clip_id_to_local = ingest["clip_id_to_local"]
@@ -489,14 +507,33 @@ def _run_generative_job(job_id: str) -> None:
         # and the failing task's worker is recycled, so the orphan is bounded.
         pool = ThreadPoolExecutor(max_workers=3)
         try:
+            prework_started = time.monotonic()
             fut_tonemap = pool.submit(
                 _pretonemap_hdr_clips, clip_id_to_local, probe_map, tmpdir, job_id=job_id
             )
             fut_text = pool.submit(_text_then_style)
             fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
             n_tonemapped = fut_tonemap.result()
+            record_render_stage(
+                "preprocessing_hdr_tonemap",
+                elapsed_ms=int((time.monotonic() - prework_started) * 1000),
+                trace_id=render_trace_id,
+                counts={"clips_converted": n_tonemapped},
+            )
             agent_text, agent_form, style_set_id = fut_text.result()
+            record_render_stage(
+                "ai_text_and_style",
+                elapsed_ms=int((time.monotonic() - prework_started) * 1000),
+                trace_id=render_trace_id,
+                counts={"has_text": bool(agent_text)},
+            )
             best_track = fut_match.result()
+            record_render_stage(
+                "audio_match",
+                elapsed_ms=int((time.monotonic() - prework_started) * 1000),
+                trace_id=render_trace_id,
+                counts={"matched": best_track is not None},
+            )
         except BaseException:
             pool.shutdown(wait=False, cancel_futures=True)
             raise
@@ -612,6 +649,8 @@ def _run_generative_job(job_id: str) -> None:
 
             variant_dir = os.path.join(tmpdir, f"variant_{rank}")
             os.makedirs(variant_dir, exist_ok=True)
+            variant_render_t0 = time.monotonic()
+            archetype_for_trace = str(spec.get("archetype") or "montage")
             try:
                 if spec.get("archetype") == "talking_head":
                     result = _render_talking_head_variant(
@@ -655,6 +694,7 @@ def _run_generative_job(job_id: str) -> None:
                         silence_cut_disabled=silence_cut_disabled,
                         silence_cut_cache=silence_cut_cache,
                         smart_captions=smart_captions,
+                        render_trace_id=render_trace_id,
                     )
                 else:
                     result = _render_generative_variant(
@@ -680,6 +720,15 @@ def _run_generative_job(job_id: str) -> None:
                         landscape_fit=landscape_fit,
                         montage_preset=montage_preset,
                     )
+                record_render_stage(
+                    "variant_render",
+                    elapsed_ms=int((time.monotonic() - variant_render_t0) * 1000),
+                    status="ok" if result.get("ok") else "failed",
+                    trace_id=render_trace_id,
+                    variant_id=variant_id,
+                    render_generation_id=spec.get("storage_generation"),
+                    counts={"archetype": archetype_for_trace, "rank": rank},
+                )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
                 if result.get("ok"):
@@ -695,6 +744,18 @@ def _run_generative_job(job_id: str) -> None:
                 # than all-at-once at _finalize_job.
                 _upsert_variant_entry(job_id, result)
                 return result
+            except BaseException as exc:
+                record_render_stage(
+                    "variant_render",
+                    elapsed_ms=int((time.monotonic() - variant_render_t0) * 1000),
+                    status="failed",
+                    trace_id=render_trace_id,
+                    variant_id=variant_id,
+                    render_generation_id=spec.get("storage_generation"),
+                    counts={"archetype": archetype_for_trace, "rank": rank},
+                    error_class=type(exc).__name__,
+                )
+                raise
             finally:
                 # Free this variant's scratch (assembled/audio_mixed/final mp4s +
                 # the large Skia PNG sequences) the moment it's done. The output +
@@ -829,7 +890,12 @@ def _run_generative_job(job_id: str) -> None:
 
     record_phase(job_id, "render_variants", next_phase="finalize")
     record_phase(job_id, "finalize")
-    _finalize_job(job_id, results)
+    with render_stage_timer(
+        "finalize",
+        trace_id=render_trace_id,
+        counts={"variant_count": len(results)},
+    ):
+        _finalize_job(job_id, results)
     # Overlay autoplace chain (plan 007, D2-B). MUST run AFTER _finalize_job —
     # finalize rebuilds every variant entry from the in-memory results whitelist,
     # so anything the match/apply tasks wrote mid-render would be stripped
@@ -1882,7 +1948,11 @@ def _run_media_overlay_pass(
         from app.config import settings as _settings_ov  # noqa: PLC0415
 
         will_reapply_sfx = (
-            bool(existing.get("smart_music_treatment")) and _settings_ov.smart_music_bed_enabled
+            (
+                bool(existing.get("background_music_treatment"))
+                or bool(existing.get("smart_music_treatment"))
+            )
+            and _settings_ov.smart_music_bed_enabled
         ) or (bool(existing.get("sound_effects")) and _settings_ov.sound_effects_enabled)
 
         # ── Clear path: remove all cards ──────────────────────────────────────
@@ -2206,7 +2276,13 @@ def _will_reapply_media_layers(variant: dict) -> bool:
     ready/failed, so a poll never observes an effect-less "ready"."""
     return (
         (bool(variant.get("media_overlays")) and settings.media_overlays_enabled)
-        or (bool(variant.get("smart_music_treatment")) and settings.smart_music_bed_enabled)
+        or (
+            (
+                bool(variant.get("background_music_treatment"))
+                or bool(variant.get("smart_music_treatment"))
+            )
+            and settings.smart_music_bed_enabled
+        )
         or (bool(variant.get("sound_effects")) and settings.sound_effects_enabled)
     )
 
@@ -2390,9 +2466,10 @@ def _reapply_persisted_sfx_if_any(
             sfx_raw = (
                 existing.get("sound_effects") or [] if _settings_sfx.sound_effects_enabled else []
             )
-            music_active = bool(existing.get("smart_music_treatment")) and getattr(
-                _settings_sfx, "smart_music_bed_enabled", True
-            )
+            music_active = (
+                bool(existing.get("background_music_treatment"))
+                or bool(existing.get("smart_music_treatment"))
+            ) and getattr(_settings_sfx, "smart_music_bed_enabled", True)
             if not sfx_raw and not music_active:
                 return False
             # pre_sfx_video_path must now point to the newly composited overlay video
@@ -2544,7 +2621,9 @@ def _run_sfx_pass(
         # Kill switch: with the bed disabled the treatment stays persisted (so
         # re-enabling restores it) but this pass mixes as if it were absent.
         music_treatment = (
-            existing.get("smart_music_treatment") if settings.smart_music_bed_enabled else None
+            existing.get("background_music_treatment") or existing.get("smart_music_treatment")
+            if settings.smart_music_bed_enabled
+            else None
         )
 
         # ── Clear path: remove all effects ───────────────────────────────────
@@ -3706,7 +3785,12 @@ def _run_regenerate_variant(
     orientation_override: str | None = None,
     force_full_render: bool = False,
 ) -> None:
-    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+    from app.services.pipeline_trace import (  # noqa: PLC0415
+        record_pipeline_event,
+        render_stage_timer,
+    )
+
+    render_trace_id = render_gen_id or uuid.uuid4().hex
 
     # ── Media-overlay fast path ─────────────────────────────────────────────────
     # When the only change is adding/removing media-overlay cards (no song/text/
@@ -3780,7 +3864,9 @@ def _run_regenerate_variant(
         and text_behind_subject is None
         and orientation_override is None
     )
-    if _is_sfx_only and _settings_sfx.sound_effects_enabled:
+    if _is_sfx_only and (
+        _settings_sfx.sound_effects_enabled or _settings_sfx.smart_music_bed_enabled
+    ):
         _run_sfx_pass(
             job_id=job_id,
             variant_id=variant_id,
@@ -4264,9 +4350,16 @@ def _run_regenerate_variant(
         # probe only). Corrupt/unresolvable timelines fall back to fresh match.
         timeline_assembly: dict[str, Any] | None = None
         if active_timeline_slots is not None and variant_id in _TIMELINE_OVERRIDE_VARIANTS:
-            timeline_assembly = _prepare_timeline_assembly(
-                active_timeline_slots, clip_paths_gcs, tmpdir, job_id=job_id
-            )
+            with render_stage_timer(
+                "asset_loading_and_preprocess",
+                trace_id=render_trace_id,
+                variant_id=variant_id,
+                render_generation_id=render_gen_id,
+                counts={"timeline_override": True, "clip_count": len(clip_paths_gcs)},
+            ):
+                timeline_assembly = _prepare_timeline_assembly(
+                    active_timeline_slots, clip_paths_gcs, tmpdir, job_id=job_id
+                )
             if timeline_assembly is None:
                 log.warning(
                     "generative_timeline_fallback_fresh_match",
@@ -4311,7 +4404,14 @@ def _run_regenerate_variant(
             # analysis is cacheable — persist clip_metas after the first orchestrate run
             # and skip re-analysis here (only re-download + re-probe are truly needed for
             # the render). Follow-up once the feature is real-render-verified.
-            ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
+            with render_stage_timer(
+                "asset_loading_and_preprocess",
+                trace_id=render_trace_id,
+                variant_id=variant_id,
+                render_generation_id=render_gen_id,
+                counts={"timeline_override": False, "clip_count": len(clip_paths_gcs)},
+            ):
+                ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
             render_clip_metas = ingest["clip_metas"]
             render_clip_id_to_local = ingest["clip_id_to_local"]
             render_clip_id_to_gcs = ingest["clip_id_to_gcs"]
@@ -4412,45 +4512,52 @@ def _run_regenerate_variant(
 
         variant_dir = os.path.join(tmpdir, f"variant_{rank}")
         os.makedirs(variant_dir, exist_ok=True)
-        result = _render_generative_variant(
-            job_id=job_id,
-            rank=rank,
-            spec=spec,
-            clip_metas=render_clip_metas,
-            clip_id_to_local=render_clip_id_to_local,
-            clip_id_to_gcs=render_clip_id_to_gcs,
-            probe_map=render_probe_map,
-            available_footage_s=available_footage_s,
-            agent_text=agent_text,
-            agent_form=agent_form,
-            variant_dir=variant_dir,
-            style_set_id=resolved_style_set_id,
-            intro_size_override_px=resolved_size_override_px,
-            user_style_knobs=existing_user_style_knobs,
-            narrative_order=narrative_order_regen,
-            filming_guide=(filming_guide_regen if narrative_shot_count_regen > 0 else None),
-            assembly_steps_override=assembly_steps_override,
-            allow_sequence=allow_sequence,
-            author_quote_fn=regen_author_quote_fn,
-            existing_sequence_quote=persisted_sequence_quote,
-            scene_timing_overrides=persisted_scene_timing_overrides,
-            language=language,
-            font_family_override=resolved_font_override,
-            effect_override=resolved_effect_override,
-            text_color_override=resolved_color_override,
-            cluster_hero_font_override=resolved_cluster_hero_override,
-            cluster_body_font_override=resolved_cluster_body_override,
-            cluster_accent_font_override=resolved_cluster_accent_override,
-            cluster_hero_size_px_override=resolved_cluster_hero_size_override,
-            cluster_body_size_px_override=resolved_cluster_body_size_override,
-            cluster_accent_size_px_override=resolved_cluster_accent_size_override,
-            landscape_fit=landscape_fit_regen,
-            montage_preset=montage_preset_regen,
-            behind_subject_override=text_behind_subject,
-            lyrics_enabled=inherited_lyrics_enabled,
-            lyric_line_overrides=inherited_lyric_line_overrides,
-            orientation=effective_orientation,
-        )
+        with render_stage_timer(
+            "variant_render",
+            trace_id=render_trace_id,
+            variant_id=variant_id,
+            render_generation_id=render_gen_id,
+            counts={"archetype": existing.get("resolved_archetype") or "montage", "rank": rank},
+        ):
+            result = _render_generative_variant(
+                job_id=job_id,
+                rank=rank,
+                spec=spec,
+                clip_metas=render_clip_metas,
+                clip_id_to_local=render_clip_id_to_local,
+                clip_id_to_gcs=render_clip_id_to_gcs,
+                probe_map=render_probe_map,
+                available_footage_s=available_footage_s,
+                agent_text=agent_text,
+                agent_form=agent_form,
+                variant_dir=variant_dir,
+                style_set_id=resolved_style_set_id,
+                intro_size_override_px=resolved_size_override_px,
+                user_style_knobs=existing_user_style_knobs,
+                narrative_order=narrative_order_regen,
+                filming_guide=(filming_guide_regen if narrative_shot_count_regen > 0 else None),
+                assembly_steps_override=assembly_steps_override,
+                allow_sequence=allow_sequence,
+                author_quote_fn=regen_author_quote_fn,
+                existing_sequence_quote=persisted_sequence_quote,
+                scene_timing_overrides=persisted_scene_timing_overrides,
+                language=language,
+                font_family_override=resolved_font_override,
+                effect_override=resolved_effect_override,
+                text_color_override=resolved_color_override,
+                cluster_hero_font_override=resolved_cluster_hero_override,
+                cluster_body_font_override=resolved_cluster_body_override,
+                cluster_accent_font_override=resolved_cluster_accent_override,
+                cluster_hero_size_px_override=resolved_cluster_hero_size_override,
+                cluster_body_size_px_override=resolved_cluster_body_size_override,
+                cluster_accent_size_px_override=resolved_cluster_accent_size_override,
+                landscape_fit=landscape_fit_regen,
+                montage_preset=montage_preset_regen,
+                behind_subject_override=text_behind_subject,
+                lyrics_enabled=inherited_lyrics_enabled,
+                lyric_line_overrides=inherited_lyric_line_overrides,
+                orientation=effective_orientation,
+            )
 
     # E1: the token check covers BOTH terminal branches (ready and failed) —
     # a superseded task's output/status must never clobber the newer commit's.
@@ -7724,6 +7831,7 @@ def _load_smart_caption_assets(job_id: str) -> list[dict[str, Any]]:
                 "source_filename": row.source_filename,
                 "duration_s": row.duration_s,
                 "aspect": row.aspect,
+                "user_context": getattr(row, "user_context", None),
                 "analysis": row.analysis or {},
             }
             for row in rows
@@ -8309,6 +8417,7 @@ def _render_subtitled_variant(
     silence_cut_disabled: bool = False,
     silence_cut_cache: _SilenceCutCache | None = None,
     smart_captions: dict[str, str] | None = None,
+    render_trace_id: str | None = None,
 ) -> dict[str, Any]:
     """Render the subtitled single-clip variant.
 
@@ -8351,9 +8460,51 @@ def _render_subtitled_variant(
         transcribe_whisper,
         transcribe_whisper_cached,
     )
+    from app.services.pipeline_trace import record_render_stage, render_stage_timer  # noqa: PLC0415
     from app.storage import upload_public_read  # noqa: PLC0415
 
     variant_id = spec["variant_id"]
+
+    def _stage_timer(
+        stage: str,
+        *,
+        cache: dict[str, Any] | None = None,
+        retry: dict[str, Any] | None = None,
+        counts: dict[str, Any] | None = None,
+    ):
+        return render_stage_timer(
+            stage,
+            trace_id=render_trace_id,
+            variant_id=variant_id,
+            render_generation_id=spec.get("storage_generation"),
+            cache=cache,
+            retry=retry,
+            counts=counts,
+        )
+
+    def _record_stage(
+        stage: str,
+        *,
+        elapsed_ms: int = 0,
+        status: str = "ok",
+        cache: dict[str, Any] | None = None,
+        retry: dict[str, Any] | None = None,
+        counts: dict[str, Any] | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        record_render_stage(
+            stage,
+            elapsed_ms=elapsed_ms,
+            status=status,
+            trace_id=render_trace_id,
+            variant_id=variant_id,
+            render_generation_id=spec.get("storage_generation"),
+            cache=cache,
+            retry=retry,
+            counts=counts,
+            error_class=error_class,
+        )
+
     # Caption style: "word" → word-by-word lime pop (line visible, active word popped);
     # anything else → sentence blocks (the safe default). Reuses the narrated key.
     caption_style = "word" if spec.get("caption_style") == "word" else "sentence"
@@ -8471,7 +8622,8 @@ def _render_subtitled_variant(
                 clip_count=len(clip_id_to_local),
             )
 
-        probe = probe_video(clip_path)
+        with _stage_timer("asset_probe"):
+            probe = probe_video(clip_path)
         # Cap sized to the CAPTION-TASK budget, not just whisper's 25MB (~13 min):
         # every Apply/re-transcribe re-encodes the full clip at preset=fast inside a
         # soft_time_limit=600 task (~realtime on the 4-vCPU worker). A longer clip
@@ -8484,7 +8636,8 @@ def _render_subtitled_variant(
         aspect = "16:9" if getattr(probe, "aspect_ratio", "") == "16:9" else "9:16"
         fit = resolve_output_fit(probe, landscape_fit=landscape_fit)
         if smart_captions is not None:
-            smart_assets, asset_context_receipt = _load_smart_caption_assets_fail_open(job_id)
+            with _stage_timer("asset_context_loading"):
+                smart_assets, asset_context_receipt = _load_smart_caption_assets_fail_open(job_id)
         else:
             smart_assets, asset_context_receipt = [], None
         trusted_caption_aliases = _smart_caption_trusted_aliases(
@@ -8528,9 +8681,10 @@ def _render_subtitled_variant(
                     "silence_cut", "silence_cut_skipped_no_audio", {"variant_id": variant_id}
                 )
             else:
-                sc_entry = _silence_cut_analysis(
-                    clip_path, float(probe.duration_s), job_id=job_id, cache=silence_cut_cache
-                )
+                with _stage_timer("silence_cut_analysis"):
+                    sc_entry = _silence_cut_analysis(
+                        clip_path, float(probe.duration_s), job_id=job_id, cache=silence_cut_cache
+                    )
                 # `words` must be non-empty to adopt the verbatim transcript:
                 # an empty-words bailout (e.g. clip_too_short — P3 returns
                 # before whisper runs) must caption from the base-transcription
@@ -8570,27 +8724,40 @@ def _render_subtitled_variant(
                 # Content-addressed cache: re-renders of the same clip reuse the
                 # identical transcript (plan 012 P1-4), so captions stop drifting
                 # run-to-run. Fail-open to a live transcribe on any cache error.
+                transcript_t0 = time.monotonic()
                 transcript = transcribe_whisper_cached(clip_path, language=None)
+                _record_stage(
+                    "transcription",
+                    elapsed_ms=int((time.monotonic() - transcript_t0) * 1000),
+                    cache={
+                        "name": "transcript",
+                        "status": getattr(transcript, "cache_status", "unknown"),
+                    },
+                    counts={"word_count": len(transcript.words)},
+                )
                 detected_lang = transcript.language or detected_lang
                 cues = build_plain_cues(transcript.words, attach_words=True)
-            cues = correct_caption_cues(
-                cues,
-                detected_lang,
-                model=settings.caption_correction_model,
-                enabled=settings.subtitled_caption_correction_enabled,
-                trusted_aliases=trusted_caption_aliases,
-            )
-            cues = resplit_cues_into_sentences(cues)
+            with _stage_timer("caption_correction", counts={"cue_count": len(cues)}):
+                cues = correct_caption_cues(
+                    cues,
+                    detected_lang,
+                    model=settings.caption_correction_model,
+                    enabled=settings.subtitled_caption_correction_enabled,
+                    trusted_aliases=trusted_caption_aliases,
+                )
+            with _stage_timer("caption_preparation", counts={"cue_count": len(cues)}):
+                cues = resplit_cues_into_sentences(cues)
             canonical_cues = copy.deepcopy(cues)
             if smart_captions is not None and cues:
                 try:
-                    smart_compiled, smart_state = _compile_smart_caption_render_plan(
-                        cues=cues,
-                        smart_captions=smart_captions,
-                        detected_lang=detected_lang,
-                        job_id=job_id,
-                        smart_assets=smart_assets,
-                    )
+                    with _stage_timer("smart_caption_compile", counts={"cue_count": len(cues)}):
+                        smart_compiled, smart_state = _compile_smart_caption_render_plan(
+                            cues=cues,
+                            smart_captions=smart_captions,
+                            detected_lang=detected_lang,
+                            job_id=job_id,
+                            smart_assets=smart_assets,
+                        )
                     if smart_compiled is not None:
                         cues = smart_compiled.caption_cues
                         base.update(smart_state)
@@ -8638,33 +8805,42 @@ def _render_subtitled_variant(
                 cut_reused = True
         if not cut_reused:
             try:
-                reframe_and_export(
-                    clip_path,
-                    0.0,
-                    float(probe.duration_s),
-                    aspect,
-                    None,  # no ASS at this stage — captions are burned in a second pass
-                    base_path,
-                    output_fit=fit,
-                    has_audio=probe.has_audio,
-                    **reframe_kwargs,
-                )
+                with _stage_timer(
+                    "base_reframe_encode",
+                    counts={"has_audio": probe.has_audio, "silence_cut": sc_apply},
+                ):
+                    reframe_and_export(
+                        clip_path,
+                        0.0,
+                        float(probe.duration_s),
+                        aspect,
+                        None,  # no ASS at this stage — captions are burned in a second pass
+                        base_path,
+                        output_fit=fit,
+                        has_audio=probe.has_audio,
+                        **reframe_kwargs,
+                    )
             except Exception as exc:
                 if reframe_kwargs.pop("semantic_crop_pulses", None) is not None:
                     if os.path.exists(base_path):
                         os.remove(base_path)
                     try:
-                        reframe_and_export(
-                            clip_path,
-                            0.0,
-                            float(probe.duration_s),
-                            aspect,
-                            None,
-                            base_path,
-                            output_fit=fit,
-                            has_audio=probe.has_audio,
-                            **reframe_kwargs,
-                        )
+                        with _stage_timer(
+                            "base_reframe_encode",
+                            retry={"reason": "camera_retry_without_pulses"},
+                            counts={"has_audio": probe.has_audio, "silence_cut": sc_apply},
+                        ):
+                            reframe_and_export(
+                                clip_path,
+                                0.0,
+                                float(probe.duration_s),
+                                aspect,
+                                None,
+                                base_path,
+                                output_fit=fit,
+                                has_audio=probe.has_audio,
+                                **reframe_kwargs,
+                            )
                         base["smart_validation_receipts"]["camera_render"] = {
                             "requested": len(smart_compiled.camera_intents),
                             "applied": 0,
@@ -8708,28 +8884,39 @@ def _render_subtitled_variant(
                     sc_entry = None
                     if os.path.exists(base_path):
                         os.remove(base_path)
-                    reframe_and_export(
-                        clip_path,
-                        0.0,
-                        float(probe.duration_s),
-                        aspect,
-                        None,
-                        base_path,
-                        output_fit=fit,
-                        has_audio=probe.has_audio,
-                    )
-            else:
-                if (
-                    smart_compiled is not None
-                    and smart_compiled.camera_intents
-                    and "semantic_crop_pulses" in reframe_kwargs
-                ):
-                    base["smart_validation_receipts"]["camera_render"] = {
-                        "requested": len(smart_compiled.camera_intents),
-                        "applied": len(smart_compiled.camera_intents),
-                        "status": "applied_in_reframe",
-                        "full_video_encode_count": 1,
-                    }
+                    with _stage_timer(
+                        "base_reframe_encode",
+                        retry={"reason": "silence_cut_apply_failed_uncut_retry"},
+                        counts={"has_audio": probe.has_audio, "silence_cut": False},
+                    ):
+                        reframe_and_export(
+                            clip_path,
+                            0.0,
+                            float(probe.duration_s),
+                            aspect,
+                            None,
+                            base_path,
+                            output_fit=fit,
+                            has_audio=probe.has_audio,
+                        )
+        else:
+            _record_stage(
+                "base_reframe_encode",
+                cache={"name": "silence_cut_video", "status": "hit"},
+                counts={"has_audio": probe.has_audio, "silence_cut": True},
+            )
+        if not cut_reused:
+            if (
+                smart_compiled is not None
+                and smart_compiled.camera_intents
+                and "semantic_crop_pulses" in reframe_kwargs
+            ):
+                base["smart_validation_receipts"]["camera_render"] = {
+                    "requested": len(smart_compiled.camera_intents),
+                    "applied": len(smart_compiled.camera_intents),
+                    "status": "applied_in_reframe",
+                    "full_video_encode_count": 1,
+                }
         if not os.path.exists(base_path) or os.path.getsize(base_path) == 0:
             raise RuntimeError("subtitled base render produced empty output")
         if smart_v2 and sc_apply_failed:
@@ -8738,7 +8925,8 @@ def _render_subtitled_variant(
             # captions and every later overlay stay audio-locked. Camera pulses
             # cannot be folded into the already-complete reframe and are recorded
             # as omitted; all non-camera Smart lanes can still ship.
-            transcript = transcribe_whisper(base_path, language=None)
+            with _stage_timer("transcription", cache={"name": "transcript", "status": "live"}):
+                transcript = transcribe_whisper(base_path, language=None)
             detected_lang = transcript.language or (language or "en")
             cues = build_plain_cues(transcript.words, attach_words=True)
             cues = correct_caption_cues(
@@ -8753,13 +8941,14 @@ def _render_subtitled_variant(
             smart_compiled = None
             if smart_captions is not None and cues:
                 try:
-                    smart_compiled, smart_state = _compile_smart_caption_render_plan(
-                        cues=cues,
-                        smart_captions=smart_captions,
-                        detected_lang=detected_lang,
-                        job_id=job_id,
-                        smart_assets=smart_assets,
-                    )
+                    with _stage_timer("smart_caption_compile", counts={"cue_count": len(cues)}):
+                        smart_compiled, smart_state = _compile_smart_caption_render_plan(
+                            cues=cues,
+                            smart_captions=smart_captions,
+                            detected_lang=detected_lang,
+                            job_id=job_id,
+                            smart_assets=smart_assets,
+                        )
                     if smart_compiled is not None:
                         cues = smart_compiled.caption_cues
                         base.update(smart_state)
@@ -8819,7 +9008,8 @@ def _render_subtitled_variant(
             # get Turkish captions even in an English plan. The user can still
             # override the detected language via the D5 chip (re-transcribe).
             # Persist the detected language so the chip shows it.
-            transcript = transcribe_whisper(base_path, language=None)
+            with _stage_timer("transcription", cache={"name": "transcript", "status": "live"}):
+                transcript = transcribe_whisper(base_path, language=None)
             detected_lang = transcript.language or (language or "en")
             # Word mode attaches each cue's real per-word timings so the highlight
             # (and any reburn of an UNedited cue) stays locked to the audio.
@@ -8831,17 +9021,19 @@ def _render_subtitled_variant(
         # Fix whisper's spelling/grammar mishearings (esp. Turkish morphology) while
         # keeping cue timing. Best-effort — a failure leaves the raw cues.
         if not smart_v2:
-            cues = correct_caption_cues(
-                cues,
-                detected_lang,
-                model=settings.caption_correction_model,
-                enabled=settings.subtitled_caption_correction_enabled,
-            )
+            with _stage_timer("caption_correction", counts={"cue_count": len(cues)}):
+                cues = correct_caption_cues(
+                    cues,
+                    detected_lang,
+                    model=settings.caption_correction_model,
+                    enabled=settings.subtitled_caption_correction_enabled,
+                )
         # One SENTENCE per caption: whisper emits no punctuation (14-word chunk cues);
         # the correction adds it — re-split so captions show one sentence at a time
         # instead of a stacked 4-line block.
         if not smart_v2:
-            cues = resplit_cues_into_sentences(cues)
+            with _stage_timer("caption_preparation", counts={"cue_count": len(cues)}):
+                cues = resplit_cues_into_sentences(cues)
             canonical_cues = copy.deepcopy(cues)
 
         # Smart Captions semantic pass. It operates on the corrected, final cue
@@ -8853,13 +9045,14 @@ def _render_subtitled_variant(
             smart_compiled = None
         if not smart_v2 and smart_captions is not None and cues:
             try:
-                smart_compiled, smart_state = _compile_smart_caption_render_plan(
-                    cues=cues,
-                    smart_captions=smart_captions,
-                    detected_lang=detected_lang,
-                    job_id=job_id,
-                    smart_assets=smart_assets,
-                )
+                with _stage_timer("smart_caption_compile", counts={"cue_count": len(cues)}):
+                    smart_compiled, smart_state = _compile_smart_caption_render_plan(
+                        cues=cues,
+                        smart_captions=smart_captions,
+                        detected_lang=detected_lang,
+                        job_id=job_id,
+                        smart_assets=smart_assets,
+                    )
                 if smart_compiled is not None:
                     cues = smart_compiled.caption_cues
                     base.update(smart_state)
@@ -8875,17 +9068,21 @@ def _render_subtitled_variant(
         shadow_version = smart_captions.get("shadow_preset_version") if smart_captions else None
         if shadow_id and shadow_version and canonical_cues:
             try:
-                shadow_compiled, shadow_state = _compile_smart_caption_render_plan(
-                    cues=canonical_cues,
-                    smart_captions={
-                        "preset_id": shadow_id,
-                        "preset_version": shadow_version,
-                        "sound_design": "off",
-                    },
-                    detected_lang=detected_lang,
-                    job_id=job_id,
-                    smart_assets=smart_assets,
-                )
+                with _stage_timer(
+                    "smart_caption_shadow_compile",
+                    counts={"cue_count": len(canonical_cues)},
+                ):
+                    shadow_compiled, shadow_state = _compile_smart_caption_render_plan(
+                        cues=canonical_cues,
+                        smart_captions={
+                            "preset_id": shadow_id,
+                            "preset_version": shadow_version,
+                            "sound_design": "off",
+                        },
+                        detected_lang=detected_lang,
+                        job_id=job_id,
+                        smart_assets=smart_assets,
+                    )
                 if shadow_compiled is not None:
                     base["smart_shadow_comparison"] = _smart_shadow_comparison(
                         primary_state=base,
@@ -8926,11 +9123,15 @@ def _render_subtitled_variant(
                 from app.pipeline.boundary_effects import apply_boundary_effects  # noqa: PLC0415
 
                 boundary_base = os.path.join(variant_dir, "base_with_boundaries.mp4")
-                apply_boundary_effects(
-                    base_path,
-                    smart_compiled.boundary_effects,
-                    boundary_base,
-                )
+                with _stage_timer(
+                    "effect_preparation",
+                    counts={"boundary_effect_count": len(smart_compiled.boundary_effects)},
+                ):
+                    apply_boundary_effects(
+                        base_path,
+                        smart_compiled.boundary_effects,
+                        boundary_base,
+                    )
                 base_path = boundary_base
                 base["smart_validation_receipts"]["boundary_render"] = {
                     "requested": len(smart_compiled.boundary_effects),
@@ -8969,16 +9170,17 @@ def _render_subtitled_variant(
             and cues
         ):
             try:
-                face_regions_placed, face_receipt_placed, cues = (
-                    _apply_face_aware_caption_placement(
-                        base=base,
-                        cues=cues,
-                        base_path=base_path,
-                        smart_compiled=smart_compiled,
-                        job_id=job_id,
-                        variant_id=variant_id,
+                with _stage_timer("caption_effect_preparation", counts={"cue_count": len(cues)}):
+                    face_regions_placed, face_receipt_placed, cues = (
+                        _apply_face_aware_caption_placement(
+                            base=base,
+                            cues=cues,
+                            base_path=base_path,
+                            smart_compiled=smart_compiled,
+                            job_id=job_id,
+                            variant_id=variant_id,
+                        )
                     )
-                )
             except Exception as exc:  # noqa: BLE001 — fail open to preset geometry
                 face_regions_placed = None
                 face_receipt_placed = None
@@ -8991,35 +9193,39 @@ def _render_subtitled_variant(
 
         final_path = os.path.join(variant_dir, "final.mp4")
         if getattr(settings, "subtitled_text_lane_enabled", False) or smart_compiled is not None:
-            final_path = _compose_subtitled_final(
-                base_path,
-                {
-                    **base,
-                    "caption_cues": cues or None,
-                    "caption_language": detected_lang,
-                },
-                variant_dir,
-            )
+            with _stage_timer("composition", counts={"cue_count": len(cues)}):
+                final_path = _compose_subtitled_final(
+                    base_path,
+                    {
+                        **base,
+                        "caption_cues": cues or None,
+                        "caption_language": detected_lang,
+                    },
+                    variant_dir,
+                )
         elif cues:
             ass_path = os.path.join(variant_dir, "captions.ass")
             ass_font = resolve_caption_font(caption_font)
-            if caption_style == "word":
-                generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=caption_margin_v)
-            else:
-                generate_ass_from_cues(
-                    cues,
-                    ass_path,
-                    font_name=ass_font,
-                    style="plain",
-                    margin_v=caption_margin_v,
-                    pop_in=True,
-                    **(
-                        {"smart_policy": smart_caption_policy}
-                        if smart_caption_policy is not None
-                        else {}
-                    ),
-                )
-            burn_captions_on_video(base_path, ass_path, FONTS_DIR, final_path)
+            with _stage_timer("caption_burn", counts={"cue_count": len(cues)}):
+                if caption_style == "word":
+                    generate_word_pop_ass(
+                        cues, ass_path, font_name=ass_font, margin_v=caption_margin_v
+                    )
+                else:
+                    generate_ass_from_cues(
+                        cues,
+                        ass_path,
+                        font_name=ass_font,
+                        style="plain",
+                        margin_v=caption_margin_v,
+                        pop_in=True,
+                        **(
+                            {"smart_policy": smart_caption_policy}
+                            if smart_caption_policy is not None
+                            else {}
+                        ),
+                    )
+                burn_captions_on_video(base_path, ass_path, FONTS_DIR, final_path)
         else:
             # No detectable speech → ship the clean clip; the UI shows the empty-caption
             # state. NOT a failure — a caption-less talking clip is still valid output.
@@ -9043,36 +9249,40 @@ def _render_subtitled_variant(
                 from app.models import SoundEffect  # noqa: PLC0415
                 from app.smart_edit.compiler import resolve_sfx_placements  # noqa: PLC0415
 
-                with _sync_session() as db:
-                    glossary = [
-                        {
-                            "id": row.id,
-                            "name": row.name,
-                            "audio_gcs_path": row.audio_gcs_path,
-                            "duration_s": row.duration_s,
-                            "role_tags": row.role_tags or [],
-                            "contains_voice": row.contains_voice,
-                            "vocal_probability": row.vocal_probability,
-                            "manual_audit_status": row.manual_audit_status,
-                            "quality_tier": row.quality_tier,
-                        }
-                        for row in db.execute(
-                            _select(SoundEffect).where(
-                                SoundEffect.status == "ready",
-                                SoundEffect.audio_gcs_path.is_not(None),
-                                SoundEffect.published_at.is_not(None),
-                                SoundEffect.archived_at.is_(None),
+                with _stage_timer(
+                    "audio_preparation",
+                    counts={"sfx_intent_count": len(smart_compiled.sfx_intents)},
+                ):
+                    with _sync_session() as db:
+                        glossary = [
+                            {
+                                "id": row.id,
+                                "name": row.name,
+                                "audio_gcs_path": row.audio_gcs_path,
+                                "duration_s": row.duration_s,
+                                "role_tags": row.role_tags or [],
+                                "contains_voice": row.contains_voice,
+                                "vocal_probability": row.vocal_probability,
+                                "manual_audit_status": row.manual_audit_status,
+                                "quality_tier": row.quality_tier,
+                            }
+                            for row in db.execute(
+                                _select(SoundEffect).where(
+                                    SoundEffect.status == "ready",
+                                    SoundEffect.audio_gcs_path.is_not(None),
+                                    SoundEffect.published_at.is_not(None),
+                                    SoundEffect.archived_at.is_(None),
+                                )
                             )
-                        )
-                        .scalars()
-                        .all()
-                    ]
-                sound_effects = resolve_sfx_placements(
-                    smart_compiled.sfx_intents,
-                    glossary,
-                    preset_id=smart_captions["preset_id"],
-                    preset_version=smart_captions["preset_version"],
-                )
+                            .scalars()
+                            .all()
+                        ]
+                    sound_effects = resolve_sfx_placements(
+                        smart_compiled.sfx_intents,
+                        glossary,
+                        preset_id=smart_captions["preset_id"],
+                        preset_version=smart_captions["preset_version"],
+                    )
                 base["smart_validation_receipts"]["sfx_resolution"] = {
                     "requested": len(smart_compiled.sfx_intents),
                     "resolved": len(sound_effects),
@@ -9104,13 +9314,17 @@ def _render_subtitled_variant(
 
         music_treatment: dict[str, Any] | None = None
         if smart_v2 and smart_compiled is not None and sound_design_auto:
-            music_treatment, music_receipt = _resolve_smart_music_treatment(
-                cues=cues,
-                audio_intents=smart_compiled.audio_treatment_intents,
-                job_id=job_id,
-                variant_id=variant_id,
-                duration_s=float(probe.duration_s),
-            )
+            with _stage_timer(
+                "audio_preparation",
+                counts={"audio_intent_count": len(smart_compiled.audio_treatment_intents)},
+            ):
+                music_treatment, music_receipt = _resolve_smart_music_treatment(
+                    cues=cues,
+                    audio_intents=smart_compiled.audio_treatment_intents,
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    duration_s=float(probe.duration_s),
+                )
             base["smart_music_treatment"] = music_treatment
             base["smart_validation_receipts"]["music_resolution"] = music_receipt
         elif smart_v2 and smart_compiled is not None:
@@ -9150,7 +9364,11 @@ def _render_subtitled_variant(
             anchor_times.extend(
                 float(event.get("start_s") or 0.0) for event in smart_compiled.media_overlays
             )
-            face_regions, face_receipt = sample_face_regions(base_path, anchor_times)
+            with _stage_timer(
+                "caption_effect_preparation",
+                counts={"anchor_count": len(anchor_times)},
+            ):
+                face_regions, face_receipt = sample_face_regions(base_path, anchor_times)
             protected_boxes.extend(region.as_dict() for region in face_regions)
             base["smart_validation_receipts"]["geometry_prepare"] = {
                 **face_receipt,
@@ -9177,7 +9395,8 @@ def _render_subtitled_variant(
                 pre_media_gcs = (
                     f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_pre_media.mp4"
                 )
-                upload_public_read(final_path, pre_media_gcs)
+                with _stage_timer("upload", counts={"artifact": "pre_media"}):
+                    upload_public_read(final_path, pre_media_gcs)
                 media_target = (
                     f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_pre_sfx.mp4"
                     if sound_effects or music_treatment
@@ -9188,17 +9407,21 @@ def _render_subtitled_variant(
                 # v2 always opts into geometry arbitration (an empty protection
                 # list still enables simultaneous-card dedup); v1 must pass None
                 # so its layout stays byte-stable pre-arbitration.
-                output_url = apply_media_overlays(
-                    pre_media_gcs,
-                    media_cards,
-                    media_target,
-                    job_id=job_id,
-                    protected_boxes=(
-                        protected_boxes if smart_v2 and smart_compiled is not None else None
-                    ),
-                    layout_receipt_out=layout_receipts,
-                    applied_cards_out=applied_media_cards,
-                )
+                with _stage_timer(
+                    "composition_media_overlay",
+                    counts={"card_count": len(media_cards)},
+                ):
+                    output_url = apply_media_overlays(
+                        pre_media_gcs,
+                        media_cards,
+                        media_target,
+                        job_id=job_id,
+                        protected_boxes=(
+                            protected_boxes if smart_v2 and smart_compiled is not None else None
+                        ),
+                        layout_receipt_out=layout_receipts,
+                        applied_cards_out=applied_media_cards,
+                    )
                 rendered_gcs = media_target
                 base["pre_media_overlay_video_path"] = pre_media_gcs
                 # Persist compiled cards (review D4): survivors carry their
@@ -9255,26 +9478,32 @@ def _render_subtitled_variant(
                     pre_sfx_gcs = (
                         f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_pre_sfx.mp4"
                     )
-                    upload_public_read(final_path, pre_sfx_gcs)
+                    with _stage_timer("upload", counts={"artifact": "pre_sfx"}):
+                        upload_public_read(final_path, pre_sfx_gcs)
                 else:
                     pre_sfx_gcs = rendered_gcs
                 placements = coerce_sound_effects(sound_effects) or []
                 if smart_v2:
-                    output_url, audio_receipt = apply_smart_audio_treatment(
-                        pre_sfx_gcs,
-                        placements,
-                        output_gcs,
-                        music_bed=music_treatment,
-                        job_id=job_id,
-                    )
+                    with _stage_timer(
+                        "audio_render",
+                        counts={"sfx_count": len(placements), "music_bed": bool(music_treatment)},
+                    ):
+                        output_url, audio_receipt = apply_smart_audio_treatment(
+                            pre_sfx_gcs,
+                            placements,
+                            output_gcs,
+                            music_bed=music_treatment,
+                            job_id=job_id,
+                        )
                     base["smart_audio_receipt"] = audio_receipt
                 else:
-                    output_url = apply_sound_effects(
-                        pre_sfx_gcs,
-                        placements,
-                        output_gcs,
-                        job_id=job_id,
-                    )
+                    with _stage_timer("audio_render", counts={"sfx_count": len(placements)}):
+                        output_url = apply_sound_effects(
+                            pre_sfx_gcs,
+                            placements,
+                            output_gcs,
+                            job_id=job_id,
+                        )
                     audio_receipt = {
                         "final_tier": "sfx_only",
                         "video_codec": "copy",
@@ -9304,14 +9533,16 @@ def _render_subtitled_variant(
 
         if rendered_gcs is None or output_url is None:
             rendered_gcs = output_gcs
-            output_url = upload_public_read(final_path, output_gcs)
+            with _stage_timer("upload", counts={"artifact": "final"}):
+                output_url = upload_public_read(final_path, output_gcs)
         # Persist the caption-free base when captions exist. With the text lane on,
         # persist it even for cue-less clips so later user-authored text can fast-reburn.
         base_gcs: str | None = None
         should_upload_base = bool(cues) or getattr(settings, "subtitled_text_lane_enabled", False)
         if should_upload_base and os.path.exists(base_path) and os.path.getsize(base_path) > 0:
             base_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
-            upload_public_read(base_path, base_gcs)
+            with _stage_timer("upload", counts={"artifact": "base"}):
+                upload_public_read(base_path, base_gcs)
 
         # Silence-cut summary (plans/010): persisted whenever the stage ran to a
         # non-bailout plan (zero-removal plans included — "nothing to cut" is
