@@ -27,6 +27,7 @@ import { useCallback, useRef, useState } from "react";
 import type { MediaOverlay, SoundEffectPlacement, VisualBlock } from "@/lib/plan-api";
 import type { CaptionMetaPatch } from "@/lib/edit-copilot/ops";
 import type { CopilotCaptionMetaSnapshot } from "@/lib/edit-copilot/snapshot";
+import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 
@@ -52,6 +53,8 @@ export interface EditorDocument {
   musicTrackId?: string | null;
   musicStartS?: number | null;
   musicDirty?: boolean;
+  backgroundMusic?: EditorCommitBackgroundMusic | null;
+  backgroundMusicDirty?: boolean;
   lyricsEnabled?: boolean;
   orientation?: EditorOrientation;
   title: string;
@@ -224,6 +227,35 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
             ? Math.max(0, doc.musicStartS)
             : null,
         musicDirty: Boolean(doc.musicDirty),
+        backgroundMusic:
+          doc.backgroundMusic && typeof doc.backgroundMusic === "object"
+            ? {
+                ...(typeof doc.backgroundMusic.track_id === "string"
+                  ? { track_id: doc.backgroundMusic.track_id }
+                  : doc.backgroundMusic.track_id === null
+                    ? { track_id: null }
+                    : {}),
+                ...(typeof doc.backgroundMusic.enabled === "boolean"
+                  ? { enabled: doc.backgroundMusic.enabled }
+                  : {}),
+                ...(typeof doc.backgroundMusic.start_s === "number" &&
+                Number.isFinite(doc.backgroundMusic.start_s)
+                  ? { start_s: Math.max(0, doc.backgroundMusic.start_s) }
+                  : {}),
+                ...(typeof doc.backgroundMusic.end_s === "number" &&
+                Number.isFinite(doc.backgroundMusic.end_s)
+                  ? { end_s: Math.max(0, doc.backgroundMusic.end_s) }
+                  : {}),
+                ...(typeof doc.backgroundMusic.gain_db === "number" &&
+                Number.isFinite(doc.backgroundMusic.gain_db)
+                  ? { gain_db: Math.max(-40, Math.min(0, doc.backgroundMusic.gain_db)) }
+                  : {}),
+                ...(typeof doc.backgroundMusic.muted === "boolean"
+                  ? { muted: doc.backgroundMusic.muted }
+                  : {}),
+              }
+            : null,
+        backgroundMusicDirty: Boolean(doc.backgroundMusicDirty),
         lyricsEnabled:
           typeof doc.lyricsEnabled === "boolean" ? doc.lyricsEnabled : undefined,
         orientation: doc.orientation === "landscape" ? "landscape" : "portrait",

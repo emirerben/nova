@@ -2478,6 +2478,17 @@ async def editor_commit_item(
                 )
             ).scalar_one_or_none()
 
+    selected_background_music_track = None
+    if (
+        commit_body.background_music is not None
+        and commit_body.background_music.track_id is not None
+    ):
+        selected_background_music_track = (
+            await db.execute(
+                select(MusicTrack).where(MusicTrack.id == commit_body.background_music.track_id)
+            )
+        ).scalar_one_or_none()
+
     visual_assets: dict[str, dict] | None = None
     if commit_body.visual_blocks is not None:
         rows = (
@@ -2500,6 +2511,7 @@ async def editor_commit_item(
         commit_body,
         user_id=str(user.id),
         music_track=selected_music_track,
+        background_music_track=selected_background_music_track,
         visual_assets=visual_assets,
     )
 
@@ -2539,6 +2551,7 @@ async def editor_commit_item(
             timeline=prep["sections"]["timeline"],
             mix=prep["sections"]["mix"],
             music=prep["sections"]["music"],
+            background_music=prep["sections"]["background_music"],
             lyrics=prep["sections"]["lyrics"],
             orientation=prep["sections"]["orientation"],
             sound_effects=prep["sections"]["sound_effects"],

@@ -717,6 +717,8 @@ def resolve_sfx_placements(
 ) -> list[dict[str, Any]]:
     """Resolve role intents to audited library assets with role-specific spacing."""
 
+    from app.agents._schemas.sound_effect import normalize_generated_sound_effects  # noqa: PLC0415
+
     preset = load_preset(preset_id, preset_version)
     glossary = _clean_sfx_rows(glossary)
     placements: list[dict[str, Any]] = []
@@ -749,4 +751,4 @@ def resolve_sfx_placements(
         last_by_role[role] = at_s
         if len(placements) >= 48:
             break
-    return placements
+    return normalize_generated_sound_effects(placements)

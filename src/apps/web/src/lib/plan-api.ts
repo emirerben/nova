@@ -1108,6 +1108,20 @@ export interface PlanItemVariant {
    */
   music_preview_url?: string | null;
   music_preview_start_s?: number | null;
+  background_music?: {
+    track_id: string;
+    title: string;
+    artist?: string | null;
+    preview_url: string;
+    src_gcs_path: string;
+    start_s: number;
+    end_s: number;
+    duration_s: number;
+    track_duration_s: number;
+    gain_db: number;
+    muted: boolean;
+    enabled: boolean;
+  } | null;
   style_set_id: string | null;
   // Agent-decided (or user-pinned) intro size — drives the ±size stepper.
   intro_text_size_px: number | null;
