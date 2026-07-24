@@ -311,7 +311,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                     "id": str(asset.id),
                     "gcs_path": asset.gcs_path,
                     "kind": asset.kind,
-                    "user_context": getattr(asset, "user_context", None),
+                    "user_context": getattr(asset, "user_context", None) or "",
                     "analysis": asset.analysis or {},
                 }
                 for asset in db.execute(
@@ -418,10 +418,10 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                             VisualTreatmentAsset(
                                 asset_id=asset["id"],
                                 kind=asset["kind"],
+                                user_context=str(asset.get("user_context") or ""),
                                 subject=str(asset["analysis"].get("subject", "")),
                                 description=str(asset["analysis"].get("description", "")),
                                 on_screen_text=str(asset["analysis"].get("on_screen_text", "")),
-                                user_context=str(asset.get("user_context") or ""),
                             )
                             for asset in assets
                         ],
@@ -1021,7 +1021,7 @@ def match_overlay_suggestions(
                         "source_filename": a.source_filename,
                         "duration_s": a.duration_s,
                         "aspect": a.aspect,
-                        "user_context": getattr(a, "user_context", None),
+                        "user_context": getattr(a, "user_context", None) or "",
                         "analysis": a.analysis or {},
                     }
                     for a in db.execute(
@@ -1110,12 +1110,12 @@ def match_overlay_suggestions(
                                 PlacementAsset(
                                     asset_id=a["id"],
                                     kind=a["kind"],
+                                    user_context=str(a.get("user_context") or ""),
                                     subject=str((a["analysis"] or {}).get("subject", "")),
                                     description=str((a["analysis"] or {}).get("description", "")),
                                     on_screen_text=str(
                                         (a["analysis"] or {}).get("on_screen_text", "")
                                     ),
-                                    user_context=str(a.get("user_context") or ""),
                                     brands=list((a["analysis"] or {}).get("brands") or []),
                                     duration_s=a["duration_s"],
                                     aspect=a["aspect"],

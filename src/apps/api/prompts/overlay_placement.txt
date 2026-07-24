@@ -6,6 +6,12 @@ $words_json
 ## The asset pool (analyzed)
 $assets_json
 
+Asset fields are source-labeled. `user_context` is written by the creator and is
+the highest-priority semantic clue for what the visual should match. `subject`,
+`description`, `on_screen_text`, `brands`, aspect, and dimensions are Nova's
+analysis; preserve their useful visual detail, but do not let them override a
+specific creator-provided context note.
+
 ## Already-occupied time intervals (existing cards — NEVER overlap these)
 $occupied_json
 

@@ -73,6 +73,7 @@ const EMPTY_SUGGESTIONS: EditorOverlaySuggestionsState = {
   unavailable: false,
   start: () => {},
   removeRow: () => {},
+  clearLocal: () => {},
 };
 
 export default function OverlaySuggestions({
