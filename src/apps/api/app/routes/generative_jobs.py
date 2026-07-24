@@ -4804,6 +4804,7 @@ def prepare_editor_commit(
         # commits through the caption reburn + reapply chain.
         "resolved_archetype": variant.get("resolved_archetype"),
         "has_caption_base": bool(variant.get("base_video_path")),
+        "render_status_at_commit": variant.get("render_status"),
         "sections": {
             "text_elements": payload.text_elements is not None,
             "caption_cues": payload.caption_cues is not None,
@@ -4850,13 +4851,11 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
             queue="overlay-jobs",
         )
         return
-    # R2 (plan 010 review): on caption archetypes an SFX/overlay-only Save must
-    # render through the caption reburn + reapply chain — the fast pass would
-    # composite onto the CURRENT video, so an in-flight caption reburn superseded
-    # by this Save would silently lose the caption edit. The commit already
-    # persisted the lanes atomically; the reburn burns the persisted cues onto
-    # the base and _reapply_user_media_layers composites the persisted lanes on
-    # top. Legacy variants without a cached base fall through to the fast pass.
+    # R2 (plan 010 review): caption archetypes must reburn when a lane-only Save
+    # could race an in-flight caption render, or when the lane changes visuals
+    # below captions. Ready/stable outer-lane edits can use the lightweight
+    # overlay/SFX passes because they operate on the current finished video and
+    # do not need to rebuild captions from the clean base.
     sections = prep["sections"]
     if (
         sections.get("camera_effects") is True
@@ -4898,11 +4897,22 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         or sections.get("music") is True
         or sections.get("orientation") is True
     )
+    caption_outer_lane_only = (
+        lane_only_commit
+        and (sections.get("sound_effects") is True or sections.get("media_overlays") is True)
+        and sections.get("visual_blocks") is not True
+        and sections.get("camera_effects") is not True
+        and sections.get("background_music") is not True
+    )
+    caption_fast_lane_safe = (
+        caption_outer_lane_only and prep.get("render_status_at_commit") == "ready"
+    )
     if (
         lane_only_commit
         and prep.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES
         and prep.get("has_caption_base")
         and sections.get("background_music") is not True
+        and not caption_fast_lane_safe
     ):
         from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
 

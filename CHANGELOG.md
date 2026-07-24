@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.10.1] — 2026-07-24
+
+### Added
+- **Render benchmarks can now capture cold and warm edit traces from the same fixture.** The new benchmark script submits a local-render generative job, records wall time, phase logs, pipeline trace events, output metadata, and fixture ffprobe data, then repeats the measurement after a small warm `song_text` music edit.
+
+### Changed
+- **Warm generative re-renders now reuse safe intermediate work.** Re-renders with unchanged source clips can reuse cached clip metadata, source-guard preprocessing, and HDR pre-tonemap outputs instead of repeating Gemini upload, clip analysis, heavy preprocessing, or SDR conversion.
+- **Small editor audio and lane edits skip unrelated render stages.** Preserve-cuts `song_text` music-window edits can replace the audio bed while stream-copying video, and ready caption variants can apply SFX or media-overlay lane changes through the lightweight fast passes instead of rebuilding captions.
+
 ## [0.12.10.0] — 2026-07-24
 
 ### Added

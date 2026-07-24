@@ -29,6 +29,14 @@ class _Meta:
         self.hook_text = ""
 
 
+class _Probe:
+    def __init__(self, duration_s, *, width=1080, height=1920, color_trc="bt709"):
+        self.duration_s = duration_s
+        self.width = width
+        self.height = height
+        self.color_trc = color_trc
+
+
 def _track(track_id="t1", lyrics_cached=None):
     return types.SimpleNamespace(
         id=track_id,
@@ -47,6 +55,146 @@ def _track(track_id="t1", lyrics_cached=None):
             "lines": [{"text": "hi"}],
         },
     )
+
+
+def test_ingest_clip_metadata_cache_hit_skips_upload_and_analysis(monkeypatch, tmp_path) -> None:
+    import app.pipeline.source_guard as sg
+    import app.tasks.template_orchestrate as to
+
+    cached = [_Meta("cached_a", 9.0), _Meta("cached_b", 4.0)]
+    monkeypatch.setattr(gb, "_load_preprocessed_source_cache", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_load_clip_metadata_cache", lambda *a, **k: cached)
+    monkeypatch.setattr(gb, "_record_render_subphase", lambda *a, **k: None)
+    monkeypatch.setattr(sg, "downscale_oversized_sources", lambda *a, **k: None)
+    monkeypatch.setattr(
+        to,
+        "_download_clips_parallel",
+        lambda gcs, tmpdir: [str(tmp_path / f"{i}.mp4") for i, _ in enumerate(gcs)],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        to,
+        "_probe_clips",
+        lambda paths: {path: _Probe(6.0) for path in paths},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        to,
+        "_upload_clips_parallel",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("upload should be skipped")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        to,
+        "_analyze_clips_parallel",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("analysis should be skipped")),
+        raising=False,
+    )
+
+    result = gb._ingest_clips(["gcs/a.mp4", "gcs/b.mp4"], str(tmp_path), job_id="job-1")
+
+    assert result["clip_metas"] == cached
+    assert result["hero"] is cached[0]
+    assert result["clip_id_to_gcs"] == {"cached_a": "gcs/a.mp4", "cached_b": "gcs/b.mp4"}
+    assert cached[0].clip_path.endswith("0.mp4")
+
+
+def test_ingest_preprocessed_cache_hit_skips_source_guard(monkeypatch, tmp_path) -> None:
+    import app.pipeline.source_guard as sg
+    import app.tasks.template_orchestrate as to
+
+    downloaded_from: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_load_preprocessed_source_cache",
+        lambda *a, **k: ["cache/a_pre.mp4", "cache/b_pre.mp4"],
+    )
+    monkeypatch.setattr(gb, "_record_render_subphase", lambda *a, **k: None)
+    monkeypatch.setattr(
+        sg,
+        "downscale_oversized_sources",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("source guard should be skipped")),
+    )
+
+    def _download(gcs, tmpdir):
+        downloaded_from.extend(gcs)
+        return [str(tmp_path / f"{i}.mp4") for i, _ in enumerate(gcs)]
+
+    monkeypatch.setattr(to, "_download_clips_parallel", _download, raising=False)
+    monkeypatch.setattr(
+        to,
+        "_probe_clips",
+        lambda paths: {path: _Probe(6.0) for path in paths},
+        raising=False,
+    )
+
+    result = gb._ingest_clips(
+        ["gcs/a.mp4", "gcs/b.mp4"], str(tmp_path), job_id="job-1", skip_analysis=True
+    )
+
+    assert downloaded_from == ["cache/a_pre.mp4", "cache/b_pre.mp4"]
+    assert list(result["clip_id_to_local"]) == ["clip_0", "clip_1"]
+
+
+def test_clip_metadata_cache_fingerprint_mismatch_falls_back(monkeypatch) -> None:
+    cache = {
+        "clip_metadata_cache": {
+            "version": gb._CLIP_METADATA_CACHE_VERSION,
+            "fingerprint": gb._cache_fingerprint(["gcs/a.mp4"]),
+            "clip_metas": [{"clip_id": "a", "hook_score": 3.0}],
+        }
+    }
+
+    monkeypatch.setattr(gb, "_read_all_candidates", lambda _job_id: cache)
+
+    assert gb._load_clip_metadata_cache("job-1", ["gcs/b.mp4"]) is None
+
+
+def test_hdr_pretonemap_cache_hit_repoints_local_clip(monkeypatch, tmp_path) -> None:
+    import app.storage as storage
+    import app.tasks.template_orchestrate as to
+
+    clip_id_to_local = {"clip-a": str(tmp_path / "hdr.mp4")}
+    probe_map = {
+        clip_id_to_local["clip-a"]: _Probe(4.0, width=2160, height=3840, color_trc="arib-std-b67")
+    }
+    signature = gb._pretonemap_fingerprint(clip_id_to_local, probe_map)
+    monkeypatch.setattr(
+        gb,
+        "_read_all_candidates",
+        lambda _job_id: {
+            "hdr_pretonemap_cache": {
+                "version": gb._HDR_PRETONEMAP_CACHE_VERSION,
+                "fingerprint": signature,
+                "processed_by_clip_id": {"clip-a": "generative-jobs/j/preprocessed/hdr.mp4"},
+            }
+        },
+    )
+    monkeypatch.setattr(
+        storage,
+        "download_to_file",
+        lambda _gcs, local: (tmp_path / "cached_sdr_marker").write_text(local),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        to,
+        "_probe_clips",
+        lambda paths: {path: _Probe(4.0, width=1080, height=1920) for path in paths},
+        raising=False,
+    )
+
+    count = gb._load_hdr_pretonemap_cache(
+        "job-1",
+        clip_id_to_local,
+        probe_map,
+        str(tmp_path),
+        signature=signature,
+        hdr_clip_ids={"clip-a"},
+    )
+
+    assert count == 1
+    assert clip_id_to_local["clip-a"].endswith("cached_sdr_clip_a.mp4")
+    assert probe_map[clip_id_to_local["clip-a"]].color_trc == "bt709"
 
 
 def test_effective_music_window_snaps_once_and_keeps_exact_video_duration() -> None:
@@ -344,14 +492,6 @@ def test_build_no_music_recipe_no_guide_is_uniform():
     recipe = gb._build_no_music_recipe(metas, available_footage_s=9.0)
     durations = [s["target_duration_s"] for s in recipe["slots"]]
     assert durations[0] == durations[1] == durations[2]
-
-
-# ── Footage-derived sizing ─────────────────────────────────────────────────────
-
-
-class _Probe:
-    def __init__(self, duration_s):
-        self.duration_s = duration_s
 
 
 def test_available_footage_sums_probes():
