@@ -3530,6 +3530,13 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         orientation_reason = "disabled"
     else:
         orientation_reason = _orientation_unsupported_reason(variant)
+    background_music_reason = None
+    if not settings.smart_music_bed_enabled:
+        background_music_reason = "smart_music_bed_disabled"
+    elif variant.get("music_track_id") is not None or variant.get("text_mode") == "lyrics":
+        background_music_reason = "song_or_lyric_variant"
+    else:
+        background_music_reason = effects_reason
     return {
         # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
         "text_elements": (
@@ -3558,6 +3565,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "sfx": sfx_reason is None,
         "overlays": overlays_reason is None,
         "visual_blocks": visual_blocks_reason is None,
+        "background_music": background_music_reason is None,
         "suggestions": suggestions_reason is None,
         "reason": caption_reason or timeline_reason,
         "sfx_reason": sfx_reason,

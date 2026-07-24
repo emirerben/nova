@@ -247,6 +247,7 @@ def _coerce_assets(raw_assets: list[dict[str, Any]] | None) -> list[SmartPlanner
                         :400
                     ],
                     on_screen_text=str(analysis.get("on_screen_text") or "")[:300],
+                    user_context=str(raw.get("user_context") or "")[:500],
                     brands=[
                         str(value)[:80]
                         for value in (analysis.get("brands") or raw.get("brands") or [])[:10]

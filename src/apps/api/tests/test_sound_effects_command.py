@@ -324,7 +324,7 @@ def test_normalize_generated_sound_effects_collapses_generated_without_role():
     assert [p["id"] for p in normalize_generated_sound_effects(placements)] == ["a"]
 
 
-def test_normalize_generated_sound_effects_preserves_manual_and_layered_effects():
+def test_normalize_generated_sound_effects_preserves_manual_but_spaces_generated_layers():
     placements = [
         {
             "id": "manual",
@@ -369,6 +369,4 @@ def test_normalize_generated_sound_effects_preserves_manual_and_layered_effects(
         "manual",
         "manual-layer",
         "impact",
-        "whoosh",
-        "different-role",
     ]

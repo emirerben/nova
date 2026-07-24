@@ -274,7 +274,7 @@ describe("AssetPool — cap", () => {
     await renderPool();
 
     expect(screen.getByText("20 of 20")).toBeInTheDocument();
-    const addButton = screen.getByRole("button", { name: /add/i });
+    const addButton = screen.getByRole("button", { name: "Add" });
     expect(addButton).toBeDisabled();
     // Inline reason text, never tooltip-only.
     expect(

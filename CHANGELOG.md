@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.7.0] — 2026-07-24
+
+### Added
+- **Uploaded visuals can now carry creator context.** Asset-pool images and videos store a short user note, show it in the visual pool, and pass it into Nova's analysis, visual matching, overlay placement, and Smart Captions planning without overwriting machine-detected subject or brand metadata.
+- **Admin job debugging can now resolve plan items directly.** Admin job lookup supports `content_plan_item_id` and exposes a derived render timing breakdown from phase logs, agent runs, and per-variant render timestamps.
+- **No-song talk-to-camera edits can add background music without becoming song variants.** Background beds are persisted separately from `music_track_id`, can be added or removed from the editor, and render through the fast audio-only treatment path so transcript, visual matching, and unrelated generation steps are not rerun.
+
+### Fixed
+- **Caption edits now point to a real place.** Editor links open the item page's Captions state instead of a missing tab, and subtitled caption cues now appear in the timeline as locked caption bars so visible text is represented honestly.
+- **List titles no longer trigger twitchy camera pulses.** Smart Captions v2 still keeps intentional semantic camera movement, but suppresses redundant/too-short pulses when a list title or text card already carries the beat.
+- **Automatic sound effects no longer stack on the same moment.** Smart Caption SFX, overlay-suggestion SFX, and persisted automatic SFX now share one spacing/deduping rule, while manual overlaps remain possible in the editor.
+- **Persisted sound effects preview on editor open.** Existing glossary and uploaded SFX placements now load signed preview URLs without waiting for the Sounds drawer.
+- **The timeline no longer shows a music bed for videos with no music.** Music rows are based on an actual matched song, voiceover bed, or background music state instead of incidental mix metadata.
+
 ## [0.12.6.1] — 2026-07-24
 
 ### Fixed

@@ -24,6 +24,7 @@ import {
   changePlanItemStyle,
   getPlanItem,
   getPlanItemJobStatus,
+  getSfxAudioUrl,
   deletePoolAsset,
   editPlanItemVariant,
   getLyricSeeds,
@@ -521,10 +522,11 @@ function OrientationToggle({
 
 /** The Captions-tab deep link — shared by the read-only banner and the
  * text-locked notice so both surfaces point at the same target identically. */
-function CaptionsTabLink({ itemId }: { itemId: string }) {
+function CaptionsTabLink({ itemId, variantId }: { itemId: string; variantId?: string | null }) {
+  const href = `/plan/items/${itemId}?tab=captions${variantId ? `&variant=${encodeURIComponent(variantId)}` : ""}`;
   return (
     <a
-      href={`/plan/items/${itemId}`}
+      href={href}
       className="font-semibold underline decoration-zinc-300 underline-offset-4 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
     >
       Open the item page Captions tab
@@ -1069,6 +1071,20 @@ export default function EditorShell({
       ? state.bars
       : state.bars.filter((bar) => !isLyricBar(bar));
   }, [lyricBarsAvailable, lyricsEnabled, lyricsOptionalActive, state.bars]);
+  const subtitledCaptionTimelineBars = useMemo<TextElementBar[]>(() => {
+    if (variant?.resolved_archetype !== "subtitled") return [];
+    return (variant.caption_cues ?? []).map((cue, index) => ({
+      id: `subtitled-caption-${index}`,
+      text: cue.text,
+      start_s: cue.start_s,
+      end_s: cue.end_s,
+      role: "narrated_caption",
+    }));
+  }, [variant?.caption_cues, variant?.resolved_archetype]);
+  const timelineTextBars = useMemo(
+    () => [...visibleTextBars, ...subtitledCaptionTimelineBars],
+    [subtitledCaptionTimelineBars, visibleTextBars],
+  );
   const lyricLineOverrides = useMemo(
     () =>
       lyricBarsAvailable
@@ -1579,7 +1595,10 @@ export default function EditorShell({
   }, []);
 
   useEffect(() => {
-    if ((activeTool !== "sounds" && activeTool !== "nova") || sfxGlossaryEffects.length > 0) {
+    if (
+      (activeTool !== "sounds" && activeTool !== "nova" && localSfx.length === 0) ||
+      sfxGlossaryEffects.length > 0
+    ) {
       return;
     }
     let cancelled = false;
@@ -1597,7 +1616,7 @@ export default function EditorShell({
     return () => {
       cancelled = true;
     };
-  }, [activeTool, sfxGlossaryEffects.length]);
+  }, [activeTool, localSfx.length, sfxGlossaryEffects.length]);
 
   const musicPickerShouldLoad =
     (!!variant?.music_track_id ||
@@ -1636,6 +1655,44 @@ export default function EditorShell({
       return changed ? next : current;
     });
   }, [localSfx, sfxGlossaryEffects]);
+
+  useEffect(() => {
+    if (localSfx.length === 0) return;
+    let cancelled = false;
+    const missingUserPaths = Array.from(
+      new Set(
+        localSfx
+          .map((placement) => placement.src_gcs_path ?? "")
+          .filter((path) => path.startsWith("users/") && !localSfxAudioUrls[path]),
+      ),
+    );
+    if (missingUserPaths.length === 0) return;
+    void Promise.all(
+      missingUserPaths.map(async (path) => {
+        try {
+          const url = await getSfxAudioUrl(itemId, path);
+          return { path, url };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((rows) => {
+      if (cancelled) return;
+      setLocalSfxAudioUrls((current) => {
+        const next = { ...current };
+        let changed = false;
+        for (const row of rows) {
+          if (!row || next[row.path] === row.url) continue;
+          next[row.path] = row.url;
+          changed = true;
+        }
+        return changed ? next : current;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId, localSfx, localSfxAudioUrls]);
 
   const overlayPoolShouldLoad =
     (MEDIA_OVERLAYS_UI_ENABLED &&
@@ -3975,7 +4032,7 @@ export default function EditorShell({
       selectElement(kind, id);
     },
     onClear: clear,
-    textBars: visibleTextBars,
+    textBars: timelineTextBars,
     readOnly,
     onRecordTimelineEdit: recordTimelineDrag,
     onPreviewTextTiming: previewTextTiming,
@@ -4709,7 +4766,7 @@ export default function EditorShell({
             {(readOnlyReason === CAPTIONS_TAB_REASON || isCaptionEdit) && (
               <>
                 {" "}
-                <CaptionsTabLink itemId={itemId} />
+                <CaptionsTabLink itemId={itemId} variantId={variant.variant_id} />
               </>
             )}
           </div>
@@ -4731,7 +4788,8 @@ export default function EditorShell({
               // Caption archetype (with base video): captions live in the Captions
               // tab regardless of text_elements, so always show the reason + link.
               <>
-                {CAPTIONS_TAB_REASON}. <CaptionsTabLink itemId={itemId} />
+                {CAPTIONS_TAB_REASON}.{" "}
+                <CaptionsTabLink itemId={itemId} variantId={variant.variant_id} />
               </>
             ) : (
               // Non-caption text lock (e.g. lyrics_sync): keep the reason-driven
@@ -4741,7 +4799,7 @@ export default function EditorShell({
                 {textElementsLockedCopy(capabilities) === CAPTIONS_TAB_REASON && (
                   <>
                     {" "}
-                    <CaptionsTabLink itemId={itemId} />
+                    <CaptionsTabLink itemId={itemId} variantId={variant.variant_id} />
                   </>
                 )}
               </>

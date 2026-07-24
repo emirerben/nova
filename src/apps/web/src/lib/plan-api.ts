@@ -1027,6 +1027,7 @@ export interface EditorCapabilities {
   sfx?: boolean;
   overlays?: boolean;
   visual_blocks?: boolean;
+  background_music?: boolean;
   /** AI overlay suggestions inside the editor's Overlays drawer (plans/005-010).
    *  Deliberately does NOT check pool assets — the drawer owns the empty-pool state. */
   suggestions?: boolean;
@@ -2068,6 +2069,7 @@ export interface PoolAsset {
   kind: "image" | "video";
   status: string; // "uploaded" | "analyzing" | "ready" | "failed"
   source_filename: string | null;
+  user_context?: string | null;
   duration_s: number | null;
   aspect: number | null;
   /** Pixel dims (plan 009 E1) — null on legacy assets until the backfill
@@ -2134,6 +2136,7 @@ export function registerPoolAsset(
     content_type: string;
     content_hash: string | null;
     source_filename: string | null;
+    user_context?: string | null;
   },
 ): Promise<PoolAsset> {
   return request<PoolAsset>(`/plan-items/${itemId}/assets`, {
@@ -2181,6 +2184,18 @@ export function listPoolAssets(
   itemId: string,
 ): Promise<{ assets: PoolAsset[]; max_assets: number }> {
   return request<{ assets: PoolAsset[]; max_assets: number }>(`/plan-items/${itemId}/assets`);
+}
+
+/** Add or edit the creator's context note for a visual asset. */
+export function updatePoolAssetContext(
+  itemId: string,
+  assetId: string,
+  userContext: string | null,
+): Promise<PoolAsset> {
+  return request<PoolAsset>(`/plan-items/${itemId}/assets/${assetId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ user_context: userContext }),
+  });
 }
 
 /** Remove an asset from the pool. */

@@ -123,6 +123,8 @@ def _commit_req(**kw) -> gj.EditorCommitRequest:
 def _music_track(**overrides):
     values = {
         "id": "t1",
+        "title": "Track One",
+        "artist": "Nova",
         "analysis_status": "ready",
         "audio_gcs_path": "music/t1.m4a",
         "duration_s": 12.0,
@@ -696,6 +698,88 @@ def test_music_commit_validates_ready_track_and_kicks_one_full_render(monkeypatc
     assert "queue" not in calls[0]
     assert calls[0]["kwargs"]["render_gen_id"] == prep["generation"]
     assert calls[0]["kwargs"]["new_track_id"] == "t2"
+
+
+def test_background_music_commit_persists_separate_bed_for_no_song_variant(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(variant_id="original_text", music_track_id=None, mix=None)
+    track = _music_track(id="t2", title="Bed Track", audio_gcs_path="music/t2.mp3")
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "original_text",
+        _commit_req(
+            background_music=gj.EditorCommitBackgroundMusic(
+                track_id="t2",
+                start_s=2.0,
+                level=0.25,
+            )
+        ),
+        background_music_track=track,
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["music_track_id"] is None
+    assert v["smart_music_treatment"] == {
+        "track_id": "t2",
+        "src_gcs_path": "music/t2.mp3",
+        "section_start_s": 2.0,
+        "section_end_s": 5.0,
+        "gain_db": -18.0,
+        "speech_duck_db": -12.0,
+        "final_lufs": -14.0,
+    }
+    assert prep["sections"]["background_music"] is True
+    assert prep["sections"]["music"] is False
+    assert prep["new_track_id"] is None
+
+
+def test_background_music_commit_routes_to_fast_audio_pass(monkeypatch):
+    _arm(monkeypatch)
+    prep = {
+        "generation": "gen1",
+        "has_render_section": True,
+        "timeline_override": None,
+        "mix_override": None,
+        "sfx_override": None,
+        "media_overlays_override": None,
+        "visual_blocks_override": None,
+        "orientation_override": None,
+        "new_track_id": None,
+        "music_window_alignment": None,
+        "text_requires_full_render": False,
+        "resolved_archetype": "subtitled",
+        "has_caption_base": False,
+        "sections": {
+            "text_elements": False,
+            "caption_cues": False,
+            "caption_meta": False,
+            "timeline": False,
+            "mix": False,
+            "music": False,
+            "background_music": True,
+            "lyrics": False,
+            "orientation": False,
+            "sound_effects": False,
+            "media_overlays": False,
+            "visual_blocks": False,
+        },
+    }
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+
+    gj.enqueue_editor_commit_render("job1", "original_text", prep)
+
+    assert len(calls) == 1
+    assert calls[0]["queue"] == "overlay-jobs"
+    assert calls[0]["kwargs"] == {
+        "render_gen_id": "gen1",
+        "sfx_override": [],
+    }
 
 
 @pytest.mark.parametrize(
@@ -2319,6 +2403,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "sfx": True,
         "overlays": True,
         "visual_blocks": False,
+        "background_music": False,
         # _arm leaves overlay_autoplace_enabled at its default (False).
         "suggestions": False,
         "reason": None,

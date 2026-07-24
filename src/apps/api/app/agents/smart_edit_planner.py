@@ -47,6 +47,7 @@ class SmartPlannerAsset(BaseModel):
     subject: str = ""
     description: str = ""
     on_screen_text: str = ""
+    user_context: str = ""
     brands: list[str] = Field(default_factory=list, max_length=10)
     filename: str = ""
     aspect: float | None = None
