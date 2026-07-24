@@ -46,6 +46,15 @@ export interface EditorCommitMix {
   original_level?: number | null;
 }
 
+export interface EditorCommitBackgroundMusic {
+  track_id?: string | null;
+  enabled?: boolean;
+  start_s?: number | null;
+  end_s?: number | null;
+  gain_db?: number | null;
+  muted?: boolean;
+}
+
 export interface EditorCommitCaptionMetaDraft {
   enabled?: boolean;
   style?: "sentence" | "word";
@@ -95,6 +104,7 @@ export interface EditorCommitRequest {
     start_s: number;
     alignment: "preserve_cuts" | "resync_beats";
   };
+  background_music?: EditorCommitBackgroundMusic;
   /** Full replacement sound-effect placement list. Omit when untouched. */
   sound_effects?: SoundEffectPlacement[];
   /** Full replacement media-overlay card list. Omit when untouched. */
@@ -135,6 +145,7 @@ export interface EditorCommitResponse {
     timeline?: boolean;
     mix?: boolean;
     music?: boolean;
+    background_music?: boolean;
     sound_effects?: boolean;
     media_overlays?: boolean;
     visual_blocks?: boolean;
@@ -191,6 +202,8 @@ export function buildEditorCommitRequest({
   musicDirty = false,
   musicTrackId,
   musicWindow,
+  backgroundMusicDirty = false,
+  backgroundMusic,
   sfxDirty = false,
   soundEffects = [],
   overlaysDirty = false,
@@ -222,6 +235,8 @@ export function buildEditorCommitRequest({
     startS: number;
     alignment: "preserve_cuts" | "resync_beats";
   };
+  backgroundMusicDirty?: boolean;
+  backgroundMusic?: EditorCommitBackgroundMusic;
   sfxDirty?: boolean;
   soundEffects?: SoundEffectPlacement[];
   overlaysDirty?: boolean;
@@ -288,6 +303,7 @@ export function buildEditorCommitRequest({
     music_window: musicWindow
       ? { start_s: musicWindow.startS, alignment: musicWindow.alignment }
       : undefined,
+    background_music: backgroundMusicDirty ? backgroundMusic : undefined,
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
     visual_blocks: visualBlocksDirty ? visualBlocks : undefined,

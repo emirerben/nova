@@ -62,6 +62,7 @@ export default function ToolDrawer({
   currentMusicTrackId = null,
   musicEditable = false,
   onPickMusic,
+  onRemoveMusic,
   musicWindow,
   overlayUploading = false,
   onOverlayUpload,
@@ -109,6 +110,7 @@ export default function ToolDrawer({
   currentMusicTrackId?: string | null;
   musicEditable?: boolean;
   onPickMusic?: (trackId: string) => void;
+  onRemoveMusic?: () => void;
   musicWindow?: SongWindowControl;
   overlayUploading?: boolean;
   onOverlayUpload?: (
@@ -378,6 +380,7 @@ export default function ToolDrawer({
           currentMusicTrackId={currentMusicTrackId}
           musicEditable={musicEditable}
           onPickMusic={onPickMusic}
+          onRemoveMusic={onRemoveMusic}
           musicWindow={musicWindow}
         />
       )}
@@ -1203,6 +1206,7 @@ function SoundsDrawer({
   currentMusicTrackId,
   musicEditable,
   onPickMusic,
+  onRemoveMusic,
   musicWindow,
 }: {
   effects: SoundEffectSummary[];
@@ -1213,6 +1217,7 @@ function SoundsDrawer({
   currentMusicTrackId: string | null;
   musicEditable: boolean;
   onPickMusic?: (trackId: string) => void;
+  onRemoveMusic?: () => void;
   musicWindow?: SongWindowControl;
 }) {
   return (
@@ -1220,7 +1225,7 @@ function SoundsDrawer({
       <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Music</p>
       {!musicEditable ? (
         <div className="mb-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
-          This edit has no swappable song.
+          Music cannot be edited for this version.
         </div>
       ) : musicLoading ? (
         <div className="mb-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
@@ -1228,6 +1233,15 @@ function SoundsDrawer({
         </div>
       ) : (
         <div className="mb-5 max-h-48 space-y-2 overflow-y-auto pr-1">
+          {currentMusicTrackId && (
+            <button
+              type="button"
+              onClick={() => onRemoveMusic?.()}
+              className="flex min-h-10 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              Remove music
+            </button>
+          )}
           {musicTracks.map((track) => {
             const selected = track.id === currentMusicTrackId;
             return (

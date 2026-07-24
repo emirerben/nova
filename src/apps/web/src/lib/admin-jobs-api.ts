@@ -22,6 +22,7 @@ export type JobTypeFilter =
 
 export interface AdminJobListItem {
   job_id: string;
+  content_plan_item_id?: string | null;
   job_type: string;
   mode: string | null;
   status: string;
@@ -142,6 +143,7 @@ export interface RenderSummary {
 export interface JobPayload {
   id: string;
   user_id: string;
+  content_plan_item_id?: string | null;
   status: string;
   job_type: string;
   mode: string | null;
@@ -191,6 +193,21 @@ export interface JobRuntimePayload {
   queue_position: number | null;
 }
 
+export interface RenderTimingStagePayload {
+  name: string;
+  elapsed_ms: number | null;
+  source: string;
+  details: unknown;
+}
+
+export interface RenderTimingBreakdownPayload {
+  queue_wait_ms: number | null;
+  processing_ms: number | null;
+  total_ms: number | null;
+  stages: RenderTimingStagePayload[];
+  repeated_work: string[];
+}
+
 export interface TemplateSummary {
   id: string;
   name: string;
@@ -223,6 +240,7 @@ export interface JobDebugResponse {
   context_runs_cap: number;
   runtime: JobRuntimePayload;
   render_summary?: RenderSummary | null;
+  render_timing?: RenderTimingBreakdownPayload;
 }
 
 export interface QueueInfoPayload {
@@ -266,6 +284,7 @@ async function _adminJson<T>(path: string): Promise<T> {
 export interface ListJobsParams {
   jobType?: JobTypeFilter;
   status?: string;
+  contentPlanItemId?: string;
   onlyFailures?: boolean;
   limit?: number;
   offset?: number;
@@ -277,6 +296,7 @@ export async function adminListJobs(
   const qs = new URLSearchParams();
   if (params.jobType && params.jobType !== "all") qs.set("job_type", params.jobType);
   if (params.status) qs.set("status", params.status);
+  if (params.contentPlanItemId) qs.set("content_plan_item_id", params.contentPlanItemId);
   if (params.onlyFailures) qs.set("only_failures", "true");
   qs.set("limit", String(params.limit ?? 50));
   qs.set("offset", String(params.offset ?? 0));

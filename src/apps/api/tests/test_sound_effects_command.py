@@ -1,6 +1,9 @@
 """Tests for the build_sound_effects_command FFmpeg filter graph."""
 
-from app.agents._schemas.sound_effect import SoundEffectPlacement
+from app.agents._schemas.sound_effect import (
+    SoundEffectPlacement,
+    normalize_generated_sound_effects,
+)
 from app.pipeline.sound_effects import MusicBedTreatment, build_sound_effects_command
 
 
@@ -268,3 +271,102 @@ def test_music_treatment_defaults_keep_cached_rows_backward_compatible():
 
     assert treatment.speech_duck_db == -12.0
     assert treatment.final_lufs == -14.0
+
+
+def test_normalize_generated_sound_effects_collapses_near_duplicates():
+    placements = [
+        {
+            "id": "a",
+            "src_gcs_path": "sound-effects/pop/audio.mp3",
+            "at_s": 1.0,
+            "gain": 1.0,
+            "smart_role": "caption_punch",
+        },
+        {
+            "id": "b",
+            "src_gcs_path": "sound-effects/pop/audio.mp3",
+            "at_s": 1.09,
+            "gain": 0.8,
+            "smart_role": "caption_punch",
+        },
+        {
+            "id": "c",
+            "src_gcs_path": "sound-effects/pop/audio.mp3",
+            "at_s": 1.3,
+            "gain": 1.0,
+            "smart_role": "caption_punch",
+        },
+    ]
+
+    normalized = normalize_generated_sound_effects(placements, threshold_s=0.15)
+
+    assert [placement["id"] for placement in normalized] == ["a", "c"]
+
+
+def test_normalize_generated_sound_effects_collapses_generated_without_role():
+    placements = [
+        {
+            "id": "a",
+            "src_gcs_path": "sound-effects/pop/audio.mp3",
+            "at_s": 1.0,
+            "gain": 1.0,
+            "smart_event_id": "cue-1",
+        },
+        {
+            "id": "b",
+            "src_gcs_path": "sound-effects/pop/audio.mp3",
+            "at_s": 1.08,
+            "gain": 1.0,
+            "smart_event_id": "cue-1",
+        },
+    ]
+
+    assert [p["id"] for p in normalize_generated_sound_effects(placements)] == ["a"]
+
+
+def test_normalize_generated_sound_effects_preserves_manual_but_spaces_generated_layers():
+    placements = [
+        {
+            "id": "manual",
+            "src_gcs_path": "sound-effects/pop/audio.mp3",
+            "at_s": 2.0,
+            "gain": 1.0,
+            "source": "user",
+        },
+        {
+            "id": "manual-layer",
+            "src_gcs_path": "sound-effects/pop/audio.mp3",
+            "at_s": 2.04,
+            "gain": 0.6,
+            "source": "user",
+        },
+        {
+            "id": "impact",
+            "src_gcs_path": "sound-effects/pop/audio.mp3",
+            "at_s": 3.0,
+            "gain": 1.0,
+            "smart_role": "caption_punch",
+        },
+        {
+            "id": "whoosh",
+            "src_gcs_path": "sound-effects/whoosh/audio.mp3",
+            "at_s": 3.04,
+            "gain": 1.0,
+            "smart_role": "caption_punch",
+        },
+        {
+            "id": "different-role",
+            "src_gcs_path": "sound-effects/pop/audio.mp3",
+            "at_s": 3.05,
+            "gain": 1.0,
+            "smart_role": "scene_transition",
+        },
+    ]
+
+    normalized = normalize_generated_sound_effects(placements, threshold_s=0.15)
+
+    assert [placement["id"] for placement in normalized] == [
+        "manual",
+        "manual-layer",
+        "impact",
+    ]

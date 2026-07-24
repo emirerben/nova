@@ -30,4 +30,17 @@ describe("sfx-preview-scheduler", () => {
     expect(sfxPlaybackOffsetAt({ at_s: 2, duration_s: 1.5 }, 2.75)).toBeCloseTo(0.75);
     expect(sfxPlaybackOffsetAt({ at_s: 2, duration_s: 1.5 }, 3.75)).toBeNull();
   });
+
+  it("honors trim bounds when computing active playback offset", () => {
+    const placement = {
+      at_s: 2,
+      duration_s: 5,
+      trim_start_s: 1.25,
+      trim_end_s: 2.75,
+    };
+    expect(sfxPlaybackOffsetAt(placement, 1.99)).toBeNull();
+    expect(sfxPlaybackOffsetAt(placement, 2)).toBeCloseTo(1.25);
+    expect(sfxPlaybackOffsetAt(placement, 2.5)).toBeCloseTo(1.75);
+    expect(sfxPlaybackOffsetAt(placement, 3.5)).toBeNull();
+  });
 });

@@ -2,10 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.12.7.0] — 2026-07-24
+## [0.12.8.0] — 2026-07-24
 
 ### Added
 - **Render jobs now explain where the time went.** Nova records content-safe stage timings for generative and subtitled renders, including queueing, asset loading, preprocessing, AI/transcription work, caption and effect preparation, composition, frame rendering, encoding, uploads, retries, and cache hits or misses. Admin job debug now shows a readable render summary before the raw trace, with total queue time, total processing time, slowest stages, repeated stages, retry behavior, and cache behavior. A read-only baseline script can summarize an exported admin debug payload or reachable job without exposing transcripts, prompts, signed URLs, or media content.
+
+## [0.12.7.0] — 2026-07-24
+
+### Added
+- **Uploaded visuals can now carry creator context.** Asset-pool images and videos store a short user note, show it in the visual pool, and pass it into Nova's analysis, visual matching, overlay placement, and Smart Captions planning without overwriting machine-detected subject or brand metadata.
+- **Admin job debugging can now resolve plan items directly.** Admin job lookup supports `content_plan_item_id` and exposes a derived render timing breakdown from phase logs, agent runs, and per-variant render timestamps.
+- **No-song talk-to-camera edits can add background music without becoming song variants.** Background beds are persisted separately from `music_track_id`, can be added or removed from the editor, and render through the fast audio-only treatment path so transcript, visual matching, and unrelated generation steps are not rerun.
+
+### Fixed
+- **Caption edits now point to a real place.** Editor links open the item page's Captions state instead of a missing tab, and subtitled caption cues now appear in the timeline as locked caption bars so visible text is represented honestly.
+- **List titles no longer trigger twitchy camera pulses.** Smart Captions v2 still keeps intentional semantic camera movement, but suppresses redundant/too-short pulses when a list title or text card already carries the beat.
+- **Automatic sound effects no longer stack on the same moment.** Smart Caption SFX, overlay-suggestion SFX, and persisted automatic SFX now share one spacing/deduping rule, while manual overlaps remain possible in the editor.
+- **Persisted sound effects preview on editor open.** Existing glossary and uploaded SFX placements now load signed preview URLs without waiting for the Sounds drawer.
+- **The timeline no longer shows a music bed for videos with no music.** Music rows are based on an actual matched song, voiceover bed, or background music state instead of incidental mix metadata.
+
+## [0.12.6.1] — 2026-07-24
+
+### Fixed
+- **Editor audio is now canonical across preview, save, reload, and export.** Automatically generated sound effects collapse only when they are the same effect at nearly identical timestamps, while manual and intentionally layered effects stay intact. The editor preview now honors the same SFX start time, trim window, duration, and gain data that the render pass uses.
+- **Background music is now a real editable audio lane.** The timeline only shows music when a valid playable music bed exists, and creators can add, replace, trim, remove, mute, and adjust music volume without changing a song/lyrics variant's song identity.
+- **Music and SFX edits now save through audio-only rendering.** Audio timeline edits persist atomically, avoid stale draft objects across variant switches or reloads, and rerun only the minimum audio mix/render work instead of transcription, planning, visual matching, captions, or unrelated AI steps.
 
 ## [0.12.6.0] — 2026-07-24
 

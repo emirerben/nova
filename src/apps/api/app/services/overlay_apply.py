@@ -137,6 +137,8 @@ def apply_suggestions_to_variant(
             return False
         return True
 
+    from app.services.sfx_spacing import normalize_auto_sfx_placements  # noqa: PLC0415
+
     merged_overlays = list(variant.get("media_overlays") or []) + [s.overlay for s in accepted]
     # SFX children are dropped when the flag is off (review C15: partial rollout
     # OVERLAY_AUTOAPPLY on / SOUND_EFFECTS off would otherwise persist SFX that
@@ -146,7 +148,9 @@ def apply_suggestions_to_variant(
         if _settings.sound_effects_enabled
         else []
     )
-    merged_sfx = list(variant.get("sound_effects") or []) + incoming_sfx
+    existing_sfx = list(variant.get("sound_effects") or [])
+    incoming_sfx = normalize_auto_sfx_placements(incoming_sfx, protected=existing_sfx)
+    merged_sfx = existing_sfx + incoming_sfx
 
     # Persist SFX + clear pending suggestions in one write (suggestions are
     # consumed whether the burn dispatch succeeds or raises — a 409 below

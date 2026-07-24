@@ -96,3 +96,54 @@ def coerce_sound_effects(raw: list | None) -> list[SoundEffectPlacement] | None:
         except Exception:  # noqa: BLE001 — bad entry → skip
             pass
     return result or None
+
+
+def normalize_generated_sound_effects(
+    raw: list[dict] | None,
+    *,
+    threshold_s: float = 0.15,
+) -> list[dict]:
+    """Drop near-duplicate generated SFX while preserving manual/layered effects.
+
+    Only placements with generated provenance are considered. Manual timeline
+    effects have no ``smart_*``/autoplace markers and pass through untouched.
+    Same-role typewriter ticks are intentionally dense, so they are never
+    coalesced even when they use one repeated asset.
+    """
+
+    if not raw:
+        return []
+    out: list[dict] = []
+    last_generated_global_at: float | None = None
+    last_generated_at: dict[tuple[str, str], float] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("smart_role") or "")
+        role_key = role or str(item.get("source") or "generated")
+        generated = bool(
+            role
+            or item.get("smart_event_id")
+            or item.get("transcript_hash")
+            or item.get("source") == "smart_captions"
+        )
+        asset = str(item.get("sound_effect_id") or item.get("src_gcs_path") or "")
+        try:
+            at_s = float(item.get("at_s") or 0.0)
+        except (TypeError, ValueError):
+            at_s = 0.0
+        if generated and role_key != "keyword_typewriter_tick":
+            if (
+                last_generated_global_at is not None
+                and abs(at_s - last_generated_global_at) <= threshold_s
+            ):
+                continue
+            last_generated_global_at = at_s
+            if asset:
+                key = (asset, role_key)
+                previous = last_generated_at.get(key)
+                if previous is not None and abs(at_s - previous) <= threshold_s:
+                    continue
+                last_generated_at[key] = at_s
+        out.append(item)
+    return out
