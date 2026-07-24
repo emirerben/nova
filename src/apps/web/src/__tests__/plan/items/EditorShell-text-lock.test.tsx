@@ -331,7 +331,7 @@ describe("EditorShell — Captions-tab notice (discoverability, plan 010 review)
     const notice = screen.getByTestId("captions-tab-notice");
     expect(notice).toHaveTextContent(CAPTIONS_TAB_REASON);
     const link = screen.getByRole("link", { name: "Open the item page Captions tab" });
-    expect(link).toHaveAttribute("href", "/plan/items/item-1");
+    expect(link).toHaveAttribute("href", "/plan/items/item-1?tab=captions&variant=var-sub");
     expect(notice.contains(link)).toBe(true);
   });
 
@@ -601,7 +601,7 @@ describe("EditorShell — Captions signpost keys off archetype, not text_element
     expect(notice).toHaveTextContent(CAPTIONS_TAB_REASON);
     expect(
       screen.getByRole("link", { name: "Open the item page Captions tab" }),
-    ).toHaveAttribute("href", "/plan/items/item-1");
+    ).toHaveAttribute("href", "/plan/items/item-1?tab=captions&variant=var-sub");
   });
 
   it("still shows the notice when text_elements is false, given a base video", async () => {
