@@ -465,6 +465,7 @@ function AssetTile({
   const [editingContext, setEditingContext] = useState(false);
   const [draftContext, setDraftContext] = useState(asset.user_context ?? "");
   const [savingContext, setSavingContext] = useState(false);
+  const [contextError, setContextError] = useState<string | null>(null);
 
   useEffect(() => {
     setDraftContext(asset.user_context ?? "");
@@ -472,9 +473,12 @@ function AssetTile({
 
   async function saveContext() {
     setSavingContext(true);
+    setContextError(null);
     try {
       await onSaveContext(draftContext);
       setEditingContext(false);
+    } catch (err) {
+      setContextError(err instanceof Error ? err.message : "Couldn't save");
     } finally {
       setSavingContext(false);
     }
@@ -563,10 +567,11 @@ function AssetTile({
                 value={draftContext}
                 maxLength={500}
                 rows={3}
-                onChange={(event) => setDraftContext(event.target.value)}
+                onChange={(event) => setDraftContext(event.target.value.slice(0, 500))}
                 className="w-full resize-none rounded-md border border-zinc-200 px-2 py-1.5 text-[12px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
                 placeholder="What should Nova know about this visual?"
               />
+              {contextError && <p className="text-[11px] text-[#3f3f46]">{contextError}</p>}
               <div className="flex justify-end gap-2">
                 <button
                   type="button"

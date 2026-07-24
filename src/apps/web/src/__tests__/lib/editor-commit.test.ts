@@ -129,6 +129,32 @@ describe("buildEditorCommitRequest", () => {
     });
   });
 
+  it("can send text_elements and caption_cues in the same commit", () => {
+    const cue = {
+      text: "Edited caption",
+      start_s: 0,
+      end_s: 1.2,
+      words: [{ text: "Original", start_s: 0, end_s: 0.4 }],
+      smart_role: "hook" as const,
+      smart_word_ids: ["w1"],
+    };
+
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      captionCues: [cue],
+      textDirty: true,
+      captionDirty: true,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+
+    expect(body.text_elements).toEqual([element]);
+    expect(body.caption_cues).toEqual([cue]);
+  });
+
   it("omits lyrics unless dirty and emits toggle-off when requested", () => {
     const clean = buildEditorCommitRequest({
       elements: [],
@@ -328,6 +354,38 @@ describe("buildEditorCommitRequest", () => {
     expect(body.music_track_id).toBe("track-new");
     expect(body.timeline_slots).toBeUndefined();
     expect(body.base_generation).toBe("gen-current");
+  });
+
+  it("sends background music only as an explicitly dirty audio section", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      backgroundMusicDirty: true,
+      backgroundMusic: {
+        track_id: "bed-new",
+        enabled: true,
+        start_s: 2.5,
+        end_s: 12,
+        gain_db: -16,
+        muted: false,
+      },
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+
+    expect(body.background_music).toEqual({
+      track_id: "bed-new",
+      enabled: true,
+      start_s: 2.5,
+      end_s: 12,
+      gain_db: -16,
+      muted: false,
+    });
+    expect(body.music_track_id).toBeUndefined();
+    expect(body.timeline_slots).toBeUndefined();
   });
 
   it("atomically preserves unsaved timeline edits with a song window", () => {

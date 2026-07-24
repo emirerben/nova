@@ -453,6 +453,7 @@ export default function PlanItemPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab") === "captions" ? "captions" : null;
   const itemId = params.id;
   const editorReturnSignal = useMemo(
     () =>
@@ -2135,6 +2136,7 @@ export default function PlanItemPage() {
             }
             renderingAction={renderingAction.current}
             updatedVariantId={updatedVariantId}
+            requestedTab={requestedTab}
             overlaySuggestions={overlaySuggestions.laneEntries}
             onSuggestionEdit={overlaySuggestions.onSuggestionEdit}
             resolveSuggestionAssetUrl={resolveSuggestionAssetUrl}
@@ -2213,6 +2215,7 @@ function FocusedResults({
   onChangeLayout,
   renderingAction,
   updatedVariantId,
+  requestedTab,
   overlaySuggestions,
   onSuggestionEdit,
   resolveSuggestionAssetUrl,
@@ -2237,6 +2240,7 @@ function FocusedResults({
   onChangeLayout: (layout: "linear" | "cluster") => Promise<void>;
   renderingAction: { type: "song" | "text" | "style" | "other"; label: string } | null;
   updatedVariantId: string | null;
+  requestedTab: EditorTab | null;
   /** 006 T3: pending AI suggestions for the timeline lanes (from the page's
    *  useOverlaySuggestionState — same envelopes SuggestionRail reviews). */
   overlaySuggestions?: SuggestionLaneEntry[];
@@ -2256,6 +2260,7 @@ function FocusedResults({
   // Previously this was state set via onTextPanelChange from UnifiedTimeline; that callback was
   // removed in T5 when the expandable textPanel slot was replaced by the interactive bar lane.
   const textLaneOpen = activeTab === "timeline" && !!variant && variant.text_mode !== "none";
+  const requestedTabAppliedRef = useRef<string | null>(null);
 
   // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
   const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
@@ -2464,6 +2469,15 @@ function FocusedResults({
   // auto-open on a clean, ready load with cues present, exactly once per mount.
   const autoOpenedCaptionsRef = useRef(false);
   const pendingCaptionScrollRef = useRef(false);
+  useEffect(() => {
+    if (requestedTab !== "captions" || !variant) return;
+    const key = `${variant.variant_id}:captions`;
+    if (requestedTabAppliedRef.current === key) return;
+    requestedTabAppliedRef.current = key;
+    pendingCaptionScrollRef.current = true;
+    autoOpenedCaptionsRef.current = true;
+    setActiveTab("captions");
+  }, [requestedTab, variant]);
   useEffect(() => {
     if (autoOpenedCaptionsRef.current) return;
     if (activeTab !== null) return; // user already picked a tab — don't override

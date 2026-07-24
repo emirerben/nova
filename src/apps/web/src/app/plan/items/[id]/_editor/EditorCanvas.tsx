@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CameraEffect,
   MediaOverlay,
   PlanItemVariant,
   PoolAsset,
@@ -26,6 +27,7 @@ import type {
   TextElement,
   VisualBlock,
 } from "@/lib/plan-api";
+import { cameraScaleAt } from "@/lib/camera-effects";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import {
   resolveTextElementsLayout,
@@ -36,6 +38,7 @@ import {
   MAX_WIDTH_FRAC_MIN,
   resolveTextElementYFrac,
 } from "@/lib/overlay-layout";
+import { isCaptionBar } from "./editor-bars";
 import {
   animationStateAt,
   normalizeAnimatedRevealText,
@@ -129,6 +132,7 @@ export default function EditorCanvas({
   bars,
   mediaOverlays = [],
   visualBlocks = [],
+  cameraEffects = [],
   visualAssets = [],
   overlayPreviewUrls = {},
   suggestedOverlayIds,
@@ -166,6 +170,7 @@ export default function EditorCanvas({
   bars: TextElementBar[];
   mediaOverlays?: MediaOverlay[];
   visualBlocks?: VisualBlock[];
+  cameraEffects?: CameraEffect[];
   visualAssets?: PoolAsset[];
   overlayPreviewUrls?: Record<string, string>;
   /** Overlay ids that came from ✓-accepted AI suggestions — dashed ✦
@@ -262,25 +267,32 @@ export default function EditorCanvas({
   const visibleCaption = useMemo(() => {
     if (
       !captionPreviewUsesCleanBase ||
-      variant.resolved_archetype !== "subtitled" ||
+      (variant.resolved_archetype !== "subtitled" &&
+        variant.resolved_archetype !== "narrated") ||
       variant.captions_enabled === false ||
-      !variant.caption_cues?.length
+      !bars.some(isCaptionBar)
     ) {
       return null;
     }
-    const cue = variant.caption_cues.find(
+    const bar = bars.filter(isCaptionBar).find(
       (candidate) => currentTime >= candidate.start_s && currentTime < candidate.end_s,
     );
-    if (!cue) return null;
-    if (variant.voiceover_caption_style === "word" && cue.words?.length) {
+    if (!bar) return null;
+    const cueIndex = Number(bar.id.match(/^caption-(\d+)$/)?.[1]);
+    const originalCue = Number.isFinite(cueIndex) ? variant.caption_cues?.[cueIndex] : null;
+    if (
+      variant.voiceover_caption_style === "word" &&
+      originalCue?.words?.length &&
+      originalCue.text === bar.text
+    ) {
       return (
-        cue.words.find(
+        originalCue.words.find(
           (word) => currentTime >= word.start_s && currentTime < word.end_s,
         )?.text ?? null
       );
     }
-    return cue.text;
-  }, [captionPreviewUsesCleanBase, currentTime, variant]);
+    return bar.text;
+  }, [bars, captionPreviewUsesCleanBase, currentTime, variant]);
   const captionFontFamily = useMemo(() => {
     const selected = INTRO_FONTS.find((font) => font.name === variant.voiceover_caption_font);
     return selected?.cssFamily ?? "'TikTok Sans', 'Inter', system-ui, sans-serif";
@@ -700,6 +712,12 @@ export default function EditorCanvas({
   // centered 16:9 composition the server will produce on Save. Portrait keeps
   // its historical contain behavior.
   const videoFitClass = canvas.w > canvas.h ? "object-cover" : "object-contain";
+  const cameraScale = cameraScaleAt(cameraEffects, currentTime);
+  const cameraTransform = {
+    transform: `scale(${cameraScale})`,
+    transformOrigin: "50% 50%",
+    zIndex: EDITOR_STAGE_Z.video,
+  };
 
   return (
     <div
@@ -745,7 +763,7 @@ export default function EditorCanvas({
                     `pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`,
                     virtualPreview.activeDeck === "a" ? "opacity-100" : "opacity-0",
                   ].join(" ")}
-                  style={{ zIndex: EDITOR_STAGE_Z.video }}
+                  style={cameraTransform}
                 />
                 <video
                   {...virtualVideoBProps}
@@ -754,7 +772,7 @@ export default function EditorCanvas({
                     `pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`,
                     virtualPreview.activeDeck === "b" ? "opacity-100" : "opacity-0",
                   ].join(" ")}
-                  style={{ zIndex: EDITOR_STAGE_Z.video }}
+                  style={cameraTransform}
                 />
                 {virtualMusicAudioProps && (
                   <audio
@@ -772,7 +790,7 @@ export default function EditorCanvas({
                 playsInline
                 preload="auto"
                 className={`pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`}
-                style={{ zIndex: EDITOR_STAGE_Z.video }}
+                style={cameraTransform}
                 onTimeUpdate={(e) => onTimeUpdate((e.target as HTMLVideoElement).currentTime)}
                 onLoadedMetadata={(e) => {
                   const d = (e.target as HTMLVideoElement).duration;

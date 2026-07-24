@@ -123,6 +123,8 @@ def _commit_req(**kw) -> gj.EditorCommitRequest:
 def _music_track(**overrides):
     values = {
         "id": "t1",
+        "title": "Track One",
+        "artist": "Nova",
         "analysis_status": "ready",
         "audio_gcs_path": "music/t1.m4a",
         "duration_s": 12.0,
@@ -365,11 +367,13 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "timeline": True,
         "mix": True,
         "music": False,
+        "background_music": False,
         "lyrics": False,
         "orientation": False,
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "camera_effects": False,
     }
 
     # Exactly ONE render kick, carrying the new token + the timeline override.
@@ -457,11 +461,13 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "timeline": False,
         "mix": False,
         "music": False,
+        "background_music": False,
         "lyrics": False,
         "orientation": False,
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "camera_effects": False,
     }
 
     calls: list[dict] = []
@@ -481,6 +487,91 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
             "queue": "overlay-jobs",
         }
     ]
+
+
+def test_subtitled_caption_commit_persists_metadata_and_reburns_caption_task(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        caption_cues=[
+            {
+                "text": "Old line",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "words": [{"text": "Old", "start_s": 0.0, "end_s": 0.4}],
+                "smart_role": "hook",
+                "smart_word_ids": ["w000001"],
+            }
+        ],
+        mix=None,
+    )
+    cues = [
+        {
+            "text": "Updated line",
+            "start_s": 0.1,
+            "end_s": 1.2,
+            "words": [{"text": "Old", "start_s": 0.0, "end_s": 0.4}],
+            "smart_role": "hook",
+            "smart_word_ids": ["w000001"],
+        }
+    ]
+
+    prep = gj.prepare_editor_commit(job, "subtitled", _commit_req(caption_cues=cues))
+
+    v = job.assembly_plan["variants"][0]
+    assert v["caption_cues"] == cues
+    assert v["render_generation_id"] == prep["generation"]
+    assert v["render_status"] == "rendering"
+    assert prep["sections"]["caption_cues"] is True
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        REBURN_NARRATED,
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "subtitled", prep)
+    assert calls == [
+        {
+            "args": [str(job.id), "subtitled"],
+            "kwargs": {"render_gen_id": prep["generation"]},
+            "queue": "overlay-jobs",
+        }
+    ]
+
+
+def test_subtitled_mixed_caption_and_text_commit_persists_both(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "subtitled_text_lane_enabled", True, raising=False)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        caption_cues=[{"text": "Old caption", "start_s": 0.0, "end_s": 1.0}],
+        mix=None,
+    )
+    caption_cues = [{"text": "Edited caption", "start_s": 0.0, "end_s": 1.0}]
+    text_elements = [{**_VALID_ELEMENT, "id": "smart-title", "text": "Edited smart title"}]
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "subtitled",
+        _commit_req(caption_cues=caption_cues, text_elements=text_elements),
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["caption_cues"] == caption_cues
+    assert v["text_elements"][0]["id"] == "smart-title"
+    assert v["text_elements"][0]["text"] == "Edited smart title"
+    assert v["text_elements_user_edited"] is True
+    assert prep["sections"]["caption_cues"] is True
+    assert prep["sections"]["text_elements"] is True
 
 
 def test_narrated_caption_meta_commit_persists_and_reburns_caption_task(monkeypatch):
@@ -556,8 +647,7 @@ def test_narrated_caption_meta_font_null_resets_when_font_set(monkeypatch):
 
 def test_subtitled_caption_meta_commit_persists_and_reburns_caption_task(monkeypatch):
     """Meta toggles (style/font/enabled/position) work on subtitled variants —
-    the copilot's set_caption_meta rides this path. Transcript cues stay owned
-    by the Captions tab."""
+    the copilot's set_caption_meta rides this path."""
     _arm(monkeypatch)
     job = _job(
         variant_id="subtitled",
@@ -696,6 +786,88 @@ def test_music_commit_validates_ready_track_and_kicks_one_full_render(monkeypatc
     assert calls[0]["kwargs"]["new_track_id"] == "t2"
 
 
+def test_background_music_commit_persists_separate_bed_for_no_song_variant(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(variant_id="original_text", music_track_id=None, mix=None)
+    track = _music_track(id="t2", title="Bed Track", audio_gcs_path="music/t2.mp3")
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "original_text",
+        _commit_req(
+            background_music=gj.EditorCommitBackgroundMusic(
+                track_id="t2",
+                start_s=2.0,
+                level=0.25,
+            )
+        ),
+        background_music_track=track,
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["music_track_id"] is None
+    assert v["smart_music_treatment"] == {
+        "track_id": "t2",
+        "src_gcs_path": "music/t2.mp3",
+        "section_start_s": 2.0,
+        "section_end_s": 5.0,
+        "gain_db": -18.0,
+        "speech_duck_db": -12.0,
+        "final_lufs": -14.0,
+    }
+    assert prep["sections"]["background_music"] is True
+    assert prep["sections"]["music"] is False
+    assert prep["new_track_id"] is None
+
+
+def test_background_music_commit_routes_to_fast_audio_pass(monkeypatch):
+    _arm(monkeypatch)
+    prep = {
+        "generation": "gen1",
+        "has_render_section": True,
+        "timeline_override": None,
+        "mix_override": None,
+        "sfx_override": None,
+        "media_overlays_override": None,
+        "visual_blocks_override": None,
+        "orientation_override": None,
+        "new_track_id": None,
+        "music_window_alignment": None,
+        "text_requires_full_render": False,
+        "resolved_archetype": "subtitled",
+        "has_caption_base": False,
+        "sections": {
+            "text_elements": False,
+            "caption_cues": False,
+            "caption_meta": False,
+            "timeline": False,
+            "mix": False,
+            "music": False,
+            "background_music": True,
+            "lyrics": False,
+            "orientation": False,
+            "sound_effects": False,
+            "media_overlays": False,
+            "visual_blocks": False,
+        },
+    }
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+
+    gj.enqueue_editor_commit_render("job1", "original_text", prep)
+
+    assert len(calls) == 1
+    assert calls[0]["queue"] == "overlay-jobs"
+    assert calls[0]["kwargs"] == {
+        "render_gen_id": "gen1",
+        "sfx_override": [],
+    }
+
+
 @pytest.mark.parametrize(
     ("variant_extra", "track"),
     [
@@ -772,6 +944,141 @@ def test_sfx_only_commit_persists_and_kicks_sfx_pass(monkeypatch):
     assert calls[0]["kwargs"]["sfx_override"][0]["src_gcs_path"] == (
         "users/u123/plan/item/sfx/pop.mp3"
     )
+
+
+def test_background_music_only_commit_persists_and_kicks_audio_pass(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(music_track_id=None, mix=None)
+    track = _music_track(id="bed-1", audio_gcs_path="music/bed-1/audio.m4a", duration_s=30.0)
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            background_music=gj.EditorCommitBackgroundMusic(
+                track_id="bed-1",
+                start_s=2.5,
+                end_s=14.0,
+                gain_db=-16.0,
+                muted=False,
+            )
+        ),
+        background_music_track=track,
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["smart_music_treatment"] == {
+        "track_id": "bed-1",
+        "src_gcs_path": "music/bed-1/audio.m4a",
+        "section_start_s": 2.5,
+        "section_end_s": 14.0,
+        "gain_db": -16.0,
+        "speech_duck_db": -12.0,
+        "final_lufs": -14.0,
+    }
+    assert v["smart_audio_receipt"] is None
+    assert prep["sections"]["background_music"] is True
+    assert prep["sections"]["sound_effects"] is False
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    assert len(calls) == 1
+    assert calls[0]["queue"] == "overlay-jobs"
+    assert calls[0]["kwargs"]["render_gen_id"] == prep["generation"]
+    assert calls[0]["kwargs"]["sfx_override"] == []
+    assert "timeline_override" not in calls[0]["kwargs"]
+    assert "music_track_id" not in calls[0]["kwargs"]
+
+
+@pytest.mark.parametrize(
+    "track",
+    [
+        None,
+        _music_track(analysis_status="failed"),
+        _music_track(published_at=None),
+        _music_track(archived_at="2026-07-02T00:00:00Z"),
+        _music_track(audio_gcs_path="users/u/not-library.m4a"),
+    ],
+)
+def test_background_music_validation_rejects_unusable_tracks_without_partial_write(
+    monkeypatch,
+    track,
+):
+    _arm(monkeypatch)
+    job = _job(music_track_id=None, mix=None)
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                background_music=gj.EditorCommitBackgroundMusic(
+                    track_id="bed-1",
+                    start_s=0.0,
+                    end_s=8.0,
+                    gain_db=-18.0,
+                )
+            ),
+            background_music_track=track,
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {"code": "music_track_unavailable"}
+    assert job.assembly_plan == before
+
+
+def test_clearing_background_music_preserves_sfx_in_audio_pass(monkeypatch):
+    _arm(monkeypatch)
+    sfx = [
+        {
+            "id": "sfx-keep",
+            "sound_effect_id": None,
+            "src_gcs_path": "users/u123/plan/item/sfx/pop.mp3",
+            "at_s": 1.2,
+            "gain": 0.8,
+            "duration_s": 0.6,
+        }
+    ]
+    job = _job(
+        music_track_id=None,
+        mix=None,
+        sound_effects=sfx,
+        smart_music_treatment={
+            "track_id": "bed-1",
+            "src_gcs_path": "music/bed-1/audio.m4a",
+            "section_start_s": 0.0,
+            "section_end_s": 10.0,
+            "gain_db": -18.0,
+        },
+        smart_audio_receipt={"final_tier": "full"},
+    )
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(background_music=gj.EditorCommitBackgroundMusic(track_id=None, enabled=False)),
+        user_id="u123",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["smart_music_treatment"] is None
+    assert v["smart_audio_receipt"] is None
+    assert v["sound_effects"][0]["id"] == "sfx-keep"
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    assert calls[0]["kwargs"]["sfx_override"][0]["id"] == "sfx-keep"
 
 
 def test_overlay_only_commit_persists_and_kicks_overlay_pass(monkeypatch):
@@ -1605,11 +1912,13 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "timeline": False,
         "mix": False,
         "music": False,
+        "background_music": False,
         "lyrics": False,
         "orientation": False,
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "camera_effects": False,
         "title": True,
     }
     v = job.assembly_plan["variants"][0]
@@ -2181,12 +2490,15 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "sfx": True,
         "overlays": True,
         "visual_blocks": False,
+        "camera_effects": False,
+        "background_music": False,
         # _arm leaves overlay_autoplace_enabled at its default (False).
         "suggestions": False,
         "reason": None,
         "sfx_reason": None,
         "overlays_reason": None,
         "visual_blocks_reason": "visual_blocks_disabled",
+        "camera_effects_reason": "unsupported_archetype",
         "suggestions_reason": "autoplace_disabled",
         "lyrics": {
             "editable": False,
@@ -2370,9 +2682,9 @@ def test_capabilities_subtitled_caption_archetype_text_elements_on(monkeypatch):
     )
     caps = _caps(job, "subtitled")
     assert caps["text_elements"] is True
-    # The reason sentence still points at the Captions tab — the text lane
-    # unlocks text tools, not the captions surface (#625 × plan 010).
-    assert caps["reason"] == "Captions for this edit are managed in the Captions tab"
+    # The reason sentence remains caption-specific even when the optional
+    # styled-text lane unlocks text tools (#625 × plan 010).
+    assert caps["reason"] == "Captions can be selected and edited in this editor"
     # Plan 010: manual SFX/overlay lanes are open on caption archetypes.
     assert caps["sfx"] is True
     assert caps["overlays"] is True
@@ -2591,8 +2903,8 @@ def test_commit_keeps_envelope_when_accepted_card_not_committed(monkeypatch):
 
 def test_caption_tab_copy_literal_is_byte_stable():
     """The FE string-compares this sentence (CAPTIONS_TAB_REASON in
-    editor-capabilities.ts) to decide whether to render the Captions-tab deep
-    link. Rewording EITHER side silently drops the link — this pin makes the
-    backend half of the contract fail loudly instead. Mirror pin lives in
+    editor-capabilities.ts). Rewording EITHER side silently drifts the editor's
+    disabled-state copy — this pin makes the backend half of the contract fail
+    loudly instead. Mirror pin lives in
     src/apps/web/src/__tests__/plan/items/editor-capabilities.test.tsx."""
-    assert gj.CAPTION_TAB_COPY == "Captions for this edit are managed in the Captions tab"
+    assert gj.CAPTION_TAB_COPY == "Captions can be selected and edited in this editor"

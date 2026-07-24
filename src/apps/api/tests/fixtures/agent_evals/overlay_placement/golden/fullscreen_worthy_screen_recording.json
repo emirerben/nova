@@ -24,6 +24,7 @@
         "kind": "video",
         "subject": "screen recording of the payload builder animating",
         "description": "dark UI, progress bars filling as the payload assembles",
+        "user_context": "This is the exact product screen the speaker means by payload builder.",
         "on_screen_text": "it builds a payload",
         "duration_s": 6.0,
         "aspect": 0.5625,
@@ -35,6 +36,7 @@
         "kind": "image",
         "subject": "wide landscape photo of an office",
         "description": "panorama of a desk setup",
+        "user_context": "General office context only; not the payload builder being described.",
         "on_screen_text": "",
         "duration_s": null,
         "aspect": 2.4,
@@ -64,6 +66,6 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "portrait screen recording IS the thing being described -> slot full, outside the hook, whoosh; panorama photo NOT chosen for full"
+    "case": "portrait screen recording IS the thing being described -> slot full, outside the hook, whoosh; creator context reinforces the match; panorama photo NOT chosen for full"
   }
 }

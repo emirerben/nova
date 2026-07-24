@@ -22,6 +22,7 @@ export type JobTypeFilter =
 
 export interface AdminJobListItem {
   job_id: string;
+  content_plan_item_id?: string | null;
   job_type: string;
   mode: string | null;
   status: string;
@@ -111,9 +112,38 @@ export interface PipelineTraceEvent {
   data: Record<string, unknown>;
 }
 
+export interface RenderSummary {
+  trace_id: string | null;
+  total_queue_ms: number | null;
+  total_processing_ms: number | null;
+  slowest_stages: Array<{
+    stage: string;
+    elapsed_ms: number;
+    status?: string;
+    variant_id?: string;
+  }>;
+  repeated_stages: Array<{ stage: string; count: number }>;
+  retries: Array<{
+    stage: string;
+    status?: string;
+    attempt?: number;
+    retry?: Record<string, unknown>;
+  }>;
+  cache: Record<string, Record<string, number>>;
+  attempts: Array<{
+    trace_id: string | null;
+    render_generation_id: string | null;
+    stage_count: number;
+    elapsed_ms: number;
+    variants: string[];
+  }>;
+  agent_work_ms?: number | null;
+}
+
 export interface JobPayload {
   id: string;
   user_id: string;
+  content_plan_item_id?: string | null;
   status: string;
   job_type: string;
   mode: string | null;
@@ -163,6 +193,21 @@ export interface JobRuntimePayload {
   queue_position: number | null;
 }
 
+export interface RenderTimingStagePayload {
+  name: string;
+  elapsed_ms: number | null;
+  source: string;
+  details: unknown;
+}
+
+export interface RenderTimingBreakdownPayload {
+  queue_wait_ms: number | null;
+  processing_ms: number | null;
+  total_ms: number | null;
+  stages: RenderTimingStagePayload[];
+  repeated_work: string[];
+}
+
 export interface TemplateSummary {
   id: string;
   name: string;
@@ -194,6 +239,8 @@ export interface JobDebugResponse {
   track_agent_runs_has_more: boolean;
   context_runs_cap: number;
   runtime: JobRuntimePayload;
+  render_summary?: RenderSummary | null;
+  render_timing?: RenderTimingBreakdownPayload;
 }
 
 export interface QueueInfoPayload {
@@ -237,6 +284,7 @@ async function _adminJson<T>(path: string): Promise<T> {
 export interface ListJobsParams {
   jobType?: JobTypeFilter;
   status?: string;
+  contentPlanItemId?: string;
   onlyFailures?: boolean;
   limit?: number;
   offset?: number;
@@ -248,6 +296,7 @@ export async function adminListJobs(
   const qs = new URLSearchParams();
   if (params.jobType && params.jobType !== "all") qs.set("job_type", params.jobType);
   if (params.status) qs.set("status", params.status);
+  if (params.contentPlanItemId) qs.set("content_plan_item_id", params.contentPlanItemId);
   if (params.onlyFailures) qs.set("only_failures", "true");
   qs.set("limit", String(params.limit ?? 50));
   qs.set("offset", String(params.offset ?? 0));

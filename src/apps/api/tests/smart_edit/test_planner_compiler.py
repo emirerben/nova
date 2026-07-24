@@ -12,6 +12,7 @@ from app.agents.smart_edit_planner import (
     SmartPlannerCandidate,
     SmartPlannerProposal,
 )
+from app.pipeline.camera_effects import camera_effects_from_intents
 from app.smart_edit.compiler import compile_smart_plan, resolve_sfx_placements
 from app.smart_edit.planner import _merge_agent_with_guards, plan_smart_captions
 from app.smart_edit.presets import load_preset
@@ -116,6 +117,66 @@ def test_turkish_talking_head_compiles_semantic_caption_number_title_and_sfx_lan
     ]
 
 
+def test_camera_intents_materialize_stable_editable_effects_without_duplicates() -> None:
+    intent = {
+        "event_id": "event-list-1",
+        "role": "list_item",
+        "token": "semantic_crop_pulse",
+        "at_s": 3.0,
+        "start_s": 3.0,
+        "end_s": 3.8,
+    }
+
+    generated_only = camera_effects_from_intents([intent], duration_s=12.0)
+    assert generated_only == [
+        {
+            "id": "camera-event-list-1",
+            "token": "semantic_crop_pulse",
+            "start_s": 3.0,
+            "end_s": 4.2,
+            "intensity": 0.04,
+            "easing": "sine_pulse",
+            "source": "smart_captions",
+            "event_id": "event-list-1",
+            "role": "list_item",
+        }
+    ]
+
+    effects = camera_effects_from_intents(
+        [intent, dict(intent)],
+        existing_effects=[
+            {
+                "id": "camera-event-list-1",
+                "event_id": "event-list-1",
+                "role": "list_item",
+                "start_s": 3.1,
+                "end_s": 4.0,
+                "intensity": 0.02,
+                "easing": "sine_pulse",
+                "source": "user",
+            },
+            {
+                "id": "user-camera",
+                "start_s": 8.0,
+                "end_s": 8.7,
+                "intensity": 0.02,
+                "easing": "sine_pulse",
+                "source": "user",
+            },
+        ],
+        duration_s=12.0,
+    )
+
+    assert [effect["id"] for effect in effects] == ["camera-event-list-1", "user-camera"]
+    edited = effects[0]
+    assert edited["source"] == "user"
+    assert edited["role"] == "list_item"
+    assert edited["start_s"] == pytest.approx(3.1)
+    assert edited["end_s"] == pytest.approx(4.0)
+    assert edited["intensity"] == pytest.approx(0.02)
+    assert edited["easing"] == "sine_pulse"
+
+
 def test_smart_sfx_never_falls_back_to_unrelated_voice_clip() -> None:
     intents = [
         {
@@ -160,6 +221,88 @@ def test_smart_sfx_never_falls_back_to_unrelated_voice_clip() -> None:
     assert len(resolved) == 1
     assert resolved[0]["sound_effect_id"] == "pop"
     assert resolved[0]["gain"] == 0.48
+
+
+def test_smart_sfx_spacing_drops_different_roles_at_same_timestamp() -> None:
+    intents = [
+        {"event_id": "a" * 24, "role": "chapter_number_pop", "at_s": 5.0},
+        {"event_id": "b" * 24, "role": "cta_click", "at_s": 5.0},
+    ]
+    glossary = [
+        {
+            "id": "pop",
+            "name": "clean soft pop",
+            "audio_gcs_path": "sound-effects/pop/audio.wav",
+            "duration_s": 0.3,
+            "role_tags": ["chapter_number_pop"],
+            "contains_voice": False,
+            "vocal_probability": 0.0,
+            "manual_audit_status": "approved",
+        },
+        {
+            "id": "click",
+            "name": "clean click",
+            "audio_gcs_path": "sound-effects/click/audio.wav",
+            "duration_s": 0.2,
+            "role_tags": ["cta_click"],
+            "contains_voice": False,
+            "vocal_probability": 0.0,
+            "manual_audit_status": "approved",
+        },
+    ]
+
+    resolved = resolve_sfx_placements(intents, glossary)
+
+    assert len(resolved) == 1
+    assert resolved[0]["at_s"] == 5.0
+
+
+def test_list_title_suppresses_redundant_camera_pulse() -> None:
+    document = SmartEditPlanDocument.model_validate(
+        {
+            "schema_version": SMART_EDIT_SCHEMA_VERSION_V2,
+            "preset_id": "cigdem",
+            "preset_version": "v2",
+            "baseline_captions": [
+                {"cue_id": "cue-1", "word_ids": ["w000001"], "display_text": "Birincisi"}
+            ],
+            "events": [
+                {
+                    "event_id": "1" * 24,
+                    "role": "list_item",
+                    "start_word_id": "w000001",
+                    "end_word_id": "w000001",
+                    "anchor": {"word_id": "w000001"},
+                    "active_start_ms": 1000,
+                    "active_end_ms": 2000,
+                    "confidence_tier": "high",
+                    "lanes": [
+                        {
+                            "kind": "text",
+                            "token": "section_heading",
+                            "transcript_word_ids": ["w000001"],
+                            "transform": "list_number_from_sequence",
+                            "sequence_number": 1,
+                        },
+                        {
+                            "kind": "camera",
+                            "token": "semantic_crop_pulse",
+                            "intensity_token": "subtle",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    cues = [{"text": "Birincisi", "start_s": 1.0, "end_s": 2.0, "words": []}]
+
+    compiled = compile_smart_plan(document, cues)
+
+    assert compiled.camera_intents == []
+    assert {
+        "event_id": "1" * 24,
+        "reason": "camera_suppressed_for_title",
+    } in compiled.validation_receipt["omissions"]
 
 
 def test_planner_returns_none_for_empty_caption_input() -> None:

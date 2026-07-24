@@ -7,6 +7,7 @@ import { sfxPlaybackOffsetAt } from "@/lib/sfx-preview-scheduler";
 interface SfxAudioEntry {
   placement: SoundEffectPlacement;
   audio: HTMLAudioElement;
+  gainNode: GainNode | null;
   scheduledAt: number | null; // timeout id
 }
 
@@ -24,10 +25,29 @@ export function useSfxPreview(
 ) {
   const entriesRef = useRef<SfxAudioEntry[]>([]);
   const timeoutsRef = useRef<number[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   function clearTimeouts() {
     timeoutsRef.current.forEach((t) => clearTimeout(t));
     timeoutsRef.current = [];
+  }
+
+  function setPreviewGain(entry: SfxAudioEntry) {
+    const gain = Math.max(0, Math.min(4, entry.placement.gain ?? 1));
+    if (entry.gainNode) {
+      entry.audio.volume = 1;
+      entry.gainNode.gain.value = gain;
+      return;
+    }
+    entry.audio.volume = Math.max(0, Math.min(1, gain));
+  }
+
+  function playPreviewAudio(audio: HTMLAudioElement) {
+    const ctx = audioContextRef.current;
+    if (ctx?.state === "suspended") {
+      void ctx.resume().catch(() => {});
+    }
+    void audio.play().catch(() => {});
   }
 
   function syncAll(video: HTMLVideoElement) {
@@ -39,11 +59,12 @@ export function useSfxPreview(
       if (!url) { audio.pause(); continue; }
       if (audio.src !== url) {
         audio.src = url;
-        audio.volume = Math.min(2, Math.max(0, placement.gain ?? 1));
         audio.load();
       }
+      setPreviewGain(entry);
 
       const offsetInSfx = now - placement.at_s;
+      const trimStartS = Math.max(0, placement.trim_start_s ?? 0);
       const activeOffset = sfxPlaybackOffsetAt(
         placement,
         now,
@@ -59,7 +80,7 @@ export function useSfxPreview(
         if (activeOffset != null) {
           // Already past the start — play from offset
           audio.currentTime = activeOffset;
-          audio.play().catch(() => {});
+          playPreviewAudio(audio);
         } else if (offsetInSfx >= 0) {
           audio.pause();
         } else {
@@ -68,8 +89,8 @@ export function useSfxPreview(
           const delayMs = -offsetInSfx * 1000;
           const tid = window.setTimeout(() => {
             if (!video.paused) {
-              audio.currentTime = 0;
-              audio.play().catch(() => {});
+              audio.currentTime = trimStartS;
+              playPreviewAudio(audio);
             }
           }, delayMs);
           timeoutsRef.current.push(tid);
@@ -90,10 +111,27 @@ export function useSfxPreview(
     entriesRef.current = placements.map((p) => {
       const audio = new Audio();
       audio.preload = "auto";
-      audio.volume = Math.min(2, Math.max(0, p.gain ?? 1));
+      let gainNode: GainNode | null = null;
+      try {
+        const AudioContextCtor =
+          window.AudioContext ??
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (AudioContextCtor) {
+          const ctx = audioContextRef.current ?? new AudioContextCtor();
+          audioContextRef.current = ctx;
+          const source = ctx.createMediaElementSource(audio);
+          gainNode = ctx.createGain();
+          source.connect(gainNode);
+          gainNode.connect(ctx.destination);
+        }
+      } catch {
+        gainNode = null;
+      }
       const url = audioUrls[p.src_gcs_path] || audioUrls[p.id] || (p as unknown as { _previewUrl?: string })._previewUrl;
       if (url) { audio.src = url; audio.load(); }
-      return { placement: p, audio, scheduledAt: null };
+      const entry = { placement: p, audio, gainNode, scheduledAt: null };
+      setPreviewGain(entry);
+      return entry;
     });
 
     const video = videoRef.current;

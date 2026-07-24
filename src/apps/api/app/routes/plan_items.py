@@ -2458,6 +2458,7 @@ async def editor_commit_item(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
 
     selected_music_track = None
+    selected_background_music_track = None
     if commit_body.music_track_id is not None:
         selected_music_track = (
             await db.execute(select(MusicTrack).where(MusicTrack.id == commit_body.music_track_id))
@@ -2477,6 +2478,27 @@ async def editor_commit_item(
                     select(MusicTrack).where(MusicTrack.id == locked_variant.get("music_track_id"))
                 )
             ).scalar_one_or_none()
+    if (
+        commit_body.background_music is not None
+        and not commit_body.background_music.remove
+        and commit_body.background_music.track_id
+    ):
+        selected_background_music_track = (
+            await db.execute(
+                select(MusicTrack).where(MusicTrack.id == commit_body.background_music.track_id)
+            )
+        ).scalar_one_or_none()
+
+    selected_background_music_track = None
+    if (
+        commit_body.background_music is not None
+        and commit_body.background_music.track_id is not None
+    ):
+        selected_background_music_track = (
+            await db.execute(
+                select(MusicTrack).where(MusicTrack.id == commit_body.background_music.track_id)
+            )
+        ).scalar_one_or_none()
 
     visual_assets: dict[str, dict] | None = None
     if commit_body.visual_blocks is not None:
@@ -2490,6 +2512,7 @@ async def editor_commit_item(
                 "status": row.status,
                 "gcs_path": row.gcs_path,
                 "kind": row.kind,
+                "user_context": getattr(row, "user_context", None),
             }
             for row in rows
         }
@@ -2500,6 +2523,7 @@ async def editor_commit_item(
         commit_body,
         user_id=str(user.id),
         music_track=selected_music_track,
+        background_music_track=selected_background_music_track,
         visual_assets=visual_assets,
     )
 
@@ -2539,11 +2563,13 @@ async def editor_commit_item(
             timeline=prep["sections"]["timeline"],
             mix=prep["sections"]["mix"],
             music=prep["sections"]["music"],
+            background_music=prep["sections"]["background_music"],
             lyrics=prep["sections"]["lyrics"],
             orientation=prep["sections"]["orientation"],
             sound_effects=prep["sections"]["sound_effects"],
             media_overlays=prep["sections"]["media_overlays"],
             visual_blocks=prep["sections"]["visual_blocks"],
+            camera_effects=prep["sections"].get("camera_effects", False),
             title=cleaned_title is not None,
         ),
     )
@@ -3239,6 +3265,7 @@ async def transcript_recorded(
 # Objects land under the persistent users/{uid}/plan/{item_id}/pool/ prefix.
 
 _MAX_POOL_ASSETS = 20  # plan 005 finding 9: cap + dedupe keep analysis spend bounded
+_MAX_POOL_CONTEXT_CHARS = 500
 
 
 def _require_autoplace() -> None:
@@ -3328,6 +3355,7 @@ class RegisterAssetBody(BaseModel):
     content_type: str
     content_hash: str | None = None
     source_filename: str | None = None
+    user_context: str | None = Field(default=None, max_length=_MAX_POOL_CONTEXT_CHARS)
 
 
 class PoolAssetOut(BaseModel):
@@ -3363,6 +3391,13 @@ class PoolAssetOut(BaseModel):
     source_type: str | None = None
     source_clip_index: int | None = None
     source_timestamp_s: float | None = None
+
+
+def _clean_pool_asset_context(value: str | None) -> str | None:
+    cleaned = _sanitize_text(str(value or "")).strip()
+    if not cleaned:
+        return None
+    return cleaned[:_MAX_POOL_CONTEXT_CHARS]
 
 
 def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
@@ -3451,6 +3486,11 @@ async def register_pool_asset(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            cleaned_context = _clean_pool_asset_context(body.user_context)
+            if body.user_context is not None and existing.user_context != cleaned_context:
+                existing.user_context = cleaned_context
+                await db.commit()
+                await db.refresh(existing)
             return _asset_out(existing, deduped=True)
     count = int(
         (
@@ -3473,6 +3513,7 @@ async def register_pool_asset(
         kind=_asset_kind_for_content_type(body.content_type),
         content_hash=body.content_hash,
         source_filename=body.source_filename,
+        user_context=_clean_pool_asset_context(body.user_context),
         status="uploaded",
     )
     db.add(asset)

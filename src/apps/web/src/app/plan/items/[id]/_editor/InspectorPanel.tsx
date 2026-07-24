@@ -48,8 +48,14 @@ import {
 import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { formatTimecode } from "@/lib/timeline/time-format";
-import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
+import type { CameraEffect, MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
+import {
+  CAMERA_EFFECT_MAX_DURATION_S,
+  CAMERA_EFFECT_MAX_INTENSITY,
+  CAMERA_EFFECT_MIN_DURATION_S,
+} from "@/lib/camera-effects";
 import type { MusicTrackSummary } from "@/lib/music-api";
+import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { EditorSelection } from "./useEditorSelection";
 import type { InspectorTab } from "./InspectorRail";
@@ -119,10 +125,10 @@ export default function InspectorPanel({
   clipTiming,
   sfx,
   overlay,
+  cameraEffect,
   tab,
   sampleWord,
   appliedPresetId,
-  captionsTabHref,
   contentRef,
   onEditText,
   onPatch,
@@ -138,6 +144,8 @@ export default function InspectorPanel({
   onPreviewOverlay,
   onRecordOverlay,
   onDeleteOverlay,
+  onPatchCameraEffect,
+  onDeleteCameraEffect,
   mixLevel,
   mixEditable,
   mixLabel,
@@ -145,8 +153,12 @@ export default function InspectorPanel({
   musicLoading = false,
   currentMusicTrackId = null,
   musicEditable = false,
+  backgroundMusic = null,
+  backgroundMusicTrackDurationS = null,
   onPatchMix,
   onPickMusic,
+  onPatchBackgroundMusic,
+  onRemoveBackgroundMusic,
   musicWindow,
   smartPlaceAvailable = false,
   onSmartPlace,
@@ -159,15 +171,10 @@ export default function InspectorPanel({
   clipTiming: InspectorClipTiming | null;
   sfx: SoundEffectPlacement | null;
   overlay: MediaOverlay | null;
+  cameraEffect: CameraEffect | null;
   tab: InspectorTab;
   sampleWord: string | null;
   appliedPresetId: string | null;
-  /**
-   * When set (a caption archetype whose captions are edited on the item page),
-   * the empty inspector state becomes a caption-specific CTA linking here
-   * instead of the generic "Select anything to edit it". Null on normal edits.
-   */
-  captionsTabHref?: string | null;
   /** Exposed so double-click-on-canvas can focus + select-all (plan §5). */
   contentRef: React.RefObject<HTMLTextAreaElement>;
   onEditText: (text: string) => void;
@@ -184,6 +191,8 @@ export default function InspectorPanel({
   onPreviewOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
   onRecordOverlay: () => void;
   onDeleteOverlay: (id: string) => void;
+  onPatchCameraEffect: (id: string, patch: Partial<CameraEffect>) => void;
+  onDeleteCameraEffect: (id: string) => void;
   mixLevel?: number | null;
   mixEditable?: boolean;
   mixLabel?: string;
@@ -191,8 +200,12 @@ export default function InspectorPanel({
   musicLoading?: boolean;
   currentMusicTrackId?: string | null;
   musicEditable?: boolean;
+  backgroundMusic?: EditorCommitBackgroundMusic | null;
+  backgroundMusicTrackDurationS?: number | null;
   onPatchMix?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
+  onRemoveBackgroundMusic?: () => void;
   musicWindow?: SongWindowControl;
   smartPlaceAvailable?: boolean;
   onSmartPlace?: () => void;
@@ -213,26 +226,9 @@ export default function InspectorPanel({
         />
       ) : selection === null ? (
         <div className="flex flex-1 items-start justify-center px-6 pt-16">
-          {captionsTabHref ? (
-            // Caption archetype: this shell can't edit caption text — point the
-            // user at the Captions tab instead of the generic empty state, which
-            // otherwise reads as "editing is broken" (the reported bug).
-            <div className="text-center" data-testid="inspector-captions-cta">
-              <p className="font-display text-[16px] leading-relaxed text-[#71717a]">
-                Captions are edited on the item page.
-              </p>
-              <a
-                href={captionsTabHref}
-                className="mt-2 inline-block text-[13px] font-semibold text-[#0c0c0e] underline decoration-zinc-300 underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-              >
-                Edit captions →
-              </a>
-            </div>
-          ) : (
-            <p className="font-display text-[16px] leading-relaxed text-[#71717a]">
-              Select anything to edit it
-            </p>
-          )}
+          <p className="font-display text-[16px] leading-relaxed text-[#71717a]">
+            Select anything to edit it
+          </p>
         </div>
       ) : selection.kind === "text" && bar ? (
         <TextInspector
@@ -272,6 +268,13 @@ export default function InspectorPanel({
           onDelete={onDeleteOverlay}
           onClose={onClose}
         />
+      ) : selection.kind === "camera" && cameraEffect ? (
+        <CameraInspector
+          effect={cameraEffect}
+          onPatch={onPatchCameraEffect}
+          onDelete={onDeleteCameraEffect}
+          onClose={onClose}
+        />
       ) : selection.kind === "music" ? (
         <MixInspector
           level={mixLevel}
@@ -281,7 +284,11 @@ export default function InspectorPanel({
           musicLoading={musicLoading}
           currentMusicTrackId={currentMusicTrackId}
           musicEditable={musicEditable}
+          backgroundMusic={backgroundMusic}
+          backgroundMusicTrackDurationS={backgroundMusicTrackDurationS}
           onPickMusic={onPickMusic}
+          onPatchBackgroundMusic={onPatchBackgroundMusic}
+          onRemoveBackgroundMusic={onRemoveBackgroundMusic}
           musicWindow={musicWindow}
           onPatch={onPatchMix}
           onClose={onClose}
@@ -313,8 +320,12 @@ function MixInspector({
   musicLoading,
   currentMusicTrackId,
   musicEditable,
+  backgroundMusic,
+  backgroundMusicTrackDurationS,
   onPatch,
   onPickMusic,
+  onPatchBackgroundMusic,
+  onRemoveBackgroundMusic,
   musicWindow,
   onClose,
 }: {
@@ -325,12 +336,37 @@ function MixInspector({
   musicLoading: boolean;
   currentMusicTrackId: string | null;
   musicEditable: boolean;
+  backgroundMusic?: EditorCommitBackgroundMusic | null;
+  backgroundMusicTrackDurationS?: number | null;
   onPatch?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
+  onRemoveBackgroundMusic?: () => void;
   musicWindow?: SongWindowControl;
   onClose: () => void;
 }) {
   const safeLevel = Math.max(0, Math.min(1, level ?? 0));
+  const hasBackgroundMusic = !!backgroundMusic?.track_id && backgroundMusic.enabled !== false;
+  const bedMuted = Boolean(backgroundMusic?.muted);
+  const gainDb = Math.max(-40, Math.min(0, backgroundMusic?.gain_db ?? -18));
+  const trimStartS = Math.max(0, backgroundMusic?.start_s ?? 0);
+  const trimEndS =
+    typeof backgroundMusic?.end_s === "number" && Number.isFinite(backgroundMusic.end_s)
+      ? Math.max(trimStartS, backgroundMusic.end_s)
+      : backgroundMusicTrackDurationS != null
+        ? Math.max(trimStartS, backgroundMusicTrackDurationS)
+        : trimStartS;
+  const clampTrimStart = (value: number) => {
+    const maxStart =
+      backgroundMusicTrackDurationS != null
+        ? Math.max(0, backgroundMusicTrackDurationS - 0.1)
+        : Number.POSITIVE_INFINITY;
+    return Math.max(0, Math.min(maxStart, value));
+  };
+  const clampTrimEnd = (value: number) => {
+    const maxEnd = backgroundMusicTrackDurationS ?? Number.POSITIVE_INFINITY;
+    return Math.max(trimStartS + 0.1, Math.min(maxEnd, value));
+  };
   return (
     <div className="px-5 pt-5">
       <div className="flex items-center justify-between">
@@ -387,13 +423,74 @@ function MixInspector({
           )
         ) : (
           <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
-            This edit has no swappable song.
+            Music cannot be edited for this version.
           </p>
         )}
       </div>
       {musicWindow && (
         <div className="mt-4">
           <SongWindowSelector {...musicWindow} />
+        </div>
+      )}
+      {hasBackgroundMusic && (
+        <div className="mt-4 border-t border-zinc-200 pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[12px] font-semibold text-[#3f3f46]">Background bed</p>
+            <button
+              type="button"
+              onClick={onRemoveBackgroundMusic}
+              className="min-h-9 rounded-lg border border-zinc-200 px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              Remove
+            </button>
+          </div>
+          <label className="mt-3 flex min-h-11 items-center justify-between rounded-lg border border-zinc-200 px-3 text-[13px] text-[#3f3f46]">
+            Mute
+            <input
+              type="checkbox"
+              checked={bedMuted}
+              onChange={(event) => onPatchBackgroundMusic?.({ muted: event.target.checked })}
+              className="h-4 w-4 accent-lime-500"
+            />
+          </label>
+          <div className="mt-4">
+            <div className="flex items-center justify-between text-[12px] font-semibold text-[#3f3f46]">
+              <label htmlFor="editor-background-music-volume">Volume</label>
+              <span>{Math.round(((gainDb + 40) / 40) * 100)}%</span>
+            </div>
+            <input
+              id="editor-background-music-volume"
+              type="range"
+              min={-40}
+              max={0}
+              step={0.5}
+              value={gainDb}
+              onChange={(event) =>
+                onPatchBackgroundMusic?.({ gain_db: Number(event.target.value) })
+              }
+              className="mt-2 h-11 w-full cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            />
+          </div>
+          <FieldNumber
+            label="Trim start"
+            value={trimStartS}
+            min={0}
+            step={0.1}
+            onCommit={(value) => {
+              const nextStart = clampTrimStart(value);
+              onPatchBackgroundMusic?.({
+                start_s: nextStart,
+                end_s: Math.max(nextStart + 0.1, trimEndS),
+              });
+            }}
+          />
+          <FieldNumber
+            label="Trim end"
+            value={trimEndS}
+            min={0.1}
+            step={0.1}
+            onCommit={(value) => onPatchBackgroundMusic?.({ end_s: clampTrimEnd(value) })}
+          />
         </div>
       )}
       {editable ? (
@@ -648,6 +745,107 @@ function PercentNumberInput({
         <span className="pl-1 text-[11px] text-[#71717a]">%</span>
       </div>
     </label>
+  );
+}
+
+function CameraInspector({
+  effect,
+  onPatch,
+  onDelete,
+  onClose,
+}: {
+  effect: CameraEffect;
+  onPatch: (id: string, patch: Partial<CameraEffect>) => void;
+  onDelete: (id: string) => void;
+  onClose: () => void;
+}) {
+  const duration = Math.max(
+    CAMERA_EFFECT_MIN_DURATION_S,
+    Math.min(CAMERA_EFFECT_MAX_DURATION_S, effect.end_s - effect.start_s),
+  );
+  const intensityPct = Math.round(
+    Math.max(0, Math.min(CAMERA_EFFECT_MAX_INTENSITY, effect.intensity)) * 100,
+  );
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-[18px] text-[#0c0c0e]">Camera</h2>
+        <CloseX onClose={onClose} />
+      </div>
+      <p className="mt-1 text-[12px] text-[#71717a]">Focus pulse</p>
+
+      <TimingSection label="Timing">
+        <TimingNumberInput
+          label="Start"
+          value={effect.start_s}
+          min={0}
+          onChange={(value) =>
+            onPatch(effect.id, {
+              start_s: Math.max(0, value),
+              end_s: Math.max(0, value) + duration,
+            })
+          }
+        />
+        <TimingNumberInput
+          label="End"
+          value={effect.end_s}
+          min={effect.start_s + CAMERA_EFFECT_MIN_DURATION_S}
+          onChange={(value) =>
+            onPatch(effect.id, {
+              end_s: Math.max(effect.start_s + CAMERA_EFFECT_MIN_DURATION_S, value),
+            })
+          }
+        />
+      </TimingSection>
+
+      <div className="mt-3 border-b border-zinc-100 pb-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[13px] font-bold text-[#0c0c0e]">Duration</span>
+          <span className="text-[12px] tabular-nums text-[#71717a]">
+            {duration.toFixed(1)}s
+          </span>
+        </div>
+        <input
+          type="range"
+          aria-label="Camera focus duration"
+          min={CAMERA_EFFECT_MIN_DURATION_S}
+          max={CAMERA_EFFECT_MAX_DURATION_S}
+          step={0.1}
+          value={duration}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            if (Number.isFinite(next)) {
+              onPatch(effect.id, { end_s: effect.start_s + next });
+            }
+          }}
+          className="w-full accent-[#0c0c0e]"
+        />
+      </div>
+
+      <div className="mt-3 border-b border-zinc-100 pb-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[13px] font-bold text-[#0c0c0e]">Intensity</span>
+          <span className="text-[12px] tabular-nums text-[#71717a]">{intensityPct}%</span>
+        </div>
+        <input
+          type="range"
+          aria-label="Camera focus intensity"
+          min={0}
+          max={Math.round(CAMERA_EFFECT_MAX_INTENSITY * 100)}
+          step={1}
+          value={intensityPct}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            if (Number.isFinite(next)) {
+              onPatch(effect.id, { intensity: next / 100 });
+            }
+          }}
+          className="w-full accent-[#0c0c0e]"
+        />
+      </div>
+
+      <DangerButton onClick={() => onDelete(effect.id)}>Delete camera effect</DangerButton>
+    </div>
   );
 }
 

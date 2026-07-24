@@ -8,7 +8,7 @@
 import type { EditorCapabilities, PlanItemVariant } from "@/lib/plan-api";
 import type { EditorTool } from "./ToolRail";
 
-export const CAPTIONS_TAB_REASON = "Captions for this edit are managed in the Captions tab";
+export const CAPTIONS_TAB_REASON = "Captions can be selected and edited in this editor";
 
 /**
  * Text-lane fallback (review fix round on plan 010): when `text_elements` is
@@ -87,10 +87,9 @@ export function textElementsLockedCopy(
 
 /**
  * Tool-rail disable map (plan 010 OV-1). Text/Styles disable when the shell
- * is read-only OR when `text_elements` alone is false — subtitled variants
- * keep on-video text in the Captions tab even once sfx/overlays flip true,
- * so the tools stay disabled with the honest Captions-tab tooltip instead of
- * silently no-op saving. Sounds/Overlays follow their own capability +
+ * is read-only OR when `text_elements` alone is false. Caption cue edits use
+ * `caption_cues`; optional styled text stays disabled until its lane is enabled.
+ * Sounds/Overlays follow their own capability +
  * server-provided reason.
  *
  * `isLyrics` is the one exception: a lyrics-synced variant's per-element text
@@ -129,7 +128,11 @@ export function computeToolDisabledReasons({
   // Sounds also owns the song-window selector. Keep the drawer reachable when
   // that capability exists, even if SFX are disabled or the selector itself
   // needs to explain a short-song/timing-metadata disabled state.
-  if (capabilities?.sfx === false && capabilities.music_window == null) {
+  if (
+    capabilities?.sfx === false &&
+    capabilities.music_window == null &&
+    capabilities.background_music !== true
+  ) {
     out.sounds = editorReasonCopy(
       capabilities.sfx_reason ?? "sound effects aren't available for this edit",
     );
