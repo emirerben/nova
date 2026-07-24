@@ -52,6 +52,9 @@ function makeAsset(overrides: Record<string, unknown> = {}) {
     duration_s: null,
     aspect: null,
     subject: null,
+    user_context: "",
+    nova_description: null,
+    nova_on_screen_text: null,
     display_url: "https://storage.example/signed/shot.png",
     deduped: false,
     gcs_path: "users/u1/plan/item-1/pool/shot.png",
@@ -274,7 +277,7 @@ describe("AssetPool — cap", () => {
     await renderPool();
 
     expect(screen.getByText("20 of 20")).toBeInTheDocument();
-    const addButton = screen.getByRole("button", { name: /add/i });
+    const addButton = screen.getByRole("button", { name: "Add" });
     expect(addButton).toBeDisabled();
     // Inline reason text, never tooltip-only.
     expect(
@@ -691,5 +694,56 @@ describe("AssetPool — brand micro-label (analysis v5)", () => {
     await renderPool();
     expect(screen.getByText("no brands")).not.toHaveAttribute("title");
     expect(screen.getByText("old analysis")).not.toHaveAttribute("title");
+  });
+});
+
+describe("AssetPool — creator context", () => {
+  it("labels user context separately from Nova analysis and saves edits", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-context",
+      status: "ready",
+      subject: "chart",
+      user_context: "",
+      nova_description: "Nova sees a generic chart",
+    });
+    const updated = {
+      ...asset,
+      user_context: "Use this when I mention churn",
+    };
+    const onAssetContextUpdated = jest.fn();
+    let patchBody: unknown = null;
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === "/api/plan/plan-items/item-1/assets") {
+        return jsonResponse({ assets: [asset], max_assets: 20 });
+      }
+      if (
+        method === "PATCH" &&
+        url === "/api/plan/plan-items/item-1/assets/asset-context/context"
+      ) {
+        patchBody = JSON.parse(String(init?.body ?? "{}"));
+        return jsonResponse(updated);
+      }
+      return undefined;
+    });
+    await act(async () => {
+      render(<AssetPool itemId="item-1" onAssetContextUpdated={onAssetContextUpdated} />);
+    });
+
+    expect(screen.getByText("You")).toBeInTheDocument();
+    expect(screen.getByText("Nova")).toBeInTheDocument();
+    expect(screen.getByText("Nova sees a generic chart")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add context" }));
+    fireEvent.change(screen.getByPlaceholderText("What should Nova know about this visual?"), {
+      target: { value: "Use this when I mention churn" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(onAssetContextUpdated).toHaveBeenCalledWith(updated);
+    });
+    expect(patchBody).toEqual({ user_context: "Use this when I mention churn" });
+    expect(screen.getByText("Use this when I mention churn")).toBeInTheDocument();
   });
 });

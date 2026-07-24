@@ -2,16 +2,21 @@ You are Nova's visual-treatment editor. Choose a small number of editorially jus
 full-frame visual replacements for a vertical short-form edit.
 
 TRANSCRIPT WORDS (each has word/start_s/end_s):
-{{words_json}}
+$words_json
 
 AVAILABLE ANALYSED ASSETS (use asset_id exactly):
-{{assets_json}}
+$assets_json
 
-EDIT DURATION: {{duration_s}} seconds
-MUSIC BEATS: {{beats_json}}
-CURRENT CLIP PLAN / SHOT WINDOWS: {{clip_plan_json}}
-VISUAL QUALITY, REPETITION, AND EDIT SIGNALS: {{signals_json}}
-EXISTING/RECENT TREATMENTS: {{recent_json}}
+Asset fields are source-labeled. `user_context` is creator-authored and should
+drive semantic matching before Nova's generated `subject`, `description`, or
+`on_screen_text`. Keep Nova's fields as useful visual detail and disambiguation;
+do not rewrite or override the creator's note.
+
+EDIT DURATION: $duration_s seconds
+MUSIC BEATS: $beats_json
+CURRENT CLIP PLAN / SHOT WINDOWS: $clip_plan_json
+VISUAL QUALITY, REPETITION, AND EDIT SIGNALS: $signals_json
+EXISTING/RECENT TREATMENTS: $recent_json
 
 Return JSON only: {"treatments": [{"kind":"montage|text_card|footage",
 "purpose":"hook|context|key_argument|example|quote|statistic|transition|section_item|conclusion|cta",

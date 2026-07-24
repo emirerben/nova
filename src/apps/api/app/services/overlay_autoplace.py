@@ -588,6 +588,7 @@ def filter_wishlist_against_assets(wishlist: list[str], assets: list[dict]) -> l
             " ".join(
                 str(x or "")
                 for x in (
+                    asset.get("user_context"),
                     analysis.get("subject"),
                     analysis.get("description"),
                     analysis.get("on_screen_text"),
@@ -635,12 +636,14 @@ def heuristic_match(
         asset_text = " ".join(
             str(x or "")
             for x in (
+                asset.get("user_context"),
                 analysis.get("subject"),
                 analysis.get("description"),
                 analysis.get("on_screen_text"),
                 asset.get("source_filename", "").rsplit(".", 1)[0].replace("-", " "),
             )
         )
+        user_tokens = _tokens(str(asset.get("user_context") or ""))
         asset_tokens = _tokens(asset_text)
         if not asset_tokens:
             continue
@@ -648,7 +651,7 @@ def heuristic_match(
         for i in range(len(words)):
             window = words[i : i + window_words]
             window_tokens = _tokens(" ".join(str(w.get("word", "")) for w in window))
-            score = len(asset_tokens & window_tokens)
+            score = len(asset_tokens & window_tokens) + 2 * len(user_tokens & window_tokens)
             if score > best_score:
                 best_score, best_idx = score, i
                 best_anchor = " ".join(str(w.get("word", "")) for w in window[:6])

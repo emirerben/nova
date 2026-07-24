@@ -56,6 +56,8 @@ export interface EditorOverlaySuggestionsState {
   /** Remove one row locally; `accepted` rows keep their envelope server-side
    *  until the commit drops it. */
   removeRow: (id: string, opts?: { accepted?: boolean }) => void;
+  /** Clear local rows after an asset-context edit invalidates pending matches. */
+  clearLocal: () => void;
 }
 
 export function useEditorOverlaySuggestions({
@@ -194,6 +196,14 @@ export function useEditorOverlaySuggestions({
     [itemId, variantId],
   );
 
+  const clearLocal = useCallback(() => {
+    acceptedThisRunRef.current = false;
+    setRows([]);
+    setWishlist([]);
+    setPollTicks(0);
+    setPhase("idle");
+  }, []);
+
   return {
     phase,
     rows,
@@ -203,5 +213,6 @@ export function useEditorOverlaySuggestions({
     unavailable,
     start,
     removeRow,
+    clearLocal,
   };
 }

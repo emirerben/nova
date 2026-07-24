@@ -2061,6 +2061,11 @@ export interface PoolAsset {
   width?: number | null;
   height?: number | null;
   subject: string | null;
+  /** Creator-authored context, kept separate from Nova's generated analysis. */
+  user_context: string;
+  /** Nova-generated description fields, source-labeled for the UI. */
+  nova_description?: string | null;
+  nova_on_screen_text?: string | null;
   /** Brand/mascot identities from analysis (ANALYSIS_VERSION 5, brand-aware
    *  matching) — null/absent on pre-v5 analyses, [] analyzed with none found. */
   brands?: string[] | null;
@@ -2173,6 +2178,18 @@ export function listPoolAssets(
 export function deletePoolAsset(itemId: string, assetId: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/plan-items/${itemId}/assets/${assetId}`, {
     method: "DELETE",
+  });
+}
+
+/** Set or clear creator context for a pool visual; clears pending suggestions server-side. */
+export function updatePoolAssetContext(
+  itemId: string,
+  assetId: string,
+  userContext: string | null,
+): Promise<PoolAsset> {
+  return request<PoolAsset>(`/plan-items/${itemId}/assets/${assetId}/context`, {
+    method: "PATCH",
+    body: JSON.stringify({ user_context: userContext }),
   });
 }
 

@@ -15,6 +15,7 @@ from app.agents.overlay_placement import RawPlacement
 from app.services.overlay_autoplace import (
     build_suggestions,
     filter_wishlist_against_assets,
+    heuristic_match,
     pacing_cap_s,
     pick_trim_window,
 )
@@ -262,6 +263,41 @@ def test_wishlist_drops_brand_already_present_in_pool() -> None:
         }
     ]
     assert filter_wishlist_against_assets(wishlist, assets) == ["a close-up of the receipt"]
+
+
+def test_wishlist_treats_user_context_as_satisfying_asset() -> None:
+    wishlist = ["a screenshot of the churn dashboard"]
+    assets = [
+        {
+            "source_filename": "chart.png",
+            "user_context": "This is the churn dashboard I mention",
+            "analysis": {"subject": "line chart", "description": "A generic analytics chart"},
+        }
+    ]
+    assert filter_wishlist_against_assets(wishlist, assets) == []
+
+
+def test_heuristic_match_weights_user_context_above_nova_description() -> None:
+    words = [
+        {"word": "when", "start_s": 0.0, "end_s": 0.2},
+        {"word": "churn", "start_s": 0.2, "end_s": 0.5},
+        {"word": "spikes", "start_s": 0.5, "end_s": 0.8},
+    ]
+    assets = [
+        {
+            "id": "a1",
+            "kind": "image",
+            "source_filename": "generic-chart.png",
+            "duration_s": None,
+            "aspect": 1.0,
+            "user_context": "churn",
+            "analysis": {"subject": "chart", "description": "revenue graph"},
+        }
+    ]
+    placements = heuristic_match(words, assets, duration_s=10.0, min_overlap=2)
+    assert len(placements) == 1
+    assert placements[0].asset_id == "a1"
+    assert placements[0].start_s == 0.0
 
 
 # ── analysis_is_stale (decision C — the loop guard) ───────────────────────────

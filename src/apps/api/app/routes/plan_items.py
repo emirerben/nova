@@ -3343,6 +3343,10 @@ class PoolAssetOut(BaseModel):
     width: int | None = None
     height: int | None = None
     subject: str | None  # analysis micro-label for the pool tile (2A state table)
+    # Creator-authored context is intentionally separate from Nova analysis.
+    user_context: str = ""
+    nova_description: str | None = None
+    nova_on_screen_text: str | None = None
     # Brand/mascot identities from the analysis JSONB (ANALYSIS_VERSION 5,
     # brand-aware matching) — surfaced so detection is verifiable from the pool
     # tile. None on pre-v5 analyses until the backfill re-analyzes them;
@@ -3374,6 +3378,20 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
     # validation and 500 the whole list.
     raw_brands = analysis.get("brands")
     brands = [str(b) for b in raw_brands if b] if isinstance(raw_brands, list) else None
+    raw_user_context = getattr(asset, "user_context", None)
+    user_context = raw_user_context.strip()[:500] if isinstance(raw_user_context, str) else ""
+    raw_description = analysis.get("description")
+    nova_description = (
+        str(raw_description).strip()[:400]
+        if isinstance(raw_description, str) and raw_description.strip()
+        else None
+    )
+    raw_on_screen_text = analysis.get("on_screen_text")
+    nova_on_screen_text = (
+        str(raw_on_screen_text).strip()[:400]
+        if isinstance(raw_on_screen_text, str) and raw_on_screen_text.strip()
+        else None
+    )
     return PoolAssetOut(
         id=str(asset.id),
         kind=asset.kind,
@@ -3384,6 +3402,9 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         width=analysis.get("width"),
         height=analysis.get("height"),
         subject=analysis.get("subject"),
+        user_context=user_context,
+        nova_description=nova_description,
+        nova_on_screen_text=nova_on_screen_text,
         brands=brands,
         display_url=display_url,
         deduped=deduped,
@@ -3690,6 +3711,87 @@ def _clear_suggestions_for_asset(job: Job, asset_id: str) -> int:
         job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
         flag_modified(job, "assembly_plan")
     return removed
+
+
+def _clear_pending_overlay_suggestions(job: Job) -> int:
+    """Clear only pending AI suggestions for a job.
+
+    Applied/manual placements live in media_overlays / sound_effects and must
+    survive creator-context edits unchanged.
+    """
+    removed = 0
+    changed = False
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        pending = v.get("overlay_suggestions") or []
+        if (
+            not pending
+            and not v.get("overlay_suggest_status")
+            and not v.get("overlay_suggest_hash")
+        ):
+            continue
+        removed += len(pending) if isinstance(pending, list) else 0
+        changed = True
+        v["overlay_suggestions"] = None
+        v["overlay_suggest_status"] = None
+        v["overlay_suggest_hash"] = None
+        v["overlay_suggest_wishlist"] = None
+    if changed:
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+        flag_modified(job, "assembly_plan")
+    return removed
+
+
+class UpdateAssetContextBody(BaseModel):
+    user_context: str | None = Field(default=None)
+
+    @field_validator("user_context")
+    @classmethod
+    def _trim_context(cls, value: str | None) -> str | None:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            return None
+        if len(cleaned) > 500:
+            raise ValueError("user_context must be at most 500 characters")
+        return cleaned
+
+
+@router.patch("/{item_id}/assets/{asset_id}/context", response_model=PoolAssetOut)
+async def update_pool_asset_context(
+    item_id: str,
+    asset_id: str,
+    body: UpdateAssetContextBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PoolAssetOut:
+    """Set/clear creator-authored context for one pool visual.
+
+    This never re-analyzes assets and never moves applied/manual visuals. It only
+    clears pending AI suggestions so the next Re-match uses the new context.
+    """
+    _require_asset_pool()
+    item = await _load_owned_item(item_id, user.id, db)
+    try:
+        aid = uuid.UUID(asset_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+    asset = (
+        await db.execute(
+            select(PlanItemAsset).where(
+                PlanItemAsset.id == aid,
+                PlanItemAsset.plan_item_id == item.id,
+                PlanItemAsset.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    asset.user_context = body.user_context
+    if item.current_job is not None:
+        _clear_pending_overlay_suggestions(item.current_job)
+    await db.commit()
+    await db.refresh(asset)
+    return _asset_out(asset)
 
 
 # ── Overlay auto-placement suggestion routes (plans/005 PR1b) ─────────────────
