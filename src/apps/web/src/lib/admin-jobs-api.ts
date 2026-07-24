@@ -112,6 +112,34 @@ export interface PipelineTraceEvent {
   data: Record<string, unknown>;
 }
 
+export interface RenderSummary {
+  trace_id: string | null;
+  total_queue_ms: number | null;
+  total_processing_ms: number | null;
+  slowest_stages: Array<{
+    stage: string;
+    elapsed_ms: number;
+    status?: string;
+    variant_id?: string;
+  }>;
+  repeated_stages: Array<{ stage: string; count: number }>;
+  retries: Array<{
+    stage: string;
+    status?: string;
+    attempt?: number;
+    retry?: Record<string, unknown>;
+  }>;
+  cache: Record<string, Record<string, number>>;
+  attempts: Array<{
+    trace_id: string | null;
+    render_generation_id: string | null;
+    stage_count: number;
+    elapsed_ms: number;
+    variants: string[];
+  }>;
+  agent_work_ms?: number | null;
+}
+
 export interface JobPayload {
   id: string;
   user_id: string;
@@ -211,6 +239,7 @@ export interface JobDebugResponse {
   track_agent_runs_has_more: boolean;
   context_runs_cap: number;
   runtime: JobRuntimePayload;
+  render_summary?: RenderSummary | null;
   render_timing?: RenderTimingBreakdownPayload;
 }
 

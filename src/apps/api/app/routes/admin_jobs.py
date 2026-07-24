@@ -41,6 +41,7 @@ from app.services.queue_state import (
     get_queue_position,
     get_queue_snapshot,
 )
+from app.services.render_summary import build_render_summary
 
 log = structlog.get_logger()
 
@@ -207,6 +208,7 @@ class JobDebugResponse(BaseModel):
     track_agent_runs_has_more: bool
     context_runs_cap: int
     runtime: JobRuntimePayload
+    render_summary: Any = None
     render_timing: RenderTimingBreakdownPayload
 
 
@@ -698,6 +700,7 @@ async def get_job_debug(
         track_agent_runs_has_more=track_agent_runs_has_more,
         context_runs_cap=CONTEXT_RUNS_CAP,
         runtime=runtime,
+        render_summary=build_render_summary(job, runs),
         render_timing=_render_timing_breakdown(job, runs),
     )
 

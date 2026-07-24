@@ -24,6 +24,7 @@ Failure modes — all swallowed:
 from __future__ import annotations
 
 import contextlib
+import time
 import uuid
 from collections.abc import Iterator
 from contextvars import ContextVar
@@ -149,6 +150,157 @@ def record_pipeline_event(stage: str, event: str, data: dict[str, Any] | None = 
             job_id=job_id_str,
             error=str(exc),
         )
+
+
+_SAFE_RENDER_KEYS = {
+    "attempt",
+    "cache",
+    "counts",
+    "error_class",
+    "render_generation_id",
+    "retry",
+    "status",
+    "trace_id",
+    "variant_id",
+}
+
+
+def record_render_stage(
+    stage: str,
+    *,
+    elapsed_ms: int | None = None,
+    status: str = "ok",
+    trace_id: str | None = None,
+    variant_id: str | None = None,
+    render_generation_id: str | None = None,
+    attempt: int | None = None,
+    cache: dict[str, Any] | None = None,
+    retry: dict[str, Any] | None = None,
+    counts: dict[str, Any] | None = None,
+    error_class: str | None = None,
+) -> None:
+    """Record one content-safe render timing event.
+
+    This is intentionally narrower than ``record_pipeline_event``: render timing
+    payloads must not carry transcripts, prompts, signed URLs, user notes, or
+    media contents. Keep the payload to IDs, counts, booleans, enums, and
+    durations so admin debug can summarize performance safely.
+    """
+    payload = _sanitize_render_payload(
+        {
+            "trace_id": trace_id,
+            "variant_id": variant_id,
+            "render_generation_id": render_generation_id,
+            "stage": stage,
+            "elapsed_ms": int(elapsed_ms) if elapsed_ms is not None else None,
+            "status": status,
+            "attempt": int(attempt) if attempt is not None else None,
+            "cache": cache,
+            "retry": retry,
+            "counts": counts,
+            "error_class": error_class,
+        }
+    )
+    record_pipeline_event("render_stage", stage, payload)
+
+
+class RenderStageTimer:
+    """Best-effort context manager for stage timing.
+
+    On success it records ``status="ok"``. On exception it records
+    ``status="failed"`` plus the exception class, then lets the exception
+    propagate so render behavior remains unchanged.
+    """
+
+    def __init__(
+        self,
+        stage: str,
+        *,
+        trace_id: str | None = None,
+        variant_id: str | None = None,
+        render_generation_id: str | None = None,
+        attempt: int | None = None,
+        cache: dict[str, Any] | None = None,
+        retry: dict[str, Any] | None = None,
+        counts: dict[str, Any] | None = None,
+    ) -> None:
+        self.stage = stage
+        self.trace_id = trace_id
+        self.variant_id = variant_id
+        self.render_generation_id = render_generation_id
+        self.attempt = attempt
+        self.cache = cache
+        self.retry = retry
+        self.counts = counts
+        self._t0 = 0.0
+
+    def __enter__(self) -> RenderStageTimer:
+        self._t0 = time.monotonic()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        elapsed_ms = int((time.monotonic() - self._t0) * 1000)
+        record_render_stage(
+            self.stage,
+            elapsed_ms=elapsed_ms,
+            status="failed" if exc_type is not None else "ok",
+            trace_id=self.trace_id,
+            variant_id=self.variant_id,
+            render_generation_id=self.render_generation_id,
+            attempt=self.attempt,
+            cache=self.cache,
+            retry=self.retry,
+            counts=self.counts,
+            error_class=getattr(exc_type, "__name__", None) if exc_type is not None else None,
+        )
+
+
+def render_stage_timer(
+    stage: str,
+    *,
+    trace_id: str | None = None,
+    variant_id: str | None = None,
+    render_generation_id: str | None = None,
+    attempt: int | None = None,
+    cache: dict[str, Any] | None = None,
+    retry: dict[str, Any] | None = None,
+    counts: dict[str, Any] | None = None,
+) -> RenderStageTimer:
+    return RenderStageTimer(
+        stage,
+        trace_id=trace_id,
+        variant_id=variant_id,
+        render_generation_id=render_generation_id,
+        attempt=attempt,
+        cache=cache,
+        retry=retry,
+        counts=counts,
+    )
+
+
+def _sanitize_render_payload(value: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in _SAFE_RENDER_KEYS | {"stage", "elapsed_ms"}:
+        raw = value.get(key)
+        if raw is None:
+            continue
+        if key in {"cache", "counts", "retry"} and isinstance(raw, dict):
+            out[key] = _safe_shallow_dict(raw)
+        elif isinstance(raw, (str, int, float, bool)):
+            out[key] = raw
+    return out
+
+
+def _safe_shallow_dict(value: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, raw in value.items():
+        if not isinstance(key, str):
+            continue
+        if any(blocked in key.lower() for blocked in ("text", "prompt", "url", "path", "note")):
+            continue
+        if isinstance(raw, (str, int, float, bool)) or raw is None:
+            safe[key] = raw
+    return safe
 
 
 def _json_dumps(value: Any) -> str:
