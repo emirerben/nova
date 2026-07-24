@@ -57,6 +57,7 @@ def _owned_item(user_id: uuid.UUID):
     item = MagicMock()
     item.id = uuid.uuid4()
     item.content_plan_id = uuid.uuid4()
+    item.current_job = None
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
@@ -99,6 +100,7 @@ def _asset_row(item_id, user_id, *, content_hash="abc123") -> MagicMock:
     a.duration_s = None
     a.aspect = None
     a.analysis = None
+    a.user_context = None
     a.status = "uploaded"
     return a
 
@@ -116,6 +118,7 @@ def _asset_row(item_id, user_id, *, content_hash="abc123") -> MagicMock:
             {"gcs_path": "users/u/plan/i/pool/f.png", "content_type": "image/png"},
         ),
         ("get", "/assets", None),
+        ("patch", "/assets/00000000-0000-0000-0000-0000000000aa/context", {"user_context": "x"}),
         # FIXED uuid, NOT uuid.uuid4(): a fresh uuid per import makes the
         # parametrize id differ across pytest-xdist workers → "Different tests
         # were collected between gw1 and gw3" collection error on CI (-n auto).
@@ -368,6 +371,163 @@ def test_list_brands_filters_falsy_and_coerces_non_strings(client: TestClient):
         resp = client.get(f"/plan-items/{item.id}/assets")
     assert resp.status_code == 200
     assert resp.json()["assets"][0]["brands"] == ["Acme", "123"]
+
+
+def test_list_serializes_user_context_and_source_labeled_nova_fields(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    row = _asset_row(item.id, user.id, content_hash="h1")
+    row.user_context = "This is the competitor pricing table"
+    row.analysis = {
+        "subject": "spreadsheet",
+        "description": "A table with three pricing tiers",
+        "on_screen_text": "$9 $19 $49",
+    }
+    db = _db([_scalar_result(item), _scalars_result([row])], plan)
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.get(f"/plan-items/{item.id}/assets")
+    assert resp.status_code == 200
+    asset = resp.json()["assets"][0]
+    assert asset["user_context"] == "This is the competitor pricing table"
+    assert asset["nova_description"] == "A table with three pricing tiers"
+    assert asset["nova_on_screen_text"] == "$9 $19 $49"
+
+
+# ── context ──────────────────────────────────────────────────────────────────
+
+
+def test_update_context_trims_saves_and_leaves_analysis_unchanged(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    asset.analysis = {"description": "Nova's original read"}
+    db = _db([_scalar_result(item), _scalar_result(asset)], plan)
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.patch(
+            f"/plan-items/{item.id}/assets/{asset.id}/context",
+            json={"user_context": "  use this when I mention churn  "},
+        )
+    assert resp.status_code == 200
+    assert asset.user_context == "use this when I mention churn"
+    assert asset.analysis == {"description": "Nova's original read"}
+    assert resp.json()["user_context"] == "use this when I mention churn"
+    assert resp.json()["nova_description"] == "Nova's original read"
+    assert db.commit.await_count >= 1
+
+
+def test_update_context_empty_string_clears(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    asset.user_context = "old"
+    db = _db([_scalar_result(item), _scalar_result(asset)], plan)
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.patch(
+            f"/plan-items/{item.id}/assets/{asset.id}/context",
+            json={"user_context": "   "},
+        )
+    assert resp.status_code == 200
+    assert asset.user_context is None
+    assert resp.json()["user_context"] == ""
+
+
+def test_update_context_rejects_over_500_chars_after_trim(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    db = _db([_scalar_result(item), _scalar_result(asset)], plan)
+    _override(user, db)
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.patch(
+            f"/plan-items/{item.id}/assets/{asset.id}/context",
+            json={"user_context": f"  {'x' * 501}  "},
+        )
+    assert resp.status_code == 422
+    assert asset.user_context is None
+    assert db.commit.await_count == 0
+
+
+def test_update_context_bad_uuid_rejects(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db([_scalar_result(item)], plan)
+    _override(user, db)
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.patch(
+            f"/plan-items/{item.id}/assets/not-a-uuid/context",
+            json={"user_context": "x"},
+        )
+    assert resp.status_code == 400
+
+
+def test_update_context_404_when_asset_missing(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db([_scalar_result(item), _scalar_result(None)], plan)
+    _override(user, db)
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.patch(
+            f"/plan-items/{item.id}/assets/{uuid.uuid4()}/context",
+            json={"user_context": "x"},
+        )
+    assert resp.status_code == 404
+
+
+def test_update_context_clears_only_pending_suggestions(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    job = MagicMock()
+    job.assembly_plan = {
+        "variants": [
+            {
+                "variant_id": "v1",
+                "overlay_suggestions": [{"id": "s1"}],
+                "overlay_suggest_status": "ready",
+                "overlay_suggest_hash": "old",
+                "overlay_suggest_wishlist": ["add x"],
+                "media_overlays": [{"id": "manual", "start_s": 1.0, "end_s": 2.0}],
+                "sound_effects": [{"id": "sfx"}],
+                "visual_blocks": [{"id": "block"}],
+                "render_status": "ready",
+            }
+        ]
+    }
+    item.current_job = job
+    db = _db([_scalar_result(item), _scalar_result(asset)], plan)
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+        patch("app.routes.plan_items.flag_modified") as flag_modified,
+    ):
+        resp = client.patch(
+            f"/plan-items/{item.id}/assets/{asset.id}/context",
+            json={"user_context": "this means launch week"},
+        )
+    assert resp.status_code == 200
+    variant = job.assembly_plan["variants"][0]
+    assert variant["overlay_suggestions"] is None
+    assert variant["overlay_suggest_status"] is None
+    assert variant["overlay_suggest_hash"] is None
+    assert variant["overlay_suggest_wishlist"] is None
+    assert variant["media_overlays"] == [{"id": "manual", "start_s": 1.0, "end_s": 2.0}]
+    assert variant["sound_effects"] == [{"id": "sfx"}]
+    assert variant["visual_blocks"] == [{"id": "block"}]
+    assert variant["render_status"] == "ready"
+    flag_modified.assert_called_once_with(job, "assembly_plan")
 
 
 # ── delete ────────────────────────────────────────────────────────────────────

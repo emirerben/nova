@@ -242,12 +242,12 @@ def _coerce_assets(raw_assets: list[dict[str, Any]] | None) -> list[SmartPlanner
                 SmartPlannerAsset(
                     asset_id=str(raw.get("id") or raw.get("asset_id") or ""),
                     kind="video" if raw.get("kind") == "video" else "image",
+                    user_context=str(raw.get("user_context") or "")[:500],
                     subject=str(analysis.get("subject") or raw.get("subject") or "")[:200],
                     description=str(analysis.get("description") or raw.get("description") or "")[
                         :400
                     ],
                     on_screen_text=str(analysis.get("on_screen_text") or "")[:300],
-                    user_context=str(raw.get("user_context") or "")[:500],
                     brands=[
                         str(value)[:80]
                         for value in (analysis.get("brands") or raw.get("brands") or [])[:10]
@@ -263,7 +263,14 @@ def _coerce_assets(raw_assets: list[dict[str, Any]] | None) -> list[SmartPlanner
 
 
 def _asset_terms(asset: SmartPlannerAsset) -> set[str]:
-    values = [asset.subject, asset.description, asset.on_screen_text, asset.filename, *asset.brands]
+    values = [
+        asset.user_context,
+        asset.subject,
+        asset.description,
+        asset.on_screen_text,
+        asset.filename,
+        *asset.brands,
+    ]
     return {
         token
         for value in values
@@ -311,11 +318,21 @@ def _matching_assets(
     for asset in assets:
         terms = _asset_terms(asset)
         overlap = terms & text_tokens
+        user_terms = {
+            token
+            for token in _fold(asset.user_context).split()
+            if len(token) >= 3 and token not in _ASSET_STOP
+        }
+        user_overlap = user_terms & text_tokens
         brand_hits = sum(1 for brand in asset.brands if _fold(brand) and _fold(brand) in folded)
         phrase_hit = int(bool(_fold(asset.subject) and _fold(asset.subject) in folded))
+        user_phrase_hit = int(
+            bool(_fold(asset.user_context) and _fold(asset.user_context) in folded)
+        )
         metadata = _fold(
             " ".join(
                 (
+                    asset.user_context,
                     asset.filename,
                     asset.subject,
                     asset.description,
@@ -335,7 +352,14 @@ def _matching_assets(
             if _fold(transcript_term) and _fold(transcript_term) in folded
         }
         alias_tokens = {token for phrase in matched_aliases for token in phrase.split() if token}
-        score = len(overlap) + brand_hits * 4 + phrase_hit * 3 + len(matched_aliases) * 6
+        score = (
+            len(overlap)
+            + len(user_overlap) * 3
+            + brand_hits * 4
+            + phrase_hit * 3
+            + user_phrase_hit * 6
+            + len(matched_aliases) * 6
+        )
         if score < 1:
             continue
 
@@ -345,7 +369,7 @@ def _matching_assets(
             if _fold(brand) and _fold(brand) in folded
             for token in _fold(brand).split()
         }
-        anchor_terms = alias_tokens or brand_tokens or overlap
+        anchor_terms = alias_tokens or user_overlap or brand_tokens or overlap
         anchor_index = next(
             (index for index, tokens in enumerate(word_tokens) if tokens & anchor_terms),
             None,
