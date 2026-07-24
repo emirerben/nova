@@ -22,6 +22,7 @@ export type EditorSelectionKind =
   | "clip"
   | "sfx"
   | "overlay"
+  | "camera"
   | "music";
 
 export interface EditorSelection {

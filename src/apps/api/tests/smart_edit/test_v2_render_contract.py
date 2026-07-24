@@ -589,12 +589,16 @@ def test_semantic_crop_is_inside_existing_reframe_filter_only() -> None:
             {
                 "token": "semantic_crop_pulse",
                 "start_s": 3.0,
-                "end_s": 3.8,
+                "end_s": 4.2,
+                "intensity": 0.04,
+                "easing": "sine_pulse",
             }
         ],
     )
     joined = ",".join(treated)
-    assert "between(t,3.000,3.800)" in joined
+    assert "0.0400*between(t,3.000,4.200)" in joined
+    assert "pow(sin(PI*(t-3.000)/1.200),2)" in joined
+    assert "1+0.08" not in joined
     assert len(treated) == len(baseline) + 2
 
 

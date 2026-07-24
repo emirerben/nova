@@ -1014,6 +1014,18 @@ export interface OverlayApplyReceipt {
   at?: string;
 }
 
+export interface CameraEffect {
+  id: string;
+  token?: "semantic_crop_pulse" | string;
+  start_s: number;
+  end_s: number;
+  intensity: number;
+  easing: "sine_pulse";
+  source: "smart_captions" | "user" | string;
+  event_id?: string | null;
+  role?: string | null;
+}
+
 /**
  * Per-variant editor capability map — mirrors `_editor_capabilities` in
  * app/routes/generative_jobs.py. All-false ⇒ the editor shell is read-only;
@@ -1027,6 +1039,7 @@ export interface EditorCapabilities {
   sfx?: boolean;
   overlays?: boolean;
   visual_blocks?: boolean;
+  camera_effects?: boolean;
   /** AI overlay suggestions inside the editor's Overlays drawer (plans/005-010).
    *  Deliberately does NOT check pool assets — the drawer owns the empty-pool state. */
   suggestions?: boolean;
@@ -1034,6 +1047,7 @@ export interface EditorCapabilities {
   sfx_reason?: string | null;
   overlays_reason?: string | null;
   visual_blocks_reason?: string | null;
+  camera_effects_reason?: string | null;
   /** "autoplace_disabled" | "song_or_lyric_variant" | "caption_archetype"
    *  | inherited overlay reasons. */
   suggestions_reason?: string | null;
@@ -1218,6 +1232,8 @@ export interface PlanItemVariant {
   media_overlays?: MediaOverlay[] | null;
   /** Full-frame replacement blocks rendered below authored text and captions. */
   visual_blocks?: VisualBlock[] | null;
+  /** Editable semantic camera emphasis applied only to the base video layer. */
+  camera_effects?: CameraEffect[] | null;
   /** Cached text-free visual-block composite used for fast text reburns. */
   visual_blocks_base_path?: string | null;
   /** GCS key of the clean (un-carded) variant before the first overlay apply-pass. */
