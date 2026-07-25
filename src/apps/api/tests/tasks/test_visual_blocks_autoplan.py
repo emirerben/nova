@@ -703,3 +703,186 @@ def test_planner_flag_off_releases_claim(monkeypatch) -> None:
     autoplace.plan_visual_blocks.run(JOB_ID, "subtitled")
 
     assert variant["visual_blocks_autoplan_attempted"] is False
+
+
+def test_planner_failure_with_assets_yields_zero_blocks_not_fallback_montage(
+    monkeypatch,
+) -> None:
+    """A genuine agent failure must plan NOTHING — the deterministic opening
+    montage is a keyless-path affordance only (prod job 96771038 got an
+    unwanted opener fabricated from extracted frames on a planner failure)."""
+    job = _Job()
+    job.assembly_plan["variants"][0]["visual_blocks_autoplan_attempted"] = True
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(settings, "visual_block_autoplan_enabled", True)
+    monkeypatch.setattr(settings, "gemini_api_key", "gemini-test")
+    monkeypatch.setattr(
+        autoplace, "_sync_session", lambda: _Session(job, [_Asset(), _Asset(), _Asset()])
+    )
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
+    )
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_args: None)
+    words = [{"word": "Plenty of speech here", "start_s": 1.0, "end_s": 2.0}]
+    monkeypatch.setattr(
+        "app.services.transcript_source.transcript_source",
+        lambda _v, **_kwargs: (words, "transcript-hash"),
+    )
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    monkeypatch.setattr(
+        "app.agents.visual_treatment_planner.VisualTreatmentPlannerAgent.run",
+        lambda _self, _input, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("1 validation error for VisualTreatmentPlannerOutput")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant.apply_async",
+        lambda **_kwargs: pytest.fail("planner failure must not plan fallback blocks"),
+    )
+    events: list[str] = []
+    monkeypatch.setattr(autoplace, "_record", lambda event, **_fields: events.append(event))
+
+    autoplace.plan_visual_blocks.run(JOB_ID, "subtitled")
+
+    variant = job.assembly_plan["variants"][0]
+    assert "visual_blocks" not in variant
+    # Claim released so a later retry can plan for real.
+    assert variant["visual_blocks_autoplan_attempted"] is False
+    assert events == ["visual_blocks_planner_failed"]
+
+
+def test_keyless_path_still_plans_deterministic_opening_montage(monkeypatch) -> None:
+    """Without a Gemini key the conservative asset-grounded fallback survives."""
+    job = _Job()
+    job.assembly_plan["variants"][0]["visual_blocks_autoplan_attempted"] = True
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(settings, "visual_block_autoplan_enabled", True)
+    monkeypatch.setattr(settings, "gemini_api_key", "")
+    monkeypatch.setattr(
+        autoplace, "_sync_session", lambda: _Session(job, [_Asset(), _Asset(), _Asset()])
+    )
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
+    )
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_args: None)
+    monkeypatch.setattr(
+        "app.services.transcript_source.transcript_source", lambda _v, **_kwargs: None
+    )
+    dispatched: list[bool] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant.apply_async",
+        lambda **_kwargs: dispatched.append(True),
+    )
+    events: list[str] = []
+    monkeypatch.setattr(autoplace, "_record", lambda event, **_fields: events.append(event))
+
+    autoplace.plan_visual_blocks.run(JOB_ID, "subtitled")
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["visual_blocks"][0]["kind"] == "montage"
+    assert variant["visual_blocks"][0]["start_s"] == 0.0
+    assert len(variant["visual_blocks"][0]["shots"]) == 3
+    assert dispatched == [True]
+    assert events == ["visual_blocks_planned"]
+
+
+def test_montage_archetype_variant_is_skipped_by_planner_task(monkeypatch) -> None:
+    """Unset resolved_archetype = montage-by-default → autoplan must not run:
+    visual blocks are speech-driven and montage edits get no fabricated opener."""
+    job = _Job()
+    job.assembly_plan["variants"][0].pop("resolved_archetype")
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(settings, "visual_block_autoplan_enabled", True)
+    monkeypatch.setattr(settings, "gemini_api_key", "gemini-test")
+    monkeypatch.setattr(
+        autoplace, "_sync_session", lambda: _Session(job, [_Asset(), _Asset(), _Asset()])
+    )
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
+    )
+    monkeypatch.setattr(
+        "app.services.transcript_source.transcript_source",
+        lambda *_args, **_kwargs: pytest.fail("montage variant must skip before transcription"),
+    )
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        autoplace, "_record", lambda event, **fields: events.append((event, fields))
+    )
+
+    autoplace.plan_visual_blocks.run(JOB_ID, "subtitled")
+
+    assert "visual_blocks" not in job.assembly_plan["variants"][0]
+    assert events == [
+        (
+            "visual_blocks_skipped_archetype",
+            {"variant_id": "subtitled", "archetype": "montage"},
+        )
+    ]
+
+
+def test_dispatch_seam_skips_montage_archetype_and_claims_speech_variants(
+    monkeypatch,
+) -> None:
+    from app.tasks import generative_build
+
+    job = _Job()
+    montage_variant = dict(job.assembly_plan["variants"][0])
+    montage_variant["variant_id"] = "song_text"
+    montage_variant.pop("resolved_archetype")
+    montage_variant["render_status"] = "ready"
+    speech_variant = job.assembly_plan["variants"][0]
+    speech_variant["render_status"] = "ready"
+    job.assembly_plan["variants"] = [montage_variant, speech_variant]
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(settings, "visual_block_autoplan_enabled", True)
+    monkeypatch.setattr(generative_build, "_sync_session", lambda: _Session(job, []))
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_args: None)
+    recorded: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.record_pipeline_event",
+        lambda stage, event, data=None: recorded.append((stage, event, data)),
+    )
+    dispatched: list[tuple[list, str]] = []
+    monkeypatch.setattr(
+        autoplace.prepare_visual_block_assets,
+        "apply_async",
+        lambda *, args, queue: dispatched.append((args, queue)),
+    )
+
+    generative_build._maybe_visual_blocks_after_finalize(JOB_ID)
+
+    assert montage_variant.get("visual_blocks_autoplan_attempted") is None
+    assert speech_variant["visual_blocks_autoplan_attempted"] is True
+    assert dispatched == [([JOB_ID, ["subtitled"]], settings.autoplace_queue)]
+    assert recorded == [
+        (
+            "autoplace",
+            "visual_blocks_skipped_archetype",
+            {"variant_id": "song_text", "archetype": "montage"},
+        )
+    ]
+
+
+def test_dispatch_seam_with_only_montage_variants_dispatches_nothing(monkeypatch) -> None:
+    from app.tasks import generative_build
+
+    job = _Job()
+    job.assembly_plan["variants"][0].pop("resolved_archetype")
+    job.assembly_plan["variants"][0]["render_status"] = "ready"
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(settings, "visual_block_autoplan_enabled", True)
+    monkeypatch.setattr(generative_build, "_sync_session", lambda: _Session(job, []))
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_args: None)
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.record_pipeline_event",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        autoplace.prepare_visual_block_assets,
+        "apply_async",
+        lambda **_kwargs: pytest.fail("montage-only job must not dispatch autoplan"),
+    )
+
+    generative_build._maybe_visual_blocks_after_finalize(JOB_ID)
+
+    assert job.assembly_plan["variants"][0].get("visual_blocks_autoplan_attempted") is None

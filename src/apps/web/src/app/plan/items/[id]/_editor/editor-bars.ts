@@ -117,6 +117,10 @@ function captionIndexFromBarId(id: string): number | null {
   return Number.isFinite(index) ? index : null;
 }
 
+function isSyntheticSubtitledCaptionBar(bar: TextElementBar): boolean {
+  return /^subtitled-caption-\d+$/.test(bar.id);
+}
+
 function isCaptionCueProjection(bar: TextElementBar): boolean {
   return bar.source_params?.source === "caption_cue";
 }
@@ -434,7 +438,7 @@ export function barsToCaptionCues(
   originalById: ReadonlyMap<string, CaptionCue> = new Map(),
 ): CaptionCue[] {
   return bars
-    .filter(isCaptionBar)
+    .filter((bar) => isCaptionBar(bar) && !isSyntheticSubtitledCaptionBar(bar))
     .map((bar) => ({
       ...(originalById.get(bar.id) ??
         (captionIndexFromBarId(bar.id) != null

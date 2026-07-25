@@ -79,6 +79,31 @@ import VisualBlocksLayer from "./VisualBlocksLayer";
 const SCALE_MIN_PX = 24;
 const SCALE_MAX_PX = 250;
 const DEFAULT_CANVAS = { w: CANVAS_W, h: CANVAS_H };
+const DEFAULT_CAPTION_SIZE_PX = 78;
+const DEFAULT_CAPTION_COLOR = "#FFFFFF";
+const DEFAULT_CAPTION_HIGHLIGHT_COLOR = "#A3E635";
+const DEFAULT_CAPTION_STROKE_WIDTH = 2;
+
+function captionPreviewShadow(strokePx: number, shadowEnabled: boolean): string | undefined {
+  const shadows: string[] = [];
+  if (shadowEnabled) {
+    shadows.push(`0 ${Math.max(1, strokePx)}px ${Math.max(2, strokePx * 1.5)}px #000`);
+  }
+  if (strokePx > 0.1) {
+    const spread = Math.max(1, strokePx);
+    shadows.push(
+      `${spread}px 0 0 #000`,
+      `-${spread}px 0 0 #000`,
+      `0 ${spread}px 0 #000`,
+      `0 -${spread}px 0 #000`,
+      `${spread}px ${spread}px 0 #000`,
+      `-${spread}px ${spread}px 0 #000`,
+      `${spread}px -${spread}px 0 #000`,
+      `-${spread}px -${spread}px 0 #000`,
+    );
+  }
+  return shadows.length ? shadows.join(", ") : undefined;
+}
 
 /** Pointer movement (px) under which a pointerdown+up counts as a CLICK
  * (triggers overlap cycling) rather than a drag. */
@@ -264,7 +289,11 @@ export default function EditorCanvas({
     [currentTime, mediaOverlays, overlayPreviewUrls],
   );
   const captionPreviewUsesCleanBase = Boolean(variant.base_video_url || virtualPreview);
-  const visibleCaption = useMemo(() => {
+  const visibleCaption = useMemo((): {
+    text: string;
+    bar: TextElementBar;
+    wordMode: boolean;
+  } | null => {
     if (
       !captionPreviewUsesCleanBase ||
       (variant.resolved_archetype !== "subtitled" &&
@@ -280,23 +309,44 @@ export default function EditorCanvas({
     if (!bar) return null;
     const cueIndex = Number(bar.id.match(/^caption-(\d+)$/)?.[1]);
     const originalCue = Number.isFinite(cueIndex) ? variant.caption_cues?.[cueIndex] : null;
-    if (
+    const originalWords = originalCue?.words ?? [];
+    const wordMode =
       variant.voiceover_caption_style === "word" &&
-      originalCue?.words?.length &&
-      originalCue.text === bar.text
-    ) {
-      return (
-        originalCue.words.find(
-          (word) => currentTime >= word.start_s && currentTime < word.end_s,
-        )?.text ?? null
-      );
+      originalWords.length > 0 &&
+      originalCue?.text === bar.text;
+    if (wordMode) {
+      const activeWord = originalWords.find(
+        (word) => currentTime >= word.start_s && currentTime < word.end_s,
+      )?.text;
+      return activeWord ? { text: activeWord, bar, wordMode: true } : null;
     }
-    return bar.text;
+    return { text: bar.text, bar, wordMode: false };
   }, [bars, captionPreviewUsesCleanBase, currentTime, variant]);
-  const captionFontFamily = useMemo(() => {
-    const selected = INTRO_FONTS.find((font) => font.name === variant.voiceover_caption_font);
-    return selected?.cssFamily ?? "'TikTok Sans', 'Inter', system-ui, sans-serif";
-  }, [variant.voiceover_caption_font]);
+  const captionPreviewStyle = useMemo(() => {
+    const bar = visibleCaption?.bar;
+    const fontName = bar?.font_family ?? variant.voiceover_caption_font;
+    const selected = INTRO_FONTS.find((font) => font.name === fontName);
+    const sizePx = bar?.size_px ?? variant.caption_size_px ?? DEFAULT_CAPTION_SIZE_PX;
+    const strokeWidth =
+      bar?.stroke_width ?? variant.caption_stroke_width ?? DEFAULT_CAPTION_STROKE_WIDTH;
+    const scaledStroke = stageSize.h > 0 ? (strokeWidth / canvas.h) * stageSize.h : 0;
+    const shadowEnabled = bar?.shadow_enabled ?? variant.caption_shadow_enabled ?? true;
+    return {
+      bottomPct:
+        typeof bar?.y_frac === "number"
+          ? Math.max(0, Math.min(100, (1 - bar.y_frac) * 100))
+          : ((variant.caption_margin_v ?? 384) / canvas.h) * 100,
+      color:
+        visibleCaption?.wordMode
+          ? bar?.highlight_color ??
+            variant.caption_highlight_color ??
+            DEFAULT_CAPTION_HIGHLIGHT_COLOR
+          : bar?.color ?? variant.caption_text_color ?? DEFAULT_CAPTION_COLOR,
+      fontFamily: selected?.cssFamily ?? "'TikTok Sans', 'Inter', system-ui, sans-serif",
+      fontSizePx: stageSize.h > 0 ? (sizePx / canvas.h) * stageSize.h : 0,
+      textShadow: captionPreviewShadow(scaledStroke, shadowEnabled),
+    };
+  }, [canvas.h, stageSize.h, variant, visibleCaption]);
 
   const src = variant.base_video_url ?? variant.output_url ?? null;
   const hasPreview = Boolean(src || virtualPreview);
@@ -848,9 +898,7 @@ export default function EditorCanvas({
                     data-caption-preview="true"
                     className="pointer-events-none absolute inset-x-[7.5%] flex justify-center text-center"
                     style={{
-                      bottom: `${
-                        ((variant.caption_margin_v ?? 384) / canvas.h) * 100
-                      }%`,
+                      bottom: `${captionPreviewStyle.bottomPct}%`,
                       // The final subtitled compositor burns captions after
                       // authored text but before media overlays.
                       zIndex: EDITOR_STAGE_Z.textOverlay + 10,
@@ -858,18 +906,17 @@ export default function EditorCanvas({
                   >
                     <span
                       style={{
-                        color: "#fff",
-                        fontFamily: captionFontFamily,
-                        fontSize: `${stageSize.h > 0 ? (78 / canvas.h) * stageSize.h : 0}px`,
+                        color: captionPreviewStyle.color,
+                        fontFamily: captionPreviewStyle.fontFamily,
+                        fontSize: `${captionPreviewStyle.fontSizePx}px`,
                         fontWeight: 700,
                         lineHeight: 1.18,
                         maxWidth: "100%",
-                        textShadow:
-                          "0 2px 2px #000, 2px 0 2px #000, 0 -2px 2px #000, -2px 0 2px #000",
+                        textShadow: captionPreviewStyle.textShadow,
                         whiteSpace: "pre-wrap",
                       }}
                     >
-                      {visibleCaption}
+                      {visibleCaption.text}
                     </span>
                   </div>
                 )}

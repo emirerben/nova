@@ -1253,12 +1253,16 @@ def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
 
     from app.config import settings as _settings  # noqa: PLC0415
     from app.tasks.autoplace import (  # noqa: PLC0415
+        VISUAL_BLOCK_AUTOPLAN_ARCHETYPES,
         _clear_visual_block_attempts,
         prepare_visual_block_assets,
     )
 
     if not (_settings.visual_blocks_enabled and _settings.visual_block_autoplan_enabled):
         return
+    # Buffered, flushed AFTER the row lock releases (record_pipeline_event's
+    # own-connection UPDATE deadlocks against a held FOR UPDATE on jobs).
+    skipped_archetypes: list[tuple[str, str]] = []
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None or job.content_plan_item_id is None:
@@ -1272,13 +1276,36 @@ def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
                 and variant.get("text_mode") != "lyrics"
                 and not variant.get("visual_blocks_autoplan_attempted")
             ):
+                # Autoplan targets speech-spined archetypes only; unset
+                # resolved_archetype means montage-by-default. No claim is
+                # taken, so a later re-render that changes the archetype can
+                # still autoplan.
+                archetype = str(variant.get("resolved_archetype") or "montage")
+                if archetype not in VISUAL_BLOCK_AUTOPLAN_ARCHETYPES:
+                    skipped_archetypes.append((str(variant.get("variant_id")), archetype))
+                    continue
                 variant["visual_blocks_autoplan_attempted"] = True
                 eligible.append(str(variant.get("variant_id")))
-        if not eligible:
-            return
-        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-        flag_modified(job, "assembly_plan")
-        db.commit()
+        if eligible:
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            flag_modified(job, "assembly_plan")
+            db.commit()
+    if skipped_archetypes:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        for variant_id, archetype in skipped_archetypes:
+            record_pipeline_event(
+                "autoplace",
+                "visual_blocks_skipped_archetype",
+                {"variant_id": variant_id, "archetype": archetype},
+            )
+        log.info(
+            "visual_blocks_autoplan_skipped_archetype",
+            job_id=job_id,
+            skipped=skipped_archetypes,
+        )
+    if not eligible:
+        return
     try:
         prepare_visual_block_assets.apply_async(
             args=[job_id, eligible], queue=_settings.autoplace_queue
@@ -4095,6 +4122,107 @@ def _derive_duration_beats(durations: list[float], beat_grid: list[float]) -> li
             anchor = beat_grid[min(cursor, len(beat_grid) - 1)] + duration
             cursor = min(range(len(beat_grid)), key=lambda k: abs(beat_grid[k] - anchor))
     return out
+
+
+# Contiguity tolerance for merging adjacent same-source slots: float noise on
+# projected windows, never a real footage gap (a genuine cut is >= one beat).
+_CONTIGUOUS_SOURCE_EPSILON_S = 0.05
+
+
+def _merge_contiguous_same_source_steps(
+    steps: list,
+    *,
+    clip_id_to_local: dict[str, str],
+    probe_map: dict,
+    epsilon_s: float = _CONTIGUOUS_SOURCE_EPSILON_S,
+) -> list:
+    """Collapse adjacent matcher steps that will render contiguous windows of
+    the SAME source clip into one step.
+
+    `_plan_slots`' per-clip cursor makes every repeat use of a clip start
+    exactly where the previous slot ended, so a beat-driven recipe matched
+    against a single uploaded clip emits back-to-back slots whose seam is an
+    invisible cut — renders identically to no cut but shows as two clips in
+    the timeline editor (prod job 96771038). Runs on the FRESH-match generative
+    path only, before both `_assemble_clips` and `_build_ai_timeline`, so the
+    rendered cut structure and the editor timeline agree.
+
+    Windows are projected with the same cursor + footage-trim arithmetic the
+    planner applies under `allow_slowdown_fill=False`; adjacent same-clip steps
+    whose windows are contiguous within `epsilon_s` merge (first step's
+    slot/moment identity kept, target durations summed, moment end extended).
+    Pinned steps (`locked`/`exact_window` — user-timeline windows) and steps
+    carrying their own text overlays never merge.
+    """
+    if len(steps) < 2:
+        return list(steps)
+
+    def _project(step: Any, cursors: dict[str, float]) -> tuple[bool, float, float]:
+        slot = getattr(step, "slot", None) or {}
+        moment = getattr(step, "moment", None) or {}
+        pinned = bool(slot.get("locked") or slot.get("exact_window"))
+        duration = max(float(slot.get("target_duration_s") or 0.0), 0.5) * float(
+            slot.get("speed_factor") or 1.0
+        )
+        if pinned:
+            start = float(moment.get("start_s") or 0.0)
+            duration = max(0.5, float(moment.get("end_s", start + duration)) - start)
+        elif step.clip_id in cursors:
+            start = cursors[step.clip_id]
+        else:
+            start = float(moment.get("start_s") or 0.0)
+        probe = probe_map.get(clip_id_to_local.get(step.clip_id))
+        clip_dur = float(getattr(probe, "duration_s", 0.0) or 0.0)
+        if not pinned and clip_dur > 0.0 and start + duration > clip_dur:
+            available = max(0.0, clip_dur - start)
+            if available > 0.0:
+                duration = available  # footage-exhausted trim (no slowdown fill)
+            else:
+                start = max(0.0, clip_dur - duration)  # clamp-and-warn branch
+        return pinned, start, duration
+
+    merged: list = []
+    windows: list[tuple[bool, float, float]] = []  # (pinned, start_s, duration_s)
+    cursors: dict[str, float] = {}
+    for step in steps:
+        pinned, start, duration = _project(step, cursors)
+        if not pinned:
+            cursors[step.clip_id] = start + duration
+        slot = getattr(step, "slot", None) or {}
+        prev_win = windows[-1] if windows else None
+        if (
+            merged
+            and not pinned
+            and prev_win is not None
+            and not prev_win[0]
+            and merged[-1].clip_id == step.clip_id
+            and not slot.get("text_overlays")
+            and abs((prev_win[1] + prev_win[2]) - start) <= epsilon_s
+        ):
+            prev = merged[-1]
+            prev_slot = dict(getattr(prev, "slot", None) or {})
+            prev_slot["target_duration_s"] = round(
+                float(prev_slot.get("target_duration_s") or 0.0)
+                + float(slot.get("target_duration_s") or 0.0),
+                3,
+            )
+            if "target_duration_pct" in prev_slot or "target_duration_pct" in slot:
+                pct_a = prev_slot.get("target_duration_pct")
+                pct_b = slot.get("target_duration_pct")
+                prev_slot["target_duration_pct"] = (
+                    round(float(pct_a) + float(pct_b), 6)
+                    if pct_a is not None and pct_b is not None
+                    else None
+                )
+            merged_end = prev_win[1] + prev_win[2] + duration
+            prev_moment = dict(getattr(prev, "moment", None) or {})
+            prev_moment["end_s"] = round(merged_end, 3)
+            merged[-1] = type(prev)(slot=prev_slot, clip_id=prev.clip_id, moment=prev_moment)
+            windows[-1] = (False, prev_win[1], prev_win[2] + duration)
+            continue
+        merged.append(step)
+        windows.append((pinned, start, duration))
+    return merged
 
 
 def _build_ai_timeline(
@@ -7127,6 +7255,27 @@ def _render_generative_variant(
             except TemplateMismatchError as exc:
                 raise ValueError(f"{exc.code}: {exc.message}") from exc
             steps = assembly_plan.steps
+            # Fresh-match montage only (masonry keeps tiles; the override path
+            # above must honor the user's slots verbatim): collapse invisible
+            # same-source seams so render and editor timeline agree.
+            if not masonry_requested:
+                steps = _merge_contiguous_same_source_steps(
+                    steps, clip_id_to_local=clip_id_to_local, probe_map=probe_map
+                )
+                if len(steps) < len(assembly_plan.steps):
+                    from app.services.pipeline_trace import (  # noqa: PLC0415
+                        record_pipeline_event,
+                    )
+
+                    record_pipeline_event(
+                        "assembly",
+                        "contiguous_slots_merged",
+                        {
+                            "variant_id": variant_id,
+                            "matched_slots": len(assembly_plan.steps),
+                            "merged_slots": len(steps),
+                        },
+                    )
         _record_render_subphase(
             job_id,
             "render_variants",

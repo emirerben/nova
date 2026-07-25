@@ -10,6 +10,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Music can now actually be removed from an edit.** The Sounds drawer's Remove music button (previously wired to nothing) and a new Inspector control clear the matched track instantly in the preview and commit a `remove_music` edit that re-renders the variant through the track-free path with original clip audio.
+## [0.12.11.1] — 2026-07-25
+
+### Fixed
+- **Single-clip montages no longer split into invisible back-to-back cuts.** Adjacent matcher slots that render contiguous windows of the same source clip are merged before assembly and before the editor timeline is built, so the rendered cut structure and the clips editor agree (previously one uploaded video showed as two clips with a cut that changed nothing on screen).
+- **Montage edits no longer receive a self-added opening montage.** Visual-block autoplan is now allowlisted to speech-spined archetypes (talking head, narrated, subtitled); the deterministic fallback montage fires only on keyless dev machines instead of whenever the planner agent fails; and over-long planner rationale is truncated instead of failing schema validation.
 
 ## [0.12.11.0] — 2026-07-25
 
