@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0.0] — 2026-07-25
+
+### Added
+- **Creators can add export-matched SVG motion presets in the video editor.** The first Route trace preset supports frame-accurate start/end timing, intensity, and palette controls, with undo, drafts, atomic saves, and a cached render path below authored text.
+- **Motion preview and export now share one versioned CanvasKit frame renderer.** Browser and worker use the same immutable preset geometry, evaluator, pinned JavaScript/WASM payloads, integer-frame timing, and golden pixel fixtures; incompatible rolling-deploy versions fail closed instead of silently rendering different art.
+
+### Changed
+- **Production rendering can run the motion worker fully offline.** The Docker image pre-caches the pinned Deno/CanvasKit runtime, CI renders and hashes a real 1080×1920 frame inside that image, and FFmpeg composites only the bounded active animation window with final-output encoding quality.
+- **Nova now keeps desired motion edits separate from the last applied render.** Failed or superseded renders retain the last-good output and cache while the saved scene remains retryable, and stale motion caches are retired only after a replacement wins.
+
 ## [0.12.12.0] — 2026-07-25
 
 ### Fixed
