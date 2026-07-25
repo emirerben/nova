@@ -230,13 +230,26 @@ describe("EditorCanvas subtitled preview", () => {
       start_s: 1,
       end_s: 2.5,
       role: "narrated_caption",
+      font_family: "Playfair Display",
+      size_px: 192,
+      color: "#112233",
+      stroke_width: 8,
+      shadow_enabled: false,
     };
 
     const view = render(canvas(1.5, subtitled, [bar, captionBar]));
+    const caption = view.getByText("Edited working caption");
 
-    expect(
-      view.getByText("Edited working caption").closest("[data-caption-preview]"),
-    ).toHaveAttribute("data-caption-preview", "true");
+    expect(caption.closest("[data-caption-preview]")).toHaveAttribute(
+      "data-caption-preview",
+      "true",
+    );
+    expect(caption).toHaveStyle({
+      color: "#112233",
+      fontSize: "96px",
+    });
+    expect(caption.style.fontFamily).toContain("Playfair Display");
+    expect(caption.style.textShadow).toContain("4px 0 0 #000");
     expect(view.queryByText("Stale persisted caption")).not.toBeInTheDocument();
     expect(view.container.querySelector("video")).toHaveAttribute(
       "src",
