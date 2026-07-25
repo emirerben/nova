@@ -567,6 +567,123 @@ def test_song_timeline_override_mixes_required_music_track(monkeypatch):
     assert mix_calls[0]["kwargs"]["require_audio"] is True
 
 
+def test_song_timeline_override_replaces_stale_music_window_duration(monkeypatch):
+    """The music recipe/mix must cover the exact active timeline, not the old render."""
+    mix_calls: list = []
+    recipe_inputs: list[dict] = []
+    slots = [
+        _tl_slot(0, in_s=0.0, duration_s=1.5),
+        _tl_slot(1, in_s=0.0, duration_s=9.0, removed=True),
+        _tl_slot(2, in_s=0.0, duration_s=1.867),
+    ]
+    variant = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="agent_text",
+        music_track_id="t1",
+        music_start_s=0.543,
+        music_window_video_duration_s=2.784,
+        video_path=f"generative-jobs/{JOB_ID}/variant_1_song_text.mp4",
+        base_video_path=f"generative-jobs/{JOB_ID}/base_1_song_text.mp4",
+        user_timeline={"slots": slots},
+    )
+    _job, updates, _dl = _regen_setup(
+        monkeypatch,
+        variants=[variant],
+        track=_track("t1"),
+        mix_calls=mix_calls,
+    )
+    import app.pipeline.music_recipe as mr
+
+    def _capture_recipe(track_data, **_kwargs):
+        recipe_inputs.append(track_data)
+        return {
+            "slots": [{"position": 1, "target_duration_s": 1.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.0, 1.0, 2.0, 3.367],
+        }
+
+    monkeypatch.setattr(mr, "generate_music_recipe", _capture_recipe, raising=False)
+    monkeypatch.setattr(
+        gb,
+        "_run_music_window_audio_only_swap",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("timeline edits must rebuild the video frames")
+        ),
+        raising=False,
+    )
+
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "song_text",
+        None,
+        None,
+        False,
+        timeline_override=[
+            *slots,
+            {"slot_id": "__nova_timeline_reassembly__", "removed": True},
+        ],
+    )
+
+    assert updates[-1]["ok"] is True
+    assert updates[-1]["music_window_video_duration_s"] == pytest.approx(3.367)
+    assert mix_calls[0]["kwargs"]["validated_window_duration_s"] == pytest.approx(3.367)
+    track_config = recipe_inputs[0]["track_config"]
+    assert track_config["exact_window"] is True
+    assert track_config["best_end_s"] - track_config["best_start_s"] == pytest.approx(3.367)
+
+
+def test_song_timeline_probe_clamp_updates_exact_music_window(monkeypatch):
+    """An unprobed source clamp must also shrink recipe, mix, and persisted duration."""
+    mix_calls: list = []
+    recipe_inputs: list[dict] = []
+    slots = [_tl_slot(0, in_s=0.0, duration_s=3.367)]
+    variant = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="none",
+        music_track_id="t1",
+        music_start_s=0.0,
+        music_window_video_duration_s=3.367,
+        user_timeline={"slots": slots},
+    )
+    _job, updates, _dl = _regen_setup(
+        monkeypatch,
+        variants=[variant],
+        track=_track("t1"),
+        mix_calls=mix_calls,
+    )
+    _patch_timeline_io(monkeypatch, duration_s=2.0)
+    import app.pipeline.music_recipe as mr
+
+    def _capture_recipe(track_data, **_kwargs):
+        recipe_inputs.append(track_data)
+        return {
+            "slots": [{"position": 1, "target_duration_s": 1.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.0, 1.0, 2.0],
+        }
+
+    monkeypatch.setattr(mr, "generate_music_recipe", _capture_recipe, raising=False)
+
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "song_text",
+        None,
+        None,
+        False,
+        timeline_override=[
+            *slots,
+            {"slot_id": "__nova_timeline_reassembly__", "removed": True},
+        ],
+    )
+
+    assert updates[-1]["ok"] is True
+    assert updates[-1]["music_window_video_duration_s"] == pytest.approx(2.0)
+    assert mix_calls[0]["kwargs"]["validated_window_duration_s"] == pytest.approx(2.0)
+    track_config = recipe_inputs[0]["track_config"]
+    assert track_config["exact_window"] is True
+    assert track_config["best_end_s"] - track_config["best_start_s"] == pytest.approx(2.0)
+
+
 def test_persisted_user_timeline_drops_removed_and_honors_order(monkeypatch):
     """No kwarg → persisted user_timeline drives assembly: removed slots are
     dropped and the remaining slots render in list order. The variant's
@@ -1101,7 +1218,7 @@ def test_hook_regrounding_skips_lyrics_variants(monkeypatch):
     monkeypatch.setattr(
         gb,
         "_inject_lyrics",
-        lambda recipe_dict, track, style_set_id=None, line_overrides=None: (recipe_dict, []),
+        lambda recipe_dict, track, **_kwargs: (recipe_dict, []),
         raising=False,
     )
 
