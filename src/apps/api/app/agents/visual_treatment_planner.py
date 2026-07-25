@@ -61,6 +61,17 @@ class RawVisualTreatment(BaseModel):
     def _text(cls, value: str | None) -> str | None:
         return (value or "").strip()[:500] or None
 
+    @field_validator("rationale", mode="before")
+    @classmethod
+    def _rationale(cls, value: object) -> object:
+        # Advisory field: Gemini regularly overruns the 300-char budget, and a
+        # verbose rationale must never fail the whole plan (prod job 96771038
+        # fell to terminal_schema on exactly this). Truncate before validation
+        # so max_length stays the constraint for every other input shape.
+        if isinstance(value, str):
+            return value.strip()[:300]
+        return value
+
 
 class VisualTreatmentPlannerOutput(BaseModel):
     treatments: list[RawVisualTreatment] = Field(default_factory=list, max_length=12)
