@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.12.1] — 2026-07-25
+
+### Fixed
+- **The last clip now keeps its full selected duration when the song's beat grid ends early.** Internal cuts remain aligned to beats, while the saved terminal clip may use its exact source endpoint; video, lyrics, music mixing, and persisted duration now agree.
+
 ## [0.12.12.0] — 2026-07-25
 
 ### Fixed
