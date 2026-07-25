@@ -301,6 +301,7 @@ _SMART_CAPTION_TAGS: dict[str, str] = {
 
 @dataclass(frozen=True, slots=True)
 class CaptionStyleOverrides:
+    font_family: str | None = None
     font_size_px: int | None = None
     color: str | None = None
     highlight_color: str | None = None
@@ -315,8 +316,13 @@ class CaptionStyleOverrides:
             return value
         color = _clean_hex(value.get("color"))
         highlight = _clean_hex(value.get("highlight_color"))
+        font_family = str(value.get("font_family") or value.get("font") or "").strip()
+        font_family = re.sub(r"[,{}\[\]\r\n]", "", font_family) or None
         return cls(
-            font_size_px=_clamp_optional_int(value.get("font_size_px"), 36, 160),
+            font_family=font_family,
+            font_size_px=_clamp_optional_int(
+                value.get("font_size_px", value.get("size_px")), 36, 250
+            ),
             color=color,
             highlight_color=highlight,
             stroke_width=_clamp_optional_int(value.get("stroke_width"), 0, 12),
@@ -349,7 +355,7 @@ class SmartCaptionRenderPolicy:
             # The family is interpolated into an ASS Style line; strip the
             # field/section metacharacters — persisted JSONB is re-trusted here.
             font_family=re.sub(r"[,{}\[\]\r\n]", "", str(value["font_family"])).strip(),
-            font_size_px=max(36, min(96, int(value["font_size_px"]))),
+            font_size_px=max(36, min(250, int(value["font_size_px"]))),
             y_frac=clamp_caption_y_frac(value["y_frac"]),
             width_frac=max(0.4, min(0.95, float(value["width_frac"]))),
             max_lines=max(1, min(2, int(value["max_lines"]))),
@@ -688,15 +694,19 @@ def _word_windows_for_cue(cue: dict) -> list[dict]:
 
 
 def _compose_word_pop_text(
-    tokens: list[str], active_idx: int, *, active_color: str = _ACTIVE_WORD_ASS_COLOR
+    tokens: list[str],
+    active_idx: int,
+    *,
+    active_color: str = _ACTIVE_WORD_ASS_COLOR,
+    reset_color: str = "&H00FFFFFF",
 ) -> str:
     """The full line, sanitized, with only `tokens[active_idx]` popped in lime (revert
-    to the white style default after via `\\r`)."""
+    to the normal cue colour after the active token."""
     parts: list[str] = []
     for j, tok in enumerate(tokens):
         clean = sanitize_ass_text(tok)
         if j == active_idx:
-            parts.append(f"{{\\c{active_color}&}}{clean}{{\\r}}")
+            parts.append(f"{{\\c{active_color}&}}{clean}{{\\c{reset_color}&}}")
         else:
             parts.append(clean)
     return " ".join(parts)
@@ -742,9 +752,27 @@ def generate_word_pop_ass(
             nxt = float(windows[i + 1]["start_s"]) if i + 1 < n else float(w["end_s"])
             end = max(start + 0.01, nxt)
             prev_end = end
-            text = _compose_word_pop_text(tokens, i, active_color=active_ass_color)
+            cue_style = CaptionStyleOverrides.from_value(cue)
+            cue_active_color = (
+                _hex_to_ass(cue_style.highlight_color)
+                if cue_style and cue_style.highlight_color
+                else active_ass_color
+            )
+            reset_color = (
+                _hex_to_ass(cue_style.color)
+                if cue_style and cue_style.color
+                else _hex_to_ass(style_overrides.color)
+                if style_overrides and style_overrides.color
+                else "&H00FFFFFF"
+            )
+            text = _compose_word_pop_text(
+                tokens, i, active_color=cue_active_color, reset_color=reset_color
+            )
+            cue_tags = _cue_style_override_tags(cue)
+            margin_v_override = _cue_margin_v(cue)
             lines.append(
-                f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,0,,{text}"
+                f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,"
+                f"{margin_v_override},,{cue_tags}{text}"
             )
     _write_ass(
         lines,
@@ -834,9 +862,11 @@ def _format_cue_lines(
             smart_tags = f"{{\\fs{size}{_ass_color_tag(color) if color else ''}}}"
         else:
             smart_tags = _SMART_CAPTION_TAGS.get(str(c.get("smart_style") or ""), "")
+        cue_tags = _cue_style_override_tags(c, smart_policy)
+        margin_v_override = _cue_margin_v(c)
         lines.append(
-            f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,0,,"
-            f"{prefix_tags}{smart_tags}{text}"
+            f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,"
+            f"{margin_v_override},,{prefix_tags}{smart_tags}{cue_tags}{text}"
         )
     return lines
 
@@ -904,6 +934,36 @@ def _hex_to_ass(value: str) -> str:
 
 def _ass_color_tag(value: str) -> str:
     return f"\\c{_hex_to_ass(value)}&"
+
+
+def _cue_margin_v(cue: dict) -> int:
+    y_frac = cue.get("y_frac")
+    if isinstance(y_frac, int | float):
+        return y_frac_to_margin_v(float(y_frac))
+    return 0
+
+
+def _cue_style_override_tags(cue: dict, smart_policy: SmartCaptionRenderPolicy | None = None) -> str:
+    style = CaptionStyleOverrides.from_value(cue)
+    tags: list[str] = []
+    if style and style.font_family:
+        tags.append(f"\\fn{style.font_family}")
+    if style and style.font_size_px:
+        tags.append(f"\\fs{style.font_size_px}")
+    if style and style.color:
+        tags.append(_ass_color_tag(style.color))
+    if style and style.stroke_width is not None:
+        tags.append(f"\\bord{style.stroke_width}")
+    if style and style.shadow_enabled is not None:
+        tags.append(f"\\shad{1 if style.shadow_enabled else 0}")
+    if (
+        style
+        and style.shadow_enabled is None
+        and smart_policy
+        and smart_policy.shadow_enabled is not None
+    ):
+        tags.append(f"\\shad{1 if smart_policy.shadow_enabled else 0}")
+    return "{" + "".join(tags) + "}" if tags else ""
 
 
 def _ass_header_smart(policy: SmartCaptionRenderPolicy) -> str:

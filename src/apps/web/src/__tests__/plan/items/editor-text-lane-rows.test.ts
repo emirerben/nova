@@ -278,6 +278,13 @@ describe("barsToCaptionCues", () => {
             text: "edited words",
             start_s: 0.1,
             end_s: 1.2,
+            font_family: "Playfair Display",
+            size_px: 92,
+            color: "#112233",
+            highlight_color: "#A3E635",
+            stroke_width: 7,
+            shadow_enabled: false,
+            y_frac: 0.66,
           },
         ],
         new Map([["caption-0", original]]),
@@ -288,13 +295,47 @@ describe("barsToCaptionCues", () => {
         text: "edited words",
         start_s: 0.1,
         end_s: 1.2,
+        font_family: "Playfair Display",
+        size_px: 92,
+        color: "#112233",
+        highlight_color: "#A3E635",
+        stroke_width: 7,
+        shadow_enabled: false,
+        y_frac: 0.66,
+      },
+    ]);
+  });
+
+  it("ignores legacy synthetic subtitled timeline rows", () => {
+    expect(
+      barsToCaptionCues([
+        {
+          id: "caption-0",
+          role: "narrated_caption",
+          text: "real editable cue",
+          start_s: 0,
+          end_s: 1,
+        },
+        {
+          id: "subtitled-caption-0",
+          role: "narrated_caption",
+          text: "stale duplicate row",
+          start_s: 0,
+          end_s: 1,
+        },
+      ]),
+    ).toEqual([
+      {
+        text: "real editable cue",
+        start_s: 0,
+        end_s: 1,
       },
     ]);
   });
 });
 
 describe("caption bar style patches", () => {
-  it("routes renderer-backed caption appearance to caption_meta and drops unsupported text fields", () => {
+  it("keeps only renderer-backed caption appearance fields on local caption bars", () => {
     const patch = {
       font_family: "Playfair Display",
       size_px: 92,

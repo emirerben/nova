@@ -1095,20 +1095,6 @@ export default function EditorShell({
       ? state.bars
       : state.bars.filter((bar) => !isLyricBar(bar));
   }, [lyricBarsAvailable, lyricsEnabled, lyricsOptionalActive, state.bars]);
-  const subtitledCaptionTimelineBars = useMemo<TextElementBar[]>(() => {
-    if (variant?.resolved_archetype !== "subtitled") return [];
-    return (variant.caption_cues ?? []).map((cue, index) => ({
-      id: `subtitled-caption-${index}`,
-      text: cue.text,
-      start_s: cue.start_s,
-      end_s: cue.end_s,
-      role: "narrated_caption",
-    }));
-  }, [variant?.caption_cues, variant?.resolved_archetype]);
-  const timelineTextBars = useMemo(
-    () => [...visibleTextBars, ...subtitledCaptionTimelineBars],
-    [subtitledCaptionTimelineBars, visibleTextBars],
-  );
   const lyricLineOverrides = useMemo(
     () =>
       lyricBarsAvailable
@@ -1926,16 +1912,8 @@ export default function EditorShell({
         }
         patchToApply = localCaptionBarPatchFromPatch(patch);
         history.record();
-        if (hasCaptionCuePatch) {
+        if (hasCaptionCuePatch || Object.keys(metaPatch).length > 0) {
           setCaptionDirty(true);
-        }
-        if (Object.keys(metaPatch).length > 0) {
-          setCaptionMeta((current) => {
-            const base = current ?? (variant ? captionMetaFromVariant(variant) : null);
-            return base ? { ...base, ...metaPatch } : base;
-          });
-          setCaptionMetaPatch((current) => ({ ...current, ...metaPatch }));
-          setCaptionMetaDirty(true);
         }
       } else if (lyricsOptionalActive || !isLyricBar(target)) {
         history.record();
@@ -1950,7 +1928,6 @@ export default function EditorShell({
       lyricsOptionalActive,
       readOnly,
       state.bars,
-      variant,
     ],
   );
 
@@ -4159,7 +4136,7 @@ export default function EditorShell({
       selectElement(kind, id);
     },
     onClear: clear,
-    textBars: timelineTextBars,
+    textBars: visibleTextBars,
     readOnly,
     onRecordTimelineEdit: recordTimelineDrag,
     onPreviewTextTiming: previewTextTiming,

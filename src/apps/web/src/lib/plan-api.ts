@@ -867,6 +867,14 @@ export interface CaptionCue {
    */
   smart_role?: "hook" | "context_shift" | "list_item" | "example" | "payoff" | "cta" | null;
   smart_word_ids?: string[] | null;
+  /** Optional cue-local caption appearance overrides. When absent, variant caption_meta applies. */
+  font_family?: string | null;
+  size_px?: number | null;
+  color?: string | null;
+  highlight_color?: string | null;
+  stroke_width?: number | null;
+  shadow_enabled?: boolean | null;
+  y_frac?: number | null;
   /**
    * Plan 011/012 provenance, also round-tripped untouched via the spread:
    * `smart_emphasis` marks a named-entity cue isolated for emphasis, and

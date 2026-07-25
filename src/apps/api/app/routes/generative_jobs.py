@@ -1359,6 +1359,13 @@ class CaptionCue(BaseModel):
     # every burn, so client-sent values would be dead weight.
     smart_role: SemanticRole | None = None
     smart_word_ids: list[str] | None = None
+    font_family: str | None = Field(None, max_length=120)
+    size_px: int | None = Field(None, ge=36, le=250)
+    color: str | None = None
+    highlight_color: str | None = None
+    stroke_width: int | None = Field(None, ge=0, le=12)
+    shadow_enabled: bool | None = None
+    y_frac: float | None = Field(None, ge=0.0, le=1.0)
     # Plan 011/012 provenance the whitelist above was written to be extended with:
     # smart_emphasis marks a cue that was isolated as a named-entity moment (drives
     # the standalone min-hold at plan time + the future styling lane), and
@@ -1387,6 +1394,16 @@ class CaptionCue(BaseModel):
         if any(not _SMART_WORD_ID_RE.fullmatch(str(word_id)) for word_id in v):
             raise ValueError("Invalid smart caption word id.")
         return v
+
+    @field_validator("color", "highlight_color")
+    @classmethod
+    def _validate_caption_style_color(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        clean = v.strip().upper()
+        if not _HEX_COLOR_RE.fullmatch(clean):
+            raise ValueError("Caption style colors must be #RRGGBB hex colors.")
+        return clean
 
     @field_validator("smart_keep_together")
     @classmethod

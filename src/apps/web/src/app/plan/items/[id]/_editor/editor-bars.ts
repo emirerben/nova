@@ -117,6 +117,10 @@ function captionIndexFromBarId(id: string): number | null {
   return Number.isFinite(index) ? index : null;
 }
 
+function isSyntheticSubtitledCaptionBar(bar: TextElementBar): boolean {
+  return /^subtitled-caption-\d+$/.test(bar.id);
+}
+
 function isCaptionCueProjection(bar: TextElementBar): boolean {
   return bar.source_params?.source === "caption_cue";
 }
@@ -434,7 +438,7 @@ export function barsToCaptionCues(
   originalById: ReadonlyMap<string, CaptionCue> = new Map(),
 ): CaptionCue[] {
   return bars
-    .filter(isCaptionBar)
+    .filter((bar) => isCaptionBar(bar) && !isSyntheticSubtitledCaptionBar(bar))
     .map((bar) => ({
       ...(originalById.get(bar.id) ??
         (captionIndexFromBarId(bar.id) != null
@@ -444,5 +448,16 @@ export function barsToCaptionCues(
       text: bar.text,
       start_s: bar.start_s,
       end_s: bar.end_s,
+      ...(bar.font_family !== undefined ? { font_family: bar.font_family ?? null } : {}),
+      ...(typeof bar.size_px === "number" ? { size_px: bar.size_px } : {}),
+      ...(typeof bar.color === "string" ? { color: bar.color } : {}),
+      ...(typeof bar.highlight_color === "string"
+        ? { highlight_color: bar.highlight_color }
+        : {}),
+      ...(typeof bar.stroke_width === "number" ? { stroke_width: bar.stroke_width } : {}),
+      ...(typeof bar.shadow_enabled === "boolean"
+        ? { shadow_enabled: bar.shadow_enabled }
+        : {}),
+      ...(typeof bar.y_frac === "number" ? { y_frac: bar.y_frac } : {}),
     }));
 }

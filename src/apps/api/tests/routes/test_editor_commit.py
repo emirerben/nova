@@ -516,6 +516,13 @@ def test_subtitled_caption_commit_persists_metadata_and_reburns_caption_task(mon
             "words": [{"text": "Old", "start_s": 0.0, "end_s": 0.4}],
             "smart_role": "hook",
             "smart_word_ids": ["w000001"],
+            "font_family": "Playfair Display",
+            "size_px": 124,
+            "color": "#112233",
+            "highlight_color": "#A3E635",
+            "stroke_width": 7,
+            "shadow_enabled": False,
+            "y_frac": 0.66,
         }
     ]
 

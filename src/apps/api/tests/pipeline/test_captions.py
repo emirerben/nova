@@ -239,6 +239,44 @@ def test_caption_appearance_overrides_plain_header(tmp_path):
     assert ",7,0,2," in style
 
 
+def test_caption_cues_can_override_appearance_individually(tmp_path):
+    out = tmp_path / "cue-styled.ass"
+    generate_ass_from_cues(
+        [
+            {
+                "text": "small blue",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "font_family": "Playfair Display",
+                "size_px": 72,
+                "color": "#112233",
+                "stroke_width": 2,
+                "shadow_enabled": False,
+                "y_frac": 0.7,
+            },
+            {
+                "text": "big green",
+                "start_s": 1.0,
+                "end_s": 2.0,
+                "size_px": 142,
+                "color": "#44CC88",
+                "stroke_width": 8,
+                "shadow_enabled": True,
+            },
+        ],
+        str(out),
+        font_name="TikTok Sans",
+        style="plain",
+    )
+
+    first, second = _events(out)
+    assert "{\\fnPlayfair Display\\fs72\\c&H00332211&\\bord2\\shad0}" in first
+    assert ",0,0,576,," in first
+    assert "small blue" in first
+    assert "{\\fs142\\c&H0088CC44&\\bord8\\shad1}" in second
+    assert "big green" in second
+
+
 def _events(ass_path) -> list[str]:
     return [
         ln for ln in ass_path.read_text(encoding="utf-8").splitlines() if ln.startswith("Dialogue:")
@@ -313,7 +351,30 @@ def test_word_pop_caption_appearance_overrides_header_and_highlight(tmp_path):
     assert ",88," in style
     assert "&H00332211" in style
     assert ",3,0,2," in style
-    assert "{\\c&H0088CC44&}hello{\\r}" in _events(out)[0]
+    assert "{\\c&H0088CC44&}hello{\\c&H00332211&}" in _events(out)[0]
+
+
+def test_word_pop_cues_can_override_appearance_individually(tmp_path):
+    cue = {
+        "text": "hello world",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "size_px": 144,
+        "color": "#112233",
+        "highlight_color": "#44CC88",
+        "stroke_width": 6,
+        "shadow_enabled": False,
+        "words": [
+            {"text": "hello", "start_s": 0.0, "end_s": 0.5},
+            {"text": "world", "start_s": 0.5, "end_s": 1.0},
+        ],
+    }
+    out = tmp_path / "word-cue-styled.ass"
+    generate_word_pop_ass([cue], str(out), font_name="TikTok Sans")
+
+    first = _events(out)[0]
+    assert "{\\fs144\\c&H00332211&\\bord6\\shad0}" in first
+    assert "{\\c&H0088CC44&}hello{\\c&H00332211&}" in first
 
 
 def test_word_pop_synthesizes_for_an_edited_cue(tmp_path):
