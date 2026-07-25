@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.11.0] — 2026-07-25
+
+### Fixed
+- **Subtitled caption style edits now survive Save and reburn.** Caption font, size, fill color, highlight color, stroke width, and shadow changes now persist as caption metadata instead of being dropped as generic text styling, and the backend ASS renderer applies those fields when rebuilding captions.
+- **Caption bars only show renderer-backed appearance controls.** Unsupported generic text controls such as placement, alignment, width, animation, text case, spacing, and behind-subject are hidden for caption bars so the inspector no longer offers edits that the caption renderer cannot honor.
+
 ## [0.12.10.2] — 2026-07-25
 
 ### Fixed
