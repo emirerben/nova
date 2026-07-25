@@ -34,6 +34,10 @@ import type {
   CopilotMessage,
   QueuedCopilotMessage,
 } from "@/lib/edit-copilot/useEditCopilot";
+import {
+  MOTION_FPS,
+  type MotionPresetInstanceV1,
+} from "@nova/motion-runtime";
 
 const CATEGORY_LABEL: Record<TextPresetCategory, string> = {
   favorite: "Favorite",
@@ -68,6 +72,13 @@ export default function ToolDrawer({
   onOverlayUpload,
   overlaySuggestions = null,
   visualBlocks = [],
+  motionScenes = [],
+  motionDurationS = 0,
+  motionAvailable = false,
+  motionRuntimeCompatible = true,
+  onAddMotion,
+  onPatchMotion,
+  onRemoveMotion,
   visualAssets = [],
   visualTextElements = [],
   visualUploading = false,
@@ -121,6 +132,13 @@ export default function ToolDrawer({
    *  the autoplace flag + the variant's `suggestions` capability). */
   overlaySuggestions?: React.ReactNode;
   visualBlocks?: VisualBlock[];
+  motionScenes?: MotionPresetInstanceV1[];
+  motionDurationS?: number;
+  motionAvailable?: boolean;
+  motionRuntimeCompatible?: boolean;
+  onAddMotion?: () => void;
+  onPatchMotion?: (id: string, patch: Partial<MotionPresetInstanceV1>) => void;
+  onRemoveMotion?: (id: string) => void;
   visualAssets?: PoolAsset[];
   visualTextElements?: Array<{
     id?: string;
@@ -355,22 +373,33 @@ export default function ToolDrawer({
       )}
 
       {tool === "visuals" && (
-        <VisualsDrawer
-          blocks={visualBlocks}
-          assets={visualAssets}
-          textElements={visualTextElements}
-          uploading={visualUploading}
-          onUpload={onVisualUpload}
-          onAddMontage={onAddMontage}
-          onAddTextCard={onAddTextCard}
-          onAddBlockText={onAddVisualBlockText}
-          onSelectBlockText={onSelectVisualBlockText}
-          onSaveAssetContext={onSaveVisualAssetContext}
-          onPatchBlock={onPatchVisualBlock}
-          onDuplicateBlock={onDuplicateVisualBlock}
-          onDeleteBlock={onDeleteVisualBlock}
-          onRetimeBlock={onRetimeVisualBlock}
-        />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <MotionPresetsPanel
+            scenes={motionScenes}
+            durationS={motionDurationS}
+            available={motionAvailable}
+            runtimeCompatible={motionRuntimeCompatible}
+            onAdd={onAddMotion}
+            onPatch={onPatchMotion}
+            onRemove={onRemoveMotion}
+          />
+          <VisualsDrawer
+            blocks={visualBlocks}
+            assets={visualAssets}
+            textElements={visualTextElements}
+            uploading={visualUploading}
+            onUpload={onVisualUpload}
+            onAddMontage={onAddMontage}
+            onAddTextCard={onAddTextCard}
+            onAddBlockText={onAddVisualBlockText}
+            onSelectBlockText={onSelectVisualBlockText}
+            onSaveAssetContext={onSaveVisualAssetContext}
+            onPatchBlock={onPatchVisualBlock}
+            onDuplicateBlock={onDuplicateVisualBlock}
+            onDeleteBlock={onDeleteVisualBlock}
+            onRetimeBlock={onRetimeVisualBlock}
+          />
+        </div>
       )}
 
       {tool === "sounds" && (
@@ -396,6 +425,149 @@ export default function ToolDrawer({
         />
       )}
     </div>
+  );
+}
+
+function MotionPresetsPanel({
+  scenes,
+  durationS,
+  available,
+  runtimeCompatible,
+  onAdd,
+  onPatch,
+  onRemove,
+}: {
+  scenes: MotionPresetInstanceV1[];
+  durationS: number;
+  available: boolean;
+  runtimeCompatible: boolean;
+  onAdd?: () => void;
+  onPatch?: (id: string, patch: Partial<MotionPresetInstanceV1>) => void;
+  onRemove?: (id: string) => void;
+}) {
+  if (process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED !== "true") return null;
+  const reason = !runtimeCompatible
+    ? "Refresh to load the matching motion renderer."
+    : !available
+      ? "Motion is unavailable for this version."
+      : null;
+  return (
+    <section className="border-b border-zinc-100 px-5 pb-5">
+      <div className="mb-2 flex items-center justify-between">
+        <div>
+          <p className="text-[12px] font-semibold text-[#3f3f46]">Motion</p>
+          <p className="mt-0.5 text-[11px] text-[#71717a]">Export-matched SVG presets</p>
+        </div>
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={!!reason || !onAdd || scenes.length >= 4}
+          title={reason ?? undefined}
+          className="min-h-10 rounded-lg bg-[#0c0c0e] px-3 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-[#a1a1aa]"
+        >
+          Add route trace
+        </button>
+      </div>
+      {reason && <p className="text-[11px] text-amber-700">{reason}</p>}
+      <div className="space-y-2">
+        {scenes.map((scene) => (
+          <div key={scene.id} className="rounded-xl border border-zinc-200 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] font-semibold text-[#0c0c0e]">Route trace</span>
+              <button
+                type="button"
+                onClick={() => onRemove?.(scene.id)}
+                className="min-h-9 px-2 text-[11px] text-red-600"
+              >
+                Remove
+              </button>
+            </div>
+            <label className="mt-2 block text-[11px] text-[#71717a]">
+              Intensity
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={scene.intensity}
+                onChange={(event) =>
+                  onPatch?.(scene.id, { intensity: Number(event.target.value) })
+                }
+                className="mt-1 w-full accent-lime-500"
+              />
+            </label>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <label className="text-[10px] text-[#71717a]">
+                Start (seconds)
+                <input
+                  type="number"
+                  min={0}
+                  max={Math.max(
+                    0,
+                    (scene.end_frame_exclusive - 1) / MOTION_FPS,
+                  )}
+                  step={1 / MOTION_FPS}
+                  value={(scene.start_frame / MOTION_FPS).toFixed(2)}
+                  onChange={(event) => {
+                    const next = Math.max(
+                      0,
+                      Math.min(
+                        scene.end_frame_exclusive - 1,
+                        Math.round(Number(event.target.value) * MOTION_FPS),
+                      ),
+                    );
+                    onPatch?.(scene.id, { start_frame: next });
+                  }}
+                  className="mt-1 h-9 w-full rounded-lg border border-zinc-200 px-2 text-[11px] text-[#0c0c0e]"
+                />
+              </label>
+              <label className="text-[10px] text-[#71717a]">
+                End (seconds)
+                <input
+                  type="number"
+                  min={(scene.start_frame + 1) / MOTION_FPS}
+                  max={durationS > 0 ? durationS : undefined}
+                  step={1 / MOTION_FPS}
+                  value={(scene.end_frame_exclusive / MOTION_FPS).toFixed(2)}
+                  onChange={(event) => {
+                    const requested = Math.round(
+                      Number(event.target.value) * MOTION_FPS,
+                    );
+                    const durationFrames =
+                      durationS > 0
+                        ? Math.max(1, Math.round(durationS * MOTION_FPS))
+                        : requested;
+                    const next = Math.max(
+                      scene.start_frame + 1,
+                      Math.min(durationFrames, requested),
+                    );
+                    onPatch?.(scene.id, { end_frame_exclusive: next });
+                  }}
+                  className="mt-1 h-9 w-full rounded-lg border border-zinc-200 px-2 text-[11px] text-[#0c0c0e]"
+                />
+              </label>
+            </div>
+            <div className="mt-2 flex items-center gap-3">
+              {(["primary", "accent"] as const).map((slot) => (
+                <label key={slot} className="text-[10px] capitalize text-[#71717a]">
+                  {slot}
+                  <input
+                    type="color"
+                    value={scene.palette[slot]}
+                    onChange={(event) =>
+                      onPatch?.(scene.id, {
+                        palette: { ...scene.palette, [slot]: event.target.value },
+                      })
+                    }
+                    className="ml-1 h-8 w-8 cursor-pointer rounded border-0 bg-transparent align-middle"
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

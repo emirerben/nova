@@ -5,6 +5,10 @@ import {
   type EditorCommitResponse,
 } from "@/lib/editor-commit";
 import type { TextElement, VisualBlock } from "@/lib/plan-api";
+import {
+  MOTION_RUNTIME_HASH,
+  type MotionPresetInstanceV1,
+} from "@nova/motion-runtime";
 
 const element: TextElement = {
   id: "txt-1",
@@ -307,6 +311,33 @@ describe("buildEditorCommitRequest", () => {
 
     expect(body.visual_blocks).toEqual([block]);
     expect(body.text_elements?.[0].visual_block_id).toBe("card-1");
+  });
+
+  it("sends motion scenes with the exact runtime compatibility token", () => {
+    const scene: MotionPresetInstanceV1 = {
+      id: "motion-1",
+      preset_id: "route_trace",
+      preset_version: 1,
+      start_frame: 15,
+      end_frame_exclusive: 75,
+      palette: { primary: "#F5F5F4", accent: "#A3E635" },
+      intensity: 0.8,
+    };
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      motionScenesDirty: true,
+      motionScenes: [scene],
+      motionRuntimeHash: MOTION_RUNTIME_HASH,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+
+    expect(body.motion_scenes).toEqual([scene]);
+    expect(body.motion_runtime_hash).toBe(MOTION_RUNTIME_HASH);
   });
 
   it("does not send mix for non-mixable variants even when mix changed", () => {

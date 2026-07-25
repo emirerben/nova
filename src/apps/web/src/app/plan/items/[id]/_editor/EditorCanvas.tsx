@@ -72,6 +72,8 @@ import {
   masonryMotionOffsetFrac,
 } from "./editor-smart-placement";
 import VisualBlocksLayer from "./VisualBlocksLayer";
+import MotionCanvasLayer from "./MotionCanvasLayer";
+import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
 
 /** Min/max font size (1080×1920 canvas px) reachable via corner-drag scale.
  * Wider than the inspector's INTRO_SIZE envelope on purpose — the canvas can
@@ -157,6 +159,8 @@ export default function EditorCanvas({
   bars,
   mediaOverlays = [],
   visualBlocks = [],
+  motionScenes = [],
+  motionRuntimeHash,
   cameraEffects = [],
   visualAssets = [],
   overlayPreviewUrls = {},
@@ -195,6 +199,8 @@ export default function EditorCanvas({
   bars: TextElementBar[];
   mediaOverlays?: MediaOverlay[];
   visualBlocks?: VisualBlock[];
+  motionScenes?: MotionPresetInstanceV1[];
+  motionRuntimeHash?: string | null;
   cameraEffects?: CameraEffect[];
   visualAssets?: PoolAsset[];
   overlayPreviewUrls?: Record<string, string>;
@@ -879,6 +885,15 @@ export default function EditorCanvas({
               blocks={visualBlocks}
               assets={visualAssets}
               currentTime={currentTime}
+            />
+            <MotionCanvasLayer
+              instances={motionScenes}
+              currentTime={currentTime}
+              playing={playing}
+              width={canvas.w}
+              height={canvas.h}
+              runtimeHash={motionRuntimeHash}
+              videoRef={videoRef}
             />
 
             {/* Deselect layer over the video (the <video> is pointer-events-none,

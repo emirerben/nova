@@ -35,6 +35,7 @@ export interface EditorCommitSectionsLike {
   sound_effects?: boolean;
   media_overlays?: boolean;
   visual_blocks?: boolean;
+  motion_scenes?: boolean;
   camera_effects?: boolean;
   title?: boolean;
   lyrics?: boolean;
@@ -53,6 +54,7 @@ export function editorCommitStartedRender(sections: EditorCommitSectionsLike): b
       sections.sound_effects ||
       sections.media_overlays ||
       sections.visual_blocks ||
+      sections.motion_scenes ||
       sections.camera_effects ||
       sections.lyrics ||
       sections.orientation,

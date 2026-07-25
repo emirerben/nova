@@ -125,7 +125,7 @@ export default function InspectorPanel({
   clipTiming,
   sfx,
   overlay,
-  cameraEffect,
+  cameraEffect = null,
   tab,
   sampleWord,
   appliedPresetId,
@@ -144,8 +144,8 @@ export default function InspectorPanel({
   onPreviewOverlay,
   onRecordOverlay,
   onDeleteOverlay,
-  onPatchCameraEffect,
-  onDeleteCameraEffect,
+  onPatchCameraEffect = () => {},
+  onDeleteCameraEffect = () => {},
   mixLevel,
   mixEditable,
   mixLabel,
@@ -172,7 +172,7 @@ export default function InspectorPanel({
   clipTiming: InspectorClipTiming | null;
   sfx: SoundEffectPlacement | null;
   overlay: MediaOverlay | null;
-  cameraEffect: CameraEffect | null;
+  cameraEffect?: CameraEffect | null;
   tab: InspectorTab;
   sampleWord: string | null;
   appliedPresetId: string | null;
@@ -192,8 +192,8 @@ export default function InspectorPanel({
   onPreviewOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
   onRecordOverlay: () => void;
   onDeleteOverlay: (id: string) => void;
-  onPatchCameraEffect: (id: string, patch: Partial<CameraEffect>) => void;
-  onDeleteCameraEffect: (id: string) => void;
+  onPatchCameraEffect?: (id: string, patch: Partial<CameraEffect>) => void;
+  onDeleteCameraEffect?: (id: string) => void;
   mixLevel?: number | null;
   mixEditable?: boolean;
   mixLabel?: string;

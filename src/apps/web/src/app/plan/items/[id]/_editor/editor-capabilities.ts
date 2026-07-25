@@ -59,6 +59,8 @@ export function editorReasonCopy(reason: string | null | undefined): string {
   if (reason === "sound_effects_disabled") return "sound effects are turned off right now";
   if (reason === "media_overlays_disabled") return "overlays are turned off right now";
   if (reason === "visual_blocks_disabled") return "visual blocks are turned off right now";
+  if (reason === "motion_scenes_disabled") return "motion presets are turned off right now";
+  if (reason === "portrait_only") return "motion presets currently support portrait edits";
   if (reason === "lyrics_variant") return "lyrics-synced edits do not support visual blocks";
   if (reason === "no_clean_base") return "this edit has no reusable clean video base";
   if (reason === "duration_unknown") return "re-render this legacy edit before adding visual blocks";
@@ -142,9 +144,11 @@ export function computeToolDisabledReasons({
       capabilities.overlays_reason ?? "media overlays aren't available for this edit",
     );
   }
-  if (capabilities?.visual_blocks === false) {
+  if (capabilities?.visual_blocks === false && capabilities?.motion_scenes !== true) {
     out.visuals = editorReasonCopy(
-      capabilities.visual_blocks_reason ?? "visual blocks aren't available for this edit",
+      capabilities.motion_scenes_reason ??
+        capabilities.visual_blocks_reason ??
+        "visuals aren't available for this edit",
     );
   }
   return out;
@@ -171,6 +175,7 @@ export function planItemEditorDisabledReason(variant: PlanItemVariant | null): s
     !capabilities.sfx &&
     !capabilities.overlays &&
     !capabilities.visual_blocks &&
+    !capabilities.motion_scenes &&
     capabilities.music_window == null
   ) {
     return editorReasonCopy(capabilities.reason);
