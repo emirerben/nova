@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.12.0] — 2026-07-25
+
+### Fixed
+- **Editing intro text no longer renders the old words.** The karaoke sweep burns per-word text from stored word timings; when an edit changes the text, timings are now re-synthesized over the original window at compile time, so the sweep covers the new words instead of the AI's original line.
+- **Edited intro text keeps the user's color after the sweep.** On user-edited variants the post-sweep hold settles to the element's saved color instead of the style highlight (the "text turned itself yellow" bug); untouched AI renders keep the styled highlight hold. Preview and render agree.
+
+### Added
+- **Music can now actually be removed from an edit.** The Sounds drawer's Remove music button (previously wired to nothing) and a new Inspector control clear the matched track instantly in the preview and commit a `remove_music` edit that re-renders the variant through the track-free path with original clip audio.
 ## [0.12.11.1] — 2026-07-25
 
 ### Fixed

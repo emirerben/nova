@@ -2952,3 +2952,105 @@ def test_caption_tab_copy_literal_is_byte_stable():
     loudly instead. Mirror pin lives in
     src/apps/web/src/__tests__/plan/items/editor-capabilities.test.tsx."""
     assert gj.CAPTION_TAB_COPY == "Captions can be selected and edited in this editor"
+
+
+# ── remove_music (explicit music removal, its own flag) ─────────────────────────
+
+
+def test_remove_music_commit_clears_track_state_and_kicks_full_render(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        music_start_s=4.0,
+        track_title="Old Song",
+        music_window_video_duration_s=12.0,
+        lyric_line_overrides={"L1": {"text": "x"}},
+        lyric_overlay_snapshot={"lines": []},
+        text_elements=[
+            dict(_VALID_ELEMENT),
+            {**_VALID_ELEMENT, "id": "lyr1", "role": "lyric_line"},
+        ],
+    )
+
+    prep = gj.prepare_editor_commit(job, "song_text", _commit_req(remove_music=True))
+
+    v = job.assembly_plan["variants"][0]
+    assert v["music_track_id"] is None
+    assert v["music_start_s"] is None
+    assert v["track_title"] is None
+    assert "music_window_video_duration_s" not in v
+    # Track-derived lyric state cleared exactly like a track swap.
+    assert v["lyric_line_overrides"] is None
+    assert v["lyric_overlay_snapshot"] is None
+    assert all(e.get("role") != "lyric_line" for e in v["text_elements"])
+    assert v["render_generation_id"] == prep["generation"]
+    assert v["render_status"] == "rendering"
+    assert prep["remove_music"] is True
+    assert prep["sections"]["music"] is True
+    assert prep["new_track_id"] is None
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    assert len(calls) == 1
+    # Full re-assembly on the default queue: the fast-reburn base has the OLD
+    # music mixed in, so the fast path must be pinned off.
+    assert "queue" not in calls[0]
+    kw = calls[0]["kwargs"]
+    assert kw["render_gen_id"] == prep["generation"]
+    assert kw["force_full_render"] is True
+    assert "new_track_id" not in kw
+
+
+@pytest.mark.parametrize(
+    "conflict_kwargs",
+    [
+        {"music_track_id": "t2"},
+        {"music_window": {"start_s": 0.0, "alignment": "resync_beats"}},
+    ],
+)
+def test_remove_music_conflicts_with_swap_or_window_422(monkeypatch, conflict_kwargs):
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(remove_music=True, **conflict_kwargs),
+            music_track=_music_track(id="t2"),
+        )
+
+    assert exc.value.status_code == 422
+    assert job.assembly_plan == before
+
+
+def test_remove_music_on_trackless_variant_422(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(variant_id="original_text", music_track_id=None, mix=None)
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(job, "original_text", _commit_req(remove_music=True))
+
+    assert exc.value.status_code == 422
+    assert job.assembly_plan == before
+
+
+def test_remove_music_defaults_false_and_stays_inert(monkeypatch):
+    # A title-only commit (remove_music absent) must not count as a music
+    # section, kick a render, or touch the variant's track.
+    _arm(monkeypatch)
+    job = _job()
+
+    prep = gj.prepare_editor_commit(job, "song_text", _commit_req(title="New title"))
+
+    v = job.assembly_plan["variants"][0]
+    assert v["music_track_id"] == "t1"
+    assert prep["remove_music"] is False
+    assert prep["sections"]["music"] is False
+    assert prep["has_render_section"] is False

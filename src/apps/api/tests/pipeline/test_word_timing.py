@@ -7,7 +7,11 @@ collapses words.
 
 from __future__ import annotations
 
-from app.pipeline.word_timing import MIN_WORD_CS, synthesize_word_timings
+from app.pipeline.word_timing import (
+    MIN_WORD_CS,
+    rebuild_word_timings_for_text,
+    synthesize_word_timings,
+)
 
 
 def _cumulative_ends(timings: list[dict]) -> list[float]:
@@ -92,3 +96,78 @@ def test_beat_snap_never_moves_backwards():
 def test_string_coercion_of_non_str_tokens():
     timings = synthesize_word_timings([1, 2, 3], 0.0, 3.0)
     assert [w["text"] for w in timings] == ["1", "2", "3"]
+
+
+# ── rebuild_word_timings_for_text (karaoke text-edit repair) ────────────────────
+
+
+def _stored(words: list[str], starts_ends: list[tuple[float, float]]) -> list[dict]:
+    return [
+        {
+            "text": w,
+            "start_s": s,
+            "end_s": e,
+            "duration_cs": max(MIN_WORD_CS, int(round((e - s) * 100))),
+        }
+        for w, (s, e) in zip(words, starts_ends)
+    ]
+
+
+def test_rebuild_returns_stored_timings_verbatim_when_tokens_match():
+    stored = _stored(["hello", "world"], [(0.0, 0.7), (0.7, 1.4)])
+    out = rebuild_word_timings_for_text("hello world", stored)
+    assert out is stored  # identity: beat-snapped fidelity is preserved untouched
+
+
+def test_rebuild_token_match_is_case_sensitive():
+    stored = _stored(["Hello", "world"], [(0.0, 0.7), (0.7, 1.4)])
+    out = rebuild_word_timings_for_text("hello world", stored)
+    assert out is not stored
+    assert [w["text"] for w in out] == ["hello", "world"]
+
+
+def test_rebuild_resynthesizes_new_words_over_the_original_window():
+    # Prod job 96771038: five stale words swept while the text said "Man City".
+    stored = _stored(
+        ["city", "nights", "and", "friday", "football"],
+        [(0.0, 0.6), (0.6, 1.2), (1.2, 1.8), (1.8, 2.4), (2.4, 3.0)],
+    )
+    out = rebuild_word_timings_for_text("Man City", stored)
+    assert [w["text"] for w in out] == ["Man", "City"]
+    # Window preserved: first start → last end.
+    assert out[0]["start_s"] == 0.0
+    assert out[-1]["end_s"] == 3.0
+    # Even split, contiguous, schema-complete.
+    assert out[0]["end_s"] == out[1]["start_s"]
+    assert all({"text", "start_s", "end_s", "duration_cs"} <= set(w) for w in out)
+    assert all(w["duration_cs"] >= MIN_WORD_CS for w in out)
+
+
+def test_rebuild_preserves_nonzero_window_origin():
+    stored = _stored(["a", "b"], [(0.5, 1.0), (1.0, 1.5)])
+    out = rebuild_word_timings_for_text("x y z", stored)
+    assert [w["text"] for w in out] == ["x", "y", "z"]
+    assert out[0]["start_s"] == 0.5
+    assert out[-1]["end_s"] == 1.5
+    # Contiguous within the shifted window.
+    assert out[0]["end_s"] == out[1]["start_s"]
+    assert out[1]["end_s"] == out[2]["start_s"]
+
+
+def test_rebuild_returns_none_without_stored_timings_or_tokens():
+    assert rebuild_word_timings_for_text("hello", None) is None
+    assert rebuild_word_timings_for_text("hello", []) is None
+    stored = _stored(["a"], [(0.0, 1.0)])
+    assert rebuild_word_timings_for_text("   ", stored) is None
+
+
+def test_rebuild_returns_none_on_degenerate_window():
+    stored = _stored(["a", "b"], [(2.0, 2.0), (2.0, 2.0)])
+    assert rebuild_word_timings_for_text("new words", stored) is None
+
+
+def test_rebuild_never_mutates_inputs():
+    stored = _stored(["old", "words"], [(0.0, 1.0), (1.0, 2.0)])
+    snapshot = [dict(w) for w in stored]
+    rebuild_word_timings_for_text("brand new text", stored)
+    assert stored == snapshot

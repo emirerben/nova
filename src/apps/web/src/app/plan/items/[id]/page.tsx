@@ -3711,7 +3711,7 @@ function FocusedVariantControls({
                   session={session}
                   styleSets={[]}
                   fallbackSizePx={variant.intro_text_size_px}
-                  resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
+                  resolvedParams={resolveIntroParams(variant, styleSets, session.draft, session.isDirty)}
                 />
               )}
             </div>
@@ -3809,7 +3809,7 @@ function LiveEditPreview({
   // mounts at a time, so the ref always points at the visible player.
   useSfxPreview(sfxVideoRef, sfxPlacements, sfxAudioUrls);
 
-  const introParams = resolveIntroParams(variant, styleSets, session.draft);
+  const introParams = resolveIntroParams(variant, styleSets, session.draft, session.isDirty);
 
   // Live layout follows the draft (so toggling Classic/Editorial re-lays the
   // overlay instantly), falling back to the variant's persisted layout.
