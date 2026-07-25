@@ -1192,6 +1192,13 @@ export interface PlanItemVariant {
   // Caption font (font-registry key) for narrated captions. Null = default (TikTok
   // Sans). Editable in the on-video caption editor; the reburn honors it.
   voiceover_caption_font?: string | null;
+  // Caption appearance overrides for caption archetypes. Null/absent means the
+  // renderer's legacy defaults.
+  caption_size_px?: number | null;
+  caption_text_color?: string | null;
+  caption_highlight_color?: string | null;
+  caption_stroke_width?: number | null;
+  caption_shadow_enabled?: boolean | null;
   // ASS MarginV for captioned variants after the caption-position control is used.
   // Null/absent means legacy default: subtitled 384, narrated 180.
   caption_margin_v?: number | null;

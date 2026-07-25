@@ -342,7 +342,18 @@ def test_copilot_new_ops_coerce_and_clamp() -> None:
                 "scale": 2,
                 "display_mode": "pip",
             },
-            {"op": "set_caption_meta", "patch": {"style": "word", "y_frac": 0.1}},
+            {
+                "op": "set_caption_meta",
+                "patch": {
+                    "style": "word",
+                    "y_frac": 0.1,
+                    "size_px": 999,
+                    "color": "#aabbcc",
+                    "highlight_color": "#112233",
+                    "stroke_width": 99,
+                    "shadow_enabled": False,
+                },
+            },
             {"op": "set_mix", "music_level": 1.5},
         ],
         snapshot=snap,
@@ -360,7 +371,18 @@ def test_copilot_new_ops_coerce_and_clamp() -> None:
             "scale": 1.0,
             "display_mode": "pip",
         },
-        {"op": "set_caption_meta", "patch": {"style": "word", "y_frac": 0.3}},
+        {
+            "op": "set_caption_meta",
+            "patch": {
+                "style": "word",
+                "y_frac": 0.3,
+                "size_px": 160,
+                "color": "#AABBCC",
+                "highlight_color": "#112233",
+                "stroke_width": 12,
+                "shadow_enabled": False,
+            },
+        },
         {"op": "set_mix", "music_level": 1.0},
     ]
 

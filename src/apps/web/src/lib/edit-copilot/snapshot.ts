@@ -172,6 +172,11 @@ export interface CopilotCaptionMetaSnapshot {
   style: "sentence" | "word";
   font: string | null;
   y_frac: number;
+  size_px?: number | null;
+  color?: string | null;
+  highlight_color?: string | null;
+  stroke_width?: number | null;
+  shadow_enabled?: boolean | null;
 }
 
 export interface CopilotMusicCandidateSnapshot {
@@ -610,6 +615,17 @@ export function buildCopilotSnapshot(
         style: options.captionMeta.style,
         font: options.captionMeta.font,
         y_frac: roundCopilotNumber(options.captionMeta.y_frac),
+        size_px:
+          typeof options.captionMeta.size_px === "number"
+            ? Math.round(options.captionMeta.size_px)
+            : null,
+        color: options.captionMeta.color ?? null,
+        highlight_color: options.captionMeta.highlight_color ?? null,
+        stroke_width:
+          typeof options.captionMeta.stroke_width === "number"
+            ? Math.round(options.captionMeta.stroke_width)
+            : null,
+        shadow_enabled: options.captionMeta.shadow_enabled ?? null,
       },
     };
   }

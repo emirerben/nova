@@ -324,6 +324,11 @@ class GenerativeVariant(BaseModel):
     # WITHOUT the user-edited flag — so a non-null value does not imply the
     # creator pinned it. Only caption_position_user_edited means "user pinned".
     caption_margin_v: int | None = None
+    caption_size_px: int | None = None
+    caption_text_color: str | None = None
+    caption_highlight_color: str | None = None
+    caption_stroke_width: int | None = None
+    caption_shadow_enabled: bool | None = None
     intro_font_family: str | None = None
     intro_effect: str | None = None
     intro_text_color: str | None = None
@@ -666,6 +671,21 @@ class EditorCommitCaptionMeta(BaseModel):
     font: str | None = None
     font_set: bool = False
     y_frac: float | None = Field(None, ge=0.30, le=0.90)
+    size_px: int | None = Field(None, ge=36, le=160)
+    color: str | None = None
+    highlight_color: str | None = None
+    stroke_width: int | None = Field(None, ge=0, le=12)
+    shadow_enabled: bool | None = None
+
+    @field_validator("color", "highlight_color")
+    @classmethod
+    def validate_caption_color(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        clean = value.strip()
+        if not _HEX_COLOR_RE.match(clean):
+            raise ValueError("Caption colors must be #RRGGBB hex colors.")
+        return clean.upper()
 
 
 class EditorCommitRequest(BaseModel):
@@ -4339,6 +4359,16 @@ def prepare_editor_commit(
 
             caption_meta_patch["caption_margin_v"] = y_frac_to_margin_v(meta.y_frac)
             caption_meta_patch["caption_position_user_edited"] = True
+        if meta.size_px is not None:
+            caption_meta_patch["caption_size_px"] = int(meta.size_px)
+        if meta.color is not None:
+            caption_meta_patch["caption_text_color"] = meta.color
+        if meta.highlight_color is not None:
+            caption_meta_patch["caption_highlight_color"] = meta.highlight_color
+        if meta.stroke_width is not None:
+            caption_meta_patch["caption_stroke_width"] = int(meta.stroke_width)
+        if meta.shadow_enabled is not None:
+            caption_meta_patch["caption_shadow_enabled"] = bool(meta.shadow_enabled)
 
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None:

@@ -475,7 +475,17 @@ describe("buildEditorCommitRequest", () => {
     const dirty = buildEditorCommitRequest({
       elements: [element],
       textDirty: false,
-      captionMeta: { enabled: false, style: "word", font: null, y_frac: 0.72 },
+      captionMeta: {
+        enabled: false,
+        style: "word",
+        font: null,
+        y_frac: 0.72,
+        size_px: 92,
+        color: "#112233",
+        highlight_color: "#A3E635",
+        stroke_width: 7,
+        shadow_enabled: false,
+      },
       captionMetaDirty: true,
       timelineDirty: false,
       slots: [],
@@ -489,7 +499,14 @@ describe("buildEditorCommitRequest", () => {
       font: null,
       font_set: true,
       y_frac: 0.72,
+      size_px: 92,
+      color: "#112233",
+      highlight_color: "#A3E635",
+      stroke_width: 7,
+      shadow_enabled: false,
     });
+    expect(dirty.text_elements).toBeUndefined();
+    expect(dirty.caption_cues).toBeUndefined();
   });
 
   it("sets caption_meta font_set only when font is present", () => {

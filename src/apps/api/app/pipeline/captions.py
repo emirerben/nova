@@ -300,6 +300,33 @@ _SMART_CAPTION_TAGS: dict[str, str] = {
 
 
 @dataclass(frozen=True, slots=True)
+class CaptionStyleOverrides:
+    font_size_px: int | None = None
+    color: str | None = None
+    highlight_color: str | None = None
+    stroke_width: int | None = None
+    shadow_enabled: bool | None = None
+
+    @classmethod
+    def from_value(
+        cls, value: CaptionStyleOverrides | dict[str, Any] | None
+    ) -> CaptionStyleOverrides | None:
+        if value is None or isinstance(value, cls):
+            return value
+        color = _clean_hex(value.get("color"))
+        highlight = _clean_hex(value.get("highlight_color"))
+        return cls(
+            font_size_px=_clamp_optional_int(value.get("font_size_px"), 36, 160),
+            color=color,
+            highlight_color=highlight,
+            stroke_width=_clamp_optional_int(value.get("stroke_width"), 0, 12),
+            shadow_enabled=value.get("shadow_enabled")
+            if isinstance(value.get("shadow_enabled"), bool)
+            else None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SmartCaptionRenderPolicy:
     font_family: str
     font_size_px: int
@@ -309,6 +336,8 @@ class SmartCaptionRenderPolicy:
     color: str
     stroke_color: str
     stroke_width: int
+    shadow_enabled: bool | None = None
+    color_user_edited: bool = False
 
     @classmethod
     def from_value(
@@ -327,7 +356,28 @@ class SmartCaptionRenderPolicy:
             color=str(value["color"]),
             stroke_color=str(value["stroke_color"]),
             stroke_width=max(0, min(12, int(value["stroke_width"]))),
+            shadow_enabled=value.get("shadow_enabled")
+            if isinstance(value.get("shadow_enabled"), bool)
+            else None,
+            color_user_edited=bool(value.get("color_user_edited")),
         )
+
+
+def _clamp_optional_int(value: Any, lo: int, hi: int) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(lo, min(hi, parsed))
+
+
+def _clean_hex(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    clean = value.strip().upper()
+    return clean if re.fullmatch(r"#[0-9A-F]{6}", clean) else None
 
 
 # A bare cardinal/ordinal token ("1", "1.", "2)") — the digit-adjacency rule
@@ -543,6 +593,7 @@ def generate_ass_from_cues(
     margin_v: int | None = None,
     pop_in: bool = False,
     smart_policy: SmartCaptionRenderPolicy | dict[str, Any] | None = None,
+    appearance: CaptionStyleOverrides | dict[str, Any] | None = None,
 ) -> None:
     """Write a caption ASS from explicit ``{text, start_s, end_s}`` cues.
 
@@ -564,6 +615,7 @@ def generate_ass_from_cues(
     to every line. Off (default) keeps narrated burns byte-identical.
     """
     policy = SmartCaptionRenderPolicy.from_value(smart_policy)
+    style_overrides = CaptionStyleOverrides.from_value(appearance)
     valid = [c for c in cues if str(c.get("text", "")).strip()]
     if not valid:
         _write_empty_ass(
@@ -572,6 +624,7 @@ def generate_ass_from_cues(
             style=style,
             margin_v=margin_v,
             smart_policy=policy,
+            appearance=style_overrides,
         )
         return
     if policy:
@@ -588,6 +641,7 @@ def generate_ass_from_cues(
         style=style,
         margin_v=margin_v,
         smart_policy=policy,
+        appearance=style_overrides,
     )
 
 
@@ -633,14 +687,16 @@ def _word_windows_for_cue(cue: dict) -> list[dict]:
     ]
 
 
-def _compose_word_pop_text(tokens: list[str], active_idx: int) -> str:
+def _compose_word_pop_text(
+    tokens: list[str], active_idx: int, *, active_color: str = _ACTIVE_WORD_ASS_COLOR
+) -> str:
     """The full line, sanitized, with only `tokens[active_idx]` popped in lime (revert
     to the white style default after via `\\r`)."""
     parts: list[str] = []
     for j, tok in enumerate(tokens):
         clean = sanitize_ass_text(tok)
         if j == active_idx:
-            parts.append(f"{{\\c{_ACTIVE_WORD_ASS_COLOR}&}}{clean}{{\\r}}")
+            parts.append(f"{{\\c{active_color}&}}{clean}{{\\r}}")
         else:
             parts.append(clean)
     return " ".join(parts)
@@ -652,6 +708,7 @@ def generate_word_pop_ass(
     *,
     font_name: str | None = None,
     margin_v: int | None = None,
+    appearance: CaptionStyleOverrides | dict[str, Any] | None = None,
 ) -> None:
     """Word-by-word highlight (D2/E1): the full caption line stays visible and the
     currently-spoken word pops in the Kria lime accent.
@@ -661,6 +718,12 @@ def generate_word_pop_ass(
     baseline never jitters) with just that word inline-coloured. Timings come from
     :func:`_word_windows_for_cue` (real when unedited, synthesized per edited cue).
     """
+    style_overrides = CaptionStyleOverrides.from_value(appearance)
+    active_ass_color = (
+        _hex_to_ass(style_overrides.highlight_color)
+        if style_overrides and style_overrides.highlight_color
+        else _ACTIVE_WORD_ASS_COLOR
+    )
     mv = margin_v if margin_v is not None else SUBTITLED_CAPTION_MARGIN_V
     lines: list[str] = []
     prev_end = 0.0  # monotonic clamp across ALL events (cues included)
@@ -679,11 +742,18 @@ def generate_word_pop_ass(
             nxt = float(windows[i + 1]["start_s"]) if i + 1 < n else float(w["end_s"])
             end = max(start + 0.01, nxt)
             prev_end = end
-            text = _compose_word_pop_text(tokens, i)
+            text = _compose_word_pop_text(tokens, i, active_color=active_ass_color)
             lines.append(
                 f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,0,,{text}"
             )
-    _write_ass(lines, output_path, font_name=font_name, style="word_pop", margin_v=mv)
+    _write_ass(
+        lines,
+        output_path,
+        font_name=font_name,
+        style="word_pop",
+        margin_v=mv,
+        appearance=style_overrides,
+    )
 
 
 def _write_ass(
@@ -694,26 +764,31 @@ def _write_ass(
     style: str = "plain",
     margin_v: int | None = None,
     smart_policy: SmartCaptionRenderPolicy | None = None,
+    appearance: CaptionStyleOverrides | None = None,
 ) -> None:
     if smart_policy is not None:
         header = _ass_header_smart(smart_policy)
     elif style == "word":
-        header = _ass_header_word(font_name or "TikTok Sans")
+        header = _ass_header_word(font_name or "TikTok Sans", appearance=appearance)
     elif style == "word_pop":
         # Line-visible word-by-word: SAME plain geometry (full line at the safe margin);
         # the active word is popped via inline colour in each pre-composed dialogue line,
         # so every event shares one layout (no baseline jitter).
         header = _ass_header_for(
-            font_name or "TikTok Sans", margin_v=margin_v or SUBTITLED_CAPTION_MARGIN_V
+            font_name or "TikTok Sans",
+            margin_v=margin_v or SUBTITLED_CAPTION_MARGIN_V,
+            appearance=appearance,
         )
     elif margin_v is not None:
         # Explicit margin (subtitled safe-zone) — always the font-aware header so the
         # override applies even when font_name is None (default TikTok Sans).
-        header = _ass_header_for(font_name or "TikTok Sans", margin_v=margin_v)
-    elif font_name is None:
+        header = _ass_header_for(
+            font_name or "TikTok Sans", margin_v=margin_v, appearance=appearance
+        )
+    elif font_name is None and appearance is None:
         header = _ASS_HEADER
     else:
-        header = _ass_header_for(font_name)
+        header = _ass_header_for(font_name or "TikTok Sans", appearance=appearance)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(header)
         f.write("\n[Events]\n")
@@ -749,7 +824,13 @@ def _format_cue_lines(
         if smart_policy:
             size = int(c.get("smart_render_font_size_px") or smart_policy.font_size_px)
             role = str(c.get("smart_style") or "")
-            color = "#8FD400" if role in {"hook", "context", "payoff", "cta"} else None
+            color = (
+                None
+                if smart_policy.color_user_edited
+                else "#8FD400"
+                if role in {"hook", "context", "payoff", "cta"}
+                else None
+            )
             smart_tags = f"{{\\fs{size}{_ass_color_tag(color) if color else ''}}}"
         else:
             smart_tags = _SMART_CAPTION_TAGS.get(str(c.get("smart_style") or ""), "")
@@ -801,6 +882,7 @@ def _write_empty_ass(
     style: str = "plain",
     margin_v: int | None = None,
     smart_policy: SmartCaptionRenderPolicy | None = None,
+    appearance: CaptionStyleOverrides | None = None,
 ) -> None:
     _write_ass(
         [],
@@ -809,6 +891,7 @@ def _write_empty_ass(
         style=style,
         margin_v=margin_v,
         smart_policy=smart_policy,
+        appearance=appearance,
     )
 
 
@@ -842,12 +925,19 @@ def _ass_header_smart(policy: SmartCaptionRenderPolicy) -> str:
         f"Style: Default,{policy.font_family},{policy.font_size_px},"
         f"{_hex_to_ass(policy.color)},{_hex_to_ass(policy.color)},"
         f"{_hex_to_ass(policy.stroke_color)},&H80000000,-1,0,0,0,100,100,0,0,1,"
-        f"{policy.stroke_width},1,2,{margin_h},{margin_h},{margin_v},1\n"
+        f"{policy.stroke_width},{0 if policy.shadow_enabled is False else 1},2,"
+        f"{margin_h},{margin_h},{margin_v},1\n"
     )
 
 
 def _ass_caption_header(
-    font_name: str, *, fontsize: int, outline: int, shadow: int, margin_v: int
+    font_name: str,
+    *,
+    fontsize: int,
+    outline: int,
+    shadow: int,
+    margin_v: int,
+    appearance: CaptionStyleOverrides | None = None,
 ) -> str:
     """Build a 9:16 burn-in caption header around ``font_name``.
 
@@ -856,6 +946,12 @@ def _ass_caption_header(
     fontsize/outline/shadow/marginV — everything else (PlayRes, colours, bold,
     borderstyle, margins) is shared here so the two never drift apart.
     """
+    resolved_size = appearance.font_size_px if appearance and appearance.font_size_px else fontsize
+    resolved_color = appearance.color if appearance and appearance.color else "#FFFFFF"
+    resolved_outline = (
+        appearance.stroke_width if appearance and appearance.stroke_width is not None else outline
+    )
+    resolved_shadow = 0 if appearance and appearance.shadow_enabled is False else shadow
     return (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -868,24 +964,31 @@ def _ass_caption_header(
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
         "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
         "MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,{font_name},{fontsize},&H00FFFFFF,&H00FFFFFF,&H00000000,"
-        f"&H80000000,-1,0,0,0,100,100,0,0,1,{outline},{shadow},2,80,80,{margin_v},1\n"
+        f"Style: Default,{font_name},{resolved_size},{_hex_to_ass(resolved_color)},"
+        f"{_hex_to_ass(resolved_color)},&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,"
+        f"{resolved_outline},{resolved_shadow},2,80,80,{margin_v},1\n"
     )
 
 
-def _ass_header_for(font_name: str, *, margin_v: int = 180) -> str:
+def _ass_header_for(
+    font_name: str, *, margin_v: int = 180, appearance: CaptionStyleOverrides | None = None
+) -> str:
     """Plain subtitle look: lower-third, bottom-centered, held clear of the UI.
 
     ``margin_v`` defaults to 180 (narrated). The subtitled style passes
     :data:`SUBTITLED_CAPTION_MARGIN_V` so captions clear the platform UI chrome.
     """
-    return _ass_caption_header(font_name, fontsize=78, outline=4, shadow=1, margin_v=margin_v)
+    return _ass_caption_header(
+        font_name, fontsize=78, outline=4, shadow=1, margin_v=margin_v, appearance=appearance
+    )
 
 
-def _ass_header_word(font_name: str) -> str:
+def _ass_header_word(font_name: str, *, appearance: CaptionStyleOverrides | None = None) -> str:
     """Word-by-word ("qbuilder") look: ONE big word (120px) raised to ~73% down the
     frame (MarginV 520) with a heavier outline."""
-    return _ass_caption_header(font_name, fontsize=120, outline=6, shadow=2, margin_v=520)
+    return _ass_caption_header(
+        font_name, fontsize=120, outline=6, shadow=2, margin_v=520, appearance=appearance
+    )
 
 
 _ASS_HEADER = """\

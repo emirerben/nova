@@ -1,0 +1,63 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-24-v7",
+  "input": {
+    "utterance": "make the captions bigger, red, with a yellow highlight, thicker stroke, and no shadow",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["caption"],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [
+        {
+          "output_start_s": 0,
+          "output_end_s": 18.2,
+          "duration_s": 18.2,
+          "moment": "talking to camera"
+        }
+      ],
+      "total_duration_s": 18.2,
+      "captions": {
+        "total_cues": 9,
+        "truncated": false,
+        "cues_editable": false,
+        "cues": [],
+        "meta": {
+          "enabled": true,
+          "style": "sentence",
+          "font": "TikTok Sans Bold",
+          "y_frac": 0.8,
+          "size_px": 78,
+          "color": "#FFFFFF",
+          "highlight_color": "#A3E635",
+          "stroke_width": 4,
+          "shadow_enabled": true
+        }
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_caption_meta\",\"patch\":{\"size_px\":96,\"color\":\"#FF0000\",\"highlight_color\":\"#FFFF00\",\"stroke_width\":7,\"shadow_enabled\":false}}],\"confidence\":0.9,\"reply\":\"Updated the caption size, colors, stroke, and shadow. Save applies it to the video.\",\"suggestions\":[\"Use word captions\",\"Move captions up\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_caption_meta",
+        "patch": {
+          "size_px": 96,
+          "color": "#FF0000",
+          "highlight_color": "#FFFF00",
+          "stroke_width": 7,
+          "shadow_enabled": false
+        }
+      }
+    ],
+    "confidence": 0.9,
+    "reply": "Updated the caption size, colors, stroke, and shadow. Save applies it to the video.",
+    "suggestions": ["Use word captions", "Move captions up"],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "caption appearance changes route through set_caption_meta"
+  }
+}

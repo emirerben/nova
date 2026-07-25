@@ -18,6 +18,7 @@
 
 import type { CaptionCue, PlanItemVariant, TextElement } from "@/lib/plan-api";
 import type { LyricLineOverride } from "@/lib/editor-commit";
+import type { CaptionMetaPatch } from "@/lib/edit-copilot/ops";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 export const TEXT_LANE_BASE_HEIGHT_PX = 48;
@@ -51,6 +52,58 @@ export function isLyricBar(bar: TextElementBar | TextElement | null | undefined)
 
 export function isCaptionBar(bar: TextElementBar | null | undefined): boolean {
   return bar?.role === "narrated_caption";
+}
+
+export function captionMetaPatchFromCaptionBarPatch(
+  patch: Partial<Omit<TextElementBar, "id" | "role">>,
+): CaptionMetaPatch {
+  const metaPatch: CaptionMetaPatch = {};
+  if (Object.prototype.hasOwnProperty.call(patch, "font_family")) {
+    metaPatch.font = patch.font_family ?? null;
+  }
+  if (typeof patch.size_px === "number") {
+    metaPatch.size_px = patch.size_px;
+  }
+  if (typeof patch.color === "string") {
+    metaPatch.color = patch.color;
+  }
+  if (typeof patch.highlight_color === "string") {
+    metaPatch.highlight_color = patch.highlight_color;
+  }
+  if (typeof patch.stroke_width === "number") {
+    metaPatch.stroke_width = patch.stroke_width;
+  }
+  if (typeof patch.shadow_enabled === "boolean") {
+    metaPatch.shadow_enabled = patch.shadow_enabled;
+  }
+  if (typeof patch.y_frac === "number") {
+    metaPatch.y_frac = patch.y_frac;
+  }
+  return metaPatch;
+}
+
+export function localCaptionBarPatchFromPatch(
+  patch: Partial<Omit<TextElementBar, "id" | "role">>,
+): Partial<Omit<TextElementBar, "id" | "role">> {
+  const localPatch: Partial<Omit<TextElementBar, "id" | "role">> = {};
+  for (const key of [
+    "text",
+    "start_s",
+    "end_s",
+    "font_family",
+    "size_px",
+    "size_class",
+    "color",
+    "highlight_color",
+    "stroke_width",
+    "shadow_enabled",
+    "y_frac",
+  ] as const) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) {
+      (localPatch as Record<string, unknown>)[key] = patch[key];
+    }
+  }
+  return localPatch;
 }
 
 function captionBarId(index: number): string {
@@ -147,6 +200,7 @@ export function convertApiTextElements(
 /** Narrated CaptionCue[] → bars (stable index ids, same as the item page). */
 export function convertCaptionCues(
   cues: CaptionCue[] | null | undefined,
+  variant?: PlanItemVariant,
 ): TextElementBar[] {
   return (cues ?? []).map((c, i) => ({
     id: captionBarId(i),
@@ -154,6 +208,12 @@ export function convertCaptionCues(
     start_s: c.start_s,
     end_s: c.end_s,
     role: "narrated_caption" as const,
+    font_family: variant?.voiceover_caption_font ?? undefined,
+    size_px: variant?.caption_size_px ?? undefined,
+    color: variant?.caption_text_color ?? undefined,
+    highlight_color: variant?.caption_highlight_color ?? undefined,
+    stroke_width: variant?.caption_stroke_width ?? undefined,
+    shadow_enabled: variant?.caption_shadow_enabled ?? undefined,
   }));
 }
 
@@ -193,7 +253,7 @@ export function seedBarsFromVariant(
   const textBars = filterLyrics(convertApiTextElements(variant.text_elements)).filter(
     (bar) => !isCaptionCueProjection(bar),
   );
-  const captionBars = convertCaptionCues(variant.caption_cues);
+  const captionBars = convertCaptionCues(variant.caption_cues, variant);
   if (captionBars.length) return [...captionBars, ...textBars];
   if (variant.text_elements_user_edited) {
     return textBars;

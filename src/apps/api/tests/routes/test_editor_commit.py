@@ -667,6 +667,11 @@ def test_subtitled_caption_meta_commit_persists_and_reburns_caption_task(monkeyp
                 font="Playfair Display",
                 font_set=True,
                 y_frac=0.66,
+                size_px=92,
+                color="#112233",
+                highlight_color="#A3E635",
+                stroke_width=7,
+                shadow_enabled=False,
             )
         ),
     )
@@ -675,6 +680,11 @@ def test_subtitled_caption_meta_commit_persists_and_reburns_caption_task(monkeyp
     assert v["voiceover_caption_style"] == "word"
     assert v["voiceover_caption_font"] == "Playfair Display"
     assert v["caption_margin_v"] == 653
+    assert v["caption_size_px"] == 92
+    assert v["caption_text_color"] == "#112233"
+    assert v["caption_highlight_color"] == "#A3E635"
+    assert v["caption_stroke_width"] == 7
+    assert v["caption_shadow_enabled"] is False
     # Without these flags the smart-caption policy ignores the committed
     # font/position — the edit would silently no-op on Smart Captions.
     assert v["caption_font_user_edited"] is True

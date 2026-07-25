@@ -61,6 +61,11 @@ export interface EditorCommitCaptionMetaDraft {
   style?: "sentence" | "word";
   font?: string | null;
   y_frac?: number | null;
+  size_px?: number | null;
+  color?: string | null;
+  highlight_color?: string | null;
+  stroke_width?: number | null;
+  shadow_enabled?: boolean | null;
 }
 
 export interface EditorCommitCaptionMetaRequest {
@@ -69,6 +74,11 @@ export interface EditorCommitCaptionMetaRequest {
   font?: string | null;
   font_set: boolean;
   y_frac?: number;
+  size_px?: number;
+  color?: string;
+  highlight_color?: string;
+  stroke_width?: number;
+  shadow_enabled?: boolean;
 }
 
 export interface LyricLineOverride {
@@ -283,6 +293,17 @@ export function buildEditorCommitRequest({
           ...(hasCaptionFont ? { font: captionMeta.font ?? null } : {}),
           font_set: hasCaptionFont,
           ...(typeof captionMeta.y_frac === "number" ? { y_frac: captionMeta.y_frac } : {}),
+          ...(typeof captionMeta.size_px === "number" ? { size_px: captionMeta.size_px } : {}),
+          ...(typeof captionMeta.color === "string" ? { color: captionMeta.color } : {}),
+          ...(typeof captionMeta.highlight_color === "string"
+            ? { highlight_color: captionMeta.highlight_color }
+            : {}),
+          ...(typeof captionMeta.stroke_width === "number"
+            ? { stroke_width: captionMeta.stroke_width }
+            : {}),
+          ...(typeof captionMeta.shadow_enabled === "boolean"
+            ? { shadow_enabled: captionMeta.shadow_enabled }
+            : {}),
         }
       : undefined;
   return {
