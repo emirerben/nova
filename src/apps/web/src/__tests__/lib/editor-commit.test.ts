@@ -356,6 +356,60 @@ describe("buildEditorCommitRequest", () => {
     expect(body.base_generation).toBe("gen-current");
   });
 
+  it("emits remove_music (never music_track_id: null) when the user removed the song", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      musicDirty: true,
+      musicTrackId: null,
+      musicRemoved: true,
+      titleDirty: false,
+      title: "",
+      variant: {
+        render_generation_id: "gen-current",
+        music_track_id: "track-current",
+      },
+    });
+
+    expect(body.remove_music).toBe(true);
+    // Removal is its own flag — a null music_track_id is indistinguishable
+    // from "omitted" server-side and must never be sent.
+    expect(body.music_track_id).toBeUndefined();
+  });
+
+  it("does not emit remove_music when untouched or when the variant has no song", () => {
+    const untouched = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: {
+        render_generation_id: "gen-current",
+        music_track_id: "track-current",
+      },
+    });
+    expect(untouched.remove_music).toBeUndefined();
+    expect(untouched.music_track_id).toBeUndefined();
+
+    const noSong = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      musicDirty: true,
+      musicTrackId: null,
+      musicRemoved: true,
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current", music_track_id: null },
+    });
+    expect(noSong.remove_music).toBeUndefined();
+  });
+
   it("sends background music only as an explicitly dirty audio section", () => {
     const body = buildEditorCommitRequest({
       elements: [element],

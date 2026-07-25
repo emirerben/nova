@@ -810,6 +810,10 @@ export default function EditorShell({
   const [selectedMusicTrackId, setSelectedMusicTrackId] = useState<string | null>(
     variant?.music_track_id ?? null,
   );
+  // Explicit removed state: selectedMusicTrackId === null alone means
+  // "untouched" (falls back to the variant's persisted track), so removal
+  // needs its own flag — it drives `remove_music` in the commit payload.
+  const [musicRemoved, setMusicRemoved] = useState(false);
   const [musicStartS, setMusicStartS] = useState<number>(
     variant?.music_preview_start_s ?? 0,
   );
@@ -855,6 +859,7 @@ export default function EditorShell({
     if (!changedVariant && (musicDirty || backgroundMusicDirty)) return;
     musicHydratedVariantIdRef.current = nextVariantId;
     setSelectedMusicTrackId(variant?.music_track_id ?? null);
+    setMusicRemoved(false);
     setMusicStartS(variant?.music_preview_start_s ?? 0);
     setBackgroundMusic(
       variant?.background_music
@@ -1001,6 +1006,7 @@ export default function EditorShell({
       mixLevel,
       mixDirty,
       musicTrackId: selectedMusicTrackId,
+      musicRemoved,
       musicStartS,
       musicDirty,
       backgroundMusic,
@@ -1024,6 +1030,7 @@ export default function EditorShell({
       mixLevel,
       mixDirty,
       selectedMusicTrackId,
+      musicRemoved,
       musicStartS,
       musicDirty,
       backgroundMusic,
@@ -1048,6 +1055,7 @@ export default function EditorShell({
       setMixLevel(doc.mixLevel ?? null);
       setMixDirty(doc.mixDirty ?? false);
       setSelectedMusicTrackId(doc.musicTrackId ?? variant?.music_track_id ?? null);
+      setMusicRemoved(doc.musicRemoved ?? false);
       setMusicStartS(doc.musicStartS ?? variant?.music_preview_start_s ?? 0);
       setMusicDirty(doc.musicDirty ?? false);
       setBackgroundMusic(doc.backgroundMusic ?? null);
@@ -1263,7 +1271,9 @@ export default function EditorShell({
 
   const effectiveBackgroundMusicTrackId =
     backgroundMusic?.enabled === false ? null : (backgroundMusic?.track_id ?? null);
-  const effectiveMusicTrackId = selectedMusicTrackId ?? variant?.music_track_id ?? null;
+  const effectiveMusicTrackId = musicRemoved
+    ? null
+    : selectedMusicTrackId ?? variant?.music_track_id ?? null;
   const effectiveAudioTrackId = effectiveMusicTrackId ?? effectiveBackgroundMusicTrackId;
   const virtualMusicTrack = effectiveAudioTrackId
     ? musicTracks.find((track) => track.id === effectiveAudioTrackId) ?? null
@@ -2101,9 +2111,10 @@ export default function EditorShell({
       if (readOnly || !variant) return;
       const selectedTrack = musicTracks.find((track) => track.id === trackId);
       if (variant.music_track_id) {
-        if (trackId === selectedMusicTrackId) return;
+        if (trackId === selectedMusicTrackId && !musicRemoved) return;
         history.record();
         setSelectedMusicTrackId(trackId);
+        setMusicRemoved(false);
         const nextStartS = selectedTrack?.preview_start_s ?? 0;
         setMusicStartS(nextStartS);
         setMusicDirty(
@@ -2138,6 +2149,7 @@ export default function EditorShell({
       backgroundMusic?.gain_db,
       backgroundMusic?.track_id,
       history,
+      musicRemoved,
       musicTracks,
       previewDuration,
       readOnly,
@@ -2146,6 +2158,19 @@ export default function EditorShell({
       variant,
     ],
   );
+
+  // Remove the variant's song entirely (mirrors pickMusicTrack): explicit
+  // removed state (null selectedMusicTrackId alone = "untouched"), musicDirty
+  // drives the Save; the commit emits `remove_music: true` and the server
+  // re-renders through the track-free path.
+  const removeMusic = useCallback(() => {
+    if (readOnly || !variant?.music_track_id || musicRemoved) return;
+    history.record();
+    setSelectedMusicTrackId(null);
+    setMusicRemoved(true);
+    setMusicStartS(0);
+    setMusicDirty(true);
+  }, [history, musicRemoved, readOnly, variant?.music_track_id]);
 
   const patchBackgroundMusic = useCallback(
     (patch: Partial<EditorCommitBackgroundMusic>) => {
@@ -3759,6 +3784,7 @@ export default function EditorShell({
         mixLevel,
         musicDirty,
         musicTrackId: selectedMusicTrackId,
+        musicRemoved,
         musicWindow:
           commitMusicWindow && musicAlignment
             ? { startS: songWindowState.startS, alignment: musicAlignment }
@@ -3811,6 +3837,7 @@ export default function EditorShell({
       setTitleDirty(false);
       setMixDirty(false);
       setMusicDirty(false);
+      setMusicRemoved(false);
       setBackgroundMusicDirty(false);
       setCaptionMetaDirty(false);
       setCaptionMetaPatch({});
@@ -3850,6 +3877,7 @@ export default function EditorShell({
     mixDirty,
     mixLevel,
     musicDirty,
+    musicRemoved,
     backgroundMusic,
     backgroundMusicDirty,
     selectedMusicTrackId,
@@ -3932,6 +3960,7 @@ export default function EditorShell({
     mixLevel,
     mixDirty,
     selectedMusicTrackId,
+    musicRemoved,
     musicStartS,
     musicDirty,
     title,
@@ -4536,6 +4565,7 @@ export default function EditorShell({
               currentMusicTrackId={effectiveAudioTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
+              onRemoveMusic={removeMusic}
               musicWindow={musicWindowControl}
               overlayUploading={overlayUploading}
               onOverlayUpload={handleOverlayUpload}
@@ -4599,6 +4629,7 @@ export default function EditorShell({
               currentMusicTrackId={effectiveAudioTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
+              onRemoveMusic={removeMusic}
               musicWindow={musicWindowControl}
               overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
@@ -4742,6 +4773,7 @@ export default function EditorShell({
           backgroundMusic={backgroundMusic}
           backgroundMusicTrackDurationS={backgroundMusicTrackDurationS}
           onPickMusic={pickMusicTrack}
+          onRemoveMusic={removeMusic}
           onPatchBackgroundMusic={patchBackgroundMusic}
           onRemoveBackgroundMusic={removeBackgroundMusic}
           musicWindow={musicWindowControl}

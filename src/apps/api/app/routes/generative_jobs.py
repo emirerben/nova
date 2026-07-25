@@ -702,6 +702,11 @@ class EditorCommitRequest(BaseModel):
     timeline_slots: list[TimelineSlotEdit] | None = None
     mix: EditorCommitMix | None = None
     music_track_id: str | None = None
+    # Explicit music removal. Deliberately NOT an overloaded nullable
+    # music_track_id: `music_track_id=None` is indistinguishable from "omitted"
+    # in JSON/Pydantic, so removal gets its own flag. Mutually exclusive with
+    # music_track_id / music_window (422).
+    remove_music: bool = False
     music_window: EditorCommitMusicWindow | None = None
     background_music: EditorCommitBackgroundMusic | None = None
     lyrics: LyricsSectionRequest | None = None
@@ -4256,6 +4261,7 @@ def prepare_editor_commit(
         and payload.visual_blocks is None
         and payload.camera_effects is None
         and payload.title is None
+        and not payload.remove_music
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -4373,6 +4379,27 @@ def prepare_editor_commit(
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None:
         resolved_slots = resolve_timeline_slots_for_edit(job, variant, payload.timeline_slots)
+
+    if payload.remove_music:
+        # Removal is its own section: combining it with a swap or a song-window
+        # move in one commit is contradictory — fail loudly, nothing persisted.
+        if payload.music_track_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="remove_music cannot be combined with music_track_id.",
+            )
+        if payload.music_window is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="remove_music cannot be combined with music_window.",
+            )
+        # Same guard family as the swap branch below: removing music from a
+        # variant that has none is a client bug, not a no-op.
+        if variant.get("variant_id") == "original_text" or variant.get("music_track_id") is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This edit has no song to remove.",
+            )
 
     if payload.music_track_id is not None:
         if variant.get("variant_id") == "original_text" or variant.get("music_track_id") is None:
@@ -4698,6 +4725,7 @@ def prepare_editor_commit(
         or resolved_slots is not None
         or payload.mix is not None
         or payload.music_track_id is not None
+        or payload.remove_music
         or payload.music_window is not None
         or payload.background_music is not None
         or validated_lyrics is not None
@@ -4751,6 +4779,22 @@ def prepare_editor_commit(
                     3,
                 )
                 updated.pop("music_window_video_duration_s", None)
+        if payload.remove_music:
+            # Full music removal: the re-render resolves its track from the
+            # persisted music_track_id (None → the existing track-free render
+            # path, same as original_text). Clear every song-window field and
+            # the track-derived lyric state (same hygiene as a track swap).
+            updated["music_track_id"] = None
+            updated["music_start_s"] = None
+            updated["track_title"] = None
+            updated.pop("music_window_video_duration_s", None)
+            updated["lyric_line_overrides"] = None
+            updated["lyric_overlay_snapshot"] = None
+            updated["text_elements"] = [
+                element
+                for element in (updated.get("text_elements") or [])
+                if not isinstance(element, dict) or element.get("role") != "lyric_line"
+            ]
         if payload.music_window is not None and resolved_music_start_s is not None:
             updated["music_start_s"] = resolved_music_start_s
             updated["music_window_video_duration_s"] = round(
@@ -4832,6 +4876,7 @@ def prepare_editor_commit(
         "camera_effects_override": validated_camera_effects,
         "orientation_override": validated_orientation,
         "new_track_id": payload.music_track_id,
+        "remove_music": payload.remove_music,
         "music_window_alignment": (
             payload.music_window.alignment if payload.music_window is not None else None
         ),
@@ -4848,7 +4893,11 @@ def prepare_editor_commit(
             "caption_meta": payload.caption_meta is not None,
             "timeline": payload.timeline_slots is not None,
             "mix": payload.mix is not None,
-            "music": payload.music_track_id is not None or payload.music_window is not None,
+            "music": (
+                payload.music_track_id is not None
+                or payload.music_window is not None
+                or payload.remove_music
+            ),
             "background_music": payload.background_music is not None,
             "lyrics": payload.lyrics is not None,
             "orientation": payload.orientation is not None,
@@ -4975,6 +5024,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         prep["timeline_override"] is not None
         or prep["mix_override"] is not None
         or prep.get("new_track_id") is not None
+        or prep.get("remove_music") is True
         or prep.get("orientation_override") is not None
         or prep.get("text_requires_full_render") is True
         or prep["sections"].get("visual_blocks") is True
@@ -4987,11 +5037,16 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         # SFX are reapplied by the worker's persisted-SFX hook after the new base lands.
         # Lyric-state commits carry no override kwargs, so the regen's own
         # fast-reburn check must be pinned off or lyric re-injection is skipped.
+        # remove_music also pins the fast path off: the cached fast-reburn base
+        # has the OLD music mixed in — only a full re-assembly (which resolves
+        # the just-persisted music_track_id=None into a track-free render) can
+        # actually drop the song.
         if (
             sections.get("lyrics") is True
             or prep.get("music_window_alignment") is not None
             or prep.get("text_requires_full_render") is True
             or prep.get("orientation_override") is not None
+            or prep.get("remove_music") is True
         ):
             kwargs["force_full_render"] = True
     elif prep["media_overlays_override"] is not None:
@@ -5004,6 +5059,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         prep["timeline_override"] is None
         and prep["mix_override"] is None
         and prep.get("new_track_id") is None
+        and prep.get("remove_music") is not True
         and prep.get("orientation_override") is None
         and prep.get("text_requires_full_render") is not True
         and sections.get("lyrics") is not True

@@ -111,6 +111,10 @@ export interface EditorCommitRequest {
   mix?: EditorCommitMix;
   /** New music track id. Omit when untouched. */
   music_track_id?: string | null;
+  /** Explicit music removal (its own flag — a null music_track_id is
+   * indistinguishable from "omitted" server-side). Mutually exclusive with
+   * music_track_id / music_window (server 422s the combination). */
+  remove_music?: boolean;
   music_window?: {
     start_s: number;
     alignment: "preserve_cuts" | "resync_beats";
@@ -215,6 +219,7 @@ export function buildEditorCommitRequest({
   mixLevel,
   musicDirty = false,
   musicTrackId,
+  musicRemoved = false,
   musicWindow,
   backgroundMusicDirty = false,
   backgroundMusic,
@@ -247,6 +252,9 @@ export function buildEditorCommitRequest({
   mixLevel?: number | null;
   musicDirty?: boolean;
   musicTrackId?: string | null;
+  /** Explicit removed state — distinguishes "user removed the song" from
+   * "music untouched" (both leave musicTrackId null). */
+  musicRemoved?: boolean;
   musicWindow?: {
     startS: number;
     alignment: "preserve_cuts" | "resync_beats";
@@ -326,9 +334,11 @@ export function buildEditorCommitRequest({
       ? { music_level: normalizedMix }
       : undefined,
     music_track_id:
-      musicDirty && musicTrackId !== variant.music_track_id
-        ? musicTrackId ?? null
+      musicDirty && !musicRemoved && musicTrackId != null && musicTrackId !== variant.music_track_id
+        ? musicTrackId
         : undefined,
+    remove_music:
+      musicDirty && musicRemoved && variant.music_track_id != null ? true : undefined,
     music_window: musicWindow
       ? { start_s: musicWindow.startS, alignment: musicWindow.alignment }
       : undefined,

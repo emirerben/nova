@@ -94,6 +94,7 @@ function FocusedVariantPanel({
     variant as unknown as EditableVariant,
     styleSets,
     session.draft,
+    session.isDirty,
   );
 
   // For instant-eligible variants: always show the text-free base video +

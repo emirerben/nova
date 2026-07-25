@@ -157,6 +157,7 @@ export default function InspectorPanel({
   backgroundMusicTrackDurationS = null,
   onPatchMix,
   onPickMusic,
+  onRemoveMusic,
   onPatchBackgroundMusic,
   onRemoveBackgroundMusic,
   musicWindow,
@@ -204,6 +205,7 @@ export default function InspectorPanel({
   backgroundMusicTrackDurationS?: number | null;
   onPatchMix?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  onRemoveMusic?: () => void;
   onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
   onRemoveBackgroundMusic?: () => void;
   musicWindow?: SongWindowControl;
@@ -287,6 +289,7 @@ export default function InspectorPanel({
           backgroundMusic={backgroundMusic}
           backgroundMusicTrackDurationS={backgroundMusicTrackDurationS}
           onPickMusic={onPickMusic}
+          onRemoveMusic={onRemoveMusic}
           onPatchBackgroundMusic={onPatchBackgroundMusic}
           onRemoveBackgroundMusic={onRemoveBackgroundMusic}
           musicWindow={musicWindow}
@@ -324,6 +327,7 @@ function MixInspector({
   backgroundMusicTrackDurationS,
   onPatch,
   onPickMusic,
+  onRemoveMusic,
   onPatchBackgroundMusic,
   onRemoveBackgroundMusic,
   musicWindow,
@@ -340,6 +344,7 @@ function MixInspector({
   backgroundMusicTrackDurationS?: number | null;
   onPatch?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  onRemoveMusic?: () => void;
   onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
   onRemoveBackgroundMusic?: () => void;
   musicWindow?: SongWindowControl;
@@ -382,6 +387,15 @@ function MixInspector({
             </div>
           ) : (
             <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+              {currentMusicTrackId && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveMusic?.()}
+                  className="flex min-h-10 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                >
+                  Remove music
+                </button>
+              )}
               {musicTracks.map((track) => {
                 const selected = track.id === currentMusicTrackId;
                 return (

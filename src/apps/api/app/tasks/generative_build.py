@@ -10646,6 +10646,9 @@ def _text_element_burn_dicts(variant: dict) -> list[dict]:
         video_duration_s=float(variant.get("duration_s") or 10.0),
         include_lyric_line=include_lyric_line,
         independent_box_alignment=True,
+        # Karaoke settle-color contract: user-edited variants hold the user's
+        # element color after the sweep (see build_overlays_from_text_elements).
+        user_edited=bool(variant.get("text_elements_user_edited")),
     )
     schedules = {
         (element.text, round(float(element.start_s), 3)): params["reveal_schedule_s"]

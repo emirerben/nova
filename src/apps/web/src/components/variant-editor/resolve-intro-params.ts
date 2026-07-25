@@ -23,6 +23,11 @@ export function resolveIntroParams(
   variant: EditableVariant,
   styleSets: GenerativeStyleSet[],
   draft: EditDraft,
+  /** True when the CURRENT edit session has uncommitted text/style edits
+   * (session.isDirty) — the preview flips karaoke's settled color to the user
+   * color the moment they edit, matching what a save would render. The
+   * variant's persisted `text_elements_user_edited` flag is OR'd in below. */
+  sessionEdited = false,
 ): IntroOverlayParams {
   const setId = draft.styleSetId ?? variant.style_set_id ?? null;
   const intro = styleSets.find((s) => s.id === setId)?.intro ?? null;
@@ -67,5 +72,6 @@ export function resolveIntroParams(
     clusterHeroSizePx: draft.clusterHeroSizePx ?? variant.intro_cluster_hero_size_px ?? null,
     clusterBodySizePx: draft.clusterBodySizePx ?? variant.intro_cluster_body_size_px ?? null,
     clusterAccentSizePx: draft.clusterAccentSizePx ?? variant.intro_cluster_accent_size_px ?? null,
+    userEdited: Boolean(variant.text_elements_user_edited) || sessionEdited,
   };
 }

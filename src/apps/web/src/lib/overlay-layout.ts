@@ -68,6 +68,12 @@ export interface IntroOverlayParams {
   clusterHeroSizePx?: number | null;
   clusterBodySizePx?: number | null;
   clusterAccentSizePx?: number | null;
+  /** True when the variant's text elements are user-edited
+   * (`text_elements_user_edited`), or the current edit session is dirty.
+   * Mirror of the `user_edited` parameter on
+   * `build_overlays_from_text_elements` (generative_overlays.py): karaoke then
+   * settles on the user's text color instead of the highlight color. */
+  userEdited?: boolean | null;
 }
 
 /** Greedy word-wrap — exact port of `_wrap_text_to_lines`. Explicit newlines wrap
@@ -214,11 +220,15 @@ export function resolveAnchorFrac(p: IntroOverlayParams): { xFrac: number; yFrac
 }
 
 /** The settled (post-reveal) fill color — mirror of the hold-overlay rule in
- * `build_persistent_intro_overlays`: karaoke sweeps every word to the highlight
- * color; every other effect settles on text_color. The preview shows the hold
- * state (what the text looks like for ~95% of the video). */
+ * `build_persistent_intro_overlays` / `build_overlays_from_text_elements`
+ * (generative_overlays.py): karaoke sweeps every word to the highlight color;
+ * every other effect settles on text_color. The preview shows the hold state
+ * (what the text looks like for ~95% of the video). EXCEPTION (mirrors the
+ * Python `user_edited` flag): on user-edited variants karaoke settles on the
+ * user's text color — the highlight only animates during the sweep. */
 export function settledColor(p: IntroOverlayParams): string {
-  return p.effect === "karaoke-line" ? p.highlightColor : p.textColor;
+  if (p.effect === "karaoke-line" && !p.userEdited) return p.highlightColor;
+  return p.textColor;
 }
 
 export interface IntroHoldLayout {

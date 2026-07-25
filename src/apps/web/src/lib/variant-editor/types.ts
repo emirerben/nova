@@ -39,6 +39,9 @@ export interface EditableVariant {
   intro_layout?: "linear" | "cluster" | null;
   /** Intro rendering mode. "sequence" → text is server-locked (transcript/rhythm sync). */
   intro_mode?: "sequence" | "cluster" | "linear" | null;
+  /** True once the user has saved edited text elements — karaoke then settles
+   * on the user's color, not the highlight (settledColor / user_edited). */
+  text_elements_user_edited?: boolean | null;
   /** Whether the AI-intro overlay is occluded behind the moving subject
    * (text-behind-subject feature). Absent/false on legacy variants. */
   intro_behind_subject?: boolean | null;

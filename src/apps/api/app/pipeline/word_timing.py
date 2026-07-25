@@ -115,3 +115,55 @@ def synthesize_word_timings(
         )
         prev_end = end
     return out
+
+
+def rebuild_word_timings_for_text(text: str, word_timings: list[dict] | None) -> list[dict] | None:
+    """Return `word_timings` that match `text`'s whitespace-split tokens.
+
+    The karaoke renderer (`text_overlay_skia._draw_karaoke_line`) burns per-word
+    text from `word_timings`, NEVER from the overlay's `text` — whoever changes
+    the text must rebuild the timings (the docstring contract on the renderer).
+    Nothing on the edit path did, so a user text edit rendered the OLD words
+    (prod job 96771038). This is the compile-time repair:
+
+    - Tokens already match (whitespace-split, case-sensitive) → return the
+      stored timings unchanged, preserving beat-snapped fidelity (A17).
+    - Tokens differ → re-synthesize via `synthesize_word_timings` (the same
+      even-split pacing the original render used for agent text; the TS preview
+      has no per-word pacing rule to mirror), preserving the ORIGINAL window:
+      first stored timing's start to last stored timing's end.
+    - Nothing renderable (no stored timings, no tokens, degenerate window) →
+      None; the caller falls back to the overlay-window synthesis in
+      `build_intro_overlay`.
+
+    Pure: never mutates its inputs.
+    """
+    stored = [w for w in (word_timings or []) if isinstance(w, dict)]
+    if not stored:
+        return None
+    tokens = [t for t in (text or "").split() if t]
+    stored_tokens = [s for w in stored if (s := str(w.get("text", "")).strip())]
+    if stored_tokens == tokens:
+        return word_timings
+    if not tokens:
+        return None
+    try:
+        window_start = float(stored[0].get("start_s") or 0.0)
+        window_end = float(stored[-1].get("end_s") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    rebuilt = synthesize_word_timings(tokens, window_start, window_end)
+    if not rebuilt:
+        return None
+    if window_start:
+        # synthesize_word_timings emits overlay-relative times from 0 over the
+        # window WIDTH — shift back to the stored window's origin.
+        rebuilt = [
+            {
+                **wt,
+                "start_s": round(wt["start_s"] + window_start, 3),
+                "end_s": round(wt["end_s"] + window_start, 3),
+            }
+            for wt in rebuilt
+        ]
+    return rebuilt

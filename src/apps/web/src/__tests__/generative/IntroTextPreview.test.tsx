@@ -63,6 +63,15 @@ describe("IntroTextPreview", () => {
     expect(node.style.fontFamily).toContain("Playfair Display");
   });
 
+  it("settles user-edited karaoke on the user's text color, not the highlight", () => {
+    // Mirror of the Python user_edited settle rule (generative_overlays.py):
+    // a user-edited variant (or a dirty edit session) holds the user's color.
+    render(<IntroTextPreview params={{ ...params, userEdited: true }} />);
+    const node = document.querySelector('[data-placeholder]') as HTMLElement;
+    expect(node).not.toBeNull();
+    expect(node.style.color).toBe("rgb(255, 255, 255)"); // #FFFFFF user color
+  });
+
   it("scales the font to the container (270/1080 → ×0.25)", () => {
     render(<IntroTextPreview params={params} />);
     const node = document.querySelector('[data-placeholder]') as HTMLElement;

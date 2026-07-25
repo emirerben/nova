@@ -57,6 +57,9 @@ export interface EditorDocument {
   mixLevel?: number | null;
   mixDirty?: boolean;
   musicTrackId?: string | null;
+  /** Explicit "user removed the song" state — null musicTrackId alone means
+   * "untouched" (it falls back to the variant's persisted track). */
+  musicRemoved?: boolean;
   musicStartS?: number | null;
   musicDirty?: boolean;
   backgroundMusic?: EditorCommitBackgroundMusic | null;
@@ -228,6 +231,7 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
         mixDirty: Boolean(doc.mixDirty),
         musicTrackId:
           typeof doc.musicTrackId === "string" ? doc.musicTrackId : doc.musicTrackId === null ? null : undefined,
+        musicRemoved: Boolean(doc.musicRemoved),
         musicStartS:
           typeof doc.musicStartS === "number" && Number.isFinite(doc.musicStartS)
             ? Math.max(0, doc.musicStartS)
