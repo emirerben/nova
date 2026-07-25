@@ -9285,6 +9285,13 @@ def _render_subtitled_variant(
         "voiceover_caption_style": caption_style,
         "voiceover_caption_font": caption_font,
         "caption_margin_v": caption_margin_v,
+        "caption_size_px": spec.get("caption_size_px"),
+        "caption_text_color": spec.get("caption_text_color"),
+        "caption_highlight_color": spec.get("caption_highlight_color"),
+        "caption_stroke_width": spec.get("caption_stroke_width"),
+        "caption_shadow_enabled": spec.get("caption_shadow_enabled"),
+        "caption_font_user_edited": spec.get("caption_font_user_edited"),
+        "caption_position_user_edited": spec.get("caption_position_user_edited"),
         # Language the captions were transcribed in (ISO "en"/"tr"). Shown as the editor
         # chip; the re-transcribe override reads + rewrites it.
         "caption_language": (language or "en"),
@@ -9312,6 +9319,12 @@ def _render_subtitled_variant(
         # only when the stage ran to a plan; drives the admin cut-plan viewer.
         "silence_cut": None,
     }
+    if base.get("smart_caption_policy") is not None:
+        base["smart_caption_policy"] = _effective_smart_caption_policy(
+            base,
+            ass_font=resolve_caption_font(caption_font),
+            margin_v=caption_margin_v,
+        )
     if getattr(settings, "subtitled_text_lane_enabled", False) or smart_captions is not None:
         base["text_elements"] = []
         base["text_elements_user_edited"] = False
@@ -9928,10 +9941,23 @@ def _render_subtitled_variant(
         elif cues:
             ass_path = os.path.join(variant_dir, "captions.ass")
             ass_font = resolve_caption_font(caption_font)
+            caption_appearance = _caption_style_overrides(base)
+            caption_appearance_kwargs = (
+                {"appearance": caption_appearance} if caption_appearance is not None else {}
+            )
+            effective_smart_policy = _effective_smart_caption_policy(
+                base,
+                ass_font=ass_font,
+                margin_v=caption_margin_v,
+            )
             with _stage_timer("caption_burn", counts={"cue_count": len(cues)}):
                 if caption_style == "word":
                     generate_word_pop_ass(
-                        cues, ass_path, font_name=ass_font, margin_v=caption_margin_v
+                        cues,
+                        ass_path,
+                        font_name=ass_font,
+                        margin_v=caption_margin_v,
+                        **caption_appearance_kwargs,
                     )
                 else:
                     generate_ass_from_cues(
@@ -9941,9 +9967,10 @@ def _render_subtitled_variant(
                         style="plain",
                         margin_v=caption_margin_v,
                         pop_in=True,
+                        **caption_appearance_kwargs,
                         **(
-                            {"smart_policy": smart_caption_policy}
-                            if smart_caption_policy is not None
+                            {"smart_policy": effective_smart_policy}
+                            if effective_smart_policy is not None
                             else {}
                         ),
                     )
@@ -10565,7 +10592,27 @@ def _effective_smart_caption_policy(
         from app.pipeline.captions import margin_v_to_y_frac  # noqa: PLC0415
 
         policy["y_frac"] = margin_v_to_y_frac(margin_v)
+    if variant.get("caption_size_px") is not None:
+        policy["font_size_px"] = variant.get("caption_size_px")
+    if variant.get("caption_text_color"):
+        policy["color"] = variant.get("caption_text_color")
+        policy["color_user_edited"] = True
+    if variant.get("caption_stroke_width") is not None:
+        policy["stroke_width"] = variant.get("caption_stroke_width")
+    if variant.get("caption_shadow_enabled") is not None:
+        policy["shadow_enabled"] = bool(variant.get("caption_shadow_enabled"))
     return policy
+
+
+def _caption_style_overrides(variant: dict) -> dict[str, Any] | None:
+    appearance = {
+        "font_size_px": variant.get("caption_size_px"),
+        "color": variant.get("caption_text_color"),
+        "highlight_color": variant.get("caption_highlight_color"),
+        "stroke_width": variant.get("caption_stroke_width"),
+        "shadow_enabled": variant.get("caption_shadow_enabled"),
+    }
+    return appearance if any(value is not None for value in appearance.values()) else None
 
 
 def _fresh_variant_snapshot(job_id: str, variant_id: str) -> dict | None:
@@ -10712,11 +10759,15 @@ def _burn_persisted_captions_onto_base(
         ass_font=ass_font,
         margin_v=margin_v,
     )
+    appearance = _caption_style_overrides(variant)
+    appearance_kwargs = {"appearance": appearance} if appearance is not None else {}
     ass_path = os.path.join(tmpdir, "captions.ass")
     if subtitled_word_pop:
         # Real per-word times for cues left untouched; edited cues re-synthesize
         # inside generate_word_pop_ass (E3). Same safe margin as the first burn.
-        generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=margin_v)
+        generate_word_pop_ass(
+            cues, ass_path, font_name=ass_font, margin_v=margin_v, **appearance_kwargs
+        )
     else:
         generate_ass_from_cues(
             cues,
@@ -10728,6 +10779,7 @@ def _burn_persisted_captions_onto_base(
             # user's cue set is authoritative (never re-split here). Narrated
             # stays un-animated (margin_v is None only for narrated).
             pop_in=(archetype == "subtitled"),
+            **appearance_kwargs,
             **({"smart_policy": smart_policy} if smart_policy is not None else {}),
         )
     burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
@@ -11445,6 +11497,7 @@ def _run_retranscribe_subtitled(
     word_pop = variant.get("voiceover_caption_style") == "word"
     ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))
     caption_margin_v = _resolve_caption_margin_v(variant)
+    caption_appearance = _caption_style_overrides(variant)
 
     if not _update_variant_entry(
         job_id,
@@ -11501,8 +11554,17 @@ def _run_retranscribe_subtitled(
         else:
             out_local = os.path.join(tmpdir, "out.mp4")
             ass_path = os.path.join(tmpdir, "captions.ass")
+            caption_appearance_kwargs = (
+                {"appearance": caption_appearance} if caption_appearance is not None else {}
+            )
             if word_pop:
-                generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=caption_margin_v)
+                generate_word_pop_ass(
+                    cues,
+                    ass_path,
+                    font_name=ass_font,
+                    margin_v=caption_margin_v,
+                    **caption_appearance_kwargs,
+                )
             else:
                 generate_ass_from_cues(
                     cues,
@@ -11511,6 +11573,7 @@ def _run_retranscribe_subtitled(
                     style="plain",
                     margin_v=caption_margin_v,
                     pop_in=True,
+                    **caption_appearance_kwargs,
                 )
             burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
         new_gcs = (
@@ -12232,6 +12295,15 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # of the chosen y position (set by the creator's position edit OR
                     # by face-aware placement on the first render).
                     "caption_margin_v": r.get("caption_margin_v"),
+                    # caption appearance overrides — MUST survive or caption style
+                    # edits appear to save once, then vanish after the next full render.
+                    "caption_size_px": r.get("caption_size_px"),
+                    "caption_text_color": r.get("caption_text_color"),
+                    "caption_highlight_color": r.get("caption_highlight_color"),
+                    "caption_stroke_width": r.get("caption_stroke_width"),
+                    "caption_shadow_enabled": r.get("caption_shadow_enabled"),
+                    "caption_font_user_edited": r.get("caption_font_user_edited"),
+                    "caption_position_user_edited": r.get("caption_position_user_edited"),
                     # subtitled caption language ("en"/"tr") — MUST survive so the editor
                     # chip shows it and the re-transcribe override reads the current one.
                     "caption_language": r.get("caption_language"),

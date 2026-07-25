@@ -98,8 +98,10 @@ import {
   barsToPreviewTextElements,
   barsToTextElements,
   buildLyricLineOverrides,
+  captionMetaPatchFromCaptionBarPatch,
   isCaptionBar,
   isLyricBar,
+  localCaptionBarPatchFromPatch,
   seedBarsFromLyricSeeds,
   seedBarsFromVariant,
 } from "./editor-bars";
@@ -1912,15 +1914,44 @@ export default function EditorShell({
     (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => {
       if (readOnly) return;
       const target = state.bars.find((bar) => bar.id === id);
-      history.record();
+      let patchToApply = patch;
       if (isCaptionBar(target)) {
-        setCaptionDirty(true);
+        const hasCaptionCuePatch =
+          Object.prototype.hasOwnProperty.call(patch, "start_s") ||
+          Object.prototype.hasOwnProperty.call(patch, "end_s") ||
+          Object.prototype.hasOwnProperty.call(patch, "text");
+        const metaPatch = captionMetaPatchFromCaptionBarPatch(patch);
+        if (!hasCaptionCuePatch && Object.keys(metaPatch).length === 0) {
+          return;
+        }
+        patchToApply = localCaptionBarPatchFromPatch(patch);
+        history.record();
+        if (hasCaptionCuePatch) {
+          setCaptionDirty(true);
+        }
+        if (Object.keys(metaPatch).length > 0) {
+          setCaptionMeta((current) => {
+            const base = current ?? (variant ? captionMetaFromVariant(variant) : null);
+            return base ? { ...base, ...metaPatch } : base;
+          });
+          setCaptionMetaPatch((current) => ({ ...current, ...metaPatch }));
+          setCaptionMetaDirty(true);
+        }
       } else if (lyricsOptionalActive || !isLyricBar(target)) {
+        history.record();
         setTextDirty(true);
+      } else {
+        history.record();
       }
-      dispatch({ type: "PATCH_BAR", id, patch });
+      dispatch({ type: "PATCH_BAR", id, patch: patchToApply });
     },
-    [readOnly, state.bars, lyricsOptionalActive, history],
+    [
+      history,
+      lyricsOptionalActive,
+      readOnly,
+      state.bars,
+      variant,
+    ],
   );
 
   const selectedTextMotion = useMemo(

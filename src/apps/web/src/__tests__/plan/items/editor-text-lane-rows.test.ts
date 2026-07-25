@@ -1,8 +1,10 @@
 import { describe, expect, it } from "@jest/globals";
 import {
   barsToCaptionCues,
+  captionMetaPatchFromCaptionBarPatch,
   deriveLaneRows,
   deriveTextLaneRows,
+  localCaptionBarPatchFromPatch,
   seedBarsFromVariant,
   TEXT_LANE_BASE_HEIGHT_PX,
 } from "@/app/plan/items/[id]/_editor/editor-bars";
@@ -190,6 +192,12 @@ describe("seedBarsFromVariant", () => {
       resolved_archetype: "subtitled",
       text_elements_user_edited: false,
       caption_cues: [{ text: "caption words", start_s: 0, end_s: 1 }],
+      voiceover_caption_font: "Playfair Display",
+      caption_size_px: 92,
+      caption_text_color: "#112233",
+      caption_highlight_color: "#A3E635",
+      caption_stroke_width: 7,
+      caption_shadow_enabled: false,
       text_elements: [
         {
           id: "title",
@@ -207,6 +215,12 @@ describe("seedBarsFromVariant", () => {
         id: "caption-0",
         text: "caption words",
         role: "narrated_caption",
+        font_family: "Playfair Display",
+        size_px: 92,
+        color: "#112233",
+        highlight_color: "#A3E635",
+        stroke_width: 7,
+        shadow_enabled: false,
       }),
       expect.objectContaining({ id: "title", text: "Big title", role: "generative_intro" }),
     ]);
@@ -276,6 +290,42 @@ describe("barsToCaptionCues", () => {
         end_s: 1.2,
       },
     ]);
+  });
+});
+
+describe("caption bar style patches", () => {
+  it("routes renderer-backed caption appearance to caption_meta and drops unsupported text fields", () => {
+    const patch = {
+      font_family: "Playfair Display",
+      size_px: 92,
+      color: "#112233",
+      highlight_color: "#A3E635",
+      stroke_width: 7,
+      shadow_enabled: false,
+      y_frac: 0.66,
+      effect: "float",
+      max_width_frac: 0.7,
+      behind_subject: true,
+    } as Partial<Omit<TextElementBar, "id" | "role">>;
+
+    expect(captionMetaPatchFromCaptionBarPatch(patch)).toEqual({
+      font: "Playfair Display",
+      size_px: 92,
+      color: "#112233",
+      highlight_color: "#A3E635",
+      stroke_width: 7,
+      shadow_enabled: false,
+      y_frac: 0.66,
+    });
+    expect(localCaptionBarPatchFromPatch(patch)).toEqual({
+      font_family: "Playfair Display",
+      size_px: 92,
+      color: "#112233",
+      highlight_color: "#A3E635",
+      stroke_width: 7,
+      shadow_enabled: false,
+      y_frac: 0.66,
+    });
   });
 });
 

@@ -47,6 +47,11 @@ export const CAPTION_META_KEYS = [
   "style",
   "font",
   "y_frac",
+  "size_px",
+  "color",
+  "highlight_color",
+  "stroke_width",
+  "shadow_enabled",
 ] as const;
 
 export type CaptionMetaKey = (typeof CAPTION_META_KEYS)[number];
@@ -83,6 +88,11 @@ export type CaptionMetaPatch = Partial<{
   style: "sentence" | "word";
   font: string | null;
   y_frac: number;
+  size_px: number;
+  color: string;
+  highlight_color: string;
+  stroke_width: number;
+  shadow_enabled: boolean;
 }>;
 
 export type CopilotOp =
@@ -406,6 +416,20 @@ function validateCaptionMetaPatch(raw: unknown): CaptionMetaPatchValidation {
     } else if (key === "y_frac") {
       if (!finiteNumber(value)) return rejectCaptionMetaPatch("invalid_type", "y_frac must be a number");
       patch.y_frac = clamp(value, 0.3, 0.9);
+    } else if (key === "size_px") {
+      if (!finiteNumber(value)) return rejectCaptionMetaPatch("invalid_type", "size_px must be a number");
+      patch.size_px = Math.round(clamp(value, 36, 160));
+    } else if (key === "color" || key === "highlight_color") {
+      if (typeof value !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(value.trim())) {
+        return rejectCaptionMetaPatch("invalid_value", `${key} must be a #RRGGBB hex color`);
+      }
+      patch[key] = value.trim().toUpperCase();
+    } else if (key === "stroke_width") {
+      if (!finiteNumber(value)) return rejectCaptionMetaPatch("invalid_type", "stroke_width must be a number");
+      patch.stroke_width = Math.round(clamp(value, 0, 12));
+    } else if (key === "shadow_enabled") {
+      if (typeof value !== "boolean") return rejectCaptionMetaPatch("invalid_type", "shadow_enabled must be boolean");
+      patch.shadow_enabled = value;
     }
   }
   if (Object.keys(patch).length === 0) return rejectCaptionMetaPatch("empty_patch", "patch contains no caption meta fields");
