@@ -3394,6 +3394,7 @@ function FocusedVariantControls({
       const newPlacements: SoundEffectPlacement[] = urls.map((u, i) => ({
         id: crypto.randomUUID(),
         src_gcs_path: u.gcs_path,
+        source: "user",
         at_s: Math.min(Math.max(0, currentTimeS), Math.max(0, variantDurationS - 0.05)),
         gain: 1.0,
         label: files[i].filename.replace(/\.[^.]+$/, ""),

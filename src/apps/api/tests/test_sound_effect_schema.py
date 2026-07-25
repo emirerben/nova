@@ -82,3 +82,25 @@ def test_coerce_sound_effects_valid_entry():
     assert len(result) == 1
     assert result[0].at_s == 3.5
     assert result[0].gain == 0.8
+
+
+def test_coerce_sound_effects_preserves_generated_provenance():
+    raw = [
+        {
+            "id": "abc",
+            "src_gcs_path": "sound-effects/smart-pop/audio.mp3",
+            "source": "smart_captions",
+            "smart_role": "chapter_number_pop",
+            "smart_event_id": "event-1",
+            "transcript_hash": "hash-1",
+        }
+    ]
+
+    result = coerce_sound_effects(raw)
+
+    assert result is not None
+    dumped = result[0].model_dump()
+    assert dumped["source"] == "smart_captions"
+    assert dumped["smart_role"] == "chapter_number_pop"
+    assert dumped["smart_event_id"] == "event-1"
+    assert dumped["transcript_hash"] == "hash-1"

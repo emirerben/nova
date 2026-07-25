@@ -67,7 +67,7 @@ export function sfxReducer(
 
     case "MOVE": {
       const next = state.placements.map((p) =>
-        p.id === action.id ? { ...p, at_s: Math.max(0, action.atS) } : p,
+        p.id === action.id ? { ...p, source: "user", at_s: Math.max(0, action.atS) } : p,
       );
       return withHistory(state, next);
     }
@@ -75,7 +75,7 @@ export function sfxReducer(
     case "SET_GAIN": {
       const gain = Math.min(2, Math.max(0, action.gain));
       const next = state.placements.map((p) =>
-        p.id === action.id ? { ...p, gain } : p,
+        p.id === action.id ? { ...p, source: "user", gain } : p,
       );
       return withHistory(state, next);
     }
@@ -83,7 +83,12 @@ export function sfxReducer(
     case "TRIM": {
       const next = state.placements.map((p) =>
         p.id === action.id
-          ? { ...p, trim_start_s: action.trimStartS, trim_end_s: action.trimEndS }
+          ? {
+              ...p,
+              source: "user",
+              trim_start_s: action.trimStartS,
+              trim_end_s: action.trimEndS,
+            }
           : p,
       );
       return withHistory(state, next);
@@ -91,7 +96,7 @@ export function sfxReducer(
 
     case "SET_LABEL": {
       const next = state.placements.map((p) =>
-        p.id === action.id ? { ...p, label: action.label } : p,
+        p.id === action.id ? { ...p, source: "user", label: action.label } : p,
       );
       return withHistory(state, next);
     }

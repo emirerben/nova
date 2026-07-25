@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.10.2] — 2026-07-25
+
+### Fixed
+- **Smart Caption sound effects no longer reappear as dense duplicate ticks on reload.** Generated SFX provenance now survives validation, legacy smart-effect rows are normalized on variant reads, and dedupe only collapses the same generated asset/role within a tight timestamp window while preserving manual and intentionally layered effects.
+- **Editor SFX preview is audible for signed storage URLs.** Cross-origin signed SFX previews now avoid the Web Audio path that can silence media without CORS headers, while same-origin/blob previews still use gain nodes when available.
+
 ## [0.12.10.1] — 2026-07-24
 
 ### Added

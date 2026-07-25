@@ -223,7 +223,7 @@ def test_smart_sfx_never_falls_back_to_unrelated_voice_clip() -> None:
     assert resolved[0]["gain"] == 0.48
 
 
-def test_smart_sfx_spacing_drops_different_roles_at_same_timestamp() -> None:
+def test_smart_sfx_spacing_preserves_different_roles_at_same_timestamp() -> None:
     intents = [
         {"event_id": "a" * 24, "role": "chapter_number_pop", "at_s": 5.0},
         {"event_id": "b" * 24, "role": "cta_click", "at_s": 5.0},
@@ -253,8 +253,9 @@ def test_smart_sfx_spacing_drops_different_roles_at_same_timestamp() -> None:
 
     resolved = resolve_sfx_placements(intents, glossary)
 
-    assert len(resolved) == 1
-    assert resolved[0]["at_s"] == 5.0
+    assert len(resolved) == 2
+    assert {placement["sound_effect_id"] for placement in resolved} == {"pop", "click"}
+    assert {placement["at_s"] for placement in resolved} == {5.0}
 
 
 def test_list_title_suppresses_redundant_camera_pulse() -> None:
