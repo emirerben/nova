@@ -972,6 +972,7 @@ def _variants_for_response(job: Job) -> list[dict]:
     if changed:
         setattr(job, "_media_overlay_preview_backfilled", True)
 
+    from app.agents._schemas.sound_effect import normalize_generated_sound_effects  # noqa: PLC0415
     from app.config import settings  # noqa: PLC0415
     from app.services.speech_map import build_speech_map  # noqa: PLC0415
     from app.services.transcript_source import (  # noqa: PLC0415
@@ -1056,6 +1057,12 @@ def _variants_for_response(job: Job) -> list[dict]:
                 else:
                     signed_overlays.append(card)
             v = {**v, "media_overlays": signed_overlays}
+        raw_sound_effects = v.get("sound_effects")
+        if raw_sound_effects:
+            v = {
+                **v,
+                "sound_effects": normalize_generated_sound_effects(raw_sound_effects),
+            }
         # Intro mode (D19): expose the authoritative mode plus the FE-convenience
         # `sequence_synced` boolean. Legacy variants (pre-intro_mode) fall back to
         # the persisted intro_layout — they can never be "sequence".

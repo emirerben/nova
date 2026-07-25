@@ -795,6 +795,11 @@ export interface SoundEffectPlacement {
   duration_s?: number | null;
   /** Human label for the UI (e.g. "Fah"). */
   label?: string | null;
+  /** Optional provenance for generated placements; manual placements use source="user"/"manual". */
+  source?: string | null;
+  smart_role?: string | null;
+  smart_event_id?: string | null;
+  transcript_hash?: string | null;
 }
 
 // NOTE: `PlanItemVariant` is kept structurally assignable to the shared

@@ -327,6 +327,56 @@ def test_variants_for_response_does_not_mutate_stored_dicts(monkeypatch):
     assert stored["output_url"] == "https://stale.example/expired?X-Goog-Expires=86400"
 
 
+def test_variants_for_response_normalizes_legacy_smart_sfx_without_mutating():
+    import types
+    import uuid
+
+    import app.routes.generative_jobs as gj
+
+    placements = [
+        {
+            "id": "tick-1",
+            "sound_effect_id": "smart-keyword-typewriter-tick-v1",
+            "src_gcs_path": "sound-effects/smart-keyword-typewriter-tick-v1/audio.wav",
+            "at_s": 16.56,
+        },
+        {
+            "id": "tick-2",
+            "sound_effect_id": "smart-keyword-typewriter-tick-v1",
+            "src_gcs_path": "sound-effects/smart-keyword-typewriter-tick-v1/audio.wav",
+            "at_s": 16.622,
+        },
+        {
+            "id": "whoosh",
+            "sound_effect_id": "smart-transition-whip-v1",
+            "src_gcs_path": "sound-effects/smart-transition-whip-v1/audio.wav",
+            "at_s": 16.64,
+        },
+    ]
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        content_plan_item_id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "render_status": "ready",
+                    "sound_effects": placements,
+                }
+            ]
+        },
+    )
+
+    out = gj._variants_for_response(job)
+
+    assert [p["id"] for p in out[0]["sound_effects"]] == ["tick-1", "whoosh"]
+    assert [p["id"] for p in job.assembly_plan["variants"][0]["sound_effects"]] == [
+        "tick-1",
+        "tick-2",
+        "whoosh",
+    ]
+
+
 def test_variants_for_response_signing_failure_falls_back(monkeypatch):
     import app.routes.generative_jobs as gj
 

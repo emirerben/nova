@@ -7,8 +7,22 @@ import { sfxPlaybackOffsetAt } from "@/lib/sfx-preview-scheduler";
 interface SfxAudioEntry {
   placement: SoundEffectPlacement;
   audio: HTMLAudioElement;
+  auxAudios: HTMLAudioElement[];
   gainNode: GainNode | null;
   scheduledAt: number | null; // timeout id
+}
+
+const MAX_NATIVE_GAIN_AUDIOS = 4;
+
+export function shouldRouteSfxThroughWebAudio(url: string | undefined): boolean {
+  if (!url) return false;
+  if (url.startsWith("blob:") || url.startsWith("data:")) return true;
+  try {
+    const parsed = new URL(url, window.location.href);
+    return parsed.origin === window.location.origin;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -39,15 +53,45 @@ export function useSfxPreview(
       entry.gainNode.gain.value = gain;
       return;
     }
-    entry.audio.volume = Math.max(0, Math.min(1, gain));
+    const audios = [entry.audio, ...entry.auxAudios];
+    const activeCount = Math.max(1, Math.min(MAX_NATIVE_GAIN_AUDIOS, Math.ceil(gain)));
+    const perAudioVolume = activeCount === 0 ? 0 : Math.max(0, Math.min(1, gain / activeCount));
+    audios.forEach((audio, index) => {
+      audio.volume = index < activeCount ? perAudioVolume : 0;
+      if (index >= activeCount) audio.pause();
+    });
   }
 
-  function playPreviewAudio(audio: HTMLAudioElement) {
+  function setEntryUrl(entry: SfxAudioEntry, url: string) {
+    for (const audio of [entry.audio, ...entry.auxAudios]) {
+      if (audio.src !== url) {
+        audio.src = url;
+        audio.load();
+      }
+    }
+  }
+
+  function setEntryCurrentTime(entry: SfxAudioEntry, seconds: number) {
+    for (const audio of [entry.audio, ...entry.auxAudios]) {
+      if (audio.volume > 0) audio.currentTime = seconds;
+    }
+  }
+
+  function pauseEntry(entry: SfxAudioEntry, clearSrc = false) {
+    for (const audio of [entry.audio, ...entry.auxAudios]) {
+      audio.pause();
+      if (clearSrc) audio.src = "";
+    }
+  }
+
+  function playPreviewAudio(entry: SfxAudioEntry) {
     const ctx = audioContextRef.current;
     if (ctx?.state === "suspended") {
       void ctx.resume().catch(() => {});
     }
-    void audio.play().catch(() => {});
+    for (const audio of [entry.audio, ...entry.auxAudios]) {
+      if (audio.volume > 0) void audio.play().catch(() => {});
+    }
   }
 
   function syncAll(video: HTMLVideoElement) {
@@ -56,11 +100,8 @@ export function useSfxPreview(
     for (const entry of entriesRef.current) {
       const { placement, audio } = entry;
       const url = audioUrls[placement.src_gcs_path] || audioUrls[placement.id] || (placement as unknown as { _previewUrl?: string })._previewUrl;
-      if (!url) { audio.pause(); continue; }
-      if (audio.src !== url) {
-        audio.src = url;
-        audio.load();
-      }
+      if (!url) { pauseEntry(entry); continue; }
+      setEntryUrl(entry, url);
       setPreviewGain(entry);
 
       const offsetInSfx = now - placement.at_s;
@@ -72,25 +113,25 @@ export function useSfxPreview(
       );
 
       if (video.paused) {
-        audio.pause();
+        pauseEntry(entry);
         if (activeOffset != null) {
-          audio.currentTime = activeOffset;
+          setEntryCurrentTime(entry, activeOffset);
         }
       } else {
         if (activeOffset != null) {
           // Already past the start — play from offset
-          audio.currentTime = activeOffset;
-          playPreviewAudio(audio);
+          setEntryCurrentTime(entry, activeOffset);
+          playPreviewAudio(entry);
         } else if (offsetInSfx >= 0) {
-          audio.pause();
+          pauseEntry(entry);
         } else {
           // Not yet — schedule a future play
-          audio.pause();
+          pauseEntry(entry);
           const delayMs = -offsetInSfx * 1000;
           const tid = window.setTimeout(() => {
             if (!video.paused) {
-              audio.currentTime = trimStartS;
-              playPreviewAudio(audio);
+              setEntryCurrentTime(entry, trimStartS);
+              playPreviewAudio(entry);
             }
           }, delayMs);
           timeoutsRef.current.push(tid);
@@ -103,20 +144,23 @@ export function useSfxPreview(
   useEffect(() => {
     // Destroy old entries
     for (const entry of entriesRef.current) {
-      entry.audio.pause();
-      entry.audio.src = "";
+      pauseEntry(entry, true);
     }
     clearTimeouts();
 
     entriesRef.current = placements.map((p) => {
       const audio = new Audio();
       audio.preload = "auto";
+      let auxAudios: HTMLAudioElement[] = [];
       let gainNode: GainNode | null = null;
+      const url = audioUrls[p.src_gcs_path] || audioUrls[p.id] || (p as unknown as { _previewUrl?: string })._previewUrl;
       try {
-        const AudioContextCtor =
-          window.AudioContext ??
-          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (AudioContextCtor) {
+        if (shouldRouteSfxThroughWebAudio(url)) {
+          const AudioContextCtor =
+            window.AudioContext ??
+            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+          if (!AudioContextCtor) throw new Error("AudioContext unavailable");
+          audio.crossOrigin = "anonymous";
           const ctx = audioContextRef.current ?? new AudioContextCtor();
           audioContextRef.current = ctx;
           const source = ctx.createMediaElementSource(audio);
@@ -127,9 +171,15 @@ export function useSfxPreview(
       } catch {
         gainNode = null;
       }
-      const url = audioUrls[p.src_gcs_path] || audioUrls[p.id] || (p as unknown as { _previewUrl?: string })._previewUrl;
-      if (url) { audio.src = url; audio.load(); }
-      const entry = { placement: p, audio, gainNode, scheduledAt: null };
+      if (!gainNode) {
+        auxAudios = Array.from({ length: MAX_NATIVE_GAIN_AUDIOS - 1 }, () => {
+          const aux = new Audio();
+          aux.preload = "auto";
+          return aux;
+        });
+      }
+      const entry = { placement: p, audio, auxAudios, gainNode, scheduledAt: null };
+      if (url) setEntryUrl(entry, url);
       setPreviewGain(entry);
       return entry;
     });
@@ -147,12 +197,15 @@ export function useSfxPreview(
     const onPlay = () => syncAll(video);
     const onPause = () => {
       clearTimeouts();
-      entriesRef.current.forEach(({ audio }) => audio.pause());
+      entriesRef.current.forEach((entry) => pauseEntry(entry));
     };
     const onSeeked = () => syncAll(video);
     const onEnded = () => {
       clearTimeouts();
-      entriesRef.current.forEach(({ audio }) => { audio.pause(); audio.currentTime = 0; });
+      entriesRef.current.forEach((entry) => {
+        pauseEntry(entry);
+        setEntryCurrentTime(entry, 0);
+      });
     };
     // A native <video loop> wraps to 0 WITHOUT firing `ended` or (in Chrome) a
     // reliable `seeked`, so the one-shot SFX timers scheduled in syncAll would
@@ -179,7 +232,7 @@ export function useSfxPreview(
       video.removeEventListener("ended", onEnded);
       video.removeEventListener("timeupdate", onTimeUpdate);
       clearTimeouts();
-      entriesRef.current.forEach(({ audio }) => { audio.pause(); audio.src = ""; });
+      entriesRef.current.forEach((entry) => pauseEntry(entry, true));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoRef, placements, audioUrls]);

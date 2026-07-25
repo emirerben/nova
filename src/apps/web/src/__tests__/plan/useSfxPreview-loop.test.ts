@@ -1,6 +1,9 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
+import {
+  shouldRouteSfxThroughWebAudio,
+  useSfxPreview,
+} from "@/app/plan/_components/useSfxPreview";
 import type { SoundEffectPlacement } from "@/lib/plan-api";
 
 // jsdom doesn't implement media playback. Stub the methods useSfxPreview calls on
@@ -81,5 +84,38 @@ describe("useSfxPreview — loop re-arm", () => {
       jest.advanceTimersByTime(2000);
     });
     expect(play).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not route signed cross-origin SFX through Web Audio", () => {
+    expect(shouldRouteSfxThroughWebAudio("blob:fake-audio")).toBe(true);
+    expect(shouldRouteSfxThroughWebAudio("/api/sfx/local-preview")).toBe(true);
+    expect(
+      shouldRouteSfxThroughWebAudio(
+        "https://storage.googleapis.com/nova-videos-dev/sound-effects/pop/audio.wav?sig=1",
+      ),
+    ).toBe(false);
+  });
+
+  it("uses multiple native audio elements for cross-origin gain above 1", () => {
+    const video = makeFakeVideo();
+    const videoRef = { current: video as unknown as HTMLVideoElement };
+    const play = window.HTMLMediaElement.prototype.play as jest.MockedFunction<() => Promise<void>>;
+
+    renderHook(() =>
+      useSfxPreview(
+        videoRef,
+        [{ ...PLACEMENT, gain: 2.4 }],
+        {
+          "sound-effects/fah/audio.mp3":
+            "https://storage.googleapis.com/nova-videos-dev/sound-effects/fah/audio.wav?sig=1",
+        },
+      ),
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+
+    expect(play).toHaveBeenCalledTimes(3);
   });
 });

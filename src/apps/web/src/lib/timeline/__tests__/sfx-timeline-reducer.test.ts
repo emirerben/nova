@@ -5,6 +5,7 @@ import {
   type SfxEditorState,
 } from "../sfx-timeline-reducer";
 import type { SoundEffectPlacement } from "@/lib/plan-api";
+import { describe, expect, it } from "@jest/globals";
 
 function makePlacement(override: Partial<SoundEffectPlacement> = {}): SoundEffectPlacement {
   return {
@@ -57,6 +58,13 @@ describe("sfxReducer — MOVE", () => {
     const next = sfxReducer(state, { type: "MOVE", id: "p1", atS: 5 });
     expect(next.placements[1].at_s).toBe(10);
   });
+
+  it("marks moved generated placements as user-owned", () => {
+    const p = makePlacement({ id: "p1", source: "smart_captions", smart_role: "keyword" });
+    const state = initSfxEditorState([p]);
+    const next = sfxReducer(state, { type: "MOVE", id: "p1", atS: 5 });
+    expect(next.placements[0].source).toBe("user");
+  });
 });
 
 describe("sfxReducer — SET_GAIN", () => {
@@ -65,6 +73,13 @@ describe("sfxReducer — SET_GAIN", () => {
     const state = initSfxEditorState([p]);
     expect(sfxReducer(state, { type: "SET_GAIN", id: "p1", gain: 3 }).placements[0].gain).toBe(2);
     expect(sfxReducer(state, { type: "SET_GAIN", id: "p1", gain: -0.5 }).placements[0].gain).toBe(0);
+  });
+
+  it("marks gain-edited generated placements as user-owned", () => {
+    const p = makePlacement({ id: "p1", source: "smart_captions", gain: 1 });
+    const state = initSfxEditorState([p]);
+    const next = sfxReducer(state, { type: "SET_GAIN", id: "p1", gain: 0.5 });
+    expect(next.placements[0].source).toBe("user");
   });
 });
 

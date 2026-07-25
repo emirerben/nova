@@ -324,7 +324,7 @@ def test_normalize_generated_sound_effects_collapses_generated_without_role():
     assert [p["id"] for p in normalize_generated_sound_effects(placements)] == ["a"]
 
 
-def test_normalize_generated_sound_effects_preserves_manual_but_spaces_generated_layers():
+def test_normalize_generated_sound_effects_preserves_manual_and_generated_layers():
     placements = [
         {
             "id": "manual",
@@ -369,4 +369,71 @@ def test_normalize_generated_sound_effects_preserves_manual_but_spaces_generated
         "manual",
         "manual-layer",
         "impact",
+        "whoosh",
+        "different-role",
     ]
+
+
+def test_normalize_generated_sound_effects_collapses_dense_typewriter_ticks():
+    placements = [
+        {
+            "id": "tick-1",
+            "src_gcs_path": "sound-effects/tick/audio.mp3",
+            "at_s": 16.56,
+            "smart_role": "keyword_typewriter_tick",
+            "smart_event_id": "same-card",
+        },
+        {
+            "id": "tick-2",
+            "src_gcs_path": "sound-effects/tick/audio.mp3",
+            "at_s": 16.622,
+            "smart_role": "keyword_typewriter_tick",
+            "smart_event_id": "same-card",
+        },
+        {
+            "id": "tick-3",
+            "src_gcs_path": "sound-effects/tick/audio.mp3",
+            "at_s": 16.745,
+            "smart_role": "keyword_typewriter_tick",
+            "smart_event_id": "same-card",
+        },
+        {
+            "id": "whoosh",
+            "src_gcs_path": "sound-effects/whoosh/audio.mp3",
+            "at_s": 16.76,
+            "smart_role": "transition_whip",
+            "smart_event_id": "same-card",
+        },
+    ]
+
+    normalized = normalize_generated_sound_effects(placements, threshold_s=0.15)
+
+    assert [placement["id"] for placement in normalized] == ["tick-1", "tick-3", "whoosh"]
+
+
+def test_normalize_generated_sound_effects_recognizes_legacy_smart_assets():
+    placements = [
+        {
+            "id": "legacy-1",
+            "src_gcs_path": "sound-effects/smart-keyword-typewriter-tick-v1/audio.wav",
+            "sound_effect_id": "smart-keyword-typewriter-tick-v1",
+            "at_s": 16.56,
+        },
+        {
+            "id": "legacy-2",
+            "src_gcs_path": "sound-effects/smart-keyword-typewriter-tick-v1/audio.wav",
+            "sound_effect_id": "smart-keyword-typewriter-tick-v1",
+            "at_s": 16.622,
+        },
+        {
+            "id": "manual-smart-layer",
+            "src_gcs_path": "sound-effects/smart-keyword-typewriter-tick-v1/audio.wav",
+            "sound_effect_id": "smart-keyword-typewriter-tick-v1",
+            "at_s": 16.64,
+            "source": "user",
+        },
+    ]
+
+    normalized = normalize_generated_sound_effects(placements, threshold_s=0.15)
+
+    assert [placement["id"] for placement in normalized] == ["legacy-1", "manual-smart-layer"]

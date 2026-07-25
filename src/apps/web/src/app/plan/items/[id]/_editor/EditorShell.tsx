@@ -2278,7 +2278,7 @@ export default function EditorShell({
           if (s.id !== id) return s;
           const trimStart = s.trim_start_s ?? 0;
           const sourceEnd = s.duration_s ?? s.trim_end_s ?? null;
-          const next: SoundEffectPlacement = { ...s, at_s: patch.at_s };
+          const next: SoundEffectPlacement = { ...s, source: "user", at_s: patch.at_s };
           if (patch.end_s != null && sourceEnd != null) {
             next.trim_end_s = Math.max(trimStart + 0.1, patch.end_s - patch.at_s + trimStart);
           }
@@ -2298,6 +2298,7 @@ export default function EditorShell({
         id: crypto.randomUUID(),
         sound_effect_id: effect.id,
         src_gcs_path: "",
+        source: "user",
         at_s: Math.min(Math.max(0, currentTime), Math.max(0, previewDuration - 0.1)),
         gain: 1,
         duration_s: effect.duration_s ?? null,
@@ -2321,7 +2322,9 @@ export default function EditorShell({
     (id: string, patch: Partial<SoundEffectPlacement>) => {
       if (readOnly || capabilities?.sfx === false) return;
       history.record();
-      setLocalSfx((cur) => cur.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+      setLocalSfx((cur) =>
+        cur.map((s) => (s.id === id ? { ...s, ...patch, source: "user" } : s)),
+      );
       setSfxDirty(true);
     },
     [capabilities?.sfx, history, readOnly],
