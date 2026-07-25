@@ -1,0 +1,21 @@
+{
+  "width": 1080,
+  "height": 1920,
+  "frame": 30,
+  "runtime_hash": "motion-v1:ck0.40.0:b2556106:2abfa191:route-trace-v1",
+  "instances": [
+    {
+      "id": "route-trace-demo",
+      "preset_id": "route_trace",
+      "preset_version": 1,
+      "start_frame": 0,
+      "end_frame_exclusive": 60,
+      "palette": {
+        "primary": "#8B5CF6",
+        "accent": "#D9FF43"
+      },
+      "intensity": 0.8
+    }
+  ],
+  "output_path": "/tmp/nova-motion-route-trace.png"
+}

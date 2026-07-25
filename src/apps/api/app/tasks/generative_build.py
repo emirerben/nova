@@ -3595,6 +3595,69 @@ def _free_retired_visual_blocks_base(previous: dict, replacement: str | None) ->
         delete_object_best_effort(old_path)
 
 
+def _ensure_motion_base(
+    *,
+    job_id: str,
+    variant_id: str,
+    variant: dict,
+    base_gcs_path: str,
+) -> tuple[str, str | None]:
+    """Return the picture base with the shared motion layer below authored text."""
+    from app.config import settings as _motion_settings  # noqa: PLC0415
+    from app.pipeline.motion_scene import (  # noqa: PLC0415
+        MOTION_RUNTIME_HASH,
+        apply_motion_scenes,
+        validate_motion_instances,
+    )
+
+    scenes = validate_motion_instances(variant.get("motion_scenes") or [])
+    if not scenes:
+        return base_gcs_path, None
+    if _resolve_variant_orientation(variant) != "portrait":
+        raise RuntimeError("motion scenes require portrait orientation")
+    required_hash = variant.get("motion_runtime_hash")
+    if required_hash != MOTION_RUNTIME_HASH:
+        raise RuntimeError(
+            f"motion runtime mismatch: variant requires {required_hash!r}, "
+            f"worker has {MOTION_RUNTIME_HASH!r}"
+        )
+    cached = variant.get("motion_base_path")
+    cache_matches_source = variant.get("motion_base_source_path") == base_gcs_path
+    cache_is_fresh = bool(cached and not variant.get("motion_cache_stale") and cache_matches_source)
+    if not _motion_settings.motion_scenes_enabled:
+        if cache_is_fresh:
+            return str(cached), str(cached)
+        raise RuntimeError(
+            "motion scenes are disabled and this persisted variant needs a cache rebuild"
+        )
+    if cache_is_fresh:
+        log.info(
+            "motion_scene_cache_hit",
+            job_id=job_id,
+            variant_id=variant_id,
+            cache_path=str(cached),
+            runtime_hash=MOTION_RUNTIME_HASH,
+        )
+        return str(cached), str(cached)
+
+    cache_path = f"generative-jobs/{job_id}/motion/{variant_id}_{uuid.uuid4().hex[:10]}.mp4"
+    apply_motion_scenes(
+        base_gcs_path=base_gcs_path,
+        instances=scenes,
+        output_gcs_path=cache_path,
+        job_id=job_id,
+    )
+    return cache_path, cache_path
+
+
+def _free_retired_motion_base(previous: dict, replacement: str | None) -> None:
+    old_path = previous.get("motion_base_path")
+    if old_path and old_path != replacement:
+        from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+        delete_object_best_effort(old_path)
+
+
 def _reburn_text_on_base(
     *,
     job_id: str,
@@ -3662,9 +3725,22 @@ def _reburn_text_on_base(
         variant=existing,
         base_gcs_path=base_gcs_path,
     )
+    motion_base_source_path = render_base_gcs_path
+    render_base_gcs_path, motion_cache_path = _ensure_motion_base(
+        job_id=job_id,
+        variant_id=variant_id,
+        variant=existing,
+        base_gcs_path=render_base_gcs_path,
+    )
     visual_blocks_patch = {
         "visual_blocks_base_path": visual_blocks_cache_path,
         "visual_blocks_cache_stale": False,
+        "motion_base_path": motion_cache_path,
+        "motion_base_source_path": (motion_base_source_path if motion_cache_path else None),
+        "motion_cache_stale": False,
+        "motion_applied_runtime_hash": (
+            existing.get("motion_runtime_hash") if motion_cache_path else None
+        ),
     }
     orientation = _resolve_variant_orientation(existing)
     canvas = canvas_for_orientation(orientation)
@@ -5008,6 +5084,7 @@ def _run_regenerate_variant(
             ):
                 return
             _free_retired_visual_blocks_base(existing, result.get("visual_blocks_base_path"))
+            _free_retired_motion_base(existing, result.get("motion_base_path"))
             if _old_video_path_for_delete:
                 from app.storage import delete_object_best_effort  # noqa: PLC0415
 
@@ -5320,15 +5397,26 @@ def _run_regenerate_variant(
         has_visual_blocks = settings.visual_blocks_enabled and bool(
             latest_variant.get("visual_blocks")
         )
+        # Persisted desired state, not the live flag, decides whether the
+        # result must pass through the motion base. With the flag off,
+        # _ensure_motion_base may reuse a source-bound cache but otherwise
+        # fails closed; it must never publish a silently motionless rebuild.
+        has_motion_scenes = bool(latest_variant.get("motion_scenes"))
         if settings.visual_blocks_enabled and not has_visual_blocks:
             # Removing every block must publish the newly assembled clean base
             # and retire any previous block composite rather than preserving it
             # through the variant merge.
             result["visual_blocks_base_path"] = None
             result["visual_blocks_cache_stale"] = False
+        if settings.motion_scenes_enabled and not has_motion_scenes:
+            result["motion_base_path"] = None
+            result["motion_base_source_path"] = None
+            result["motion_cache_stale"] = False
+            result["motion_applied_runtime_hash"] = None
         if (
             (_TEXT_ELEMENTS_ENABLED and latest_variant.get("text_elements_user_edited"))
             or has_visual_blocks
+            or has_motion_scenes
         ) and result.get("base_video_path"):
             result = {
                 **result,
@@ -5345,6 +5433,8 @@ def _run_regenerate_variant(
                         # A full assembly minted a new clean base; never reuse a
                         # block composite whose audio/picture came from the old one.
                         "visual_blocks_base_path": None,
+                        "motion_base_path": None,
+                        "motion_base_source_path": None,
                     },
                     agent_text=agent_text,
                     agent_form=agent_form,
@@ -5413,6 +5503,7 @@ def _run_regenerate_variant(
             delete_object_best_effort(old_matte_path)
             delete_object_best_effort(f"{old_matte_path}.json")
         _free_retired_visual_blocks_base(existing, result.get("visual_blocks_base_path"))
+        _free_retired_motion_base(existing, result.get("motion_base_path"))
         # A full re-render re-assembles video_path without user media layers.
         _reapply_user_media_layers(
             job_id=job_id,
@@ -12419,6 +12510,12 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "visual_blocks_base_path": r.get("visual_blocks_base_path"),
                     "visual_blocks_cache_stale": r.get("visual_blocks_cache_stale", False),
                     "visual_blocks_autoplan_attempted": r.get("visual_blocks_autoplan_attempted"),
+                    "motion_scenes": r.get("motion_scenes"),
+                    "motion_runtime_hash": r.get("motion_runtime_hash"),
+                    "motion_base_path": r.get("motion_base_path"),
+                    "motion_base_source_path": r.get("motion_base_source_path"),
+                    "motion_cache_stale": r.get("motion_cache_stale", False),
+                    "motion_applied_runtime_hash": r.get("motion_applied_runtime_hash"),
                     # media-overlay cards (slice 1) — MUST survive finalization
                     # or "clear all" loses the pre-overlay clean copy reference.
                     "media_overlays": r.get("media_overlays"),

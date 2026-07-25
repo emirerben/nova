@@ -1,0 +1,14 @@
+{
+  "name": "@nova/motion-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./canvaskit": "./src/canvaskit.ts",
+    "./schema": "./motion-scene.schema.json"
+  },
+  "peerDependencies": {
+    "canvaskit-wasm": "0.40.0"
+  }
+}

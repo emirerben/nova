@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nova.video/schemas/motion-scene-v1.json",
+  "title": "Nova motion preset instances v1",
+  "type": "array",
+  "maxItems": 4,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "preset_id",
+      "preset_version",
+      "start_frame",
+      "end_frame_exclusive",
+      "palette",
+      "intensity"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "preset_id": {
+        "const": "route_trace"
+      },
+      "preset_version": {
+        "const": 1
+      },
+      "start_frame": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1799
+      },
+      "end_frame_exclusive": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1800
+      },
+      "palette": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["primary", "accent"],
+        "properties": {
+          "primary": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$"
+          },
+          "accent": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$"
+          }
+        }
+      },
+      "intensity": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    }
+  }
+}

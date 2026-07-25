@@ -31,6 +31,7 @@ on:
       - "Dockerfile"
       - ".dockerignore"
       - "src/apps/api/**"
+      - "src/packages/motion-runtime/**"
 
 # Cancel superseded runs on the same PR.
 concurrency:
@@ -71,6 +72,18 @@ jobs:
         run: |
           docker run --rm --entrypoint python nova-build-test:ci -c \
             'import cv2, skia, mediapipe; print("cv2/skia/mediapipe import OK")'
+
+      - name: Smoke-check offline CanvasKit motion renderer
+        run: |
+          docker run --rm --entrypoint sh nova-build-test:ci -c '
+            deno run --cached-only --no-config \
+              --allow-read=/app/motion-runtime,/app/.deno,/tmp \
+              --allow-write=/tmp \
+              /app/motion-runtime/server/render-frame.ts \
+              /app/motion-runtime/fixtures/route-trace-midpoint.json &&
+            echo "d287ae2bc0d86899b47210e73596d0e979dbf583e8559d069a841b53aa662cbc  /tmp/nova-motion-route-trace.png" |
+              sha256sum -c -
+          '
 
       # Import success is NOT enough for mediapipe: ImageSegmenter CREATION
       # needs libGLESv2 at runtime. When libgles2 was missing from the image

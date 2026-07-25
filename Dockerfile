@@ -93,11 +93,18 @@ COPY src/apps/api/app ./app
 COPY src/apps/api/assets ./assets
 COPY src/apps/api/prompts ./prompts
 COPY src/apps/api/scripts ./scripts
+COPY src/packages/motion-runtime ./motion-runtime
 COPY src/apps/api/alembic.ini .
 # Eval rubrics — read at runtime by app/agents/_online_eval.py (Loop B online
 # judge). _RUBRICS_ROOT is __file__-relative and resolves to /app/tests/evals/
 # rubrics, so the path here MUST match. Markdown only (~24K), no test code.
 COPY src/apps/api/tests/evals/rubrics ./tests/evals/rubrics
+
+# Offline CanvasKit worker cache. Runtime launches with --cached-only and
+# --no-config, so production renders never depend on npm/network availability.
+ENV DENO_DIR=/app/.deno
+RUN deno cache /app/motion-runtime/server/render-sequence.ts && \
+    deno cache /app/motion-runtime/server/render-frame.ts
 
 # Own everything under /app by nova
 RUN chown -R nova:nova /app

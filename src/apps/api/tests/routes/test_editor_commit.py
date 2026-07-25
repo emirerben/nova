@@ -101,6 +101,7 @@ def _arm(monkeypatch, *, object_exists=True):
     monkeypatch.setattr(settings, "sound_effects_enabled", True, raising=False)
     monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
     monkeypatch.setattr(settings, "visual_blocks_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", False, raising=False)
     monkeypatch.setattr(settings, "overlay_autoplace_enabled", False, raising=False)
     monkeypatch.setattr(settings, "subtitled_text_lane_enabled", False, raising=False)
     monkeypatch.setattr(gj.storage, "object_exists", lambda p: object_exists)
@@ -373,6 +374,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "motion_scenes": False,
         "camera_effects": False,
     }
 
@@ -467,6 +469,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "motion_scenes": False,
         "camera_effects": False,
     }
 
@@ -1962,6 +1965,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "motion_scenes": False,
         "camera_effects": False,
         "title": True,
     }
@@ -2534,6 +2538,8 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "sfx": True,
         "overlays": True,
         "visual_blocks": False,
+        "motion_scenes": False,
+        "motion_runtime_hash": None,
         "camera_effects": False,
         "background_music": False,
         # _arm leaves overlay_autoplace_enabled at its default (False).
@@ -2542,6 +2548,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "sfx_reason": None,
         "overlays_reason": None,
         "visual_blocks_reason": "visual_blocks_disabled",
+        "motion_scenes_reason": "motion_scenes_disabled",
         "camera_effects_reason": "unsupported_archetype",
         "suggestions_reason": "autoplace_disabled",
         "lyrics": {
@@ -3054,3 +3061,190 @@ def test_remove_music_defaults_false_and_stays_inert(monkeypatch):
     assert prep["remove_music"] is False
     assert prep["sections"]["music"] is False
     assert prep["has_render_section"] is False
+
+
+def _motion_scene() -> dict:
+    return {
+        "id": "route-1",
+        "preset_id": "route_trace",
+        "preset_version": 1,
+        "start_frame": 0,
+        "end_frame_exclusive": 60,
+        "palette": {"primary": "#8B5CF6", "accent": "#D9FF43"},
+        "intensity": 0.8,
+    }
+
+
+def test_editor_commit_motion_scene_is_atomic_and_routes_one_render(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[_motion_scene()],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+        ),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["motion_scenes"] == [_motion_scene()]
+    assert variant["motion_runtime_hash"] == MOTION_RUNTIME_HASH
+    assert variant["motion_cache_stale"] is True
+    assert prep["sections"]["motion_scenes"] is True
+    assert prep["has_render_section"] is True
+
+    with patch(REGEN) as task:
+        gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    task.apply_async.assert_called_once()
+    assert task.apply_async.call_args.kwargs.get("queue") is None
+
+
+def test_editor_commit_motion_runtime_mismatch_preserves_variant(monkeypatch):
+    from app.config import settings
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                motion_scenes=[_motion_scene()],
+                motion_runtime_hash="stale-web-runtime",
+            ),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {"code": "motion_runtime_mismatch"}
+    assert job.assembly_plan == before
+
+
+def test_editor_commit_rejects_motion_and_landscape_atomically(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                motion_scenes=[_motion_scene()],
+                motion_runtime_hash=MOTION_RUNTIME_HASH,
+                orientation="landscape",
+            ),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {"code": "motion_portrait_only"}
+    assert job.assembly_plan == before
+
+
+def test_editor_commit_rejects_landscape_when_motion_is_persisted(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    job = _job(
+        motion_scenes=[_motion_scene()],
+        motion_runtime_hash=MOTION_RUNTIME_HASH,
+    )
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(orientation="landscape"),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {"code": "motion_portrait_only"}
+    assert job.assembly_plan == before
+
+
+def test_editor_commit_can_clear_motion_and_switch_to_landscape(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    job = _job(
+        motion_scenes=[_motion_scene()],
+        motion_runtime_hash=MOTION_RUNTIME_HASH,
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+            orientation="landscape",
+        ),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["motion_scenes"] is None
+    assert variant["orientation"] == "landscape"
+
+
+def test_editor_commit_clears_motion_desired_state_without_deleting_live_cache(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    variant.update(
+        {
+            "motion_scenes": [_motion_scene()],
+            "motion_runtime_hash": MOTION_RUNTIME_HASH,
+            "motion_base_path": "last-good-motion.mp4",
+            "motion_cache_stale": False,
+        }
+    )
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+        ),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["motion_scenes"] is None
+    assert variant["motion_base_path"] == "last-good-motion.mp4"
+    assert variant["motion_cache_stale"] is True
+    assert prep["sections"]["motion_scenes"] is True
+
+
+def test_editor_capabilities_advertise_motion_runtime_only_when_eligible(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    capabilities = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert capabilities["motion_scenes"] is True
+    assert capabilities["motion_runtime_hash"] == MOTION_RUNTIME_HASH
