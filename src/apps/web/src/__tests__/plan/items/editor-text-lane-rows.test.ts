@@ -291,6 +291,33 @@ describe("barsToCaptionCues", () => {
       },
     ]);
   });
+
+  it("ignores legacy synthetic subtitled timeline rows", () => {
+    expect(
+      barsToCaptionCues([
+        {
+          id: "caption-0",
+          role: "narrated_caption",
+          text: "real editable cue",
+          start_s: 0,
+          end_s: 1,
+        },
+        {
+          id: "subtitled-caption-0",
+          role: "narrated_caption",
+          text: "stale duplicate row",
+          start_s: 0,
+          end_s: 1,
+        },
+      ]),
+    ).toEqual([
+      {
+        text: "real editable cue",
+        start_s: 0,
+        end_s: 1,
+      },
+    ]);
+  });
 });
 
 describe("caption bar style patches", () => {
