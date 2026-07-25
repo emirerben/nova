@@ -355,6 +355,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
     assert v["text_elements"][0]["text"] == "Hello world"
     assert v["text_elements_user_edited"] is True
     assert [s["slot_id"] for s in v["user_timeline"]["slots"]] == ["s1", "s2"]
+    assert v["music_window_video_duration_s"] == pytest.approx(3.0)
     assert v["mix"] == 0.2
     assert v["original_audio_level"] == 0.8
     # Generation bumped + variant flipped to rendering.
@@ -389,7 +390,11 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
     assert len(calls) == 1
     kwargs = calls[0]["kwargs"]
     assert kwargs["render_gen_id"] == prep["generation"]
-    assert [s["slot_id"] for s in kwargs["timeline_override"]] == ["s1", "s2"]
+    assert [s["slot_id"] for s in kwargs["timeline_override"][:-1]] == ["s1", "s2"]
+    assert kwargs["timeline_override"][-1] == {
+        "slot_id": "__nova_timeline_reassembly__",
+        "removed": True,
+    }
     assert kwargs["mix_override"] == 0.2
     # Timeline present → full re-assembly → default queue (no overlay-jobs pin).
     assert "queue" not in calls[0]
@@ -1314,6 +1319,122 @@ def test_song_timeline_seconds_snap_to_beat_grid(monkeypatch):
     assert resolved[0]["duration_s"] == 1.1
     assert resolved[1]["duration_beats"] == 2
     assert resolved[1]["duration_s"] == 1.3
+
+
+def test_song_timeline_preserves_exact_final_tail_past_last_beat(monkeypatch):
+    """Prod regression: a 3.367s clip was silently saved as the 2.784s beat span."""
+    _arm(monkeypatch)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    prefix = f"generative-jobs/{job.id}/sources/"
+    beat_grid = [
+        0.543,
+        0.759,
+        0.975,
+        1.239,
+        1.431,
+        1.719,
+        1.887,
+        2.055,
+        2.559,
+        2.727,
+        2.943,
+        3.135,
+        3.327,
+    ]
+    ai_slots = _ai_slots(prefix)
+    ai_slots[0].update({"source_duration_s": 3.367, "duration_s": 2.055, "duration_beats": 7})
+    variant["ai_timeline"] = {"beat_grid": beat_grid, "slots": ai_slots}
+    slots = [
+        gj.TimelineSlotEdit(
+            slot_id="s1",
+            clip_index=0,
+            in_s=0.0,
+            duration_s=3.367,
+        ),
+        gj.TimelineSlotEdit(
+            slot_id="s2",
+            clip_index=1,
+            in_s=1.0,
+            duration_s=1.0,
+            removed=True,
+        ),
+    ]
+
+    resolved = gj.resolve_timeline_slots_for_edit(job, variant, slots)
+
+    assert resolved[0]["duration_s"] == pytest.approx(3.367)
+    assert resolved[0]["duration_beats"] is None
+    assert resolved[1]["removed"] is True
+
+
+def test_song_timeline_snaps_internal_cut_then_preserves_exact_final_tail(monkeypatch):
+    """The terminal exception starts after the beats consumed by earlier slots."""
+    _arm(monkeypatch)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    prefix = f"generative-jobs/{job.id}/sources/"
+    beat_grid = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+    ai_slots = _ai_slots(prefix)
+    ai_slots[0].update({"source_duration_s": 2.0, "duration_s": 1.0, "duration_beats": 2})
+    ai_slots[1].update({"source_duration_s": 2.25, "duration_s": 1.0, "duration_beats": 2})
+    variant["ai_timeline"] = {"beat_grid": beat_grid, "slots": ai_slots}
+
+    resolved = gj.resolve_timeline_slots_for_edit(
+        job,
+        variant,
+        [
+            gj.TimelineSlotEdit(
+                slot_id="s1",
+                clip_index=0,
+                in_s=0.0,
+                duration_s=0.9,
+            ),
+            gj.TimelineSlotEdit(
+                slot_id="s2",
+                clip_index=1,
+                in_s=0.0,
+                duration_s=2.25,
+            ),
+        ],
+    )
+
+    assert resolved[0]["duration_s"] == pytest.approx(1.0)
+    assert resolved[0]["duration_beats"] == 2
+    assert resolved[1]["duration_s"] == pytest.approx(2.25)
+    assert resolved[1]["duration_beats"] is None
+
+
+def test_song_timeline_exact_final_tail_still_checks_source_bounds(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    prefix = f"generative-jobs/{job.id}/sources/"
+    ai_slot = _ai_slots(prefix)[0]
+    ai_slot.update({"source_duration_s": 3.367, "duration_s": 2.0, "duration_beats": 2})
+    variant["ai_timeline"] = {
+        "beat_grid": [0.543, 1.543, 2.543, 3.327],
+        "slots": [ai_slot],
+    }
+
+    with pytest.raises(HTTPException) as exc:
+        gj.resolve_timeline_slots_for_edit(
+            job,
+            variant,
+            [
+                gj.TimelineSlotEdit(
+                    slot_id="s1",
+                    clip_index=0,
+                    in_s=0.0,
+                    duration_s=3.4,
+                )
+            ],
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "TIMELINE_OUT_OF_BOUNDS"
+    assert exc.value.detail["available_duration_s"] == pytest.approx(3.367)
+    assert exc.value.detail["required_duration_s"] == pytest.approx(3.4)
 
 
 def test_no_music_timeline_seconds_snap_to_half_second(monkeypatch):

@@ -12,6 +12,11 @@ All notable changes to this project will be documented in this file.
 - **Production rendering can run the motion worker fully offline.** The Docker image pre-caches the pinned Deno/CanvasKit runtime, CI renders and hashes a real 1080×1920 frame inside that image, and FFmpeg composites only the bounded active animation window with final-output encoding quality.
 - **Nova now keeps desired motion edits separate from the last applied render.** Failed or superseded renders retain the last-good output and cache while the saved scene remains retryable, and stale motion caches are retired only after a replacement wins.
 
+## [0.12.12.1] — 2026-07-25
+
+### Fixed
+- **The last clip now keeps its full selected duration when the song's beat grid ends early.** Internal cuts remain aligned to beats, while the saved terminal clip may use its exact source endpoint; video, lyrics, music mixing, and persisted duration now agree.
+
 ## [0.12.12.0] — 2026-07-25
 
 ### Fixed

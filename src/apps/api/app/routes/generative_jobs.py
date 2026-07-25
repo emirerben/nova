@@ -556,8 +556,9 @@ class TimelineSlotEdit(BaseModel):
     `slot_id=None` marks a NEW slot (the server assigns a uuid4). `clip_index`
     indexes into `job.all_candidates["clip_paths"]` — clients never send paths.
     Beat slots size in `duration_beats` (walked against the real grid); slots
-    with `duration_beats=None` (no-grid variants, or footage-trimmed slots on
-    grid variants) send their exact window in `duration_s`.
+    with `duration_beats=None` (no-grid variants, footage-trimmed slots, or the
+    exact terminal tail after a grid's final usable beat) send their exact
+    window in `duration_s`.
     """
 
     slot_id: str | None = None
@@ -3843,13 +3844,47 @@ async def persist_user_timeline(
             updated = dict(v)
             if slots is None:
                 updated.pop("user_timeline", None)
+                duration_slots = (updated.get("ai_timeline") or {}).get("slots") or []
             else:
                 updated["user_timeline"] = {"slots": slots}
+                duration_slots = slots
+            if updated.get("music_track_id"):
+                active_duration_s = _active_timeline_duration_s(duration_slots)
+                if active_duration_s > 0:
+                    # Persist before enqueue so both old and new workers in a
+                    # rolling deploy size recipe/audio from the edited cut.
+                    updated["music_window_video_duration_s"] = active_duration_s
             variants[i] = updated
             break
     plan["variants"] = variants
     job.assembly_plan = plan
     await db.commit()
+
+
+_TIMELINE_REASSEMBLY_SENTINEL = {
+    "slot_id": "__nova_timeline_reassembly__",
+    "removed": True,
+}
+
+
+def _active_timeline_duration_s(slots: list[dict]) -> float:
+    return round(
+        sum(float(slot.get("duration_s") or 0.0) for slot in slots if not slot.get("removed")),
+        3,
+    )
+
+
+def _timeline_override_for_reassembly(slots: list[dict]) -> list[dict]:
+    """Mark an override as a real cut edit without changing the task signature.
+
+    The route persists timeline slots before enqueueing, so a worker comparing
+    the override to stored state would otherwise see them as identical and may
+    take the preserve-cuts audio-only shortcut. A removed sentinel makes that
+    comparison differ while being discarded before assembly. Keeping the signal
+    inside the existing payload is safe during rolling deploys: older workers
+    also reject the audio-only shortcut and ignore the removed slot.
+    """
+    return [*(dict(slot) for slot in slots), dict(_TIMELINE_REASSEMBLY_SENTINEL)]
 
 
 def resolve_timeline_slots_for_edit(
@@ -3931,6 +3966,10 @@ def resolve_timeline_slots_for_edit(
     grid_offset = 0  # cumulative beat cursor — grids are NOT uniform
     total = 0.0
     is_song_variant = bool(beat_grid) and bool(variant.get("music_track_id"))
+    final_active_order = next(
+        (order for order in range(len(slots) - 1, -1, -1) if not slots[order].removed),
+        -1,
+    )
 
     def _nearest_beat_count(offset: int, target_s: float | None) -> int:
         max_beats = len(beat_grid) - 1 - offset
@@ -4066,38 +4105,54 @@ def resolve_timeline_slots_for_edit(
                     duration_s = beat_grid[end] - beat_grid[grid_offset]
                 grid_offset = end
             elif is_song_variant:
-                duration_beats = _nearest_beat_count(grid_offset, duration_s)
-                # Beat slot: walk the REAL grid cumulatively. Slot i's duration is
-                # grid[offset+beats] - grid[offset]; the offset then advances, so the
-                # same `duration_beats` can yield different seconds at different
-                # positions (non-uniform grids).
-                end = grid_offset + duration_beats
-                if end > len(beat_grid) - 1:
-                    raise _timeline_error(
-                        status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
-                    )
-                duration_s = beat_grid[end] - beat_grid[grid_offset]
-                # The nearest beat count can round UP past the clip's remaining
-                # footage; reclamp to the largest span that still fits (mirrors
-                # the explicit-beat-slot branch above).
-                if max_source_window_s is not None and duration_s > max_source_window_s + 1e-6:
-                    duration_beats = _largest_beat_count_fitting_source(
-                        grid_offset, max_source_window_s
-                    )
-                    if duration_beats < 1:
-                        minimum_beat_duration_s = (
-                            beat_grid[grid_offset + 1] - beat_grid[grid_offset]
-                        )
-                        raise _out_of_bounds(
-                            e,
-                            visible_order,
-                            src_dur,
-                            duration_s,
-                            minimum_beat_duration_s=minimum_beat_duration_s,
-                        )
+                remaining_beat_span_s = beat_grid[-1] - beat_grid[grid_offset]
+                exact_terminal_tail = (
+                    order == final_active_order
+                    and window_changed
+                    and duration_s is not None
+                    and duration_s > 0
+                    and duration_s > remaining_beat_span_s + 1e-6
+                )
+                if exact_terminal_tail:
+                    # Internal cuts stay on beats, but a song grid can end a few
+                    # frames before the source. The final visible endpoint has no
+                    # downstream cut to align, so preserve the user's exact tail
+                    # instead of silently shortening it to the last natural beat.
+                    duration_s = float(duration_s)
+                    duration_beats = None
+                else:
+                    duration_beats = _nearest_beat_count(grid_offset, duration_s)
+                    # Beat slot: walk the REAL grid cumulatively. Slot i's duration is
+                    # grid[offset+beats] - grid[offset]; the offset then advances, so the
+                    # same `duration_beats` can yield different seconds at different
+                    # positions (non-uniform grids).
                     end = grid_offset + duration_beats
+                    if end > len(beat_grid) - 1:
+                        raise _timeline_error(
+                            status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
+                        )
                     duration_s = beat_grid[end] - beat_grid[grid_offset]
-                grid_offset = end
+                    # The nearest beat count can round UP past the clip's remaining
+                    # footage; reclamp to the largest span that still fits (mirrors
+                    # the explicit-beat-slot branch above).
+                    if max_source_window_s is not None and duration_s > max_source_window_s + 1e-6:
+                        duration_beats = _largest_beat_count_fitting_source(
+                            grid_offset, max_source_window_s
+                        )
+                        if duration_beats < 1:
+                            minimum_beat_duration_s = (
+                                beat_grid[grid_offset + 1] - beat_grid[grid_offset]
+                            )
+                            raise _out_of_bounds(
+                                e,
+                                visible_order,
+                                src_dur,
+                                duration_s,
+                                minimum_beat_duration_s=minimum_beat_duration_s,
+                            )
+                        end = grid_offset + duration_beats
+                        duration_s = beat_grid[end] - beat_grid[grid_offset]
+                    grid_offset = end
             elif e.duration_s is not None and e.duration_s > 0:
                 # No-music variants snap to 0.5s steps server-side. The editor may
                 # send drag-derived floats; persisted/rendered state is the snapped
@@ -4191,7 +4246,11 @@ async def dispatch_edit_timeline(
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-    regenerate_generative_variant.delay(str(job.id), variant_id, timeline_override=resolved)
+    regenerate_generative_variant.delay(
+        str(job.id),
+        variant_id,
+        timeline_override=_timeline_override_for_reassembly(resolved),
+    )
 
 
 async def dispatch_reset_timeline(job: Job, variant_id: str, *, db: AsyncSession) -> None:
@@ -4217,7 +4276,9 @@ async def dispatch_reset_timeline(job: Job, variant_id: str, *, db: AsyncSession
     # Pass the AI slots as the override: the regenerate path is identical to an
     # edit, just sourced from the AI's own plan (simplest reset contract).
     regenerate_generative_variant.delay(
-        str(job.id), variant_id, timeline_override=[dict(s) for s in ai_slots]
+        str(job.id),
+        variant_id,
+        timeline_override=_timeline_override_for_reassembly(ai_slots),
     )
 
 
@@ -4894,6 +4955,13 @@ def prepare_editor_commit(
                 }
             else:
                 updated.pop("user_timeline", None)
+        if resolved_slots is not None and updated.get("music_track_id"):
+            active_duration_s = _active_timeline_duration_s(resolved_slots)
+            if active_duration_s > 0:
+                # The editor commit persists before enqueue. Keep the duration
+                # beside those cuts so an older worker cannot reuse a stale
+                # music window during a rolling deploy.
+                updated["music_window_video_duration_s"] = active_duration_s
         if payload.background_music is not None:
             updated["smart_music_treatment"] = background_music_treatment
             updated["smart_audio_receipt"] = None
@@ -5109,7 +5177,11 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
 
     kwargs: dict = {"render_gen_id": prep["generation"]}
     if prep["timeline_override"] is not None:
-        kwargs["timeline_override"] = prep["timeline_override"]
+        kwargs["timeline_override"] = (
+            _timeline_override_for_reassembly(prep["timeline_override"])
+            if prep["sections"].get("timeline") is True
+            else prep["timeline_override"]
+        )
     if prep["mix_override"] is not None:
         kwargs["mix_override"] = float(prep["mix_override"])
     if prep.get("new_track_id") is not None:

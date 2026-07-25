@@ -159,6 +159,9 @@ AI's assembly decisions, not pixels.
   load-bearing). This also keeps swap-song alive past the 24h upload lifecycle.
 - **Endpoints:** GET/POST/DELETE `/generative-jobs/{id}/variants/{vid}/timeline`
   (mirrored on plan-items). Beat math walks the real non-uniform grid server-side.
+  Internal cut boundaries remain beat-quantized. When the final active clip extends
+  beyond the grid's last natural beat, its terminal endpoint stays at the exact
+  user-requested second; the re-render sizes the song window to that timeline total.
 - **Kill switch:** `GENERATIVE_TIMELINE_EDITOR_ENABLED=false` (Fly secret + restart) —
   GET returns `editable:false reason:"disabled"`, POST 403.
 - **Guards:** window-parity test (`tests/pipeline/test_exact_window_steps.py`) pins that

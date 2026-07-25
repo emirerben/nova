@@ -234,6 +234,26 @@ def test_effective_music_window_never_snaps_past_legal_start() -> None:
     assert window["end_s"] == pytest.approx(19.0)
 
 
+def test_effective_music_window_legacy_missing_start_still_uses_exact_duration() -> None:
+    track = _track()
+    track.duration_s = 60.0
+    track.track_config = {"best_start_s": 57.0, "best_end_s": 60.0}
+    track.beat_timestamps_s = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 57.0, 59.0]
+
+    window = gb._effective_music_window(
+        track,
+        requested_start_s=None,
+        requested_duration_s=10.0,
+        fallback_footage_s=10.0,
+    )
+
+    assert window["validated"] is True
+    assert window["start_s"] == pytest.approx(50.0)
+    assert window["end_s"] == pytest.approx(60.0)
+    assert window["duration_s"] == pytest.approx(10.0)
+    assert window["track_config"]["exact_window"] is True
+
+
 def test_project_recipe_overlays_to_exact_timeline_steps() -> None:
     recipe = {
         "slots": [
