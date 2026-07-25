@@ -107,6 +107,7 @@ def test_deno_renderer_discovers_cache_without_broad_read_permission(
     _render_sequence([_scene()], width=1080, height=1920, tmpdir=str(tmp_path))
 
     render_cmd = calls[1]
+    assert "--node-modules-dir=none" in render_cmd
     read_flag = next(part for part in render_cmd if part.startswith("--allow-read"))
     assert read_flag.startswith("--allow-read=")
     assert str(tmp_path) in read_flag

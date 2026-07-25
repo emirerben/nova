@@ -103,8 +103,13 @@ COPY src/apps/api/tests/evals/rubrics ./tests/evals/rubrics
 # Offline CanvasKit worker cache. Runtime launches with --cached-only and
 # --no-config, so production renders never depend on npm/network availability.
 ENV DENO_DIR=/app/.deno
-RUN deno cache /app/motion-runtime/server/render-sequence.ts && \
-    deno cache /app/motion-runtime/server/render-frame.ts
+RUN deno cache --node-modules-dir=none \
+      npm:@webgpu/types@0.1.21 \
+      npm:canvaskit-wasm@0.40.0 && \
+    deno cache --node-modules-dir=none \
+      /app/motion-runtime/server/render-sequence.ts && \
+    deno cache --node-modules-dir=none \
+      /app/motion-runtime/server/render-frame.ts
 
 # Own everything under /app by nova
 RUN chown -R nova:nova /app

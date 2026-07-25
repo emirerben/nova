@@ -76,7 +76,7 @@ jobs:
       - name: Smoke-check offline CanvasKit motion renderer
         run: |
           docker run --rm --entrypoint sh nova-build-test:ci -c '
-            deno run --cached-only --no-config \
+            deno run --cached-only --no-config --node-modules-dir=none \
               --allow-read=/app/motion-runtime,/app/.deno,/tmp \
               --allow-write=/tmp \
               /app/motion-runtime/server/render-frame.ts \

@@ -156,6 +156,7 @@ def _render_sequence(
         "run",
         "--cached-only",
         "--no-config",
+        "--node-modules-dir=none",
         allow_read,
         f"--allow-write={tmpdir}",
         str(runtime_root / "server" / "render-sequence.ts"),
