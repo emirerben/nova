@@ -1952,6 +1952,7 @@ def regenerate_generative_variant(
     `text_behind_subject`: explicit text-behind-subject toggle (None = leave the
     persisted `intro_behind_subject` decision alone). Kwarg name is a frozen
     contract with the route layer's `.delay(...)` call.
+
     """
     log.info(
         "generative_regenerate_start",
@@ -4893,6 +4894,16 @@ def _run_regenerate_variant(
             )
             # Everything removed → nothing to assemble → fresh match below.
             active_timeline_slots = kept_slots or None
+            if active_timeline_slots and (new_track_id or existing_track_id):
+                # A user timeline can end after the song's last natural beat.
+                # Size the exact music window from the cut we are about to render,
+                # not a stale duration persisted by the previous render.
+                active_timeline_duration_s = round(
+                    sum(float(slot.get("duration_s") or 0.0) for slot in active_timeline_slots),
+                    3,
+                )
+                if active_timeline_duration_s > 0:
+                    existing_music_window_duration_s = active_timeline_duration_s
 
     # Mark this variant as re-rendering so the UI can show a spinner immediately.
     _update_variant_entry(
@@ -5124,6 +5135,19 @@ def _run_regenerate_variant(
         assembly_steps_override: list | None = None
         if timeline_assembly is not None:
             assembly_steps_override = timeline_assembly["steps"]
+            if track is not None:
+                rendered_timeline_duration_s = round(
+                    sum(
+                        float(step.slot.get("target_duration_s") or 0.0)
+                        for step in assembly_steps_override
+                    ),
+                    3,
+                )
+                if rendered_timeline_duration_s > 0:
+                    # Unknown source durations are clamped only after probing.
+                    # Recipe, lyrics, mix, and persisted state must follow the
+                    # exact windows that survived that clamp.
+                    existing_music_window_duration_s = rendered_timeline_duration_s
             record_pipeline_event(
                 "assembly",
                 "timeline_override_path",
@@ -6300,7 +6324,7 @@ def _effective_music_window(
     from app.services.music_sections import track_config_with_rank_one  # noqa: PLC0415
 
     cfg = _fit_section_to_footage(track_config_with_rank_one(track), fallback_footage_s)
-    if requested_start_s is None or requested_duration_s is None:
+    if requested_duration_s is None:
         start_s = float(cfg.get("best_start_s", 0.0) or 0.0)
         end_s = float(cfg.get("best_end_s", start_s) or start_s)
         return {
@@ -6310,6 +6334,11 @@ def _effective_music_window(
             "track_config": cfg,
             "validated": False,
         }
+    if requested_start_s is None:
+        # Legacy variants may predate persisted music_start_s. An edited
+        # timeline still supplies an exact duration, so seed its start from the
+        # ranked section and run the same legal beat-snap/clamp path.
+        requested_start_s = float(cfg.get("best_start_s", 0.0) or 0.0)
 
     track_duration_s = float(track.duration_s or 0.0)
     duration_s = float(requested_duration_s)
