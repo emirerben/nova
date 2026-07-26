@@ -236,6 +236,18 @@ class Settings(BaseSettings):
     subtitled_caption_correction_enabled: bool = True
     caption_correction_model: str = "gpt-4o"
 
+    # Caption punctuation restoration: whisper-1's word-level timestamps strip
+    # punctuation/capitalization (it lives only in the full-text transcript).
+    # align_punctuated_text() in transcribe.py restores it onto the timed word
+    # stream at the end of _transcribe_openai (fail-open — any residual
+    # alignment mismatch bails for the WHOLE transcript and returns the
+    # original unpunctuated words; never ships a half-aligned transcript).
+    # _transcribe_local (faster-whisper) already emits punctuation attached to
+    # words, so this flag only affects the openai-api backend.
+    # Kill switch: `fly secrets set CAPTION_PUNCTUATION_ENABLED=false --app nova-video`
+    # + worker restart — byte-identical to pre-feature behavior.
+    caption_punctuation_enabled: bool = True
+
     # Self-narration for narrated walkthroughs: a NARRATED_EDIT_FORMATS item with NO
     # recorded voiceover may still generate when its footage carries the voice — the
     # clip audio IS the narration. Resolution: 1 clip with speech → subtitled (editable
