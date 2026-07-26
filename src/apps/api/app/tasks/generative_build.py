@@ -3623,6 +3623,10 @@ def _ensure_motion_base(
     base_gcs_path: str,
 ) -> tuple[str, str | None]:
     """Return the picture base with the shared motion layer below authored text."""
+    raw_scenes = variant.get("motion_scenes")
+    if raw_scenes is None or raw_scenes == []:
+        return base_gcs_path, None
+
     from app.config import settings as _motion_settings  # noqa: PLC0415
     from app.pipeline.motion_scene import (  # noqa: PLC0415
         MOTION_RUNTIME_HASH,
@@ -3630,9 +3634,7 @@ def _ensure_motion_base(
         validate_motion_instances,
     )
 
-    scenes = validate_motion_instances(variant.get("motion_scenes") or [])
-    if not scenes:
-        return base_gcs_path, None
+    scenes = validate_motion_instances(raw_scenes)
     if _resolve_variant_orientation(variant) != "portrait":
         raise RuntimeError("motion scenes require portrait orientation")
     required_hash = variant.get("motion_runtime_hash")

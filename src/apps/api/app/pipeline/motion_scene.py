@@ -27,12 +27,17 @@ class MotionSceneError(RuntimeError):
     pass
 
 
-def _runtime_root() -> Path:
-    candidates = (
-        Path(__file__).resolve().parents[4] / "packages" / "motion-runtime",
+def _runtime_candidates(module_file: Path) -> tuple[Path, ...]:
+    """Return production-first runtime locations without assuming source depth."""
+    source = module_file.resolve()
+    return (
         Path("/app/motion-runtime"),
+        *(parent / "packages" / "motion-runtime" for parent in source.parents),
     )
-    for candidate in candidates:
+
+
+def _runtime_root() -> Path:
+    for candidate in _runtime_candidates(Path(__file__)):
         if (candidate / "motion-scene.schema.json").is_file():
             return candidate
     raise MotionSceneError("motion runtime package is missing")
