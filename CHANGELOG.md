@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.1.0] — 2026-07-26
+
+### Added
+- **Text and media overlays can now dissolve out at the end of their own timeline window.** The new opt-in effect supports text blocks plus uploaded image/video overlay cards, with editor controls, browser preview, and server-rendered output that uses a noise displacement field and late opacity fade.
+- **Dissolve renders now preserve existing overlay output by default.** Media overlays default to no exit effect, while tests cover byte-identical command generation for unchanged cards, schema validation, preview timing math, and real render behavior for the new dissolve path.
+
 ## [0.13.0.0] — 2026-07-25
 
 ### Added
