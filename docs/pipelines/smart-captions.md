@@ -221,12 +221,17 @@ Non-Smart caption correction keeps its original behavior.
 - **Selection:** `_resolve_smart_music_treatment` in `tasks/generative_build.py`
   — deterministic, under a short Redis lock with a 24h cache key
   (`smart-captions:music-treatment:{job_id}:{variant_id}`). Eligibility is a
-  closed allowlist (`_smart_music_track_eligible`): ready + published +
-  non-archived + `track_config.smart_captions_licensed == true` + analysis
-  complete (curated `music/` audio path, current-version `ai_labels` and
-  `best_sections`, resolvable best section). The admin toggle lives on the
-  `/admin/music/[id]` Config tab (`TrackConfig.smart_captions_licensed` in
-  `src/lib/music-api.ts`).
+  closed allowlist (`_smart_music_track_eligible`): ready + non-archived +
+  analysis complete (curated `music/` audio path, current-version `ai_labels`
+  and `best_sections`, resolvable best section). **No license flag or
+  publish-state requirement** — archiving in `/admin/music` is the sole
+  curation lever. The `AudioTreatmentLane.selection_token` literal
+  (`licensed_published_match`) is legacy naming kept unrenamed to avoid
+  schema/preset churn; it no longer implies a license/publish check.
+  The receipt's `eligible_reasons` breaks eligibility down per filter
+  (`total`/`ready`/`labeled_current`/`sectioned_current`/`eligible`) so a
+  future empty pool is diagnosable from `/admin/jobs` without guessing which
+  clause killed it.
 - **Mix:** `MusicBedTreatment` in `app/pipeline/sound_effects.py` — looped bed,
   sidechain-ducked under speech (`speech_duck_db`, default −12 dB), loudnorm to
   `final_lufs` (default −14), mixed with reveal SFX in ONE voice-safe graph that
@@ -238,7 +243,8 @@ Non-Smart caption correction keeps its original behavior.
   `SOUND_EFFECTS_ENABLED` (the SFX lane is user-authored; the bed is
   agent-selected). Off: new renders resolve no treatment, reburns skip re-mixing
   the bed, persisted treatments are preserved for re-enable, never deleted.
-- Guards: `test_music_eligibility_is_closed_and_requires_explicit_license`,
+- Guards: `test_music_eligibility_is_closed_by_freshness_not_license`,
+  `test_music_eligibility_ignores_published_at_and_license_flag`,
   `test_music_and_sfx_share_one_voice_safe_stream_copy_graph`,
   `test_audio_treatment_retries_full_then_sfx_only`.
 

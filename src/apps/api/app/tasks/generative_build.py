@@ -8987,16 +8987,20 @@ def _smart_shadow_comparison(
 
 
 def _smart_music_track_eligible(track: Any) -> bool:
-    """Closed production eligibility predicate for the v2 background bed."""
+    """Closed production eligibility predicate for the v2 background bed.
+
+    Eligibility is purely a function of analysis freshness + curation state
+    (archiving in /admin/music is the only lever left). There is no license
+    or publish-state requirement: any `ready`, labeled, sectioned, non-archived
+    `music/%` track is eligible for the bed, published or not.
+    """
 
     from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION  # noqa: PLC0415
     from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION  # noqa: PLC0415
     from app.services.music_sections import current_best_section_for_track  # noqa: PLC0415
 
-    config = getattr(track, "track_config", None) or {}
     return bool(
         getattr(track, "analysis_status", None) == "ready"
-        and getattr(track, "published_at", None) is not None
         and getattr(track, "archived_at", None) is None
         and str(getattr(track, "audio_gcs_path", "") or "").startswith("music/")
         and getattr(track, "ai_labels", None)
@@ -9004,7 +9008,6 @@ def _smart_music_track_eligible(track: Any) -> bool:
         and getattr(track, "best_sections", None)
         and getattr(track, "section_version", None) == CURRENT_SECTION_VERSION
         and current_best_section_for_track(track) is not None
-        and config.get("smart_captions_licensed") is True
     )
 
 
@@ -9067,6 +9070,7 @@ def _resolve_smart_music_treatment(
             receipt.update({"status": "reused", "track_id": treatment.get("track_id")})
             return treatment, receipt
 
+        from sqlalchemy import func as _func  # noqa: PLC0415
         from sqlalchemy import select as _select  # noqa: PLC0415
         from sqlalchemy.orm import load_only  # noqa: PLC0415
 
@@ -9074,6 +9078,38 @@ def _resolve_smart_music_treatment(
         from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION  # noqa: PLC0415
 
         with _sync_session() as db:
+            library_base = (
+                MusicTrack.archived_at.is_(None),
+                MusicTrack.audio_gcs_path.like("music/%"),
+            )
+            ready_clause = MusicTrack.analysis_status == "ready"
+            labeled_clause = (
+                MusicTrack.ai_labels.is_not(None),
+                MusicTrack.label_version == CURRENT_LABEL_VERSION,
+            )
+            sectioned_clause = (
+                MusicTrack.best_sections.is_not(None),
+                MusicTrack.section_version == CURRENT_SECTION_VERSION,
+            )
+            eligibility_counts = db.execute(
+                _select(
+                    _func.count().label("total"),
+                    _func.count().filter(ready_clause).label("ready"),
+                    _func.count().filter(ready_clause, *labeled_clause).label("labeled_current"),
+                    _func.count()
+                    .filter(ready_clause, *labeled_clause, *sectioned_clause)
+                    .label("sectioned_current"),
+                )
+                .select_from(MusicTrack)
+                .where(*library_base)
+            ).one()
+            receipt["eligible_reasons"] = {
+                "total": eligibility_counts.total,
+                "ready": eligibility_counts.ready,
+                "labeled_current": eligibility_counts.labeled_current,
+                "sectioned_current": eligibility_counts.sectioned_current,
+                "eligible": 0,
+            }
             tracks = list(
                 db.execute(
                     _select(MusicTrack)
@@ -9098,14 +9134,12 @@ def _resolve_smart_music_treatment(
                     )
                     .where(
                         MusicTrack.analysis_status == "ready",
-                        MusicTrack.published_at.is_not(None),
                         MusicTrack.archived_at.is_(None),
                         MusicTrack.audio_gcs_path.like("music/%"),
                         MusicTrack.ai_labels.is_not(None),
                         MusicTrack.label_version == CURRENT_LABEL_VERSION,
                         MusicTrack.best_sections.is_not(None),
                         MusicTrack.section_version == CURRENT_SECTION_VERSION,
-                        MusicTrack.track_config.contains({"smart_captions_licensed": True}),
                     )
                     .order_by(MusicTrack.created_at.desc(), MusicTrack.id)
                     .limit(_SMART_MUSIC_CANDIDATE_LIMIT)
@@ -9133,6 +9167,7 @@ def _resolve_smart_music_treatment(
                 )
             eligible = [track for track in tracks if _smart_music_track_eligible(track)]
         receipt["eligible_tracks"] = len(eligible)
+        receipt["eligible_reasons"]["eligible"] = len(eligible)
         if not eligible:
             receipt["reason"] = "empty_eligible_library"
             return None, receipt

@@ -478,31 +478,52 @@ def test_music_and_sfx_share_one_voice_safe_stream_copy_graph() -> None:
     assert cmd[cmd.index("-c:v") + 1] == "copy"
 
 
-def test_music_eligibility_is_closed_and_requires_explicit_license() -> None:
+def test_music_eligibility_is_closed_by_freshness_not_license() -> None:
+    """Eligibility is purely analysis freshness + curation (archived_at) — no
+    license flag, no publish-state requirement. Archiving in /admin/music is
+    the only remaining curation lever."""
     valid = SimpleNamespace(
         analysis_status="ready",
-        published_at=datetime.now(UTC),
+        published_at=None,
         archived_at=None,
         audio_gcs_path="music/track/audio.mp3",
         ai_labels={"labels": {}},
         label_version=CURRENT_LABEL_VERSION,
         best_sections=[{"rank": 1, "start_s": 2.0, "end_s": 20.0}],
         section_version=CURRENT_SECTION_VERSION,
-        track_config={"smart_captions_licensed": True},
+        track_config={},
     )
     assert _smart_music_track_eligible(valid)
     for field, value in (
         ("analysis_status", "failed"),
-        ("published_at", None),
         ("archived_at", datetime.now(UTC)),
         ("audio_gcs_path", None),
+        ("ai_labels", None),
         ("label_version", "stale"),
+        ("best_sections", None),
         ("section_version", "stale"),
-        ("track_config", {"smart_captions_licensed": False}),
     ):
         candidate = SimpleNamespace(**vars(valid))
         setattr(candidate, field, value)
         assert not _smart_music_track_eligible(candidate)
+
+
+def test_music_eligibility_ignores_published_at_and_license_flag() -> None:
+    """Pin: an unpublished, unlicensed, but ready+labeled+sectioned track is
+    eligible — regression guard for the license/publish clauses removed from
+    `_smart_music_track_eligible`."""
+    track = SimpleNamespace(
+        analysis_status="ready",
+        published_at=None,
+        archived_at=None,
+        audio_gcs_path="music/track/audio.mp3",
+        ai_labels={"labels": {}},
+        label_version=CURRENT_LABEL_VERSION,
+        best_sections=[{"rank": 1, "start_s": 2.0, "end_s": 20.0}],
+        section_version=CURRENT_SECTION_VERSION,
+        track_config={"smart_captions_licensed": False},
+    )
+    assert _smart_music_track_eligible(track)
 
 
 def test_audio_treatment_retries_full_then_sfx_only(monkeypatch, tmp_path) -> None:

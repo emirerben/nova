@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0.2] — 2026-07-26
+
+### Fixed
+- **The Smart Caption music bed can now actually be selected in production.** Eligibility no longer requires a track to be published or explicitly flagged `smart_captions_licensed` — any ready, labeled, sectioned, non-archived track is eligible; archiving in `/admin/music` is now the only curation lever. The empty-pool receipt reason is replaced with per-filter counts (`total`/`ready`/`labeled_current`/`sectioned_current`/`eligible`) so a future eligibility drought is diagnosable from `/admin/jobs` instead of a guessing game.
+
 ## [0.15.0.1] — 2026-07-26
 
 ### Fixed
