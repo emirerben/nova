@@ -20,7 +20,9 @@ log = structlog.get_logger()
 
 # Bumped when the cached transcript shape or the transcription contract changes,
 # so a stale cache from an older code version is never reused.
-_TRANSCRIPT_CACHE_VERSION = "v1"
+# v2: align_punctuated_text now restores punctuation/case onto the word stream —
+# v1 entries hold pre-punctuation words and must not be served.
+_TRANSCRIPT_CACHE_VERSION = "v2"
 
 LOW_CONFIDENCE_THRESHOLD = 0.6
 LOW_SPEECH_RATIO_THRESHOLD = 0.10  # <10% of words above threshold → ASR fallback

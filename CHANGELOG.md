@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0.1] — 2026-07-26
+
+### Fixed
+- **Re-rendering a previously-used clip now picks up punctuated captions.** The content-addressed transcript cache still served pre-punctuation `v1` entries for clips transcribed before v0.15.1.0, so a new render of the same clip silently came back without punctuation. The cache version is bumped to `v2`; stale entries are simply never read again.
+
 ## [0.16.0.0] — 2026-07-26
 
 ### Added
