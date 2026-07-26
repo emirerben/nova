@@ -129,10 +129,30 @@ def test_apply_subject_mask_dtype_preserved():
     assert out.dtype == np.uint8
 
 
-def test_apply_subject_mask_shape_mismatch_fails_open():
+def test_apply_subject_mask_resizes_mismatched_mask():
+    """A well-formed 2-D mask of a different shape is resized to the rgba's
+    shape and applied — the landscape-canvas case (#661): the stored matte is
+    portrait-raster regardless of source orientation, so the resize is the
+    geometrically correct registration, not a fallback."""
+    rgba = np.zeros((4, 6, 4), dtype=np.uint8)
+    rgba[..., 3] = 255
+    # Left half subject, right half clear — at a different resolution.
+    mask = np.zeros((2, 4), dtype=np.float32)
+    mask[:, :2] = 1.0
+    with mock.patch.object(tos, "log") as mock_log:
+        out = tos._apply_subject_mask(rgba, mask)
+    assert out[..., 3][:, 0].max() == 0, "subject side fully occluded after resize"
+    assert out[..., 3][:, -1].min() == 255, "clear side untouched after resize"
+    for call in mock_log.warning.call_args_list:
+        assert call.args[0] != "text_behind_subject_mask_shape_mismatch"
+
+
+def test_apply_subject_mask_garbage_mask_fails_open():
+    """A mask that cannot be resized (wrong ndim) still fails open — returns
+    the rgba unchanged with a warning, never raises mid-render."""
     rgba = np.zeros((4, 4, 4), dtype=np.uint8)
     rgba[..., 3] = 255
-    mask = np.ones((2, 2), dtype=np.float32)
+    mask = np.ones((2, 2, 3), dtype=np.float32)
     with mock.patch.object(tos, "log") as mock_log:
         out = tos._apply_subject_mask(rgba, mask)
     assert (out == rgba).all()
@@ -213,9 +233,10 @@ def test_behind_subject_with_matte_renders_animated_masked_sequence(tmp_workdir)
     # subject's mask can move even when the settled text doesn't.
     assert all(os.stat(f).st_nlink == 1 for f in frames)
 
-    # The matte is sampled exactly once per rendered frame. There is no
-    # whole-layer visibility pre-pass that can hide unaffected glyph pixels.
-    assert len(matte.calls) == seq["n_frames"]
+    # The matte is sampled twice per frame: once by the sequential visibility
+    # pre-pass (which never engages on a steady 50% occlusion — no strobing,
+    # not near-total) and once by the per-pixel render.
+    assert len(matte.calls) == 2 * seq["n_frames"]
     distinct = sorted(set(matte.calls))
     assert len(distinct) == seq["n_frames"]
     assert distinct[0] == pytest.approx(0.0)
@@ -356,7 +377,8 @@ def test_behind_subject_45s_window_not_clamped_at_long_running_ceiling(tmp_workd
     assert seq["n_frames"] == wanted + 1  # + seam hold frame, same as any animated sequence
     assert seq["n_frames"] > tos.LONG_RUNNING_TEXT_FRAME_CEILING
     assert seq["n_frames"] <= tos.BEHIND_SUBJECT_FRAME_CEILING
-    assert len(matte.calls) == seq["n_frames"]
+    # Visibility pre-pass + render each sample every frame.
+    assert len(matte.calls) == 2 * seq["n_frames"]
     for call in mock_log.warning.call_args_list:
         assert call.args[0] != "skia_long_running_text_duration_clamped"
 
@@ -377,7 +399,8 @@ def test_behind_subject_150s_window_clamps_at_behind_subject_ceiling_with_warnin
     assert seq is not None
     assert tos.BEHIND_SUBJECT_FRAME_CEILING == 3600
     assert seq["n_frames"] == tos.BEHIND_SUBJECT_FRAME_CEILING
-    assert len(matte.calls) == tos.BEHIND_SUBJECT_FRAME_CEILING
+    # Visibility pre-pass + render each sample every frame.
+    assert len(matte.calls) == 2 * tos.BEHIND_SUBJECT_FRAME_CEILING
     mock_log.warning.assert_any_call(
         "skia_long_running_text_duration_clamped",
         effect="static",
@@ -466,3 +489,189 @@ def test_behind_subject_without_matte_ffmpeg_cmd_uses_static_loop_shape(tmp_work
     cmd = run_mock.call_args[0][0]
     assert "-loop" in cmd
     assert "-framerate" not in cmd
+
+
+# -- Visibility policy: anti-strobe hide with hysteresis ----------------------
+#
+# Restored from the #651 quality train (removed by #670) with a strobe gate:
+# heavy occlusion alone no longer hides the layer (the #670 complaint — a
+# smooth sweep must stay per-pixel even at 95% occlusion); it hides only when
+# the occlusion is ALSO strobing (repeated frame-to-frame visible-alpha
+# jumps), or when occlusion is near-total (> BEHIND_FULL_OCCLUSION_FRAC).
+
+
+class _ScriptedScaleMatte:
+    """Frame-indexed scripted masks for `_behind_visibility_scales` tests.
+    Masks are text_alpha-shaped float arrays; index = round(t_abs * FPS)."""
+
+    def __init__(self, masks: list[np.ndarray | None]):
+        self.masks = masks
+
+    def mask_at(self, t_abs: float) -> np.ndarray | None:
+        idx = min(len(self.masks) - 1, max(0, int(round(t_abs * tos.FPS))))
+        return self.masks[idx]
+
+
+def _alpha(shape=(8, 8)) -> np.ndarray:
+    return np.ones(shape, dtype=np.float32)
+
+
+def _flat(value: float, shape=(8, 8)) -> np.ndarray:
+    return np.full(shape, value, dtype=np.float32)
+
+
+def _gap_mask(gap: str, occ: float = 0.8, shape=(8, 8)) -> np.ndarray:
+    """Full occlusion except a clear gap band on the `left` or `right` —
+    alternating the two emulates mask gaps opening/closing every frame
+    (the crowd-strobe failure #651 measured at 12 visible-alpha jumps/s)."""
+    mask = np.ones(shape, dtype=np.float32)
+    cols = max(1, int(round(shape[1] * (1.0 - occ))))
+    if gap == "left":
+        mask[:, :cols] = 0.0
+    else:
+        mask[:, -cols:] = 0.0
+    return mask
+
+
+def test_visibility_policy_smooth_heavy_occlusion_stays_per_pixel():
+    """Steady 90% occlusion with no strobing must NOT hide the layer — the
+    #670 fix's core requirement, now satisfied by the strobe gate instead of
+    deleting the policy."""
+    n = 30
+    matte = _ScriptedScaleMatte([_flat(0.9)] * n)
+    scales = tos._behind_visibility_scales(matte, _alpha(), 0.0, n, 1.0 / tos.FPS)
+    assert scales is None
+
+
+def test_visibility_policy_hides_on_strobing_heavy_occlusion():
+    """Alternating gap masks at ~80% occlusion jump visible alpha by ~0.4 of
+    the text's own alpha every frame — the strobe gate engages the hide and
+    ramps out over the fade window."""
+    n = 30
+    masks = [_gap_mask("left" if i % 2 == 0 else "right") for i in range(n)]
+    scales = tos._behind_visibility_scales(
+        _ScriptedScaleMatte(masks), _alpha(), 0.0, n, 1.0 / tos.FPS
+    )
+    assert scales is not None
+    assert scales[-1] == 0.0
+    # Fade, not a pop: some frame carries an intermediate scale.
+    assert any(0.0 < s < 1.0 for s in scales)
+    # Engages within the first strobe window, not at the very first frame.
+    assert scales[0] == 1.0
+    assert min(scales[: tos._BEHIND_STROBE_WINDOW_FRAMES]) < 1.0
+
+
+def test_visibility_policy_near_total_occlusion_hides_without_strobe():
+    """>98% steady occlusion hides unconditionally — the <=2% surviving
+    shreds are below what the strobe detector can measure."""
+    n = 12
+    matte = _ScriptedScaleMatte([_flat(0.99)] * n)
+    scales = tos._behind_visibility_scales(matte, _alpha(), 0.0, n, 1.0 / tos.FPS)
+    assert scales is not None
+    assert scales[-1] == 0.0
+    assert scales[tos._BEHIND_VISIBILITY_FADE_FRAMES] == 0.0
+
+
+def test_visibility_policy_hysteresis_does_not_flap_in_the_gap():
+    """Once hidden, occlusion between SHOW (0.50) and HIDE (0.70) keeps the
+    text hidden — jitter around one threshold can't flap the state."""
+    frame_dur = 1.0 / tos.FPS
+    engage = [_gap_mask("left" if i % 2 == 0 else "right") for i in range(10)]
+    in_gap = [_flat(0.6)] * 10
+    scales = tos._behind_visibility_scales(
+        _ScriptedScaleMatte(engage + in_gap), _alpha(), 0.0, 20, frame_dur
+    )
+    assert scales is not None
+    assert scales[-1] == 0.0, "0.6 occlusion after a hide must stay hidden (hysteresis)"
+
+
+def test_visibility_policy_reveals_when_clearly_visible_again():
+    frame_dur = 1.0 / tos.FPS
+    engage = [_gap_mask("left" if i % 2 == 0 else "right") for i in range(10)]
+    clear = [_flat(0.2)] * 10
+    scales = tos._behind_visibility_scales(
+        _ScriptedScaleMatte(engage + clear), _alpha(), 0.0, 20, frame_dur
+    )
+    assert scales is not None
+    assert scales[9] == 0.0, "sanity: strobe segment engaged the hide"
+    assert scales[-1] == 1.0, "clearly-visible text fades back in"
+
+
+def test_visibility_policy_single_smooth_pass_never_engages_strobe_rule():
+    """One occluder entering (jump), holding at 80%, and exiting (jump)
+    produces exactly 2 strobe events — below the 3-event floor, so a single
+    smooth pass can never engage the strobe rule."""
+    n = 20
+    masks = [_flat(0.0)] * 5 + [_flat(0.8)] * 10 + [_flat(0.0)] * 5
+    scales = tos._behind_visibility_scales(
+        _ScriptedScaleMatte(masks), _alpha(), 0.0, n, 1.0 / tos.FPS
+    )
+    assert scales is None
+
+
+def test_visibility_policy_zero_alpha_returns_none():
+    matte = _ScriptedScaleMatte([_flat(1.0)] * 4)
+    assert (
+        tos._behind_visibility_scales(
+            matte, np.zeros((8, 8), dtype=np.float32), 0.0, 4, 1.0 / tos.FPS
+        )
+        is None
+    )
+
+
+def test_heavily_occluded_window_writes_fully_transparent_frames(tmp_workdir):
+    """Full-render integration: a steadily >98%-occluding matte engages the
+    policy and the settled frames come out fully transparent — clean hide,
+    not a strobe of shredded fragments."""
+    overlay = _behind_overlay()
+    matte = _ConstantMatte(0.99)
+    with mock.patch.object(tos, "log", wraps=tos.log) as mock_log:
+        seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0, matte=matte)
+    assert seq is not None
+    mock_log.info.assert_any_call(
+        "text_behind_subject_visibility_policy_engaged",
+        hidden_frames=mock.ANY,
+        n_render=seq["n_frames"],
+        text="HELLO",
+    )
+    frames = sorted(
+        os.path.join(tmp_workdir, f) for f in os.listdir(tmp_workdir) if f.endswith(".png")
+    )
+    last = np.array(Image.open(frames[-1]).convert("RGBA"))
+    assert last[..., 3].max() == 0, "settled hidden frame must be fully transparent"
+
+
+# -- Landscape canvas: portrait-raster matte registers onto 1920x1080 ---------
+
+
+class _PortraitRasterMatte:
+    """Always returns the portrait-shaped (1920, 1080) full-occlusion mask
+    `mask_at` produces in prod regardless of source orientation."""
+
+    def mask_at(self, t_abs: float) -> np.ndarray | None:
+        return np.ones((1920, 1080), dtype=np.float32)
+
+
+def test_landscape_canvas_behind_subject_occludes(tmp_workdir):
+    """Landscape variants (#661) render on a 1920x1080 canvas while the matte
+    is stored portrait-raster — before the resize fix the shape mismatch
+    failed open and behind_subject was a silent no-op on every landscape
+    render."""
+    from app.pipeline.canvas import LANDSCAPE
+
+    overlay = _behind_overlay(end_s=0.2)
+    with mock.patch.object(tos, "log", wraps=tos.log) as mock_log:
+        seq = tos._generate_overlay_sequence(
+            overlay, tmp_workdir, 0, matte=_PortraitRasterMatte(), render_canvas=LANDSCAPE
+        )
+    assert seq is not None
+    for call in mock_log.warning.call_args_list:
+        assert call.args[0] != "text_behind_subject_mask_shape_mismatch"
+    frames = sorted(
+        os.path.join(tmp_workdir, f) for f in os.listdir(tmp_workdir) if f.endswith(".png")
+    )
+    assert frames
+    for f in frames:
+        arr = np.array(Image.open(f).convert("RGBA"))
+        assert arr.shape[:2] == (1080, 1920)
+        assert arr[..., 3].max() == 0, f"{f}: full-occlusion mask must occlude on landscape"

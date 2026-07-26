@@ -32,10 +32,10 @@ occluded overlay and a matte with a hard, cutout-quality edge. Instead:
   occluded overlay's glyphs as a straight-alpha RGBA frame, then multiplies the
   **alpha channel** by `(1 - mask)` before PNG-encoding it
   (`_apply_subject_mask`). Where the mask says "subject", text alpha drops
-  toward 0; everywhere else it's untouched. The renderer never derives a
-  whole-layer opacity from the overlap: a partial matte can hide only the
-  glyph pixels it intersects, while a matte that genuinely covers every glyph
-  pixel still produces natural full occlusion.
+  toward 0; everywhere else it's untouched. A partial matte hides only the
+  glyph pixels it intersects — with one exception, the anti-strobe
+  **visibility policy** (see its section below), which hides the whole layer
+  when the occlusion is near-total or heavy-AND-strobing.
 - The masked PNG sequence then burns into the video exactly like any other
   Skia overlay sequence — no second overlay pass, no separate subject layer,
   no compositing order to get wrong. The subject was always the top pixel
@@ -76,8 +76,20 @@ Public surface of `subject_matte.py`:
 - `matte_is_sane(stats) -> bool` — the sanity gate (see below).
 - `SubjectMatteProvider.open(matte_path) -> SubjectMatteProvider | None` —
   reads the mp4 + sidecar once, serves per-timestamp masks from memory
-  (`mask_at`), upscaled to 1080×1920 with nearest-frame lookup by window +
-  offset.
+  (`mask_at`), upscaled to the portrait 1080×1920 raster with nearest-frame
+  lookup by window + offset. Landscape renders draw on a 1920×1080 canvas —
+  the renderer resizes the mask to the frame it's masking
+  (`_mask_for_shape` in `text_overlay_skia.py`, logs
+  `text_behind_subject_mask_resized` once per shape pair). The matte is
+  stored portrait-raster regardless of source orientation, so the
+  anisotropic resize is the geometrically correct registration. Before this
+  fix (#661 regression) the shape mismatch failed open and behind_subject
+  was a silent no-op on every landscape variant.
+
+The matte mp4 encodes **lossless** (`-qp 0`, still `ultrafast` — it's an
+intermediate artifact): default-CRF x264 rings along the hard silhouette
+edge differently per frame, an edge shimmer the occlusion multiply makes
+visible.
 
 `mediapipe` is imported lazily inside `_compute_subject_matte_inner` so the
 module — and the structural eval-CI job, which has no libEGL/GPU — can import
@@ -112,7 +124,28 @@ cache-miss → compute + sanity-gate + upload + open. **Any** step failing
 `behind_subject` from every overlay about to burn and logs
 `text_behind_subject_fallback` — the render always finishes as plain text,
 never fails. A bad recompute never clobbers a previously-good cached path
-(`matte_gcs_path` only advances on success).
+(`matte_gcs_path` only advances on success). Every resolution outcome also
+records a `subject_matte_resolved` pipeline-trace event
+(`source: cache|computed`, or `outcome: fallback_stripped` + error) so the
+admin job-debug view shows whether/why a matte was used — prod job
+`1e768d5b` (behind_subject silently ignored) had zero matte visibility.
+
+### Subtitled variants
+
+`_compose_subtitled_final` (the sole compositor for
+`resolved_archetype == "subtitled"` — first render, text reburn, caption
+reburn, camera rerender, re-transcribe) calls the same resolver internally
+for its authored-text underlay burn and returns
+`(final_path, subject_matte_path)`; **every call site persists the returned
+matte path** into its variant patch (the plumbing args are required
+keyword-only so a future call site can't silently reintroduce the
+no-matte no-op this path originally shipped with). The matte caches under
+`{variant_..._base.mp4}.matte.mp4` next to the caption-free base. Captions
+themselves burn through libass afterwards and are **never occluded** — only
+Skia text elements are. Camera-effect rerenders (and first renders with
+camera moves) recompute against the warped substrate under a camera-scoped
+key and do NOT persist it: the variant's cached matte stays registered to
+the clean base later reburns actually use.
 
 ## Prod runtime dependency: libgles2
 
@@ -145,6 +178,49 @@ subject (~0.8% of frame on a beach wide shot) is a legitimate occluder and
 must keep the effect. Coverage stats are computed on the post-treatment
 masks (what actually multiplies text alpha). Either failure falls back to plain text via the same
 `text_behind_subject_fallback` path as a hard compute error.
+
+**Shape stability:** presence flips can't see a silhouette that never
+disappears but wobbles violently frame to frame — occlusion registered to a
+shape that won't hold still reads as glitching. `MatteStats` therefore also
+carries `shape_stability_iou`: the **median** IoU of the binarized treated
+mask across consecutive present-frame pairs (within windows only), computed
+when at least 5 pairs exist (`iou_pair_count`; `None` otherwise — old
+sidecars and very short mattes are never rejected on a stat they don't
+have). The gate rejects below `_MIN_SHAPE_STABILITY_IOU = 0.40`
+(conservative: real subjects at 30fps keep adjacent-frame IoU well above
+0.7 even in fast motion, and the median is immune to isolated scene cuts —
+the Argentina anchor's single cut pair can't drag it down).
+
+## Visibility policy (anti-strobe hide)
+
+Per-pixel occlusion alone reads as glitching when a crowd or large object
+covers MOST of the text through mask gaps that open and close every frame:
+what survives is a strobe of shredded fragments (#651 measured 12
+visible-alpha jumps/s on the Argentina crowd scene). #651 shipped a
+whole-layer hide above 70% occlusion; #670 deleted it because a *smooth*
+partial occlusion (one subject sweeping across) was fading the whole layer —
+reintroducing the strobe. Both requirements now hold via a strobe detector
+(`_behind_visibility_scales` in `text_overlay_skia.py`, a sequential
+pre-pass before the thread-pool render):
+
+- **Strobe events:** frame-to-frame `|Δ visible alpha| / text alpha` above
+  `BEHIND_STROBE_JUMP_FRAC = 0.15` counts as one event, tracked over a
+  trailing `15`-frame window (0.5s). Measured: a smooth sweep at 95%
+  occlusion jumps ≤ 0.09 per frame and produces at most 2 events ever
+  (entry + exit); gap-strobing jumps ~0.24 on every frame.
+- **Hide** when occlusion > `BEHIND_FULL_OCCLUSION_FRAC = 0.98`
+  (near-total: the ≤2% surviving shreds are below what the detector can
+  see), OR when occlusion > `BEHIND_HIDE_OCCLUSION_FRAC = 0.70` AND ≥ 3
+  events are in the window. **Reveal** only below
+  `BEHIND_SHOW_OCCLUSION_FRAC = 0.50` (hysteresis — jitter around one
+  threshold can't flap the state). Transitions ramp over 3 frames
+  (`_BEHIND_VISIBILITY_FADE_FRAMES`) so they read as the subject wiping the
+  text away, not a pop. Engagement logs
+  `text_behind_subject_visibility_policy_engaged`.
+- The #670 requirement is pinned by
+  `test_partial_sweep_only_occludes_intersecting_text_pixels` (unchanged);
+  the strobe/hysteresis behavior by the `test_visibility_policy_*` suite in
+  `tests/pipeline/test_text_behind_subject_render.py`.
 
 ## AI decision path: `overlay_format_matcher.behind_subject`
 
@@ -232,7 +308,10 @@ for the 45s-not-clamped / 150s-clamped-with-warning pins.
 - **Scope: generative intro + TextElements only.** `behind_subject` is
   supported on the montage `agent_text` intro path
   (`build_persistent_intro_overlays`) and on user-authored `TextElement`
-  overlays (`build_overlays_from_text_elements`). It is NOT supported on:
+  overlays (`build_overlays_from_text_elements`) — including on **subtitled
+  variants**, whose authored-text underlay burns through
+  `_compose_subtitled_final` (see "Subtitled variants" above; captions
+  themselves are never occluded). It is NOT supported on:
   - **`role="generative_sequence"` overlays** — the transcript-synced /
     rhythm-mode editorial sequence always routes through
     `_render_sequence_composite` once there are ≥2 overlays, which has no

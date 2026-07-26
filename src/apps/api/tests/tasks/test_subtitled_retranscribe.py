@@ -209,12 +209,12 @@ def test_retranscribe_flag_on_routes_through_subtitled_compose(monkeypatch):
     seen: dict = {}
     _patch_retx_io(monkeypatch, seen)
 
-    def _compose(base_local, variant, tmpdir):
+    def _compose(base_local, variant, tmpdir, **_matte_kwargs):
         seen["compose_variant"] = dict(variant)
         out = f"{tmpdir}/composed.mp4"
         with open(out, "wb") as f:
             f.write(b"composed")
-        return out
+        return out, variant.get("subject_matte_path")
 
     monkeypatch.setattr(gb, "_compose_subtitled_final", _compose)
 

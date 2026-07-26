@@ -44,6 +44,7 @@ import re
 import shutil
 import subprocess
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -2396,6 +2397,53 @@ class SubjectMatteProvider(Protocol):
     def mask_at(self, t_abs: float) -> np.ndarray | None: ...
 
 
+_MASK_RESIZE_LOGGED: set[tuple[tuple[int, ...], tuple[int, ...]]] = set()
+
+
+def _mask_for_shape(mask: np.ndarray | None, shape: tuple[int, int]) -> np.ndarray | None:
+    """`mask` resized to `(H, W)` = `shape`, or None when unusable.
+
+    The stored matte is always portrait-raster (270x480 upscaled to
+    1080x1920 by `mask_at`) regardless of source orientation — landscape
+    frames are squeezed into that raster at compute time, so an anisotropic
+    resize back to the render canvas is geometrically correct, not a hack.
+    A mask that can't be resized (wrong ndim, empty) fails open as None
+    rather than raising mid-render.
+    """
+    import cv2  # noqa: PLC0415 — lazy, keeps eval-CI import weight down
+
+    if mask is None:
+        return None
+    if tuple(mask.shape) == tuple(shape):
+        return mask
+    if mask.ndim != 2 or mask.size == 0:
+        log.warning(
+            "text_behind_subject_mask_shape_mismatch",
+            mask_shape=tuple(mask.shape),
+            rgba_shape=tuple(shape),
+        )
+        return None
+    try:
+        resized = cv2.resize(mask, (shape[1], shape[0]), interpolation=cv2.INTER_LINEAR)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "text_behind_subject_mask_shape_mismatch",
+            mask_shape=tuple(mask.shape),
+            rgba_shape=tuple(shape),
+            error=str(exc),
+        )
+        return None
+    key = (tuple(mask.shape), tuple(shape))
+    if key not in _MASK_RESIZE_LOGGED:
+        _MASK_RESIZE_LOGGED.add(key)
+        log.info(
+            "text_behind_subject_mask_resized",
+            mask_shape=tuple(mask.shape),
+            rgba_shape=tuple(shape),
+        )
+    return resized
+
+
 def _apply_subject_mask(rgba: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Zero out text alpha where `mask` says the subject sits on top.
 
@@ -2406,17 +2454,15 @@ def _apply_subject_mask(rgba: np.ndarray, mask: np.ndarray) -> np.ndarray:
     untouched. Premultiplied output would additionally require scaling RGB by
     the same factor, or the occluded edge shows bright fringing.
 
-    `mask` is float32 in [0, 1], shape (H, W). A shape mismatch fails open
-    (returns `rgba` unchanged) rather than raising mid-render.
+    `mask` is float32 in [0, 1], shape (H, W). A mask of a different shape is
+    resized to the rgba's shape (`_mask_for_shape` — landscape canvases);
+    a mask that can't be resized fails open (returns `rgba` unchanged)
+    rather than raising mid-render.
     """
-    if mask.shape != rgba.shape[:2]:
-        log.warning(
-            "text_behind_subject_mask_shape_mismatch",
-            mask_shape=tuple(mask.shape),
-            rgba_shape=tuple(rgba.shape[:2]),
-        )
+    sized = _mask_for_shape(mask, rgba.shape[:2])
+    if sized is None:
         return rgba
-    factor = 1.0 - np.clip(mask, 0.0, 1.0).astype(np.float32)
+    factor = 1.0 - np.clip(sized, 0.0, 1.0).astype(np.float32)
     out = rgba.copy()
     out[..., 3] = np.clip(out[..., 3].astype(np.float32) * factor, 0, 255).astype(np.uint8)
     return out
@@ -2449,6 +2495,95 @@ def _write_rgba_array_png(arr: np.ndarray, out_path: str) -> None:
     already scaled alpha on the numpy array — mirrors `_write_png_pillow`'s
     compress_level so both paths produce the same PNG weight."""
     Image.fromarray(arr, "RGBA").save(out_path, "PNG", compress_level=3)
+
+
+# -- behind_subject visibility policy -----------------------------------------
+#
+# Per-pixel occlusion alone reads as glitching when a crowd or a large object
+# covers MOST of the text through mask gaps that open and close every frame:
+# what survives is a strobe of shredded fragments (prod Argentina montage,
+# crowd scene 10.9-12.2s, measured 12 visible-alpha jumps/s). But a SMOOTH
+# heavy occlusion — one subject sweeping across the text — must stay
+# per-pixel, or a moderate overlap fades the whole layer (the #670 complaint
+# that removed the first version of this policy). The two cases are told
+# apart by the frame-to-frame visible-alpha jump, not the occlusion level:
+# a smooth sweep changes visible alpha by <= ~0.09 of the text's alpha per
+# frame even at 95% occlusion, while gap-strobing jumps ~0.24 on every frame.
+#
+# Policy: hide the text entirely when occlusion is near-total
+# (> BEHIND_FULL_OCCLUSION_FRAC — the <= 2% surviving shreds are below what
+# the strobe detector can see), or when occlusion is heavy
+# (> BEHIND_HIDE_OCCLUSION_FRAC) AND the recent window shows repeated
+# visible-alpha jumps (strobing). Reveal only below
+# BEHIND_SHOW_OCCLUSION_FRAC — the hysteresis gap means jitter around one
+# threshold can't flap the state — and ramp alpha over
+# _BEHIND_VISIBILITY_FADE_FRAMES so transitions read as the subject wiping
+# the text away, not a pop.
+BEHIND_HIDE_OCCLUSION_FRAC = 0.70
+BEHIND_SHOW_OCCLUSION_FRAC = 0.50
+BEHIND_FULL_OCCLUSION_FRAC = 0.98
+_BEHIND_VISIBILITY_FADE_FRAMES = 3
+# A frame-to-frame |Δ visible alpha| above this fraction of the text's own
+# alpha counts as one strobe event; _BEHIND_STROBE_MIN_EVENTS events within
+# the trailing _BEHIND_STROBE_WINDOW_FRAMES (0.5s @ 30fps) engage the hide.
+# A single smooth pass of an occluder produces at most 2 events (entry +
+# exit) and can never engage; gap-strobing produces one per frame.
+BEHIND_STROBE_JUMP_FRAC = 0.15
+_BEHIND_STROBE_WINDOW_FRAMES = 15
+_BEHIND_STROBE_MIN_EVENTS = 3
+
+
+def _behind_visibility_scales(
+    matte: SubjectMatteProvider,
+    text_alpha: np.ndarray,
+    start_s: float,
+    n_render: int,
+    frame_dur: float,
+) -> np.ndarray | None:
+    """Per-frame [0,1] alpha scale for a behind_subject overlay, or None when
+    the policy never engages (all-visible — render path can skip scaling).
+
+    `text_alpha` is the overlay's own straight alpha (H, W) float32 [0,1] from
+    its settled frame — the region occlusion and jumps are measured against.
+    Sequential by design: hysteresis and the strobe window need frame order,
+    so this runs as a pre-pass before the (unordered) thread-pool render.
+    """
+    alpha_sum = float(text_alpha.sum())
+    if alpha_sum <= 0.0:
+        return None
+
+    scales = np.empty(n_render, dtype=np.float32)
+    hidden = False
+    current = 1.0
+    step = 1.0 / _BEHIND_VISIBILITY_FADE_FRAMES
+    engaged = False
+    prev_vis: np.ndarray | None = None
+    jump_events: deque[bool] = deque(maxlen=_BEHIND_STROBE_WINDOW_FRAMES)
+    for i in range(n_render):
+        mask = _mask_for_shape(matte.mask_at(start_s + i * frame_dur), text_alpha.shape)
+        if mask is None:
+            occ = 0.0
+            vis = text_alpha
+        else:
+            clipped = np.clip(mask, 0.0, 1.0)
+            occ = float((clipped * text_alpha).sum()) / alpha_sum
+            vis = text_alpha * (1.0 - clipped)
+        if prev_vis is not None:
+            jump = float(np.abs(vis - prev_vis).sum()) / alpha_sum
+            jump_events.append(jump > BEHIND_STROBE_JUMP_FRAC)
+        prev_vis = vis
+        if not hidden and (
+            occ > BEHIND_FULL_OCCLUSION_FRAC
+            or (occ > BEHIND_HIDE_OCCLUSION_FRAC and sum(jump_events) >= _BEHIND_STROBE_MIN_EVENTS)
+        ):
+            hidden = True
+        elif hidden and occ < BEHIND_SHOW_OCCLUSION_FRAC:
+            hidden = False
+        target = 0.0 if hidden else 1.0
+        current = min(current + step, target) if target > current else max(current - step, target)
+        scales[i] = current
+        engaged = engaged or current < 1.0
+    return scales if engaged else None
 
 
 # -- Public API: render overlays to FFmpeg-ready PNG sequences ---------------
@@ -2673,6 +2808,34 @@ def _generate_overlay_sequence(
         else None
     )
 
+    # Visibility policy pre-pass (sequential — hysteresis and the strobe
+    # window need frame order). Measured against the settled frame's own
+    # alpha; animated overlays use their settled state, which is what the
+    # text occupies for the vast majority of a behind_subject window.
+    vis_scales: np.ndarray | None = None
+    if behind:
+        settled_arr = (
+            static_behind_arr
+            if static_behind_arr is not None
+            else _skia_image_to_rgba_array(
+                _draw_frame(overlay, duration_s, duration_s, render_canvas=render_canvas)
+            )
+        )
+        vis_scales = _behind_visibility_scales(
+            matte,
+            settled_arr[..., 3].astype(np.float32) / 255.0,
+            start_s,
+            n_render,
+            frame_dur,
+        )
+        if vis_scales is not None:
+            log.info(
+                "text_behind_subject_visibility_policy_engaged",
+                hidden_frames=int((vis_scales <= 0.0).sum()),
+                n_render=n_render,
+                text=_overlay_text(overlay)[:40],
+            )
+
     def _render_one(i: int) -> None:
         t_local = i * frame_dur
         out_path = os.path.join(work_dir, f"{pattern_prefix}{i:04d}.png")
@@ -2698,9 +2861,20 @@ def _generate_overlay_sequence(
                     )
                 )
             )
+            scale = 1.0 if vis_scales is None else float(vis_scales[i])
+            if scale <= 0.0:
+                # Fully behind the subject — write a transparent frame instead
+                # of a strobe of shredded fragments through mask gaps.
+                arr = arr.copy()
+                arr[..., 3] = 0
+                _write_rgba_array_png(arr, out_path)
+                return
             mask = matte.mask_at(start_s + t_local)
             if mask is not None:
                 arr = _apply_subject_mask(arr, mask)
+            if scale < 1.0:
+                arr = arr.copy()
+                arr[..., 3] = (arr[..., 3].astype(np.float32) * scale).astype(np.uint8)
             _write_rgba_array_png(arr, out_path)
         else:
             img = _draw_frame(overlay, t_local, duration_s, render_canvas=render_canvas)
