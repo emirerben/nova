@@ -199,6 +199,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `SUBTITLED_TEXT_LANE_ENABLED` — defaults **`false`**. Styled-text lane on subtitled variants: user-authored text elements burn (Skia) onto the caption-free base FIRST, captions LAST (always topmost) via `_compose_subtitled_final`; caption Apply, text fast-reburn, and re-transcribe all route through it, and subtitled text fast-reburns mint a NEW GCS key + delete the old (CDN staleness). Dual-flag with `NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED` (Vercel; gates `isTextLaneEligible` — subtitled stays excluded from instant-edit, server-Apply only). Fly first, then Vercel. Apply: `fly secrets set SUBTITLED_TEXT_LANE_ENABLED=true --app nova-video` + `fly machine restart <id>` (api + worker).
 - `SUBTITLED_ARCHETYPE_ENABLED` — defaults to **`false`**. Gates the subtitled single-clip edit style (talk-to-camera clip → auto-detected-language captions, editable + reburnable, sentence-per-cue with pop-in; TR/EN). When off, a `subtitled` job falls back to montage. Dual-flag with `NEXT_PUBLIC_SUBTITLED_ENABLED` (Vercel picker card) — keep Fly + Vercel in sync. Companions: `SUBTITLED_CAPTION_CORRECTION_ENABLED` (default `true` — LLM pass fixing whisper mishearings per cue, timing preserved) + `CAPTION_CORRECTION_MODEL` (default `gpt-4o`; mini missed Turkish case errors 4/4 runs). Apply: `fly secrets set SUBTITLED_ARCHETYPE_ENABLED=true --app nova-video` + `fly machine restart <id>` (api + worker).
 - `NARRATED_SELF_NARRATION_ENABLED` — defaults **`false`**. Narrated items generate WITHOUT a recorded voiceover when the footage's own audio carries the voice: 1 clip → `subtitled` (captions), 2+ → `talking_head` (speech spine); no speech → montage + reason persisted on `assembly_plan["archetype_fallback"]` (item-page banner). SOLE gate — deliberately bypasses the two archetype flags above (they gate declared formats). Dual-flag `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED` (Vercel); flip Fly first. Voiceover, when recorded, still wins (narrated archetype unchanged). Guards: flag-off pins in `tests/tasks/test_generative_dispatch.py`.
+- `CAPTION_PUNCTUATION_ENABLED` — defaults `true`. `_transcribe_openai` restores punctuation/case from full-text onto the timed word stream via `align_punctuated_text()` (`transcribe.py`): casefold+strip match, k<=3 number-split merge, bounded 2-token resync; ANY residual mismatch bails the WHOLE transcript (fail-open). `false` ⇒ byte-identical; `_transcribe_local` unaffected. Apply: `fly secrets set CAPTION_PUNCTUATION_ENABLED=false` + restart.
 - `SILENCE_CUT_ENABLED` — defaults **`false`**. Auto-cuts silences + filler vocalizations ("uh", "ııı") from speech render paths ONLY (subtitled + talking_head spine; self-narration inherits; music/beat paths structurally excluded — guard: `tests/tasks/test_silence_cut_isolation.py`). Engine: `app/pipeline/silence_cut.py` (pure CutPlan) applied inside `reframe_and_export(keep_segments=…)` with alternating punch-in; captions rebuilt from remapped words, fillers stripped. Fail-open: any failure ⇒ uncut render, job never fails. Per-item opt-out: `POST /admin/jobs/{id}/silence-cut-disable` (scripts/admin.py) + full re-render. User-validated behavior pinned by `tests/pipeline/test_silence_cut_golden.py` — detection-rule changes move that pin consciously. Companion `RETAKE_CUT_ENABLED` (default `false`, independent): `retake_detector` agent cuts abandoned takes; flip only after silence cutting validates in prod + live evals pass. Pre-flip gate: prod-image parity render (TR+EN). See plans/010-silence-filler-cut.md. Apply: `fly secrets set SILENCE_CUT_ENABLED=true --app nova-video` + `fly machine restart <id>` (worker).
 
 ## Agent evals
@@ -273,19 +274,10 @@ fly secrets set -a nova-video \
 ### Dockerfile / .dockerignore coupling
 Any new `COPY <src> ...` line added to the prod `Dockerfile` must have its source path
 verified against `.dockerignore` — the two files do not track each other and there is no
-local tool that flags the mismatch. If `.dockerignore` excludes the source path, the
-`COPY` will fail with "not found in build context" at Fly's builder, AFTER the PR has
-already merged to `main`.
-
-Incident (May 2026): PR #118 (`f156c19`, v0.4.7.0) added
-`COPY src/apps/api/tests/evals/rubrics ./tests/evals/rubrics` for the Loop B online
-judge. Local pytest + the `test-api` CI job both passed (they run against the source
-tree, not the image). The deploy then failed on Fly. PR #119 (`121a6e9`) hotfixed
-`.dockerignore` with negation patterns to let the rubrics through.
-
-`.github/workflows/docker-build.yml` runs `docker build` against the prod Dockerfile on
-every PR that touches `Dockerfile`, `.dockerignore`, or `src/apps/api/**` — so this
-class of bug fails on the PR, not on merge-to-main.
+local tool that flags the mismatch; a mismatch fails at Fly's builder, AFTER the PR has
+already merged to `main`. `.github/workflows/docker-build.yml` catches it on the PR
+instead for any PR touching `Dockerfile`, `.dockerignore`, or `src/apps/api/**`. See
+agents/DECISIONS.md "Dockerfile / .dockerignore coupling" for the PR #118/#119 incident.
 
 ## Agentic workflow (how to work fast here)
 

@@ -25,6 +25,18 @@ _TRANSCRIPT_CACHE_VERSION = "v1"
 LOW_CONFIDENCE_THRESHOLD = 0.6
 LOW_SPEECH_RATIO_THRESHOLD = 0.10  # <10% of words above threshold → ASR fallback
 
+# align_punctuated_text: normalize for comparison by casefolding + stripping
+# ALL punctuation (not just leading/trailing) — matches the codebase's existing
+# fuzzy-match convention (see `_fold` in caption_correct.py / smart_edit's
+# planner.py). This is what lets "thats" (whisper strips the apostrophe from
+# word-level tokens) match display token "that's", and lets the concatenation
+# of "200" + "000" match display token "200,000" in the merge case below. The
+# DISPLAY token (full punctuation intact) is always what ends up on the Word —
+# normalization only decides whether two tokens refer to the same thing.
+_WORD_CHARS_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_MAX_MERGE_TOKENS = 3  # "200,000" vs whisper's "200" + "000" (k <= 3)
+_MAX_LOOKAHEAD = 2  # bounded resync window, each side
+
 
 @dataclass
 class Word:
@@ -347,6 +359,163 @@ def _apply_segment_signals(words: list[Word], segments: list) -> None:
                 break
 
 
+def _norm_token(token: str) -> str:
+    """Casefold + strip ALL punctuation for alignment comparison (display text
+    is never derived from this — see module comment above)."""
+    return "".join(_WORD_CHARS_RE.findall(token)).casefold()
+
+
+def _retext(word: Word, display_token: str) -> Word:
+    """Copy `word` with its text replaced by the punctuated display token."""
+    return Word(
+        text=display_token,
+        start_s=word.start_s,
+        end_s=word.end_s,
+        confidence=word.confidence,
+        segment_avg_logprob=word.segment_avg_logprob,
+        segment_no_speech_prob=word.segment_no_speech_prob,
+    )
+
+
+def _try_merge(words: list[Word], wi: int, display_norm: str) -> tuple[Word, int] | None:
+    """Merge case: concat of the next k (2 <= k <= _MAX_MERGE_TOKENS) stripped
+    word tokens equals the display token — e.g. "200,000" vs "200" + "000".
+    Returns (merged_word, tokens_consumed) or None."""
+    n_words = len(words)
+    for k in range(2, _MAX_MERGE_TOKENS + 1):
+        if wi + k > n_words:
+            break
+        concat = "".join(_norm_token(words[wi + j].text) for j in range(k))
+        if concat and concat == display_norm:
+            first, last = words[wi], words[wi + k - 1]
+            merged = Word(
+                text=words[wi].text,  # overwritten by caller with the display token
+                start_s=first.start_s,
+                end_s=last.end_s,
+                confidence=min(words[wi + j].confidence for j in range(k)),
+                segment_avg_logprob=first.segment_avg_logprob,
+                segment_no_speech_prob=last.segment_no_speech_prob,
+            )
+            return merged, k
+    return None
+
+
+def _find_resync(
+    words: list[Word], wi: int, display_tokens: list[str], di: int
+) -> tuple[int, int] | None:
+    """Bounded lookahead (<= _MAX_LOOKAHEAD tokens each side) for a resync point
+    after a 1:1 match and a merge both fail at (wi, di). Returns (word_skip,
+    display_skip) for the smallest total skip found, preferring to skip WORDS
+    (extra spoken tokens absent from the punctuated text) over DISPLAY tokens
+    on ties. Returns None if no resync point exists within the window —
+    callers must then bail for the whole transcript (fail-open)."""
+    n_words, n_display = len(words), len(display_tokens)
+    best: tuple[int, int, int] | None = None  # (total, word_skip, display_skip)
+    for a in range(0, _MAX_LOOKAHEAD + 1):
+        widx = wi + a
+        if widx >= n_words:
+            continue
+        word_norm = _norm_token(words[widx].text)
+        for b in range(0, _MAX_LOOKAHEAD + 1):
+            if a == 0 and b == 0:
+                continue
+            didx = di + b
+            if didx >= n_display:
+                continue
+            if word_norm and word_norm == _norm_token(display_tokens[didx]):
+                total = a + b
+                if best is None or total < best[0] or (total == best[0] and a > best[1]):
+                    best = (total, a, b)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def align_punctuated_text(full_text: str, words: list[Word]) -> list[Word]:
+    """Restore punctuation + capitalization from `full_text` onto the timed word
+    stream (whisper-1's word-level output carries neither — they live only in
+    the full-text transcript).
+
+    Walks both token sequences with a cursor, comparing via casefold + strip of
+    punctuation:
+      - 1:1 match -> word.text becomes the punctuated display token.
+      - merge case (display token == concat of the next k <= 3 stripped word
+        tokens, e.g. "200,000" vs "200" + "000") -> one merged Word spanning
+        first.start_s -> last.end_s.
+      - residual mismatch -> a bounded (<= 2 tokens each side) lookahead tries
+        to find a resync point; if none exists, BAIL FOR THE WHOLE TRANSCRIPT
+        and return the original `words` unchanged. Fail-open by design — a
+        half-aligned transcript (wrong text on the wrong timestamp) is worse
+        than an unpunctuated one.
+
+    Pure function: never mutates `words` in place, never raises.
+    """
+    if not words:
+        return words
+    display_tokens = full_text.split()
+    if not display_tokens:
+        log.info("alignment_bailed", reason="empty_full_text", word_count=len(words))
+        return words
+
+    aligned: list[Word] = []
+    wi = di = 0
+    n_words, n_display = len(words), len(display_tokens)
+
+    while wi < n_words:
+        if di >= n_display:
+            log.info(
+                "alignment_bailed",
+                reason="display_tokens_exhausted",
+                word_index=wi,
+                display_index=di,
+            )
+            return words
+
+        w = words[wi]
+        display = display_tokens[di]
+        display_norm = _norm_token(display)
+
+        if _norm_token(w.text) == display_norm:
+            aligned.append(_retext(w, display))
+            wi += 1
+            di += 1
+            continue
+
+        merge = _try_merge(words, wi, display_norm)
+        if merge is not None:
+            merged_word, consumed = merge
+            aligned.append(_retext(merged_word, display))
+            wi += consumed
+            di += 1
+            continue
+
+        resync = _find_resync(words, wi, display_tokens, di)
+        if resync is not None:
+            word_skip, _display_skip = resync
+            # Extra spoken word(s) not reflected in the punctuated text (e.g. a
+            # stray token whisper's word list emitted that full_text dropped):
+            # keep them verbatim, no display token to attach.
+            for j in range(word_skip):
+                aligned.append(words[wi + j])
+            wi += resync[0]
+            di += resync[1]
+            continue
+
+        log.info(
+            "alignment_bailed",
+            reason="unresolved_mismatch",
+            word_index=wi,
+            display_index=di,
+        )
+        return words
+
+    if di != n_display:
+        log.info("alignment_bailed", reason="display_tokens_leftover", leftover=n_display - di)
+        return words
+
+    return aligned
+
+
 def _transcribe_openai(
     audio_path: str, *, language: str | None = None, verbatim_prompt: str | None = None
 ) -> Transcript:
@@ -393,9 +562,17 @@ def _transcribe_openai(
     # them onto words (defensive: absent/None segments leave the fields None).
     _apply_segment_signals(words, list(getattr(response, "segments", None) or []))
 
+    full_text = response.text or ""
+    # Restore punctuation/capitalization from the full-text transcript onto the
+    # timed word stream (whisper-1's word-level output has neither). Fail-open:
+    # align_punctuated_text() bails to the original `words` on any residual
+    # mismatch, so this is safe to call unconditionally when enabled.
+    if settings.caption_punctuation_enabled:
+        words = align_punctuated_text(full_text, words)
+
     transcript = Transcript(
         words=words,
-        full_text=response.text or "",
+        full_text=full_text,
         # verbose_json reports the detected (or hinted) language — captions follow it.
         language=_normalize_lang(getattr(response, "language", "") or lang),
     )

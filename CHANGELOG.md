@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.1.0] — 2026-07-26
+
+### Added
+- **Captions now carry punctuation and capitalization again.** Whisper's word-level timestamps strip punctuation from every word; a new alignment pass restores it from the full transcript onto the timed word stream, matching each word by casefolded/punctuation-stripped comparison, merging split number tokens (e.g. "200,000"), and — critically — bailing out to the original unpunctuated words for the WHOLE transcript on any residual mismatch, so a render never ships half-aligned text. On by default; kill switch `CAPTION_PUNCTUATION_ENABLED=false` restores byte-identical pre-feature output. Local faster-whisper dev backend is unaffected (it already emits punctuation).
+
 ## [0.15.0.3] — 2026-07-26
 
 ### Fixed
