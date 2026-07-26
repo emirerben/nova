@@ -265,6 +265,11 @@ class AudioTreatmentLane(StrictModel):
 
     kind: Literal["audio_treatment"]
     token: Literal["voice_safe_music_bed"]
+    # NOTE: the literal name is legacy — eligibility no longer requires a
+    # license flag or a publish state. It now means "matched against the
+    # closed pool of ready + labeled(current) + sectioned(current) +
+    # non-archived music/% tracks" (see `_smart_music_track_eligible`).
+    # Kept unrenamed to avoid schema/preset churn for no behavior gain.
     selection_token: Literal["licensed_published_match"]
     gain_token: Literal["preset"] = "preset"
 
