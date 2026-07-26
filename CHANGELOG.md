@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0.0] — 2026-07-26
+
+### Added
+- **Text can now write itself onto the video with the new Handwriting animation.** The editor preview and both production renderers share the same 200ms pause, two-second eased reveal, preserve every existing font and style choice, and settle to the exact static text frame.
+- **Handwriting stays correct across advanced text workflows.** Multi-line alignment, tracking, rotation, emoji, glow, stroke, shadow, long overlays, editorial sequence fade-outs, theme transitions, reduced motion, and text-behind-subject mattes are covered in browser, pixel, hold-plan, and production-image tests.
+
 ## [0.13.2.1] — 2026-07-26
 
 ### Fixed
