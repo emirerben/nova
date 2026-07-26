@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-26",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -322,6 +322,19 @@
       "highlight_color": "#FFE08A",
       "niche": "professional lifestyle & city aesthetics",
       "source": "tiktok market research 2026-06"
+    },
+    {
+      "id": "relatable-frustration-static-02",
+      "content_profile": "universal everyday frustration, naming a familiar problem the viewer recognizes in the first frame, candid and direct with no punchline needed",
+      "effect": "static",
+      "text": "the one problem that never gets solved",
+      "highlight_word": "never",
+      "position": "top",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "niche": "lifestyle & everyday humor",
+      "source": "tiktok market research 2026-07"
     }
   ]
 }

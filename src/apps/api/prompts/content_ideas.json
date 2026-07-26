@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-26",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -212,6 +212,36 @@
       "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
       "source": "tiktok:@izzsiomoi (2026-06)",
       "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "office-outfit-rotation-weekly-01",
+      "niche": "professional lifestyle & city aesthetics",
+      "pillar": "work outfits (#9to5)",
+      "idea": "a compilation of this week's office looks — one short clip per outfit, cut to 8-15 seconds total",
+      "hook_pattern": "office fits from this week",
+      "filming_context": "mirror or tripod, each look gets 1-2 seconds, cut on the beat — the rapid rotation is the format",
+      "source": "tiktok:@allexmarielle (2026-07)",
+      "performance": {"engagement_rate": 0.1664, "view_index": 1.47, "sampled_at": "2026-07"}
+    },
+    {
+      "id": "universal-frustration-hook-01",
+      "niche": "lifestyle & everyday humor",
+      "pillar": "universal frustrations",
+      "idea": "name a universally felt daily frustration as the full premise — 'the [x] problem that never gets solved' — and let the clip be the proof",
+      "hook_pattern": "the [frustration] problem, still not solved",
+      "filming_context": "candid, real-environment clips; no setup needed; the frustration is both the hook and the content — don't resolve it",
+      "source": "tiktok:@nermozdemir (2026-07)",
+      "performance": {"engagement_rate": 0.0409, "view_index": 18.42, "sampled_at": "2026-07"}
+    },
+    {
+      "id": "community-cultural-moment-01",
+      "niche": "lifestyle & everyday humor",
+      "pillar": "cultural moments",
+      "idea": "tap into a national sports win or shared cultural milestone in real time with a brief, authentic reaction clip that names a collective identity",
+      "hook_pattern": "we are a [x] nation / this is [country] right now",
+      "filming_context": "any real-moment footage works — the timeliness IS the hook; shoot while the event is live or trending",
+      "source": "tiktok:@nermozdemir (2026-07)",
+      "performance": {"engagement_rate": 0.1515, "view_index": 2.0, "sampled_at": "2026-07"}
     }
   ]
 }
