@@ -1287,8 +1287,7 @@ def _handwriting_ass_dialogue_events(
 
     if settle_s < duration_s:
         events.extend(
-            (start_s + settle_s, end_s, _line_text(line_index))
-            for line_index in range(len(lines))
+            (start_s + settle_s, end_s, _line_text(line_index)) for line_index in range(len(lines))
         )
     return events
 
