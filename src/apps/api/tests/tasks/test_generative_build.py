@@ -4663,11 +4663,11 @@ def test_subtitled_render_boundary_failure_fails_open_with_receipt(monkeypatch, 
     _plan_mock, compile_mock = _patch_subtitled_smart_render(monkeypatch, tmp_path)
     composed_from = {}
 
-    def record_compose(base_path, _variant, variant_dir):
+    def record_compose(base_path, _variant, variant_dir, **_matte_kwargs):
         composed_from["base_path"] = base_path
         output = Path(variant_dir) / "smart-final.mp4"
         output.write_bytes(b"smart-captioned-video")
-        return str(output)
+        return str(output), _variant.get("subject_matte_path")
 
     monkeypatch.setattr(gb, "_compose_subtitled_final", record_compose)
     compile_mock.return_value.boundary_effects = [
