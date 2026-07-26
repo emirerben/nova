@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0.0] — 2026-07-26
+
+### Changed
+- **Kria links now show accurate page names and a branded social preview.** The public landing and Make Your Edit pages have their own canonical, Open Graph, and Twitter metadata, while creator workspaces and transient render pages stay out of search results. The new Kria share card uses a versioned URL so future designs refresh reliably.
+
 ## [0.13.2.1] — 2026-07-26
 
 ### Fixed
