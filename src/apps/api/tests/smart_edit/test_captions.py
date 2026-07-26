@@ -375,6 +375,72 @@ def test_merge_back_never_glues_marker_into_floor_name(policy: CaptionPolicy) ->
     )
 
 
+# ── plan 3b: cue lengths follow punctuation ────────────────────────────────
+#
+# Workstream 3a restores punctuation onto the timed word stream ahead of this
+# file. These tests pin what 3b does with it: sentence-final punctuation
+# already closes phrase-shaped cues via `_should_close`'s `_STRONG_END_RE`
+# check (no new logic — this test just proves it fires now that words carry
+# real punctuation); the standalone-span test below exercises the NEW
+# boundary-preferring split in `build_semantic_caption_cues`. The
+# `CAPTION_PUNCTUATION_ENABLED=false` kill-switch byte-identity test lives
+# upstream at `tests/pipeline/test_transcribe_punctuation_alignment.py::
+# test_kill_switch_disabled_reproduces_pre_fix_output` (this file's chunker
+# is downstream of that flag and has no branch on it to pin here).
+
+
+def test_punctuated_sentences_produce_phrase_shaped_cues(policy: CaptionPolicy) -> None:
+    # Contiguous timing (no inter-word gap) so a cue only closes on real
+    # punctuation or a cap — never the pause heuristic — isolating exactly the
+    # behavior this test pins.
+    loose = CaptionPolicy(
+        **{**policy.model_dump(), "min_words": 1, "max_words": 10, "max_chars": 80}
+    )
+    words = _words(["This", "is", "a", "test.", "It", "works", "well."], step_ms=200, dur_ms=200)
+    cues = build_semantic_caption_cues(words, loose, role_by_word_id=_roles(words))
+    assert [c["text"] for c in cues] == ["This is a test.", "It works well."]
+
+
+def test_standalone_span_prefers_clause_boundary_over_raw_split(policy: CaptionPolicy) -> None:
+    # Buffered run before the standalone span contains an internal comma. The
+    # forced close before "YC" must prefer that boundary over the raw position
+    # (right before "YC") so the neighbor cue reads as a clean phrase instead
+    # of an orphaned mid-clause fragment. The trailing remainder ("and honestly
+    # building", 3 words) is >= min_words so the existing sub-min_words
+    # merge-back floor leaves it as its own cue rather than re-absorbing it.
+    loose = CaptionPolicy(
+        **{**policy.model_dump(), "min_words": 2, "max_words": 10, "max_chars": 80}
+    )
+    words = _words(
+        ["We're", "really", "excited,", "and", "honestly", "building", "YC"],
+        step_ms=200,
+        dur_ms=200,
+    )
+    cues = build_semantic_caption_cues(
+        words, loose, role_by_word_id=_roles(words), standalone_spans=[["w000006"]]
+    )
+    texts = [c["text"] for c in cues]
+    assert texts == ["We're really excited,", "and honestly building", "YC"]
+    assert texts[0].endswith(","), "split must prefer the clause boundary, not the raw position"
+    assert next(c for c in cues if c["text"] == "YC")["smart_emphasis"] is True
+
+
+def test_standalone_span_no_boundary_falls_back_to_raw_split(policy: CaptionPolicy) -> None:
+    # No comma/period anywhere in the buffered run -> nothing to prefer, so the
+    # raw position split (pre-3b behavior) is unchanged.
+    loose = CaptionPolicy(
+        **{**policy.model_dump(), "min_words": 2, "max_words": 10, "max_chars": 80}
+    )
+    words = _words(
+        ["we're", "really", "honestly", "building", "the", "YC"], step_ms=200, dur_ms=200
+    )
+    cues = build_semantic_caption_cues(
+        words, loose, role_by_word_id=_roles(words), standalone_spans=[["w000005"]]
+    )
+    texts = [c["text"] for c in cues]
+    assert texts == ["we're really honestly building the", "YC"]
+
+
 def test_lone_marker_leads_forward_when_backward_blocked(policy: CaptionPolicy) -> None:
     # "and" after an isolated name (backward blocked) leads into the next normal
     # cue instead of standing alone; the name keeps its emphasis.
