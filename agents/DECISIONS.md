@@ -124,6 +124,10 @@ These are the "why" behind invariants stated tersely in CLAUDE.md's pipeline sec
 **Incident:** job `a1091488` (Rule of Thirds) rendered "pilot in cockpit" — Gemini's `detected_subject` from a cockpit clip — in place of "The"/"Thirds".
 **Fix:** removed the `_consensus_subject(clip_metas)` fallback and the empty-hook `clip_meta.hook_text` fallback. Overlay substitution input is now exclusively user-provided (`inputs.location`). Sentinel: `TestNoGeminiTextLeaks`. Does NOT cover `copy_writer` (captions are a separate trust surface).
 
+### [2026-05] Dockerfile / .dockerignore coupling (PR #118/#119)
+**Incident:** PR #118 (`f156c19`, v0.4.7.0) added `COPY src/apps/api/tests/evals/rubrics ./tests/evals/rubrics` for the Loop B online judge. Local pytest + the `test-api` CI job both passed (they run against the source tree, not the image). The deploy then failed on Fly with "not found in build context" because `.dockerignore` excluded the source path — the two files don't track each other and nothing local flags the mismatch. PR #119 (`121a6e9`) hotfixed `.dockerignore` with negation patterns to let the rubrics through.
+**Rule:** any new `COPY <src> ...` in the prod `Dockerfile` must have its source path verified against `.dockerignore`. `.github/workflows/docker-build.yml` now runs `docker build` against the prod Dockerfile on every PR touching `Dockerfile`, `.dockerignore`, or `src/apps/api/**`, so this class of bug fails on the PR, not on merge-to-main.
+
 ### Encoder-policy preset history
 - PR #102: curtain-close → `medium`.
 - PR #105: curtain-close → `fast` + `--concurrency=1` + PNG-overlay.

@@ -287,3 +287,43 @@ def test_llm_request_exposes_only_lines_and_closed_aliases(monkeypatch) -> None:
         "lines": ["Koka Kola ayıcıkları"],
         "trusted_aliases": ["Coca Cola"],
     }
+
+
+# ── Workstream 3a downstream audit ────────────────────────────────────────────
+# Punctuation now rides the timed word (e.g. a trailing comma from
+# align_punctuated_text). This locks in that the trusted-alias matcher's
+# existing punctuation-stripping in `_fold` already handles it — the plan's
+# call-out is that this job's aliases "worked only because tokens were bare",
+# so it must keep working once tokens carry punctuation.
+
+_PUNCTUATED_CUES = [
+    {
+        "text": "usermagick is great",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "words": [
+            {"word_id": "p-1", "text": "UserMagick,", "start_s": 0.0, "end_s": 0.4},
+            {"word_id": "p-2", "text": "is", "start_s": 0.4, "end_s": 0.6},
+            {"word_id": "p-3", "text": "great.", "start_s": 0.6, "end_s": 1.0},
+        ],
+    }
+]
+
+
+def test_fold_strips_punctuation_riding_the_word() -> None:
+    assert cc._fold("UserMagick,") == cc._fold("UserMagick")
+    assert cc._fold("great.") == cc._fold("great")
+
+
+def test_trusted_alias_match_survives_punctuation_riding_the_word(monkeypatch) -> None:
+    proposal = {
+        "line_index": 0,
+        "start_word_index": 0,
+        "end_word_index": 0,
+        "original_span": "UserMagick",
+        "target_alias": "Usersmagic",
+    }
+    monkeypatch.setattr(cc, "_llm_propose_substitutions", lambda *a, **k: [proposal])
+    out = cc.correct_caption_cues(_PUNCTUATED_CUES, "en", trusted_aliases=["Usersmagic"])
+    assert out[0]["words"][0]["text"] == "Usersmagic"
+    assert out[0]["text"] == "Usersmagic is great."
