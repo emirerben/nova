@@ -4616,6 +4616,57 @@ def test_subtitled_render_smart_planner_failure_fails_open(monkeypatch, tmp_path
     assert result["caption_cues"] == [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}]
 
 
+def test_subtitled_render_boundary_failure_fails_open_with_receipt(monkeypatch, tmp_path):
+    import uuid
+    from pathlib import Path
+
+    from app.pipeline import boundary_effects
+
+    _plan_mock, compile_mock = _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    composed_from = {}
+
+    def record_compose(base_path, _variant, variant_dir):
+        composed_from["base_path"] = base_path
+        output = Path(variant_dir) / "smart-final.mp4"
+        output.write_bytes(b"smart-captioned-video")
+        return str(output)
+
+    monkeypatch.setattr(gb, "_compose_subtitled_final", record_compose)
+    compile_mock.return_value.boundary_effects = [
+        {
+            "effect": "horizontal_motion_blur",
+            "at_s": 0.4,
+            "duration_s": 0.42,
+        }
+    ]
+
+    def fail_boundary_render(*_args, **_kwargs):
+        raise boundary_effects.BoundaryEffectError("ffmpeg timeline failure")
+
+    monkeypatch.setattr(boundary_effects, "apply_boundary_effects", fail_boundary_render)
+
+    result = gb._render_subtitled_variant(
+        job_id=str(uuid.uuid4()),
+        rank=1,
+        spec={"variant_id": "subtitled", "caption_style": "sentence"},
+        clip_id_to_local={"clip-1": str(tmp_path / "source.mp4")},
+        variant_dir=str(tmp_path),
+        smart_captions={"preset_id": "cigdem", "preset_version": "v1"},
+    )
+
+    assert result["ok"] is True
+    assert result["render_status"] == "ready"
+    assert result["boundary_effects"] is None
+    assert Path(composed_from["base_path"]) == tmp_path / "final_base.mp4"
+    assert (tmp_path / "final_base.mp4").read_bytes() == b"base-video"
+    assert result["smart_validation_receipts"]["boundary_render"] == {
+        "requested": 1,
+        "applied": 0,
+        "status": "failed_open",
+        "error": "ffmpeg timeline failure",
+    }
+
+
 def test_finalize_job_preserves_smart_caption_plan_and_authoritative_titles(monkeypatch):
     """Smart output must survive the finalizer's explicit variant whitelist."""
     import uuid
