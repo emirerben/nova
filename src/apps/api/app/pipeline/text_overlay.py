@@ -25,6 +25,7 @@ import numpy as np
 import structlog
 
 from app.pipeline.ass_utils import format_ass_time, sanitize_ass_text
+from app.pipeline.generative_overlays import resolve_line_spacing, resolve_max_width_frac
 from app.pipeline.text_animation_math import (
     HANDWRITING_NOMINAL_SETTLE_S as _HANDWRITING_NOMINAL_SETTLE_S,
 )
@@ -578,6 +579,8 @@ def generate_animated_overlay_ass(
                 position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
                 text_anchor=overlay.get("text_anchor", "center"),
+                max_width_frac=overlay.get("max_width_frac"),
+                line_spacing=overlay.get("line_spacing"),
                 outline_px=(
                     overlay.get("outline_px")
                     if overlay.get("outline_px") is not None
@@ -1111,10 +1114,11 @@ def _handwriting_ass_dialogue_events(
     start_s: float,
     end_s: float,
     position: str,
-    pos_or_align: str,
     font_family: str | None,
     text_size_px: int | None,
     text_anchor: str,
+    max_width_frac: float | None,
+    line_spacing: float | None,
     position_x_frac: float | None,
     position_y_frac: float | None,
     outline_tag: str,
@@ -1138,7 +1142,7 @@ def _handwriting_ass_dialogue_events(
     if font is None:
         font = _load_styled_font("display", "medium", text_size_px=font_size)
     draw = ImageDraw.Draw(Image.new("L", (1, 1), 0))
-    max_width = int(CANVAS_W * _TEXT_MAX_LINE_W)
+    max_width = int(CANVAS_W * resolve_max_width_frac(max_width_frac))
     logical_text = text.replace(r"\N", "\n")
     lines: list[str] = []
     for logical_line in logical_text.split("\n"):
@@ -1153,13 +1157,16 @@ def _handwriting_ass_dialogue_events(
         line_widths.append(max(0.0, float(bbox[2] - bbox[0]) + tracked))
     try:
         ascent, descent = font.getmetrics()
-        line_step = max(1, int((ascent + descent) * _TEXT_LINE_SPACING))
+        line_step = max(1, int((ascent + descent) * resolve_line_spacing(line_spacing)))
     except AttributeError:
         line_step = max(
             1,
-            max(
-                (draw.textbbox((0, 0), line, font=font)[3] for line in lines),
-                default=font_size,
+            int(
+                max(
+                    (draw.textbbox((0, 0), line, font=font)[3] for line in lines),
+                    default=font_size,
+                )
+                * resolve_line_spacing(line_spacing)
             ),
         )
     block_h = max(line_step, line_step * len(lines))
@@ -1238,19 +1245,23 @@ def _handwriting_ass_dialogue_events(
     clip_bottom = min(CANVAS_H, int(math.ceil(content_bottom + bleed)))
     full_right = min(CANVAS_W, int(math.ceil(content_right + bleed)))
 
-    wrapped_text = r"\N".join(lines)
     color_tag = f"\\1c&H{_hex_to_ass_bgr(text_color)}&" if text_color else ""
     spacing_tag = f"\\fsp{spacing_px:.3f}" if abs(spacing_px) > 1e-6 else ""
     rotation_tag = (
-        f"\\frz{_finite_float(rotation_deg, 0.0):.3f}"
+        f"\\org({anchor_x},{anchor_y})\\frz{_finite_float(rotation_deg, 0.0):.3f}"
         if abs(_finite_float(rotation_deg, 0.0)) > 1e-6
         else ""
     )
     shadow_tag = "" if shadow_enabled else r"\shad0"
-    base_tags = (
-        f"{pos_or_align}\\q2\\fs{font_size}{spacing_tag}{rotation_tag}"
-        f"{shadow_tag}{outline_tag}{color_tag}"
-    )
+    line_alignment = {"left": 4, "center": 5, "right": 6}.get(effective_text_anchor, 5)
+
+    def _line_text(line_index: int, clip_tag: str = "") -> str:
+        line_y = int(round(block_top + (line_index + 0.5) * line_step))
+        tags = (
+            f"\\an{line_alignment}\\pos({anchor_x},{line_y})\\q2\\fs{font_size}"
+            f"{spacing_tag}{rotation_tag}{shadow_tag}{outline_tag}{color_tag}{clip_tag}"
+        )
+        return f"{{{tags}}}{lines[line_index]}"
 
     settle_s = min(duration_s, _HANDWRITING_NOMINAL_SETTLE_S)
     frame_count = max(1, int(math.ceil(settle_s * _HANDWRITING_ASS_FPS)))
@@ -1268,19 +1279,16 @@ def _handwriting_ass_dialogue_events(
                 full_right,
                 int(math.ceil(clip_left + (full_right - clip_left) * progress)),
             )
-        row_text = (
-            f"{{{base_tags}\\clip({clip_left},{clip_top},{clip_right},{clip_bottom})}}"
-            f"{wrapped_text}"
+        clip_tag = f"\\clip({clip_left},{clip_top},{clip_right},{clip_bottom})"
+        events.extend(
+            (start_s + local_start, start_s + local_end, _line_text(line_index, clip_tag))
+            for line_index in range(len(lines))
         )
-        events.append((start_s + local_start, start_s + local_end, row_text))
 
     if settle_s < duration_s:
-        events.append(
-            (
-                start_s + settle_s,
-                end_s,
-                f"{{{base_tags}}}{wrapped_text}",
-            )
+        events.extend(
+            (start_s + settle_s, end_s, _line_text(line_index))
+            for line_index in range(len(lines))
         )
     return events
 
@@ -1297,6 +1305,8 @@ def _write_animated_ass(
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
     text_anchor: str = "center",
+    max_width_frac: float | None = None,
+    line_spacing: float | None = None,
     outline_px: int | None = None,
     # Karaoke-only: per-word timings relative to overlay start, and the
     # highlight color used for "already sung" words. None for non-karaoke
@@ -1564,10 +1574,11 @@ def _write_animated_ass(
             start_s=start_s,
             end_s=end_s,
             position=position,
-            pos_or_align=pos_or_align,
             font_family=font_family,
             text_size_px=text_size_px,
             text_anchor=text_anchor,
+            max_width_frac=max_width_frac,
+            line_spacing=line_spacing,
             position_x_frac=position_x_frac,
             position_y_frac=position_y_frac,
             outline_tag=outline_tag,

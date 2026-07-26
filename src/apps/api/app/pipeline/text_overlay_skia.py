@@ -3292,25 +3292,6 @@ def _ffmpeg_burn_pngs(
         )
 
 
-def _strip_behind_subject_for_sequence_role(overlays: list[dict]) -> list[dict]:
-    """behind_subject is not supported on role="generative_sequence" overlays
-    in v1 — they always route through `_render_sequence_composite` once
-    there are >= 2 of them, and that composite path has no matte hook.
-    Stripping (rather than raising) matches this module's existing
-    "unknown/unsupported field degrades gracefully" posture."""
-    out: list[dict] = []
-    for overlay in overlays:
-        if overlay.get("role") == SEQUENCE_OVERLAY_ROLE and overlay.get("behind_subject"):
-            log.warning(
-                "text_behind_subject_unsupported_for_sequence_role",
-                text=_overlay_text(overlay)[:40],
-            )
-            overlay = dict(overlay)
-            overlay.pop("behind_subject", None)
-        out.append(overlay)
-    return out
-
-
 def render_text_overlay_sequences(
     overlays: list[dict],
     tmpdir: str,
@@ -3331,8 +3312,6 @@ def render_text_overlay_sequences(
     if not overlays:
         return [], None
 
-    overlays = _strip_behind_subject_for_sequence_role(overlays)
-
     # Resolve the timing window: production caller passes ABS_PASS_TIME_S /
     # ABS_PASS_SLOT_INDEX sentinels meaning "use the final-pass duration".
     # The overlays carry absolute timestamps already; we only need a permissive
@@ -3348,9 +3327,10 @@ def render_text_overlay_sequences(
     # cost scales with input count, and a sequence edit can carry 80+ blocks.
     # Everything else (lyric, intro, legacy) keeps the per-overlay path
     # untouched. 0/1 sequence overlays also stay per-overlay (no regression
-    # for the trivial cases). Masonry blocks with board-local layer origins
-    # are composited only with blocks sharing the same origin because differently
-    # originated full-frame layers cannot share one pre-composited stream.
+    # for the trivial cases). Matte-aware sequence overlays stay per-overlay
+    # too: their subject mask can change every frame and cannot be represented
+    # by the hold-linked composite economy. Masonry blocks with board-local
+    # layer origins are composited only with blocks sharing the same origin.
     sequence_overlays = [o for o in overlays if o.get("role") == SEQUENCE_OVERLAY_ROLE]
     sequence_groups: list[tuple[float | None, list[dict]]] = []
     for overlay in sequence_overlays:
@@ -3374,7 +3354,7 @@ def render_text_overlay_sequences(
                 group_work_dir,
                 **_render_canvas_kwargs(canvas),
             )
-            if len(group) >= 2
+            if len(group) >= 2 and not any(o.get("behind_subject") for o in group)
             else None
         )
         if composite is None:

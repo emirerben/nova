@@ -410,39 +410,68 @@ def test_behind_subject_150s_window_clamps_at_behind_subject_ceiling_with_warnin
     )
 
 
-# -- Sequence-role overlays: behind_subject unsupported in v1 -----------------
+# -- Sequence-role overlays: matte-aware per-overlay fallback -----------------
 
 
-def test_sequence_role_behind_subject_key_stripped_with_warning(tmp_workdir):
+def test_sequence_role_behind_subject_without_matte_degrades_to_normal_text(tmp_workdir):
     overlays = [
         _sequence_overlay(text="first", start_s=0.0, end_s=3.0, behind_subject=True),
         _sequence_overlay(text="second", start_s=1.0, end_s=4.0, position_y_frac=0.5),
     ]
-    with mock.patch.object(tos, "log", wraps=tos.log) as mock_log:
-        sequences, work_dir = tos.render_text_overlay_sequences(overlays, tmp_workdir)
-    assert sequences  # still renders — degrades, doesn't drop the overlay
+    sequences, work_dir = tos.render_text_overlay_sequences(overlays, tmp_workdir)
+    assert len(sequences) == 2
     assert work_dir is not None
-    mock_log.warning.assert_any_call(
-        "text_behind_subject_unsupported_for_sequence_role", text="first"
+
+
+def test_sequence_handwriting_uses_changing_matte_after_reveal_settles(tmp_workdir):
+    """The public path must keep sequence handwriting matte-aware after 2.2s."""
+    canvas = tos.Canvas(180, 320)
+
+    class _ChangingMatte:
+        def __init__(self):
+            self.calls: list[float] = []
+
+        def mask_at(self, t_abs: float) -> np.ndarray:
+            self.calls.append(t_abs)
+            mask = np.zeros((canvas.height, canvas.width), dtype=np.float32)
+            if int(round(t_abs * tos.FPS)) % 2:
+                mask[:, : canvas.width // 2] = 0.5
+            else:
+                mask[:, canvas.width // 2 :] = 0.5
+            return mask
+
+    overlays = [
+        _sequence_overlay(
+            text="first",
+            effect="handwriting",
+            start_s=0.0,
+            end_s=2.5,
+            fade_out_ms=0,
+            behind_subject=True,
+            text_size_px=24,
+        ),
+        _sequence_overlay(
+            text="second",
+            effect="handwriting",
+            start_s=0.0,
+            end_s=2.5,
+            fade_out_ms=0,
+            behind_subject=True,
+            position_y_frac=0.55,
+            text_size_px=24,
+        ),
+    ]
+    matte = _ChangingMatte()
+    sequences, work_dir = tos.render_text_overlay_sequences(
+        overlays, tmp_workdir, matte=matte, canvas=canvas
     )
-
-
-def test_sequence_role_behind_subject_does_not_reach_composite_with_matte_set(tmp_workdir):
-    """Even when a matte IS supplied, sequence-role overlays never occlude —
-    behind_subject is stripped before the role split, so the composite path
-    (which has no matte hook) never sees it."""
-    overlays = [
-        _sequence_overlay(text="first", start_s=0.0, end_s=3.0, behind_subject=True),
-        _sequence_overlay(text="second", start_s=1.0, end_s=4.0, position_y_frac=0.5),
-    ]
-    matte = _ConstantMatte(1.0)
-    sequences, work_dir = tos.render_text_overlay_sequences(overlays, tmp_workdir, matte=matte)
-    assert len(sequences) == 1  # composite still forms (>= 2 sequence overlays)
-    assert sequences[0]["is_animated"] is True
+    assert len(sequences) == 2
+    assert all(sequence["is_animated"] for sequence in sequences)
     assert work_dir is not None
-    # The composite renders "first" fully opaque during its window — proof
-    # the (never-consulted) matte did not occlude it.
-    assert len(matte.calls) == 0
+    settled_a = np.array(Image.open(sequences[0]["pattern"] % 68).convert("RGBA"))
+    settled_b = np.array(Image.open(sequences[0]["pattern"] % 69).convert("RGBA"))
+    assert not np.array_equal(settled_a, settled_b)
+    assert len(matte.calls) > 0
 
 
 # -- FFmpeg command shape parity -----------------------------------------------

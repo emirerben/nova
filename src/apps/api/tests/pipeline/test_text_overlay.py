@@ -295,6 +295,8 @@ class TestAnimatedOverlayASS:
                     "text_color": "#FF484C",
                     "stroke_width": 3,
                     "letter_spacing": 0.04,
+                    "line_spacing": 1.7,
+                    "max_width_frac": 0.3,
                     "rotation_deg": -4,
                 }],
                 4.0, tmpdir, 0,
@@ -310,16 +312,24 @@ class TestAnimatedOverlayASS:
             assert r"\1c&H4C48FF&" in dialogues[0]
             assert r"\fsp3.840" in dialogues[0]
             assert r"\frz-4.000" in dialogues[0]
-            assert r"\N" in dialogues[0]
+            # Each wrapped line gets its own positioned event so non-default
+            # line spacing is honored by libass instead of its fixed leading.
+            import re
+
+            assert r"\N" not in dialogues[0]
+            y_positions = [
+                int(re.search(r"\\pos\(\d+,(\d+)\)", line).group(1))
+                for line in dialogues[:2]
+            ]
+            assert y_positions[1] - y_positions[0] > 150
             # The settled tail drops clipping entirely, matching static text.
             assert r"\clip(" not in dialogues[-1]
 
-            import re
             first_clip = re.search(
                 r"\\clip\((\d+),(\d+),(\d+),(\d+)\)", dialogues[0]
             )
             mid_clip = re.search(
-                r"\\clip\((\d+),(\d+),(\d+),(\d+)\)", dialogues[35]
+                r"\\clip\((\d+),(\d+),(\d+),(\d+)\)", dialogues[70]
             )
             assert first_clip and mid_clip
             assert first_clip.group(1) == first_clip.group(3)
