@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.2.0] — 2026-07-26
+
+### Fixed
+- **Smart Caption boundary blurs now process only the frames where they are visible.** FFmpeg gates both Gaussian blur and frame blending to the normalized effect-window union while preserving the existing sinusoidal overlap weights, audio stream copy, and final encoding policy; same-image 1080×1920 validation reduced the pass from 24.77s to 4.86s with byte-identical output.
+- **Large boundary-effect plans no longer exceed FFmpeg's expression parser depth.** Blend weights and activation windows compile into balanced expression trees, with real-FFmpeg coverage at the full 120-event budget and fail-open caller coverage for subtitled renders.
+
 ## [0.13.0.0] — 2026-07-25
 
 ### Added
