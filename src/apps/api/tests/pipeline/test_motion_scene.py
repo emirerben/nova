@@ -7,7 +7,10 @@ import pytest
 from app.pipeline.motion_scene import (
     MOTION_MAX_ACTIVE_FRAMES,
     MOTION_RUNTIME_HASH,
+    MotionSceneError,
     _render_sequence,
+    _runtime_candidates,
+    _runtime_root,
     validate_motion_instances,
 )
 
@@ -81,6 +84,42 @@ def test_python_and_typescript_runtime_hashes_are_locked_together() -> None:
         Path(__file__).resolve().parents[4] / "packages" / "motion-runtime" / "src" / "contract.ts"
     ).read_text()
     assert f'"{MOTION_RUNTIME_HASH}"' in contract
+
+
+def test_runtime_candidates_support_shallow_production_module_path() -> None:
+    candidates = _runtime_candidates(Path("/app/app/pipeline/motion_scene.py"))
+
+    assert candidates[0] == Path("/app/motion-runtime")
+    assert Path("/app/packages/motion-runtime") in candidates
+
+
+def test_runtime_root_discovers_local_package_from_any_source_depth(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    module_file = tmp_path / "nested" / "app" / "pipeline" / "motion_scene.py"
+    runtime = tmp_path / "packages" / "motion-runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "motion-scene.schema.json").write_text("{}")
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene._runtime_candidates",
+        lambda _module_file: _runtime_candidates(module_file),
+    )
+
+    assert _runtime_root() == runtime
+
+
+def test_runtime_root_fails_explicitly_when_package_is_missing(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene._runtime_candidates",
+        lambda _module_file: (tmp_path / "missing-runtime",),
+    )
+
+    with pytest.raises(MotionSceneError, match="motion runtime package is missing"):
+        _runtime_root()
 
 
 def test_deno_renderer_discovers_cache_without_broad_read_permission(

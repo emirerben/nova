@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0.1] — 2026-07-26
+
+### Fixed
+- **Saved video edits now replace the rendered output again.** Production workers no longer assume the source checkout's directory depth when locating the packaged motion runtime, and text-only rerenders bypass the optional motion lane entirely when no motion scenes are present. Docker CI now exercises the Python runtime locator inside the production image so this deployment-only failure cannot recur.
+
 ## [0.13.2.1] — 2026-07-26
 
 ### Fixed
