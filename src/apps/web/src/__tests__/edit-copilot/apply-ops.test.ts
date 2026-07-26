@@ -335,6 +335,74 @@ describe("applyCopilotOps", () => {
     const timing = applyCopilotOps([{ op: "set_caption_timing", cue_index: 0, start_s: 1.5 }], extendedCtx());
     expect(timing.textActions).toEqual([{ type: "PATCH_BAR", id: "caption-1", patch: { start_s: 1.5, end_s: 2.5 } }]);
 
+    // set_caption_emphasis: turning it on derives smart_style from the cue's
+    // own role (mirrors the editor's Emphasize toggle, editor-bars.ts
+    // smartStyleForRole); turning it off clears both.
+    const hookBars = [
+      bar({ id: "caption-1", role: "narrated_caption", text: "old caption", start_s: 1.0, end_s: 2.0, smart_role: "hook" }),
+    ];
+    const hookSlots = [slot({ key: "a", slotId: "a", durationS: 3 })];
+    const hookExtras: Parameters<typeof buildCopilotSnapshot>[5] = {
+      captionsPresent: true,
+      captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.7 },
+    };
+    const hookCtx = {
+      bars: hookBars,
+      slots: hookSlots,
+      snapshot: buildCopilotSnapshot(hookBars, hookSlots, clips, { text_elements: true, timeline: true }, [], hookExtras),
+    };
+    const emphasize = applyCopilotOps(
+      [{ op: "set_caption_emphasis", cue_index: 0, emphasis: true }],
+      hookCtx,
+    );
+    expect(emphasize.textActions).toEqual([
+      { type: "PATCH_BAR", id: "caption-1", patch: { smart_emphasis: true, smart_style: "hook" } },
+    ]);
+    expect(emphasize.rejected).toEqual([]);
+
+    const emphasizedBars = [
+      bar({
+        id: "caption-1",
+        role: "narrated_caption",
+        text: "old caption",
+        start_s: 1.0,
+        end_s: 2.0,
+        smart_role: "hook",
+        smart_emphasis: true,
+      }),
+    ];
+    const emphasizedCtx = {
+      bars: emphasizedBars,
+      slots: hookSlots,
+      snapshot: buildCopilotSnapshot(emphasizedBars, hookSlots, clips, { text_elements: true, timeline: true }, [], hookExtras),
+    };
+    const clear = applyCopilotOps(
+      [{ op: "set_caption_emphasis", cue_index: 0, emphasis: false }],
+      emphasizedCtx,
+    );
+    expect(clear.textActions).toEqual([
+      { type: "PATCH_BAR", id: "caption-1", patch: { smart_emphasis: false, smart_style: null } },
+    ]);
+
+    // Drift: emphasis was toggled locally after the snapshot was read.
+    const driftedBars = [
+      bar({
+        id: "caption-1",
+        role: "narrated_caption",
+        text: "old caption",
+        start_s: 1.0,
+        end_s: 2.0,
+        smart_role: "hook",
+        smart_emphasis: true,
+      }),
+    ];
+    const drifted = applyCopilotOps(
+      [{ op: "set_caption_emphasis", cue_index: 0, emphasis: true }],
+      { bars: driftedBars, slots: hookSlots, snapshot: hookCtx.snapshot },
+    );
+    expect(drifted.textActions).toEqual([]);
+    expect(drifted.rejected).toMatchObject([{ reason: "user_changed" }]);
+
     const meta = applyCopilotOps([{ op: "set_caption_meta", patch: { style: "word", y_frac: 0.8 } }], extendedCtx());
     expect(meta.captionMetaPatch).toEqual({ style: "word", y_frac: 0.8 });
 

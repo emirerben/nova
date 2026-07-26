@@ -98,6 +98,10 @@ export function localCaptionBarPatchFromPatch(
     "stroke_width",
     "shadow_enabled",
     "y_frac",
+    // 4b emphasize toggle: hasOwnProperty (not truthiness) below lets an
+    // explicit null/false clear-emphasis patch through, not just a truthy set.
+    "smart_style",
+    "smart_emphasis",
   ] as const) {
     if (Object.prototype.hasOwnProperty.call(patch, key)) {
       (localPatch as Record<string, unknown>)[key] = patch[key];
@@ -218,7 +222,76 @@ export function convertCaptionCues(
     highlight_color: variant?.caption_highlight_color ?? undefined,
     stroke_width: variant?.caption_stroke_width ?? undefined,
     shadow_enabled: variant?.caption_shadow_enabled ?? undefined,
+    // 4b: server-authored role/style/emphasis, surfaced for the inspector's
+    // badge + emphasize toggle. undefined (not null) so an untouched bar's
+    // Save round-trips through the ORIGINAL cue (see barsToCaptionCues).
+    smart_role: c.smart_role ?? undefined,
+    smart_style: c.smart_style ?? undefined,
+    smart_emphasis: c.smart_emphasis ?? undefined,
   }));
+}
+
+/**
+ * smart_role (chunker's SemanticRole vocabulary, read-only) → smart_style
+ * (the closed ASS-style token set `persist_variant_captions` accepts, mirrors
+ * `routes/generative_jobs.py` CaptionCue.smart_style Literal). Every name
+ * matches its style token except "context_shift" → "context". Falls back to
+ * "hook" for a role-less cue (e.g. legacy/plain cues) so the Emphasize toggle
+ * always has a valid closed-set value to send.
+ */
+const ROLE_TO_SMART_STYLE: Record<
+  NonNullable<TextElementBar["smart_role"]>,
+  NonNullable<TextElementBar["smart_style"]>
+> = {
+  hook: "hook",
+  context_shift: "context",
+  list_item: "list_item",
+  example: "example",
+  payoff: "payoff",
+  cta: "cta",
+};
+
+export function smartStyleForRole(
+  role: TextElementBar["smart_role"] | null | undefined,
+): NonNullable<TextElementBar["smart_style"]> {
+  return (role && ROLE_TO_SMART_STYLE[role]) || "hook";
+}
+
+/** Badge copy for the caption role chip (InspectorPanel). */
+export const SMART_ROLE_BADGE_LABELS: Record<NonNullable<TextElementBar["smart_role"]>, string> = {
+  hook: "Hook",
+  context_shift: "Context",
+  list_item: "List",
+  example: "Example",
+  payoff: "Payoff",
+  cta: "CTA",
+};
+
+/**
+ * Editor-side font-size PREVIEW scale for a caption cue, keyed by smart_style.
+ * Mirrors the relative role→size hierarchy in `_SMART_CAPTION_TAGS`
+ * (app/pipeline/captions.py — kept after 4a removed only that dict's color
+ * override) against the narrated default of 72px (`_ass_header_for`). This is
+ * an ordering approximation, not a byte-exact burn size: the real burn size
+ * is a text-fit measurement (`measure_caption`) the editor can't replicate
+ * without running the same layout engine. It exists so "editor == output"
+ * holds for RELATIVE size (emphasized cues visibly look bigger here too).
+ */
+const SMART_CAPTION_ROLE_SIZE_SCALE: Partial<Record<NonNullable<TextElementBar["smart_style"]>, number>> = {
+  hook: 1.14,
+  list_item: 1.14,
+  payoff: 1.14,
+  cta: 1.08,
+  context: 1.06,
+  example: 0.97,
+};
+
+export function smartCaptionPreviewSizePx(
+  baseSizePx: number,
+  smartStyle: TextElementBar["smart_style"] | null | undefined,
+): number {
+  const scale = smartStyle ? SMART_CAPTION_ROLE_SIZE_SCALE[smartStyle] : undefined;
+  return Math.round(baseSizePx * (scale ?? 1));
 }
 
 /** scene_timings[] → bars (stable index ids; untimed scenes skipped). */
@@ -439,14 +512,22 @@ export function barsToCaptionCues(
 ): CaptionCue[] {
   return bars
     .filter((bar) => isCaptionBar(bar) && !isSyntheticSubtitledCaptionBar(bar))
-    .map((bar) => ({
-      ...(originalById.get(bar.id) ??
-        (captionIndexFromBarId(bar.id) != null
-          ? originalById.get(captionBarId(captionIndexFromBarId(bar.id) as number))
-          : undefined) ??
-        {}),
-      text: bar.text,
-      start_s: bar.start_s,
-      end_s: bar.end_s,
-    }));
+    .map((bar) => {
+      const cue: CaptionCue = {
+        ...(originalById.get(bar.id) ??
+          (captionIndexFromBarId(bar.id) != null
+            ? originalById.get(captionBarId(captionIndexFromBarId(bar.id) as number))
+            : undefined) ??
+          {}),
+        text: bar.text,
+        start_s: bar.start_s,
+        end_s: bar.end_s,
+      };
+      // 4b Emphasize toggle: undefined means untouched (the original spread
+      // above already carries whatever the server authored); a defined value
+      // (including explicit null/false from clearing) is the user's edit.
+      if (bar.smart_style !== undefined) cue.smart_style = bar.smart_style;
+      if (bar.smart_emphasis !== undefined) cue.smart_emphasis = bar.smart_emphasis;
+      return cue;
+    });
 }

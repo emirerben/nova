@@ -126,6 +126,7 @@ export type CopilotOp =
   | { op: "edit_caption"; cue_index: number; text: string }
   | { op: "set_caption_timing"; cue_index: number; start_s?: number; end_s?: number }
   | { op: "set_caption_meta"; patch: CaptionMetaPatch }
+  | { op: "set_caption_emphasis"; cue_index: number; emphasis: boolean }
   | { op: "swap_music"; track_id: string }
   | { op: "set_mix"; music_level: number }
   | { op: "set_intro_layout"; layout: "linear" | "cluster" }
@@ -466,7 +467,12 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
   ) {
     return "overlay";
   }
-  if (op.op === "edit_caption" || op.op === "set_caption_timing" || op.op === "set_caption_meta") {
+  if (
+    op.op === "edit_caption" ||
+    op.op === "set_caption_timing" ||
+    op.op === "set_caption_meta" ||
+    op.op === "set_caption_emphasis"
+  ) {
     return "caption";
   }
   if (op.op === "swap_music" || op.op === "set_mix") return "music";
@@ -758,6 +764,22 @@ export function validateCopilotOp(
       const patch = validateCaptionMetaPatch(raw.patch);
       if (!patch.ok) return patch;
       return { ok: true, op: { op: opName, patch: patch.patch } };
+    }
+    case "set_caption_emphasis": {
+      if (!integerIndex(raw.cue_index) || typeof raw.emphasis !== "boolean") {
+        return reject(
+          "missing_required",
+          "set_caption_emphasis requires cue_index and a boolean emphasis",
+          opName,
+        );
+      }
+      if (snapshot?.captions?.cues_editable === false) {
+        return reject("invalid_index", "This draft has caption settings but no editable cue list.", opName);
+      }
+      if (!hasIndex(snapshot, "caption", raw.cue_index)) {
+        return reject("invalid_index", "cue_index must point into snapshot caption cues", opName);
+      }
+      return { ok: true, op: { op: opName, cue_index: raw.cue_index, emphasis: raw.emphasis } };
     }
     case "swap_music": {
       if (typeof raw.track_id !== "string" || raw.track_id.trim() === "") {

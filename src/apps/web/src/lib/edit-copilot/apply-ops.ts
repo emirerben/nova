@@ -15,6 +15,7 @@ import {
   applyTextTimingInput,
   sequentialSlotLayout,
 } from "@/app/plan/items/[id]/_editor/editor-bar-drag";
+import { smartStyleForRole } from "@/app/plan/items/[id]/_editor/editor-bars";
 import {
   deleteSlotEnforceFloor,
   splitSlotAt,
@@ -252,6 +253,7 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "edit_caption") return `Caption ${op.cue_index + 1} edited`;
   if (op.op === "set_caption_timing") return `Caption ${op.cue_index + 1} timing`;
   if (op.op === "set_caption_meta") return "Captions";
+  if (op.op === "set_caption_emphasis") return `Caption ${op.cue_index + 1} emphasis`;
   if (op.op === "swap_music") return "Swapped song";
   if (op.op === "set_mix") return "Music volume";
   if (op.op === "set_intro_layout") return "Intro layout";
@@ -950,6 +952,35 @@ export function applyCopilotOps(
         label: `Caption ${op.cue_index + 1} timing`,
         from: `${fmtSeconds(bar.start_s)}-${fmtSeconds(bar.end_s)}`,
         to: `${fmtSeconds(next.start_s)}-${fmtSeconds(next.end_s)}`,
+      });
+    } else if (op.op === "set_caption_emphasis") {
+      if (ctx.snapshot.captions?.cues_editable === false) {
+        rejected.push(reject(op.op, labelForOp(op), "unsupported_field", "This draft has caption settings but no editable cue list."));
+        continue;
+      }
+      const snap = captionSnapAt(ctx.snapshot, op.cue_index);
+      const bar = snap ? captionBarForSnap(ctx.bars, snap) : null;
+      if (!snap || !bar) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "caption cue no longer exists"));
+        continue;
+      }
+      const currentEmphasis = bar.smart_emphasis === true;
+      const snapEmphasis = snap.smart_emphasis === true;
+      if (currentEmphasis !== snapEmphasis) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption emphasis was changed after Nova read it"));
+        continue;
+      }
+      // smart_style follows the cue's own role (hook/context/list_item/example/
+      // payoff/cta) — same mapping the editor's Emphasize toggle uses
+      // (editor-bars.ts smartStyleForRole) — clearing resets both.
+      const patch = op.emphasis
+        ? { smart_emphasis: true, smart_style: smartStyleForRole(bar.smart_role ?? snap.smart_role) }
+        : { smart_emphasis: false, smart_style: null };
+      textActions.push({ type: "PATCH_BAR", id: bar.id, patch });
+      applied.push({
+        label: `Caption ${op.cue_index + 1} emphasis`,
+        from: currentEmphasis ? "emphasized" : "normal",
+        to: op.emphasis ? "emphasized" : "normal",
       });
     } else if (op.op === "set_caption_meta") {
       const snap = ctx.snapshot.captions?.meta ?? null;

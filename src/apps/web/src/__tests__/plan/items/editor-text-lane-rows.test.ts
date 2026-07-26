@@ -2,10 +2,14 @@ import { describe, expect, it } from "@jest/globals";
 import {
   barsToCaptionCues,
   captionMetaPatchFromCaptionBarPatch,
+  convertCaptionCues,
   deriveLaneRows,
   deriveTextLaneRows,
   localCaptionBarPatchFromPatch,
   seedBarsFromVariant,
+  smartCaptionPreviewSizePx,
+  smartStyleForRole,
+  SMART_ROLE_BADGE_LABELS,
   TEXT_LANE_BASE_HEIGHT_PX,
 } from "@/app/plan/items/[id]/_editor/editor-bars";
 import {
@@ -317,6 +321,121 @@ describe("barsToCaptionCues", () => {
         end_s: 1,
       },
     ]);
+  });
+
+  it("4b: writes a user-set smart_style/smart_emphasis, overriding the original", () => {
+    const original: CaptionCue = {
+      text: "we flew to Turkey",
+      start_s: 0,
+      end_s: 1,
+      smart_role: "hook",
+      smart_style: null,
+      smart_emphasis: false,
+    };
+
+    expect(
+      barsToCaptionCues(
+        [
+          {
+            id: "caption-0",
+            role: "narrated_caption",
+            text: "we flew to Turkey",
+            start_s: 0,
+            end_s: 1,
+            // Emphasize toggle ON: editor sets both fields explicitly.
+            smart_style: "hook",
+            smart_emphasis: true,
+          },
+        ],
+        new Map([["caption-0", original]]),
+      ),
+    ).toEqual([{ ...original, smart_style: "hook", smart_emphasis: true }]);
+  });
+
+  it("4b: an untouched bar (smart_style/smart_emphasis undefined) preserves the original cue", () => {
+    const original: CaptionCue = {
+      text: "we flew to Turkey",
+      start_s: 0,
+      end_s: 1,
+      smart_role: "hook",
+      smart_style: "hook",
+      smart_emphasis: true,
+    };
+
+    expect(
+      barsToCaptionCues(
+        [
+          {
+            id: "caption-0",
+            role: "narrated_caption",
+            text: "we flew to Turkey, honestly",
+            start_s: 0,
+            end_s: 1.4,
+          },
+        ],
+        new Map([["caption-0", original]]),
+      ),
+    ).toEqual([{ ...original, text: "we flew to Turkey, honestly", end_s: 1.4 }]);
+  });
+});
+
+describe("convertCaptionCues smart-caption fields (4b)", () => {
+  it("seeds role/style/emphasis onto the bar for the badge + toggle", () => {
+    const cues: CaptionCue[] = [
+      {
+        text: "we flew to Turkey",
+        start_s: 0,
+        end_s: 1,
+        smart_role: "hook",
+        smart_style: "hook",
+        smart_emphasis: true,
+      },
+    ];
+    const [bar] = convertCaptionCues(cues);
+    expect(bar.smart_role).toBe("hook");
+    expect(bar.smart_style).toBe("hook");
+    expect(bar.smart_emphasis).toBe(true);
+  });
+
+  it("leaves the fields undefined (not null) for a plain cue", () => {
+    const [bar] = convertCaptionCues([{ text: "plain", start_s: 0, end_s: 1 }]);
+    expect(bar.smart_role).toBeUndefined();
+    expect(bar.smart_style).toBeUndefined();
+    expect(bar.smart_emphasis).toBeUndefined();
+  });
+});
+
+describe("smartStyleForRole (4b)", () => {
+  it("maps every SemanticRole to its closed smart_style token", () => {
+    expect(smartStyleForRole("hook")).toBe("hook");
+    expect(smartStyleForRole("context_shift")).toBe("context");
+    expect(smartStyleForRole("list_item")).toBe("list_item");
+    expect(smartStyleForRole("example")).toBe("example");
+    expect(smartStyleForRole("payoff")).toBe("payoff");
+    expect(smartStyleForRole("cta")).toBe("cta");
+  });
+
+  it("falls back to hook for a role-less cue", () => {
+    expect(smartStyleForRole(null)).toBe("hook");
+    expect(smartStyleForRole(undefined)).toBe("hook");
+  });
+
+  it("has a badge label for every role smartStyleForRole accepts", () => {
+    for (const role of ["hook", "context_shift", "list_item", "example", "payoff", "cta"] as const) {
+      expect(SMART_ROLE_BADGE_LABELS[role]).toEqual(expect.any(String));
+    }
+  });
+});
+
+describe("smartCaptionPreviewSizePx (4b)", () => {
+  it("scales up for emphasized-hierarchy roles and down for example", () => {
+    expect(smartCaptionPreviewSizePx(64, "hook")).toBeGreaterThan(64);
+    expect(smartCaptionPreviewSizePx(64, "example")).toBeLessThan(64);
+  });
+
+  it("is a no-op preview for a role-less/absent style", () => {
+    expect(smartCaptionPreviewSizePx(64, null)).toBe(64);
+    expect(smartCaptionPreviewSizePx(64, undefined)).toBe(64);
   });
 });
 

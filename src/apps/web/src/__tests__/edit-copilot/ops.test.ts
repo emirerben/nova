@@ -156,6 +156,20 @@ describe("edit-copilot extended op validation", () => {
     ).toMatchObject({ ok: true, op: { patch: { enabled: true, style: "word", font: null, y_frac: 0.9 } } });
     expect(validateCopilotOp({ op: "set_caption_meta", patch: { junk: 1 } }, validationSnapshot))
       .toMatchObject({ ok: false, rejection: { reason: "empty_patch" } });
+    expect(validateCopilotOp({ op: "set_caption_emphasis", cue_index: 0, emphasis: true }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { op: "set_caption_emphasis", cue_index: 0, emphasis: true } });
+    expect(validateCopilotOp({ op: "set_caption_emphasis", cue_index: 0, emphasis: false }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { emphasis: false } });
+    expect(validateCopilotOp({ op: "set_caption_emphasis", cue_index: 0, emphasis: "yes" }, validationSnapshot))
+      .toMatchObject({ ok: false, rejection: { reason: "missing_required" } });
+    expect(validateCopilotOp({ op: "set_caption_emphasis", cue_index: 5, emphasis: true }, validationSnapshot))
+      .toMatchObject({ ok: false, rejection: { reason: "invalid_index" } });
+    expect(
+      validateCopilotOp(
+        { op: "set_caption_emphasis", cue_index: 0, emphasis: true },
+        { ...validationSnapshot, captions: { cues: [{ id: "caption-1" }], cues_editable: false } },
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_index" } });
     expect(validateCopilotOp({ op: "swap_music", track_id: "track-1" }, validationSnapshot)).toMatchObject({ ok: true });
     expect(validateCopilotOp({ op: "set_mix", music_level: 2 }, validationSnapshot))
       .toMatchObject({ ok: true, op: { music_level: 1 } });

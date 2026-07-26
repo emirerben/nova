@@ -50,6 +50,38 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.has_narrated_captions).toBe(true);
   });
 
+  it("4b: surfaces smart_role/smart_emphasis on each caption cue", () => {
+    const snapshot = buildCopilotSnapshot(
+      [
+        bar({
+          id: "caption-0",
+          role: "narrated_caption",
+          text: "we flew to Turkey",
+          start_s: 0,
+          end_s: 1.2,
+          smart_role: "hook",
+          smart_emphasis: true,
+        }),
+        bar({
+          id: "caption-1",
+          role: "narrated_caption",
+          text: "for the summer",
+          start_s: 1.2,
+          end_s: 2.2,
+        }),
+      ],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      { captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.7 } },
+    );
+
+    expect(snapshot.captions?.cues[0]).toMatchObject({ smart_role: "hook", smart_emphasis: true });
+    // Absent on-bar fields normalize to null, not undefined (stable JSON shape).
+    expect(snapshot.captions?.cues[1]).toMatchObject({ smart_role: null, smart_emphasis: null });
+  });
+
   it("renders effective style values and output windows", () => {
     const snapshot = buildCopilotSnapshot(
       [

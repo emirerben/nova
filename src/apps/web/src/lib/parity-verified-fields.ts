@@ -81,4 +81,9 @@ export const INSPECTOR_INTERNAL_FIELDS: ReadonlySet<string> = new Set([
   "position",
   // Resolved into size_px by the size control:
   "size_class",
+  // Caption role badge + Emphasize toggle own these (InspectorPanel), not the
+  // generic read-only row dumper.
+  "smart_role",
+  "smart_style",
+  "smart_emphasis",
 ]);

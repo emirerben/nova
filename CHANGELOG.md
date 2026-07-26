@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.2.0] — 2026-07-26
+
+### Added
+- **Caption emphasis is now visible and editable in the editor.** Each caption row shows its AI-assigned role (Hook / Context / List / Example / Payoff / CTA) and, for emphasized cues, a size-preview hint matching what the burn does — no more guessing which lines will render bigger. A per-cue "Emphasize" toggle sets or clears the emphasis directly, and a merge-with-neighbor action folds an orphan caption fragment into the cue before or after it. Both flow through the existing captions save path — no new endpoint.
+- **The chat copilot can now toggle caption emphasis.** "Emphasize Turkey" or "remove the emphasis on the intro line" resolves to the matching caption cue and applies instantly, alongside the existing caption text/timing/meta edits.
+
 ## [0.15.1.1] — 2026-07-26
 
 ### Fixed
