@@ -1,7 +1,8 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type { TextElement } from "@/lib/plan-api";
+import { animationStateAt } from "@/lib/overlay-animation";
 import {
   CANVAS_H,
   resolveTextElementsLayout,
@@ -95,6 +96,7 @@ export function TextElementOverlayContent({
   canvasPixelCssSize = `${100 / CANVAS_H}cqh`,
   reserveText,
   showCursor = false,
+  revealProgress,
   children,
 }: {
   layout: TextElementLayout;
@@ -104,6 +106,8 @@ export function TextElementOverlayContent({
   canvasPixelCssSize?: string;
   reserveText?: string | null;
   showCursor?: boolean;
+  /** Apply handwriting clipping to the shrink-to-fit painted node. */
+  revealProgress?: number;
   children?: ReactNode;
 }) {
   const content = children ?? layout.text;
@@ -113,6 +117,36 @@ export function TextElementOverlayContent({
     strokeWidth,
     canvasPixelCssSize,
   });
+  const handwritingStyle: CSSProperties | undefined =
+    revealProgress === undefined
+      ? undefined
+      : (() => {
+          const horizontalBleed = Math.max(
+            layout.strokeWidth + 2,
+            layout.shadowEnabled ? 42 : 0,
+            layout.glowStrength > 0 ? 62 : 0,
+          );
+          const verticalBleed = Math.max(
+            layout.strokeWidth + 2,
+            layout.shadowEnabled ? 48 : 0,
+            layout.glowStrength > 0 ? 62 : 0,
+          );
+          const leftBleed = `calc(${-horizontalBleed} * ${canvasPixelCssSize})`;
+          const verticalClipBleed = `calc(${-verticalBleed} * ${canvasPixelCssSize})`;
+          const rightInset = `calc(${(1 - revealProgress) * 100}% + ${
+            (1 - 2 * revealProgress) * horizontalBleed
+          } * ${canvasPixelCssSize})`;
+          return {
+            display: "inline-block",
+            width: "max-content",
+            maxWidth: "100%",
+            clipPath:
+              revealProgress >= 1
+                ? undefined
+                : `inset(${verticalClipBleed} ${rightInset} ${verticalClipBleed} ${leftBleed})`,
+            willChange: revealProgress >= 1 ? undefined : "clip-path",
+          };
+        })();
 
   if (reserveText != null && typeof content === "string" && reserveText.startsWith(content)) {
     const hiddenRemainder = reserveText.slice(content.length);
@@ -131,13 +165,39 @@ export function TextElementOverlayContent({
     );
   }
 
+  if (revealProgress === undefined) {
+    return <div style={sharedStyle}>{content}</div>;
+  }
+
   return (
     <div
-      style={sharedStyle}
+      data-handwriting-reveal=""
+      style={{
+        display: "flex",
+        justifyContent:
+          layout.alignment === "left"
+            ? "flex-start"
+            : layout.alignment === "right"
+              ? "flex-end"
+              : "center",
+      }}
     >
-      {content}
+      <div style={{ ...sharedStyle, ...handwritingStyle }}>{content}</div>
     </div>
   );
+}
+
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, []);
+  return reduced;
 }
 
 export default function TextElementOverlayLayer({
@@ -148,6 +208,7 @@ export default function TextElementOverlayLayer({
   currentTime?: number;
 }) {
   const layouts = resolveTextElementsLayout(elements);
+  const reducedMotion = usePrefersReducedMotion();
   const visible =
     currentTime === undefined
       ? layouts
@@ -170,6 +231,18 @@ export default function TextElementOverlayLayer({
             fontSize={`${(layout.sizePx / CANVAS_H) * 100}cqh`}
             strokeWidth={
               layout.strokeWidth > 0 ? `${(layout.strokeWidth / CANVAS_H) * 100}cqh` : null
+            }
+            revealProgress={
+              layout.effect === "handwriting"
+                ? reducedMotion || currentTime === undefined
+                  ? 1
+                  : animationStateAt(
+                      layout.effect,
+                      currentTime - layout.start_s,
+                      Math.max(0, layout.end_s - layout.start_s),
+                      layout.text,
+                    ).revealProgress
+                : undefined
             }
           />
         </div>

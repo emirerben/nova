@@ -920,6 +920,7 @@ export interface TextElement {
     | "typewriter"
     | "stream-in"
     | "staggered-slice"
+    | "handwriting"
     | "dissolve-out"
     | "bounce"
     | "slide-in"

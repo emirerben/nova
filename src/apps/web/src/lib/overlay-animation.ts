@@ -23,6 +23,8 @@ export interface AnimationState {
   visibleText: string;
   /** Whether a zero-width streaming cursor should be drawn after visibleText. */
   showCursor: boolean;
+  /** Left-to-right painted-text reveal. 0 = fully clipped, 1 = settled. */
+  revealProgress: number;
   /** Exit dissolve progress 0-1. Preview-only; text layout stays unchanged. */
   dissolveProgress: number;
 }
@@ -270,6 +272,25 @@ export function motionCubicBezier(
   return sampleY(u);
 }
 
+export const HANDWRITING_NOMINAL_DELAY_S = 0.2;
+export const HANDWRITING_NOMINAL_DRAW_S = 2.0;
+export const HANDWRITING_NOMINAL_SETTLE_S =
+  HANDWRITING_NOMINAL_DELAY_S + HANDWRITING_NOMINAL_DRAW_S;
+
+/** Mirror of `_handwriting_progress` in text_overlay_skia.py. */
+export function handwritingProgressAt(tLocal: number, durationS: number): number {
+  if (durationS <= 0) return 1.0;
+  const timingScale = Math.min(1.0, durationS / HANDWRITING_NOMINAL_SETTLE_S);
+  const delayS = HANDWRITING_NOMINAL_DELAY_S * timingScale;
+  const drawS = HANDWRITING_NOMINAL_DRAW_S * timingScale;
+  const normalized = (Math.max(0, tLocal) - delayS) / Math.max(0.001, drawS);
+  return motionCubicBezier(normalized, 0.25, 0.1, 0.25, 1.0);
+}
+
+export function handwritingSettleS(durationS: number): number {
+  return Math.max(0, Math.min(HANDWRITING_NOMINAL_SETTLE_S, durationS));
+}
+
 /** Mirror of _clamped_keyframes_s + _pop_in_scale_at. */
 export function popInScaleAt(tLocal: number, durationS: number): number {
   // Python constants (verbatim):
@@ -370,6 +391,7 @@ function identityAnimationState(text: string): AnimationState {
     scaleOriginY: 0.0,
     visibleText: text,
     showCursor: false,
+    revealProgress: 1.0,
     dissolveProgress: 0,
   };
 }
@@ -462,6 +484,7 @@ export function animationStateAt(
     scaleOriginY,
     visibleText,
     showCursor,
+    revealProgress,
     dissolveProgress,
   } = identityAnimationState(text);
 
@@ -511,6 +534,8 @@ export function animationStateAt(
       }
     }
     // else scale = 1.0 (identity)
+  } else if (effect === "handwriting") {
+    revealProgress = handwritingProgressAt(tLocal, durationS);
   } else if (effect === "dissolve-out") {
     dissolveProgress = dissolveOutProgressAt(tLocal, durationS);
     alpha = dissolveOutAlphaAt(dissolveProgress);
@@ -525,6 +550,7 @@ export function animationStateAt(
     scaleOriginY,
     visibleText,
     showCursor,
+    revealProgress,
     dissolveProgress,
   };
 }
@@ -546,7 +572,7 @@ export function sequenceFadeOutAlphaAt(
   return Math.max(0, 1 - progress * progress);
 }
 
-const SEQUENCE_FADE_EFFECTS = new Set(["fade-in", "static", "none"]);
+const SEQUENCE_FADE_EFFECTS = new Set(["fade-in", "handwriting", "static", "none"]);
 
 /** Apply the sequence tail only to the same role/effect matrix as Skia's
  * `_is_sequence_overlay`. Lyric lines carry the same field name but use their

@@ -765,6 +765,132 @@ def test_staggered_slice_is_animated_and_links_settled_hold_frames():
     assert hold_indices[-1] == 119
 
 
+def test_handwriting_timing_matches_css_ease_and_short_duration_compression():
+    import json
+    from pathlib import Path
+
+    from app.pipeline import text_overlay as classic_text_overlay
+
+    timing_cases = json.loads(
+        (Path(__file__).parents[1] / "fixtures" / "handwriting_timing.json").read_text()
+    )
+    for case in timing_cases:
+        expected = case["progress"]
+        args = (case["t_local"], case["duration_s"])
+        assert tos._handwriting_progress(*args) == pytest.approx(expected, abs=1e-8)
+        assert classic_text_overlay._handwriting_progress(*args) == pytest.approx(
+            expected, abs=1e-8
+        )
+
+    assert tos._handwriting_progress(0.0, 4.0) == 0.0
+    assert tos._handwriting_progress(0.199, 4.0) == 0.0
+    assert tos._handwriting_progress(1.2, 4.0) == pytest.approx(0.8024, abs=1e-3)
+    assert tos._handwriting_progress(2.2, 4.0) == 1.0
+    assert tos._handwriting_settle_s(4.0) == 2.2
+
+    assert tos._handwriting_progress(0.09, 1.0) == 0.0
+    assert tos._handwriting_progress(0.5, 1.0) > 0.7
+    assert tos._handwriting_progress(1.0, 1.0) == 1.0
+    assert tos._handwriting_progress(0.0, 0.0) == 1.0
+
+
+def test_handwriting_reveal_is_monotonic_and_settled_frame_is_static():
+    import io
+
+    overlay = {
+        "text": "🗣️ FIELD NOTES\nNUMBER TWO",
+        "effect": "handwriting",
+        "font_family": "Inter",
+        "text_size_px": 110,
+        "text_color": "#FF484C",
+        "stroke_width": 3,
+        "shadow_enabled": True,
+        "glow_color": "#FF484C",
+        "glow_strength": 0.5,
+        "letter_spacing": 0.04,
+        "line_spacing": 1.2,
+        "rotation_deg": -4,
+        "text_anchor": "right",
+        "position_x_frac": 0.9,
+        "position_y_frac": 0.45,
+    }
+
+    def opaque_pixels(t_local: float) -> int:
+        image = tos._draw_frame(overlay, t_local, 4.0)
+        rgba = Image.open(io.BytesIO(bytes(image.encodeToData()))).convert("RGBA")
+        return sum(value > 0 for value in rgba.getchannel("A").get_flattened_data())
+
+    counts = [opaque_pixels(t) for t in (0.1, 0.5, 1.2, 2.0, 2.2)]
+    assert counts[0] == 0
+    assert counts == sorted(counts)
+    assert counts[2] < counts[-1]
+
+    settled = bytes(tos._draw_frame(overlay, 2.2, 4.0).encodeToData())
+    static = bytes(tos._draw_frame({**overlay, "effect": "static"}, 2.2, 4.0).encodeToData())
+    assert settled == static
+
+
+def test_handwriting_uses_long_ceiling_and_links_only_safe_settled_frames():
+    overlay = {"text": "FIELD NOTES", "effect": "handwriting"}
+    assert tos._is_animated(overlay)
+    assert tos._uses_long_running_frame_ceiling(overlay)
+
+    plan = tos._handwriting_hold_plan(overlay, 241, 1.0 / tos.FPS, 8.0)
+    assert plan is not None
+    render_indices, settled_idx, hold_indices = plan
+    assert settled_idx == 66
+    assert hold_indices[0] == 67
+    assert hold_indices[-1] == 240
+    assert max(render_indices) == settled_idx
+
+    assert (
+        tos._handwriting_hold_plan(
+            {**overlay, "theme_transition": {"type": "giant-title-wipe"}},
+            241,
+            1.0 / tos.FPS,
+            8.0,
+        )
+        is None
+    )
+    # A persisted behind_subject request with no active matte degrades to normal
+    # text and may still reuse settled frames. Active mattes bypass hold planning
+    # in _generate_overlay_sequence.
+    assert (
+        tos._handwriting_hold_plan(
+            {**overlay, "behind_subject": True},
+            241,
+            1.0 / tos.FPS,
+            8.0,
+        )
+        is not None
+    )
+    assert 40 * tos.FPS < tos.BEHIND_SUBJECT_FRAME_CEILING
+
+
+def test_sequence_handwriting_combines_reveal_hold_and_fade_out():
+    overlay = {
+        "text": "FIELD NOTES",
+        "role": tos.SEQUENCE_OVERLAY_ROLE,
+        "effect": "handwriting",
+        "fade_out_ms": 500,
+        "start_s": 0.0,
+        "end_s": 6.0,
+    }
+    assert tos._is_sequence_overlay(overlay)
+    assert tos._sequence_head_settle_s(overlay) == 2.2
+    assert tos._sequence_block_changing_at(overlay, 1.0, 6.0)
+    assert not tos._sequence_block_changing_at(overlay, 3.0, 6.0)
+    assert tos._sequence_block_changing_at(overlay, 5.75, 6.0)
+
+    plan = tos._sequence_hold_plan(overlay, 181, 1.0 / tos.FPS, 6.0)
+    assert plan is not None
+    render_indices, settled_idx, hold_indices = plan
+    assert settled_idx == 66
+    assert 90 in hold_indices
+    assert 164 in hold_indices
+    assert 165 in render_indices
+
+
 def test_skia_validation_restores_explicit_newlines_after_ass_sanitization():
     clamped = tos._validate_and_clamp(
         {

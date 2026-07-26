@@ -78,6 +78,7 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "typewriter",
         "stream-in",
         "staggered-slice",
+        "handwriting",
         "dissolve-out",
         "bounce",
         "slide-in",
@@ -173,6 +174,7 @@ _BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
     "slide-up": "slide-up",
     "karaoke-line": "karaoke-line",
     "staggered-slice": "staggered-slice",
+    "handwriting": "handwriting",
 }
 
 # Map from burn-dict text_anchor value → TextElement alignment.
@@ -327,6 +329,7 @@ class TextElement(BaseModel):
             "typewriter",
             "stream-in",
             "staggered-slice",
+            "handwriting",
             "dissolve-out",
             "bounce",
             "slide-in",

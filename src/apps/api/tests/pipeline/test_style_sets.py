@@ -16,6 +16,7 @@ from app.pipeline.style_sets import (
 
 def test_special_editor_effects_are_selectable_but_not_style_defaults() -> None:
     assert "staggered-slice" in _INTRO_ANIMATION_EFFECTS
+    assert "handwriting" in _INTRO_ANIMATION_EFFECTS
     assert all(
         role.get("effect") not in {"staggered-slice", "giant-title-wipe"}
         for style_set_id in style_set_ids()

@@ -50,6 +50,7 @@ _SKIA_EFFECTS = {
     "typewriter",
     "stream-in",
     "staggered-slice",
+    "handwriting",
     "dissolve-out",
     "bounce",
     "slide-up",
