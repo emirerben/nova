@@ -11,10 +11,9 @@
  * a friendly error.
  */
 import StyleAgentInterview from "@/app/plan/_components/StyleAgentInterview";
+import { ROUTE_METADATA } from "@/lib/site-metadata";
 
-export const metadata = {
-  title: "Your Style — Kria",
-};
+export const metadata = ROUTE_METADATA.style;
 
 export default function StylePage() {
   return (
