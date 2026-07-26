@@ -1,0 +1,25 @@
+{
+  "overlays": [
+    {
+      "text": "KEEP THE FONT\nREVEAL THE INK",
+      "effect": "ink-reveal",
+      "font_family": "Inter",
+      "text_size_px": 118,
+      "position_x_frac": 0.88,
+      "position_y_frac": 0.46,
+      "text_anchor": "right",
+      "vertical_anchor": "center",
+      "max_width_frac": 0.62,
+      "text_color": "#FFFFFF",
+      "glow_color": "#FF484C",
+      "glow_strength": 0.5,
+      "stroke_width": 3,
+      "shadow_enabled": true,
+      "letter_spacing": 0.03,
+      "line_spacing": 1.2,
+      "rotation_deg": 5,
+      "start_s": 0.0,
+      "end_s": 5.5
+    }
+  ]
+}

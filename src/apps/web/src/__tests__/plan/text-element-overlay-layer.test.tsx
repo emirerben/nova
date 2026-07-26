@@ -91,21 +91,21 @@ describe("TextElementOverlayLayer", () => {
     expect(screen.queryByText("READY NOW")).not.toBeInTheDocument();
   });
 
-  it("animates authoritative handwriting elements from the video playhead", () => {
-    const handwriting = { ...element, effect: "handwriting" as const };
+  it("animates authoritative ink-reveal elements from the video playhead", () => {
+    const inkReveal = { ...element, effect: "ink-reveal" as const };
     const { container, rerender } = render(
-      <TextElementOverlayLayer elements={[handwriting]} currentTime={1} />,
+      <TextElementOverlayLayer elements={[inkReveal]} currentTime={1} />,
     );
     const painted = () =>
-      container.querySelector<HTMLElement>("[data-handwriting-reveal] > div");
+      container.querySelector<HTMLElement>("[data-ink-reveal] > div");
 
     expect(painted()?.style.clipPath).toContain("100%");
 
-    rerender(<TextElementOverlayLayer elements={[handwriting]} currentTime={2.2} />);
+    rerender(<TextElementOverlayLayer elements={[inkReveal]} currentTime={2.2} />);
     expect(painted()?.style.clipPath).toContain("calc(");
     expect(painted()?.style.clipPath).not.toContain("100%");
 
-    rerender(<TextElementOverlayLayer elements={[handwriting]} currentTime={3.3} />);
+    rerender(<TextElementOverlayLayer elements={[inkReveal]} currentTime={3.3} />);
     expect(painted()?.style.clipPath).toBe("");
   });
 
@@ -135,7 +135,7 @@ describe("TextElementOverlayLayer", () => {
   );
 
   it.each(["left", "center", "right"] as const)(
-    "clips handwriting on the shrink-to-fit painted node for %s alignment",
+    "clips ink reveal on the shrink-to-fit painted node for %s alignment",
     (alignment) => {
       const [layout] = resolveTextElementsLayout([
         {
@@ -144,6 +144,7 @@ describe("TextElementOverlayLayer", () => {
           text: "READY NOW\nWRAPPED LINE",
           rotation_deg: 8,
           letter_spacing: 0.05,
+          effect: "ink-reveal",
         },
       ]);
       const { container } = render(
@@ -154,7 +155,7 @@ describe("TextElementOverlayLayer", () => {
         />,
       );
 
-      const reveal = container.querySelector("[data-handwriting-reveal]");
+      const reveal = container.querySelector("[data-ink-reveal]");
       const painted = reveal?.firstElementChild;
       expect(reveal).toHaveStyle({
         display: "flex",
@@ -177,28 +178,72 @@ describe("TextElementOverlayLayer", () => {
     },
   );
 
-  it("removes handwriting clipping and paint hints after settlement", () => {
-    const [layout] = resolveTextElementsLayout([{ ...element, text: "SETTLED" }]);
+  it("removes ink-reveal clipping and paint hints after settlement", () => {
+    const [layout] = resolveTextElementsLayout([
+      { ...element, text: "SETTLED", effect: "ink-reveal" },
+    ]);
     const { container } = render(
       <TextElementOverlayContent layout={layout} fontSize="20px" revealProgress={1} />,
     );
-    const painted = container.querySelector<HTMLElement>("[data-handwriting-reveal] > div");
+    const painted = container.querySelector<HTMLElement>("[data-ink-reveal] > div");
 
     expect(painted?.style.clipPath).toBe("");
     expect(painted?.style.willChange).toBe("");
   });
 
-  it("starts the handwriting clip at zero padded width", () => {
+  it("starts the ink-reveal clip at zero padded width", () => {
     const [layout] = resolveTextElementsLayout([
-      { ...element, text: "INK", shadow_enabled: true },
+      { ...element, text: "INK", shadow_enabled: true, effect: "ink-reveal" },
     ]);
     const { container } = render(
       <TextElementOverlayContent layout={layout} fontSize="20px" revealProgress={0} />,
     );
-    const painted = container.querySelector<HTMLElement>("[data-handwriting-reveal] > div");
+    const painted = container.querySelector<HTMLElement>("[data-ink-reveal] > div");
 
     expect(painted?.style.clipPath).toContain("100%");
     expect(painted?.style.clipPath).toContain("+ 42");
+  });
+
+  it("draws handwriting as authored sequential SVG strokes", () => {
+    const [layout] = resolveTextElementsLayout([
+      {
+        ...element,
+        text: "WRITE",
+        effect: "handwriting",
+        glow_color: "#ff484c",
+        glow_strength: 0.5,
+        shadow_enabled: true,
+      },
+    ]);
+    const { container, rerender } = render(
+      <TextElementOverlayContent layout={layout} fontSize="20px" revealProgress={0} />,
+    );
+
+    const paths = () =>
+      Array.from(
+        container.querySelectorAll<SVGPathElement>(
+          "[data-handwriting-strokes] g:last-of-type path",
+        ),
+      );
+    const svg = container.querySelector<SVGSVGElement>("[data-handwriting-strokes]");
+    expect(paths().length).toBeGreaterThan(5);
+    expect(paths().every((path) => path.getAttribute("stroke-dashoffset") === "1")).toBe(true);
+    expect(svg?.style.filter).toContain("#ff484c");
+    expect(svg?.style.filter).toContain("rgba(0, 0, 0, 0.63)");
+
+    rerender(
+      <TextElementOverlayContent layout={layout} fontSize="20px" revealProgress={0.5} />,
+    );
+    const middleOffsets = paths().map((path) =>
+      Number(path.getAttribute("stroke-dashoffset")),
+    );
+    expect(middleOffsets.some((offset) => offset < 1)).toBe(true);
+    expect(middleOffsets.some((offset) => offset === 1)).toBe(true);
+
+    rerender(
+      <TextElementOverlayContent layout={layout} fontSize="20px" revealProgress={1} />,
+    );
+    expect(paths().every((path) => path.getAttribute("stroke-dashoffset") === "0")).toBe(true);
   });
 
   it("honors explicit shadow off when no stroke is present", () => {

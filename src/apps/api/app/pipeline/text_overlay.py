@@ -103,6 +103,7 @@ ASS_ANIMATED_EFFECTS = frozenset(
         "pop-in",
         "bounce",
         "handwriting",
+        "ink-reveal",
         "karaoke-line",
         "lyric-line",
     }
@@ -1567,7 +1568,7 @@ def _write_animated_ass(
             f"}}{wrapped}"
         )
 
-    elif effect == "handwriting":
+    elif effect in {"handwriting", "ink-reveal"}:
         dialogue_events = _handwriting_ass_dialogue_events(
             text=text,
             start_s=start_s,

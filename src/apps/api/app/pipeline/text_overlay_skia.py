@@ -68,6 +68,11 @@ from app.pipeline.generative_overlays import (
     resolve_line_spacing,
     resolve_max_width_frac,
 )
+from app.pipeline.handwriting_strokes import (
+    layout_handwriting_text,
+    partial_polyline,
+    stroke_local_progress,
+)
 from app.pipeline.text_animation_math import handwriting_progress as _handwriting_progress
 from app.pipeline.text_animation_math import handwriting_settle_s as _handwriting_settle_s
 from app.pipeline.text_animation_math import motion_cubic_bezier as _motion_cubic_bezier
@@ -502,7 +507,7 @@ SEQUENCE_OVERLAY_ROLE = "generative_sequence"
 # Effects a sequence overlay may carry: the fade-in head reuses the existing
 # "fade-in" effect; "static"/"none" scenes appear settled and only need the
 # fade-out tail.
-_SEQUENCE_FADE_EFFECTS = ("fade-in", "handwriting", "static", "none")
+_SEQUENCE_FADE_EFFECTS = ("fade-in", "handwriting", "ink-reveal", "static", "none")
 
 # The fade-in effect's alpha ramp settles at this t_local (mirrors the
 # `effect == "fade-in"` branch in _draw_with_animation: progress = t / 0.4).
@@ -548,7 +553,7 @@ def _uses_long_running_frame_ceiling(overlay: dict) -> bool:
     return (
         effect in {"lyric-line", "karaoke-line"}
         or (effect == "pop-in" and bool(overlay.get("pop_animated_suffix")))
-        or effect == "handwriting"
+        or effect in {"handwriting", "ink-reveal"}
     )
 
 
@@ -620,6 +625,8 @@ class TypefaceResolution:
 
     @property
     def fallback(self) -> bool:
+        if self.source == "authored_centerline":
+            return False
         return bool(self.requested_font_family and self.name != self.requested_font_family)
 
     def report_dict(self) -> dict[str, Any]:
@@ -773,7 +780,21 @@ def _typeface_for_overlay(overlay: dict, font_name_override: str | None = None) 
 
 
 def _resolved_typeface_for_render(overlay: dict) -> TypefaceResolution:
-    if overlay.get("effect") != "font-cycle":
+    effect = overlay.get("effect")
+    if effect == "handwriting":
+        resolved = _registry_typeface("Patrick Hand")
+        if resolved is None:
+            return _resolve_typeface_for_overlay(overlay)
+        _name, _file_name, typeface = resolved
+        return TypefaceResolution(
+            typeface=typeface,
+            requested_font_family=overlay.get("font_family") or None,
+            requested_font_style=overlay.get("font_style", "display") or None,
+            name="Nova Handwriting Strokes",
+            file="handwriting-strokes.json",
+            source="authored_centerline",
+        )
+    if effect != "font-cycle":
         return _resolve_typeface_for_overlay(overlay)
 
     settle_name = overlay.get("font_family") or "Playfair Display"
@@ -1259,6 +1280,27 @@ def measure_text_overlay_box(
     text = _overlay_text(overlay)
     if not text:
         return {"left": 0.5, "top": 0.5, "right": 0.5, "bottom": 0.5}
+    if overlay.get("effect") == "handwriting":
+        size = _resolve_font_size_px(overlay)
+        max_width = _overlay_max_width_px(overlay, render_canvas)
+        letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
+        layout = layout_handwriting_text(
+            text,
+            max_width_em=max_width / max(size, 1),
+            letter_spacing_em=letter_spacing_em,
+            line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
+        )
+        width = layout.width_em * size
+        height = layout.height_em * size
+        cx, cy = _resolve_anchor(overlay, render_canvas)
+        left = _anchored_left_x(_resolve_text_anchor(overlay), cx, width)
+        top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, height)
+        return {
+            "left": max(0.0, left / render_canvas.width),
+            "top": max(0.0, top / render_canvas.height),
+            "right": min(1.0, (left + width) / render_canvas.width),
+            "bottom": min(1.0, (top + height) / render_canvas.height),
+        }
     typeface = _typeface_for_overlay(overlay)
     initial_size = _resolve_font_size_px(overlay)
     max_width = _overlay_max_width_px(overlay, render_canvas)
@@ -1290,6 +1332,167 @@ def measure_text_overlay_box(
 
 
 # -- Per-frame drawing -------------------------------------------------------
+
+
+def _draw_handwriting_strokes(
+    canvas: skia.Canvas,
+    text: str,
+    overlay: dict,
+    reveal_progress: float,
+    *,
+    render_canvas: Canvas = PORTRAIT,
+    alpha: float = 1.0,
+) -> None:
+    """Draw authored monoline glyph paths in deterministic pen order.
+
+    Unlike the ``ink-reveal`` effect, this never paints an ordinary font and
+    never clips a finished text block. The settled frame remains the same
+    monoline lettering produced by the animated centerlines.
+    """
+
+    reveal_progress = max(0.0, min(1.0, reveal_progress))
+    if not text or reveal_progress <= 0.0 or alpha <= 0.0:
+        return
+
+    size = _resolve_font_size_px(overlay)
+    max_width = _overlay_max_width_px(overlay, render_canvas)
+    letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
+    layout = layout_handwriting_text(
+        text,
+        max_width_em=max_width / max(size, 1),
+        letter_spacing_em=letter_spacing_em,
+        line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
+    )
+    if not layout.strokes:
+        return
+
+    cx, cy = _resolve_anchor(overlay, render_canvas)
+    anchor = _resolve_text_anchor(overlay)
+    block_h = layout.height_em * size
+    block_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block_h)
+    block_w = layout.width_em * size
+    block_left = _anchored_left_x(anchor, cx, block_w)
+
+    ink_width = max(1.0, layout.stroke_width_em * size)
+    outline_px = float(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
+    shadow_alpha = 0 if overlay.get("shadow_enabled") is False else _clamp_byte(160 * alpha)
+    fill_color = _skia_color_from_hex(
+        overlay.get("text_color", "#FFFFFF"),
+        _clamp_byte(255 * alpha),
+    )
+    glow_kwargs = _resolve_glow_kwargs(overlay, alpha)
+    glow_rgb = glow_kwargs.get("glow_rgb")
+    glow_strength = float(glow_kwargs.get("glow_strength", 0.0))
+
+    fill_paint = skia.Paint(
+        AntiAlias=True,
+        Color=fill_color,
+        Style=skia.Paint.kStroke_Style,
+        StrokeWidth=ink_width,
+        StrokeCap=skia.Paint.kRound_Cap,
+        StrokeJoin=skia.Paint.kRound_Join,
+    )
+    if overlay.get("text_gradient"):
+        shader = _skia_gradient_shader(
+            overlay["text_gradient"],
+            block_left,
+            block_top,
+            max(block_w, 1.0),
+            max(block_h, 1.0),
+            alpha,
+        )
+        if shader is not None:
+            fill_paint.setShader(shader)
+
+    outline_paint = (
+        skia.Paint(
+            AntiAlias=True,
+            Color=skia.ColorSetARGB(_clamp_byte(230 * alpha), 0, 0, 0),
+            Style=skia.Paint.kStroke_Style,
+            StrokeWidth=ink_width + outline_px * 2.0,
+            StrokeCap=skia.Paint.kRound_Cap,
+            StrokeJoin=skia.Paint.kRound_Join,
+        )
+        if outline_px > 0
+        else None
+    )
+    shadow_paint = (
+        skia.Paint(
+            AntiAlias=True,
+            Color=skia.ColorSetARGB(shadow_alpha, 0, 0, 0),
+            Style=skia.Paint.kStroke_Style,
+            StrokeWidth=ink_width,
+            StrokeCap=skia.Paint.kRound_Cap,
+            StrokeJoin=skia.Paint.kRound_Join,
+            MaskFilter=skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, 12.0),
+        )
+        if shadow_alpha > 0
+        else None
+    )
+    glow_paints: list[skia.Paint] = []
+    if glow_rgb is not None and glow_strength > 0.0:
+        r, g, b = glow_rgb
+        for sigma, base_alpha in ((8.0, 120.0), (20.0, 220.0)):
+            glow_alpha = _clamp_byte(base_alpha * glow_strength * alpha)
+            if glow_alpha <= 0:
+                continue
+            glow_paints.append(
+                skia.Paint(
+                    AntiAlias=True,
+                    Color=skia.ColorSetARGB(glow_alpha, r, g, b),
+                    Style=skia.Paint.kStroke_Style,
+                    StrokeWidth=ink_width,
+                    StrokeCap=skia.Paint.kRound_Cap,
+                    StrokeJoin=skia.Paint.kRound_Join,
+                    MaskFilter=skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, sigma),
+                )
+            )
+
+    canvas.save()
+    rotation_deg = _finite_float(overlay.get("rotation_deg"), 0.0)
+    if rotation_deg:
+        canvas.translate(cx, cy)
+        canvas.rotate(rotation_deg)
+        canvas.translate(-cx, -cy)
+
+    visible_paths: list[skia.Path] = []
+    for stroke in layout.strokes:
+        progress = stroke_local_progress(stroke, reveal_progress)
+        points = partial_polyline(stroke.points, progress)
+        if len(points) < 2:
+            continue
+        line_width = layout.line_widths_em[stroke.line_index] * size
+        line_left = _anchored_left_x(anchor, cx, line_width)
+        path = skia.Path()
+        path.moveTo(
+            line_left + points[0][0] * size,
+            block_top + points[0][1] * size,
+        )
+        for x, y in points[1:]:
+            path.lineTo(line_left + x * size, block_top + y * size)
+        visible_paths.append(path)
+
+    # Composite by paint layer, not by centerline segment. Drawing a blurred
+    # shadow immediately before every small segment lets later shadows darken
+    # already-painted ink at skeleton junctions, producing a beaded texture.
+    # A real pen has one continuous shadow/glow silhouette, so paint every
+    # path in the back layers first and the opaque ink last.
+    for glow_paint in glow_paints:
+        for path in visible_paths:
+            canvas.drawPath(path, glow_paint)
+    if shadow_paint is not None:
+        canvas.save()
+        canvas.translate(0.0, 6.0)
+        for path in visible_paths:
+            canvas.drawPath(path, shadow_paint)
+        canvas.restore()
+    if outline_paint is not None:
+        for path in visible_paths:
+            canvas.drawPath(path, outline_paint)
+    for path in visible_paths:
+        canvas.drawPath(path, fill_paint)
+
+    canvas.restore()
 
 
 def _draw_centered_text(
@@ -2195,7 +2398,7 @@ def _draw_with_animation(
                 scale = 0.90 + 0.10 * ((p - 0.72) / 0.28)
         else:
             scale = 1.0
-    elif effect == "handwriting":
+    elif effect in ("handwriting", "ink-reveal"):
         reveal_progress = _handwriting_progress(t_local, duration_s)
     elif effect == "lyric-line":
         alpha = _lyric_line_alpha(overlay, t_local, duration_s)
@@ -2211,6 +2414,17 @@ def _draw_with_animation(
     # fade-out over the final fade_out_ms (lyric-path field names + curves).
     if _is_sequence_overlay(overlay):
         alpha *= _sequence_fade_out_alpha(overlay, t_local, duration_s)
+
+    if effect == "handwriting":
+        _draw_handwriting_strokes(
+            canvas,
+            text,
+            overlay,
+            reveal_progress,
+            render_canvas=render_canvas,
+            alpha=alpha,
+        )
+        return
 
     _draw_centered_text(
         canvas,
@@ -2245,6 +2459,7 @@ _ANIMATED_EFFECTS_SKIA = {
     DISSOLVE_OUT,
     "staggered-slice",
     "handwriting",
+    "ink-reveal",
     "karaoke-line",
     # lyric-line must be animated to honor fade_in_ms / fade_out_ms. Without
     # this, two consecutive lyric overlays whose [start_s, end_s] windows
@@ -2622,7 +2837,7 @@ def _sequence_hold_plan(
     effect = overlay.get("effect", "none")
     if effect == "fade-in":
         settle_s = min(_FADE_IN_SETTLE_S, duration_s)
-    elif effect == "handwriting":
+    elif effect in {"handwriting", "ink-reveal"}:
         settle_s = _handwriting_settle_s(duration_s)
     else:
         settle_s = 0.0
@@ -2666,7 +2881,7 @@ def _staggered_slice_hold_plan(
 def _handwriting_hold_plan(
     overlay: dict, n_render: int, frame_dur: float, duration_s: float
 ) -> tuple[list[int], int, list[int]] | None:
-    if overlay.get("effect") != "handwriting" or n_render <= 1:
+    if overlay.get("effect") not in {"handwriting", "ink-reveal"} or n_render <= 1:
         return None
     if overlay.get("role") == SEQUENCE_OVERLAY_ROLE:
         return None
@@ -2747,7 +2962,7 @@ def _generate_overlay_sequence(
     # ceiling. Single source of truth keeps this clamp and the +1 seam frame aligned.
     long_ceiling = (
         BEHIND_SUBJECT_FRAME_CEILING
-        if wants_behind or effect == "handwriting"
+        if wants_behind or effect in {"handwriting", "ink-reveal"}
         else LONG_RUNNING_TEXT_FRAME_CEILING
     )
     if uses_long_ceiling:
@@ -2799,7 +3014,7 @@ def _generate_overlay_sequence(
                 render_canvas=render_canvas,
             )
         )
-        if behind and effect == "handwriting"
+        if behind and effect in {"handwriting", "ink-reveal"}
         else None
     )
     dissolve_source_img = (
@@ -3031,7 +3246,7 @@ def _sequence_head_settle_s(overlay: dict) -> float | None:
     effect = overlay.get("effect", "none")
     if effect == "fade-in":
         return _FADE_IN_SETTLE_S
-    if effect == "handwriting":
+    if effect in {"handwriting", "ink-reveal"}:
         return _handwriting_settle_s(
             max(
                 0.0,

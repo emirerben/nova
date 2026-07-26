@@ -223,6 +223,7 @@ def test_copilot_accepts_handwriting_effect_and_catalogs_it() -> None:
     )
     assert out.ops[0]["patch"] == {"effect": "handwriting"}
     assert "- handwriting" in _effect_catalog()
+    assert "- ink-reveal" in _effect_catalog()
 
 
 def test_copilot_required_field_drop() -> None:
@@ -966,11 +967,12 @@ def test_format_snapshot_renders_sfx_roles_and_suggestions() -> None:
     assert "roles=" not in plain_line
 
 
-def test_prompt_version_bumped_for_handwriting_effect_catalog() -> None:
-    # The prompt-change rule: set_caption_emphasis + its vocabulary changed in v9.
+def test_prompt_version_bumped_for_caption_emphasis_and_effect_catalog() -> None:
+    # Caption emphasis claimed v9 on main; the added effect vocabulary advances
+    # the combined prompt to the next unique version.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-07-26-v9"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-07-26-v10"
 
 
 def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:

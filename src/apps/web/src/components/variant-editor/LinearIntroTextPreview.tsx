@@ -31,6 +31,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { animationStateAt, type AnimationState } from "@/lib/overlay-animation";
 import { StaggeredSliceText } from "@/components/variant-editor/StaggeredSliceText";
+import { HandwritingText } from "@/components/HandwritingText";
 import { CANVAS_W, MAX_INTRO_S, resolveCssFont } from "@/lib/overlay-constants";
 import {
   MAX_LINE_W_FRAC,
@@ -224,7 +225,7 @@ export function LinearIntroTextPreview({
   const { xFrac, yFrac } = resolveAnchorFrac(params);
   const color = settledColor(params);
   const strokePx = (params.strokeWidth ?? 0) * 2 * scale;
-  const handwritingPaintBleedPx = Math.ceil(Math.max(strokePx + 2 * scale, 30 * scale));
+  const inkRevealPaintBleedPx = Math.ceil(Math.max(strokePx + 2 * scale, 30 * scale));
 
   if (scale === 0 && containerWidth === 0) {
     // First paint before the ResizeObserver fires — render the measuring shell only.
@@ -277,16 +278,16 @@ export function LinearIntroTextPreview({
     whiteSpace: "pre-wrap",
     overflowWrap: "normal",
     userSelect: "none",
-    ...(effect === "handwriting" && playState?.revealProgress !== undefined
+    ...(effect === "ink-reveal" && playState?.revealProgress !== undefined
       ? {
           clipPath:
             playState.revealProgress >= 1
               ? undefined
-              : `inset(-${handwritingPaintBleedPx}px calc(${
+              : `inset(-${inkRevealPaintBleedPx}px calc(${
                   (1 - playState.revealProgress) * 100
                 }% + ${
-                  (1 - 2 * playState.revealProgress) * handwritingPaintBleedPx
-                }px) -${handwritingPaintBleedPx}px -${handwritingPaintBleedPx}px)`,
+                  (1 - 2 * playState.revealProgress) * inkRevealPaintBleedPx
+                }px) -${inkRevealPaintBleedPx}px -${inkRevealPaintBleedPx}px)`,
           willChange: playState.revealProgress >= 1 ? undefined : "clip-path",
         }
       : {}),
@@ -345,7 +346,10 @@ export function LinearIntroTextPreview({
               overflowWrap: "normal",
               caretColor: color,
               // Hide during animation so caret/IME aren't corrupted by visibility toggling
-              visibility: isPlaying && playState !== null ? "hidden" : "visible",
+              visibility:
+                (isPlaying && playState !== null) || (effect === "handwriting" && !editable)
+                  ? "hidden"
+                  : "visible",
             }}
           />
           {/* Playback layer — non-editable overlay that runs the entrance animation */}
@@ -357,10 +361,39 @@ export function LinearIntroTextPreview({
               style={playbackStyle}
             />
           )}
-          {isPlaying && playState !== null && effect !== "staggered-slice" && (
+          {isPlaying && playState !== null && effect === "handwriting" && (
+            <div aria-hidden="true" style={playbackStyle}>
+              <HandwritingText
+                text={text}
+                revealProgress={playState.revealProgress}
+                color={color}
+                maxWidthEm={(CANVAS_W * MAX_LINE_W_FRAC) / Math.max(1, sizePx)}
+                alignment={anchor}
+                outlineWidthEm={(2 * (params.strokeWidth ?? 0)) / Math.max(1, sizePx)}
+                shadowEnabled
+              />
+            </div>
+          )}
+          {!isPlaying && !editable && effect === "handwriting" && (
+            <div aria-hidden="true" style={playbackStyle}>
+              <HandwritingText
+                text={text}
+                revealProgress={1}
+                color={color}
+                maxWidthEm={(CANVAS_W * MAX_LINE_W_FRAC) / Math.max(1, sizePx)}
+                alignment={anchor}
+                outlineWidthEm={(2 * (params.strokeWidth ?? 0)) / Math.max(1, sizePx)}
+                shadowEnabled
+              />
+            </div>
+          )}
+          {isPlaying &&
+            playState !== null &&
+            effect !== "staggered-slice" &&
+            effect !== "handwriting" && (
             <div
               aria-hidden="true"
-              data-handwriting-reveal={effect === "handwriting" ? "" : undefined}
+              data-ink-reveal={effect === "ink-reveal" ? "" : undefined}
               style={playbackStyle}
             >
               {playState.visibleText}

@@ -71,11 +71,13 @@ describe("handwritingProgressAt", () => {
   });
 
   it("only changes revealProgress in the shared animation state", () => {
-    const state = animationStateAt("handwriting", 1.2, 4, TEXT);
-    expect(state.revealProgress).toBeCloseTo(handwritingProgressAt(1.2, 4));
-    expect(state.visibleText).toBe(TEXT);
-    expect(state.alpha).toBe(1);
-    expect(state.scale).toBe(1);
+    for (const effect of ["handwriting", "ink-reveal"]) {
+      const state = animationStateAt(effect, 1.2, 4, TEXT);
+      expect(state.revealProgress).toBeCloseTo(handwritingProgressAt(1.2, 4));
+      expect(state.visibleText).toBe(TEXT);
+      expect(state.alpha).toBe(1);
+      expect(state.scale).toBe(1);
+    }
   });
 });
 
@@ -518,6 +520,7 @@ describe("non-text-reveal effects preserve visibleText", () => {
     "pop-in",
     "bounce",
     "handwriting",
+    "ink-reveal",
     "none",
     "static",
   ];

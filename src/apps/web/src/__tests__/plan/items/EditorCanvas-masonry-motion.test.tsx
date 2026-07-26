@@ -89,12 +89,14 @@ describe("EditorCanvas masonry board motion", () => {
     try {
       const handwritingBar = { ...bar, effect: "handwriting" } as TextElementBar;
       const view = render(canvas(0.5, variant, [handwritingBar]));
-      const paintedText = view.container.querySelector<HTMLElement>(
-        "[data-handwriting-reveal] > div",
+      const paths = Array.from(
+        view.container.querySelectorAll<SVGPathElement>(
+          "[data-handwriting-strokes] g:last-of-type path",
+        ),
       );
 
-      expect(paintedText).not.toBeNull();
-      expect(paintedText?.style.clipPath).toBe("");
+      expect(paths.length).toBeGreaterThan(0);
+      expect(paths.every((path) => path.getAttribute("stroke-dashoffset") === "0")).toBe(true);
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,

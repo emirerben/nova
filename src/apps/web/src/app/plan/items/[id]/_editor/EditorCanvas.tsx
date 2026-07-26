@@ -1193,7 +1193,7 @@ export default function EditorCanvas({
                         />
                       ) : (
                         <TextElementOverlayContent
-                          layout={layout}
+                          layout={{ ...layout, effect: effect as TextElement["effect"] }}
                           fontSize={`${fontPx}px`}
                           strokeWidth={strokePx > 0 ? `${strokePx}px` : null}
                           canvasPixelCssSize={`${stageSize.h / canvas.h}px`}
@@ -1204,7 +1204,7 @@ export default function EditorCanvas({
                           }
                           showCursor={animation.showCursor}
                           revealProgress={
-                            effect === "handwriting"
+                            effect === "handwriting" || effect === "ink-reveal"
                               ? reducedMotion
                                 ? 1
                                 : animation.revealProgress

@@ -92,6 +92,17 @@ def test_font_cycle_reports_actual_settle_typeface_not_style_default():
     assert resolved["fallback"] is False
 
 
+def test_handwriting_reports_the_authored_centerline_asset_not_selected_font():
+    resolved = tos.resolved_typeface_for_overlay(
+        {"effect": "handwriting", "font_family": "Inter", "font_style": "sans"}
+    )
+    assert resolved["requested_font_family"] == "Inter"
+    assert resolved["name"] == "Nova Handwriting Strokes"
+    assert resolved["file"] == "handwriting-strokes.json"
+    assert resolved["source"] == "authored_centerline"
+    assert resolved["fallback"] is False
+
+
 def test_unknown_font_family_emits_fallback_font_resolved_event(tmp_workdir):
     overlay = {
         "text": "fallback font",
@@ -794,7 +805,7 @@ def test_handwriting_timing_matches_css_ease_and_short_duration_compression():
     assert tos._handwriting_progress(0.0, 0.0) == 1.0
 
 
-def test_handwriting_reveal_is_monotonic_and_settled_frame_is_static():
+def test_handwriting_reveal_is_monotonic_and_settled_frame_is_stable():
     import io
 
     overlay = {
@@ -826,12 +837,49 @@ def test_handwriting_reveal_is_monotonic_and_settled_frame_is_static():
     assert counts[2] < counts[-1]
 
     settled = bytes(tos._draw_frame(overlay, 2.2, 4.0).encodeToData())
+    later = bytes(tos._draw_frame(overlay, 4.0, 4.0).encodeToData())
+    assert settled == later
+
+
+def test_ink_reveal_settles_to_the_requested_static_font():
+    overlay = {
+        "text": "FIELD NOTES",
+        "effect": "ink-reveal",
+        "font_family": "Inter",
+        "text_size_px": 110,
+        "text_color": "#FF484C",
+        "stroke_width": 3,
+        "shadow_enabled": True,
+    }
+
+    settled = bytes(tos._draw_frame(overlay, 2.2, 4.0).encodeToData())
     static = bytes(tos._draw_frame({**overlay, "effect": "static"}, 2.2, 4.0).encodeToData())
     assert settled == static
 
 
-def test_handwriting_uses_long_ceiling_and_links_only_safe_settled_frames():
-    overlay = {"text": "FIELD NOTES", "effect": "handwriting"}
+def test_handwriting_uses_the_authored_stroke_face_not_the_selected_font():
+    base = {
+        "text": "WRITE THIS",
+        "effect": "handwriting",
+        "text_size_px": 110,
+        "text_color": "#FF484C",
+        "shadow_enabled": False,
+    }
+
+    inter = bytes(tos._draw_frame({**base, "font_family": "Inter"}, 2.2, 4.0).encodeToData())
+    playfair = bytes(
+        tos._draw_frame(
+            {**base, "font_family": "Playfair Display"},
+            2.2,
+            4.0,
+        ).encodeToData()
+    )
+    assert inter == playfair
+
+
+@pytest.mark.parametrize("effect", ["handwriting", "ink-reveal"])
+def test_write_on_effects_use_long_ceiling_and_link_only_safe_settled_frames(effect):
+    overlay = {"text": "FIELD NOTES", "effect": effect}
     assert tos._is_animated(overlay)
     assert tos._uses_long_running_frame_ceiling(overlay)
 
@@ -867,11 +915,12 @@ def test_handwriting_uses_long_ceiling_and_links_only_safe_settled_frames():
     assert 40 * tos.FPS < tos.BEHIND_SUBJECT_FRAME_CEILING
 
 
-def test_sequence_handwriting_combines_reveal_hold_and_fade_out():
+@pytest.mark.parametrize("effect", ["handwriting", "ink-reveal"])
+def test_sequence_write_on_combines_reveal_hold_and_fade_out(effect):
     overlay = {
         "text": "FIELD NOTES",
         "role": tos.SEQUENCE_OVERLAY_ROLE,
-        "effect": "handwriting",
+        "effect": effect,
         "fade_out_ms": 500,
         "start_s": 0.0,
         "end_s": 6.0,
@@ -1237,6 +1286,38 @@ def test_dispatch_keeps_classic_on_pillow(tmp_workdir):
             use_skia=False,
         )
         skia_fn.assert_not_called()
+
+
+def test_dispatch_routes_classic_handwriting_to_skia(tmp_workdir):
+    """Centerline handwriting cannot be represented by libass clipping."""
+    from app.tasks.template_orchestrate import _burn_text_overlays
+
+    with (
+        mock.patch("app.pipeline.text_overlay_skia.burn_text_overlays_skia") as skia_fn,
+        mock.patch("app.config.settings") as fake_settings,
+    ):
+        fake_settings.text_renderer_skia_enabled = True
+        in_path = os.path.join(tmp_workdir, "in.mp4")
+        out_path = os.path.join(tmp_workdir, "out.mp4")
+        with open(in_path, "wb") as f:
+            f.write(b"\x00")
+
+        overlays = [
+            {
+                "text": "WRITE",
+                "start_s": 0,
+                "end_s": 2,
+                "effect": "handwriting",
+            }
+        ]
+        _burn_text_overlays(
+            in_path,
+            overlays,
+            out_path,
+            tmp_workdir,
+            use_skia=False,
+        )
+        skia_fn.assert_called_once_with(in_path, overlays, out_path, tmp_workdir)
 
 
 # -- Left-anchor positioning (prod 89cde014 left-clip regression) ------------

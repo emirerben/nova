@@ -2,7 +2,7 @@
   "agent": "nova.edit.copilot",
   "prompt_version": "2026-07-26-v10",
   "input": {
-    "utterance": "make the title write itself on like handwriting",
+    "utterance": "keep this font but reveal the title like ink from left to right",
     "prior_turns": [],
     "variant_snapshot": {
       "allowed_op_families": ["style"],
@@ -12,6 +12,7 @@
           "text": "FIELD NOTES",
           "start_s": 0,
           "end_s": 4,
+          "font_family": "Inter",
           "color": "#FFFFFF",
           "effect": "static"
         }
@@ -26,7 +27,7 @@
       "total_duration_s": 4
     }
   },
-  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"effect\":\"handwriting\"}}],\"confidence\":0.98,\"reply\":\"Applied the Handwriting animation to the title.\",\"suggestions\":[\"Preview the animation\",\"Try Ink reveal to preserve the selected font\"],\"needs_clarification\":false}",
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"effect\":\"ink-reveal\"}}],\"confidence\":0.98,\"reply\":\"Applied Ink reveal while keeping the selected font.\",\"suggestions\":[\"Preview the animation\",\"Try Handwriting for drawn letterforms\"],\"needs_clarification\":false}",
   "output": {
     "intent": "edit",
     "ops": [
@@ -34,20 +35,20 @@
         "op": "patch_text_style",
         "bar_index": 0,
         "patch": {
-          "effect": "handwriting"
+          "effect": "ink-reveal"
         }
       }
     ],
     "confidence": 0.98,
-    "reply": "Applied the Handwriting animation to the title.",
+    "reply": "Applied Ink reveal while keeping the selected font.",
     "suggestions": [
       "Preview the animation",
-      "Try Ink reveal to preserve the selected font"
+      "Try Handwriting for drawn letterforms"
     ],
     "needs_clarification": false
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "explicit handwriting text effect"
+    "case": "explicit ink reveal preserving font"
   }
 }
