@@ -62,6 +62,9 @@ dependencies = [
     # declaring `terminal_refusal`. Opted in per-agent via
     # `AgentSpec.enable_json_repair`. Pure-Python, ~50KB, MIT.
     "json-repair>=0.30",
+    # Canonical motion-scene contract validation. The same checked-in JSON
+    # Schema is consumed by the API and exercised by the TypeScript runtime.
+    "jsonschema>=4.23,<5",
     # ImageSegmenter (selfie segmenter, VIDEO mode) for the subject-matte
     # occlusion engine (app.pipeline.subject_matte). Imported LAZILY inside
     # subject_matte.py functions so the module stays importable without it

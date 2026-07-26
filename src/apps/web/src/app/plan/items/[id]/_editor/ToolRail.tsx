@@ -47,14 +47,16 @@ export default function ToolRail({
   const copilotEnabled = process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true";
   const visualBlocksEnabled =
     process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
+  const motionScenesEnabled =
+    process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED === "true";
   const tools = useMemo(
     () =>
       TOOLS.filter(
         (tool) =>
           (copilotEnabled || tool.id !== "nova") &&
-          (visualBlocksEnabled || tool.id !== "visuals"),
+          (visualBlocksEnabled || motionScenesEnabled || tool.id !== "visuals"),
       ),
-    [copilotEnabled, visualBlocksEnabled],
+    [copilotEnabled, motionScenesEnabled, visualBlocksEnabled],
   );
 
   useEffect(() => {

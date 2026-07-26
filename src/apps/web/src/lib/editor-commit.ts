@@ -26,6 +26,7 @@ import {
   type TextElement,
   type VisualBlock,
 } from "@/lib/plan-api";
+import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
 
 const PLAN_BASE = "/api/plan";
 
@@ -126,6 +127,9 @@ export interface EditorCommitRequest {
   media_overlays?: MediaOverlay[];
   /** Full replacement visual-block list. Omit when untouched. */
   visual_blocks?: VisualBlock[];
+  /** Curated immutable motion-preset instances; no raw scene graphs or SVG. */
+  motion_scenes?: MotionPresetInstanceV1[];
+  motion_runtime_hash?: string;
   /** Full replacement scene camera-effect list. Omit when untouched. */
   camera_effects?: CameraEffect[];
   /** Working-state title. Omit when untouched; null clears. */
@@ -166,6 +170,7 @@ export interface EditorCommitResponse {
     sound_effects?: boolean;
     media_overlays?: boolean;
     visual_blocks?: boolean;
+    motion_scenes?: boolean;
     camera_effects?: boolean;
     title?: boolean;
     lyrics?: boolean;
@@ -229,6 +234,9 @@ export function buildEditorCommitRequest({
   mediaOverlays = [],
   visualBlocksDirty = false,
   visualBlocks = [],
+  motionScenesDirty = false,
+  motionScenes = [],
+  motionRuntimeHash,
   cameraEffectsDirty = false,
   cameraEffects = [],
   acceptedSuggestions = [],
@@ -267,6 +275,9 @@ export function buildEditorCommitRequest({
   mediaOverlays?: MediaOverlay[];
   visualBlocksDirty?: boolean;
   visualBlocks?: VisualBlock[];
+  motionScenesDirty?: boolean;
+  motionScenes?: MotionPresetInstanceV1[];
+  motionRuntimeHash?: string;
   cameraEffectsDirty?: boolean;
   cameraEffects?: CameraEffect[];
   acceptedSuggestions?: AcceptedSuggestionRef[];
@@ -346,6 +357,8 @@ export function buildEditorCommitRequest({
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
     visual_blocks: visualBlocksDirty ? visualBlocks : undefined,
+    motion_scenes: motionScenesDirty ? motionScenes : undefined,
+    motion_runtime_hash: motionScenesDirty ? motionRuntimeHash : undefined,
     camera_effects: cameraEffectsDirty ? cameraEffects : undefined,
     accepted_suggestion_ids: acceptedIds.length > 0 ? acceptedIds : undefined,
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,

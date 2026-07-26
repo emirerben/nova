@@ -715,6 +715,8 @@ class EditorCommitRequest(BaseModel):
     sound_effects: list[dict] | None = None
     media_overlays: list[dict] | None = None
     visual_blocks: list[dict] | None = None
+    motion_scenes: list[dict] | None = None
+    motion_runtime_hash: str | None = None
     camera_effects: list[dict] | None = None
     title: str | None = Field(None, max_length=300)
     base_generation: str = ""
@@ -749,6 +751,7 @@ class EditorCommitSections(BaseModel):
     sound_effects: bool
     media_overlays: bool
     visual_blocks: bool
+    motion_scenes: bool = False
     camera_effects: bool = False
     title: bool
 
@@ -3528,6 +3531,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # section.
     caption_reason = CAPTION_TAB_COPY if archetype == "subtitled" else None
     from app.config import settings  # noqa: PLC0415
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH  # noqa: PLC0415
 
     # Plan 010: caption archetypes get the manual SFX/overlay lanes — the caption
     # re-render terminals reapply persisted lanes, so effects survive caption edits.
@@ -3548,6 +3552,20 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         visual_blocks_reason = "duration_unknown"
     else:
         visual_blocks_reason = effects_reason
+    if not settings.motion_scenes_enabled:
+        motion_scenes_reason = "motion_scenes_disabled"
+    elif variant.get("text_mode") == "lyrics":
+        motion_scenes_reason = "lyrics_variant"
+    elif archetype in CAPTION_EDIT_ARCHETYPES:
+        motion_scenes_reason = "caption_archetype"
+    elif not variant.get("base_video_path"):
+        motion_scenes_reason = "no_clean_base"
+    elif _variant_orientation(variant) != "portrait":
+        motion_scenes_reason = "portrait_only"
+    elif visual_block_variant_duration(variant) <= 0:
+        motion_scenes_reason = "duration_unknown"
+    else:
+        motion_scenes_reason = effects_reason
     # AI overlay suggestions (plans 005-009): mirrors the suggest-overlays route's
     # eligibility EXCEPT the ready-asset count — that's a DB query and this map is
     # cheap-by-design; the editor's pool strip owns the empty-pool state locally.
@@ -3602,6 +3620,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "sfx": sfx_reason is None,
         "overlays": overlays_reason is None,
         "visual_blocks": visual_blocks_reason is None,
+        "motion_scenes": motion_scenes_reason is None,
+        "motion_runtime_hash": MOTION_RUNTIME_HASH if settings.motion_scenes_enabled else None,
         "camera_effects": (
             effects_reason is None
             and variant.get("resolved_archetype") == "subtitled"
@@ -3613,6 +3633,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "sfx_reason": sfx_reason,
         "overlays_reason": overlays_reason,
         "visual_blocks_reason": visual_blocks_reason,
+        "motion_scenes_reason": motion_scenes_reason,
         "camera_effects_reason": (
             effects_reason
             if effects_reason is not None
@@ -4320,6 +4341,7 @@ def prepare_editor_commit(
         and payload.sound_effects is None
         and payload.media_overlays is None
         and payload.visual_blocks is None
+        and payload.motion_scenes is None
         and payload.camera_effects is None
         and payload.title is None
         and not payload.remove_music
@@ -4717,6 +4739,58 @@ def prepare_editor_commit(
                     )
 
     validated_camera_effects: list[dict] | None = None
+
+    validated_motion_scenes: list[dict] | None = None
+    if payload.motion_scenes is not None:
+        from app.config import settings as _settings_motion  # noqa: PLC0415
+        from app.pipeline.motion_scene import (  # noqa: PLC0415
+            MOTION_FPS,
+            MOTION_RUNTIME_HASH,
+            validate_motion_instances,
+        )
+
+        if not _settings_motion.motion_scenes_enabled:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        if payload.motion_runtime_hash != MOTION_RUNTIME_HASH:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "motion_runtime_mismatch"},
+            )
+        motion_reason = None
+        if variant.get("text_mode") == "lyrics":
+            motion_reason = "lyrics_variant"
+        elif variant.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES:
+            motion_reason = "caption_archetype"
+        elif not variant.get("base_video_path"):
+            motion_reason = "no_clean_base"
+        duration_s = visual_block_variant_duration(variant)
+        if duration_s <= 0:
+            motion_reason = motion_reason or "duration_unknown"
+        if motion_reason is not None:
+            if not payload.motion_scenes:
+                log.debug(
+                    "editor_commit_ignored_empty_section",
+                    section="motion_scenes",
+                    job_id=str(job.id),
+                    variant_id=variant_id,
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": motion_reason},
+                )
+        else:
+            try:
+                validated_motion_scenes = validate_motion_instances(
+                    payload.motion_scenes,
+                    duration_frames=max(1, round(duration_s * MOTION_FPS)),
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+
     if payload.camera_effects is not None:
         from app.pipeline.camera_effects import normalize_camera_effects  # noqa: PLC0415
 
@@ -4751,6 +4825,18 @@ def prepare_editor_commit(
                 payload.camera_effects,
                 duration_s=visual_block_variant_duration(variant),
             )
+
+    effective_motion_scenes = (
+        validated_motion_scenes
+        if validated_motion_scenes is not None
+        else list(variant.get("motion_scenes") or [])
+    )
+    effective_orientation = validated_orientation or _variant_orientation(variant)
+    if effective_motion_scenes and effective_orientation != "portrait":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "motion_portrait_only"},
+        )
 
     if payload.visual_blocks is not None or payload.text_elements is not None:
         from app.agents._schemas.visual_block import (  # noqa: PLC0415
@@ -4794,6 +4880,7 @@ def prepare_editor_commit(
         or validated_sfx is not None
         or validated_overlays is not None
         or validated_visual_blocks is not None
+        or validated_motion_scenes is not None
         or validated_camera_effects is not None
     )
     new_gen = uuid.uuid4().hex if has_render_section else None
@@ -4895,6 +4982,12 @@ def prepare_editor_commit(
             # the replacement. The stale bit prevents reuse; retaining the key
             # lets the winning render free it without a pre-render delete race.
             updated["visual_blocks_cache_stale"] = True
+        if validated_motion_scenes is not None:
+            updated["motion_scenes"] = validated_motion_scenes or None
+            updated["motion_runtime_hash"] = payload.motion_runtime_hash
+            # Desired state is persisted before rendering; the last-good output
+            # and applied hash are only replaced by the token-winning worker.
+            updated["motion_cache_stale"] = True
         if validated_camera_effects is not None:
             updated["camera_effects"] = validated_camera_effects or None
         if payload.accepted_suggestion_ids:
@@ -4941,6 +5034,7 @@ def prepare_editor_commit(
         ),
         "media_overlays_override": validated_overlays,
         "visual_blocks_override": validated_visual_blocks,
+        "motion_scenes_override": validated_motion_scenes,
         "camera_effects_override": validated_camera_effects,
         "orientation_override": validated_orientation,
         "new_track_id": payload.music_track_id,
@@ -4976,6 +5070,7 @@ def prepare_editor_commit(
             "sound_effects": validated_sfx is not None,
             "media_overlays": validated_overlays is not None,
             "visual_blocks": validated_visual_blocks is not None,
+            "motion_scenes": validated_motion_scenes is not None,
             "camera_effects": validated_camera_effects is not None,
         },
     }
@@ -5041,6 +5136,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         sections.get("sound_effects") is True
         or sections.get("media_overlays") is True
         or sections.get("visual_blocks") is True
+        or sections.get("motion_scenes") is True
         or sections.get("camera_effects") is True
         or sections.get("background_music") is True
     ) and not (
@@ -5055,6 +5151,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         lane_only_commit
         and (sections.get("sound_effects") is True or sections.get("media_overlays") is True)
         and sections.get("visual_blocks") is not True
+        and sections.get("motion_scenes") is not True
         and sections.get("camera_effects") is not True
         and sections.get("background_music") is not True
     )
@@ -5100,6 +5197,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         or prep.get("orientation_override") is not None
         or prep.get("text_requires_full_render") is True
         or prep["sections"].get("visual_blocks") is True
+        or prep["sections"].get("motion_scenes") is True
         or prep["sections"].get("camera_effects") is True
         or sections.get("lyrics") is True
         or prep.get("music_window_alignment") is not None
@@ -5137,6 +5235,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         and sections.get("lyrics") is not True
         and prep.get("music_window_alignment") is None
         and sections.get("visual_blocks") is not True
+        and sections.get("motion_scenes") is not True
         and sections.get("camera_effects") is not True
     )
     apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}

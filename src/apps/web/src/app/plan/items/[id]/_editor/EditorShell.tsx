@@ -169,6 +169,11 @@ import {
   SUGGESTION_POLL_INTERVAL_MS,
   useEditorOverlaySuggestions,
 } from "./useEditorOverlaySuggestions";
+import {
+  MOTION_FPS,
+  MOTION_RUNTIME_HASH,
+  type MotionPresetInstanceV1,
+} from "@nova/motion-runtime";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
 
@@ -187,6 +192,8 @@ const MEDIA_OVERLAYS_UI_ENABLED =
 const SOUND_EFFECTS_UI_ENABLED = process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
 const VISUAL_BLOCKS_UI_ENABLED =
   process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
+const MOTION_SCENES_UI_ENABLED =
+  process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED === "true";
 const LYRICS_EDITOR_UI = process.env.NEXT_PUBLIC_LYRICS_EDITOR_ENABLED === "true";
 // Lyrics-optional "elements" model: instant toggle-insert/remove of
 // beat-synced lyric bars, no render round-trip. Independent of
@@ -609,6 +616,7 @@ export default function EditorShell({
   const [localSfxAudioUrls, setLocalSfxAudioUrls] = useState<Record<string, string>>({});
   const [localOverlays, setLocalOverlays] = useState<MediaOverlay[]>([]);
   const [localVisualBlocks, setLocalVisualBlocks] = useState<VisualBlock[]>([]);
+  const [localMotionScenes, setLocalMotionScenes] = useState<MotionPresetInstanceV1[]>([]);
   const [localCameraEffects, setLocalCameraEffects] = useState<CameraEffect[]>([]);
   // AI-suggestion provenance (Overlays drawer): accepted envelope id + the
   // overlay card id it staged. Kept OFF the MediaOverlay objects — the save
@@ -624,6 +632,7 @@ export default function EditorShell({
   const [sfxDirty, setSfxDirty] = useState(false);
   const [overlaysDirty, setOverlaysDirty] = useState(false);
   const [visualBlocksDirty, setVisualBlocksDirty] = useState(false);
+  const [motionScenesDirty, setMotionScenesDirty] = useState(false);
   const [cameraEffectsDirty, setCameraEffectsDirty] = useState(false);
   const [mixLevel, setMixLevel] = useState<number | null>(null);
   const [mixDirty, setMixDirty] = useState(false);
@@ -684,7 +693,7 @@ export default function EditorShell({
     // a baseline conflict, preserve or reload them together so neither half can
     // point at state from the other tab.
     const keepCoupledVisualDocument =
-      conflictReseed && (visualBlocksDirty || textDirty || captionDirty);
+      conflictReseed && (visualBlocksDirty || motionScenesDirty || textDirty || captionDirty);
     const keepCameraEffects = conflictReseed && cameraEffectsDirty;
     if (sections.text && !keepCoupledVisualDocument) {
       originalsRef.current = new Map(
@@ -726,6 +735,8 @@ export default function EditorShell({
     if (!keepCoupledVisualDocument) {
       setLocalVisualBlocks((variant.visual_blocks ?? []).map((block) => ({ ...block })));
       setVisualBlocksDirty(false);
+      setLocalMotionScenes((variant.motion_scenes ?? []).map((scene) => ({ ...scene })));
+      setMotionScenesDirty(false);
     }
     if (!keepCameraEffects) {
       setLocalCameraEffects(
@@ -961,6 +972,7 @@ export default function EditorShell({
     capabilities.sfx === false &&
     capabilities.overlays === false &&
     capabilities.visual_blocks !== true &&
+    capabilities.motion_scenes !== true &&
     capabilities.camera_effects !== true &&
     capabilities.orientation?.editable !== true &&
     capabilities.music_window?.editable !== true;
@@ -997,6 +1009,7 @@ export default function EditorShell({
       sfx: localSfx,
       overlays: localOverlays,
       visualBlocks: localVisualBlocks,
+      motionScenes: localMotionScenes,
       cameraEffects: localCameraEffects,
       captionMeta,
       captionMetaDirty,
@@ -1021,6 +1034,7 @@ export default function EditorShell({
       localSfx,
       localOverlays,
       localVisualBlocks,
+      localMotionScenes,
       localCameraEffects,
       captionMeta,
       captionMetaDirty,
@@ -1049,6 +1063,7 @@ export default function EditorShell({
       setLocalSfx(doc.sfx ?? []);
       setLocalOverlays(doc.overlays ?? []);
       setLocalVisualBlocks(doc.visualBlocks ?? []);
+      setLocalMotionScenes(doc.motionScenes ?? []);
       setLocalCameraEffects(doc.cameraEffects ?? []);
       setVideoMuted(doc.videoMuted);
       setSoundMuted(doc.soundMuted);
@@ -1078,6 +1093,7 @@ export default function EditorShell({
       if (capabilities?.sfx !== false) setSfxDirty(true);
       if (capabilities?.overlays !== false) setOverlaysDirty(true);
       if (capabilities?.visual_blocks !== false) setVisualBlocksDirty(true);
+      if (capabilities?.motion_scenes !== false) setMotionScenesDirty(true);
       if (capabilities?.camera_effects !== false) {
         setCameraEffectsDirty(!cameraEffectsEqual(doc.cameraEffects, variant?.camera_effects));
       }
@@ -1094,6 +1110,78 @@ export default function EditorShell({
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
+
+  const motionRuntimeCompatible =
+    !capabilities?.motion_runtime_hash ||
+    capabilities.motion_runtime_hash === MOTION_RUNTIME_HASH;
+  const addRouteTraceMotion = useCallback(() => {
+    if (
+      readOnly ||
+      !MOTION_SCENES_UI_ENABLED ||
+      capabilities?.motion_scenes === false ||
+      !motionRuntimeCompatible ||
+      localMotionScenes.length >= 4
+    ) {
+      return;
+    }
+    history.record();
+    const motionDuration =
+      duration > 0 ? duration : Math.max(0, Number(variant?.duration_s ?? 0));
+    const durationFrames = Math.max(1, Math.round(motionDuration * MOTION_FPS));
+    let startFrame = Math.max(
+      0,
+      Math.min(durationFrames - 1, Math.floor(currentTime * MOTION_FPS)),
+    );
+    let endFrame = Math.min(durationFrames, startFrame + 2 * MOTION_FPS);
+    if (endFrame <= startFrame) {
+      startFrame = Math.max(0, durationFrames - 2 * MOTION_FPS);
+      endFrame = durationFrames;
+    }
+    setLocalMotionScenes((current) => [
+      ...current,
+      {
+        id: `motion-${crypto.randomUUID()}`,
+        preset_id: "route_trace",
+        preset_version: 1,
+        start_frame: startFrame,
+        end_frame_exclusive: endFrame,
+        palette: { primary: "#8B5CF6", accent: "#D9FF43" },
+        intensity: 0.8,
+      },
+    ]);
+    setMotionScenesDirty(true);
+  }, [
+    capabilities?.motion_scenes,
+    currentTime,
+    history,
+    localMotionScenes.length,
+    motionRuntimeCompatible,
+    readOnly,
+    duration,
+    variant?.duration_s,
+  ]);
+
+  const patchMotionScene = useCallback(
+    (id: string, patch: Partial<MotionPresetInstanceV1>) => {
+      if (readOnly || capabilities?.motion_scenes === false) return;
+      history.record(`motion:${id}`);
+      setLocalMotionScenes((current) =>
+        current.map((scene) => (scene.id === id ? { ...scene, ...patch } : scene)),
+      );
+      setMotionScenesDirty(true);
+    },
+    [capabilities?.motion_scenes, history, readOnly],
+  );
+
+  const removeMotionScene = useCallback(
+    (id: string) => {
+      if (readOnly || capabilities?.motion_scenes === false) return;
+      history.record();
+      setLocalMotionScenes((current) => current.filter((scene) => scene.id !== id));
+      setMotionScenesDirty(true);
+    },
+    [capabilities?.motion_scenes, history, readOnly],
+  );
 
   const visibleTextBars = useMemo(() => {
     // Elements model: state.bars already IS the source of truth (the toggle
@@ -3783,6 +3871,9 @@ export default function EditorShell({
         mediaOverlays: localOverlays,
         visualBlocksDirty,
         visualBlocks: localVisualBlocks,
+        motionScenesDirty,
+        motionScenes: localMotionScenes,
+        motionRuntimeHash: capabilities?.motion_runtime_hash ?? MOTION_RUNTIME_HASH,
         cameraEffectsDirty,
         cameraEffects: localCameraEffects,
         // Filtered against the staged overlay ids inside the builder — an
@@ -3819,6 +3910,7 @@ export default function EditorShell({
       setSfxDirty(false);
       setOverlaysDirty(false);
       setVisualBlocksDirty(false);
+      setMotionScenesDirty(false);
       setCameraEffectsDirty(false);
       setTitleDirty(false);
       setMixDirty(false);
@@ -3886,6 +3978,9 @@ export default function EditorShell({
     localOverlays,
     visualBlocksDirty,
     localVisualBlocks,
+    motionScenesDirty,
+    localMotionScenes,
+    capabilities?.motion_runtime_hash,
     cameraEffectsDirty,
     localCameraEffects,
     acceptedSuggestions,
@@ -3938,6 +4033,7 @@ export default function EditorShell({
     localSfx,
     localOverlays,
     localVisualBlocks,
+    localMotionScenes,
     captionMeta,
     captionMetaDirty,
     captionMetaPatch,
@@ -4470,6 +4566,8 @@ export default function EditorShell({
             elements={previewElements}
             bars={visibleTextBars}
             visualBlocks={localVisualBlocks}
+            motionScenes={localMotionScenes}
+            motionRuntimeHash={capabilities?.motion_runtime_hash}
             cameraEffects={localCameraEffects}
             visualAssets={poolAssets}
             mediaOverlays={localOverlays}
@@ -4557,6 +4655,13 @@ export default function EditorShell({
               onOverlayUpload={handleOverlayUpload}
               overlaySuggestions={overlaySuggestionsNode}
               visualBlocks={localVisualBlocks}
+              motionScenes={localMotionScenes}
+              motionDurationS={previewDuration}
+              motionAvailable={capabilities?.motion_scenes === true}
+              motionRuntimeCompatible={motionRuntimeCompatible}
+              onAddMotion={addRouteTraceMotion}
+              onPatchMotion={patchMotionScene}
+              onRemoveMotion={removeMotionScene}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
               visualUploading={pendingPoolUploads.length > 0}
@@ -4621,6 +4726,13 @@ export default function EditorShell({
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
               visualBlocks={localVisualBlocks}
+              motionScenes={localMotionScenes}
+              motionDurationS={previewDuration}
+              motionAvailable={capabilities?.motion_scenes === true}
+              motionRuntimeCompatible={motionRuntimeCompatible}
+              onAddMotion={addRouteTraceMotion}
+              onPatchMotion={patchMotionScene}
+              onRemoveMotion={removeMotionScene}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
               visualUploading={pendingPoolUploads.length > 0}
@@ -4678,6 +4790,8 @@ export default function EditorShell({
             elements={previewElements}
             bars={visibleTextBars}
             visualBlocks={localVisualBlocks}
+            motionScenes={localMotionScenes}
+            motionRuntimeHash={capabilities?.motion_runtime_hash}
             cameraEffects={localCameraEffects}
             visualAssets={poolAssets}
             mediaOverlays={localOverlays}

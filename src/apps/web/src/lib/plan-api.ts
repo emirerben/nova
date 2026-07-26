@@ -1,3 +1,5 @@
+import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
+
 /**
  * API client for content-plan endpoints (Phase 3+).
  *
@@ -1044,6 +1046,8 @@ export interface EditorCapabilities {
   sfx?: boolean;
   overlays?: boolean;
   visual_blocks?: boolean;
+  motion_scenes?: boolean;
+  motion_runtime_hash?: string | null;
   camera_effects?: boolean;
   background_music?: boolean;
   /** AI overlay suggestions inside the editor's Overlays drawer (plans/005-010).
@@ -1053,6 +1057,7 @@ export interface EditorCapabilities {
   sfx_reason?: string | null;
   overlays_reason?: string | null;
   visual_blocks_reason?: string | null;
+  motion_scenes_reason?: string | null;
   camera_effects_reason?: string | null;
   /** "autoplace_disabled" | "song_or_lyric_variant" | "caption_archetype"
    *  | inherited overlay reasons. */
@@ -1166,6 +1171,10 @@ export interface PlanItemVariant {
   // is what makes a variant instant-edit-eligible. Absent on lyrics/legacy.
   base_video_url?: string | null;
   base_video_path?: string | null;
+  motion_scenes?: MotionPresetInstanceV1[] | null;
+  motion_runtime_hash?: string | null;
+  motion_applied_runtime_hash?: string | null;
+  motion_cache_stale?: boolean;
   // Narrated on-video caption editor: editable cues over the caption-free base.
   // Present only on narrated variants; null otherwise.
   caption_cues?: CaptionCue[] | null;

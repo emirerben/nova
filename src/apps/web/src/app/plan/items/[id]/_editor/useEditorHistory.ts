@@ -35,6 +35,7 @@ import type { CopilotCaptionMetaSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { DraftSlot } from "@/app/generative/timeline-math";
+import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
 
 export type EditorOrientation = "portrait" | "landscape";
 
@@ -48,6 +49,7 @@ export interface EditorDocument {
   sfx?: SoundEffectPlacement[];
   overlays?: MediaOverlay[];
   visualBlocks?: VisualBlock[];
+  motionScenes?: MotionPresetInstanceV1[];
   cameraEffects?: CameraEffect[];
   captionMeta?: CopilotCaptionMetaSnapshot | null;
   captionMetaDirty?: boolean;
@@ -214,6 +216,9 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
         ...(Array.isArray(doc.overlays) ? { overlays: doc.overlays as MediaOverlay[] } : {}),
         ...(Array.isArray(doc.visualBlocks)
           ? { visualBlocks: doc.visualBlocks as VisualBlock[] }
+          : {}),
+        ...(Array.isArray(doc.motionScenes)
+          ? { motionScenes: doc.motionScenes as MotionPresetInstanceV1[] }
           : {}),
         captionMeta:
           doc.captionMeta && typeof doc.captionMeta === "object"
