@@ -77,6 +77,7 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "stream-in",
         "staggered-slice",
         "handwriting",
+        "dissolve-out",
     }
 )
 
@@ -95,6 +96,7 @@ _INTRO_ANIMATION_EFFECTS: frozenset[str] = frozenset(
         "stream-in",
         "staggered-slice",
         "handwriting",
+        "dissolve-out",
         "none",
         "static",
     }

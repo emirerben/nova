@@ -25,7 +25,22 @@ export interface AnimationState {
   showCursor: boolean;
   /** Left-to-right painted-text reveal. 0 = fully clipped, 1 = settled. */
   revealProgress: number;
+  /** Exit dissolve progress 0-1. Preview-only; text layout stays unchanged. */
+  dissolveProgress: number;
 }
+
+// Mirrors app.pipeline.dissolve_effect.DEFAULT_DISSOLVE_PARAMS.
+export const DISSOLVE_OUT_PARAMS = {
+  durationS: 1.0,
+  baseFrequency: 0.004,
+  fineFrequency: 1.0,
+  maxScalePx: 2000,
+  webkitScaleCapPx: 920,
+  coherence: 5,
+  fadeStartProgress: 0.5,
+  transformScaleGrowth: 0.1,
+  webkitTransformScaleGrowth: 0.035,
+} as const;
 
 export interface ThemeTransition {
   type?: string | null;
@@ -377,7 +392,44 @@ function identityAnimationState(text: string): AnimationState {
     visibleText: text,
     showCursor: false,
     revealProgress: 1.0,
+    dissolveProgress: 0,
   };
+}
+
+export function dissolveOutProgressAt(tLocal: number, durationS: number): number {
+  const duration = Math.max(0.01, durationS);
+  const dissolveFor = Math.min(DISSOLVE_OUT_PARAMS.durationS, duration);
+  const start = Math.max(0, duration - dissolveFor);
+  const raw = (Math.max(0, tLocal) - start) / Math.max(0.01, dissolveFor);
+  return easeOutCubic(raw);
+}
+
+export function dissolveOutAlphaAt(progress: number): number {
+  if (progress <= DISSOLVE_OUT_PARAMS.fadeStartProgress) return 1;
+  return Math.max(
+    0,
+    1 -
+      (progress - DISSOLVE_OUT_PARAMS.fadeStartProgress) /
+        (1 - DISSOLVE_OUT_PARAMS.fadeStartProgress),
+  );
+}
+
+export function dissolveOutDisplacementScaleAt(
+  progress: number,
+  cssPixelsPerCanvasPixel: number,
+  capToWebkit = false,
+): number {
+  const maxScale = capToWebkit
+    ? Math.min(DISSOLVE_OUT_PARAMS.maxScalePx, DISSOLVE_OUT_PARAMS.webkitScaleCapPx)
+    : DISSOLVE_OUT_PARAMS.maxScalePx;
+  return Math.max(0, progress) * maxScale * cssPixelsPerCanvasPixel;
+}
+
+export function dissolveOutTransformScaleAt(progress: number, capToWebkit = false): number {
+  const growth = capToWebkit
+    ? DISSOLVE_OUT_PARAMS.webkitTransformScaleGrowth
+    : DISSOLVE_OUT_PARAMS.transformScaleGrowth;
+  return 1 + Math.max(0, progress) * growth;
 }
 
 /**
@@ -433,6 +485,7 @@ export function animationStateAt(
     visibleText,
     showCursor,
     revealProgress,
+    dissolveProgress,
   } = identityAnimationState(text);
 
   if (effect === "scale-up") {
@@ -483,6 +536,9 @@ export function animationStateAt(
     // else scale = 1.0 (identity)
   } else if (effect === "handwriting") {
     revealProgress = handwritingProgressAt(tLocal, durationS);
+  } else if (effect === "dissolve-out") {
+    dissolveProgress = dissolveOutProgressAt(tLocal, durationS);
+    alpha = dissolveOutAlphaAt(dissolveProgress);
   }
   // "none", "static", "karaoke-line", "lyric-line", "font-cycle", unknown → identity
 
@@ -495,6 +551,7 @@ export function animationStateAt(
     visibleText,
     showCursor,
     revealProgress,
+    dissolveProgress,
   };
 }
 

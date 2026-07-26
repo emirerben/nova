@@ -912,9 +912,15 @@ class TestSecurityGuards:
             "karaoke-line",
             "staggered-slice",
             "handwriting",
+            "dissolve-out",
         ):
             elem = TextElement(text="test", start_s=0, end_s=1, effect=effect)
             assert elem.effect == effect
+
+    def test_dissolve_out_roundtrips_to_the_burn_dict(self):
+        elem = TextElement(text="VANISH", start_s=0, end_s=3, effect="dissolve-out")
+        [overlay] = build_overlays_from_text_elements([elem], video_duration_s=3.0)
+        assert overlay["effect"] == "dissolve-out"
 
     def test_staggered_slice_roundtrips_to_the_burn_dict(self):
         elem = TextElement(

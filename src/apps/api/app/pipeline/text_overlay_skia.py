@@ -56,6 +56,11 @@ import structlog
 from PIL import Image
 
 from app.pipeline.canvas import PORTRAIT, Canvas
+from app.pipeline.dissolve_effect import (
+    DISSOLVE_OUT,
+    dissolve_filter_parts,
+    render_dissolve_skia_image,
+)
 from app.pipeline.generative_overlays import (
     resolve_letter_spacing_em,
     resolve_letter_spacing_px,
@@ -2295,6 +2300,7 @@ _ANIMATED_EFFECTS_SKIA = {
     "slide-down",
     "pop-in",
     "bounce",
+    DISSOLVE_OUT,
     "staggered-slice",
     "handwriting",
     "karaoke-line",
@@ -2614,6 +2620,7 @@ def _generate_overlay_sequence(
     duration_s = max(0.0, end_s - start_s)
     if duration_s <= 0:
         return None
+    effect = overlay.get("effect", "none")
 
     pattern_prefix = f"skia_overlay_{idx:03d}_f"
     _record_font_resolved_event(overlay, idx)
@@ -2640,6 +2647,7 @@ def _generate_overlay_sequence(
                 "start_s": start_s,
                 "end_s": end_s,
                 "is_animated": False,
+                "effect": effect,
             },
             overlay,
         )
@@ -2655,7 +2663,6 @@ def _generate_overlay_sequence(
     # cannot blow scratch disk on the encode worker:
     # 30s × 30fps = 900 frames × ~1MB PNG ≈ 1GB worst case, vs 7200 frames ×
     # 1MB ≈ 7GB unbounded.
-    effect = overlay.get("effect", "none")
     wanted = max(1, int(round(duration_s * FPS)))
     uses_long_ceiling = _uses_long_running_frame_ceiling(overlay)
     # behind_subject gets the larger BEHIND_SUBJECT_FRAME_CEILING (hold-to-EOF
@@ -2703,11 +2710,25 @@ def _generate_overlay_sequence(
         if behind and not _is_animated(overlay)
         else None
     )
+    dissolve_source_img = (
+        _draw_frame({**overlay, "effect": "static"}, 0.0, duration_s, render_canvas=render_canvas)
+        if effect == DISSOLVE_OUT and not behind
+        else None
+    )
 
     def _render_one(i: int) -> None:
         t_local = i * frame_dur
         out_path = os.path.join(work_dir, f"{pattern_prefix}{i:04d}.png")
-        if behind:
+        if dissolve_source_img is not None:
+            img = render_dissolve_skia_image(
+                dissolve_source_img,
+                t_local,
+                duration_s,
+                seed=101 + idx * 37,
+                cap_to_webkit=True,
+            )
+            _write_png_pillow(img, out_path)
+        elif behind:
             arr = (
                 static_behind_arr
                 if static_behind_arr is not None
@@ -2769,6 +2790,8 @@ def _generate_overlay_sequence(
             "start_s": start_s,
             "end_s": end_s,
             "is_animated": True,
+            "effect": effect,
+            "dissolve_renderer": "skia" if effect == DISSOLVE_OUT else None,
         },
         overlay,
     )
@@ -3066,12 +3089,29 @@ def _ffmpeg_burn_pngs(
         src = f"{i + 1}:v"
         start = seq["start_s"]
         end = seq["end_s"]
+        duration_s = max(0.001, float(end) - float(start))
+        local_src = src
+        if seq.get("effect") == DISSOLVE_OUT and seq.get("dissolve_renderer") != "skia":
+            dissolved = f"dissolve_text_{i}"
+            fc_parts.extend(
+                dissolve_filter_parts(
+                    local_src,
+                    dissolved,
+                    prefix=f"dt{i}",
+                    component_duration_s=duration_s,
+                    width=canvas.width,
+                    height=canvas.height,
+                    fps=float(seq["fps"]),
+                    seed=101 + i * 37,
+                )
+            )
+            local_src = dissolved
         if seq["is_animated"]:
             shifted = f"shift{i}"
-            fc_parts.append(f"[{src}]setpts=PTS+{start:.4f}/TB[{shifted}]")
+            fc_parts.append(f"[{local_src}]setpts=PTS+{start:.4f}/TB[{shifted}]")
             ov_src = shifted
         else:
-            ov_src = src
+            ov_src = local_src
         out = f"v{i}"
         fc_parts.append(
             f"[{prev}][{ov_src}]overlay=0:0"

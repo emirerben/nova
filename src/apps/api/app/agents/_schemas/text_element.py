@@ -79,6 +79,7 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "stream-in",
         "staggered-slice",
         "handwriting",
+        "dissolve-out",
         "bounce",
         "slide-in",
     }
@@ -329,6 +330,7 @@ class TextElement(BaseModel):
             "stream-in",
             "staggered-slice",
             "handwriting",
+            "dissolve-out",
             "bounce",
             "slide-in",
         ]

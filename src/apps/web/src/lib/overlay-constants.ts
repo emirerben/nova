@@ -161,6 +161,7 @@ export const INTRO_ANIMATIONS: IntroAnimation[] = [
   { value: "stream-in",  label: "Stream in"  },
   { value: "staggered-slice", label: "Staggered slice" },
   { value: "handwriting", label: "Handwriting" },
+  { value: "dissolve-out", label: "Dissolve out" },
   { value: "none",       label: "None"       },
 ];
 

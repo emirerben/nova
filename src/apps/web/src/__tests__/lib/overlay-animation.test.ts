@@ -1,5 +1,10 @@
 import {
   animationStateAt,
+  DISSOLVE_OUT_PARAMS,
+  dissolveOutAlphaAt,
+  dissolveOutDisplacementScaleAt,
+  dissolveOutProgressAt,
+  dissolveOutTransformScaleAt,
   easeOutCubic,
   giantTitleWipeAlphaAt,
   giantTitleWipeScaleAt,
@@ -137,6 +142,34 @@ describe("animationStateAt — fade-in", () => {
     expect(s.alpha).toBeCloseTo(1.0);
     expect(s.scale).toBeCloseTo(1.0);
     expect(s.yTranslate).toBeCloseTo(0.0);
+  });
+});
+
+describe("animationStateAt — dissolve-out", () => {
+  it("holds normally before the final dissolve window", () => {
+    const s = animationStateAt("dissolve-out", 3.9, 5.0, TEXT);
+    expect(s.dissolveProgress).toBeCloseTo(0);
+    expect(s.alpha).toBeCloseTo(1);
+    expect(s.visibleText).toBe(TEXT);
+  });
+
+  it("ramps displacement through the final second and fades in the tail half", () => {
+    expect(dissolveOutProgressAt(4.0, 5.0)).toBeCloseTo(0);
+    expect(dissolveOutProgressAt(4.5, 5.0)).toBeCloseTo(0.875);
+    expect(dissolveOutProgressAt(5.0, 5.0)).toBeCloseTo(1);
+    expect(dissolveOutAlphaAt(0.25)).toBeCloseTo(1);
+    expect(dissolveOutAlphaAt(0.75)).toBeCloseTo(0.5);
+    expect(animationStateAt("dissolve-out", 5.0, 5.0, TEXT).alpha).toBeCloseTo(0);
+  });
+
+  it("uses the SVG playground displacement and transform scale constants", () => {
+    expect(DISSOLVE_OUT_PARAMS.baseFrequency).toBeCloseTo(0.004);
+    expect(DISSOLVE_OUT_PARAMS.fineFrequency).toBeCloseTo(1);
+    expect(DISSOLVE_OUT_PARAMS.coherence).toBeCloseTo(5);
+    expect(dissolveOutDisplacementScaleAt(0.5, 0.25)).toBeCloseTo(250);
+    expect(dissolveOutDisplacementScaleAt(1, 1, true)).toBeCloseTo(920);
+    expect(dissolveOutTransformScaleAt(1)).toBeCloseTo(1.1);
+    expect(dissolveOutTransformScaleAt(1, true)).toBeCloseTo(1.035);
   });
 });
 

@@ -214,6 +214,7 @@ const ALLOWED_EFFECTS = new Set([
   "stream-in",
   "staggered-slice",
   "handwriting",
+  "dissolve-out",
   "bounce",
   "slide-in",
 ]);

@@ -82,6 +82,9 @@ class MediaOverlay(BaseModel):
     # Smart Captions may author a closed entrance motion token. Manual cards
     # default to none and retain their existing byte path.
     entrance_token: Literal["none", "pop_in"] = "none"
+    # Optional exit treatment. Unknown values coerce to none so a newer client
+    # never drops a card when talking to an older server version.
+    exit_token: Literal["none", "dissolve-out"] = "none"
 
     # Position: preset OR custom frac pair. On parse, presets resolve to their
     # canonical y_frac / x_frac defaults; custom uses the literal values.
@@ -119,6 +122,11 @@ class MediaOverlay(BaseModel):
         long-standing pip behavior.
         """
         return v if v in ("pip", "fullscreen") else "pip"
+
+    @field_validator("exit_token", mode="before")
+    @classmethod
+    def _coerce_exit_token(cls, v: object) -> str:
+        return v if v in ("none", "dissolve-out") else "none"
 
     @field_validator("x_frac", "y_frac", mode="before")
     @classmethod
