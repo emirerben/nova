@@ -491,9 +491,7 @@ def build_media_overlay_command(
                 card_filter_parts.append("tpad=stop_mode=clone:stop=-1")
 
         # PTS shift so the card plays from its own start during the window.
-        card_filter_parts.append(
-            f"setpts=PTS-STARTPTS+{card.start_s:.3f}/TB,settb=AVTB[{shifted}]"
-        )
+        card_filter_parts.append(f"setpts=PTS-STARTPTS+{card.start_s:.3f}/TB,settb=AVTB[{shifted}]")
         filter_parts.append(",".join(card_filter_parts))
 
         # Overlay with time-gate. Fullscreen composites at the origin (static

@@ -138,9 +138,7 @@ def dissolve_transform_scale_at_progress(
     cap_to_webkit: bool = False,
 ) -> float:
     growth = (
-        params.webkit_transform_scale_growth
-        if cap_to_webkit
-        else params.transform_scale_growth
+        params.webkit_transform_scale_growth if cap_to_webkit else params.transform_scale_growth
     )
     return 1.0 + growth * _clamp01(progress)
 
@@ -279,9 +277,12 @@ def render_dissolve_svg_displacement_image(
     if x0 >= x1 or y0 >= y1:
         return _numpy_rgba_to_skia_image(np.zeros((height, width, 4), dtype=np.uint8))
 
-    big = _skia_image_to_rgba_array(
-        _skia_noise_image(width, height, params.base_frequency, seed)
-    ).astype(np.float32) / 255.0
+    big = (
+        _skia_image_to_rgba_array(
+            _skia_noise_image(width, height, params.base_frequency, seed)
+        ).astype(np.float32)
+        / 255.0
+    )
     big_r = np.clip(big[y0:y1, x0:x1, 0] * params.coherence + params.intercept, 0.0, 1.0)
     big_g = np.clip(big[y0:y1, x0:x1, 1] * params.coherence + params.intercept, 0.0, 1.0)
     yy, xx = np.indices((y1 - y0, x1 - x0), dtype=np.float32)
@@ -479,9 +480,7 @@ def _skia_displacement_filter(
             params.fine_frequency,
             seed + 1543,
         )
-        displacement = skia.ImageFilters.Merge(
-            [displacement, skia.ImageFilters.Image(fine_img)]
-        )
+        displacement = skia.ImageFilters.Merge([displacement, skia.ImageFilters.Image(fine_img)])
 
     color = skia.ImageFilters.Image(source_img)
     crop = skia.IRect.MakeXYWH(0, 0, width, height)
