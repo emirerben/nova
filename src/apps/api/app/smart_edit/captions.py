@@ -11,6 +11,11 @@ from app.smart_edit.schemas import SemanticRole, SmartWord
 
 _TOKEN_RE = re.compile(r"\S+")
 _STRONG_END_RE = re.compile(r"[.!?…][\"')\]]*$")
+# A word ends a clause OR sentence (comma/semicolon/colon in addition to the
+# strong-end punctuation above) — the preferred split point when a forced close
+# would otherwise land mid-clause. Mirrors `app.pipeline.captions._CLAUSE_END_RE`
+# (kept as a separate constant: this engine's chunker is independent).
+_CLAUSE_BREAK_RE = re.compile(r"[.!?,;:…][\"')\]]*$")
 # A standalone emphasis cue ("Messi" alone) shorter than this is held on screen
 # up to this floor so a single word does not strobe past unreadably.
 _STANDALONE_MIN_HOLD_S = 0.5
@@ -136,6 +141,21 @@ def _tokens_for_cue(cue: dict[str, Any]) -> list[_TimedToken]:
         _TimedToken(token, start + index * step, start + (index + 1) * step, "segment_estimate")
         for index, token in enumerate(display_tokens)
     ]
+
+
+def _last_clause_boundary(tokens: list[_TimedToken], *, min_prefix_words: int) -> int | None:
+    """Index of the last clause/sentence-ending token in ``tokens``, searched
+    backward down to (never below) ``min_prefix_words`` tokens from the start —
+    so the prefix a boundary would carve off is never smaller than a readable
+    phrase. Returns ``None`` when no boundary qualifies within that window
+    (caller falls back to the raw split position, unchanged from before).
+    """
+
+    floor = max(0, min_prefix_words - 1)
+    for idx in range(len(tokens) - 1, floor - 1, -1):
+        if _CLAUSE_BREAK_RE.search(tokens[idx].text):
+            return idx
+    return None
 
 
 def _should_close(
@@ -315,6 +335,22 @@ def build_semantic_caption_cues(
             _span_start, span_end, span_kind = span_starting_here
             if span_kind == "standalone":
                 close_before = True
+                # Prefer the last clause/sentence boundary within the buffered
+                # run over the raw position split (plan 3b): a forced close
+                # right before a standalone span otherwise cuts wherever the
+                # span happens to start, which can strand an orphan mid-clause
+                # fragment ("...building the" | "YC"). If a real boundary
+                # exists, carve the buffer there instead — the clean prefix
+                # closes now, and the (usually short) remainder becomes its
+                # own cue that the existing sub-min_words merge-back floor may
+                # still fold into it below.
+                boundary_idx = _last_clause_boundary(
+                    current_tokens, min_prefix_words=policy.min_words
+                )
+                if boundary_idx is not None and boundary_idx < len(current_tokens) - 1:
+                    chunks.append((current_words[: boundary_idx + 1], current_role))
+                    current_words = current_words[boundary_idx + 1 :]
+                    current_tokens = current_tokens[boundary_idx + 1 :]
             else:
                 # keep_together: break early only if the whole span cannot join
                 # the current cue without breaching a cap. Never split it.

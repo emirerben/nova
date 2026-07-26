@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Small portrait HDR clips no longer fail during tonemapping.** The shared HLG/HDR10 resize now rounds both dimensions even before subsampled `zscale` processing, preventing libzimg code 1027 when inputs such as 632×894 previously became 1357×1920. A regression test pins the filter ordering used by both pre-tonemap and per-slot render paths.
 
+## [0.15.1.1] — 2026-07-26
+
+### Fixed
+- **Standalone caption emphasis ("Messi alone") no longer strands an orphaned mid-clause fragment before it.** With punctuation now restored onto the timed word stream, the smart chunker's forced close right before a standalone emphasis span (e.g. `"...building the" | "YC"`) prefers the last clause or sentence boundary within the buffered run over the raw split position, so the cue immediately before the span reads as a full phrase when a real boundary exists. Falls back to the prior raw-position split when no boundary is in range — byte-identical when no standalone spans are present. Displayed cue text still keeps its punctuation.
+
 ## [0.15.1.0] — 2026-07-26
 
 ### Added
