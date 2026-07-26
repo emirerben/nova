@@ -10,6 +10,12 @@ All notable changes to this project will be documented in this file.
 - **Behind-subject occlusion now applies on landscape renders.** The portrait-raster matte hit a silent shape-mismatch fail-open on the 1920×1080 canvas since the landscape toggle shipped; the renderer now resizes the mask to the frame it masks.
 - **Matte edges no longer shimmer.** The matte intermediate encodes lossless (`-qp 0`) — default-CRF x264 ringing along the hard silhouette edge varied per frame and read as flicker after the occlusion multiply.
 - **Unstable mattes decline the effect instead of glitching.** `matte_is_sane` gains a shape-stability gate (median adjacent-frame IoU of the binarized mask < 0.40 rejects): a silhouette that never disappears but wobbles violently now falls back to plain text, matching the engine's best-effort contract.
+## [0.13.3.0] — 2026-07-26
+
+### Added
+- **Text and media overlays can now dissolve out at the end of their own timeline window.** The new opt-in effect supports text blocks plus uploaded image/video overlay cards, with editor controls, browser preview, and server-rendered output that uses a noise displacement field and late opacity fade.
+- **Dissolve renders now preserve existing overlay output by default.** Media overlays default to no exit effect, while tests cover byte-identical command generation for unchanged cards, schema validation, preview timing math, and real render behavior for the new dissolve path.
+
 ## [0.13.2.0] — 2026-07-26
 
 ### Fixed

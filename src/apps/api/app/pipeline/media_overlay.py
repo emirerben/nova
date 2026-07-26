@@ -43,6 +43,7 @@ import os
 import subprocess
 import tempfile
 import time
+from math import ceil
 
 import structlog
 
@@ -54,6 +55,13 @@ from app.agents._schemas.media_overlay import (
 )
 from app.config import settings
 from app.pipeline.canvas import PORTRAIT, Canvas
+from app.pipeline.dissolve_effect import (
+    DISSOLVE_OUT,
+    MEDIA_OVERLAY_DISSOLVE_PARAMS,
+    read_skia_png,
+    render_dissolve_svg_displacement_image,
+    write_skia_png,
+)
 from app.pipeline.image_clip import (
     image_has_alpha,
     is_image_file,
@@ -91,6 +99,7 @@ _FULLSCREEN_TOTAL_BUDGET_S = 1500
 # veryfast retry — fail fast with a clear error instead of tripping the Celery
 # hard limit mid-encode. Only consulted when a caller threads a deadline.
 _DEADLINE_FLOOR_S = 120
+_DISSOLVE_FPS = 30
 
 
 class MediaOverlayError(Exception):
@@ -127,6 +136,177 @@ def _resolve_pass_budget(
 def _has_fullscreen(cards: list[MediaOverlay]) -> bool:
     """True when any card is a full-frame takeover (drives preset + timeout)."""
     return any(c.display_mode == "fullscreen" for c in cards)
+
+
+def _is_dissolve_frame_sequence(path: str) -> bool:
+    return "%04d" in path and "dissolve_card_" in path
+
+
+def _run_ffmpeg(cmd: list[str], *, label: str, timeout_s: int = 180) -> None:
+    result = subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=False)
+    if result.returncode != 0:
+        stderr_tail = result.stderr.decode("utf-8", errors="replace")[-800:]
+        raise MediaOverlayError(f"{label} failed (rc={result.returncode}): {stderr_tail}")
+
+
+def _render_dissolve_component_source_frames(
+    *,
+    card: MediaOverlay,
+    local_path: str,
+    card_width_px: int,
+    has_alpha: bool,
+    source_pattern: str,
+    frame_count: int,
+    duration_s: float,
+    canvas: Canvas,
+) -> None:
+    """Rasterize the selected media card into full-frame transparent hold frames."""
+    inputs: list[str]
+    if is_image_file(local_path) or local_path.endswith((".jpg", ".jpeg", ".png")):
+        inputs = [
+            "-loop",
+            "1",
+            "-t",
+            f"{duration_s:.3f}",
+            "-i",
+            local_path,
+        ]
+    else:
+        inputs = ["-i", local_path]
+
+    cx, cy = card.canvas_center_px()
+    ox = cx - card_width_px // 2
+    oy_expr = f"({round(cy)}-overlay_h/2)"
+    is_fullscreen = card.display_mode == "fullscreen"
+    is_video_card = not is_image_file(local_path) and not local_path.endswith(
+        (".jpg", ".jpeg", ".png", ".gif")
+    )
+
+    card_parts: list[str] = []
+    if is_video_card and (card.clip_trim_start_s or card.clip_trim_end_s):
+        ts = card.clip_trim_start_s or 0.0
+        if card.clip_trim_end_s is not None:
+            card_parts.append(
+                f"[0:v]trim=start={ts:.3f}:end={card.clip_trim_end_s:.3f},setpts=PTS-STARTPTS"
+            )
+        else:
+            card_parts.append(f"[0:v]trim=start={ts:.3f},setpts=PTS-STARTPTS")
+    else:
+        card_parts.append("[0:v]null")
+
+    if is_fullscreen:
+        card_parts.append(
+            f"scale={canvas.width}:{canvas.height}:force_original_aspect_ratio=increase,"
+            f"crop={canvas.width}:{canvas.height},setsar=1,format=rgba"
+        )
+    else:
+        pix_fmt = "rgba" if has_alpha else "yuv420p"
+        if card.entrance_token == "pop_in":
+            card_parts.append(
+                f"scale=w='{card_width_px}*(0.82+0.18*min(t/0.18,1))':"
+                f"h=-2:eval=frame,format={pix_fmt}"
+            )
+        else:
+            card_parts.append(f"scale={card_width_px}:-2,format={pix_fmt}")
+
+    if is_video_card:
+        trim_s = card.clip_trim_start_s or 0.0
+        trim_e = card.clip_trim_end_s if card.clip_trim_end_s is not None else card.clip_duration_s
+        if trim_e is not None:
+            trim_dur = trim_e - trim_s
+            extra_pad = max(0.0, duration_s - trim_dur)
+            if extra_pad > 0:
+                card_parts.append(f"tpad=stop_mode=clone:stop_duration={extra_pad:.3f}")
+        else:
+            card_parts.append("tpad=stop_mode=clone:stop=-1")
+
+    card_parts.append("setpts=PTS-STARTPTS,settb=AVTB[card]")
+    layer_xy = "0:0" if is_fullscreen else f"{ox}:{oy_expr}"
+    filter_complex = ";".join(
+        [
+            ",".join(card_parts),
+            (
+                f"color=c=black@0:s={canvas.width}x{canvas.height}:d={duration_s:.3f}:"
+                f"r={_DISSOLVE_FPS},format=rgba,colorchannelmixer=aa=0[blank]"
+            ),
+            f"[blank][card]overlay={layer_xy}:eof_action=pass,format=rgba[out]",
+        ]
+    )
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        *inputs,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[out]",
+        "-frames:v",
+        str(frame_count),
+        "-start_number",
+        "0",
+        "-y",
+        source_pattern,
+    ]
+    _run_ffmpeg(cmd, label="media-overlay dissolve source raster")
+
+
+def _render_dissolve_card_sequence(
+    *,
+    card: MediaOverlay,
+    local_path: str,
+    card_width_px: int,
+    has_alpha: bool,
+    tmpdir: str,
+    index: int,
+    canvas: Canvas,
+    job_id: str | None,
+) -> str:
+    """Render one media overlay's exit dissolve as full-frame transparent PNGs."""
+    duration_s = max(0.001, float(card.end_s) - float(card.start_s))
+    frame_count = max(1, int(ceil(duration_s * _DISSOLVE_FPS)))
+    source_dir = os.path.join(tmpdir, f"dissolve_card_{index}_source")
+    output_dir = os.path.join(tmpdir, f"dissolve_card_{index}_frames")
+    os.makedirs(source_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+    source_pattern = os.path.join(source_dir, "frame_%04d.png")
+    output_pattern = os.path.join(output_dir, "frame_%04d.png")
+
+    _render_dissolve_component_source_frames(
+        card=card,
+        local_path=local_path,
+        card_width_px=card_width_px,
+        has_alpha=has_alpha,
+        source_pattern=source_pattern,
+        frame_count=frame_count,
+        duration_s=duration_s,
+        canvas=canvas,
+    )
+
+    seed = 211 + index * 53
+    for frame in range(frame_count):
+        src = os.path.join(source_dir, f"frame_{frame:04d}.png")
+        dst = os.path.join(output_dir, f"frame_{frame:04d}.png")
+        source_img = read_skia_png(src)
+        dissolved = render_dissolve_svg_displacement_image(
+            source_img,
+            frame / _DISSOLVE_FPS,
+            duration_s,
+            seed=seed,
+            params=MEDIA_OVERLAY_DISSOLVE_PARAMS,
+            cap_to_webkit=True,
+        )
+        write_skia_png(dissolved, dst)
+
+    log.info(
+        "media_overlay_dissolve_sequence_rendered",
+        job_id=job_id,
+        card_id=card.id,
+        frame_count=frame_count,
+        renderer="skia",
+    )
+    return output_pattern
 
 
 def build_media_overlay_command(
@@ -174,7 +354,16 @@ def build_media_overlay_command(
         # a real compiler output when one pool image backs two time windows)
         # would both resolve cards.index to the FIRST card's paths.
         local = card_local_paths[orig_idx]
-        if is_image_file(local) or local.endswith((".jpg", ".jpeg", ".png")):
+        if _is_dissolve_frame_sequence(local):
+            inputs += [
+                "-framerate",
+                str(_DISSOLVE_FPS),
+                "-start_number",
+                "0",
+                "-i",
+                local,
+            ]
+        elif is_image_file(local) or local.endswith((".jpg", ".jpeg", ".png")):
             # Static image: -loop 1 supplies frames; -t bounds the looped
             # source to the card's visible window. WITHOUT the bound the loop
             # is infinite and ffmpeg decodes+rescales the full-resolution image
@@ -208,8 +397,29 @@ def build_media_overlay_command(
         out_label = f"ov{filter_idx}"
         local = card_local_paths[orig_idx]
         is_fullscreen = card.display_mode == "fullscreen"
+        is_dissolve_sequence = _is_dissolve_frame_sequence(local)
+        dissolve_out = card.exit_token == DISSOLVE_OUT
         alpha_pip = bool(card_has_alpha[orig_idx]) and not is_fullscreen
         alpha_pips.append(alpha_pip)
+
+        if is_dissolve_sequence:
+            filter_parts.append(
+                f"[{in_idx}:v]format=rgba,setpts=PTS-STARTPTS+{card.start_s:.3f}/TB,"
+                f"settb=AVTB[{shifted}]"
+            )
+            filter_parts.append(
+                f"{prev}[{shifted}]overlay=0:0:"
+                f"enable='between(t,{card.start_s:.3f},{card.end_s:.3f})':"
+                f"eof_action=pass[{out_label}]"
+            )
+            prev = f"[{out_label}]"
+            continue
+
+        if dissolve_out:
+            raise ValueError(
+                "dissolve-out media overlays must be prepared as Skia frame sequences "
+                "before build_media_overlay_command"
+            )
 
         # Build the per-card filter chain.
         card_filter_parts: list[str] = []
@@ -282,7 +492,6 @@ def build_media_overlay_command(
 
         # PTS shift so the card plays from its own start during the window.
         card_filter_parts.append(f"setpts=PTS-STARTPTS+{card.start_s:.3f}/TB,settb=AVTB[{shifted}]")
-
         filter_parts.append(",".join(card_filter_parts))
 
         # Overlay with time-gate. Fullscreen composites at the origin (static
@@ -496,23 +705,40 @@ def apply_media_overlays(
         # Validate timing: discard cards with end_s <= start_s (shouldn't happen
         # post-schema-validation, but defensive here too).
         valid: list[tuple[MediaOverlay, str, int, bool]] = []
-        for card, prepared in prepared_cards:
+        applied_card_payloads: list[dict] = []
+        for render_idx, (card, prepared) in enumerate(prepared_cards):
             if card.end_s <= card.start_s:
                 log.warning("media_overlay_bad_timing", card_id=card.id, job_id=job_id)
                 continue
+            card_width_px = round(card.scale * canvas.width)
+            render_path = prepared.local_path
+            render_has_alpha = prepared.has_alpha
+            if card.exit_token == DISSOLVE_OUT:
+                render_path = _render_dissolve_card_sequence(
+                    card=card,
+                    local_path=prepared.local_path,
+                    card_width_px=card_width_px,
+                    has_alpha=prepared.has_alpha,
+                    tmpdir=tmpdir,
+                    index=render_idx,
+                    canvas=canvas,
+                    job_id=job_id,
+                )
+                render_has_alpha = True
             valid.append(
                 (
                     card,
-                    prepared.local_path,
-                    round(card.scale * canvas.width),
-                    prepared.has_alpha,
+                    render_path,
+                    card_width_px,
+                    render_has_alpha,
                 )
             )
+            applied_card_payloads.append(card.model_dump(exclude_none=True))
 
         if not valid:
             raise MediaOverlayError("No cards have valid timing — skipping apply-pass")
         if applied_cards_out is not None:
-            applied_cards_out.extend(card.model_dump(exclude_none=True) for card, *_ in valid)
+            applied_cards_out.extend(applied_card_payloads)
 
         final_cards, final_paths, final_widths, final_alpha_flags = zip(*valid)  # type: ignore[misc]
 

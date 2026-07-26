@@ -78,6 +78,7 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "typewriter",
         "stream-in",
         "staggered-slice",
+        "dissolve-out",
         "bounce",
         "slide-in",
     }
@@ -326,6 +327,7 @@ class TextElement(BaseModel):
             "typewriter",
             "stream-in",
             "staggered-slice",
+            "dissolve-out",
             "bounce",
             "slide-in",
         ]

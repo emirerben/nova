@@ -76,6 +76,20 @@ class TestDisplayMode:
         assert cards[0].display_mode == "fullscreen"
 
 
+class TestExitToken:
+    def test_default_is_none(self):
+        card = MediaOverlay.model_validate(_card())
+        assert card.exit_token == "none"
+
+    def test_dissolve_out_parses(self):
+        card = MediaOverlay.model_validate(_card(exit_token="dissolve-out"))
+        assert card.exit_token == "dissolve-out"
+
+    def test_unknown_value_coerces_to_none_never_drops(self):
+        card = MediaOverlay.model_validate(_card(exit_token="sparkle"))
+        assert card.exit_token == "none"
+
+
 class TestMediaOverlayValidation:
     def test_valid_card_parses(self):
         card = MediaOverlay.model_validate(_card())
