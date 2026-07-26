@@ -71,6 +71,11 @@ import {
   MEDIA_OVERLAY_MIN_SCALE,
   MEDIA_OVERLAY_MAX_SCALE,
 } from "./editor-media-overlays";
+import {
+  SMART_ROLE_BADGE_LABELS,
+  smartCaptionPreviewSizePx,
+  smartStyleForRole,
+} from "./editor-bars";
 import PresetGrid from "./PresetGrid";
 import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
 
@@ -163,6 +168,9 @@ export default function InspectorPanel({
   musicWindow,
   smartPlaceAvailable = false,
   onSmartPlace,
+  onMergeCaptionCue,
+  canMergeCaptionPrev = false,
+  canMergeCaptionNext = false,
   onClose,
   onPickPreset,
 }: {
@@ -211,6 +219,12 @@ export default function InspectorPanel({
   musicWindow?: SongWindowControl;
   smartPlaceAvailable?: boolean;
   onSmartPlace?: () => void;
+  /** 4b merge-with-neighbor: folds the selected caption cue into its
+   * chronological prev/next cue. Availability flags computed by the shell
+   * (needs the full bar list, which this panel doesn't have). */
+  onMergeCaptionCue?: (direction: "prev" | "next") => void;
+  canMergeCaptionPrev?: boolean;
+  canMergeCaptionNext?: boolean;
   /** Close X clears the selection — the column stays (D6). */
   onClose: () => void;
   onPickPreset: (preset: TextPreset) => void;
@@ -244,6 +258,9 @@ export default function InspectorPanel({
           onPatchTiming={onPatchTextTiming}
           smartPlaceAvailable={smartPlaceAvailable}
           onSmartPlace={onSmartPlace}
+          onMergeCaptionCue={onMergeCaptionCue}
+          canMergeCaptionPrev={canMergeCaptionPrev}
+          canMergeCaptionNext={canMergeCaptionNext}
           onClose={onClose}
         />
       ) : selection.kind === "clip" && clipTiming ? (
@@ -1096,6 +1113,9 @@ function TextInspector({
   onPatchTiming,
   smartPlaceAvailable,
   onSmartPlace,
+  onMergeCaptionCue,
+  canMergeCaptionPrev = false,
+  canMergeCaptionNext = false,
   onClose,
 }: {
   bar: TextElementBar;
@@ -1107,14 +1127,28 @@ function TextInspector({
   onPatchTiming: (patch: { start_s?: number; end_s?: number }) => void;
   smartPlaceAvailable: boolean;
   onSmartPlace?: () => void;
+  onMergeCaptionCue?: (direction: "prev" | "next") => void;
+  canMergeCaptionPrev?: boolean;
+  canMergeCaptionNext?: boolean;
   onClose: () => void;
 }) {
   // Stroke row starts expanded when the bar already carries a stroke.
   const [strokeOpen, setStrokeOpen] = useState((bar.stroke_width ?? 0) > 0);
   const isLyric = bar.role === "lyric_line";
   const isCaption = bar.role === "narrated_caption";
+  // 4b: role badge + Emphasize toggle. smart_role is server-authored/read-only;
+  // the toggle only ever writes smart_style/smart_emphasis (see editor-bars.ts
+  // smartStyleForRole).
+  const smartRoleBadge = isCaption && bar.smart_role ? SMART_ROLE_BADGE_LABELS[bar.smart_role] : null;
+  const isEmphasized = isCaption && bar.smart_emphasis === true;
 
   const sizeValue = Math.round(bar.size_px ?? 64);
+  // Read-only preview: how much bigger this cue burns relative to the base
+  // caption size, given its smart_style. Not editable here — the chunker/burn
+  // owns the real geometry (see smartCaptionPreviewSizePx's doc comment).
+  const smartPreviewSizePx = isCaption
+    ? smartCaptionPreviewSizePx(sizeValue, bar.smart_style)
+    : sizeValue;
   const clampedSlider = Math.min(
     EDITOR_TEXT_SIZE_MAX,
     Math.max(EDITOR_TEXT_SIZE_MIN, sizeValue),
@@ -1157,6 +1191,15 @@ function TextInspector({
       <div className="flex items-center justify-between">
         <h2 className="flex items-center gap-2 font-display text-[18px] text-[#0c0c0e]">
           {isCaption ? "Captions" : "Text"}
+          {smartRoleBadge && (
+            <span
+              aria-label={`Caption role: ${smartRoleBadge}`}
+              title="AI-assigned caption role"
+              className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#71717a]"
+            >
+              {smartRoleBadge}
+            </span>
+          )}
           {isLyric && (
             <span
               aria-label="Lyric timing locked"
@@ -1209,6 +1252,54 @@ function TextInspector({
         </>
       )}
 
+      {/* 4b: Smart Captions emphasis + orphan-fragment merge. Read-only role
+          badge lives in the heading above; this row is the two editable
+          affordances, both persisted through the existing captions PATCH. */}
+      {isCaption && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-pressed={isEmphasized}
+            onClick={() =>
+              onPatch(
+                isEmphasized
+                  ? { smart_emphasis: false, smart_style: null }
+                  : { smart_emphasis: true, smart_style: smartStyleForRole(bar.smart_role) },
+              )
+            }
+            className={`min-h-8 rounded-full border px-3 text-[12px] font-semibold transition-colors ${
+              isEmphasized
+                ? "border-lime-600 bg-lime-50 text-lime-700"
+                : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+            } focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500`}
+          >
+            {isEmphasized ? "★ Emphasized" : "Emphasize"}
+          </button>
+          {onMergeCaptionCue && (canMergeCaptionPrev || canMergeCaptionNext) && (
+            <>
+              <button
+                type="button"
+                disabled={!canMergeCaptionPrev}
+                onClick={() => onMergeCaptionCue("prev")}
+                title="Merge with the previous caption"
+                className="min-h-8 rounded-full border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              >
+                {"←"} Merge
+              </button>
+              <button
+                type="button"
+                disabled={!canMergeCaptionNext}
+                onClick={() => onMergeCaptionCue("next")}
+                title="Merge with the next caption"
+                className="min-h-8 rounded-full border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              >
+                Merge {"→"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Font + size */}
       <div className="mt-3">
         <FontSelect
@@ -1244,6 +1335,11 @@ function TextInspector({
           className="min-w-0 flex-1 accent-[#0c0c0e]"
         />
       </div>
+      {isCaption && smartPreviewSizePx !== sizeValue && (
+        <p className="mt-1 text-[11px] text-[#71717a]">
+          Burns bigger for this role — ~{smartPreviewSizePx}px, not editable here
+        </p>
+      )}
 
       {canEditMaxWidth && !isLyric && !isCaption && (
         <div className="mt-2 flex items-center gap-2">

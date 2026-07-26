@@ -412,6 +412,8 @@ def test_copilot_new_ops_coerce_and_clamp() -> None:
         {"op": "edit_caption", "cue_index": 0},
         {"op": "set_caption_timing", "cue_index": 0},
         {"op": "set_caption_meta"},
+        {"op": "set_caption_emphasis", "cue_index": 0},
+        {"op": "set_caption_emphasis", "emphasis": True},
         {"op": "swap_music"},
         {"op": "set_mix"},
         {"op": "set_title"},
@@ -435,6 +437,9 @@ def test_copilot_new_ops_required_field_missing_drop(op: dict) -> None:
         {"op": "edit_caption", "cue_index": -1, "text": "fixed"},
         {"op": "edit_caption", "cue_index": 2, "text": "fixed"},
         {"op": "edit_caption", "cue_index": 0.5, "text": "fixed"},
+        {"op": "set_caption_emphasis", "cue_index": -1, "emphasis": True},
+        {"op": "set_caption_emphasis", "cue_index": 2, "emphasis": True},
+        {"op": "set_caption_emphasis", "cue_index": 0.5, "emphasis": True},
     ],
 )
 def test_copilot_new_index_ops_oob_negative_and_non_int_drop(op: dict) -> None:
@@ -471,6 +476,7 @@ def test_copilot_swap_music_requires_swappable() -> None:
         ({"op": "add_sfx", "effect_id": "pop", "at_s": 1}, ["text"]),
         ({"op": "patch_overlay", "overlay_index": 0, "patch": {"scale": 0.5}}, ["text"]),
         ({"op": "edit_caption", "cue_index": 0, "text": "fixed"}, ["text"]),
+        ({"op": "set_caption_emphasis", "cue_index": 0, "emphasis": True}, ["text"]),
         ({"op": "swap_music", "track_id": "track-1"}, ["text"]),
         ({"op": "set_mix", "music_level": 0.5}, ["text"]),
         ({"op": "set_title", "title": "New title"}, ["text"]),
@@ -590,6 +596,72 @@ def test_copilot_caption_meta_whitelist_and_empty_drop() -> None:
         snapshot=_full_snapshot(),
     )
     assert empty.ops == []
+
+
+def test_copilot_set_caption_emphasis_parses() -> None:
+    out = _parse(
+        [{"op": "set_caption_emphasis", "cue_index": 0, "emphasis": True}],
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == [{"op": "set_caption_emphasis", "cue_index": 0, "emphasis": True}]
+
+    cleared = _parse(
+        [{"op": "set_caption_emphasis", "cue_index": 1, "emphasis": False}],
+        snapshot=_full_snapshot(),
+    )
+    assert cleared.ops == [{"op": "set_caption_emphasis", "cue_index": 1, "emphasis": False}]
+
+
+@pytest.mark.parametrize(
+    "emphasis",
+    ["true", 1, None, "yes"],
+)
+def test_copilot_set_caption_emphasis_rejects_non_bool(emphasis: object) -> None:
+    out = _parse(
+        [{"op": "set_caption_emphasis", "cue_index": 0, "emphasis": emphasis}],
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == []
+
+
+def test_copilot_set_caption_emphasis_meta_only_drop() -> None:
+    # Meta-only captions (subtitled talk-to-camera) ship an empty cues list —
+    # same mechanism edit_caption/set_caption_timing already rely on: any
+    # cue_index is out of bounds against an empty list, so it drops.
+    snap = _full_snapshot()
+    snap["captions"]["cues"] = []
+    snap["captions"]["cues_editable"] = False
+    out = _parse(
+        [{"op": "set_caption_emphasis", "cue_index": 0, "emphasis": True}],
+        snapshot=snap,
+    )
+    assert out.ops == []
+
+
+def test_format_snapshot_renders_caption_role_and_emphasis() -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    snap = _snapshot(allowed=["text", "style", "caption"])
+    snap["captions"] = {
+        "total_cues": 1,
+        "truncated": False,
+        "cues_editable": True,
+        "cues": [
+            {
+                "index": 0,
+                "id": "cue-1",
+                "text": "we flew to Turkey",
+                "start_s": 0.0,
+                "end_s": 1.2,
+                "smart_role": "hook",
+                "smart_emphasis": True,
+            }
+        ],
+        "meta": {"enabled": True, "style": "sentence", "font": None, "y_frac": 0.8},
+    }
+    rendered = _format_snapshot(snap)
+    assert "role='hook'" in rendered
+    assert "emphasis=True" in rendered
 
 
 @pytest.mark.parametrize(
@@ -895,10 +967,10 @@ def test_format_snapshot_renders_sfx_roles_and_suggestions() -> None:
 
 
 def test_prompt_version_bumped_for_handwriting_effect_catalog() -> None:
-    # The prompt-change rule: the generated effect catalog changed in v8.
+    # The prompt-change rule: set_caption_emphasis + its vocabulary changed in v9.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-07-26-v8"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-07-26-v9"
 
 
 def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:

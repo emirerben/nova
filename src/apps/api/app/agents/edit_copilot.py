@@ -25,7 +25,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-07-26-v8"
+EDIT_COPILOT_PROMPT_VERSION = "2026-07-26-v9"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -52,7 +52,7 @@ _OVERLAY_OPS = {
     "remove_overlay",
     "accept_overlay_suggestion",
 }
-_CAPTION_OPS = {"edit_caption", "set_caption_timing", "set_caption_meta"}
+_CAPTION_OPS = {"edit_caption", "set_caption_timing", "set_caption_meta", "set_caption_emphasis"}
 _MUSIC_OPS = {"swap_music", "set_mix"}
 _RENDER_OPS = frozenset({"set_intro_layout"})
 _TITLE_OPS = {"set_title"}
@@ -91,6 +91,7 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "edit_caption": frozenset({"cue_index", "text"}),
     "set_caption_timing": frozenset({"cue_index"}),
     "set_caption_meta": frozenset({"patch"}),
+    "set_caption_emphasis": frozenset({"cue_index", "emphasis"}),
     "swap_music": frozenset({"track_id"}),
     "set_mix": frozenset({"music_level"}),
     "set_intro_layout": frozenset({"layout"}),
@@ -130,6 +131,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "edit_caption": frozenset({"cue_index", "text"}),
     "set_caption_timing": frozenset({"cue_index", "start_s", "end_s"}),
     "set_caption_meta": frozenset({"patch"}),
+    "set_caption_emphasis": frozenset({"cue_index", "emphasis"}),
     "swap_music": frozenset({"track_id"}),
     "set_mix": frozenset({"music_level"}),
     "set_intro_layout": frozenset({"layout"}),
@@ -569,6 +571,8 @@ def _format_snapshot(snapshot: dict) -> str:
                     f"{cue.get('index')}. id={_clean_prompt_data(cue.get('id'), max_chars=80)!r} "
                     f"timing={_fmt_round3(_first_number(cue, ('start_s',)))}-"
                     f"{_fmt_round3(_first_number(cue, ('end_s',)))}s "
+                    f"role={_clean_prompt_data(cue.get('smart_role'), max_chars=20)!r} "
+                    f"emphasis={bool(cue.get('smart_emphasis'))} "
                     f"text={_clean_prompt_data(cue.get('text'), max_chars=80)!r}"
                 )
         else:
@@ -1008,6 +1012,11 @@ def _coerce_payload(
         if not clean_patch:
             return None
         out["patch"] = clean_patch
+
+    if name == "set_caption_emphasis":
+        if not isinstance(out.get("emphasis"), bool):
+            state.invalid_value()
+            return None
 
     for key in ("start_s", "end_s", "in_s", "duration_s", "at_s", "gain", "music_level", "scale"):
         if key in out:

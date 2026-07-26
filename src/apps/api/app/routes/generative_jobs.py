@@ -1354,15 +1354,21 @@ class CaptionCue(BaseModel):
     # construction (build_plain_cues), so a generous cap keeps the debounced PATCH from
     # becoming an unbounded JSONB write surface.
     words: list[CaptionWord] | None = None
-    # Server-authored semantic role. Closed tokens compile to fixed ASS styles;
-    # round-trip it through the editor so an unchanged cue keeps its Smart look.
+    # Server-authored by default, but CLIENT-EDITABLE (plan Workstream 4b): the
+    # editor's per-cue "Emphasize" toggle sets/clears this alongside
+    # smart_emphasis below, through this SAME PATCH — no dedicated endpoint.
+    # The Literal closes the value set (persist_variant_captions rejects
+    # anything outside it with a 422); an unchanged cue round-trips whatever
+    # the server originally authored.
     smart_style: Literal["hook", "context", "list_item", "example", "payoff", "cta"] | None = None
     # Smart Captions v2 provenance. The captions PATCH replaces the ENTIRE cue
     # list, so anything not whitelisted here is stripped from ALL cues on the
-    # first text edit. Not read at render time (smart_style above is the ASS
-    # styling carrier) but preserved for the planner lineage plan 011 extends.
-    # smart_role uses the smart_edit SemanticRole vocabulary — distinct from
-    # smart_style's ("context_shift" vs "context").
+    # first text edit. Read-only from the editor's perspective — the chunker
+    # assigns it and it is never client-set (distinct from smart_style above,
+    # which the Emphasize toggle DOES set). Not read at render time
+    # (smart_style is the ASS styling carrier) but preserved for the planner
+    # lineage plan 011 extends. Uses the smart_edit SemanticRole vocabulary —
+    # distinct from smart_style's ("context_shift" vs "context").
     # The derived smart_render_* caches are deliberately NOT round-tripped:
     # generate_ass_from_cues recomputes them from text + the pinned policy at
     # every burn, so client-sent values would be dead weight.
@@ -1370,8 +1376,10 @@ class CaptionCue(BaseModel):
     smart_word_ids: list[str] | None = None
     # Plan 011/012 provenance the whitelist above was written to be extended with:
     # smart_emphasis marks a cue that was isolated as a named-entity moment (drives
-    # the standalone min-hold at plan time + the future styling lane), and
-    # smart_keep_together holds the line-layout adjacency pairs the reburn honors.
+    # the standalone min-hold at plan time) — CLIENT-EDITABLE alongside
+    # smart_style above (plan Workstream 4b's Emphasize toggle sets/clears both
+    # together). smart_keep_together holds the line-layout adjacency pairs the
+    # reburn honors and stays server-only/round-tripped untouched.
     # Both must survive a caption text edit or the emphasis/layout look is silently
     # lost on the FIRST edit (same trap #699 closed for smart_role/smart_word_ids).
     smart_emphasis: bool | None = None

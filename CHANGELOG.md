@@ -7,6 +7,12 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Small portrait HDR clips no longer fail during tonemapping.** The shared HLG/HDR10 resize now rounds both dimensions even before subsampled `zscale` processing, preventing libzimg code 1027 when inputs such as 632×894 previously became 1357×1920. A regression test pins the filter ordering used by both pre-tonemap and per-slot render paths.
 
+## [0.15.2.0] — 2026-07-26
+
+### Added
+- **Caption emphasis is now visible and editable in the editor.** Each caption row shows its AI-assigned role (Hook / Context / List / Example / Payoff / CTA) and, for emphasized cues, a size-preview hint matching what the burn does — no more guessing which lines will render bigger. A per-cue "Emphasize" toggle sets or clears the emphasis directly, and a merge-with-neighbor action folds an orphan caption fragment into the cue before or after it. Both flow through the existing captions save path — no new endpoint.
+- **The chat copilot can now toggle caption emphasis.** "Emphasize Turkey" or "remove the emphasis on the intro line" resolves to the matching caption cue and applies instantly, alongside the existing caption text/timing/meta edits.
+
 ## [0.15.1.1] — 2026-07-26
 
 ### Fixed
