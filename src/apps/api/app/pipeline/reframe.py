@@ -734,9 +734,12 @@ _HDR10_TRANSFER = "smpte2084"
 # Scaling in linear-light is also the physically correct HDR-aware order:
 # averaging gamma-encoded HDR luminance biases bright values; averaging linear
 # light averages physical luminance. `force_original_aspect_ratio=decrease`
-# makes this a strict downscale — a 1080×1920 HDR source passes through
-# unchanged. lanczos preserves highlight detail across the downscale (bilinear,
-# the scale default, blurs specular highlights). Expected wall-clock breakdown
+# fits the source inside the output-height square while preserving aspect ratio;
+# it can still upscale smaller inputs. `force_divisible_by=2` rounds both scaled
+# dimensions to an even value before the subsampled zscale stages — without it,
+# a 632×894 HLG input becomes 1357×1920 and libzimg rejects the odd width.
+# lanczos preserves highlight detail across the resize (bilinear, the scale
+# default, blurs specular highlights). Expected wall-clock breakdown
 # for a 24s 4K HLG clip on shared-cpu-2x: HEVC decode ~60s, zscale=t=linear at
 # 4K ~30s, scale 4K→1080p YUV ~20s, format=gbrpf32le at 1080p ~75s, gamut +
 # tonemap + transfer at 1080p ~50s, libx264 ultrafast encode at 1080p ~30s =
@@ -744,7 +747,7 @@ _HDR10_TRANSFER = "smpte2084"
 _ZSCALE_SDR_PIPELINE = (
     "zscale=t=linear:npl=400"
     f",scale={settings.output_height}:{settings.output_height}"
-    ":force_original_aspect_ratio=decrease:flags=lanczos"
+    ":force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos"
     ",format=gbrpf32le"
     ",zscale=p=bt709"
     ",tonemap=tonemap=mobius"
