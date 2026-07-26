@@ -125,7 +125,7 @@ export default function InspectorPanel({
   clipTiming,
   sfx,
   overlay,
-  cameraEffect,
+  cameraEffect = null,
   tab,
   sampleWord,
   appliedPresetId,
@@ -144,8 +144,8 @@ export default function InspectorPanel({
   onPreviewOverlay,
   onRecordOverlay,
   onDeleteOverlay,
-  onPatchCameraEffect,
-  onDeleteCameraEffect,
+  onPatchCameraEffect = () => {},
+  onDeleteCameraEffect = () => {},
   mixLevel,
   mixEditable,
   mixLabel,
@@ -157,6 +157,7 @@ export default function InspectorPanel({
   backgroundMusicTrackDurationS = null,
   onPatchMix,
   onPickMusic,
+  onRemoveMusic,
   onPatchBackgroundMusic,
   onRemoveBackgroundMusic,
   musicWindow,
@@ -171,7 +172,7 @@ export default function InspectorPanel({
   clipTiming: InspectorClipTiming | null;
   sfx: SoundEffectPlacement | null;
   overlay: MediaOverlay | null;
-  cameraEffect: CameraEffect | null;
+  cameraEffect?: CameraEffect | null;
   tab: InspectorTab;
   sampleWord: string | null;
   appliedPresetId: string | null;
@@ -191,8 +192,8 @@ export default function InspectorPanel({
   onPreviewOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
   onRecordOverlay: () => void;
   onDeleteOverlay: (id: string) => void;
-  onPatchCameraEffect: (id: string, patch: Partial<CameraEffect>) => void;
-  onDeleteCameraEffect: (id: string) => void;
+  onPatchCameraEffect?: (id: string, patch: Partial<CameraEffect>) => void;
+  onDeleteCameraEffect?: (id: string) => void;
   mixLevel?: number | null;
   mixEditable?: boolean;
   mixLabel?: string;
@@ -204,6 +205,7 @@ export default function InspectorPanel({
   backgroundMusicTrackDurationS?: number | null;
   onPatchMix?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  onRemoveMusic?: () => void;
   onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
   onRemoveBackgroundMusic?: () => void;
   musicWindow?: SongWindowControl;
@@ -287,6 +289,7 @@ export default function InspectorPanel({
           backgroundMusic={backgroundMusic}
           backgroundMusicTrackDurationS={backgroundMusicTrackDurationS}
           onPickMusic={onPickMusic}
+          onRemoveMusic={onRemoveMusic}
           onPatchBackgroundMusic={onPatchBackgroundMusic}
           onRemoveBackgroundMusic={onRemoveBackgroundMusic}
           musicWindow={musicWindow}
@@ -324,6 +327,7 @@ function MixInspector({
   backgroundMusicTrackDurationS,
   onPatch,
   onPickMusic,
+  onRemoveMusic,
   onPatchBackgroundMusic,
   onRemoveBackgroundMusic,
   musicWindow,
@@ -340,6 +344,7 @@ function MixInspector({
   backgroundMusicTrackDurationS?: number | null;
   onPatch?: (level: number) => void;
   onPickMusic?: (trackId: string) => void;
+  onRemoveMusic?: () => void;
   onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
   onRemoveBackgroundMusic?: () => void;
   musicWindow?: SongWindowControl;
@@ -382,6 +387,15 @@ function MixInspector({
             </div>
           ) : (
             <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+              {currentMusicTrackId && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveMusic?.()}
+                  className="flex min-h-10 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                >
+                  Remove music
+                </button>
+              )}
               {musicTracks.map((track) => {
                 const selected = track.id === currentMusicTrackId;
                 return (
@@ -1098,6 +1112,7 @@ function TextInspector({
   // Stroke row starts expanded when the bar already carries a stroke.
   const [strokeOpen, setStrokeOpen] = useState((bar.stroke_width ?? 0) > 0);
   const isLyric = bar.role === "lyric_line";
+  const isCaption = bar.role === "narrated_caption";
 
   const sizeValue = Math.round(bar.size_px ?? 64);
   const clampedSlider = Math.min(
@@ -1141,7 +1156,7 @@ function TextInspector({
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 pt-4 motion-safe:animate-fade-up motion-safe:[animation-duration:150ms]">
       <div className="flex items-center justify-between">
         <h2 className="flex items-center gap-2 font-display text-[18px] text-[#0c0c0e]">
-          Text
+          {isCaption ? "Captions" : "Text"}
           {isLyric && (
             <span
               aria-label="Lyric timing locked"
@@ -1166,14 +1181,16 @@ function TextInspector({
       />
       {!isLyric && (
         <>
-          <button
-            type="button"
-            disabled={!smartPlaceAvailable}
-            onClick={onSmartPlace}
-            className="mt-2 min-h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#0c0c0e] hover:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-          >
-            Smart place
-          </button>
+          {!isCaption && (
+            <button
+              type="button"
+              disabled={!smartPlaceAvailable}
+              onClick={onSmartPlace}
+              className="mt-2 min-h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#0c0c0e] hover:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              Smart place
+            </button>
+          )}
 
           <TimingSection label="Timing">
             <TimingNumberInput
@@ -1228,7 +1245,7 @@ function TextInspector({
         />
       </div>
 
-      {canEditMaxWidth && !isLyric && (
+      {canEditMaxWidth && !isLyric && !isCaption && (
         <div className="mt-2 flex items-center gap-2">
           <span className="w-[44px] text-[12px] font-semibold text-[#3f3f46]">Width</span>
           <input
@@ -1254,7 +1271,7 @@ function TextInspector({
         </div>
       )}
 
-      {!isLyric && (
+      {!isLyric && !isCaption && (
         <div className="mt-4">
           <span className="block text-[12px] font-semibold text-[#3f3f46]">
             Text alignment
@@ -1293,7 +1310,7 @@ function TextInspector({
         </div>
       )}
 
-      {!isLyric && (
+      {!isLyric && !isCaption && (
         <div className="mt-3">
           <span className="block text-[12px] font-semibold text-[#3f3f46]">
             Box position
@@ -1334,7 +1351,7 @@ function TextInspector({
         </div>
       )}
 
-      {!isLyric && (
+      {!isLyric && !isCaption && (
         <>
           <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
             Animation
@@ -1406,7 +1423,7 @@ function TextInspector({
         <span className="text-[13px] font-bold text-[#0c0c0e]">Style</span>
       </div>
 
-      {canEditTextCase && !isLyric && (
+      {canEditTextCase && !isLyric && !isCaption && (
         <label className="flex h-11 items-center justify-between border-b border-zinc-100">
           <span className="text-[13px] text-[#3f3f46]">Aa case</span>
           <select
@@ -1423,7 +1440,7 @@ function TextInspector({
         </label>
       )}
 
-      {(canEditLetterSpacing || canEditLineSpacing) && !isLyric && (
+      {(canEditLetterSpacing || canEditLineSpacing) && !isLyric && !isCaption && (
         <div className="flex min-h-11 items-center justify-between gap-3 border-b border-zinc-100 py-2">
           {canEditLetterSpacing && (
             <label className="min-w-0 flex-1 text-[12px] text-[#3f3f46]">
@@ -1505,7 +1522,7 @@ function TextInspector({
         </label>
       )}
 
-      {TEXT_BEHIND_SUBJECT_UI_ENABLED && !isLyric && (
+      {TEXT_BEHIND_SUBJECT_UI_ENABLED && !isLyric && !isCaption && (
         <label className="flex h-11 items-center justify-between border-b border-zinc-100">
           <span className="text-[13px] text-[#3f3f46]">Behind subject</span>
           <input

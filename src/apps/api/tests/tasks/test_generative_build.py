@@ -234,6 +234,26 @@ def test_effective_music_window_never_snaps_past_legal_start() -> None:
     assert window["end_s"] == pytest.approx(19.0)
 
 
+def test_effective_music_window_legacy_missing_start_still_uses_exact_duration() -> None:
+    track = _track()
+    track.duration_s = 60.0
+    track.track_config = {"best_start_s": 57.0, "best_end_s": 60.0}
+    track.beat_timestamps_s = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 57.0, 59.0]
+
+    window = gb._effective_music_window(
+        track,
+        requested_start_s=None,
+        requested_duration_s=10.0,
+        fallback_footage_s=10.0,
+    )
+
+    assert window["validated"] is True
+    assert window["start_s"] == pytest.approx(50.0)
+    assert window["end_s"] == pytest.approx(60.0)
+    assert window["duration_s"] == pytest.approx(10.0)
+    assert window["track_config"]["exact_window"] is True
+
+
 def test_project_recipe_overlays_to_exact_timeline_steps() -> None:
     recipe = {
         "slots": [
@@ -4048,6 +4068,39 @@ def test_reburn_subtitled_uses_safe_margin_and_pop_in(monkeypatch):
     assert burned["called"] is True
 
 
+def test_reburn_subtitled_passes_caption_appearance(monkeypatch):
+    import uuid
+
+    variant = _narrated_caption_variant(
+        resolved_archetype="subtitled",
+        variant_id="subtitled",
+        caption_size_px=82,
+        caption_text_color="#112233",
+        caption_highlight_color="#A3E635",
+        caption_stroke_width=6,
+        caption_shadow_enabled=False,
+    )
+    job = _FakeJob(assembly_plan={"variants": [variant]})
+    _patch_job_session(monkeypatch, job)
+    _patch_reburn_io(monkeypatch, {"called": False})
+    seen = {}
+
+    def _gen(_cues, _path, **kwargs):
+        seen["appearance"] = kwargs.get("appearance")
+
+    monkeypatch.setattr("app.pipeline.captions.generate_ass_from_cues", _gen)
+
+    gb._run_reburn_narrated_captions(str(uuid.uuid4()), "subtitled")
+
+    assert seen["appearance"] == {
+        "font_size_px": 82,
+        "color": "#112233",
+        "highlight_color": "#A3E635",
+        "stroke_width": 6,
+        "shadow_enabled": False,
+    }
+
+
 def test_reburn_subtitled_word_style_routes_to_word_pop(monkeypatch):
     import uuid
 
@@ -4296,6 +4349,13 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
         "voiceover_caption_style": "word",
         "voiceover_caption_font": "Montserrat Bold",
         "caption_margin_v": 653,
+        "caption_size_px": 92,
+        "caption_text_color": "#112233",
+        "caption_highlight_color": "#A3E635",
+        "caption_stroke_width": 7,
+        "caption_shadow_enabled": False,
+        "caption_font_user_edited": True,
+        "caption_position_user_edited": True,
         "caption_language": "tr",
     }
     gb._finalize_job(str(uuid.uuid4()), [result])
@@ -4306,9 +4366,46 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     assert v["voiceover_caption_style"] == "word"
     assert v["voiceover_caption_font"] == "Montserrat Bold"
     assert v["caption_margin_v"] == 653
+    assert v["caption_size_px"] == 92
+    assert v["caption_text_color"] == "#112233"
+    assert v["caption_highlight_color"] == "#A3E635"
+    assert v["caption_stroke_width"] == 7
+    assert v["caption_shadow_enabled"] is False
+    assert v["caption_font_user_edited"] is True
+    assert v["caption_position_user_edited"] is True
     # subtitled: the language must survive or the editor chip + re-transcribe lose it.
     assert v["caption_language"] == "tr"
     assert job.status == "variants_ready"
+
+
+def test_effective_smart_caption_policy_honors_user_caption_appearance() -> None:
+    policy = gb._effective_smart_caption_policy(
+        {
+            "smart_caption_policy": {
+                "font_family": "Preset Font",
+                "font_size_px": 60,
+                "color": "#FFFFFF",
+                "stroke_width": 2,
+                "shadow_enabled": True,
+                "y_frac": 0.7,
+            },
+            "caption_size_px": 88,
+            "caption_text_color": "#112233",
+            "caption_stroke_width": 7,
+            "caption_shadow_enabled": False,
+        },
+        ass_font="Inter",
+        margin_v=None,
+    )
+
+    assert policy is not None
+    assert policy["font_size_px"] == 88
+    assert policy["color"] == "#112233"
+    assert policy["color_user_edited"] is True
+    assert policy["stroke_width"] == 7
+    assert policy["shadow_enabled"] is False
+    assert policy["font_family"] == "Preset Font"
+    assert policy["y_frac"] == 0.7
 
 
 def _patch_subtitled_smart_render(monkeypatch, tmp_path):
@@ -4454,6 +4551,45 @@ def test_subtitled_render_invokes_and_persists_smart_captions(monkeypatch, tmp_p
     assert persisted["smart_planner_versions"] == {
         "planner": "test-planner",
         "compiler": "test-compiler",
+    }
+
+
+def test_subtitled_render_passes_caption_appearance_to_first_burn(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    seen = {}
+
+    def fake_ass(_cues, path, **kwargs):
+        seen["appearance"] = kwargs.get("appearance")
+        Path(path).write_text("ass", encoding="utf-8")
+
+    monkeypatch.setattr("app.pipeline.captions.generate_ass_from_cues", fake_ass)
+
+    result = gb._render_subtitled_variant(
+        job_id="job-appearance",
+        rank=1,
+        spec={
+            "variant_id": "subtitled",
+            "caption_style": "sentence",
+            "caption_size_px": 84,
+            "caption_text_color": "#112233",
+            "caption_highlight_color": "#A3E635",
+            "caption_stroke_width": 5,
+            "caption_shadow_enabled": False,
+        },
+        clip_id_to_local={"clip-1": str(tmp_path / "source.mp4")},
+        variant_dir=str(tmp_path),
+        smart_captions=None,
+    )
+
+    assert result["ok"] is True
+    assert seen["appearance"] == {
+        "font_size_px": 84,
+        "color": "#112233",
+        "highlight_color": "#A3E635",
+        "stroke_width": 5,
+        "shadow_enabled": False,
     }
 
 

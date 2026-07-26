@@ -35,6 +35,7 @@ import type { CopilotCaptionMetaSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { DraftSlot } from "@/app/generative/timeline-math";
+import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
 
 export type EditorOrientation = "portrait" | "landscape";
 
@@ -48,6 +49,7 @@ export interface EditorDocument {
   sfx?: SoundEffectPlacement[];
   overlays?: MediaOverlay[];
   visualBlocks?: VisualBlock[];
+  motionScenes?: MotionPresetInstanceV1[];
   cameraEffects?: CameraEffect[];
   captionMeta?: CopilotCaptionMetaSnapshot | null;
   captionMetaDirty?: boolean;
@@ -57,6 +59,9 @@ export interface EditorDocument {
   mixLevel?: number | null;
   mixDirty?: boolean;
   musicTrackId?: string | null;
+  /** Explicit "user removed the song" state — null musicTrackId alone means
+   * "untouched" (it falls back to the variant's persisted track). */
+  musicRemoved?: boolean;
   musicStartS?: number | null;
   musicDirty?: boolean;
   backgroundMusic?: EditorCommitBackgroundMusic | null;
@@ -212,6 +217,9 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
         ...(Array.isArray(doc.visualBlocks)
           ? { visualBlocks: doc.visualBlocks as VisualBlock[] }
           : {}),
+        ...(Array.isArray(doc.motionScenes)
+          ? { motionScenes: doc.motionScenes as MotionPresetInstanceV1[] }
+          : {}),
         captionMeta:
           doc.captionMeta && typeof doc.captionMeta === "object"
             ? (doc.captionMeta as CopilotCaptionMetaSnapshot)
@@ -228,6 +236,7 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
         mixDirty: Boolean(doc.mixDirty),
         musicTrackId:
           typeof doc.musicTrackId === "string" ? doc.musicTrackId : doc.musicTrackId === null ? null : undefined,
+        musicRemoved: Boolean(doc.musicRemoved),
         musicStartS:
           typeof doc.musicStartS === "number" && Number.isFinite(doc.musicStartS)
             ? Math.max(0, doc.musicStartS)

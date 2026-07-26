@@ -178,7 +178,7 @@ export function VariantCard({
   // committed render runs, the preview stays up with a "Saving…" badge — the
   // user never stares at a "Rendering…" placeholder for a text tweak.
   if (editActive && editSession) {
-    const introParams = resolveIntroParams(variant, styleSets, editSession.draft);
+    const introParams = resolveIntroParams(variant, styleSets, editSession.draft, editSession.isDirty);
     return (
       <div className={cardClass}>
         <div className="mb-2 flex items-center justify-between">

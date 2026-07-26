@@ -3,20 +3,23 @@
   "version": "0.2.2.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/sync-font-registry.mjs && next dev",
-    "build": "node scripts/sync-font-registry.mjs --check && next build",
+    "dev": "node scripts/sync-font-registry.mjs && node scripts/sync-motion-runtime.mjs && next dev",
+    "build": "node scripts/sync-font-registry.mjs --check && node scripts/sync-motion-runtime.mjs && next build",
     "start": "next start",
     "lint": "next lint",
     "test": "jest",
     "e2e": "playwright test",
     "sync:fonts": "node scripts/sync-font-registry.mjs",
-    "check:fonts": "node scripts/sync-font-registry.mjs --check"
+    "check:fonts": "node scripts/sync-font-registry.mjs --check",
+    "check:motion": "node scripts/sync-motion-runtime.mjs --check"
   },
   "dependencies": {
+    "@nova/motion-runtime": "file:../../packages/motion-runtime",
     "@radix-ui/react-dialog": "^1.0.5",
     "@radix-ui/react-progress": "^1.0.3",
     "@swc/helpers": "^0.5.21",
     "@xyflow/react": "^12.10.1",
+    "canvaskit-wasm": "0.40.0",
     "clsx": "^2.1.1",
     "next": "14.2.35",
     "next-auth": "^4.24.7",

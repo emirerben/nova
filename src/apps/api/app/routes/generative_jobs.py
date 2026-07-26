@@ -324,6 +324,11 @@ class GenerativeVariant(BaseModel):
     # WITHOUT the user-edited flag — so a non-null value does not imply the
     # creator pinned it. Only caption_position_user_edited means "user pinned".
     caption_margin_v: int | None = None
+    caption_size_px: int | None = None
+    caption_text_color: str | None = None
+    caption_highlight_color: str | None = None
+    caption_stroke_width: int | None = None
+    caption_shadow_enabled: bool | None = None
     intro_font_family: str | None = None
     intro_effect: str | None = None
     intro_text_color: str | None = None
@@ -551,8 +556,9 @@ class TimelineSlotEdit(BaseModel):
     `slot_id=None` marks a NEW slot (the server assigns a uuid4). `clip_index`
     indexes into `job.all_candidates["clip_paths"]` — clients never send paths.
     Beat slots size in `duration_beats` (walked against the real grid); slots
-    with `duration_beats=None` (no-grid variants, or footage-trimmed slots on
-    grid variants) send their exact window in `duration_s`.
+    with `duration_beats=None` (no-grid variants, footage-trimmed slots, or the
+    exact terminal tail after a grid's final usable beat) send their exact
+    window in `duration_s`.
     """
 
     slot_id: str | None = None
@@ -666,6 +672,21 @@ class EditorCommitCaptionMeta(BaseModel):
     font: str | None = None
     font_set: bool = False
     y_frac: float | None = Field(None, ge=0.30, le=0.90)
+    size_px: int | None = Field(None, ge=36, le=160)
+    color: str | None = None
+    highlight_color: str | None = None
+    stroke_width: int | None = Field(None, ge=0, le=12)
+    shadow_enabled: bool | None = None
+
+    @field_validator("color", "highlight_color")
+    @classmethod
+    def validate_caption_color(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        clean = value.strip()
+        if not _HEX_COLOR_RE.match(clean):
+            raise ValueError("Caption colors must be #RRGGBB hex colors.")
+        return clean.upper()
 
 
 class EditorCommitRequest(BaseModel):
@@ -682,6 +703,11 @@ class EditorCommitRequest(BaseModel):
     timeline_slots: list[TimelineSlotEdit] | None = None
     mix: EditorCommitMix | None = None
     music_track_id: str | None = None
+    # Explicit music removal. Deliberately NOT an overloaded nullable
+    # music_track_id: `music_track_id=None` is indistinguishable from "omitted"
+    # in JSON/Pydantic, so removal gets its own flag. Mutually exclusive with
+    # music_track_id / music_window (422).
+    remove_music: bool = False
     music_window: EditorCommitMusicWindow | None = None
     background_music: EditorCommitBackgroundMusic | None = None
     lyrics: LyricsSectionRequest | None = None
@@ -689,6 +715,8 @@ class EditorCommitRequest(BaseModel):
     sound_effects: list[dict] | None = None
     media_overlays: list[dict] | None = None
     visual_blocks: list[dict] | None = None
+    motion_scenes: list[dict] | None = None
+    motion_runtime_hash: str | None = None
     camera_effects: list[dict] | None = None
     title: str | None = Field(None, max_length=300)
     base_generation: str = ""
@@ -723,6 +751,7 @@ class EditorCommitSections(BaseModel):
     sound_effects: bool
     media_overlays: bool
     visual_blocks: bool
+    motion_scenes: bool = False
     camera_effects: bool = False
     title: bool
 
@@ -972,6 +1001,7 @@ def _variants_for_response(job: Job) -> list[dict]:
     if changed:
         setattr(job, "_media_overlay_preview_backfilled", True)
 
+    from app.agents._schemas.sound_effect import normalize_generated_sound_effects  # noqa: PLC0415
     from app.config import settings  # noqa: PLC0415
     from app.services.speech_map import build_speech_map  # noqa: PLC0415
     from app.services.transcript_source import (  # noqa: PLC0415
@@ -1056,6 +1086,12 @@ def _variants_for_response(job: Job) -> list[dict]:
                 else:
                     signed_overlays.append(card)
             v = {**v, "media_overlays": signed_overlays}
+        raw_sound_effects = v.get("sound_effects")
+        if raw_sound_effects:
+            v = {
+                **v,
+                "sound_effects": normalize_generated_sound_effects(raw_sound_effects),
+            }
         # Intro mode (D19): expose the authoritative mode plus the FE-convenience
         # `sequence_synced` boolean. Legacy variants (pre-intro_mode) fall back to
         # the persisted intro_layout — they can never be "sequence".
@@ -3495,6 +3531,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # section.
     caption_reason = CAPTION_TAB_COPY if archetype == "subtitled" else None
     from app.config import settings  # noqa: PLC0415
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH  # noqa: PLC0415
 
     # Plan 010: caption archetypes get the manual SFX/overlay lanes — the caption
     # re-render terminals reapply persisted lanes, so effects survive caption edits.
@@ -3515,6 +3552,20 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         visual_blocks_reason = "duration_unknown"
     else:
         visual_blocks_reason = effects_reason
+    if not settings.motion_scenes_enabled:
+        motion_scenes_reason = "motion_scenes_disabled"
+    elif variant.get("text_mode") == "lyrics":
+        motion_scenes_reason = "lyrics_variant"
+    elif archetype in CAPTION_EDIT_ARCHETYPES:
+        motion_scenes_reason = "caption_archetype"
+    elif not variant.get("base_video_path"):
+        motion_scenes_reason = "no_clean_base"
+    elif _variant_orientation(variant) != "portrait":
+        motion_scenes_reason = "portrait_only"
+    elif visual_block_variant_duration(variant) <= 0:
+        motion_scenes_reason = "duration_unknown"
+    else:
+        motion_scenes_reason = effects_reason
     # AI overlay suggestions (plans 005-009): mirrors the suggest-overlays route's
     # eligibility EXCEPT the ready-asset count — that's a DB query and this map is
     # cheap-by-design; the editor's pool strip owns the empty-pool state locally.
@@ -3569,6 +3620,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "sfx": sfx_reason is None,
         "overlays": overlays_reason is None,
         "visual_blocks": visual_blocks_reason is None,
+        "motion_scenes": motion_scenes_reason is None,
+        "motion_runtime_hash": MOTION_RUNTIME_HASH if settings.motion_scenes_enabled else None,
         "camera_effects": (
             effects_reason is None
             and variant.get("resolved_archetype") == "subtitled"
@@ -3580,6 +3633,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "sfx_reason": sfx_reason,
         "overlays_reason": overlays_reason,
         "visual_blocks_reason": visual_blocks_reason,
+        "motion_scenes_reason": motion_scenes_reason,
         "camera_effects_reason": (
             effects_reason
             if effects_reason is not None
@@ -3790,13 +3844,47 @@ async def persist_user_timeline(
             updated = dict(v)
             if slots is None:
                 updated.pop("user_timeline", None)
+                duration_slots = (updated.get("ai_timeline") or {}).get("slots") or []
             else:
                 updated["user_timeline"] = {"slots": slots}
+                duration_slots = slots
+            if updated.get("music_track_id"):
+                active_duration_s = _active_timeline_duration_s(duration_slots)
+                if active_duration_s > 0:
+                    # Persist before enqueue so both old and new workers in a
+                    # rolling deploy size recipe/audio from the edited cut.
+                    updated["music_window_video_duration_s"] = active_duration_s
             variants[i] = updated
             break
     plan["variants"] = variants
     job.assembly_plan = plan
     await db.commit()
+
+
+_TIMELINE_REASSEMBLY_SENTINEL = {
+    "slot_id": "__nova_timeline_reassembly__",
+    "removed": True,
+}
+
+
+def _active_timeline_duration_s(slots: list[dict]) -> float:
+    return round(
+        sum(float(slot.get("duration_s") or 0.0) for slot in slots if not slot.get("removed")),
+        3,
+    )
+
+
+def _timeline_override_for_reassembly(slots: list[dict]) -> list[dict]:
+    """Mark an override as a real cut edit without changing the task signature.
+
+    The route persists timeline slots before enqueueing, so a worker comparing
+    the override to stored state would otherwise see them as identical and may
+    take the preserve-cuts audio-only shortcut. A removed sentinel makes that
+    comparison differ while being discarded before assembly. Keeping the signal
+    inside the existing payload is safe during rolling deploys: older workers
+    also reject the audio-only shortcut and ignore the removed slot.
+    """
+    return [*(dict(slot) for slot in slots), dict(_TIMELINE_REASSEMBLY_SENTINEL)]
 
 
 def resolve_timeline_slots_for_edit(
@@ -3878,6 +3966,10 @@ def resolve_timeline_slots_for_edit(
     grid_offset = 0  # cumulative beat cursor — grids are NOT uniform
     total = 0.0
     is_song_variant = bool(beat_grid) and bool(variant.get("music_track_id"))
+    final_active_order = next(
+        (order for order in range(len(slots) - 1, -1, -1) if not slots[order].removed),
+        -1,
+    )
 
     def _nearest_beat_count(offset: int, target_s: float | None) -> int:
         max_beats = len(beat_grid) - 1 - offset
@@ -4013,38 +4105,54 @@ def resolve_timeline_slots_for_edit(
                     duration_s = beat_grid[end] - beat_grid[grid_offset]
                 grid_offset = end
             elif is_song_variant:
-                duration_beats = _nearest_beat_count(grid_offset, duration_s)
-                # Beat slot: walk the REAL grid cumulatively. Slot i's duration is
-                # grid[offset+beats] - grid[offset]; the offset then advances, so the
-                # same `duration_beats` can yield different seconds at different
-                # positions (non-uniform grids).
-                end = grid_offset + duration_beats
-                if end > len(beat_grid) - 1:
-                    raise _timeline_error(
-                        status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
-                    )
-                duration_s = beat_grid[end] - beat_grid[grid_offset]
-                # The nearest beat count can round UP past the clip's remaining
-                # footage; reclamp to the largest span that still fits (mirrors
-                # the explicit-beat-slot branch above).
-                if max_source_window_s is not None and duration_s > max_source_window_s + 1e-6:
-                    duration_beats = _largest_beat_count_fitting_source(
-                        grid_offset, max_source_window_s
-                    )
-                    if duration_beats < 1:
-                        minimum_beat_duration_s = (
-                            beat_grid[grid_offset + 1] - beat_grid[grid_offset]
-                        )
-                        raise _out_of_bounds(
-                            e,
-                            visible_order,
-                            src_dur,
-                            duration_s,
-                            minimum_beat_duration_s=minimum_beat_duration_s,
-                        )
+                remaining_beat_span_s = beat_grid[-1] - beat_grid[grid_offset]
+                exact_terminal_tail = (
+                    order == final_active_order
+                    and window_changed
+                    and duration_s is not None
+                    and duration_s > 0
+                    and duration_s > remaining_beat_span_s + 1e-6
+                )
+                if exact_terminal_tail:
+                    # Internal cuts stay on beats, but a song grid can end a few
+                    # frames before the source. The final visible endpoint has no
+                    # downstream cut to align, so preserve the user's exact tail
+                    # instead of silently shortening it to the last natural beat.
+                    duration_s = float(duration_s)
+                    duration_beats = None
+                else:
+                    duration_beats = _nearest_beat_count(grid_offset, duration_s)
+                    # Beat slot: walk the REAL grid cumulatively. Slot i's duration is
+                    # grid[offset+beats] - grid[offset]; the offset then advances, so the
+                    # same `duration_beats` can yield different seconds at different
+                    # positions (non-uniform grids).
                     end = grid_offset + duration_beats
+                    if end > len(beat_grid) - 1:
+                        raise _timeline_error(
+                            status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
+                        )
                     duration_s = beat_grid[end] - beat_grid[grid_offset]
-                grid_offset = end
+                    # The nearest beat count can round UP past the clip's remaining
+                    # footage; reclamp to the largest span that still fits (mirrors
+                    # the explicit-beat-slot branch above).
+                    if max_source_window_s is not None and duration_s > max_source_window_s + 1e-6:
+                        duration_beats = _largest_beat_count_fitting_source(
+                            grid_offset, max_source_window_s
+                        )
+                        if duration_beats < 1:
+                            minimum_beat_duration_s = (
+                                beat_grid[grid_offset + 1] - beat_grid[grid_offset]
+                            )
+                            raise _out_of_bounds(
+                                e,
+                                visible_order,
+                                src_dur,
+                                duration_s,
+                                minimum_beat_duration_s=minimum_beat_duration_s,
+                            )
+                        end = grid_offset + duration_beats
+                        duration_s = beat_grid[end] - beat_grid[grid_offset]
+                    grid_offset = end
             elif e.duration_s is not None and e.duration_s > 0:
                 # No-music variants snap to 0.5s steps server-side. The editor may
                 # send drag-derived floats; persisted/rendered state is the snapped
@@ -4138,7 +4246,11 @@ async def dispatch_edit_timeline(
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-    regenerate_generative_variant.delay(str(job.id), variant_id, timeline_override=resolved)
+    regenerate_generative_variant.delay(
+        str(job.id),
+        variant_id,
+        timeline_override=_timeline_override_for_reassembly(resolved),
+    )
 
 
 async def dispatch_reset_timeline(job: Job, variant_id: str, *, db: AsyncSession) -> None:
@@ -4164,7 +4276,9 @@ async def dispatch_reset_timeline(job: Job, variant_id: str, *, db: AsyncSession
     # Pass the AI slots as the override: the regenerate path is identical to an
     # edit, just sourced from the AI's own plan (simplest reset contract).
     regenerate_generative_variant.delay(
-        str(job.id), variant_id, timeline_override=[dict(s) for s in ai_slots]
+        str(job.id),
+        variant_id,
+        timeline_override=_timeline_override_for_reassembly(ai_slots),
     )
 
 
@@ -4227,8 +4341,10 @@ def prepare_editor_commit(
         and payload.sound_effects is None
         and payload.media_overlays is None
         and payload.visual_blocks is None
+        and payload.motion_scenes is None
         and payload.camera_effects is None
         and payload.title is None
+        and not payload.remove_music
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -4332,10 +4448,41 @@ def prepare_editor_commit(
 
             caption_meta_patch["caption_margin_v"] = y_frac_to_margin_v(meta.y_frac)
             caption_meta_patch["caption_position_user_edited"] = True
+        if meta.size_px is not None:
+            caption_meta_patch["caption_size_px"] = int(meta.size_px)
+        if meta.color is not None:
+            caption_meta_patch["caption_text_color"] = meta.color
+        if meta.highlight_color is not None:
+            caption_meta_patch["caption_highlight_color"] = meta.highlight_color
+        if meta.stroke_width is not None:
+            caption_meta_patch["caption_stroke_width"] = int(meta.stroke_width)
+        if meta.shadow_enabled is not None:
+            caption_meta_patch["caption_shadow_enabled"] = bool(meta.shadow_enabled)
 
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None:
         resolved_slots = resolve_timeline_slots_for_edit(job, variant, payload.timeline_slots)
+
+    if payload.remove_music:
+        # Removal is its own section: combining it with a swap or a song-window
+        # move in one commit is contradictory — fail loudly, nothing persisted.
+        if payload.music_track_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="remove_music cannot be combined with music_track_id.",
+            )
+        if payload.music_window is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="remove_music cannot be combined with music_window.",
+            )
+        # Same guard family as the swap branch below: removing music from a
+        # variant that has none is a client bug, not a no-op.
+        if variant.get("variant_id") == "original_text" or variant.get("music_track_id") is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This edit has no song to remove.",
+            )
 
     if payload.music_track_id is not None:
         if variant.get("variant_id") == "original_text" or variant.get("music_track_id") is None:
@@ -4592,6 +4739,58 @@ def prepare_editor_commit(
                     )
 
     validated_camera_effects: list[dict] | None = None
+
+    validated_motion_scenes: list[dict] | None = None
+    if payload.motion_scenes is not None:
+        from app.config import settings as _settings_motion  # noqa: PLC0415
+        from app.pipeline.motion_scene import (  # noqa: PLC0415
+            MOTION_FPS,
+            MOTION_RUNTIME_HASH,
+            validate_motion_instances,
+        )
+
+        if not _settings_motion.motion_scenes_enabled:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        if payload.motion_runtime_hash != MOTION_RUNTIME_HASH:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "motion_runtime_mismatch"},
+            )
+        motion_reason = None
+        if variant.get("text_mode") == "lyrics":
+            motion_reason = "lyrics_variant"
+        elif variant.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES:
+            motion_reason = "caption_archetype"
+        elif not variant.get("base_video_path"):
+            motion_reason = "no_clean_base"
+        duration_s = visual_block_variant_duration(variant)
+        if duration_s <= 0:
+            motion_reason = motion_reason or "duration_unknown"
+        if motion_reason is not None:
+            if not payload.motion_scenes:
+                log.debug(
+                    "editor_commit_ignored_empty_section",
+                    section="motion_scenes",
+                    job_id=str(job.id),
+                    variant_id=variant_id,
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": motion_reason},
+                )
+        else:
+            try:
+                validated_motion_scenes = validate_motion_instances(
+                    payload.motion_scenes,
+                    duration_frames=max(1, round(duration_s * MOTION_FPS)),
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+
     if payload.camera_effects is not None:
         from app.pipeline.camera_effects import normalize_camera_effects  # noqa: PLC0415
 
@@ -4627,6 +4826,18 @@ def prepare_editor_commit(
                 duration_s=visual_block_variant_duration(variant),
             )
 
+    effective_motion_scenes = (
+        validated_motion_scenes
+        if validated_motion_scenes is not None
+        else list(variant.get("motion_scenes") or [])
+    )
+    effective_orientation = validated_orientation or _variant_orientation(variant)
+    if effective_motion_scenes and effective_orientation != "portrait":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "motion_portrait_only"},
+        )
+
     if payload.visual_blocks is not None or payload.text_elements is not None:
         from app.agents._schemas.visual_block import (  # noqa: PLC0415
             validate_visual_block_text_links,
@@ -4661,6 +4872,7 @@ def prepare_editor_commit(
         or resolved_slots is not None
         or payload.mix is not None
         or payload.music_track_id is not None
+        or payload.remove_music
         or payload.music_window is not None
         or payload.background_music is not None
         or validated_lyrics is not None
@@ -4668,6 +4880,7 @@ def prepare_editor_commit(
         or validated_sfx is not None
         or validated_overlays is not None
         or validated_visual_blocks is not None
+        or validated_motion_scenes is not None
         or validated_camera_effects is not None
     )
     new_gen = uuid.uuid4().hex if has_render_section else None
@@ -4714,6 +4927,22 @@ def prepare_editor_commit(
                     3,
                 )
                 updated.pop("music_window_video_duration_s", None)
+        if payload.remove_music:
+            # Full music removal: the re-render resolves its track from the
+            # persisted music_track_id (None → the existing track-free render
+            # path, same as original_text). Clear every song-window field and
+            # the track-derived lyric state (same hygiene as a track swap).
+            updated["music_track_id"] = None
+            updated["music_start_s"] = None
+            updated["track_title"] = None
+            updated.pop("music_window_video_duration_s", None)
+            updated["lyric_line_overrides"] = None
+            updated["lyric_overlay_snapshot"] = None
+            updated["text_elements"] = [
+                element
+                for element in (updated.get("text_elements") or [])
+                if not isinstance(element, dict) or element.get("role") != "lyric_line"
+            ]
         if payload.music_window is not None and resolved_music_start_s is not None:
             updated["music_start_s"] = resolved_music_start_s
             updated["music_window_video_duration_s"] = round(
@@ -4726,6 +4955,13 @@ def prepare_editor_commit(
                 }
             else:
                 updated.pop("user_timeline", None)
+        if resolved_slots is not None and updated.get("music_track_id"):
+            active_duration_s = _active_timeline_duration_s(resolved_slots)
+            if active_duration_s > 0:
+                # The editor commit persists before enqueue. Keep the duration
+                # beside those cuts so an older worker cannot reuse a stale
+                # music window during a rolling deploy.
+                updated["music_window_video_duration_s"] = active_duration_s
         if payload.background_music is not None:
             updated["smart_music_treatment"] = background_music_treatment
             updated["smart_audio_receipt"] = None
@@ -4746,6 +4982,12 @@ def prepare_editor_commit(
             # the replacement. The stale bit prevents reuse; retaining the key
             # lets the winning render free it without a pre-render delete race.
             updated["visual_blocks_cache_stale"] = True
+        if validated_motion_scenes is not None:
+            updated["motion_scenes"] = validated_motion_scenes or None
+            updated["motion_runtime_hash"] = payload.motion_runtime_hash
+            # Desired state is persisted before rendering; the last-good output
+            # and applied hash are only replaced by the token-winning worker.
+            updated["motion_cache_stale"] = True
         if validated_camera_effects is not None:
             updated["camera_effects"] = validated_camera_effects or None
         if payload.accepted_suggestion_ids:
@@ -4792,9 +5034,11 @@ def prepare_editor_commit(
         ),
         "media_overlays_override": validated_overlays,
         "visual_blocks_override": validated_visual_blocks,
+        "motion_scenes_override": validated_motion_scenes,
         "camera_effects_override": validated_camera_effects,
         "orientation_override": validated_orientation,
         "new_track_id": payload.music_track_id,
+        "remove_music": payload.remove_music,
         "music_window_alignment": (
             payload.music_window.alignment if payload.music_window is not None else None
         ),
@@ -4811,7 +5055,11 @@ def prepare_editor_commit(
             "caption_meta": payload.caption_meta is not None,
             "timeline": payload.timeline_slots is not None,
             "mix": payload.mix is not None,
-            "music": payload.music_track_id is not None or payload.music_window is not None,
+            "music": (
+                payload.music_track_id is not None
+                or payload.music_window is not None
+                or payload.remove_music
+            ),
             "background_music": payload.background_music is not None,
             "lyrics": payload.lyrics is not None,
             "orientation": payload.orientation is not None,
@@ -4822,6 +5070,7 @@ def prepare_editor_commit(
             "sound_effects": validated_sfx is not None,
             "media_overlays": validated_overlays is not None,
             "visual_blocks": validated_visual_blocks is not None,
+            "motion_scenes": validated_motion_scenes is not None,
             "camera_effects": validated_camera_effects is not None,
         },
     }
@@ -4887,6 +5136,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         sections.get("sound_effects") is True
         or sections.get("media_overlays") is True
         or sections.get("visual_blocks") is True
+        or sections.get("motion_scenes") is True
         or sections.get("camera_effects") is True
         or sections.get("background_music") is True
     ) and not (
@@ -4901,6 +5151,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         lane_only_commit
         and (sections.get("sound_effects") is True or sections.get("media_overlays") is True)
         and sections.get("visual_blocks") is not True
+        and sections.get("motion_scenes") is not True
         and sections.get("camera_effects") is not True
         and sections.get("background_music") is not True
     )
@@ -4926,7 +5177,11 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
 
     kwargs: dict = {"render_gen_id": prep["generation"]}
     if prep["timeline_override"] is not None:
-        kwargs["timeline_override"] = prep["timeline_override"]
+        kwargs["timeline_override"] = (
+            _timeline_override_for_reassembly(prep["timeline_override"])
+            if prep["sections"].get("timeline") is True
+            else prep["timeline_override"]
+        )
     if prep["mix_override"] is not None:
         kwargs["mix_override"] = float(prep["mix_override"])
     if prep.get("new_track_id") is not None:
@@ -4938,9 +5193,11 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         prep["timeline_override"] is not None
         or prep["mix_override"] is not None
         or prep.get("new_track_id") is not None
+        or prep.get("remove_music") is True
         or prep.get("orientation_override") is not None
         or prep.get("text_requires_full_render") is True
         or prep["sections"].get("visual_blocks") is True
+        or prep["sections"].get("motion_scenes") is True
         or prep["sections"].get("camera_effects") is True
         or sections.get("lyrics") is True
         or prep.get("music_window_alignment") is not None
@@ -4950,11 +5207,16 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         # SFX are reapplied by the worker's persisted-SFX hook after the new base lands.
         # Lyric-state commits carry no override kwargs, so the regen's own
         # fast-reburn check must be pinned off or lyric re-injection is skipped.
+        # remove_music also pins the fast path off: the cached fast-reburn base
+        # has the OLD music mixed in — only a full re-assembly (which resolves
+        # the just-persisted music_track_id=None into a track-free render) can
+        # actually drop the song.
         if (
             sections.get("lyrics") is True
             or prep.get("music_window_alignment") is not None
             or prep.get("text_requires_full_render") is True
             or prep.get("orientation_override") is not None
+            or prep.get("remove_music") is True
         ):
             kwargs["force_full_render"] = True
     elif prep["media_overlays_override"] is not None:
@@ -4967,11 +5229,13 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         prep["timeline_override"] is None
         and prep["mix_override"] is None
         and prep.get("new_track_id") is None
+        and prep.get("remove_music") is not True
         and prep.get("orientation_override") is None
         and prep.get("text_requires_full_render") is not True
         and sections.get("lyrics") is not True
         and prep.get("music_window_alignment") is None
         and sections.get("visual_blocks") is not True
+        and sections.get("motion_scenes") is not True
         and sections.get("camera_effects") is not True
     )
     apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}

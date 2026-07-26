@@ -5,6 +5,10 @@ import {
   type EditorCommitResponse,
 } from "@/lib/editor-commit";
 import type { TextElement, VisualBlock } from "@/lib/plan-api";
+import {
+  MOTION_RUNTIME_HASH,
+  type MotionPresetInstanceV1,
+} from "@nova/motion-runtime";
 
 const element: TextElement = {
   id: "txt-1",
@@ -309,6 +313,33 @@ describe("buildEditorCommitRequest", () => {
     expect(body.text_elements?.[0].visual_block_id).toBe("card-1");
   });
 
+  it("sends motion scenes with the exact runtime compatibility token", () => {
+    const scene: MotionPresetInstanceV1 = {
+      id: "motion-1",
+      preset_id: "route_trace",
+      preset_version: 1,
+      start_frame: 15,
+      end_frame_exclusive: 75,
+      palette: { primary: "#F5F5F4", accent: "#A3E635" },
+      intensity: 0.8,
+    };
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      motionScenesDirty: true,
+      motionScenes: [scene],
+      motionRuntimeHash: MOTION_RUNTIME_HASH,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+
+    expect(body.motion_scenes).toEqual([scene]);
+    expect(body.motion_runtime_hash).toBe(MOTION_RUNTIME_HASH);
+  });
+
   it("does not send mix for non-mixable variants even when mix changed", () => {
     const body = buildEditorCommitRequest({
       elements: [element],
@@ -354,6 +385,60 @@ describe("buildEditorCommitRequest", () => {
     expect(body.music_track_id).toBe("track-new");
     expect(body.timeline_slots).toBeUndefined();
     expect(body.base_generation).toBe("gen-current");
+  });
+
+  it("emits remove_music (never music_track_id: null) when the user removed the song", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      musicDirty: true,
+      musicTrackId: null,
+      musicRemoved: true,
+      titleDirty: false,
+      title: "",
+      variant: {
+        render_generation_id: "gen-current",
+        music_track_id: "track-current",
+      },
+    });
+
+    expect(body.remove_music).toBe(true);
+    // Removal is its own flag — a null music_track_id is indistinguishable
+    // from "omitted" server-side and must never be sent.
+    expect(body.music_track_id).toBeUndefined();
+  });
+
+  it("does not emit remove_music when untouched or when the variant has no song", () => {
+    const untouched = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: {
+        render_generation_id: "gen-current",
+        music_track_id: "track-current",
+      },
+    });
+    expect(untouched.remove_music).toBeUndefined();
+    expect(untouched.music_track_id).toBeUndefined();
+
+    const noSong = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      musicDirty: true,
+      musicTrackId: null,
+      musicRemoved: true,
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current", music_track_id: null },
+    });
+    expect(noSong.remove_music).toBeUndefined();
   });
 
   it("sends background music only as an explicitly dirty audio section", () => {
@@ -475,7 +560,17 @@ describe("buildEditorCommitRequest", () => {
     const dirty = buildEditorCommitRequest({
       elements: [element],
       textDirty: false,
-      captionMeta: { enabled: false, style: "word", font: null, y_frac: 0.72 },
+      captionMeta: {
+        enabled: false,
+        style: "word",
+        font: null,
+        y_frac: 0.72,
+        size_px: 92,
+        color: "#112233",
+        highlight_color: "#A3E635",
+        stroke_width: 7,
+        shadow_enabled: false,
+      },
       captionMetaDirty: true,
       timelineDirty: false,
       slots: [],
@@ -489,7 +584,14 @@ describe("buildEditorCommitRequest", () => {
       font: null,
       font_set: true,
       y_frac: 0.72,
+      size_px: 92,
+      color: "#112233",
+      highlight_color: "#A3E635",
+      stroke_width: 7,
+      shadow_enabled: false,
     });
+    expect(dirty.text_elements).toBeUndefined();
+    expect(dirty.caption_cues).toBeUndefined();
   });
 
   it("sets caption_meta font_set only when font is present", () => {

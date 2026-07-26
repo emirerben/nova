@@ -1,2 +1,4 @@
 .vercel
 .gstack/
+# Generated from the exact pinned canvaskit-wasm package at dev/build time.
+/public/_motion/canvaskit.wasm

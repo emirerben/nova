@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from app.pipeline.canvas import PORTRAIT, Canvas
-from app.pipeline.word_timing import synthesize_word_timings
+from app.pipeline.word_timing import rebuild_word_timings_for_text, synthesize_word_timings
 
 if TYPE_CHECKING:
     from app.agents._schemas.text_element import TextElement
@@ -850,6 +850,7 @@ def build_overlays_from_text_elements(
     video_duration_s: float,
     include_lyric_line: bool = False,
     independent_box_alignment: bool = False,
+    user_edited: bool = False,
 ) -> list[dict]:
     """Compile a list of TextElement objects to burn-dict format.
 
@@ -890,6 +891,15 @@ def build_overlays_from_text_elements(
     ``independent_box_alignment`` is enabled only for authoritative editor
     saves. Read-adapter round trips leave it off so legacy burn dictionaries
     remain byte-identical, including their historical left-anchor y semantics.
+
+    ``user_edited`` (variant-level ``text_elements_user_edited``, default False
+    so every legacy caller stays byte-identical): on user-edited variants the
+    post-sweep karaoke settled/hold color is the ELEMENT's color (the user's
+    saved pick), not the highlight color — the yellow highlight still animates
+    during the reveal sweep. Untouched AI-authored renders keep the
+    settle-to-highlight look. TS mirror: ``settledColor`` in
+    src/apps/web/src/lib/overlay-layout.ts (``userEdited`` on
+    IntroOverlayParams).
     """
     from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
 
@@ -963,6 +973,16 @@ def build_overlays_from_text_elements(
                 for wt in elem_word_timings
             ]
 
+        # Karaoke text-edit repair: _draw_karaoke_line burns words from
+        # word_timings, never from `text`. When the stored timings' words no
+        # longer match the element's (edited) text, re-synthesize them over the
+        # original window so the sweep covers the NEW words (prod job 96771038:
+        # stale five-word sweep over "Man City"). Matching timings pass through
+        # verbatim (beat-snap fidelity, A17). A None result falls back to
+        # build_intro_overlay's own overlay-window synthesis.
+        if effect == "karaoke-line" and elem_word_timings:
+            elem_word_timings = rebuild_word_timings_for_text(elem_text, elem_word_timings)
+
         # ── reveal_s: produce [reveal, hold] pair (directly authored only) ───
         # Adapter-sourced elements never set reveal_s (legacy burn dicts don't
         # carry it); those come back as two pre-split TextElements already.
@@ -1005,7 +1025,11 @@ def build_overlays_from_text_elements(
 
             # Settled color matches the animated reveal's final frame:
             # karaoke sweeps every word to highlight_color; others stay text_color.
-            settled = highlight_color_v if effect == "karaoke-line" else text_color
+            # On user-edited variants the hold honors the user's saved color
+            # instead (TS mirror: settledColor in overlay-layout.ts).
+            settled = (
+                highlight_color_v if (effect == "karaoke-line" and not user_edited) else text_color
+            )
             hold = build_intro_overlay(
                 elem_text,
                 effect="static",

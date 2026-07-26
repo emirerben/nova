@@ -457,7 +457,7 @@ async def test_edit_cumulative_walk_durations(monkeypatch):
         db=None,
     )
     assert len(delays) == 1
-    override = delays[0][1]["timeline_override"]
+    override = delays[0][1]["timeline_override"][:-1]
     assert [s["duration_s"] for s in override] == [pytest.approx(1.1), pytest.approx(2.7)]
     assert [s["duration_beats"] for s in override] == [2, 4]
     assert [s["order"] for s in override] == [0, 1]
@@ -897,8 +897,13 @@ async def test_edit_persists_before_enqueue(monkeypatch):
     assert (job_id, variant_id) == (str(job.id), "song_text")
     args, kwargs = delays[0]
     assert args == (str(job.id), "song_text")
-    # The exact slots persisted are the exact override the task receives.
-    assert kwargs["timeline_override"] is persisted
+    # The task receives the persisted slots plus a removed rolling-deploy-safe
+    # marker that forces visual reassembly after the persist-first write.
+    assert kwargs["timeline_override"][:-1] == persisted
+    assert kwargs["timeline_override"][-1] == {
+        "slot_id": "__nova_timeline_reassembly__",
+        "removed": True,
+    }
     assert persisted[1]["removed"] is True
     # Removed slots don't consume beats: only slot 1 walked the grid.
     assert persisted[0]["duration_s"] == pytest.approx(1.1)
@@ -935,7 +940,11 @@ async def test_reset_deletes_user_timeline_and_enqueues_ai_slots(monkeypatch):
     assert persists[0] == (str(job.id), "song_text", None)  # None = remove user_timeline
     args, kwargs = delays[0]
     assert args == (str(job.id), "song_text")
-    assert kwargs["timeline_override"] == ai_slots
+    assert kwargs["timeline_override"][:-1] == ai_slots
+    assert kwargs["timeline_override"][-1] == {
+        "slot_id": "__nova_timeline_reassembly__",
+        "removed": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -1010,16 +1019,30 @@ class _FakeLockingDB:
 @pytest.mark.asyncio
 async def test_persist_user_timeline_merges_row_locked():
     row = types.SimpleNamespace(
-        assembly_plan={"variants": [{"variant_id": "song_text", "render_status": "ready"}]}
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "ready",
+                    "music_track_id": "t1",
+                    "music_window_video_duration_s": 2.784,
+                }
+            ]
+        }
     )
     db = _FakeLockingDB(row)
-    slots = [{"slot_id": "s1", "clip_index": 0}]
+    slots = [
+        {"slot_id": "s1", "clip_index": 0, "duration_s": 1.5},
+        {"slot_id": "removed", "clip_index": 1, "duration_s": 9.0, "removed": True},
+        {"slot_id": "s2", "clip_index": 2, "duration_s": 1.867},
+    ]
 
     await gj.persist_user_timeline(db, str(uuid.uuid4()), "song_text", slots)
 
     assert db.locked is True  # SELECT ... FOR UPDATE — mirrors _update_variant_entry
     assert db.committed is True
     assert row.assembly_plan["variants"][0]["user_timeline"] == {"slots": slots}
+    assert row.assembly_plan["variants"][0]["music_window_video_duration_s"] == pytest.approx(3.367)
     # Sibling fields survive the merge.
     assert row.assembly_plan["variants"][0]["render_status"] == "ready"
 
@@ -1028,12 +1051,26 @@ async def test_persist_user_timeline_merges_row_locked():
 async def test_persist_user_timeline_none_removes_key():
     row = types.SimpleNamespace(
         assembly_plan={
-            "variants": [{"variant_id": "song_text", "user_timeline": {"slots": [{"a": 1}]}}]
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "music_track_id": "t1",
+                    "music_window_video_duration_s": 2.784,
+                    "ai_timeline": {
+                        "slots": [
+                            {"slot_id": "ai-1", "duration_s": 1.5},
+                            {"slot_id": "ai-2", "duration_s": 1.867},
+                        ]
+                    },
+                    "user_timeline": {"slots": [{"a": 1}]},
+                }
+            ]
         }
     )
     db = _FakeLockingDB(row)
     await gj.persist_user_timeline(db, str(uuid.uuid4()), "song_text", None)
     assert "user_timeline" not in row.assembly_plan["variants"][0]
+    assert row.assembly_plan["variants"][0]["music_window_video_duration_s"] == pytest.approx(3.367)
     assert db.committed is True
 
 
@@ -1165,7 +1202,7 @@ async def test_unmodified_roundtrip_get_then_post_succeeds(monkeypatch, variant_
     await gj.dispatch_edit_timeline(job, variant_id, _req(_frontend_payload(out["slots"])), db=None)
 
     assert seq == ["persist", "enqueue"]
-    override = delays[0][1]["timeline_override"]
+    override = delays[0][1]["timeline_override"][:-1]
     assert [s["slot_id"] for s in override] == ["s1", "s2", "s3"]
     # Null-beats slots round-trip their exact window; beats slots re-derive from
     # the same grid at the same offsets.

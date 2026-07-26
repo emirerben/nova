@@ -271,6 +271,17 @@ describe("param resolution", () => {
     expect(settledColor(baseParams)).toBe("#FFD24A");
     expect(settledColor({ ...baseParams, effect: "fade-in" })).toBe("#FFFFFF");
   });
+
+  it("user-edited karaoke settles to the user's text color (mirror of user_edited)", () => {
+    // Mirror of build_overlays_from_text_elements(user_edited=True): the
+    // sweep still highlights, but the settled hold is the user's color.
+    expect(settledColor({ ...baseParams, userEdited: true })).toBe("#FFFFFF");
+    // Non-karaoke effects are unaffected by the flag.
+    expect(settledColor({ ...baseParams, effect: "fade-in", userEdited: true })).toBe("#FFFFFF");
+    // Explicit false/null keep today's settle-to-highlight look.
+    expect(settledColor({ ...baseParams, userEdited: false })).toBe("#FFD24A");
+    expect(settledColor({ ...baseParams, userEdited: null })).toBe("#FFD24A");
+  });
 });
 
 describe("layoutIntroHold", () => {

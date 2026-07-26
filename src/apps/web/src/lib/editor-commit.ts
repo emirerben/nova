@@ -26,6 +26,7 @@ import {
   type TextElement,
   type VisualBlock,
 } from "@/lib/plan-api";
+import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
 
 const PLAN_BASE = "/api/plan";
 
@@ -61,6 +62,11 @@ export interface EditorCommitCaptionMetaDraft {
   style?: "sentence" | "word";
   font?: string | null;
   y_frac?: number | null;
+  size_px?: number | null;
+  color?: string | null;
+  highlight_color?: string | null;
+  stroke_width?: number | null;
+  shadow_enabled?: boolean | null;
 }
 
 export interface EditorCommitCaptionMetaRequest {
@@ -69,6 +75,11 @@ export interface EditorCommitCaptionMetaRequest {
   font?: string | null;
   font_set: boolean;
   y_frac?: number;
+  size_px?: number;
+  color?: string;
+  highlight_color?: string;
+  stroke_width?: number;
+  shadow_enabled?: boolean;
 }
 
 export interface LyricLineOverride {
@@ -101,6 +112,10 @@ export interface EditorCommitRequest {
   mix?: EditorCommitMix;
   /** New music track id. Omit when untouched. */
   music_track_id?: string | null;
+  /** Explicit music removal (its own flag — a null music_track_id is
+   * indistinguishable from "omitted" server-side). Mutually exclusive with
+   * music_track_id / music_window (server 422s the combination). */
+  remove_music?: boolean;
   music_window?: {
     start_s: number;
     alignment: "preserve_cuts" | "resync_beats";
@@ -112,6 +127,9 @@ export interface EditorCommitRequest {
   media_overlays?: MediaOverlay[];
   /** Full replacement visual-block list. Omit when untouched. */
   visual_blocks?: VisualBlock[];
+  /** Curated immutable motion-preset instances; no raw scene graphs or SVG. */
+  motion_scenes?: MotionPresetInstanceV1[];
+  motion_runtime_hash?: string;
   /** Full replacement scene camera-effect list. Omit when untouched. */
   camera_effects?: CameraEffect[];
   /** Working-state title. Omit when untouched; null clears. */
@@ -152,6 +170,7 @@ export interface EditorCommitResponse {
     sound_effects?: boolean;
     media_overlays?: boolean;
     visual_blocks?: boolean;
+    motion_scenes?: boolean;
     camera_effects?: boolean;
     title?: boolean;
     lyrics?: boolean;
@@ -205,6 +224,7 @@ export function buildEditorCommitRequest({
   mixLevel,
   musicDirty = false,
   musicTrackId,
+  musicRemoved = false,
   musicWindow,
   backgroundMusicDirty = false,
   backgroundMusic,
@@ -214,6 +234,9 @@ export function buildEditorCommitRequest({
   mediaOverlays = [],
   visualBlocksDirty = false,
   visualBlocks = [],
+  motionScenesDirty = false,
+  motionScenes = [],
+  motionRuntimeHash,
   cameraEffectsDirty = false,
   cameraEffects = [],
   acceptedSuggestions = [],
@@ -237,6 +260,9 @@ export function buildEditorCommitRequest({
   mixLevel?: number | null;
   musicDirty?: boolean;
   musicTrackId?: string | null;
+  /** Explicit removed state — distinguishes "user removed the song" from
+   * "music untouched" (both leave musicTrackId null). */
+  musicRemoved?: boolean;
   musicWindow?: {
     startS: number;
     alignment: "preserve_cuts" | "resync_beats";
@@ -249,6 +275,9 @@ export function buildEditorCommitRequest({
   mediaOverlays?: MediaOverlay[];
   visualBlocksDirty?: boolean;
   visualBlocks?: VisualBlock[];
+  motionScenesDirty?: boolean;
+  motionScenes?: MotionPresetInstanceV1[];
+  motionRuntimeHash?: string;
   cameraEffectsDirty?: boolean;
   cameraEffects?: CameraEffect[];
   acceptedSuggestions?: AcceptedSuggestionRef[];
@@ -283,6 +312,17 @@ export function buildEditorCommitRequest({
           ...(hasCaptionFont ? { font: captionMeta.font ?? null } : {}),
           font_set: hasCaptionFont,
           ...(typeof captionMeta.y_frac === "number" ? { y_frac: captionMeta.y_frac } : {}),
+          ...(typeof captionMeta.size_px === "number" ? { size_px: captionMeta.size_px } : {}),
+          ...(typeof captionMeta.color === "string" ? { color: captionMeta.color } : {}),
+          ...(typeof captionMeta.highlight_color === "string"
+            ? { highlight_color: captionMeta.highlight_color }
+            : {}),
+          ...(typeof captionMeta.stroke_width === "number"
+            ? { stroke_width: captionMeta.stroke_width }
+            : {}),
+          ...(typeof captionMeta.shadow_enabled === "boolean"
+            ? { shadow_enabled: captionMeta.shadow_enabled }
+            : {}),
         }
       : undefined;
   return {
@@ -305,9 +345,11 @@ export function buildEditorCommitRequest({
       ? { music_level: normalizedMix }
       : undefined,
     music_track_id:
-      musicDirty && musicTrackId !== variant.music_track_id
-        ? musicTrackId ?? null
+      musicDirty && !musicRemoved && musicTrackId != null && musicTrackId !== variant.music_track_id
+        ? musicTrackId
         : undefined,
+    remove_music:
+      musicDirty && musicRemoved && variant.music_track_id != null ? true : undefined,
     music_window: musicWindow
       ? { start_s: musicWindow.startS, alignment: musicWindow.alignment }
       : undefined,
@@ -315,6 +357,8 @@ export function buildEditorCommitRequest({
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
     visual_blocks: visualBlocksDirty ? visualBlocks : undefined,
+    motion_scenes: motionScenesDirty ? motionScenes : undefined,
+    motion_runtime_hash: motionScenesDirty ? motionRuntimeHash : undefined,
     camera_effects: cameraEffectsDirty ? cameraEffects : undefined,
     accepted_suggestion_ids: acceptedIds.length > 0 ? acceptedIds : undefined,
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,

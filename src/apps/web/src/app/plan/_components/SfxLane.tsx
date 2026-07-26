@@ -216,6 +216,7 @@ export default function SfxLane({
         id: crypto.randomUUID(),
         sound_effect_id: effect.id,
         src_gcs_path: "",
+        source: "user",
         at_s: Math.min(Math.max(0, currentTimeS), Math.max(0, totalDurationS - 0.1)),
         gain: 1.0,
         label: effect.name,

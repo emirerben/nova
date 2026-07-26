@@ -20,5 +20,10 @@ export function captionMetaFromVariant(variant: PlanItemVariant): CopilotCaption
     style: variant.voiceover_caption_style === "word" ? "word" : "sentence",
     font: variant.voiceover_caption_font ?? null,
     y_frac: 1 - captionPreviewBottomCqh(variant) / 100,
+    size_px: variant.caption_size_px ?? null,
+    color: variant.caption_text_color ?? null,
+    highlight_color: variant.caption_highlight_color ?? null,
+    stroke_width: variant.caption_stroke_width ?? null,
+    shadow_enabled: variant.caption_shadow_enabled ?? null,
   };
 }

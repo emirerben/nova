@@ -1,3 +1,5 @@
+import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
+
 /**
  * API client for content-plan endpoints (Phase 3+).
  *
@@ -797,6 +799,11 @@ export interface SoundEffectPlacement {
   duration_s?: number | null;
   /** Human label for the UI (e.g. "Fah"). */
   label?: string | null;
+  /** Optional provenance for generated placements; manual placements use source="user"/"manual". */
+  source?: string | null;
+  smart_role?: string | null;
+  smart_event_id?: string | null;
+  transcript_hash?: string | null;
 }
 
 // NOTE: `PlanItemVariant` is kept structurally assignable to the shared
@@ -1042,6 +1049,8 @@ export interface EditorCapabilities {
   sfx?: boolean;
   overlays?: boolean;
   visual_blocks?: boolean;
+  motion_scenes?: boolean;
+  motion_runtime_hash?: string | null;
   camera_effects?: boolean;
   background_music?: boolean;
   /** AI overlay suggestions inside the editor's Overlays drawer (plans/005-010).
@@ -1051,6 +1060,7 @@ export interface EditorCapabilities {
   sfx_reason?: string | null;
   overlays_reason?: string | null;
   visual_blocks_reason?: string | null;
+  motion_scenes_reason?: string | null;
   camera_effects_reason?: string | null;
   /** "autoplace_disabled" | "song_or_lyric_variant" | "caption_archetype"
    *  | inherited overlay reasons. */
@@ -1164,6 +1174,10 @@ export interface PlanItemVariant {
   // is what makes a variant instant-edit-eligible. Absent on lyrics/legacy.
   base_video_url?: string | null;
   base_video_path?: string | null;
+  motion_scenes?: MotionPresetInstanceV1[] | null;
+  motion_runtime_hash?: string | null;
+  motion_applied_runtime_hash?: string | null;
+  motion_cache_stale?: boolean;
   // Narrated on-video caption editor: editable cues over the caption-free base.
   // Present only on narrated variants; null otherwise.
   caption_cues?: CaptionCue[] | null;
@@ -1190,6 +1204,13 @@ export interface PlanItemVariant {
   // Caption font (font-registry key) for narrated captions. Null = default (TikTok
   // Sans). Editable in the on-video caption editor; the reburn honors it.
   voiceover_caption_font?: string | null;
+  // Caption appearance overrides for caption archetypes. Null/absent means the
+  // renderer's legacy defaults.
+  caption_size_px?: number | null;
+  caption_text_color?: string | null;
+  caption_highlight_color?: string | null;
+  caption_stroke_width?: number | null;
+  caption_shadow_enabled?: boolean | null;
   // ASS MarginV for captioned variants after the caption-position control is used.
   // Null/absent means legacy default: subtitled 384, narrated 180.
   caption_margin_v?: number | null;

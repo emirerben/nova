@@ -567,6 +567,123 @@ def test_song_timeline_override_mixes_required_music_track(monkeypatch):
     assert mix_calls[0]["kwargs"]["require_audio"] is True
 
 
+def test_song_timeline_override_replaces_stale_music_window_duration(monkeypatch):
+    """The music recipe/mix must cover the exact active timeline, not the old render."""
+    mix_calls: list = []
+    recipe_inputs: list[dict] = []
+    slots = [
+        _tl_slot(0, in_s=0.0, duration_s=1.5),
+        _tl_slot(1, in_s=0.0, duration_s=9.0, removed=True),
+        _tl_slot(2, in_s=0.0, duration_s=1.867),
+    ]
+    variant = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="agent_text",
+        music_track_id="t1",
+        music_start_s=0.543,
+        music_window_video_duration_s=2.784,
+        video_path=f"generative-jobs/{JOB_ID}/variant_1_song_text.mp4",
+        base_video_path=f"generative-jobs/{JOB_ID}/base_1_song_text.mp4",
+        user_timeline={"slots": slots},
+    )
+    _job, updates, _dl = _regen_setup(
+        monkeypatch,
+        variants=[variant],
+        track=_track("t1"),
+        mix_calls=mix_calls,
+    )
+    import app.pipeline.music_recipe as mr
+
+    def _capture_recipe(track_data, **_kwargs):
+        recipe_inputs.append(track_data)
+        return {
+            "slots": [{"position": 1, "target_duration_s": 1.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.0, 1.0, 2.0, 3.367],
+        }
+
+    monkeypatch.setattr(mr, "generate_music_recipe", _capture_recipe, raising=False)
+    monkeypatch.setattr(
+        gb,
+        "_run_music_window_audio_only_swap",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("timeline edits must rebuild the video frames")
+        ),
+        raising=False,
+    )
+
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "song_text",
+        None,
+        None,
+        False,
+        timeline_override=[
+            *slots,
+            {"slot_id": "__nova_timeline_reassembly__", "removed": True},
+        ],
+    )
+
+    assert updates[-1]["ok"] is True
+    assert updates[-1]["music_window_video_duration_s"] == pytest.approx(3.367)
+    assert mix_calls[0]["kwargs"]["validated_window_duration_s"] == pytest.approx(3.367)
+    track_config = recipe_inputs[0]["track_config"]
+    assert track_config["exact_window"] is True
+    assert track_config["best_end_s"] - track_config["best_start_s"] == pytest.approx(3.367)
+
+
+def test_song_timeline_probe_clamp_updates_exact_music_window(monkeypatch):
+    """An unprobed source clamp must also shrink recipe, mix, and persisted duration."""
+    mix_calls: list = []
+    recipe_inputs: list[dict] = []
+    slots = [_tl_slot(0, in_s=0.0, duration_s=3.367)]
+    variant = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="none",
+        music_track_id="t1",
+        music_start_s=0.0,
+        music_window_video_duration_s=3.367,
+        user_timeline={"slots": slots},
+    )
+    _job, updates, _dl = _regen_setup(
+        monkeypatch,
+        variants=[variant],
+        track=_track("t1"),
+        mix_calls=mix_calls,
+    )
+    _patch_timeline_io(monkeypatch, duration_s=2.0)
+    import app.pipeline.music_recipe as mr
+
+    def _capture_recipe(track_data, **_kwargs):
+        recipe_inputs.append(track_data)
+        return {
+            "slots": [{"position": 1, "target_duration_s": 1.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.0, 1.0, 2.0],
+        }
+
+    monkeypatch.setattr(mr, "generate_music_recipe", _capture_recipe, raising=False)
+
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "song_text",
+        None,
+        None,
+        False,
+        timeline_override=[
+            *slots,
+            {"slot_id": "__nova_timeline_reassembly__", "removed": True},
+        ],
+    )
+
+    assert updates[-1]["ok"] is True
+    assert updates[-1]["music_window_video_duration_s"] == pytest.approx(2.0)
+    assert mix_calls[0]["kwargs"]["validated_window_duration_s"] == pytest.approx(2.0)
+    track_config = recipe_inputs[0]["track_config"]
+    assert track_config["exact_window"] is True
+    assert track_config["best_end_s"] - track_config["best_start_s"] == pytest.approx(2.0)
+
+
 def test_persisted_user_timeline_drops_removed_and_honors_order(monkeypatch):
     """No kwarg → persisted user_timeline drives assembly: removed slots are
     dropped and the remaining slots render in list order. The variant's
@@ -1101,7 +1218,7 @@ def test_hook_regrounding_skips_lyrics_variants(monkeypatch):
     monkeypatch.setattr(
         gb,
         "_inject_lyrics",
-        lambda recipe_dict, track, style_set_id=None, line_overrides=None: (recipe_dict, []),
+        lambda recipe_dict, track, **_kwargs: (recipe_dict, []),
         raising=False,
     )
 
@@ -1217,3 +1334,152 @@ def test_finalize_job_preserves_ai_timeline(monkeypatch):
     assert variants[0]["ai_timeline"] == ai_timeline, "finalize stripped ai_timeline"
     # voiceover mix survives finalization too (same whitelist-strip class)
     assert variants[1]["mix"] == 0.7
+
+
+# ── contiguous same-source slot merge (invisible-cut fix, prod job 96771038) ────
+
+
+def _step(clip_id, *, position, target_s, moment=None, **slot_extra):
+    return types.SimpleNamespace(
+        clip_id=clip_id,
+        slot={"position": position, "target_duration_s": target_s, **slot_extra},
+        moment=moment or {"start_s": 0.0, "energy": 5.0, "description": f"slot {position}"},
+    )
+
+
+def test_merge_contiguous_same_source_steps_merges_cursor_neighbors():
+    """Two adjacent slots of one clip: the planner cursor makes the second
+    start exactly where the first ends → one step with summed duration."""
+    steps = [
+        _step("c1", position=1, target_s=3.646, moment={"start_s": 0.0, "end_s": 3.646}),
+        _step("c1", position=2, target_s=8.512, moment={"start_s": 3.646, "end_s": 12.158}),
+    ]
+    merged = gb._merge_contiguous_same_source_steps(
+        steps, clip_id_to_local={"c1": "/a.mp4"}, probe_map={"/a.mp4": _Probe(15.8)}
+    )
+    assert len(merged) == 1
+    assert merged[0].clip_id == "c1"
+    assert merged[0].slot["position"] == 1
+    assert merged[0].slot["target_duration_s"] == pytest.approx(12.158)
+    assert merged[0].moment["start_s"] == 0.0
+    assert merged[0].moment["end_s"] == pytest.approx(12.158)
+
+
+def test_merge_skips_different_sources():
+    steps = [
+        _step("c1", position=1, target_s=2.0, moment={"start_s": 0.0, "end_s": 2.0}),
+        _step("c2", position=2, target_s=2.0, moment={"start_s": 0.0, "end_s": 2.0}),
+    ]
+    merged = gb._merge_contiguous_same_source_steps(
+        steps,
+        clip_id_to_local={"c1": "/a.mp4", "c2": "/b.mp4"},
+        probe_map={"/a.mp4": _Probe(10.0), "/b.mp4": _Probe(10.0)},
+    )
+    assert len(merged) == 2
+
+
+def test_merge_skips_non_contiguous_same_source_windows():
+    """Footage-exhausted clamp: slot 1 trims to the clip end (cursor lands on
+    clip_dur), slot 2 has no footage left and clamps BACK from the end — the
+    windows overlap instead of continuing, so they must stay separate slots."""
+    steps = [
+        _step("c1", position=1, target_s=6.0, moment={"start_s": 0.0, "end_s": 6.0}),
+        _step("c1", position=2, target_s=2.0, moment={"start_s": 0.0, "end_s": 2.0}),
+    ]
+    merged = gb._merge_contiguous_same_source_steps(
+        steps, clip_id_to_local={"c1": "/a.mp4"}, probe_map={"/a.mp4": _Probe(5.0)}
+    )
+    assert len(merged) == 2
+
+
+def test_merge_epsilon_bounds_the_contiguity_check():
+    """The clamp gap above (2.0s) is way past the default 0.05s epsilon; a
+    caller-widened epsilon that covers the gap merges the same pair."""
+
+    def _steps():
+        return [
+            _step("c1", position=1, target_s=6.0, moment={"start_s": 0.0, "end_s": 6.0}),
+            _step("c1", position=2, target_s=2.0, moment={"start_s": 0.0, "end_s": 2.0}),
+        ]
+
+    kwargs = {"clip_id_to_local": {"c1": "/a.mp4"}, "probe_map": {"/a.mp4": _Probe(5.0)}}
+    assert len(gb._merge_contiguous_same_source_steps(_steps(), **kwargs)) == 2
+    assert len(gb._merge_contiguous_same_source_steps(_steps(), epsilon_s=2.5, **kwargs)) == 1
+
+
+def test_merge_never_touches_pinned_exact_window_steps():
+    """User-pinned windows (timeline override / locked slots) are verbatim —
+    even a perfectly contiguous pair stays two slots."""
+    steps = [
+        _step(
+            "c1",
+            position=1,
+            target_s=3.0,
+            moment={"start_s": 0.0, "end_s": 3.0},
+            exact_window=True,
+        ),
+        _step(
+            "c1",
+            position=2,
+            target_s=2.0,
+            moment={"start_s": 3.0, "end_s": 5.0},
+            exact_window=True,
+        ),
+    ]
+    merged = gb._merge_contiguous_same_source_steps(
+        steps, clip_id_to_local={"c1": "/a.mp4"}, probe_map={"/a.mp4": _Probe(10.0)}
+    )
+    assert len(merged) == 2
+
+
+def test_single_clip_two_contiguous_slots_render_one_timeline_slot(monkeypatch, tmp_path):
+    """Integration: a 1-clip upload whose recipe emitted two back-to-back slots
+    assembles ONE slot and persists ONE ai_timeline slot (prod job 96771038)."""
+    import app.pipeline.template_matcher as tm
+
+    assembled: list = []
+    _patch_render_helpers(monkeypatch, [], assembled_steps=assembled)
+
+    steps = [
+        types.SimpleNamespace(
+            clip_id="c1",
+            slot={"position": 1, "target_duration_s": 3.646},
+            moment={"start_s": 0.0, "end_s": 3.646, "energy": 6.0, "description": "opening"},
+        ),
+        types.SimpleNamespace(
+            clip_id="c1",
+            slot={"position": 2, "target_duration_s": 8.512},
+            moment={"start_s": 3.646, "end_s": 12.158, "energy": 6.0, "description": "rest"},
+        ),
+    ]
+    monkeypatch.setattr(
+        tm, "match", lambda recipe, metas, **kw: types.SimpleNamespace(steps=steps), raising=False
+    )
+    vdir = tmp_path / "v3"
+    vdir.mkdir()
+    spec = {"variant_id": "original_text", "rank": 3, "text_mode": "none", "track": None}
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=3,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/a.mp4"},
+        clip_id_to_gcs={"c1": CLIP_PATHS[0]},
+        probe_map={"/a.mp4": _Probe(15.8)},
+        available_footage_s=15.8,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+    )
+
+    assert res["ok"] is True
+    # The render itself assembled a single merged slot — cut structure and
+    # editor timeline agree.
+    assert len(assembled[0]) == 1
+    slots = res["ai_timeline"]["slots"]
+    assert len(slots) == 1
+    assert slots[0]["in_s"] == 0.0
+    assert slots[0]["duration_s"] == pytest.approx(12.158)
+    assert slots[0]["source_gcs_path"] == CLIP_PATHS[0]
+    assert slots[0]["order"] == 0
+    assert slots[0]["moment_description"] == "opening"

@@ -49,6 +49,13 @@ class SoundEffectPlacement(BaseModel):
     duration_s: float | None = Field(default=None, ge=0.0)
     # Human-readable label for the admin UI / editor (e.g. "Fah").
     label: str | None = Field(default=None)
+    # Optional generated-placement provenance. Manual editor placements either
+    # omit these fields or carry source="user"/"manual"; Smart Captions and
+    # autoplace outputs keep them so dedupe can stay precise after validation.
+    source: str | None = Field(default=None)
+    smart_role: str | None = Field(default=None)
+    smart_event_id: str | None = Field(default=None)
+    transcript_hash: str | None = Field(default=None)
 
     @field_validator("at_s", mode="before")
     @classmethod
@@ -114,36 +121,34 @@ def normalize_generated_sound_effects(
     if not raw:
         return []
     out: list[dict] = []
-    last_generated_global_at: float | None = None
-    last_generated_at: dict[tuple[str, str], float] = {}
+    kept_generated_at: dict[tuple[str, str], list[float]] = {}
     for item in raw:
         if not isinstance(item, dict):
             continue
         role = str(item.get("smart_role") or "")
-        role_key = role or str(item.get("source") or "generated")
+        source = str(item.get("source") or "")
         generated = bool(
-            role
-            or item.get("smart_event_id")
-            or item.get("transcript_hash")
-            or item.get("source") == "smart_captions"
+            source not in {"user", "manual", "uploaded"}
+            and (
+                role
+                or item.get("smart_event_id")
+                or item.get("transcript_hash")
+                or source == "smart_captions"
+                or str(item.get("sound_effect_id") or "").startswith("smart-")
+                or str(item.get("src_gcs_path") or "").startswith("sound-effects/smart-")
+            )
         )
         asset = str(item.get("sound_effect_id") or item.get("src_gcs_path") or "")
+        role_key = role or source or asset or "generated"
         try:
             at_s = float(item.get("at_s") or 0.0)
         except (TypeError, ValueError):
             at_s = 0.0
-        if generated and role_key != "keyword_typewriter_tick":
-            if (
-                last_generated_global_at is not None
-                and abs(at_s - last_generated_global_at) <= threshold_s
-            ):
+        if generated and asset:
+            key = (asset, role_key)
+            previous = kept_generated_at.setdefault(key, [])
+            if any(abs(at_s - kept_at_s) <= threshold_s for kept_at_s in previous):
                 continue
-            last_generated_global_at = at_s
-            if asset:
-                key = (asset, role_key)
-                previous = last_generated_at.get(key)
-                if previous is not None and abs(at_s - previous) <= threshold_s:
-                    continue
-                last_generated_at[key] = at_s
+            previous.append(at_s)
         out.append(item)
     return out

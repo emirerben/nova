@@ -174,7 +174,19 @@ _OVERLAY_PATCH_FIELDS = frozenset(
         "display_mode",
     }
 )
-_CAPTION_META_FIELDS = frozenset({"enabled", "style", "font", "y_frac"})
+_CAPTION_META_FIELDS = frozenset(
+    {
+        "enabled",
+        "style",
+        "font",
+        "y_frac",
+        "size_px",
+        "color",
+        "highlight_color",
+        "stroke_width",
+        "shadow_enabled",
+    }
+)
 _FONT_KIND_HINTS: dict[str, str] = {
     "playfair": "serif",
     "fraunces": "serif",
@@ -566,14 +578,19 @@ def _format_snapshot(snapshot: dict) -> str:
             f"enabled={bool(meta.get('enabled'))} "
             f"style={_clean_prompt_data(meta.get('style'), max_chars=40)!r} "
             f"font={_clean_prompt_data(meta.get('font'), max_chars=80)!r} "
-            f"y_frac={_fmt_round3(_first_number(meta, ('y_frac',)))}"
+            f"y_frac={_fmt_round3(_first_number(meta, ('y_frac',)))} "
+            f"size_px={_fmt_round3(_first_number(meta, ('size_px',)))} "
+            f"color={_clean_prompt_data(meta.get('color'), max_chars=16)!r} "
+            f"highlight={_clean_prompt_data(meta.get('highlight_color'), max_chars=16)!r} "
+            f"stroke={_fmt_round3(_first_number(meta, ('stroke_width',)))} "
+            f"shadow={meta.get('shadow_enabled')!r}"
         )
         if not cues_editable:
             lines.append(
                 f"meta-only captions: {total_cues} transcript cues exist but their text "
                 "and timing are not available in this draft — never emit "
                 "edit_caption or set_caption_timing here. set_caption_meta "
-                "(style/font/enabled/y_frac) DOES apply."
+                "(style/font/enabled/y_frac/size/color/stroke/shadow) DOES apply."
             )
         if truncated:
             lines.append(
@@ -1282,6 +1299,28 @@ def _coerce_caption_meta_patch(patch: dict, state: _ParseState) -> dict:
                 state.invalid_value()
                 return {}
             out[key] = clamp_caption_y_frac(num)
+        elif key == "size_px":
+            num = _as_float(value)
+            if num is None:
+                state.invalid_value()
+                return {}
+            out[key] = max(36, min(160, int(round(num))))
+        elif key in {"color", "highlight_color"}:
+            if not isinstance(value, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", value.strip()):
+                state.invalid_value()
+                return {}
+            out[key] = value.strip().upper()
+        elif key == "stroke_width":
+            num = _as_float(value)
+            if num is None:
+                state.invalid_value()
+                return {}
+            out[key] = max(0, min(12, int(round(num))))
+        elif key == "shadow_enabled":
+            if not isinstance(value, bool):
+                state.invalid_value()
+                return {}
+            out[key] = value
     return out
 
 

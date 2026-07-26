@@ -101,6 +101,7 @@ def _arm(monkeypatch, *, object_exists=True):
     monkeypatch.setattr(settings, "sound_effects_enabled", True, raising=False)
     monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
     monkeypatch.setattr(settings, "visual_blocks_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", False, raising=False)
     monkeypatch.setattr(settings, "overlay_autoplace_enabled", False, raising=False)
     monkeypatch.setattr(settings, "subtitled_text_lane_enabled", False, raising=False)
     monkeypatch.setattr(gj.storage, "object_exists", lambda p: object_exists)
@@ -354,6 +355,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
     assert v["text_elements"][0]["text"] == "Hello world"
     assert v["text_elements_user_edited"] is True
     assert [s["slot_id"] for s in v["user_timeline"]["slots"]] == ["s1", "s2"]
+    assert v["music_window_video_duration_s"] == pytest.approx(3.0)
     assert v["mix"] == 0.2
     assert v["original_audio_level"] == 0.8
     # Generation bumped + variant flipped to rendering.
@@ -373,6 +375,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "motion_scenes": False,
         "camera_effects": False,
     }
 
@@ -387,7 +390,11 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
     assert len(calls) == 1
     kwargs = calls[0]["kwargs"]
     assert kwargs["render_gen_id"] == prep["generation"]
-    assert [s["slot_id"] for s in kwargs["timeline_override"]] == ["s1", "s2"]
+    assert [s["slot_id"] for s in kwargs["timeline_override"][:-1]] == ["s1", "s2"]
+    assert kwargs["timeline_override"][-1] == {
+        "slot_id": "__nova_timeline_reassembly__",
+        "removed": True,
+    }
     assert kwargs["mix_override"] == 0.2
     # Timeline present → full re-assembly → default queue (no overlay-jobs pin).
     assert "queue" not in calls[0]
@@ -467,6 +474,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "motion_scenes": False,
         "camera_effects": False,
     }
 
@@ -667,6 +675,11 @@ def test_subtitled_caption_meta_commit_persists_and_reburns_caption_task(monkeyp
                 font="Playfair Display",
                 font_set=True,
                 y_frac=0.66,
+                size_px=92,
+                color="#112233",
+                highlight_color="#A3E635",
+                stroke_width=7,
+                shadow_enabled=False,
             )
         ),
     )
@@ -675,6 +688,11 @@ def test_subtitled_caption_meta_commit_persists_and_reburns_caption_task(monkeyp
     assert v["voiceover_caption_style"] == "word"
     assert v["voiceover_caption_font"] == "Playfair Display"
     assert v["caption_margin_v"] == 653
+    assert v["caption_size_px"] == 92
+    assert v["caption_text_color"] == "#112233"
+    assert v["caption_highlight_color"] == "#A3E635"
+    assert v["caption_stroke_width"] == 7
+    assert v["caption_shadow_enabled"] is False
     # Without these flags the smart-caption policy ignores the committed
     # font/position — the edit would silently no-op on Smart Captions.
     assert v["caption_font_user_edited"] is True
@@ -1301,6 +1319,122 @@ def test_song_timeline_seconds_snap_to_beat_grid(monkeypatch):
     assert resolved[0]["duration_s"] == 1.1
     assert resolved[1]["duration_beats"] == 2
     assert resolved[1]["duration_s"] == 1.3
+
+
+def test_song_timeline_preserves_exact_final_tail_past_last_beat(monkeypatch):
+    """Prod regression: a 3.367s clip was silently saved as the 2.784s beat span."""
+    _arm(monkeypatch)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    prefix = f"generative-jobs/{job.id}/sources/"
+    beat_grid = [
+        0.543,
+        0.759,
+        0.975,
+        1.239,
+        1.431,
+        1.719,
+        1.887,
+        2.055,
+        2.559,
+        2.727,
+        2.943,
+        3.135,
+        3.327,
+    ]
+    ai_slots = _ai_slots(prefix)
+    ai_slots[0].update({"source_duration_s": 3.367, "duration_s": 2.055, "duration_beats": 7})
+    variant["ai_timeline"] = {"beat_grid": beat_grid, "slots": ai_slots}
+    slots = [
+        gj.TimelineSlotEdit(
+            slot_id="s1",
+            clip_index=0,
+            in_s=0.0,
+            duration_s=3.367,
+        ),
+        gj.TimelineSlotEdit(
+            slot_id="s2",
+            clip_index=1,
+            in_s=1.0,
+            duration_s=1.0,
+            removed=True,
+        ),
+    ]
+
+    resolved = gj.resolve_timeline_slots_for_edit(job, variant, slots)
+
+    assert resolved[0]["duration_s"] == pytest.approx(3.367)
+    assert resolved[0]["duration_beats"] is None
+    assert resolved[1]["removed"] is True
+
+
+def test_song_timeline_snaps_internal_cut_then_preserves_exact_final_tail(monkeypatch):
+    """The terminal exception starts after the beats consumed by earlier slots."""
+    _arm(monkeypatch)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    prefix = f"generative-jobs/{job.id}/sources/"
+    beat_grid = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+    ai_slots = _ai_slots(prefix)
+    ai_slots[0].update({"source_duration_s": 2.0, "duration_s": 1.0, "duration_beats": 2})
+    ai_slots[1].update({"source_duration_s": 2.25, "duration_s": 1.0, "duration_beats": 2})
+    variant["ai_timeline"] = {"beat_grid": beat_grid, "slots": ai_slots}
+
+    resolved = gj.resolve_timeline_slots_for_edit(
+        job,
+        variant,
+        [
+            gj.TimelineSlotEdit(
+                slot_id="s1",
+                clip_index=0,
+                in_s=0.0,
+                duration_s=0.9,
+            ),
+            gj.TimelineSlotEdit(
+                slot_id="s2",
+                clip_index=1,
+                in_s=0.0,
+                duration_s=2.25,
+            ),
+        ],
+    )
+
+    assert resolved[0]["duration_s"] == pytest.approx(1.0)
+    assert resolved[0]["duration_beats"] == 2
+    assert resolved[1]["duration_s"] == pytest.approx(2.25)
+    assert resolved[1]["duration_beats"] is None
+
+
+def test_song_timeline_exact_final_tail_still_checks_source_bounds(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    prefix = f"generative-jobs/{job.id}/sources/"
+    ai_slot = _ai_slots(prefix)[0]
+    ai_slot.update({"source_duration_s": 3.367, "duration_s": 2.0, "duration_beats": 2})
+    variant["ai_timeline"] = {
+        "beat_grid": [0.543, 1.543, 2.543, 3.327],
+        "slots": [ai_slot],
+    }
+
+    with pytest.raises(HTTPException) as exc:
+        gj.resolve_timeline_slots_for_edit(
+            job,
+            variant,
+            [
+                gj.TimelineSlotEdit(
+                    slot_id="s1",
+                    clip_index=0,
+                    in_s=0.0,
+                    duration_s=3.4,
+                )
+            ],
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "TIMELINE_OUT_OF_BOUNDS"
+    assert exc.value.detail["available_duration_s"] == pytest.approx(3.367)
+    assert exc.value.detail["required_duration_s"] == pytest.approx(3.4)
 
 
 def test_no_music_timeline_seconds_snap_to_half_second(monkeypatch):
@@ -1952,6 +2086,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
+        "motion_scenes": False,
         "camera_effects": False,
         "title": True,
     }
@@ -2524,6 +2659,8 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "sfx": True,
         "overlays": True,
         "visual_blocks": False,
+        "motion_scenes": False,
+        "motion_runtime_hash": None,
         "camera_effects": False,
         "background_music": False,
         # _arm leaves overlay_autoplace_enabled at its default (False).
@@ -2532,6 +2669,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "sfx_reason": None,
         "overlays_reason": None,
         "visual_blocks_reason": "visual_blocks_disabled",
+        "motion_scenes_reason": "motion_scenes_disabled",
         "camera_effects_reason": "unsupported_archetype",
         "suggestions_reason": "autoplace_disabled",
         "lyrics": {
@@ -2942,3 +3080,292 @@ def test_caption_tab_copy_literal_is_byte_stable():
     loudly instead. Mirror pin lives in
     src/apps/web/src/__tests__/plan/items/editor-capabilities.test.tsx."""
     assert gj.CAPTION_TAB_COPY == "Captions can be selected and edited in this editor"
+
+
+# ── remove_music (explicit music removal, its own flag) ─────────────────────────
+
+
+def test_remove_music_commit_clears_track_state_and_kicks_full_render(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        music_start_s=4.0,
+        track_title="Old Song",
+        music_window_video_duration_s=12.0,
+        lyric_line_overrides={"L1": {"text": "x"}},
+        lyric_overlay_snapshot={"lines": []},
+        text_elements=[
+            dict(_VALID_ELEMENT),
+            {**_VALID_ELEMENT, "id": "lyr1", "role": "lyric_line"},
+        ],
+    )
+
+    prep = gj.prepare_editor_commit(job, "song_text", _commit_req(remove_music=True))
+
+    v = job.assembly_plan["variants"][0]
+    assert v["music_track_id"] is None
+    assert v["music_start_s"] is None
+    assert v["track_title"] is None
+    assert "music_window_video_duration_s" not in v
+    # Track-derived lyric state cleared exactly like a track swap.
+    assert v["lyric_line_overrides"] is None
+    assert v["lyric_overlay_snapshot"] is None
+    assert all(e.get("role") != "lyric_line" for e in v["text_elements"])
+    assert v["render_generation_id"] == prep["generation"]
+    assert v["render_status"] == "rendering"
+    assert prep["remove_music"] is True
+    assert prep["sections"]["music"] is True
+    assert prep["new_track_id"] is None
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    assert len(calls) == 1
+    # Full re-assembly on the default queue: the fast-reburn base has the OLD
+    # music mixed in, so the fast path must be pinned off.
+    assert "queue" not in calls[0]
+    kw = calls[0]["kwargs"]
+    assert kw["render_gen_id"] == prep["generation"]
+    assert kw["force_full_render"] is True
+    assert "new_track_id" not in kw
+
+
+@pytest.mark.parametrize(
+    "conflict_kwargs",
+    [
+        {"music_track_id": "t2"},
+        {"music_window": {"start_s": 0.0, "alignment": "resync_beats"}},
+    ],
+)
+def test_remove_music_conflicts_with_swap_or_window_422(monkeypatch, conflict_kwargs):
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(remove_music=True, **conflict_kwargs),
+            music_track=_music_track(id="t2"),
+        )
+
+    assert exc.value.status_code == 422
+    assert job.assembly_plan == before
+
+
+def test_remove_music_on_trackless_variant_422(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(variant_id="original_text", music_track_id=None, mix=None)
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(job, "original_text", _commit_req(remove_music=True))
+
+    assert exc.value.status_code == 422
+    assert job.assembly_plan == before
+
+
+def test_remove_music_defaults_false_and_stays_inert(monkeypatch):
+    # A title-only commit (remove_music absent) must not count as a music
+    # section, kick a render, or touch the variant's track.
+    _arm(monkeypatch)
+    job = _job()
+
+    prep = gj.prepare_editor_commit(job, "song_text", _commit_req(title="New title"))
+
+    v = job.assembly_plan["variants"][0]
+    assert v["music_track_id"] == "t1"
+    assert prep["remove_music"] is False
+    assert prep["sections"]["music"] is False
+    assert prep["has_render_section"] is False
+
+
+def _motion_scene() -> dict:
+    return {
+        "id": "route-1",
+        "preset_id": "route_trace",
+        "preset_version": 1,
+        "start_frame": 0,
+        "end_frame_exclusive": 60,
+        "palette": {"primary": "#8B5CF6", "accent": "#D9FF43"},
+        "intensity": 0.8,
+    }
+
+
+def test_editor_commit_motion_scene_is_atomic_and_routes_one_render(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[_motion_scene()],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+        ),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["motion_scenes"] == [_motion_scene()]
+    assert variant["motion_runtime_hash"] == MOTION_RUNTIME_HASH
+    assert variant["motion_cache_stale"] is True
+    assert prep["sections"]["motion_scenes"] is True
+    assert prep["has_render_section"] is True
+
+    with patch(REGEN) as task:
+        gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    task.apply_async.assert_called_once()
+    assert task.apply_async.call_args.kwargs.get("queue") is None
+
+
+def test_editor_commit_motion_runtime_mismatch_preserves_variant(monkeypatch):
+    from app.config import settings
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                motion_scenes=[_motion_scene()],
+                motion_runtime_hash="stale-web-runtime",
+            ),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {"code": "motion_runtime_mismatch"}
+    assert job.assembly_plan == before
+
+
+def test_editor_commit_rejects_motion_and_landscape_atomically(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                motion_scenes=[_motion_scene()],
+                motion_runtime_hash=MOTION_RUNTIME_HASH,
+                orientation="landscape",
+            ),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {"code": "motion_portrait_only"}
+    assert job.assembly_plan == before
+
+
+def test_editor_commit_rejects_landscape_when_motion_is_persisted(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    job = _job(
+        motion_scenes=[_motion_scene()],
+        motion_runtime_hash=MOTION_RUNTIME_HASH,
+    )
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(orientation="landscape"),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {"code": "motion_portrait_only"}
+    assert job.assembly_plan == before
+
+
+def test_editor_commit_can_clear_motion_and_switch_to_landscape(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    job = _job(
+        motion_scenes=[_motion_scene()],
+        motion_runtime_hash=MOTION_RUNTIME_HASH,
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+            orientation="landscape",
+        ),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["motion_scenes"] is None
+    assert variant["orientation"] == "landscape"
+
+
+def test_editor_commit_clears_motion_desired_state_without_deleting_live_cache(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    variant.update(
+        {
+            "motion_scenes": [_motion_scene()],
+            "motion_runtime_hash": MOTION_RUNTIME_HASH,
+            "motion_base_path": "last-good-motion.mp4",
+            "motion_cache_stale": False,
+        }
+    )
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+        ),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["motion_scenes"] is None
+    assert variant["motion_base_path"] == "last-good-motion.mp4"
+    assert variant["motion_cache_stale"] is True
+    assert prep["sections"]["motion_scenes"] is True
+
+
+def test_editor_capabilities_advertise_motion_runtime_only_when_eligible(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    capabilities = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert capabilities["motion_scenes"] is True
+    assert capabilities["motion_runtime_hash"] == MOTION_RUNTIME_HASH

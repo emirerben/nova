@@ -1253,12 +1253,16 @@ def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
 
     from app.config import settings as _settings  # noqa: PLC0415
     from app.tasks.autoplace import (  # noqa: PLC0415
+        VISUAL_BLOCK_AUTOPLAN_ARCHETYPES,
         _clear_visual_block_attempts,
         prepare_visual_block_assets,
     )
 
     if not (_settings.visual_blocks_enabled and _settings.visual_block_autoplan_enabled):
         return
+    # Buffered, flushed AFTER the row lock releases (record_pipeline_event's
+    # own-connection UPDATE deadlocks against a held FOR UPDATE on jobs).
+    skipped_archetypes: list[tuple[str, str]] = []
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None or job.content_plan_item_id is None:
@@ -1272,13 +1276,36 @@ def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
                 and variant.get("text_mode") != "lyrics"
                 and not variant.get("visual_blocks_autoplan_attempted")
             ):
+                # Autoplan targets speech-spined archetypes only; unset
+                # resolved_archetype means montage-by-default. No claim is
+                # taken, so a later re-render that changes the archetype can
+                # still autoplan.
+                archetype = str(variant.get("resolved_archetype") or "montage")
+                if archetype not in VISUAL_BLOCK_AUTOPLAN_ARCHETYPES:
+                    skipped_archetypes.append((str(variant.get("variant_id")), archetype))
+                    continue
                 variant["visual_blocks_autoplan_attempted"] = True
                 eligible.append(str(variant.get("variant_id")))
-        if not eligible:
-            return
-        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-        flag_modified(job, "assembly_plan")
-        db.commit()
+        if eligible:
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            flag_modified(job, "assembly_plan")
+            db.commit()
+    if skipped_archetypes:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        for variant_id, archetype in skipped_archetypes:
+            record_pipeline_event(
+                "autoplace",
+                "visual_blocks_skipped_archetype",
+                {"variant_id": variant_id, "archetype": archetype},
+            )
+        log.info(
+            "visual_blocks_autoplan_skipped_archetype",
+            job_id=job_id,
+            skipped=skipped_archetypes,
+        )
+    if not eligible:
+        return
     try:
         prepare_visual_block_assets.apply_async(
             args=[job_id, eligible], queue=_settings.autoplace_queue
@@ -1925,6 +1952,7 @@ def regenerate_generative_variant(
     `text_behind_subject`: explicit text-behind-subject toggle (None = leave the
     persisted `intro_behind_subject` decision alone). Kwarg name is a frozen
     contract with the route layer's `.delay(...)` call.
+
     """
     log.info(
         "generative_regenerate_start",
@@ -3568,6 +3596,69 @@ def _free_retired_visual_blocks_base(previous: dict, replacement: str | None) ->
         delete_object_best_effort(old_path)
 
 
+def _ensure_motion_base(
+    *,
+    job_id: str,
+    variant_id: str,
+    variant: dict,
+    base_gcs_path: str,
+) -> tuple[str, str | None]:
+    """Return the picture base with the shared motion layer below authored text."""
+    from app.config import settings as _motion_settings  # noqa: PLC0415
+    from app.pipeline.motion_scene import (  # noqa: PLC0415
+        MOTION_RUNTIME_HASH,
+        apply_motion_scenes,
+        validate_motion_instances,
+    )
+
+    scenes = validate_motion_instances(variant.get("motion_scenes") or [])
+    if not scenes:
+        return base_gcs_path, None
+    if _resolve_variant_orientation(variant) != "portrait":
+        raise RuntimeError("motion scenes require portrait orientation")
+    required_hash = variant.get("motion_runtime_hash")
+    if required_hash != MOTION_RUNTIME_HASH:
+        raise RuntimeError(
+            f"motion runtime mismatch: variant requires {required_hash!r}, "
+            f"worker has {MOTION_RUNTIME_HASH!r}"
+        )
+    cached = variant.get("motion_base_path")
+    cache_matches_source = variant.get("motion_base_source_path") == base_gcs_path
+    cache_is_fresh = bool(cached and not variant.get("motion_cache_stale") and cache_matches_source)
+    if not _motion_settings.motion_scenes_enabled:
+        if cache_is_fresh:
+            return str(cached), str(cached)
+        raise RuntimeError(
+            "motion scenes are disabled and this persisted variant needs a cache rebuild"
+        )
+    if cache_is_fresh:
+        log.info(
+            "motion_scene_cache_hit",
+            job_id=job_id,
+            variant_id=variant_id,
+            cache_path=str(cached),
+            runtime_hash=MOTION_RUNTIME_HASH,
+        )
+        return str(cached), str(cached)
+
+    cache_path = f"generative-jobs/{job_id}/motion/{variant_id}_{uuid.uuid4().hex[:10]}.mp4"
+    apply_motion_scenes(
+        base_gcs_path=base_gcs_path,
+        instances=scenes,
+        output_gcs_path=cache_path,
+        job_id=job_id,
+    )
+    return cache_path, cache_path
+
+
+def _free_retired_motion_base(previous: dict, replacement: str | None) -> None:
+    old_path = previous.get("motion_base_path")
+    if old_path and old_path != replacement:
+        from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+        delete_object_best_effort(old_path)
+
+
 def _reburn_text_on_base(
     *,
     job_id: str,
@@ -3635,9 +3726,22 @@ def _reburn_text_on_base(
         variant=existing,
         base_gcs_path=base_gcs_path,
     )
+    motion_base_source_path = render_base_gcs_path
+    render_base_gcs_path, motion_cache_path = _ensure_motion_base(
+        job_id=job_id,
+        variant_id=variant_id,
+        variant=existing,
+        base_gcs_path=render_base_gcs_path,
+    )
     visual_blocks_patch = {
         "visual_blocks_base_path": visual_blocks_cache_path,
         "visual_blocks_cache_stale": False,
+        "motion_base_path": motion_cache_path,
+        "motion_base_source_path": (motion_base_source_path if motion_cache_path else None),
+        "motion_cache_stale": False,
+        "motion_applied_runtime_hash": (
+            existing.get("motion_runtime_hash") if motion_cache_path else None
+        ),
     }
     orientation = _resolve_variant_orientation(existing)
     canvas = canvas_for_orientation(orientation)
@@ -4095,6 +4199,107 @@ def _derive_duration_beats(durations: list[float], beat_grid: list[float]) -> li
             anchor = beat_grid[min(cursor, len(beat_grid) - 1)] + duration
             cursor = min(range(len(beat_grid)), key=lambda k: abs(beat_grid[k] - anchor))
     return out
+
+
+# Contiguity tolerance for merging adjacent same-source slots: float noise on
+# projected windows, never a real footage gap (a genuine cut is >= one beat).
+_CONTIGUOUS_SOURCE_EPSILON_S = 0.05
+
+
+def _merge_contiguous_same_source_steps(
+    steps: list,
+    *,
+    clip_id_to_local: dict[str, str],
+    probe_map: dict,
+    epsilon_s: float = _CONTIGUOUS_SOURCE_EPSILON_S,
+) -> list:
+    """Collapse adjacent matcher steps that will render contiguous windows of
+    the SAME source clip into one step.
+
+    `_plan_slots`' per-clip cursor makes every repeat use of a clip start
+    exactly where the previous slot ended, so a beat-driven recipe matched
+    against a single uploaded clip emits back-to-back slots whose seam is an
+    invisible cut — renders identically to no cut but shows as two clips in
+    the timeline editor (prod job 96771038). Runs on the FRESH-match generative
+    path only, before both `_assemble_clips` and `_build_ai_timeline`, so the
+    rendered cut structure and the editor timeline agree.
+
+    Windows are projected with the same cursor + footage-trim arithmetic the
+    planner applies under `allow_slowdown_fill=False`; adjacent same-clip steps
+    whose windows are contiguous within `epsilon_s` merge (first step's
+    slot/moment identity kept, target durations summed, moment end extended).
+    Pinned steps (`locked`/`exact_window` — user-timeline windows) and steps
+    carrying their own text overlays never merge.
+    """
+    if len(steps) < 2:
+        return list(steps)
+
+    def _project(step: Any, cursors: dict[str, float]) -> tuple[bool, float, float]:
+        slot = getattr(step, "slot", None) or {}
+        moment = getattr(step, "moment", None) or {}
+        pinned = bool(slot.get("locked") or slot.get("exact_window"))
+        duration = max(float(slot.get("target_duration_s") or 0.0), 0.5) * float(
+            slot.get("speed_factor") or 1.0
+        )
+        if pinned:
+            start = float(moment.get("start_s") or 0.0)
+            duration = max(0.5, float(moment.get("end_s", start + duration)) - start)
+        elif step.clip_id in cursors:
+            start = cursors[step.clip_id]
+        else:
+            start = float(moment.get("start_s") or 0.0)
+        probe = probe_map.get(clip_id_to_local.get(step.clip_id))
+        clip_dur = float(getattr(probe, "duration_s", 0.0) or 0.0)
+        if not pinned and clip_dur > 0.0 and start + duration > clip_dur:
+            available = max(0.0, clip_dur - start)
+            if available > 0.0:
+                duration = available  # footage-exhausted trim (no slowdown fill)
+            else:
+                start = max(0.0, clip_dur - duration)  # clamp-and-warn branch
+        return pinned, start, duration
+
+    merged: list = []
+    windows: list[tuple[bool, float, float]] = []  # (pinned, start_s, duration_s)
+    cursors: dict[str, float] = {}
+    for step in steps:
+        pinned, start, duration = _project(step, cursors)
+        if not pinned:
+            cursors[step.clip_id] = start + duration
+        slot = getattr(step, "slot", None) or {}
+        prev_win = windows[-1] if windows else None
+        if (
+            merged
+            and not pinned
+            and prev_win is not None
+            and not prev_win[0]
+            and merged[-1].clip_id == step.clip_id
+            and not slot.get("text_overlays")
+            and abs((prev_win[1] + prev_win[2]) - start) <= epsilon_s
+        ):
+            prev = merged[-1]
+            prev_slot = dict(getattr(prev, "slot", None) or {})
+            prev_slot["target_duration_s"] = round(
+                float(prev_slot.get("target_duration_s") or 0.0)
+                + float(slot.get("target_duration_s") or 0.0),
+                3,
+            )
+            if "target_duration_pct" in prev_slot or "target_duration_pct" in slot:
+                pct_a = prev_slot.get("target_duration_pct")
+                pct_b = slot.get("target_duration_pct")
+                prev_slot["target_duration_pct"] = (
+                    round(float(pct_a) + float(pct_b), 6)
+                    if pct_a is not None and pct_b is not None
+                    else None
+                )
+            merged_end = prev_win[1] + prev_win[2] + duration
+            prev_moment = dict(getattr(prev, "moment", None) or {})
+            prev_moment["end_s"] = round(merged_end, 3)
+            merged[-1] = type(prev)(slot=prev_slot, clip_id=prev.clip_id, moment=prev_moment)
+            windows[-1] = (False, prev_win[1], prev_win[2] + duration)
+            continue
+        merged.append(step)
+        windows.append((pinned, start, duration))
+    return merged
 
 
 def _build_ai_timeline(
@@ -4765,6 +4970,16 @@ def _run_regenerate_variant(
             )
             # Everything removed → nothing to assemble → fresh match below.
             active_timeline_slots = kept_slots or None
+            if active_timeline_slots and (new_track_id or existing_track_id):
+                # A user timeline can end after the song's last natural beat.
+                # Size the exact music window from the cut we are about to render,
+                # not a stale duration persisted by the previous render.
+                active_timeline_duration_s = round(
+                    sum(float(slot.get("duration_s") or 0.0) for slot in active_timeline_slots),
+                    3,
+                )
+                if active_timeline_duration_s > 0:
+                    existing_music_window_duration_s = active_timeline_duration_s
 
     # Mark this variant as re-rendering so the UI can show a spinner immediately.
     _update_variant_entry(
@@ -4880,6 +5095,7 @@ def _run_regenerate_variant(
             ):
                 return
             _free_retired_visual_blocks_base(existing, result.get("visual_blocks_base_path"))
+            _free_retired_motion_base(existing, result.get("motion_base_path"))
             if _old_video_path_for_delete:
                 from app.storage import delete_object_best_effort  # noqa: PLC0415
 
@@ -4996,6 +5212,19 @@ def _run_regenerate_variant(
         assembly_steps_override: list | None = None
         if timeline_assembly is not None:
             assembly_steps_override = timeline_assembly["steps"]
+            if track is not None:
+                rendered_timeline_duration_s = round(
+                    sum(
+                        float(step.slot.get("target_duration_s") or 0.0)
+                        for step in assembly_steps_override
+                    ),
+                    3,
+                )
+                if rendered_timeline_duration_s > 0:
+                    # Unknown source durations are clamped only after probing.
+                    # Recipe, lyrics, mix, and persisted state must follow the
+                    # exact windows that survived that clamp.
+                    existing_music_window_duration_s = rendered_timeline_duration_s
             record_pipeline_event(
                 "assembly",
                 "timeline_override_path",
@@ -5192,15 +5421,26 @@ def _run_regenerate_variant(
         has_visual_blocks = settings.visual_blocks_enabled and bool(
             latest_variant.get("visual_blocks")
         )
+        # Persisted desired state, not the live flag, decides whether the
+        # result must pass through the motion base. With the flag off,
+        # _ensure_motion_base may reuse a source-bound cache but otherwise
+        # fails closed; it must never publish a silently motionless rebuild.
+        has_motion_scenes = bool(latest_variant.get("motion_scenes"))
         if settings.visual_blocks_enabled and not has_visual_blocks:
             # Removing every block must publish the newly assembled clean base
             # and retire any previous block composite rather than preserving it
             # through the variant merge.
             result["visual_blocks_base_path"] = None
             result["visual_blocks_cache_stale"] = False
+        if settings.motion_scenes_enabled and not has_motion_scenes:
+            result["motion_base_path"] = None
+            result["motion_base_source_path"] = None
+            result["motion_cache_stale"] = False
+            result["motion_applied_runtime_hash"] = None
         if (
             (_TEXT_ELEMENTS_ENABLED and latest_variant.get("text_elements_user_edited"))
             or has_visual_blocks
+            or has_motion_scenes
         ) and result.get("base_video_path"):
             result = {
                 **result,
@@ -5217,6 +5457,8 @@ def _run_regenerate_variant(
                         # A full assembly minted a new clean base; never reuse a
                         # block composite whose audio/picture came from the old one.
                         "visual_blocks_base_path": None,
+                        "motion_base_path": None,
+                        "motion_base_source_path": None,
                     },
                     agent_text=agent_text,
                     agent_form=agent_form,
@@ -5285,6 +5527,7 @@ def _run_regenerate_variant(
             delete_object_best_effort(old_matte_path)
             delete_object_best_effort(f"{old_matte_path}.json")
         _free_retired_visual_blocks_base(existing, result.get("visual_blocks_base_path"))
+        _free_retired_motion_base(existing, result.get("motion_base_path"))
         # A full re-render re-assembles video_path without user media layers.
         _reapply_user_media_layers(
             job_id=job_id,
@@ -6172,7 +6415,7 @@ def _effective_music_window(
     from app.services.music_sections import track_config_with_rank_one  # noqa: PLC0415
 
     cfg = _fit_section_to_footage(track_config_with_rank_one(track), fallback_footage_s)
-    if requested_start_s is None or requested_duration_s is None:
+    if requested_duration_s is None:
         start_s = float(cfg.get("best_start_s", 0.0) or 0.0)
         end_s = float(cfg.get("best_end_s", start_s) or start_s)
         return {
@@ -6182,6 +6425,11 @@ def _effective_music_window(
             "track_config": cfg,
             "validated": False,
         }
+    if requested_start_s is None:
+        # Legacy variants may predate persisted music_start_s. An edited
+        # timeline still supplies an exact duration, so seed its start from the
+        # ranked section and run the same legal beat-snap/clamp path.
+        requested_start_s = float(cfg.get("best_start_s", 0.0) or 0.0)
 
     track_duration_s = float(track.duration_s or 0.0)
     duration_s = float(requested_duration_s)
@@ -7127,6 +7375,27 @@ def _render_generative_variant(
             except TemplateMismatchError as exc:
                 raise ValueError(f"{exc.code}: {exc.message}") from exc
             steps = assembly_plan.steps
+            # Fresh-match montage only (masonry keeps tiles; the override path
+            # above must honor the user's slots verbatim): collapse invisible
+            # same-source seams so render and editor timeline agree.
+            if not masonry_requested:
+                steps = _merge_contiguous_same_source_steps(
+                    steps, clip_id_to_local=clip_id_to_local, probe_map=probe_map
+                )
+                if len(steps) < len(assembly_plan.steps):
+                    from app.services.pipeline_trace import (  # noqa: PLC0415
+                        record_pipeline_event,
+                    )
+
+                    record_pipeline_event(
+                        "assembly",
+                        "contiguous_slots_merged",
+                        {
+                            "variant_id": variant_id,
+                            "matched_slots": len(assembly_plan.steps),
+                            "merged_slots": len(steps),
+                        },
+                    )
         _record_render_subphase(
             job_id,
             "render_variants",
@@ -9285,6 +9554,13 @@ def _render_subtitled_variant(
         "voiceover_caption_style": caption_style,
         "voiceover_caption_font": caption_font,
         "caption_margin_v": caption_margin_v,
+        "caption_size_px": spec.get("caption_size_px"),
+        "caption_text_color": spec.get("caption_text_color"),
+        "caption_highlight_color": spec.get("caption_highlight_color"),
+        "caption_stroke_width": spec.get("caption_stroke_width"),
+        "caption_shadow_enabled": spec.get("caption_shadow_enabled"),
+        "caption_font_user_edited": spec.get("caption_font_user_edited"),
+        "caption_position_user_edited": spec.get("caption_position_user_edited"),
         # Language the captions were transcribed in (ISO "en"/"tr"). Shown as the editor
         # chip; the re-transcribe override reads + rewrites it.
         "caption_language": (language or "en"),
@@ -9312,6 +9588,12 @@ def _render_subtitled_variant(
         # only when the stage ran to a plan; drives the admin cut-plan viewer.
         "silence_cut": None,
     }
+    if base.get("smart_caption_policy") is not None:
+        base["smart_caption_policy"] = _effective_smart_caption_policy(
+            base,
+            ass_font=resolve_caption_font(caption_font),
+            margin_v=caption_margin_v,
+        )
     if getattr(settings, "subtitled_text_lane_enabled", False) or smart_captions is not None:
         base["text_elements"] = []
         base["text_elements_user_edited"] = False
@@ -9928,10 +10210,23 @@ def _render_subtitled_variant(
         elif cues:
             ass_path = os.path.join(variant_dir, "captions.ass")
             ass_font = resolve_caption_font(caption_font)
+            caption_appearance = _caption_style_overrides(base)
+            caption_appearance_kwargs = (
+                {"appearance": caption_appearance} if caption_appearance is not None else {}
+            )
+            effective_smart_policy = _effective_smart_caption_policy(
+                base,
+                ass_font=ass_font,
+                margin_v=caption_margin_v,
+            )
             with _stage_timer("caption_burn", counts={"cue_count": len(cues)}):
                 if caption_style == "word":
                     generate_word_pop_ass(
-                        cues, ass_path, font_name=ass_font, margin_v=caption_margin_v
+                        cues,
+                        ass_path,
+                        font_name=ass_font,
+                        margin_v=caption_margin_v,
+                        **caption_appearance_kwargs,
                     )
                 else:
                     generate_ass_from_cues(
@@ -9941,9 +10236,10 @@ def _render_subtitled_variant(
                         style="plain",
                         margin_v=caption_margin_v,
                         pop_in=True,
+                        **caption_appearance_kwargs,
                         **(
-                            {"smart_policy": smart_caption_policy}
-                            if smart_caption_policy is not None
+                            {"smart_policy": effective_smart_policy}
+                            if effective_smart_policy is not None
                             else {}
                         ),
                     )
@@ -10565,7 +10861,27 @@ def _effective_smart_caption_policy(
         from app.pipeline.captions import margin_v_to_y_frac  # noqa: PLC0415
 
         policy["y_frac"] = margin_v_to_y_frac(margin_v)
+    if variant.get("caption_size_px") is not None:
+        policy["font_size_px"] = variant.get("caption_size_px")
+    if variant.get("caption_text_color"):
+        policy["color"] = variant.get("caption_text_color")
+        policy["color_user_edited"] = True
+    if variant.get("caption_stroke_width") is not None:
+        policy["stroke_width"] = variant.get("caption_stroke_width")
+    if variant.get("caption_shadow_enabled") is not None:
+        policy["shadow_enabled"] = bool(variant.get("caption_shadow_enabled"))
     return policy
+
+
+def _caption_style_overrides(variant: dict) -> dict[str, Any] | None:
+    appearance = {
+        "font_size_px": variant.get("caption_size_px"),
+        "color": variant.get("caption_text_color"),
+        "highlight_color": variant.get("caption_highlight_color"),
+        "stroke_width": variant.get("caption_stroke_width"),
+        "shadow_enabled": variant.get("caption_shadow_enabled"),
+    }
+    return appearance if any(value is not None for value in appearance.values()) else None
 
 
 def _fresh_variant_snapshot(job_id: str, variant_id: str) -> dict | None:
@@ -10599,6 +10915,9 @@ def _text_element_burn_dicts(variant: dict) -> list[dict]:
         video_duration_s=float(variant.get("duration_s") or 10.0),
         include_lyric_line=include_lyric_line,
         independent_box_alignment=True,
+        # Karaoke settle-color contract: user-edited variants hold the user's
+        # element color after the sweep (see build_overlays_from_text_elements).
+        user_edited=bool(variant.get("text_elements_user_edited")),
     )
     schedules = {
         (element.text, round(float(element.start_s), 3)): params["reveal_schedule_s"]
@@ -10712,11 +11031,15 @@ def _burn_persisted_captions_onto_base(
         ass_font=ass_font,
         margin_v=margin_v,
     )
+    appearance = _caption_style_overrides(variant)
+    appearance_kwargs = {"appearance": appearance} if appearance is not None else {}
     ass_path = os.path.join(tmpdir, "captions.ass")
     if subtitled_word_pop:
         # Real per-word times for cues left untouched; edited cues re-synthesize
         # inside generate_word_pop_ass (E3). Same safe margin as the first burn.
-        generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=margin_v)
+        generate_word_pop_ass(
+            cues, ass_path, font_name=ass_font, margin_v=margin_v, **appearance_kwargs
+        )
     else:
         generate_ass_from_cues(
             cues,
@@ -10728,6 +11051,7 @@ def _burn_persisted_captions_onto_base(
             # user's cue set is authoritative (never re-split here). Narrated
             # stays un-animated (margin_v is None only for narrated).
             pop_in=(archetype == "subtitled"),
+            **appearance_kwargs,
             **({"smart_policy": smart_policy} if smart_policy is not None else {}),
         )
     burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
@@ -11445,6 +11769,7 @@ def _run_retranscribe_subtitled(
     word_pop = variant.get("voiceover_caption_style") == "word"
     ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))
     caption_margin_v = _resolve_caption_margin_v(variant)
+    caption_appearance = _caption_style_overrides(variant)
 
     if not _update_variant_entry(
         job_id,
@@ -11501,8 +11826,17 @@ def _run_retranscribe_subtitled(
         else:
             out_local = os.path.join(tmpdir, "out.mp4")
             ass_path = os.path.join(tmpdir, "captions.ass")
+            caption_appearance_kwargs = (
+                {"appearance": caption_appearance} if caption_appearance is not None else {}
+            )
             if word_pop:
-                generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=caption_margin_v)
+                generate_word_pop_ass(
+                    cues,
+                    ass_path,
+                    font_name=ass_font,
+                    margin_v=caption_margin_v,
+                    **caption_appearance_kwargs,
+                )
             else:
                 generate_ass_from_cues(
                     cues,
@@ -11511,6 +11845,7 @@ def _run_retranscribe_subtitled(
                     style="plain",
                     margin_v=caption_margin_v,
                     pop_in=True,
+                    **caption_appearance_kwargs,
                 )
             burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
         new_gcs = (
@@ -12204,6 +12539,12 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "visual_blocks_base_path": r.get("visual_blocks_base_path"),
                     "visual_blocks_cache_stale": r.get("visual_blocks_cache_stale", False),
                     "visual_blocks_autoplan_attempted": r.get("visual_blocks_autoplan_attempted"),
+                    "motion_scenes": r.get("motion_scenes"),
+                    "motion_runtime_hash": r.get("motion_runtime_hash"),
+                    "motion_base_path": r.get("motion_base_path"),
+                    "motion_base_source_path": r.get("motion_base_source_path"),
+                    "motion_cache_stale": r.get("motion_cache_stale", False),
+                    "motion_applied_runtime_hash": r.get("motion_applied_runtime_hash"),
                     # media-overlay cards (slice 1) — MUST survive finalization
                     # or "clear all" loses the pre-overlay clean copy reference.
                     "media_overlays": r.get("media_overlays"),
@@ -12232,6 +12573,15 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # of the chosen y position (set by the creator's position edit OR
                     # by face-aware placement on the first render).
                     "caption_margin_v": r.get("caption_margin_v"),
+                    # caption appearance overrides — MUST survive or caption style
+                    # edits appear to save once, then vanish after the next full render.
+                    "caption_size_px": r.get("caption_size_px"),
+                    "caption_text_color": r.get("caption_text_color"),
+                    "caption_highlight_color": r.get("caption_highlight_color"),
+                    "caption_stroke_width": r.get("caption_stroke_width"),
+                    "caption_shadow_enabled": r.get("caption_shadow_enabled"),
+                    "caption_font_user_edited": r.get("caption_font_user_edited"),
+                    "caption_position_user_edited": r.get("caption_position_user_edited"),
                     # subtitled caption language ("en"/"tr") — MUST survive so the editor
                     # chip shows it and the re-transcribe override reads the current one.
                     "caption_language": r.get("caption_language"),

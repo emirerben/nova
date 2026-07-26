@@ -41,6 +41,14 @@ log = structlog.get_logger()
 
 _AUTOPLACE_TASK_LIMITS = {"soft_time_limit": 240, "time_limit": 300}
 
+# Visual blocks replace the base picture during a window and are planned from
+# the spoken transcript, so autoplan only targets speech-spined archetypes.
+# ALLOWLIST on purpose: `resolved_archetype` is unset on montage variants
+# (montage-by-default), and any future archetype must opt IN rather than get
+# fabricated blocks baked into its render (prod job 96771038 got an unwanted
+# opening montage on a montage edit this way).
+VISUAL_BLOCK_AUTOPLAN_ARCHETYPES = frozenset({"talking_head", "narrated", "subtitled"})
+
 
 def _record(event: str, **fields) -> None:
     try:
@@ -306,6 +314,17 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                 or variant.get("visual_blocks")
             ):
                 return
+            # Defense-in-depth twin of the dispatch-seam gate in
+            # _maybe_visual_blocks_after_finalize: montage(-default) variants
+            # never get autoplanned blocks.
+            archetype = str(variant.get("resolved_archetype") or "montage")
+            if archetype not in VISUAL_BLOCK_AUTOPLAN_ARCHETYPES:
+                _record(
+                    "visual_blocks_skipped_archetype",
+                    variant_id=variant_id,
+                    archetype=archetype,
+                )
+                return
             assets = [
                 {
                     "id": str(asset.id),
@@ -449,15 +468,12 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                     error=str(exc)[:160],
                 )
 
-        # Keyless/agent-failure fallback is deliberately conservative: a short
-        # opening montage is grounded by real assets; semantic cards require the
-        # transcript-aware agent and are never hallucinated heuristically.
-        if (
-            planner_outcome != "succeeded"
-            and not proposals
-            and len(assets) >= 3
-            and duration_s >= 1.2
-        ):
+        # Keyless-ONLY fallback: a short opening montage grounded by real assets
+        # keeps the flow alive on machines without a Gemini key. A genuine
+        # planner failure must mean zero blocks planned — fabricating a montage
+        # on an agent error baked an unwanted opener into a user's edit (prod
+        # job 96771038).
+        if not settings.gemini_api_key and not proposals and len(assets) >= 3 and duration_s >= 1.2:
             proposals = [
                 RawVisualTreatment(
                     kind="montage",

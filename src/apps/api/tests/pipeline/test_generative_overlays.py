@@ -6,10 +6,12 @@ mandatory per CLAUDE.md's #296-class history.
 
 from __future__ import annotations
 
+from app.agents._schemas.text_element import TextElement
 from app.pipeline.generative_overlays import (
     _HOLD_TO_END_S,
     HOOK_WINDOW_S,
     build_intro_overlay,
+    build_overlays_from_text_elements,
     build_persistent_intro_overlays,
     inject_intro_overlay,
     inject_persistent_intro,
@@ -990,3 +992,85 @@ def test_hook_window_cluster_hold_capped():
     holds = [o for o in overlays if o["effect"] == "static"]
     for h in holds:
         assert h["end_s"] <= 3.0, f"hold end_s {h['end_s']} exceeds hook_window_s 3.0"
+
+
+# ── TextElement compile path: karaoke text-edit repair + settled color ──────────
+#
+# Prod job 96771038: the user edited "city nights and friday football" to
+# "Man City" (white). The render swept the OLD five words (word_timings were
+# stored verbatim) and settled the hold on the yellow highlight. These tests
+# pin the compile-time repair (stale timings resynthesized from the edited
+# text) and the user-edited settle-color contract (TS mirror: settledColor in
+# overlay-layout.ts).
+
+_STALE_TIMINGS = [
+    {"text": "city", "start_s": 0.0, "end_s": 0.6, "duration_cs": 60},
+    {"text": "nights", "start_s": 0.6, "end_s": 1.2, "duration_cs": 60},
+    {"text": "and", "start_s": 1.2, "end_s": 1.8, "duration_cs": 60},
+    {"text": "friday", "start_s": 1.8, "end_s": 2.4, "duration_cs": 60},
+    {"text": "football", "start_s": 2.4, "end_s": 3.0, "duration_cs": 60},
+]
+
+
+def _karaoke_element(**overrides) -> TextElement:
+    payload = {
+        "id": "intro-1",
+        "text": "Man City",
+        "start_s": 0.0,
+        "end_s": 10.0,
+        "role": "generative_intro",
+        "effect": "karaoke-line",
+        "color": "#FFFFFF",
+        "reveal_s": 3.0,
+        "word_timings": [dict(w) for w in _STALE_TIMINGS],
+    }
+    payload.update(overrides)
+    return TextElement.model_validate(payload)
+
+
+def test_karaoke_word_timings_resynthesized_when_text_edited():
+    reveal, hold = build_overlays_from_text_elements([_karaoke_element()], video_duration_s=10.0)
+    assert reveal["effect"] == "karaoke-line"
+    assert [w["text"] for w in reveal["word_timings"]] == ["Man", "City"]
+    # Original sweep window preserved (first start → last end of the stored timings).
+    assert reveal["word_timings"][0]["start_s"] == 0.0
+    assert reveal["word_timings"][-1]["end_s"] == 3.0
+    assert hold["effect"] == "static"
+
+
+def test_karaoke_word_timings_kept_verbatim_when_text_matches():
+    elem = _karaoke_element(text="city nights and friday football")
+    reveal, _hold = build_overlays_from_text_elements([elem], video_duration_s=10.0)
+    assert reveal["word_timings"] == _STALE_TIMINGS  # beat-snap fidelity (A17)
+
+
+def test_karaoke_without_stored_timings_synthesizes_from_window():
+    elem = _karaoke_element(word_timings=None)
+    reveal, _hold = build_overlays_from_text_elements([elem], video_duration_s=10.0)
+    # build_intro_overlay's own synthesis over the reveal window covers the text.
+    assert [w["text"] for w in reveal["word_timings"]] == ["Man", "City"]
+
+
+def test_karaoke_settled_color_default_is_highlight():
+    # Untouched AI-authored render (user_edited absent/False): today's look.
+    _reveal, hold = build_overlays_from_text_elements([_karaoke_element()], video_duration_s=10.0)
+    assert hold["text_color"] == "#FFD24A"
+
+
+def test_karaoke_settled_color_honors_user_color_when_user_edited():
+    reveal, hold = build_overlays_from_text_elements(
+        [_karaoke_element()], video_duration_s=10.0, user_edited=True
+    )
+    # The sweep keeps the highlight during the reveal…
+    assert reveal["highlight_color"] == "#FFD24A"
+    # …but the settled hold is the user's saved color.
+    assert hold["text_color"] == "#FFFFFF"
+
+
+def test_non_karaoke_settled_color_unaffected_by_user_edited():
+    elem = _karaoke_element(effect="fade-in", word_timings=None)
+    for user_edited in (False, True):
+        _reveal, hold = build_overlays_from_text_elements(
+            [elem], video_duration_s=10.0, user_edited=user_edited
+        )
+        assert hold["text_color"] == "#FFFFFF"

@@ -615,6 +615,10 @@ class Settings(BaseSettings):
     # authoring can launch first while planner evals are still running.
     visual_block_autoplan_enabled: bool = False
 
+    # Curated CanvasKit motion-preset lane. The API/worker gate is flipped
+    # before NEXT_PUBLIC_MOTION_SCENES_ENABLED so rolling deploys fail closed.
+    motion_scenes_enabled: bool = False
+
     # Sound-effects glossary + user placement (PR-1 foundation). Admin-curated
     # SFX + user uploads placed at arbitrary timestamps in a plan-item variant.
     # Kill switch: SOUND_EFFECTS_ENABLED=false → sfx-upload-urls + sound-effects

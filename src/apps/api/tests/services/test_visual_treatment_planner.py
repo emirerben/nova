@@ -754,3 +754,45 @@ def test_announced_ten_item_list_degrades_to_first_eight_cards() -> None:
     assert [treatment.text for treatment in treatments] == [
         f"{ordinal}. Item{ordinal}" for ordinal in range(1, 9)
     ]
+
+
+def test_overlong_rationale_is_truncated_not_rejected() -> None:
+    """Gemini regularly overruns the 300-char rationale budget; the advisory
+    field must truncate instead of failing the whole plan with a SchemaError
+    (prod job 96771038 → terminal_schema → fabricated fallback montage)."""
+    treatment = RawVisualTreatment(
+        kind="text_card",
+        purpose="section_item",
+        start_s=1.0,
+        end_s=3.0,
+        text="1. Storytelling",
+        rationale="spoken section heading " * 30,
+    )
+    assert len(treatment.rationale) == 300
+
+
+def test_overlong_rationale_survives_full_planner_parse() -> None:
+    import json
+
+    from app.agents.visual_treatment_planner import VisualTreatmentPlannerAgent
+
+    raw = json.dumps(
+        {
+            "treatments": [
+                {
+                    "kind": "montage",
+                    "purpose": "hook",
+                    "start_s": 0.0,
+                    "end_s": 2.5,
+                    "asset_ids": ["a", "b", "c"],
+                    "rationale": "x" * 512,
+                }
+            ]
+        }
+    )
+    output = VisualTreatmentPlannerAgent.parse(
+        VisualTreatmentPlannerAgent.__new__(VisualTreatmentPlannerAgent),
+        raw,
+        VisualTreatmentPlannerInput(duration_s=30.0),
+    )
+    assert len(output.treatments[0].rationale) == 300

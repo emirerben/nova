@@ -98,8 +98,10 @@ import {
   barsToPreviewTextElements,
   barsToTextElements,
   buildLyricLineOverrides,
+  captionMetaPatchFromCaptionBarPatch,
   isCaptionBar,
   isLyricBar,
+  localCaptionBarPatchFromPatch,
   seedBarsFromLyricSeeds,
   seedBarsFromVariant,
 } from "./editor-bars";
@@ -167,6 +169,11 @@ import {
   SUGGESTION_POLL_INTERVAL_MS,
   useEditorOverlaySuggestions,
 } from "./useEditorOverlaySuggestions";
+import {
+  MOTION_FPS,
+  MOTION_RUNTIME_HASH,
+  type MotionPresetInstanceV1,
+} from "@nova/motion-runtime";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
 
@@ -185,6 +192,8 @@ const MEDIA_OVERLAYS_UI_ENABLED =
 const SOUND_EFFECTS_UI_ENABLED = process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
 const VISUAL_BLOCKS_UI_ENABLED =
   process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
+const MOTION_SCENES_UI_ENABLED =
+  process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED === "true";
 const LYRICS_EDITOR_UI = process.env.NEXT_PUBLIC_LYRICS_EDITOR_ENABLED === "true";
 // Lyrics-optional "elements" model: instant toggle-insert/remove of
 // beat-synced lyric bars, no render round-trip. Independent of
@@ -607,6 +616,7 @@ export default function EditorShell({
   const [localSfxAudioUrls, setLocalSfxAudioUrls] = useState<Record<string, string>>({});
   const [localOverlays, setLocalOverlays] = useState<MediaOverlay[]>([]);
   const [localVisualBlocks, setLocalVisualBlocks] = useState<VisualBlock[]>([]);
+  const [localMotionScenes, setLocalMotionScenes] = useState<MotionPresetInstanceV1[]>([]);
   const [localCameraEffects, setLocalCameraEffects] = useState<CameraEffect[]>([]);
   // AI-suggestion provenance (Overlays drawer): accepted envelope id + the
   // overlay card id it staged. Kept OFF the MediaOverlay objects — the save
@@ -622,6 +632,7 @@ export default function EditorShell({
   const [sfxDirty, setSfxDirty] = useState(false);
   const [overlaysDirty, setOverlaysDirty] = useState(false);
   const [visualBlocksDirty, setVisualBlocksDirty] = useState(false);
+  const [motionScenesDirty, setMotionScenesDirty] = useState(false);
   const [cameraEffectsDirty, setCameraEffectsDirty] = useState(false);
   const [mixLevel, setMixLevel] = useState<number | null>(null);
   const [mixDirty, setMixDirty] = useState(false);
@@ -682,7 +693,7 @@ export default function EditorShell({
     // a baseline conflict, preserve or reload them together so neither half can
     // point at state from the other tab.
     const keepCoupledVisualDocument =
-      conflictReseed && (visualBlocksDirty || textDirty || captionDirty);
+      conflictReseed && (visualBlocksDirty || motionScenesDirty || textDirty || captionDirty);
     const keepCameraEffects = conflictReseed && cameraEffectsDirty;
     if (sections.text && !keepCoupledVisualDocument) {
       originalsRef.current = new Map(
@@ -724,6 +735,8 @@ export default function EditorShell({
     if (!keepCoupledVisualDocument) {
       setLocalVisualBlocks((variant.visual_blocks ?? []).map((block) => ({ ...block })));
       setVisualBlocksDirty(false);
+      setLocalMotionScenes((variant.motion_scenes ?? []).map((scene) => ({ ...scene })));
+      setMotionScenesDirty(false);
     }
     if (!keepCameraEffects) {
       setLocalCameraEffects(
@@ -808,6 +821,10 @@ export default function EditorShell({
   const [selectedMusicTrackId, setSelectedMusicTrackId] = useState<string | null>(
     variant?.music_track_id ?? null,
   );
+  // Explicit removed state: selectedMusicTrackId === null alone means
+  // "untouched" (falls back to the variant's persisted track), so removal
+  // needs its own flag — it drives `remove_music` in the commit payload.
+  const [musicRemoved, setMusicRemoved] = useState(false);
   const [musicStartS, setMusicStartS] = useState<number>(
     variant?.music_preview_start_s ?? 0,
   );
@@ -853,6 +870,7 @@ export default function EditorShell({
     if (!changedVariant && (musicDirty || backgroundMusicDirty)) return;
     musicHydratedVariantIdRef.current = nextVariantId;
     setSelectedMusicTrackId(variant?.music_track_id ?? null);
+    setMusicRemoved(false);
     setMusicStartS(variant?.music_preview_start_s ?? 0);
     setBackgroundMusic(
       variant?.background_music
@@ -954,6 +972,7 @@ export default function EditorShell({
     capabilities.sfx === false &&
     capabilities.overlays === false &&
     capabilities.visual_blocks !== true &&
+    capabilities.motion_scenes !== true &&
     capabilities.camera_effects !== true &&
     capabilities.orientation?.editable !== true &&
     capabilities.music_window?.editable !== true;
@@ -990,6 +1009,7 @@ export default function EditorShell({
       sfx: localSfx,
       overlays: localOverlays,
       visualBlocks: localVisualBlocks,
+      motionScenes: localMotionScenes,
       cameraEffects: localCameraEffects,
       captionMeta,
       captionMetaDirty,
@@ -999,6 +1019,7 @@ export default function EditorShell({
       mixLevel,
       mixDirty,
       musicTrackId: selectedMusicTrackId,
+      musicRemoved,
       musicStartS,
       musicDirty,
       backgroundMusic,
@@ -1013,6 +1034,7 @@ export default function EditorShell({
       localSfx,
       localOverlays,
       localVisualBlocks,
+      localMotionScenes,
       localCameraEffects,
       captionMeta,
       captionMetaDirty,
@@ -1022,6 +1044,7 @@ export default function EditorShell({
       mixLevel,
       mixDirty,
       selectedMusicTrackId,
+      musicRemoved,
       musicStartS,
       musicDirty,
       backgroundMusic,
@@ -1040,12 +1063,14 @@ export default function EditorShell({
       setLocalSfx(doc.sfx ?? []);
       setLocalOverlays(doc.overlays ?? []);
       setLocalVisualBlocks(doc.visualBlocks ?? []);
+      setLocalMotionScenes(doc.motionScenes ?? []);
       setLocalCameraEffects(doc.cameraEffects ?? []);
       setVideoMuted(doc.videoMuted);
       setSoundMuted(doc.soundMuted);
       setMixLevel(doc.mixLevel ?? null);
       setMixDirty(doc.mixDirty ?? false);
       setSelectedMusicTrackId(doc.musicTrackId ?? variant?.music_track_id ?? null);
+      setMusicRemoved(doc.musicRemoved ?? false);
       setMusicStartS(doc.musicStartS ?? variant?.music_preview_start_s ?? 0);
       setMusicDirty(doc.musicDirty ?? false);
       setBackgroundMusic(doc.backgroundMusic ?? null);
@@ -1068,6 +1093,7 @@ export default function EditorShell({
       if (capabilities?.sfx !== false) setSfxDirty(true);
       if (capabilities?.overlays !== false) setOverlaysDirty(true);
       if (capabilities?.visual_blocks !== false) setVisualBlocksDirty(true);
+      if (capabilities?.motion_scenes !== false) setMotionScenesDirty(true);
       if (capabilities?.camera_effects !== false) {
         setCameraEffectsDirty(!cameraEffectsEqual(doc.cameraEffects, variant?.camera_effects));
       }
@@ -1085,6 +1111,78 @@ export default function EditorShell({
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
 
+  const motionRuntimeCompatible =
+    !capabilities?.motion_runtime_hash ||
+    capabilities.motion_runtime_hash === MOTION_RUNTIME_HASH;
+  const addRouteTraceMotion = useCallback(() => {
+    if (
+      readOnly ||
+      !MOTION_SCENES_UI_ENABLED ||
+      capabilities?.motion_scenes === false ||
+      !motionRuntimeCompatible ||
+      localMotionScenes.length >= 4
+    ) {
+      return;
+    }
+    history.record();
+    const motionDuration =
+      duration > 0 ? duration : Math.max(0, Number(variant?.duration_s ?? 0));
+    const durationFrames = Math.max(1, Math.round(motionDuration * MOTION_FPS));
+    let startFrame = Math.max(
+      0,
+      Math.min(durationFrames - 1, Math.floor(currentTime * MOTION_FPS)),
+    );
+    let endFrame = Math.min(durationFrames, startFrame + 2 * MOTION_FPS);
+    if (endFrame <= startFrame) {
+      startFrame = Math.max(0, durationFrames - 2 * MOTION_FPS);
+      endFrame = durationFrames;
+    }
+    setLocalMotionScenes((current) => [
+      ...current,
+      {
+        id: `motion-${crypto.randomUUID()}`,
+        preset_id: "route_trace",
+        preset_version: 1,
+        start_frame: startFrame,
+        end_frame_exclusive: endFrame,
+        palette: { primary: "#8B5CF6", accent: "#D9FF43" },
+        intensity: 0.8,
+      },
+    ]);
+    setMotionScenesDirty(true);
+  }, [
+    capabilities?.motion_scenes,
+    currentTime,
+    history,
+    localMotionScenes.length,
+    motionRuntimeCompatible,
+    readOnly,
+    duration,
+    variant?.duration_s,
+  ]);
+
+  const patchMotionScene = useCallback(
+    (id: string, patch: Partial<MotionPresetInstanceV1>) => {
+      if (readOnly || capabilities?.motion_scenes === false) return;
+      history.record(`motion:${id}`);
+      setLocalMotionScenes((current) =>
+        current.map((scene) => (scene.id === id ? { ...scene, ...patch } : scene)),
+      );
+      setMotionScenesDirty(true);
+    },
+    [capabilities?.motion_scenes, history, readOnly],
+  );
+
+  const removeMotionScene = useCallback(
+    (id: string) => {
+      if (readOnly || capabilities?.motion_scenes === false) return;
+      history.record();
+      setLocalMotionScenes((current) => current.filter((scene) => scene.id !== id));
+      setMotionScenesDirty(true);
+    },
+    [capabilities?.motion_scenes, history, readOnly],
+  );
+
   const visibleTextBars = useMemo(() => {
     // Elements model: state.bars already IS the source of truth (the toggle
     // inserts/removes lyric bars directly) — nothing to filter.
@@ -1093,20 +1191,6 @@ export default function EditorShell({
       ? state.bars
       : state.bars.filter((bar) => !isLyricBar(bar));
   }, [lyricBarsAvailable, lyricsEnabled, lyricsOptionalActive, state.bars]);
-  const subtitledCaptionTimelineBars = useMemo<TextElementBar[]>(() => {
-    if (variant?.resolved_archetype !== "subtitled") return [];
-    return (variant.caption_cues ?? []).map((cue, index) => ({
-      id: `subtitled-caption-${index}`,
-      text: cue.text,
-      start_s: cue.start_s,
-      end_s: cue.end_s,
-      role: "narrated_caption",
-    }));
-  }, [variant?.caption_cues, variant?.resolved_archetype]);
-  const timelineTextBars = useMemo(
-    () => [...visibleTextBars, ...subtitledCaptionTimelineBars],
-    [subtitledCaptionTimelineBars, visibleTextBars],
-  );
   const lyricLineOverrides = useMemo(
     () =>
       lyricBarsAvailable
@@ -1261,7 +1345,9 @@ export default function EditorShell({
 
   const effectiveBackgroundMusicTrackId =
     backgroundMusic?.enabled === false ? null : (backgroundMusic?.track_id ?? null);
-  const effectiveMusicTrackId = selectedMusicTrackId ?? variant?.music_track_id ?? null;
+  const effectiveMusicTrackId = musicRemoved
+    ? null
+    : selectedMusicTrackId ?? variant?.music_track_id ?? null;
   const effectiveAudioTrackId = effectiveMusicTrackId ?? effectiveBackgroundMusicTrackId;
   const virtualMusicTrack = effectiveAudioTrackId
     ? musicTracks.find((track) => track.id === effectiveAudioTrackId) ?? null
@@ -1912,15 +1998,44 @@ export default function EditorShell({
     (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => {
       if (readOnly) return;
       const target = state.bars.find((bar) => bar.id === id);
-      history.record();
+      let patchToApply = patch;
       if (isCaptionBar(target)) {
-        setCaptionDirty(true);
+        const hasCaptionCuePatch =
+          Object.prototype.hasOwnProperty.call(patch, "start_s") ||
+          Object.prototype.hasOwnProperty.call(patch, "end_s") ||
+          Object.prototype.hasOwnProperty.call(patch, "text");
+        const metaPatch = captionMetaPatchFromCaptionBarPatch(patch);
+        if (!hasCaptionCuePatch && Object.keys(metaPatch).length === 0) {
+          return;
+        }
+        patchToApply = localCaptionBarPatchFromPatch(patch);
+        history.record();
+        if (hasCaptionCuePatch) {
+          setCaptionDirty(true);
+        }
+        if (Object.keys(metaPatch).length > 0) {
+          setCaptionMeta((current) => {
+            const base = current ?? (variant ? captionMetaFromVariant(variant) : null);
+            return base ? { ...base, ...metaPatch } : base;
+          });
+          setCaptionMetaPatch((current) => ({ ...current, ...metaPatch }));
+          setCaptionMetaDirty(true);
+        }
       } else if (lyricsOptionalActive || !isLyricBar(target)) {
+        history.record();
         setTextDirty(true);
+      } else {
+        history.record();
       }
-      dispatch({ type: "PATCH_BAR", id, patch });
+      dispatch({ type: "PATCH_BAR", id, patch: patchToApply });
     },
-    [readOnly, state.bars, lyricsOptionalActive, history],
+    [
+      history,
+      lyricsOptionalActive,
+      readOnly,
+      state.bars,
+      variant,
+    ],
   );
 
   const selectedTextMotion = useMemo(
@@ -2070,9 +2185,10 @@ export default function EditorShell({
       if (readOnly || !variant) return;
       const selectedTrack = musicTracks.find((track) => track.id === trackId);
       if (variant.music_track_id) {
-        if (trackId === selectedMusicTrackId) return;
+        if (trackId === selectedMusicTrackId && !musicRemoved) return;
         history.record();
         setSelectedMusicTrackId(trackId);
+        setMusicRemoved(false);
         const nextStartS = selectedTrack?.preview_start_s ?? 0;
         setMusicStartS(nextStartS);
         setMusicDirty(
@@ -2107,6 +2223,7 @@ export default function EditorShell({
       backgroundMusic?.gain_db,
       backgroundMusic?.track_id,
       history,
+      musicRemoved,
       musicTracks,
       previewDuration,
       readOnly,
@@ -2115,6 +2232,19 @@ export default function EditorShell({
       variant,
     ],
   );
+
+  // Remove the variant's song entirely (mirrors pickMusicTrack): explicit
+  // removed state (null selectedMusicTrackId alone = "untouched"), musicDirty
+  // drives the Save; the commit emits `remove_music: true` and the server
+  // re-renders through the track-free path.
+  const removeMusic = useCallback(() => {
+    if (readOnly || !variant?.music_track_id || musicRemoved) return;
+    history.record();
+    setSelectedMusicTrackId(null);
+    setMusicRemoved(true);
+    setMusicStartS(0);
+    setMusicDirty(true);
+  }, [history, musicRemoved, readOnly, variant?.music_track_id]);
 
   const patchBackgroundMusic = useCallback(
     (patch: Partial<EditorCommitBackgroundMusic>) => {
@@ -2278,7 +2408,7 @@ export default function EditorShell({
           if (s.id !== id) return s;
           const trimStart = s.trim_start_s ?? 0;
           const sourceEnd = s.duration_s ?? s.trim_end_s ?? null;
-          const next: SoundEffectPlacement = { ...s, at_s: patch.at_s };
+          const next: SoundEffectPlacement = { ...s, source: "user", at_s: patch.at_s };
           if (patch.end_s != null && sourceEnd != null) {
             next.trim_end_s = Math.max(trimStart + 0.1, patch.end_s - patch.at_s + trimStart);
           }
@@ -2298,6 +2428,7 @@ export default function EditorShell({
         id: crypto.randomUUID(),
         sound_effect_id: effect.id,
         src_gcs_path: "",
+        source: "user",
         at_s: Math.min(Math.max(0, currentTime), Math.max(0, previewDuration - 0.1)),
         gain: 1,
         duration_s: effect.duration_s ?? null,
@@ -2321,7 +2452,9 @@ export default function EditorShell({
     (id: string, patch: Partial<SoundEffectPlacement>) => {
       if (readOnly || capabilities?.sfx === false) return;
       history.record();
-      setLocalSfx((cur) => cur.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+      setLocalSfx((cur) =>
+        cur.map((s) => (s.id === id ? { ...s, ...patch, source: "user" } : s)),
+      );
       setSfxDirty(true);
     },
     [capabilities?.sfx, history, readOnly],
@@ -3725,6 +3858,7 @@ export default function EditorShell({
         mixLevel,
         musicDirty,
         musicTrackId: selectedMusicTrackId,
+        musicRemoved,
         musicWindow:
           commitMusicWindow && musicAlignment
             ? { startS: songWindowState.startS, alignment: musicAlignment }
@@ -3737,6 +3871,9 @@ export default function EditorShell({
         mediaOverlays: localOverlays,
         visualBlocksDirty,
         visualBlocks: localVisualBlocks,
+        motionScenesDirty,
+        motionScenes: localMotionScenes,
+        motionRuntimeHash: capabilities?.motion_runtime_hash ?? MOTION_RUNTIME_HASH,
         cameraEffectsDirty,
         cameraEffects: localCameraEffects,
         // Filtered against the staged overlay ids inside the builder — an
@@ -3773,10 +3910,12 @@ export default function EditorShell({
       setSfxDirty(false);
       setOverlaysDirty(false);
       setVisualBlocksDirty(false);
+      setMotionScenesDirty(false);
       setCameraEffectsDirty(false);
       setTitleDirty(false);
       setMixDirty(false);
       setMusicDirty(false);
+      setMusicRemoved(false);
       setBackgroundMusicDirty(false);
       setCaptionMetaDirty(false);
       setCaptionMetaPatch({});
@@ -3816,6 +3955,7 @@ export default function EditorShell({
     mixDirty,
     mixLevel,
     musicDirty,
+    musicRemoved,
     backgroundMusic,
     backgroundMusicDirty,
     selectedMusicTrackId,
@@ -3838,6 +3978,9 @@ export default function EditorShell({
     localOverlays,
     visualBlocksDirty,
     localVisualBlocks,
+    motionScenesDirty,
+    localMotionScenes,
+    capabilities?.motion_runtime_hash,
     cameraEffectsDirty,
     localCameraEffects,
     acceptedSuggestions,
@@ -3890,6 +4033,7 @@ export default function EditorShell({
     localSfx,
     localOverlays,
     localVisualBlocks,
+    localMotionScenes,
     captionMeta,
     captionMetaDirty,
     captionMetaPatch,
@@ -3898,6 +4042,7 @@ export default function EditorShell({
     mixLevel,
     mixDirty,
     selectedMusicTrackId,
+    musicRemoved,
     musicStartS,
     musicDirty,
     title,
@@ -4125,7 +4270,7 @@ export default function EditorShell({
       selectElement(kind, id);
     },
     onClear: clear,
-    textBars: timelineTextBars,
+    textBars: visibleTextBars,
     readOnly,
     onRecordTimelineEdit: recordTimelineDrag,
     onPreviewTextTiming: previewTextTiming,
@@ -4421,6 +4566,8 @@ export default function EditorShell({
             elements={previewElements}
             bars={visibleTextBars}
             visualBlocks={localVisualBlocks}
+            motionScenes={localMotionScenes}
+            motionRuntimeHash={capabilities?.motion_runtime_hash}
             cameraEffects={localCameraEffects}
             visualAssets={poolAssets}
             mediaOverlays={localOverlays}
@@ -4502,11 +4649,19 @@ export default function EditorShell({
               currentMusicTrackId={effectiveAudioTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
+              onRemoveMusic={removeMusic}
               musicWindow={musicWindowControl}
               overlayUploading={overlayUploading}
               onOverlayUpload={handleOverlayUpload}
               overlaySuggestions={overlaySuggestionsNode}
               visualBlocks={localVisualBlocks}
+              motionScenes={localMotionScenes}
+              motionDurationS={previewDuration}
+              motionAvailable={capabilities?.motion_scenes === true}
+              motionRuntimeCompatible={motionRuntimeCompatible}
+              onAddMotion={addRouteTraceMotion}
+              onPatchMotion={patchMotionScene}
+              onRemoveMotion={removeMotionScene}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
               visualUploading={pendingPoolUploads.length > 0}
@@ -4565,11 +4720,19 @@ export default function EditorShell({
               currentMusicTrackId={effectiveAudioTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
+              onRemoveMusic={removeMusic}
               musicWindow={musicWindowControl}
               overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
               visualBlocks={localVisualBlocks}
+              motionScenes={localMotionScenes}
+              motionDurationS={previewDuration}
+              motionAvailable={capabilities?.motion_scenes === true}
+              motionRuntimeCompatible={motionRuntimeCompatible}
+              onAddMotion={addRouteTraceMotion}
+              onPatchMotion={patchMotionScene}
+              onRemoveMotion={removeMotionScene}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
               visualUploading={pendingPoolUploads.length > 0}
@@ -4627,6 +4790,8 @@ export default function EditorShell({
             elements={previewElements}
             bars={visibleTextBars}
             visualBlocks={localVisualBlocks}
+            motionScenes={localMotionScenes}
+            motionRuntimeHash={capabilities?.motion_runtime_hash}
             cameraEffects={localCameraEffects}
             visualAssets={poolAssets}
             mediaOverlays={localOverlays}
@@ -4708,6 +4873,7 @@ export default function EditorShell({
           backgroundMusic={backgroundMusic}
           backgroundMusicTrackDurationS={backgroundMusicTrackDurationS}
           onPickMusic={pickMusicTrack}
+          onRemoveMusic={removeMusic}
           onPatchBackgroundMusic={patchBackgroundMusic}
           onRemoveBackgroundMusic={removeBackgroundMusic}
           musicWindow={musicWindowControl}

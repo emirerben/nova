@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0.0] — 2026-07-25
+
+### Added
+- **Creators can add export-matched SVG motion presets in the video editor.** The first Route trace preset supports frame-accurate start/end timing, intensity, and palette controls, with undo, drafts, atomic saves, and a cached render path below authored text.
+- **Motion preview and export now share one versioned CanvasKit frame renderer.** Browser and worker use the same immutable preset geometry, evaluator, pinned JavaScript/WASM payloads, integer-frame timing, and golden pixel fixtures; incompatible rolling-deploy versions fail closed instead of silently rendering different art.
+
+### Changed
+- **Production rendering can run the motion worker fully offline.** The Docker image pre-caches the pinned Deno/CanvasKit runtime, CI renders and hashes a real 1080×1920 frame inside that image, and FFmpeg composites only the bounded active animation window with final-output encoding quality.
+- **Nova now keeps desired motion edits separate from the last applied render.** Failed or superseded renders retain the last-good output and cache while the saved scene remains retryable, and stale motion caches are retired only after a replacement wins.
+
+## [0.12.12.1] — 2026-07-25
+
+### Fixed
+- **The last clip now keeps its full selected duration when the song's beat grid ends early.** Internal cuts remain aligned to beats, while the saved terminal clip may use its exact source endpoint; video, lyrics, music mixing, and persisted duration now agree.
+
+## [0.12.12.0] — 2026-07-25
+
+### Fixed
+- **Editing intro text no longer renders the old words.** The karaoke sweep burns per-word text from stored word timings; when an edit changes the text, timings are now re-synthesized over the original window at compile time, so the sweep covers the new words instead of the AI's original line.
+- **Edited intro text keeps the user's color after the sweep.** On user-edited variants the post-sweep hold settles to the element's saved color instead of the style highlight (the "text turned itself yellow" bug); untouched AI renders keep the styled highlight hold. Preview and render agree.
+
+### Added
+- **Music can now actually be removed from an edit.** The Sounds drawer's Remove music button (previously wired to nothing) and a new Inspector control clear the matched track instantly in the preview and commit a `remove_music` edit that re-renders the variant through the track-free path with original clip audio.
+## [0.12.11.1] — 2026-07-25
+
+### Fixed
+- **Single-clip montages no longer split into invisible back-to-back cuts.** Adjacent matcher slots that render contiguous windows of the same source clip are merged before assembly and before the editor timeline is built, so the rendered cut structure and the clips editor agree (previously one uploaded video showed as two clips with a cut that changed nothing on screen).
+- **Montage edits no longer receive a self-added opening montage.** Visual-block autoplan is now allowlisted to speech-spined archetypes (talking head, narrated, subtitled); the deterministic fallback montage fires only on keyless dev machines instead of whenever the planner agent fails; and over-long planner rationale is truncated instead of failing schema validation.
+
+## [0.12.11.0] — 2026-07-25
+
+### Fixed
+- **Subtitled caption style edits now survive Save and reburn.** Caption font, size, fill color, highlight color, stroke width, and shadow changes now persist as caption metadata instead of being dropped as generic text styling, and the backend ASS renderer applies those fields when rebuilding captions.
+- **Caption bars only show renderer-backed appearance controls.** Unsupported generic text controls such as placement, alignment, width, animation, text case, spacing, and behind-subject are hidden for caption bars so the inspector no longer offers edits that the caption renderer cannot honor.
+
+## [0.12.10.2] — 2026-07-25
+
+### Fixed
+- **Smart Caption sound effects no longer reappear as dense duplicate ticks on reload.** Generated SFX provenance now survives validation, legacy smart-effect rows are normalized on variant reads, and dedupe only collapses the same generated asset/role within a tight timestamp window while preserving manual and intentionally layered effects.
+- **Editor SFX preview is audible for signed storage URLs.** Cross-origin signed SFX previews now avoid the Web Audio path that can silence media without CORS headers, while same-origin/blob previews still use gain nodes when available.
+
 ## [0.12.10.1] — 2026-07-24
 
 ### Added

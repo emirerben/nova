@@ -217,6 +217,28 @@ def test_pop_in_prepends_animation_tags_only_when_asked(tmp_path):
     assert "\\fad" not in pline and "\\t(" not in pline
 
 
+def test_caption_appearance_overrides_plain_header(tmp_path):
+    out = tmp_path / "styled.ass"
+    generate_ass_from_cues(
+        [{"text": "caption", "start_s": 0.0, "end_s": 1.0}],
+        str(out),
+        font_name="TikTok Sans",
+        style="plain",
+        appearance={
+            "font_size_px": 92,
+            "color": "#112233",
+            "stroke_width": 7,
+            "shadow_enabled": False,
+        },
+    )
+
+    style = _style_line(out)
+    assert "TikTok Sans" in style
+    assert ",92," in style
+    assert "&H00332211" in style
+    assert ",7,0,2," in style
+
+
 def _events(ass_path) -> list[str]:
     return [
         ln for ln in ass_path.read_text(encoding="utf-8").splitlines() if ln.startswith("Dialogue:")
@@ -261,6 +283,37 @@ def test_word_pop_highlights_one_word_per_event_with_real_timings(tmp_path):
     style = _style_line(out)
     assert ",78," in style
     assert style.endswith(f"2,80,80,{SUBTITLED_CAPTION_MARGIN_V},1")
+
+
+def test_word_pop_caption_appearance_overrides_header_and_highlight(tmp_path):
+    cue = {
+        "text": "hello world",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "words": [
+            {"text": "hello", "start_s": 0.0, "end_s": 0.5},
+            {"text": "world", "start_s": 0.5, "end_s": 1.0},
+        ],
+    }
+    out = tmp_path / "word-styled.ass"
+    generate_word_pop_ass(
+        [cue],
+        str(out),
+        font_name="TikTok Sans",
+        appearance={
+            "font_size_px": 88,
+            "color": "#112233",
+            "highlight_color": "#44CC88",
+            "stroke_width": 3,
+            "shadow_enabled": False,
+        },
+    )
+
+    style = _style_line(out)
+    assert ",88," in style
+    assert "&H00332211" in style
+    assert ",3,0,2," in style
+    assert "{\\c&H0088CC44&}hello{\\r}" in _events(out)[0]
 
 
 def test_word_pop_synthesizes_for_an_edited_cue(tmp_path):
