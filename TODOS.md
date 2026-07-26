@@ -8,6 +8,32 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Text-behind-subject consistency train — deferrals (from behind-subject-consistency PR, 2026-07-26)
+
+### Matte cache staleness vs visual-blocks / motion / camera bases
+**What:** `subject_matte_path` is reused unconditionally while `_ensure_visual_blocks_base` / `_ensure_motion_base` can rewrite base pixels; both of those caches carry staleness fields (`visual_blocks_cache_stale`, `motion_cache_stale`) but the matte has none. A variant that gains blocks/motion after its matte was computed burns occlusion registered to the wrong pixels. (Camera effects are already handled: camera renders recompute under a camera-scoped key and never persist.)
+**Why:** Reads as drifting/misaligned occlusion — the same "glitchy" symptom this train fixed — but only where `VISUAL_BLOCKS_ENABLED` / `MOTION_SCENES_ENABLED` are on.
+**How:** Add a `subject_matte_source_path` field mirroring `motion_base_source_path`; `_resolve_subject_matte_for_burn` treats a mismatch with the actual burn substrate as cache-miss.
+**Effort:** M (CC: half-day)
+**Priority:** P2
+**Depends on:** —
+
+### Inspector hides persisted behind_subject state (D17 violation)
+**What:** `behind_subject` is in `EDITABLE_ROW_FIELDS` (InspectorPanel), so with `NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED` off — or on a caption bar — a persisted `behind_subject: true` renders NO row at all, neither editable nor read-only.
+**Why:** Violates the editor's own D17 invariant ("never hide state it preserves"); a stale AI-set flag is invisible and unkillable from the UI.
+**How:** Render a read-only "Behind subject: on" row when the flag is set but the control is unavailable.
+**Effort:** S (CC: ~1h)
+**Priority:** P3
+**Depends on:** —
+
+### Caption-variant /edit rejection is a silent no-op
+**What:** `POST /variants/{id}/edit` on a subtitled/narrated variant without user-edited text elements hits the `_CAPTION_REBURN_ARCHETYPES` guard: logs `generative_regenerate_rejected_caption_variant`, resets `render_status` to ready, renders nothing — 200 OK, no user-visible error. Also `_is_subtitled_text_reburn` doesn't exclude behind-subject-only edits the way the other `_is_*_only` guards do.
+**Why:** A user action that does nothing with no feedback is the same failure class as the original behind-subject no-op.
+**How:** Return a 4xx (or a structured "unsupported for this variant" payload) from the route instead of accepting-and-dropping; add `text_behind_subject is None` to `_is_subtitled_text_reburn`'s exclusions if variant-level toggles are ever exposed on caption archetypes.
+**Effort:** S-M (CC: 2-3h incl. frontend toast)
+**Priority:** P3
+**Depends on:** —
+
 ## Edit copilot creative capabilities — deferred lanes (from copilot-creative PR)
 
 ### In-montage visual effects for generative renders (transitions / zoom / speed ramps)

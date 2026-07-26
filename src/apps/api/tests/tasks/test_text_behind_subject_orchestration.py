@@ -579,3 +579,289 @@ def test_reburn_text_on_base_flag_off_no_matte_key_present(monkeypatch):
     assert result["subject_matte_path"] is None
     assert calls["compute"] == []
     assert all("behind_subject" not in ov for ov in burn_calls[-1]["overlays"])
+
+
+# ── _compose_subtitled_final: matte threading (prod job 1e768d5b regression) ──
+#
+# Every subtitled render (first render + every reburn flavor) routes through
+# this compositor; before the fix it burned with matte=None at every call
+# site, so behind_subject on a subtitled text element was a silent no-op.
+
+
+def _patch_subtitled_compose(monkeypatch, burn_seen: dict):
+    import app.pipeline.probe as probe_mod
+    import app.pipeline.text_overlay_skia as skia_mod
+
+    monkeypatch.setattr(
+        gb,
+        "_text_element_burn_dicts",
+        lambda variant: [dict(d) for d in variant.get("_burn_dicts") or []],
+    )
+
+    def _fake_burn(base, overlays, out, tmpdir, *, matte=None, canvas=None):
+        burn_seen.update({"overlays": overlays, "matte": matte, "canvas": canvas, "out": out})
+        with open(out, "wb") as f:
+            f.write(b"text")
+
+    monkeypatch.setattr(skia_mod, "burn_text_overlays_skia", _fake_burn, raising=False)
+
+    def _fake_captions(input_path, output_path, variant, tmpdir):
+        burn_seen["captions_input"] = input_path
+        with open(output_path, "wb") as f:
+            f.write(b"cap")
+
+    monkeypatch.setattr(gb, "_burn_persisted_captions_onto_base", _fake_captions)
+    monkeypatch.setattr(
+        probe_mod,
+        "probe_video",
+        lambda p: types.SimpleNamespace(duration_s=5.0),
+        raising=False,
+    )
+
+
+def _subtitled_variant(**kw) -> dict:
+    base = {
+        "variant_id": "subtitled",
+        "resolved_archetype": "subtitled",
+        "subject_matte_path": None,
+        "orientation": None,
+        "caption_cues": [{"text": "hi", "start_s": 0.0, "end_s": 1.0}],
+        "_burn_dicts": [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+    }
+    base.update(kw)
+    return base
+
+
+def test_compose_subtitled_resolves_matte_and_passes_provider(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    burn_seen: dict = {}
+    _patch_subtitled_compose(monkeypatch, burn_seen)
+    base_local = str(tmp_path / "base.mp4")
+    with open(base_local, "wb") as f:
+        f.write(b"\x00")
+
+    final, matte_path = gb._compose_subtitled_final(
+        base_local,
+        _subtitled_variant(),
+        str(tmp_path),
+        job_id="j",
+        variant_id="subtitled",
+        upload_key_base="generative-jobs/j/variant_1_subtitled_base.mp4",
+    )
+
+    assert len(calls["compute"]) == 1
+    assert burn_seen["matte"] == "PROVIDER"
+    assert matte_path == "generative-jobs/j/variant_1_subtitled_base.mp4.matte.mp4"
+    assert final.endswith("subtitled_final.mp4")
+    # Captions burn onto the text-burned underlay, never with a matte.
+    assert burn_seen["captions_input"] == burn_seen["out"]
+
+
+def test_compose_subtitled_cached_matte_reused_no_recompute(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    burn_seen: dict = {}
+    _patch_subtitled_compose(monkeypatch, burn_seen)
+    cached = "generative-jobs/j/variant_1_subtitled_base.mp4.matte.mp4"
+
+    _final, matte_path = gb._compose_subtitled_final(
+        str(tmp_path / "base.mp4"),
+        _subtitled_variant(subject_matte_path=cached),
+        str(tmp_path),
+        job_id="j",
+        variant_id="subtitled",
+        upload_key_base="generative-jobs/j/variant_1_subtitled_base.mp4",
+    )
+
+    assert calls["compute"] == []
+    assert cached in calls["downloads"]
+    assert burn_seen["matte"] == "PROVIDER"
+    assert matte_path == cached
+
+
+def test_compose_subtitled_flag_off_burns_plain_and_keeps_cached_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", False, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    burn_seen: dict = {}
+    _patch_subtitled_compose(monkeypatch, burn_seen)
+
+    _final, matte_path = gb._compose_subtitled_final(
+        str(tmp_path / "base.mp4"),
+        _subtitled_variant(subject_matte_path="old/matte.mp4"),
+        str(tmp_path),
+        job_id="j",
+        variant_id="subtitled",
+        upload_key_base="generative-jobs/j/variant_1_subtitled_base.mp4",
+    )
+
+    assert calls["compute"] == [] and calls["downloads"] == []
+    assert burn_seen["matte"] is None
+    # Overlays keep the key (renderer logs the no-matte fallback — montage
+    # semantics) and the cached path survives untouched for a later flag-on.
+    assert burn_seen["overlays"][0].get("behind_subject") is True
+    assert matte_path == "old/matte.mp4"
+
+
+def test_compose_subtitled_resolver_failure_strips_and_completes(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    _patch_matte_module(monkeypatch, compute="none")
+    burn_seen: dict = {}
+    _patch_subtitled_compose(monkeypatch, burn_seen)
+
+    final, matte_path = gb._compose_subtitled_final(
+        str(tmp_path / "base.mp4"),
+        _subtitled_variant(),
+        str(tmp_path),
+        job_id="j",
+        variant_id="subtitled",
+        upload_key_base="generative-jobs/j/variant_1_subtitled_base.mp4",
+    )
+
+    assert final.endswith("subtitled_final.mp4"), "matte failure must never fail the render"
+    assert burn_seen["matte"] is None
+    assert all("behind_subject" not in ov for ov in burn_seen["overlays"])
+    assert matte_path is None  # cached was None; failure never mints a path
+
+
+def test_compose_subtitled_no_behind_elements_skips_resolver(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    burn_seen: dict = {}
+    _patch_subtitled_compose(monkeypatch, burn_seen)
+
+    _final, matte_path = gb._compose_subtitled_final(
+        str(tmp_path / "base.mp4"),
+        _subtitled_variant(_burn_dicts=[{"start_s": 0.0, "end_s": 2.0}]),
+        str(tmp_path),
+        job_id="j",
+        variant_id="subtitled",
+        upload_key_base="generative-jobs/j/variant_1_subtitled_base.mp4",
+    )
+
+    assert calls["compute"] == [] and calls["downloads"] == []
+    assert burn_seen["matte"] is None
+    assert matte_path is None
+
+
+def test_compose_subtitled_landscape_variant_gets_landscape_canvas(monkeypatch, tmp_path):
+    from app.pipeline.canvas import LANDSCAPE
+
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    _patch_matte_module(monkeypatch)
+    burn_seen: dict = {}
+    _patch_subtitled_compose(monkeypatch, burn_seen)
+
+    gb._compose_subtitled_final(
+        str(tmp_path / "base.mp4"),
+        _subtitled_variant(orientation="landscape"),
+        str(tmp_path),
+        job_id="j",
+        variant_id="subtitled",
+        upload_key_base="generative-jobs/j/variant_1_subtitled_base.mp4",
+    )
+
+    assert burn_seen["canvas"] is LANDSCAPE
+
+
+# ── subject_matte_resolved trace event (admin job-debug observability) ────────
+#
+# Prod job 1e768d5b had ZERO matte visibility in the pipeline trace — the
+# resolver is the single chokepoint, so one event there covers montage,
+# lyrics, text-element and subtitled call sites alike.
+
+
+def _capture_trace_events(monkeypatch) -> list:
+    import app.services.pipeline_trace as trace_mod
+
+    events: list = []
+    monkeypatch.setattr(
+        trace_mod,
+        "record_pipeline_event",
+        lambda stage, event, data: events.append((stage, event, data)),
+        raising=False,
+    )
+    return events
+
+
+def test_resolver_records_computed_trace_event(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    _patch_matte_module(monkeypatch)
+    events = _capture_trace_events(monkeypatch)
+    gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=None,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert events == [
+        (
+            "overlay",
+            "subject_matte_resolved",
+            {
+                "variant_id": "v",
+                "source": "computed",
+                "matte_path": "generative-jobs/j/base_1_x.mp4.matte.mp4",
+            },
+        )
+    ]
+
+
+def test_resolver_records_cache_trace_event(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    _patch_matte_module(monkeypatch)
+    events = _capture_trace_events(monkeypatch)
+    cached = "generative-jobs/j/base_1_x.mp4.matte.mp4"
+    gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=cached,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert events[0][2]["source"] == "cache"
+    assert events[0][2]["matte_path"] == cached
+
+
+def test_resolver_records_fallback_trace_event(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    _patch_matte_module(monkeypatch, compute="none")
+    events = _capture_trace_events(monkeypatch)
+    gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=None,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert len(events) == 1
+    stage, event, data = events[0]
+    assert (stage, event) == ("overlay", "subject_matte_resolved")
+    assert data["outcome"] == "fallback_stripped"
+    assert "error" in data
+
+
+def test_resolver_flag_off_records_no_trace_event(monkeypatch, tmp_path):
+    _patch_matte_module(monkeypatch)
+    events = _capture_trace_events(monkeypatch)
+    gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=None,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert events == []

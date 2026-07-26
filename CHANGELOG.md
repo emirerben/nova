@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0.1] — 2026-07-26
+
+### Fixed
+- **Text-behind-subject now works on subtitled variants.** The subtitled compositor never resolved a subject matte, so a `behind_subject` text element (e.g. a Smart title on a talk-to-camera edit) silently rendered on top of the subject (prod job `1e768d5b`). Every subtitled render path — first render, text reburn, caption reburn, camera rerender, re-transcribe — now runs the shared matte resolver, caches the matte next to the caption-free base, and persists `subject_matte_path` so edits stay fast; the resolution outcome is visible in admin job-debug via a new `subject_matte_resolved` trace event.
+- **Behind-subject text no longer strobes under heavy moving occlusion.** Restores the anti-strobe visibility policy (shipped in 0.7.31.2, removed in 0.9.3.0 — the CHANGELOG entries for those two releases describe mutually exclusive behaviors; both now hold): the layer hides with hysteresis and a 3-frame fade when occlusion is near-total (>98%) or heavy (>70%) **and** measurably strobing (repeated frame-to-frame visible-alpha jumps). A smooth single-subject sweep — the reason 0.9.3.0 removed the policy — stays strictly per-pixel, pinned by the unchanged partial-sweep test.
+- **Behind-subject occlusion now applies on landscape renders.** The portrait-raster matte hit a silent shape-mismatch fail-open on the 1920×1080 canvas since the landscape toggle shipped; the renderer now resizes the mask to the frame it masks.
+- **Matte edges no longer shimmer.** The matte intermediate encodes lossless (`-qp 0`) — default-CRF x264 ringing along the hard silhouette edge varied per frame and read as flicker after the occlusion multiply.
+- **Unstable mattes decline the effect instead of glitching.** `matte_is_sane` gains a shape-stability gate (median adjacent-frame IoU of the binarized mask < 0.40 rejects): a silhouette that never disappears but wobbles violently now falls back to plain text, matching the engine's best-effort contract.
+
 ## [0.13.0.0] — 2026-07-25
 
 ### Added

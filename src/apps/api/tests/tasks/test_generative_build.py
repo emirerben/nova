@@ -3935,7 +3935,7 @@ def test_compose_subtitled_burns_text_before_captions(monkeypatch, tmp_path):
         lambda elements, **kw: [{"text": elements[0].text}],
     )
 
-    def _burn_text(input_path, overlays, output_path, tmpdir):
+    def _burn_text(input_path, overlays, output_path, tmpdir, **_kwargs):
         order.append(("text", input_path, output_path, overlays))
         with open(output_path, "wb") as f:
             f.write(b"text")
@@ -3948,7 +3948,7 @@ def test_compose_subtitled_burns_text_before_captions(monkeypatch, tmp_path):
     monkeypatch.setattr("app.pipeline.text_overlay_skia.burn_text_overlays_skia", _burn_text)
     monkeypatch.setattr(gb, "_burn_persisted_captions_onto_base", _burn_captions)
 
-    out = gb._compose_subtitled_final(
+    out, _matte = gb._compose_subtitled_final(
         str(base),
         {
             "duration_s": 3.0,
@@ -3965,6 +3965,9 @@ def test_compose_subtitled_burns_text_before_captions(monkeypatch, tmp_path):
             "caption_cues": [{"text": "caption", "start_s": 0.0, "end_s": 1.0}],
         },
         str(tmp_path),
+        job_id="job",
+        variant_id="subtitled",
+        upload_key_base="generative-jobs/job/variant_1_subtitled_base.mp4",
     )
 
     assert out.endswith("subtitled_final.mp4")
@@ -3990,7 +3993,14 @@ def test_compose_subtitled_without_text_passes_base_to_captions(monkeypatch, tmp
 
     monkeypatch.setattr(gb, "_burn_persisted_captions_onto_base", _burn_captions)
 
-    gb._compose_subtitled_final(str(base), {"text_elements": [], "caption_cues": []}, str(tmp_path))
+    gb._compose_subtitled_final(
+        str(base),
+        {"text_elements": [], "caption_cues": []},
+        str(tmp_path),
+        job_id="job",
+        variant_id="subtitled",
+        upload_key_base="generative-jobs/job/variant_1_subtitled_base.mp4",
+    )
 
     assert seen["input"] == str(base)
 
@@ -4132,12 +4142,12 @@ def test_reburn_subtitled_flag_on_routes_caption_apply_through_compose(monkeypat
     _patch_reburn_io(monkeypatch, {"called": False})
     seen = {}
 
-    def _compose(base_local, fresh_variant, tmpdir):
+    def _compose(base_local, fresh_variant, tmpdir, **_matte_kwargs):
         seen["variant"] = dict(fresh_variant)
         out = f"{tmpdir}/composed.mp4"
         with open(out, "wb") as f:
             f.write(b"composed")
-        return out
+        return out, fresh_variant.get("subject_matte_path")
 
     monkeypatch.setattr(gb, "_compose_subtitled_final", _compose)
 
@@ -4145,6 +4155,34 @@ def test_reburn_subtitled_flag_on_routes_caption_apply_through_compose(monkeypat
 
     assert seen["variant"]["variant_id"] == "subtitled"
     assert job.assembly_plan["variants"][0]["video_path"].find("_cap_") != -1
+
+
+def test_reburn_subtitled_persists_compositor_matte_path(monkeypatch):
+    """The caption reburn must persist the matte path the compositor returns —
+    the cache that keeps later behind-subject reburns download-fast instead of
+    a 90s recompute (and the fingerprint prod job 1e768d5b was missing)."""
+    import uuid
+
+    monkeypatch.setattr(gb.settings, "subtitled_text_lane_enabled", True, raising=False)
+    variant = _narrated_caption_variant(resolved_archetype="subtitled", variant_id="subtitled")
+    job = _FakeJob(assembly_plan={"variants": [variant]})
+    _patch_job_session(monkeypatch, job)
+    _patch_reburn_io(monkeypatch, {"called": False})
+
+    def _compose(base_local, fresh_variant, tmpdir, **_matte_kwargs):
+        out = f"{tmpdir}/composed.mp4"
+        with open(out, "wb") as f:
+            f.write(b"composed")
+        return out, "generative-jobs/j/variant_1_subtitled_base.mp4.matte.mp4"
+
+    monkeypatch.setattr(gb, "_compose_subtitled_final", _compose)
+
+    gb._run_reburn_narrated_captions(str(uuid.uuid4()), "subtitled")
+
+    assert (
+        job.assembly_plan["variants"][0]["subject_matte_path"]
+        == "generative-jobs/j/variant_1_subtitled_base.mp4.matte.mp4"
+    )
 
 
 # ── Background-sound (bed-level) reburn — new post-gen editor control ─────────
@@ -4467,10 +4505,10 @@ def _patch_subtitled_smart_render(monkeypatch, tmp_path):
 
     monkeypatch.setattr(narrated_assembler, "burn_captions_on_video", fake_burn)
 
-    def fake_compose(_base, _variant, variant_dir):
+    def fake_compose(_base, _variant, variant_dir, **_matte_kwargs):
         output = Path(variant_dir) / "smart-final.mp4"
         output.write_bytes(b"smart-captioned-video")
-        return str(output)
+        return str(output), _variant.get("subject_matte_path")
 
     monkeypatch.setattr(gb, "_compose_subtitled_final", fake_compose)
     monkeypatch.setattr(

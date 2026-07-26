@@ -674,3 +674,131 @@ class TestComputeSubjectMatteEndToEnd:
         assert out_path.exists()
         assert (tmp_path / "matte.mp4.json").exists()
         assert result.frame_count > 0
+
+
+# ---------------------------------------------------------------------------
+# Shape-stability gate (median adjacent-frame IoU) — pure function, no fixtures.
+# ---------------------------------------------------------------------------
+
+
+class TestShapeStabilityGate:
+    def test_stable_shape_is_sane(self) -> None:
+        stats = _stats(0.1, max_=0.4)
+        stats.shape_stability_iou = 0.90
+        stats.iou_pair_count = 100
+        assert matte_is_sane(stats) is True
+
+    def test_scene_cut_median_survives(self) -> None:
+        # Argentina-montage anchor shape: one scene-cut pair with near-zero
+        # IoU cannot drag the MEDIAN down when every other pair is stable.
+        stats = _stats(0.14, max_=0.4)
+        stats.presence_flips = 1
+        stats.presence_flips_per_s = 0.29
+        stats.shape_stability_iou = float(np.median([0.05] + [0.88] * 60))
+        stats.iou_pair_count = 61
+        assert matte_is_sane(stats) is True
+
+    def test_violently_unstable_shape_rejected(self) -> None:
+        # Silhouette never disappears (0 presence flips) but the typical
+        # adjacent-frame pair shares under 40% of its area — occlusion
+        # registered to a shape that won't hold still reads as glitching.
+        stats = _stats(0.1, max_=0.4)
+        stats.presence_flips = 0
+        stats.shape_stability_iou = 0.30
+        assert matte_is_sane(stats) is False
+
+    def test_threshold_boundary_is_kept(self) -> None:
+        stats = _stats(0.1, max_=0.4)
+        stats.shape_stability_iou = subject_matte._MIN_SHAPE_STABILITY_IOU
+        assert matte_is_sane(stats) is True
+
+    def test_missing_iou_stat_is_ignored(self) -> None:
+        # Old sidecars (and short mattes with < _MIN_IOU_PAIRS pairs) carry
+        # no IoU stat — the gate must not reject what it cannot judge.
+        stats = _stats(0.1, max_=0.4)
+        assert stats.shape_stability_iou is None
+        assert matte_is_sane(stats) is True
+
+
+@needs_ffmpeg
+class TestShapeStabilityStatCompute:
+    def test_sidecar_carries_shape_stability_iou(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A steady synthetic subject yields IoU 1.0 across every adjacent
+        pair, persisted in the sidecar stats for the sanity gate."""
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        calls: list[float] = []
+        # Constant confident blob → identical treated mask every frame.
+        blob = np.zeros((16, 16), dtype=np.float32)
+        blob[4:12, 4:12] = 0.95
+        _install_fake_mediapipe(monkeypatch, calls, mask_value=blob)
+
+        out_path = tmp_path / "matte.mp4"
+        result = compute_subject_matte(str(video_path), [MatteWindow(0.0, 1.0)], str(out_path))
+        assert result is not None
+        assert result.shape_stability_iou == pytest.approx(1.0)
+        assert result.iou_pair_count == 29  # 30 output ticks -> 29 adjacent pairs
+
+        sidecar = json.loads((tmp_path / "matte.mp4.json").read_text())
+        assert sidecar["stats"]["shape_stability_iou"] == pytest.approx(1.0)
+        assert sidecar["stats"]["iou_pair_count"] == 29
+
+
+# ---------------------------------------------------------------------------
+# Lossless matte intermediate encode (-qp 0).
+# ---------------------------------------------------------------------------
+
+
+class TestMatteWriterLossless:
+    def test_writer_cmd_pins_lossless_qp(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: dict = {}
+
+        def _fake_popen(cmd, **kwargs):  # noqa: ANN001
+            seen["cmd"] = cmd
+            raise RuntimeError("stop before spawning")
+
+        monkeypatch.setattr(subject_matte.subprocess, "Popen", _fake_popen)
+        with pytest.raises(RuntimeError):
+            subject_matte._spawn_matte_writer("/tmp/out.mp4")
+        cmd = seen["cmd"]
+        qp_idx = cmd.index("-qp")
+        assert cmd[qp_idx + 1] == "0", "matte intermediate must encode lossless"
+
+    @needs_ffmpeg
+    def test_hard_edge_roundtrip_has_no_ringing(self, tmp_path: Path) -> None:
+        """The matte carries hard-cut edges; default-CRF x264 rings along
+        them differently per frame (visible edge shimmer after the occlusion
+        multiply). Lossless encode must round-trip a hard edge within LSB
+        tolerance of the yuv420p range conversion."""
+        import cv2
+
+        out_path = str(tmp_path / "matte.mp4")
+        frames = []
+        for k in range(3):
+            frame = np.zeros(
+                (subject_matte._MATTE_HEIGHT, subject_matte._MATTE_WIDTH), dtype=np.uint8
+            )
+            frame[:, : 100 + k] = 255  # hard vertical edge, shifting per frame
+            frames.append(frame)
+
+        proc = subject_matte._spawn_matte_writer(out_path)
+        assert proc.stdin is not None
+        for frame in frames:
+            proc.stdin.write(frame.tobytes())
+        _, stderr = proc.communicate(timeout=30)
+        assert proc.returncode == 0, stderr.decode(errors="replace")
+
+        cap = cv2.VideoCapture(out_path)
+        try:
+            for frame in frames:
+                ok, decoded = cap.read()
+                assert ok
+                gray = cv2.cvtColor(decoded, cv2.COLOR_BGR2GRAY)
+                diff = np.abs(gray.astype(np.int16) - frame.astype(np.int16))
+                assert int(diff.max()) <= 2, (
+                    f"edge ringing detected (max diff {int(diff.max())}) — "
+                    "matte encode is no longer lossless"
+                )
+        finally:
+            cap.release()
