@@ -116,6 +116,47 @@ describe("TextElementOverlayLayer", () => {
     },
   );
 
+  it.each(["left", "center", "right"] as const)(
+    "clips handwriting on the shrink-to-fit painted node for %s alignment",
+    (alignment) => {
+      const [layout] = resolveTextElementsLayout([
+        {
+          ...element,
+          alignment,
+          text: "READY NOW\nWRAPPED LINE",
+          rotation_deg: 8,
+          letter_spacing: 0.05,
+        },
+      ]);
+      const { container } = render(
+        <TextElementOverlayContent
+          layout={layout}
+          fontSize="20px"
+          revealProgress={0.25}
+        />,
+      );
+
+      const reveal = container.querySelector("[data-handwriting-reveal]");
+      const painted = reveal?.firstElementChild;
+      expect(reveal).toHaveStyle({
+        display: "flex",
+        justifyContent:
+          alignment === "left"
+            ? "flex-start"
+            : alignment === "right"
+              ? "flex-end"
+              : "center",
+      });
+      expect(painted).toHaveStyle({
+        display: "inline-block",
+        width: "max-content",
+        maxWidth: "100%",
+        clipPath: "inset(0 75% 0 0)",
+        letterSpacing: "0.05em",
+      });
+    },
+  );
+
   it("honors explicit shadow off when no stroke is present", () => {
     render(
       <TextElementOverlayLayer

@@ -918,6 +918,7 @@ export interface TextElement {
     | "typewriter"
     | "stream-in"
     | "staggered-slice"
+    | "handwriting"
     | "bounce"
     | "slide-in"
     | null;

@@ -277,8 +277,72 @@ class TestAnimatedOverlayASS:
         from app.pipeline.text_overlay import ASS_ANIMATED_EFFECTS
         assert "pop-in" in ASS_ANIMATED_EFFECTS
         assert "bounce" in ASS_ANIMATED_EFFECTS
+        assert "handwriting" in ASS_ANIMATED_EFFECTS
         # Sanity: ensure we didn't accidentally promote scale-up too
         assert "scale-up" not in ASS_ANIMATED_EFFECTS
+
+    def test_handwriting_ass_clips_the_whole_painted_block_and_settles(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": "FIELD NOTES\nNUMBER TWO",
+                    "start_s": 0.0,
+                    "end_s": 4.0,
+                    "position": "center",
+                    "effect": "handwriting",
+                    "font_family": "Inter",
+                    "text_size_px": 96,
+                    "text_color": "#FF484C",
+                    "outline_px": 3,
+                    "letter_spacing": 0.04,
+                    "rotation_deg": -4,
+                }],
+                4.0, tmpdir, 0,
+            )
+            assert result is not None and len(result) == 1
+            content = open(result[0]).read()
+            dialogues = [
+                line for line in content.splitlines() if line.startswith("Dialogue:")
+            ]
+            assert len(dialogues) > 60
+            assert r"\clip(" in dialogues[0]
+            assert r"\bord3" in dialogues[0]
+            assert r"\1c&H4C48FF&" in dialogues[0]
+            assert r"\fsp3.840" in dialogues[0]
+            assert r"\frz-4.000" in dialogues[0]
+            assert r"\N" in dialogues[0]
+            # The settled tail drops clipping entirely, matching static text.
+            assert r"\clip(" not in dialogues[-1]
+
+            import re
+            first_clip = re.search(
+                r"\\clip\((\d+),(\d+),(\d+),(\d+)\)", dialogues[0]
+            )
+            mid_clip = re.search(
+                r"\\clip\((\d+),(\d+),(\d+),(\d+)\)", dialogues[35]
+            )
+            assert first_clip and mid_clip
+            assert first_clip.group(1) == first_clip.group(3)
+            assert int(mid_clip.group(3)) > int(mid_clip.group(1))
+
+    def test_short_handwriting_ass_compresses_without_a_settled_tail(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": "FAST",
+                    "start_s": 0.0,
+                    "end_s": 0.5,
+                    "position": "center",
+                    "effect": "handwriting",
+                }],
+                1.0, tmpdir, 0,
+            )
+            content = open(result[0]).read()
+            dialogues = [
+                line for line in content.splitlines() if line.startswith("Dialogue:")
+            ]
+            assert 14 <= len(dialogues) <= 16
+            assert all(r"\clip(" in line for line in dialogues)
 
     def test_pop_in_prewraps_long_text_into_fixed_lines(self):
         """pop-in must emit `\\N` + `\\q2` for text that would wrap at full scale.

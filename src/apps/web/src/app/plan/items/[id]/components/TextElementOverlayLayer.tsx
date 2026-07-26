@@ -95,6 +95,7 @@ export function TextElementOverlayContent({
   canvasPixelCssSize = `${100 / CANVAS_H}cqh`,
   reserveText,
   showCursor = false,
+  revealProgress,
   children,
 }: {
   layout: TextElementLayout;
@@ -104,6 +105,8 @@ export function TextElementOverlayContent({
   canvasPixelCssSize?: string;
   reserveText?: string | null;
   showCursor?: boolean;
+  /** Apply handwriting clipping to the shrink-to-fit painted node. */
+  revealProgress?: number;
   children?: ReactNode;
 }) {
   const content = children ?? layout.text;
@@ -113,6 +116,17 @@ export function TextElementOverlayContent({
     strokeWidth,
     canvasPixelCssSize,
   });
+  const handwritingStyle: CSSProperties | undefined =
+    revealProgress === undefined
+      ? undefined
+      : {
+          display: "inline-block",
+          width: "max-content",
+          maxWidth: "100%",
+          clipPath:
+            revealProgress >= 1 ? undefined : `inset(0 ${(1 - revealProgress) * 100}% 0 0)`,
+          willChange: revealProgress >= 1 ? undefined : "clip-path",
+        };
 
   if (reserveText != null && typeof content === "string" && reserveText.startsWith(content)) {
     const hiddenRemainder = reserveText.slice(content.length);
@@ -131,11 +145,24 @@ export function TextElementOverlayContent({
     );
   }
 
+  if (revealProgress === undefined) {
+    return <div style={sharedStyle}>{content}</div>;
+  }
+
   return (
     <div
-      style={sharedStyle}
+      data-handwriting-reveal=""
+      style={{
+        display: "flex",
+        justifyContent:
+          layout.alignment === "left"
+            ? "flex-start"
+            : layout.alignment === "right"
+              ? "flex-end"
+              : "center",
+      }}
     >
-      {content}
+      <div style={{ ...sharedStyle, ...handwritingStyle }}>{content}</div>
     </div>
   );
 }

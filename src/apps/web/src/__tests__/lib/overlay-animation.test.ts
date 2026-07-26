@@ -3,6 +3,8 @@ import {
   easeOutCubic,
   giantTitleWipeAlphaAt,
   giantTitleWipeScaleAt,
+  handwritingProgressAt,
+  handwritingSettleS,
   motionCubicBezier,
   normalizeAnimatedRevealText,
   popInScaleAt,
@@ -35,6 +37,32 @@ describe("easeOutCubic", () => {
 
   it("t > 1 clamps to 1", () => {
     expect(easeOutCubic(2)).toBeCloseTo(1);
+  });
+});
+
+describe("handwritingProgressAt", () => {
+  it("holds for 200ms, follows CSS ease, and settles at 2.2s", () => {
+    expect(handwritingProgressAt(0, 4)).toBe(0);
+    expect(handwritingProgressAt(0.199, 4)).toBe(0);
+    expect(handwritingProgressAt(1.2, 4)).toBeCloseTo(0.8024, 3);
+    expect(handwritingProgressAt(2.2, 4)).toBe(1);
+    expect(handwritingSettleS(4)).toBe(2.2);
+  });
+
+  it("compresses the delay and draw phases proportionally for short overlays", () => {
+    expect(handwritingProgressAt(0.09, 1)).toBe(0);
+    expect(handwritingProgressAt(0.5, 1)).toBeGreaterThan(0.7);
+    expect(handwritingProgressAt(1, 1)).toBe(1);
+    expect(handwritingSettleS(1)).toBe(1);
+    expect(handwritingProgressAt(0, 0)).toBe(1);
+  });
+
+  it("only changes revealProgress in the shared animation state", () => {
+    const state = animationStateAt("handwriting", 1.2, 4, TEXT);
+    expect(state.revealProgress).toBeCloseTo(handwritingProgressAt(1.2, 4));
+    expect(state.visibleText).toBe(TEXT);
+    expect(state.alpha).toBe(1);
+    expect(state.scale).toBe(1);
   });
 });
 
@@ -448,6 +476,7 @@ describe("non-text-reveal effects preserve visibleText", () => {
     "slide-down",
     "pop-in",
     "bounce",
+    "handwriting",
     "none",
     "static",
   ];

@@ -96,6 +96,7 @@ ASS_ANIMATED_EFFECTS = frozenset(
         "slide-down",
         "pop-in",
         "bounce",
+        "handwriting",
         "karaoke-line",
         "lyric-line",
     }
@@ -572,6 +573,7 @@ def generate_animated_overlay_ass(
                 position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
                 text_anchor=overlay.get("text_anchor", "center"),
+                vertical_anchor=overlay.get("vertical_anchor"),
                 outline_px=overlay.get("outline_px"),
                 # Karaoke needs per-word timings (relative to overlay start)
                 # plus the highlight color used for "already sung" words.
@@ -599,6 +601,9 @@ def generate_animated_overlay_ass(
                 # the helper starts from the Style's Fontsize=90 and never
                 # honours the injector's narrower default.
                 text_size_px=overlay.get("text_size_px"),
+                letter_spacing=overlay.get("letter_spacing"),
+                rotation_deg=overlay.get("rotation_deg"),
+                shadow_enabled=overlay.get("shadow_enabled") is not False,
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -1089,6 +1094,199 @@ def _emit_lyric_line_alpha_tags(
     return "{" + "".join(tags) + "}"
 
 
+_HANDWRITING_NOMINAL_DELAY_S = 0.2
+_HANDWRITING_NOMINAL_DRAW_S = 2.0
+_HANDWRITING_NOMINAL_SETTLE_S = _HANDWRITING_NOMINAL_DELAY_S + _HANDWRITING_NOMINAL_DRAW_S
+_HANDWRITING_ASS_FPS = 30
+
+
+def _handwriting_motion_ease(t: float) -> float:
+    """CSS `ease` cubic-bezier(0.25, 0.1, 0.25, 1); mirrored in Skia/TS."""
+    target_x = max(0.0, min(1.0, t))
+    if target_x <= 0.0:
+        return 0.0
+    if target_x >= 1.0:
+        return 1.0
+
+    def _sample(axis_1: float, axis_2: float, u: float) -> float:
+        inv = 1.0 - u
+        return 3.0 * axis_1 * inv * inv * u + 3.0 * axis_2 * inv * u * u + u**3
+
+    def _sample_x_derivative(u: float) -> float:
+        inv = 1.0 - u
+        return 3.0 * 0.25 * inv * inv + 6.0 * (0.25 - 0.25) * inv * u + 3.0 * (1.0 - 0.25) * u * u
+
+    u = target_x
+    for _ in range(8):
+        error = _sample(0.25, 0.25, u) - target_x
+        if abs(error) < 1e-6:
+            return _sample(0.1, 1.0, u)
+        derivative = _sample_x_derivative(u)
+        if abs(derivative) < 1e-6:
+            break
+        u = max(0.0, min(1.0, u - error / derivative))
+
+    lower = 0.0
+    upper = 1.0
+    u = target_x
+    for _ in range(12):
+        if _sample(0.25, 0.25, u) < target_x:
+            lower = u
+        else:
+            upper = u
+        u = (lower + upper) / 2.0
+    return _sample(0.1, 1.0, u)
+
+
+def _handwriting_progress(t_local: float, duration_s: float) -> float:
+    if duration_s <= 0:
+        return 1.0
+    timing_scale = min(1.0, duration_s / _HANDWRITING_NOMINAL_SETTLE_S)
+    delay_s = _HANDWRITING_NOMINAL_DELAY_S * timing_scale
+    draw_s = _HANDWRITING_NOMINAL_DRAW_S * timing_scale
+    return _handwriting_motion_ease((max(0.0, t_local) - delay_s) / max(0.001, draw_s))
+
+
+def _handwriting_ass_dialogue_events(
+    *,
+    text: str,
+    start_s: float,
+    end_s: float,
+    position: str,
+    pos_or_align: str,
+    font_family: str | None,
+    text_size_px: int | None,
+    text_anchor: str,
+    vertical_anchor: str | None,
+    position_x_frac: float | None,
+    position_y_frac: float | None,
+    outline_tag: str,
+    outline_px: int | None,
+    text_color: str | None,
+    letter_spacing: float | None,
+    rotation_deg: float | None,
+    shadow_enabled: bool,
+) -> list[tuple[float, float, str]]:
+    """Sample a whole-painted-block rectangular clip at video frame cadence.
+
+    Static clip slices avoid libass karaoke's fill-only behavior: fill, outline,
+    shadow, rotation, and tracking are clipped together. The settled tail drops
+    the clip entirely, so it is byte-equivalent to the normal ASS text event.
+    """
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    duration_s = max(0.0, end_s - start_s)
+    font_size = max(1, int(text_size_px or OVERLAY_FONT_SIZE))
+    font = _resolve_font_family(font_family or "Playfair Display", font_size)
+    if font is None:
+        font = _load_styled_font("display", "medium", text_size_px=font_size)
+    draw = ImageDraw.Draw(Image.new("L", (1, 1), 0))
+    max_width = int(CANVAS_W * _TEXT_MAX_LINE_W)
+    logical_text = text.replace(r"\N", "\n")
+    lines: list[str] = []
+    for logical_line in logical_text.split("\n"):
+        lines.extend(_wrap_text_to_lines(logical_line, font, max_width, draw))
+    lines = lines or [""]
+
+    spacing_px = float(letter_spacing or 0.0) * font_size
+    line_widths: list[float] = []
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        tracked = max(0, len(line) - 1) * spacing_px
+        line_widths.append(max(0.0, float(bbox[2] - bbox[0]) + tracked))
+    try:
+        ascent, descent = font.getmetrics()
+        line_step = max(1, int((ascent + descent) * _TEXT_LINE_SPACING))
+    except AttributeError:
+        line_step = max(
+            1,
+            max(
+                (draw.textbbox((0, 0), line, font=font)[3] for line in lines),
+                default=font_size,
+            ),
+        )
+    block_h = max(line_step, line_step * len(lines))
+
+    anchor_x = int(
+        CANVAS_W * (max(0.0, min(1.0, position_x_frac)) if position_x_frac is not None else 0.5)
+    )
+    y_frac = (
+        max(0.0, min(1.0, position_y_frac))
+        if position_y_frac is not None
+        else _POSITION_Y.get(position, 0.5)
+    )
+    anchor_y = int(CANVAS_H * y_frac)
+    is_top_anchored = vertical_anchor == "top" or (
+        vertical_anchor is None and text_anchor == "left"
+    )
+    block_top = anchor_y if is_top_anchored else anchor_y - block_h / 2.0
+
+    line_lefts: list[float] = []
+    line_rights: list[float] = []
+    for width in line_widths:
+        if text_anchor == "left":
+            left = float(anchor_x)
+        elif text_anchor == "right":
+            left = anchor_x - width
+        else:
+            left = anchor_x - width / 2.0
+        line_lefts.append(left)
+        line_rights.append(left + width)
+    content_left = min(line_lefts, default=float(anchor_x))
+    content_right = max(line_rights, default=float(anchor_x))
+    bleed = max(4.0, float(outline_px or 0) + 2.0, 18.0 if shadow_enabled else 0.0)
+    clip_left = max(0, int(math.floor(content_left - bleed)))
+    clip_top = max(0, int(math.floor(block_top - bleed)))
+    clip_bottom = min(CANVAS_H, int(math.ceil(block_top + block_h + bleed)))
+    full_right = min(CANVAS_W, int(math.ceil(content_right + bleed)))
+
+    wrapped_text = r"\N".join(lines)
+    color_tag = f"\\1c&H{_hex_to_ass_bgr(text_color)}&" if text_color else ""
+    spacing_tag = f"\\fsp{spacing_px:.3f}" if abs(spacing_px) > 1e-6 else ""
+    rotation_tag = (
+        f"\\frz{_finite_float(rotation_deg, 0.0):.3f}"
+        if abs(_finite_float(rotation_deg, 0.0)) > 1e-6
+        else ""
+    )
+    shadow_tag = "" if shadow_enabled else r"\shad0"
+    base_tags = (
+        f"{pos_or_align}\\q2\\fs{font_size}{spacing_tag}{rotation_tag}"
+        f"{shadow_tag}{outline_tag}{color_tag}"
+    )
+
+    settle_s = min(duration_s, _HANDWRITING_NOMINAL_SETTLE_S)
+    frame_count = max(1, int(math.ceil(settle_s * _HANDWRITING_ASS_FPS)))
+    events: list[tuple[float, float, str]] = []
+    for frame_index in range(frame_count):
+        local_start = frame_index / _HANDWRITING_ASS_FPS
+        local_end = min(settle_s, (frame_index + 1) / _HANDWRITING_ASS_FPS)
+        if local_end <= local_start:
+            continue
+        progress = _handwriting_progress(local_start, duration_s)
+        if progress <= 0.0:
+            clip_right = clip_left
+        else:
+            clip_right = min(
+                full_right,
+                int(math.ceil(content_left + (content_right - content_left) * progress + bleed)),
+            )
+        row_text = (
+            f"{{{base_tags}\\clip({clip_left},{clip_top},{clip_right},{clip_bottom})}}"
+            f"{wrapped_text}"
+        )
+        events.append((start_s + local_start, start_s + local_end, row_text))
+
+    if settle_s < duration_s:
+        events.append(
+            (
+                start_s + settle_s,
+                end_s,
+                f"{{{base_tags}}}{wrapped_text}",
+            )
+        )
+    return events
+
+
 def _write_animated_ass(
     text: str,
     start_s: float,
@@ -1101,6 +1299,7 @@ def _write_animated_ass(
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
     text_anchor: str = "center",
+    vertical_anchor: str | None = None,
     outline_px: int | None = None,
     # Karaoke-only: per-word timings relative to overlay start, and the
     # highlight color used for "already sung" words. None for non-karaoke
@@ -1132,6 +1331,9 @@ def _write_animated_ass(
     # text would overflow the 90%-canvas safe width. None means "use the
     # Style's Fontsize as-is, and only shrink if needed."
     text_size_px: int | None = None,
+    letter_spacing: float | None = None,
+    rotation_deg: float | None = None,
+    shadow_enabled: bool = True,
 ) -> None:
     """Write an ASS file with animation tags for the given effect.
 
@@ -1358,6 +1560,28 @@ def _write_animated_ass(
             f"\\t({k2},{k3},\\fscx{s3}\\fscy{s3})"
             f"}}{wrapped}"
         )
+
+    elif effect == "handwriting":
+        dialogue_events = _handwriting_ass_dialogue_events(
+            text=text,
+            start_s=start_s,
+            end_s=end_s,
+            position=position,
+            pos_or_align=pos_or_align,
+            font_family=font_family,
+            text_size_px=text_size_px,
+            text_anchor=text_anchor,
+            vertical_anchor=vertical_anchor,
+            position_x_frac=position_x_frac,
+            position_y_frac=position_y_frac,
+            outline_tag=outline_tag,
+            outline_px=outline_px,
+            text_color=text_color,
+            letter_spacing=letter_spacing,
+            rotation_deg=rotation_deg,
+            shadow_enabled=shadow_enabled,
+        )
+        dialogue_text = dialogue_events[0][2]
 
     else:
         dialogue_text = f"{{{pos_or_align}{outline_tag}}}{text}"

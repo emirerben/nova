@@ -276,6 +276,15 @@ export function LinearIntroTextPreview({
     whiteSpace: "pre-wrap",
     overflowWrap: "normal",
     userSelect: "none",
+    ...(effect === "handwriting" && playState?.revealProgress !== undefined
+      ? {
+          clipPath:
+            playState.revealProgress >= 1
+              ? undefined
+              : `inset(0 ${(1 - playState.revealProgress) * 100}% 0 0)`,
+          willChange: "clip-path",
+        }
+      : {}),
   };
 
   return (
@@ -346,6 +355,7 @@ export function LinearIntroTextPreview({
           {isPlaying && playState !== null && effect !== "staggered-slice" && (
             <div
               aria-hidden="true"
+              data-handwriting-reveal={effect === "handwriting" ? "" : undefined}
               style={playbackStyle}
             >
               {playState.visibleText}

@@ -911,6 +911,7 @@ class TestSecurityGuards:
             "slide-down",
             "karaoke-line",
             "staggered-slice",
+            "handwriting",
         ):
             elem = TextElement(text="test", start_s=0, end_s=1, effect=effect)
             assert elem.effect == effect
@@ -925,6 +926,20 @@ class TestSecurityGuards:
         [overlay] = build_overlays_from_text_elements([elem], video_duration_s=4.0)
         assert overlay["effect"] == "staggered-slice"
         assert overlay["text"] == "GOAL OF THE\nTOURNAMENT"
+
+    def test_handwriting_roundtrips_to_and_from_the_burn_dict(self):
+        elem = TextElement(
+            text="FIELD NOTES",
+            start_s=0,
+            end_s=4,
+            effect="handwriting",
+        )
+        [overlay] = build_overlays_from_text_elements([elem], video_duration_s=4.0)
+        assert overlay["effect"] == "handwriting"
+
+        adapted = _burn_dict_to_text_element(overlay)
+        assert adapted is not None
+        assert adapted.effect == "handwriting"
 
     def test_staggered_slice_roundtrips_from_the_burn_dict(self):
         variant = {

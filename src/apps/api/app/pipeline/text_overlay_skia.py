@@ -493,7 +493,7 @@ SEQUENCE_OVERLAY_ROLE = "generative_sequence"
 # Effects a sequence overlay may carry: the fade-in head reuses the existing
 # "fade-in" effect; "static"/"none" scenes appear settled and only need the
 # fade-out tail.
-_SEQUENCE_FADE_EFFECTS = ("fade-in", "static", "none")
+_SEQUENCE_FADE_EFFECTS = ("fade-in", "handwriting", "static", "none")
 
 # The fade-in effect's alpha ramp settles at this t_local (mirrors the
 # `effect == "fade-in"` branch in _draw_with_animation: progress = t / 0.4).
@@ -536,8 +536,10 @@ def _uses_long_running_frame_ceiling(overlay: dict) -> bool:
     if overlay.get("behind_subject"):
         return True
     effect = overlay.get("effect", "none")
-    return effect in {"lyric-line", "karaoke-line"} or (
-        effect == "pop-in" and bool(overlay.get("pop_animated_suffix"))
+    return (
+        effect in {"lyric-line", "karaoke-line"}
+        or (effect == "pop-in" and bool(overlay.get("pop_animated_suffix")))
+        or effect == "handwriting"
     )
 
 
@@ -1297,6 +1299,7 @@ def _draw_centered_text(
     scale_origin_y: float = 0.0,
     layout_text: str | None = None,
     show_cursor: bool = False,
+    reveal_progress: float = 1.0,
 ) -> None:
     """Draw `text` centered horizontally at the overlay's anchor, with
     shadow + optional stroke + fill. Mirrors Pillow's _draw_text_png layout:
@@ -1331,6 +1334,9 @@ def _draw_centered_text(
 
     if not lines:
         return
+    reveal_progress = max(0.0, min(1.0, reveal_progress))
+    if reveal_progress <= 0.0:
+        return
 
     draw_lines, cursor_line = (
         _fixed_reveal_lines(lines, text) if layout_text is not None else (lines, len(lines) - 1)
@@ -1358,6 +1364,34 @@ def _draw_centered_text(
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
     shadow_alpha = 0 if overlay.get("shadow_enabled") is False else int(160 * alpha)
 
+    # Handwriting reveals the fully styled painted block, not just the fill.
+    # Resolve the actual line/emoji bounds before applying the canvas transform
+    # so the clip rotates/scales with the text and does not inherit the outer
+    # placement box's unused width.
+    content_left = float(render_canvas.width)
+    content_right = 0.0
+    for i, line_w in enumerate(block["widths"]):
+        if i == 0 and emoji_metrics is not None:
+            combined_w = emoji_metrics["size"] + emoji_metrics["gap"] + line_w
+            line_left = _anchored_left_x(anchor, cx, combined_w)
+            line_right = line_left + combined_w
+        else:
+            line_left = _anchored_left_x(anchor, cx, line_w)
+            line_right = line_left + line_w
+        content_left = min(content_left, line_left)
+        content_right = max(content_right, line_right)
+    glow_strength = _finite_float(overlay.get("glow_strength"), 0.0)
+    horizontal_bleed = max(
+        float(stroke_px + 2),
+        42.0 if shadow_alpha > 0 else 0.0,
+        62.0 if glow_strength > 0 else 0.0,
+    )
+    vertical_bleed = max(
+        float(stroke_px + 2),
+        48.0 if shadow_alpha > 0 else 0.0,
+        62.0 if glow_strength > 0 else 0.0,
+    )
+
     # Build gradient shader when text_gradient is set and no explicit
     # color_override (karaoke highlight keeps solid colour).
     gradient_shader: Any = None
@@ -1383,6 +1417,20 @@ def _draw_centered_text(
         canvas.rotate(rotation_deg)
     canvas.scale(scale, scale)
     canvas.translate(-origin_x, -origin_y)
+    if reveal_progress < 1.0:
+        reveal_right = min(
+            content_right + horizontal_bleed,
+            content_left + (content_right - content_left) * reveal_progress + horizontal_bleed,
+        )
+        canvas.clipRect(
+            skia.Rect(
+                content_left - horizontal_bleed,
+                block_top - vertical_bleed,
+                reveal_right,
+                block_top + block["block_h"] + vertical_bleed,
+            ),
+            doAntiAlias=True,
+        )
 
     for i, line in enumerate(lines):
         baseline_y = first_baseline + i * block["line_step"]
@@ -1778,6 +1826,26 @@ def _motion_cubic_bezier(t: float, x1: float, y1: float, x2: float, y2: float) -
     return sample_y(u)
 
 
+_HANDWRITING_NOMINAL_DELAY_S = 0.2
+_HANDWRITING_NOMINAL_DRAW_S = 2.0
+_HANDWRITING_NOMINAL_SETTLE_S = _HANDWRITING_NOMINAL_DELAY_S + _HANDWRITING_NOMINAL_DRAW_S
+
+
+def _handwriting_progress(t_local: float, duration_s: float) -> float:
+    """Deterministic CSS-ease write-on progress; TS mirror: handwritingProgressAt."""
+    if duration_s <= 0:
+        return 1.0
+    timing_scale = min(1.0, duration_s / _HANDWRITING_NOMINAL_SETTLE_S)
+    delay_s = _HANDWRITING_NOMINAL_DELAY_S * timing_scale
+    draw_s = _HANDWRITING_NOMINAL_DRAW_S * timing_scale
+    normalized = (max(0.0, t_local) - delay_s) / max(0.001, draw_s)
+    return _motion_cubic_bezier(normalized, 0.25, 0.1, 0.25, 1.0)
+
+
+def _handwriting_settle_s(duration_s: float) -> float:
+    return max(0.0, min(_HANDWRITING_NOMINAL_SETTLE_S, duration_s))
+
+
 def _clamped_keyframes_s(keyframes_s: tuple[float, ...], duration_s: float) -> tuple[float, ...]:
     last = keyframes_s[-1]
     if last <= 0 or last <= duration_s:
@@ -2119,6 +2187,7 @@ def _draw_with_animation(
     scale_origin_y = 0.0
     visible_text = text
     show_cursor = False
+    reveal_progress = 1.0
 
     if effect == "scale-up":
         if duration_s > 0.6:
@@ -2179,6 +2248,8 @@ def _draw_with_animation(
                 scale = 0.90 + 0.10 * ((p - 0.72) / 0.28)
         else:
             scale = 1.0
+    elif effect == "handwriting":
+        reveal_progress = _handwriting_progress(t_local, duration_s)
     elif effect == "lyric-line":
         alpha = _lyric_line_alpha(overlay, t_local, duration_s)
     elif effect not in ("none", "static"):
@@ -2207,6 +2278,7 @@ def _draw_with_animation(
         scale_origin_y=scale_origin_y,
         layout_text=reveal_text if effect in ("typewriter", "stream-in") else None,
         show_cursor=show_cursor,
+        reveal_progress=reveal_progress,
     )
 
 
@@ -2224,6 +2296,7 @@ _ANIMATED_EFFECTS_SKIA = {
     "pop-in",
     "bounce",
     "staggered-slice",
+    "handwriting",
     "karaoke-line",
     # lyric-line must be animated to honor fade_in_ms / fade_out_ms. Without
     # this, two consecutive lyric overlays whose [start_s, end_s] windows
@@ -2462,8 +2535,15 @@ def _sequence_hold_plan(
     """
     if not _is_sequence_overlay(overlay):
         return None
+    if overlay.get("behind_subject") or _theme_transition_type(overlay) is not None:
+        return None
     effect = overlay.get("effect", "none")
-    settle_s = min(_FADE_IN_SETTLE_S, duration_s) if effect == "fade-in" else 0.0
+    if effect == "fade-in":
+        settle_s = min(_FADE_IN_SETTLE_S, duration_s)
+    elif effect == "handwriting":
+        settle_s = _handwriting_settle_s(duration_s)
+    else:
+        settle_s = 0.0
     fade_out_s = min(_sequence_fade_out_ms(overlay) / 1000.0, duration_s)
     fade_out_start_s = duration_s - fade_out_s
 
@@ -2493,6 +2573,24 @@ def _staggered_slice_hold_plan(
     if _theme_transition_type(overlay) is not None:
         return None
     settle_s = min(duration_s, _staggered_slice_settle_s(_overlay_text(overlay)))
+    settled_idx = min(n_render - 1, int(math.ceil(settle_s / frame_dur - 1e-9)))
+    if settled_idx >= n_render - 1:
+        return None
+    render_indices = list(range(settled_idx + 1))
+    hold_indices = list(range(settled_idx + 1, n_render))
+    return render_indices, settled_idx, hold_indices
+
+
+def _handwriting_hold_plan(
+    overlay: dict, n_render: int, frame_dur: float, duration_s: float
+) -> tuple[list[int], int, list[int]] | None:
+    if overlay.get("effect") != "handwriting" or n_render <= 1:
+        return None
+    if overlay.get("role") == SEQUENCE_OVERLAY_ROLE:
+        return None
+    if overlay.get("behind_subject") or _theme_transition_type(overlay) is not None:
+        return None
+    settle_s = _handwriting_settle_s(duration_s)
     settled_idx = min(n_render - 1, int(math.ceil(settle_s / frame_dur - 1e-9)))
     if settled_idx >= n_render - 1:
         return None
@@ -2637,6 +2735,8 @@ def _generate_overlay_sequence(
         hold_plan = _sequence_hold_plan(overlay, n_render, frame_dur, duration_s)
         if hold_plan is None:
             hold_plan = _staggered_slice_hold_plan(overlay, n_render, frame_dur, duration_s)
+        if hold_plan is None:
+            hold_plan = _handwriting_hold_plan(overlay, n_render, frame_dur, duration_s)
     if hold_plan is None:
         render_indices: list[int] = list(range(n_render))
         settled_idx = -1
@@ -2767,9 +2867,19 @@ def _sequence_head_settle_s(overlay: dict) -> float | None:
     changing (correct, just not frame-economical) because we don't model that
     effect's animation envelope here.
     """
+    if _theme_transition_type(overlay) is not None:
+        return None
     effect = overlay.get("effect", "none")
     if effect == "fade-in":
         return _FADE_IN_SETTLE_S
+    if effect == "handwriting":
+        return _handwriting_settle_s(
+            max(
+                0.0,
+                _finite_float(overlay.get("end_s"), 0.0)
+                - _finite_float(overlay.get("start_s"), 0.0),
+            )
+        )
     if effect in ("static", "none"):
         return 0.0
     return None
