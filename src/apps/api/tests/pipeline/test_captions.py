@@ -611,6 +611,55 @@ def test_generate_ass_from_smart_cue_uses_closed_high_contrast_style(tmp_path) -
     assert "Birincisi Selocanlar" in content
 
 
+def test_legacy_smart_caption_tags_drop_the_green_burn() -> None:
+    """The legacy (no-policy) closed style set keeps its fs/bord/shad overrides
+    for hook/context/payoff/cta but must never emit the removed lime accent
+    (#84CC16 -> &H16CC84&) — that burn was the user-visible "green captions"
+    the user asked to remove. list_item/example still carry their own colours,
+    unaffected by this change."""
+    from app.pipeline.captions import _SMART_CAPTION_TAGS
+
+    for role in ("hook", "context", "payoff", "cta"):
+        tags = _SMART_CAPTION_TAGS[role]
+        assert "16CC84" not in tags
+        assert "\\c" not in tags
+        assert "\\fs" in tags
+
+
+def test_smart_policy_cue_keeps_size_override_but_drops_green() -> None:
+    """Emphasized smart-policy cues keep their per-role `smart_render_font_size_px`
+    override (size hierarchy stays) but never emit a colour override tag — colour
+    always inherits the policy's base Style line (`_ass_header_smart`), so the
+    removed #8FD400 green burn cannot reappear even for hook/context/payoff/cta."""
+    from app.pipeline.captions import SmartCaptionRenderPolicy, _format_cue_lines
+
+    policy = SmartCaptionRenderPolicy.from_value(
+        {
+            "font_family": "TikTok Sans",
+            "font_size_px": 64,
+            "y_frac": 0.7,
+            "width_frac": 0.85,
+            "max_lines": 2,
+            "color": "#FFFFFF",
+            "stroke_color": "#000000",
+            "stroke_width": 6,
+        }
+    )
+    cue = {
+        "text": "Big reveal",
+        "start_s": 0.0,
+        "end_s": 1.5,
+        "smart_style": "hook",
+        "smart_render_font_size_px": 82,
+    }
+    lines = _format_cue_lines([cue], smart_policy=policy)
+    assert len(lines) == 1
+    assert "\\fs82" in lines[0]
+    assert "8FD400" not in lines[0]
+    assert "16CC84" not in lines[0]
+    assert "\\c" not in lines[0]
+
+
 def test_unknown_smart_caption_style_is_byte_identical_to_legacy(tmp_path) -> None:
     baseline = tmp_path / "baseline.ass"
     unknown = tmp_path / "unknown.ass"

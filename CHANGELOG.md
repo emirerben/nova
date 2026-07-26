@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Small portrait HDR clips no longer fail during tonemapping.** The shared HLG/HDR10 resize now rounds both dimensions even before subsampled `zscale` processing, preventing libzimg code 1027 when inputs such as 632×894 previously became 1357×1920. A regression test pins the filter ordering used by both pre-tonemap and per-slot render paths.
 
+## [0.15.0.3] — 2026-07-26
+
+### Fixed
+- **Smart Caption emphasis no longer burns hook/context/payoff/cta cues in lime green.** The `#8FD400` colour override (and its legacy `&H16CC84&` ASS equivalent) is removed from both the closed-role tag set and the policy-driven render branch; captions now always render in the user's chosen caption colour. The size hierarchy that distinguishes emphasized roles is unchanged — hook/payoff/context/cta still render larger than plain text via their existing font-size override.
+
 ## [0.15.0.2] — 2026-07-26
 
 ### Fixed

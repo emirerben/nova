@@ -288,14 +288,16 @@ _SENTENCE_POP_TAGS = "{\\fad(120,0)\\fscx94\\fscy94\\t(0,140,\\fscx100\\fscy100)
 
 # Smart Captions cue roles compile to a CLOSED set of ASS override blocks. The
 # default/absent path emits no extra bytes, preserving every legacy/narrated ASS
-# file. Colours use ASS BGR ordering: #84CC16 → &H16CC84&.
+# file. hook/context/payoff/cta size-only (no colour override — the #84CC16 lime
+# burn was removed; role hierarchy now reads through font size alone). Colours
+# used ASS BGR ordering when present, e.g. #FFFFFF → &HFFFFFF&.
 _SMART_CAPTION_TAGS: dict[str, str] = {
-    "hook": "{\\fs82\\c&H16CC84&\\bord8\\shad2}",
-    "context": "{\\fs76\\c&H16CC84&\\bord8\\shad2}",
+    "hook": "{\\fs82\\bord8\\shad2}",
+    "context": "{\\fs76\\bord8\\shad2}",
     "list_item": "{\\fs82\\c&HFFFFFF&\\bord8\\shad2}",
     "example": "{\\fs70\\c&HF5F5F5&\\bord7\\shad2}",
-    "payoff": "{\\fs82\\c&H16CC84&\\bord8\\shad2}",
-    "cta": "{\\fs78\\c&H16CC84&\\bord8\\shad2}",
+    "payoff": "{\\fs82\\bord8\\shad2}",
+    "cta": "{\\fs78\\bord8\\shad2}",
 }
 
 
@@ -822,16 +824,12 @@ def _format_cue_lines(
         start = max(0.0, float(c["start_s"]))
         end = max(start + 0.01, float(c["end_s"]))
         if smart_policy:
+            # Colour is never overridden here — the base Style line already carries
+            # `smart_policy.color` (see `_ass_header_smart`), so every cue, emphasized
+            # or not, renders in the user's policy colour. Only the size override
+            # survives to express the hook/context/payoff/cta role hierarchy.
             size = int(c.get("smart_render_font_size_px") or smart_policy.font_size_px)
-            role = str(c.get("smart_style") or "")
-            color = (
-                None
-                if smart_policy.color_user_edited
-                else "#8FD400"
-                if role in {"hook", "context", "payoff", "cta"}
-                else None
-            )
-            smart_tags = f"{{\\fs{size}{_ass_color_tag(color) if color else ''}}}"
+            smart_tags = f"{{\\fs{size}}}"
         else:
             smart_tags = _SMART_CAPTION_TAGS.get(str(c.get("smart_style") or ""), "")
         lines.append(
