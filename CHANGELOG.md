@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.2.1] — 2026-07-26
+
+### Fixed
+- **Small portrait HDR clips no longer fail during tonemapping.** The shared HLG/HDR10 resize now rounds both dimensions even before subsampled `zscale` processing, preventing libzimg code 1027 when inputs such as 632×894 previously became 1357×1920. A regression test pins the filter ordering used by both pre-tonemap and per-slot render paths.
+
 ## [0.15.2.0] — 2026-07-26
 
 ### Added
