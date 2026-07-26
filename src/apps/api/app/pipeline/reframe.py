@@ -720,7 +720,7 @@ _HDR10_TRANSFER = "smpte2084"
 #   preserves midtone contrast better than reinhard, less aggressive than
 #   hable. Specular highlights compressed gracefully instead of clipped.
 #
-# Pre-downscale BEFORE format=gbrpf32le, in linear-light 10-bit YUV space. The
+# Resize BEFORE format=gbrpf32le, in linear-light 10-bit YUV space. The
 # `format=gbrpf32le` step is a 6.4× memory expansion (10-bit YUV → 32-bit float
 # planar) — for a 4K iPhone HDR source that's ~95MB/frame of bandwidth. PR #152
 # put the scale AFTER format=gbrpf32le, which still left the heavy float upconvert

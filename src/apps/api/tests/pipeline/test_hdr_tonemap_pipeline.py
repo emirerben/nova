@@ -11,7 +11,7 @@ def test_hdr_tonemap_forces_even_dimensions_before_subsampled_zscale() -> None:
     from app.pipeline.reframe import _ZSCALE_SDR_PIPELINE
 
     pipeline = _ZSCALE_SDR_PIPELINE
-    resize_idx = pipeline.index("scale=")
+    resize_idx = pipeline.index(",scale=")
     even_idx = pipeline.index("force_divisible_by=2")
     float_idx = pipeline.index("format=gbrpf32le")
     subsampled_zscale_idx = pipeline.index("zscale=p=bt709")
