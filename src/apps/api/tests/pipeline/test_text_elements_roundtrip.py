@@ -911,6 +911,7 @@ class TestSecurityGuards:
             "slide-down",
             "karaoke-line",
             "staggered-slice",
+            "ink-reveal",
             "handwriting",
             "dissolve-out",
         ):
@@ -946,6 +947,20 @@ class TestSecurityGuards:
         adapted = _burn_dict_to_text_element(overlay)
         assert adapted is not None
         assert adapted.effect == "handwriting"
+
+    def test_ink_reveal_roundtrips_to_and_from_the_burn_dict(self):
+        elem = TextElement(
+            text="FIELD NOTES",
+            start_s=0,
+            end_s=4,
+            effect="ink-reveal",
+        )
+        [overlay] = build_overlays_from_text_elements([elem], video_duration_s=4.0)
+        assert overlay["effect"] == "ink-reveal"
+
+        adapted = _burn_dict_to_text_element(overlay)
+        assert adapted is not None
+        assert adapted.effect == "ink-reveal"
 
     def test_staggered_slice_roundtrips_from_the_burn_dict(self):
         variant = {

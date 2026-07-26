@@ -78,6 +78,7 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "typewriter",
         "stream-in",
         "staggered-slice",
+        "ink-reveal",
         "handwriting",
         "dissolve-out",
         "bounce",
@@ -174,6 +175,7 @@ _BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
     "slide-up": "slide-up",
     "karaoke-line": "karaoke-line",
     "staggered-slice": "staggered-slice",
+    "ink-reveal": "ink-reveal",
     "handwriting": "handwriting",
 }
 
@@ -329,6 +331,7 @@ class TextElement(BaseModel):
             "typewriter",
             "stream-in",
             "staggered-slice",
+            "ink-reveal",
             "handwriting",
             "dissolve-out",
             "bounce",

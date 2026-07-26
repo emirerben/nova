@@ -214,6 +214,7 @@ const ALLOWED_EFFECTS = new Set([
   "typewriter",
   "stream-in",
   "staggered-slice",
+  "ink-reveal",
   "handwriting",
   "dissolve-out",
   "bounce",

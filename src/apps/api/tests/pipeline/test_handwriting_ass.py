@@ -1,4 +1,4 @@
-"""Classic/libass handwriting animation coverage."""
+"""Classic/libass ink-reveal fallback coverage."""
 
 from __future__ import annotations
 
@@ -13,11 +13,12 @@ def _dialogues(path: str) -> list[str]:
     return [line for line in Path(path).read_text().splitlines() if line.startswith("Dialogue:")]
 
 
-def test_handwriting_routes_through_the_ass_animation_path():
+def test_write_on_effects_route_through_the_ass_fallback_path():
     assert "handwriting" in ASS_ANIMATED_EFFECTS
+    assert "ink-reveal" in ASS_ANIMATED_EFFECTS
 
 
-def test_handwriting_ass_clips_the_whole_painted_block_and_settles():
+def test_ink_reveal_ass_clips_the_whole_painted_block_and_settles():
     with tempfile.TemporaryDirectory() as tmpdir:
         result = generate_animated_overlay_ass(
             [
@@ -26,7 +27,7 @@ def test_handwriting_ass_clips_the_whole_painted_block_and_settles():
                     "start_s": 0.0,
                     "end_s": 4.0,
                     "position": "center",
-                    "effect": "handwriting",
+                    "effect": "ink-reveal",
                     "font_family": "Inter",
                     "text_size_px": 96,
                     "text_color": "#FF484C",
@@ -70,7 +71,7 @@ def test_handwriting_ass_clips_the_whole_painted_block_and_settles():
         assert int(mid_clip.group(3)) > int(mid_clip.group(1))
 
 
-def test_short_handwriting_ass_compresses_without_a_settled_tail():
+def test_short_ink_reveal_ass_compresses_without_a_settled_tail():
     with tempfile.TemporaryDirectory() as tmpdir:
         result = generate_animated_overlay_ass(
             [
@@ -79,7 +80,7 @@ def test_short_handwriting_ass_compresses_without_a_settled_tail():
                     "start_s": 0.0,
                     "end_s": 0.5,
                     "position": "center",
-                    "effect": "handwriting",
+                    "effect": "ink-reveal",
                 }
             ],
             1.0,

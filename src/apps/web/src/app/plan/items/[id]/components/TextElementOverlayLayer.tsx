@@ -10,6 +10,7 @@ import {
 } from "@/lib/overlay-layout";
 import { resolveClusterCssFont } from "@/lib/overlay-constants";
 import { FONT_FACES } from "@/lib/font-faces";
+import { HandwritingText } from "@/components/HandwritingText";
 
 export function textElementAnchorTransform(alignment: TextElementLayout["alignment"]): string {
   if (alignment === "left") return "translate(0, -50%)";
@@ -106,7 +107,7 @@ export function TextElementOverlayContent({
   canvasPixelCssSize?: string;
   reserveText?: string | null;
   showCursor?: boolean;
-  /** Apply handwriting clipping to the shrink-to-fit painted node. */
+  /** Apply write-on progress to ink-reveal or centerline handwriting. */
   revealProgress?: number;
   children?: ReactNode;
 }) {
@@ -117,6 +118,37 @@ export function TextElementOverlayContent({
     strokeWidth,
     canvasPixelCssSize,
   });
+  if (layout.effect === "handwriting") {
+    return (
+      <div
+        data-handwriting-reveal=""
+        style={{
+          display: "flex",
+          justifyContent:
+            layout.alignment === "left"
+              ? "flex-start"
+              : layout.alignment === "right"
+                ? "flex-end"
+                : "center",
+          fontSize,
+        }}
+      >
+        <HandwritingText
+          text={typeof content === "string" ? content : layout.text}
+          revealProgress={revealProgress ?? 1}
+          color={layout.color}
+          maxWidthEm={layout.maxWidthPx / Math.max(1, layout.sizePx)}
+          alignment={layout.alignment}
+          letterSpacingEm={layout.letterSpacingEm}
+          lineSpacing={layout.lineSpacing}
+          outlineWidthEm={layout.strokeWidth / Math.max(1, layout.sizePx)}
+          shadowEnabled={layout.shadowEnabled}
+          glowColor={layout.glowColor}
+          glowStrength={layout.glowStrength}
+        />
+      </div>
+    );
+  }
   const handwritingStyle: CSSProperties | undefined =
     revealProgress === undefined
       ? undefined
@@ -171,7 +203,7 @@ export function TextElementOverlayContent({
 
   return (
     <div
-      data-handwriting-reveal=""
+      data-ink-reveal=""
       style={{
         display: "flex",
         justifyContent:
@@ -233,7 +265,7 @@ export default function TextElementOverlayLayer({
               layout.strokeWidth > 0 ? `${(layout.strokeWidth / CANVAS_H) * 100}cqh` : null
             }
             revealProgress={
-              layout.effect === "handwriting"
+              layout.effect === "handwriting" || layout.effect === "ink-reveal"
                 ? reducedMotion || currentTime === undefined
                   ? 1
                   : animationStateAt(

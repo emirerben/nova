@@ -1,0 +1,21 @@
+{
+  "overlays": [
+    {
+      "text": "FIELD NOTES",
+      "effect": "ink-reveal",
+      "font_family": "Patrick Hand",
+      "text_size_px": 132,
+      "position_x_frac": 0.08,
+      "position_y_frac": 0.28,
+      "text_anchor": "left",
+      "vertical_anchor": "top",
+      "text_color": "#FF484C",
+      "stroke_width": 2,
+      "shadow_enabled": true,
+      "letter_spacing": 0.04,
+      "rotation_deg": -4,
+      "start_s": 0.0,
+      "end_s": 4.0
+    }
+  ]
+}

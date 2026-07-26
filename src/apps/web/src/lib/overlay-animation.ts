@@ -534,7 +534,7 @@ export function animationStateAt(
       }
     }
     // else scale = 1.0 (identity)
-  } else if (effect === "handwriting") {
+  } else if (effect === "handwriting" || effect === "ink-reveal") {
     revealProgress = handwritingProgressAt(tLocal, durationS);
   } else if (effect === "dissolve-out") {
     dissolveProgress = dissolveOutProgressAt(tLocal, durationS);
@@ -572,7 +572,13 @@ export function sequenceFadeOutAlphaAt(
   return Math.max(0, 1 - progress * progress);
 }
 
-const SEQUENCE_FADE_EFFECTS = new Set(["fade-in", "handwriting", "static", "none"]);
+const SEQUENCE_FADE_EFFECTS = new Set([
+  "fade-in",
+  "handwriting",
+  "ink-reveal",
+  "static",
+  "none",
+]);
 
 /** Apply the sequence tail only to the same role/effect matrix as Skia's
  * `_is_sequence_overlay`. Lyric lines carry the same field name but use their

@@ -5063,9 +5063,10 @@ def _burn_text_overlays(
     """Burn text overlays onto the joined video.
 
     Renderer dispatch:
-      - When `use_skia=True` AND `settings.text_renderer_skia_enabled`,
+      - When `use_skia=True`, or any overlay uses authored centerline
+        handwriting, AND `settings.text_renderer_skia_enabled`,
         delegates to `text_overlay_skia.burn_text_overlays_skia`. Used for
-        agentic templates and music jobs.
+        agentic templates, music jobs, and handwriting on classic templates.
       - Otherwise (classic non-music + non-agentic OR kill switch off),
         runs the Pillow + libass two-pass overlay model below.
 
@@ -5088,7 +5089,8 @@ def _burn_text_overlays(
     """
     from app.config import settings  # noqa: PLC0415
 
-    if use_skia and settings.text_renderer_skia_enabled:
+    needs_handwriting_skia = any(o.get("effect") == "handwriting" for o in overlays)
+    if (use_skia or needs_handwriting_skia) and settings.text_renderer_skia_enabled:
         from app.pipeline.text_overlay_skia import (  # noqa: PLC0415
             burn_text_overlays_skia,
         )
