@@ -75,6 +75,18 @@ export interface TextElementBar {
    * Render-only compositing flag — the canvas preview cannot segment the
    * subject, so this has no visual effect here beyond the inspector toggle. */
   behind_subject?: boolean;
+  /** Smart Captions v2 role (chunker-assigned, read-only in the editor).
+   * narrated_caption bars only — mirrors CaptionCue.smart_role. Drives the
+   * inspector's role badge; undefined for legacy/plain cues. */
+  smart_role?: "hook" | "context_shift" | "list_item" | "example" | "payoff" | "cta" | null;
+  /** Smart Captions ASS style token. Server-authored by default, but the
+   * editor's "Emphasize" toggle can set/clear it (mirrors CaptionCue.smart_style,
+   * routes/generative_jobs.py). undefined = untouched (Save preserves whatever
+   * the original cue carried); null/a token = an explicit user edit. */
+  smart_style?: "hook" | "context" | "list_item" | "example" | "payoff" | "cta" | null;
+  /** Emphasis flag toggled alongside smart_style — mirrors CaptionCue.smart_emphasis.
+   * Same undefined-vs-explicit-value convention as smart_style. */
+  smart_emphasis?: boolean | null;
 }
 
 const LYRIC_ALLOWED_PATCH_FIELDS = new Set([

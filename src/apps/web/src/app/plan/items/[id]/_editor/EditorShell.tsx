@@ -1252,6 +1252,24 @@ export default function EditorShell({
         : null,
     [selection, visibleTextBars],
   );
+  // 4b merge-with-neighbor: whether the selected caption cue has an earlier /
+  // later caption bar it can fold into. Chronological order (not bar array
+  // order) since bars can be reordered by edits.
+  const captionMergeAvailability = useMemo(() => {
+    if (!selectedBar || !isCaptionBar(selectedBar)) {
+      return { canMergePrev: false, canMergeNext: false };
+    }
+    const captionBars = visibleTextBars
+      .filter(isCaptionBar)
+      .slice()
+      .sort((a, b) => a.start_s - b.start_s);
+    const index = captionBars.findIndex((b) => b.id === selectedBar.id);
+    return {
+      canMergePrev: index > 0,
+      canMergeNext: index >= 0 && index < captionBars.length - 1,
+    };
+  }, [selectedBar, visibleTextBars]);
+
   const clipSourceDurations = useMemo(() => {
     const out: Record<string, number | null> = {};
     for (const slot of slots) {
@@ -2003,7 +2021,11 @@ export default function EditorShell({
         const hasCaptionCuePatch =
           Object.prototype.hasOwnProperty.call(patch, "start_s") ||
           Object.prototype.hasOwnProperty.call(patch, "end_s") ||
-          Object.prototype.hasOwnProperty.call(patch, "text");
+          Object.prototype.hasOwnProperty.call(patch, "text") ||
+          // 4b Emphasize toggle: sets/clears smart_emphasis + smart_style,
+          // which persist through the same cue-list PATCH as text/timing.
+          Object.prototype.hasOwnProperty.call(patch, "smart_style") ||
+          Object.prototype.hasOwnProperty.call(patch, "smart_emphasis");
         const metaPatch = captionMetaPatchFromCaptionBarPatch(patch);
         if (!hasCaptionCuePatch && Object.keys(metaPatch).length === 0) {
           return;
@@ -2036,6 +2058,37 @@ export default function EditorShell({
       state.bars,
       variant,
     ],
+  );
+
+  // 4b merge-with-neighbor: folds an orphan caption fragment into its
+  // chronological prev/next cue (concatenated text, extended end_s), then
+  // removes the absorbed bar. One history step, mirroring `deleteSelected`'s
+  // record-then-dispatch shape so the merge undoes atomically.
+  const mergeCaptionCue = useCallback(
+    (direction: "prev" | "next") => {
+      if (readOnly) return;
+      if (!selection || selection.kind !== "text") return;
+      const captionBars = state.bars
+        .filter(isCaptionBar)
+        .slice()
+        .sort((a, b) => a.start_s - b.start_s);
+      const index = captionBars.findIndex((b) => b.id === selection.id);
+      if (index < 0) return;
+      const neighbor = captionBars[direction === "prev" ? index - 1 : index + 1];
+      if (!neighbor) return;
+      const current = captionBars[index];
+      const [earlier, later] = direction === "prev" ? [neighbor, current] : [current, neighbor];
+      history.record();
+      setCaptionDirty(true);
+      dispatch({
+        type: "PATCH_BAR",
+        id: earlier.id,
+        patch: { text: `${earlier.text} ${later.text}`.trim(), end_s: later.end_s },
+      });
+      dispatch({ type: "DELETE_BAR", id: later.id });
+      selectText(earlier.id);
+    },
+    [history, readOnly, selectText, selection, state.bars],
   );
 
   const selectedTextMotion = useMemo(
@@ -4882,6 +4935,9 @@ export default function EditorShell({
             !!selectedBar && !readOnly && (isMasonryVariant(variant) || !!smartPlacementCandidate)
           }
           onSmartPlace={applySelectedSmartPlacement}
+          onMergeCaptionCue={mergeCaptionCue}
+          canMergeCaptionPrev={!readOnly && captionMergeAvailability.canMergePrev}
+          canMergeCaptionNext={!readOnly && captionMergeAvailability.canMergeNext}
           onClose={clear}
           onPickPreset={pickPreset}
         />

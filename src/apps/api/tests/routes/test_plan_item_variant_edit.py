@@ -1110,6 +1110,69 @@ def test_edit_captions_persists_cues(client: TestClient) -> None:
     ]
 
 
+def test_edit_captions_persists_client_set_smart_style_and_emphasis(client: TestClient) -> None:
+    # 4b: the editor's Emphasize toggle round-trips smart_style/smart_emphasis
+    # through this SAME endpoint (no dedicated emphasis endpoint) — the toggle
+    # ON case (sets both) and the clear case (nulls both) on separate cues.
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job, item], plan)
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/captions",
+        json={
+            "cues": [
+                {
+                    "text": "we flew to Turkey",
+                    "start_s": 0.0,
+                    "end_s": 1.2,
+                    "smart_role": "hook",
+                    "smart_style": "hook",
+                    "smart_emphasis": True,
+                },
+                {
+                    "text": "for the summer",
+                    "start_s": 1.2,
+                    "end_s": 2.2,
+                    "smart_role": "context_shift",
+                    "smart_style": None,
+                    "smart_emphasis": False,
+                },
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    cues = job.assembly_plan["variants"][0]["caption_cues"]
+    assert cues[0]["smart_style"] == "hook"
+    assert cues[0]["smart_emphasis"] is True
+    assert cues[0]["smart_role"] == "hook"
+    assert cues[1].get("smart_style") is None
+    assert cues[1]["smart_emphasis"] is False
+
+
+def test_edit_captions_rejects_smart_style_outside_closed_set(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job, item], plan)
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/captions",
+        json={
+            "cues": [
+                {
+                    "text": "could",
+                    "start_s": 0.0,
+                    "end_s": 1.0,
+                    "smart_style": "not_a_real_style",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 422
+
+
 # ── caption font (editor font picker for narrated captions) ───────────────────
 
 _VALID_CAPTION_FONT = "TikTok Sans Bold"  # a known non-deprecated registry font

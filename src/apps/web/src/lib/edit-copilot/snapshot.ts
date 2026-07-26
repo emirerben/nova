@@ -165,6 +165,11 @@ export interface CopilotCaptionCueSnapshot {
   text: string;
   start_s: number;
   end_s: number;
+  /** Server-authored role (chunker's SemanticRole vocabulary) — read-only,
+   * never settable via a copilot op. Mirrors CaptionCue.smart_role. */
+  smart_role?: "hook" | "context_shift" | "list_item" | "example" | "payoff" | "cta" | null;
+  /** Toggled by set_caption_emphasis. Mirrors CaptionCue.smart_emphasis. */
+  smart_emphasis?: boolean | null;
 }
 
 export interface CopilotCaptionMetaSnapshot {
@@ -264,6 +269,8 @@ export interface CaptionCueLike {
   text: string;
   start_s: number;
   end_s: number;
+  smart_role?: "hook" | "context_shift" | "list_item" | "example" | "payoff" | "cta" | null;
+  smart_emphasis?: boolean | null;
 }
 
 export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
@@ -474,6 +481,8 @@ export function buildCopilotSnapshot(
     text: bar.text,
     start_s: bar.start_s,
     end_s: bar.end_s,
+    smart_role: bar.smart_role ?? null,
+    smart_emphasis: bar.smart_emphasis ?? null,
   }));
   const allowedOptions: AllowedOpFamilyOptions = {
     ...options,
@@ -609,6 +618,8 @@ export function buildCopilotSnapshot(
         text: cue.text.slice(0, 80),
         start_s: roundCopilotNumber(cue.start_s),
         end_s: roundCopilotNumber(cue.end_s),
+        smart_role: cue.smart_role ?? null,
+        smart_emphasis: cue.smart_emphasis ?? null,
       })),
       meta: {
         enabled: options.captionMeta.enabled,
