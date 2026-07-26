@@ -4,6 +4,8 @@ import { ImageResponse } from "next/og";
 
 import { GET } from "@/app/opengraph-image/v1/route";
 import {
+  SOCIAL_IMAGE_ALT,
+  SOCIAL_IMAGE_HEADLINE_LINES,
   SOCIAL_IMAGE_PATH,
   SOCIAL_IMAGE_SIZE,
   SOCIAL_IMAGE_VERSION,
@@ -19,6 +21,16 @@ jest.mock("next/og", () => ({
 }));
 
 describe("/opengraph-image/v1", () => {
+  it("uses the approved social-card headline", () => {
+    expect(SOCIAL_IMAGE_HEADLINE_LINES).toEqual([
+      "The AI agent for",
+      "content creators",
+    ]);
+    expect(SOCIAL_IMAGE_ALT).toBe(
+      "Kria — the AI agent for content creators",
+    );
+  });
+
   it("uses a content-versioned URL for immutable social caches", () => {
     expect(SOCIAL_IMAGE_VERSION).toBe("v1");
     expect(SOCIAL_IMAGE_PATH).toBe("/opengraph-image/v1");

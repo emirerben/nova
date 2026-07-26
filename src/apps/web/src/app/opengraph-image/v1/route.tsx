@@ -5,7 +5,10 @@ import { ImageResponse } from "next/og";
 
 import { KriaMarkSvg } from "@/components/KriaMark";
 import { APEX_WEB_ORIGIN, BRAND_NAME } from "@/lib/brand";
-import { SOCIAL_IMAGE_SIZE } from "@/lib/site-metadata";
+import {
+  SOCIAL_IMAGE_HEADLINE_LINES,
+  SOCIAL_IMAGE_SIZE,
+} from "@/lib/site-metadata";
 
 const frauncesBold = readFile(
   path.join(
@@ -100,7 +103,7 @@ export async function GET() {
                 letterSpacing: "-0.055em",
               }}
             >
-              Your content career,
+              {SOCIAL_IMAGE_HEADLINE_LINES[0]}
             </div>
             <div
               style={{
@@ -119,7 +122,7 @@ export async function GET() {
                   letterSpacing: "-0.055em",
                 }}
               >
-                on autopilot.
+                {SOCIAL_IMAGE_HEADLINE_LINES[1]}
               </span>
               <span
                 style={{

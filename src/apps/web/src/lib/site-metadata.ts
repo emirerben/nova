@@ -9,8 +9,11 @@ export const SOCIAL_IMAGE_SIZE = {
   width: 1200,
   height: 630,
 } as const;
-export const SOCIAL_IMAGE_ALT =
-  "Kria — your AI content agent for planning and editing short-form video";
+export const SOCIAL_IMAGE_HEADLINE_LINES = [
+  "The AI agent for",
+  "content creators",
+] as const;
+export const SOCIAL_IMAGE_ALT = "Kria — the AI agent for content creators";
 
 const PRIVATE_ROBOTS: Metadata["robots"] = {
   index: false,
