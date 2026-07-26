@@ -73,6 +73,21 @@ jobs:
           docker run --rm --entrypoint python nova-build-test:ci -c \
             'import cv2, skia, mediapipe; print("cv2/skia/mediapipe import OK")'
 
+      - name: Smoke-check Python motion runtime discovery
+        run: |
+          docker run --rm --entrypoint python \
+            -e STORAGE_BUCKET=test \
+            -e DATABASE_URL=postgresql://test:test@localhost/test \
+            nova-build-test:ci -c '
+          from pathlib import Path
+          from app.pipeline.motion_scene import _runtime_root, validate_motion_instances
+
+          runtime = _runtime_root()
+          assert runtime == Path("/app/motion-runtime"), runtime
+          assert validate_motion_instances([]) == []
+          print("Python motion runtime discovery passed")
+          '
+
       - name: Smoke-check offline CanvasKit motion renderer
         run: |
           docker run --rm --entrypoint sh nova-build-test:ci -c '

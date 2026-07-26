@@ -19,6 +19,34 @@ def _scene() -> dict:
     }
 
 
+@pytest.mark.parametrize("variant", [{}, {"motion_scenes": []}])
+def test_no_motion_scenes_skip_runtime_validation(monkeypatch, variant) -> None:
+    def fail_if_called(_value):
+        raise AssertionError("no-motion reburn must not load the optional runtime")
+
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene.validate_motion_instances",
+        fail_if_called,
+    )
+
+    assert gb._ensure_motion_base(
+        job_id="job-1",
+        variant_id="variant-1",
+        variant=variant,
+        base_gcs_path="clean-base.mp4",
+    ) == ("clean-base.mp4", None)
+
+
+def test_malformed_falsey_motion_scenes_are_still_validated() -> None:
+    with pytest.raises(ValueError, match="is not of type 'array'"):
+        gb._ensure_motion_base(
+            job_id="job-1",
+            variant_id="variant-1",
+            variant={"motion_scenes": {}},
+            base_gcs_path="clean-base.mp4",
+        )
+
+
 def test_stale_motion_cache_is_rebuilt_with_required_runtime(monkeypatch) -> None:
     calls: list[dict] = []
     monkeypatch.setattr(settings, "motion_scenes_enabled", True)
