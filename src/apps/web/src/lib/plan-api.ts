@@ -764,6 +764,8 @@ export interface MediaOverlay {
    *  card's window (position/scale ignored at render but preserved for
    *  toggle-back). Absent/unknown coerces to "pip" on the server. */
   display_mode?: "pip" | "fullscreen";
+  /** Optional exit treatment. Absent/unknown coerces to "none" on the server. */
+  exit_token?: "none" | "dissolve-out";
   /** When the overlay is visible on the main video timeline. */
   start_s: number;
   end_s: number;
@@ -911,6 +913,7 @@ export interface TextElement {
     | "typewriter"
     | "stream-in"
     | "staggered-slice"
+    | "dissolve-out"
     | "bounce"
     | "slide-in"
     | null;

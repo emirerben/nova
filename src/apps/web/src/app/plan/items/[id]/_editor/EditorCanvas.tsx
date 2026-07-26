@@ -41,6 +41,11 @@ import {
 import { isCaptionBar } from "./editor-bars";
 import {
   animationStateAt,
+  DISSOLVE_OUT_PARAMS,
+  dissolveOutAlphaAt,
+  dissolveOutDisplacementScaleAt,
+  dissolveOutProgressAt,
+  dissolveOutTransformScaleAt,
   normalizeAnimatedRevealText,
   sequenceOverlayFadeOutAlphaAt,
   staggeredSlicePreviewVisibleAt,
@@ -79,6 +84,7 @@ import VisualBlocksLayer from "./VisualBlocksLayer";
 const SCALE_MIN_PX = 24;
 const SCALE_MAX_PX = 250;
 const DEFAULT_CANVAS = { w: CANVAS_W, h: CANVAS_H };
+const DISSOLVE_PREVIEW_FILTER_ID = "nova-editor-dissolve-preview";
 
 /** Pointer movement (px) under which a pointerdown+up counts as a CLICK
  * (triggers overlap cycling) rather than a drag. */
@@ -106,6 +112,25 @@ interface DragState {
   moved: boolean;
   /** Hits (topmost first) captured at pointerdown — used for click-cycling. */
   hits: string[];
+}
+
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(media.matches);
+    update();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener("change", update);
+    }
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+  return reduced;
 }
 
 type DragOverride =
@@ -230,6 +255,7 @@ export default function EditorCanvas({
   // Transient per-drag override so a gesture is ONE history entry (the
   // PATCH_BAR dispatch happens on pointerup, not per pointermove).
   const [dragOverride, setDragOverride] = useState<DragOverride | null>(null);
+  const reducedMotion = usePrefersReducedMotion();
 
   // Measure the stage so 1080×1920-scale px project onto the rendered box.
   useEffect(() => {
@@ -718,6 +744,28 @@ export default function EditorCanvas({
     transformOrigin: "50% 50%",
     zIndex: EDITOR_STAGE_Z.video,
   };
+  const cssPixelsPerCanvasPixel = stageSize.h > 0 ? stageSize.h / canvas.h : 0;
+  const dissolvePreviewProgress = reducedMotion
+    ? 0
+    : Math.max(
+        0,
+        ...visible.map((layout) => {
+          const effect = barById.get(layout.id)?.effect ?? "static";
+          return effect === "dissolve-out"
+            ? dissolveOutProgressAt(currentTime - layout.start_s, layout.end_s - layout.start_s)
+            : 0;
+        }),
+        ...visibleMediaOverlays.map(({ card }) =>
+          card.exit_token === "dissolve-out"
+            ? dissolveOutProgressAt(currentTime - card.start_s, card.end_s - card.start_s)
+            : 0,
+        ),
+      );
+  const dissolvePreviewScale = dissolveOutDisplacementScaleAt(
+    dissolvePreviewProgress,
+    cssPixelsPerCanvasPixel,
+    true,
+  );
 
   return (
     <div
@@ -754,6 +802,58 @@ export default function EditorCanvas({
               if (tool === "select" && e.target === e.currentTarget) onClearSelection();
             }}
           >
+            <svg
+              aria-hidden
+              className="pointer-events-none absolute h-0 w-0"
+              focusable="false"
+            >
+              <defs>
+                <filter
+                  id={DISSOLVE_PREVIEW_FILTER_ID}
+                  x="-200%"
+                  y="-200%"
+                  width="500%"
+                  height="500%"
+                  colorInterpolationFilters="sRGB"
+                >
+                  <feTurbulence
+                    type="fractalNoise"
+                    baseFrequency={DISSOLVE_OUT_PARAMS.baseFrequency}
+                    numOctaves="1"
+                    result="bigNoise"
+                  />
+                  <feComponentTransfer in="bigNoise" result="bigNoiseAdjusted">
+                    <feFuncR
+                      type="linear"
+                      slope={DISSOLVE_OUT_PARAMS.coherence}
+                      intercept={-((DISSOLVE_OUT_PARAMS.coherence - 1) / 2)}
+                    />
+                    <feFuncG
+                      type="linear"
+                      slope={DISSOLVE_OUT_PARAMS.coherence}
+                      intercept={-((DISSOLVE_OUT_PARAMS.coherence - 1) / 2)}
+                    />
+                  </feComponentTransfer>
+                  <feTurbulence
+                    type="fractalNoise"
+                    baseFrequency={DISSOLVE_OUT_PARAMS.fineFrequency}
+                    numOctaves="1"
+                    result="fineNoise"
+                  />
+                  <feMerge result="mergedNoise">
+                    <feMergeNode in="bigNoiseAdjusted" />
+                    <feMergeNode in="fineNoise" />
+                  </feMerge>
+                  <feDisplacementMap
+                    in="SourceGraphic"
+                    in2="mergedNoise"
+                    scale={dissolvePreviewScale}
+                    xChannelSelector="R"
+                    yChannelSelector="G"
+                  />
+                </filter>
+              </defs>
+            </svg>
             {virtualPreview ? (
               <>
                 <video
@@ -878,6 +978,7 @@ export default function EditorCanvas({
                     key={overlay.card.id}
                     overlay={overlay}
                     currentTimeS={currentTime}
+                    reducedMotion={reducedMotion}
                     selected={selectedOverlayId === overlay.card.id}
                     flashing={flashOverlayIds?.has(overlay.card.id) ?? false}
                     suggested={suggestedOverlayIds?.has(overlay.card.id) ?? false}
@@ -980,9 +1081,19 @@ export default function EditorCanvas({
                       style={{
                         ...baseStyle,
                         opacity: animation.alpha * transition.alpha * fadeOutAlpha,
+                        filter:
+                          !reducedMotion && animation.dissolveProgress > 0
+                            ? `url(#${DISSOLVE_PREVIEW_FILTER_ID})`
+                            : undefined,
                         transform: `${baseStyle.transform ?? ""} translateY(${
                           (animation.yTranslate / canvas.h) * stageSize.h
-                        }px) scale(${animation.scale * transition.scale})`,
+                        }px) scale(${
+                          animation.scale *
+                          transition.scale *
+                          (reducedMotion
+                            ? 1
+                            : dissolveOutTransformScaleAt(animation.dissolveProgress))
+                        })`,
                         transformOrigin: `calc(50% + ${
                           ((transition.scaleOriginX || animation.scaleOriginX) / canvas.w) *
                           stageSize.w
@@ -1178,6 +1289,7 @@ export default function EditorCanvas({
 function MediaOverlayCard({
   overlay,
   currentTimeS,
+  reducedMotion,
   selected,
   flashing = false,
   suggested = false,
@@ -1194,6 +1306,7 @@ function MediaOverlayCard({
 }: {
   overlay: VisibleMediaOverlay;
   currentTimeS: number;
+  reducedMotion: boolean;
   selected: boolean;
   flashing?: boolean;
   /** ✓-accepted AI suggestion, unsaved — dashed lime outline + ✦ marker. */
@@ -1217,6 +1330,19 @@ function MediaOverlayCard({
   const xFrac = dragOverride?.x_frac ?? card.x_frac;
   const yFrac = dragOverride?.y_frac ?? card.y_frac;
   const scale = dragOverride?.scale ?? card.scale;
+  const durationS = Math.max(0.01, card.end_s - card.start_s);
+  const progress =
+    card.exit_token === "dissolve-out"
+      ? dissolveOutProgressAt(currentTimeS - card.start_s, durationS)
+      : 0;
+  const mediaStyle =
+    progress > 0
+      ? {
+          opacity: dissolveOutAlphaAt(progress),
+          filter: !reducedMotion ? `url(#${DISSOLVE_PREVIEW_FILTER_ID})` : undefined,
+          transform: !reducedMotion ? `scale(${dissolveOutTransformScaleAt(progress)})` : undefined,
+        }
+      : undefined;
   return (
     <div
       ref={setRef}
@@ -1248,6 +1374,7 @@ function MediaOverlayCard({
           src={displayUrl}
           alt=""
           className="h-auto w-full rounded"
+          style={mediaStyle}
           draggable={false}
           onError={() => setPreviewFailed(true)}
         />
@@ -1258,9 +1385,13 @@ function MediaOverlayCard({
           trimEnd={card.clip_trim_end_s ?? null}
           cardStartS={card.start_s}
           currentTimeS={currentTimeS}
+          style={mediaStyle}
         />
       ) : (
-        <div className="flex aspect-[4/3] w-full items-center justify-center rounded border border-dashed border-zinc-300 bg-white/90 px-3 text-center text-[11px] font-medium text-[#3f3f46] shadow-sm">
+        <div
+          className="flex aspect-[4/3] w-full items-center justify-center rounded border border-dashed border-zinc-300 bg-white/90 px-3 text-center text-[11px] font-medium text-[#3f3f46] shadow-sm"
+          style={mediaStyle}
+        >
           Preview unavailable
         </div>
       )}
@@ -1337,12 +1468,14 @@ function EditorVideoOverlayPreview({
   trimEnd,
   cardStartS,
   currentTimeS,
+  style,
 }: {
   src: string;
   trimStart: number;
   trimEnd: number | null;
   cardStartS: number;
   currentTimeS: number;
+  style?: React.CSSProperties;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
 
@@ -1365,6 +1498,7 @@ function EditorVideoOverlayPreview({
       loop
       playsInline
       className="h-auto w-full rounded"
+      style={style}
     />
   );
 }

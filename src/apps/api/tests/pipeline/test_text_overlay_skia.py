@@ -126,6 +126,32 @@ def test_font_resolved_event_no_trace_context_does_not_raise(tmp_workdir):
     assert tos._generate_overlay_sequence(overlay, tmp_workdir, 8) is not None
 
 
+def test_dissolve_out_renders_skia_dissolve_sequence(tmp_workdir):
+    overlay = {
+        "text": "vanish",
+        "effect": "dissolve-out",
+        "text_size_px": 90,
+        "start_s": 0.0,
+        "end_s": 0.2,
+    }
+
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 9)
+
+    assert seq is not None
+    assert seq["effect"] == "dissolve-out"
+    assert seq["dissolve_renderer"] == "skia"
+    assert seq["is_animated"] is True
+    assert seq["n_frames"] > 1
+    first = Image.open(seq["first_frame"]).convert("RGBA")
+    last_path = os.path.join(
+        tmp_workdir,
+        f"skia_overlay_{9:03d}_f{seq['n_frames'] - 1:04d}.png",
+    )
+    last = Image.open(last_path).convert("RGBA")
+    assert first.getchannel("A").getextrema()[1] > 0
+    assert last.getchannel("A").getextrema()[1] == 0
+
+
 # -- Turkish-diacritic glyph coverage (TR regression) -------------------------
 #
 # Adding Turkish-language support to intro_writer/overlay_format_matcher is

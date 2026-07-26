@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.agents._schemas.media_overlay import MediaOverlay
 from app.pipeline import media_overlay as mo
 from app.pipeline.media_overlay import build_media_overlay_command
@@ -199,6 +201,36 @@ class TestAlphaCards:
             card_has_alpha=[False],
         )
         assert explicit_false == baseline
+
+    def test_exit_token_none_is_byte_identical_to_default(self):
+        card = _card_img()
+        baseline = _build([card], local_paths=["/tmp/card.jpg"])
+        explicit_none = build_media_overlay_command(
+            "/tmp/base.mp4",
+            [card.model_copy(update={"exit_token": "none"})],
+            ["/tmp/card.jpg"],
+            [card.card_width_px()],
+            "/tmp/out.mp4",
+        )
+        assert explicit_none == baseline
+
+    def test_dissolve_out_requires_prepared_skia_sequence(self):
+        card = _card_img(start_s=1.0, end_s=3.0).model_copy(update={"exit_token": "dissolve-out"})
+        with pytest.raises(ValueError, match="Skia frame sequences"):
+            _build([card], local_paths=["/tmp/card.jpg"])
+
+    def test_prepared_dissolve_sequence_composites_full_canvas_overlay(self):
+        card = _card_img(start_s=1.0, end_s=3.0).model_copy(update={"exit_token": "dissolve-out"})
+        cmd = _build(
+            [card],
+            local_paths=["/tmp/dissolve_card_0_frames/frame_%04d.png"],
+        )
+        fc = _fc(cmd)
+        assert "-framerate" in cmd
+        assert "/tmp/dissolve_card_0_frames/frame_%04d.png" in cmd
+        assert "[1:v]format=rgba,setpts=PTS-STARTPTS+1.000/TB,settb=AVTB[c0]" in fc
+        assert "overlay=0:0:enable='between(t,1.000,3.000)'" in fc
+        assert "perlin=s=1080x1920" not in fc
 
     def test_fullscreen_alpha_asset_stays_flattened_command_byte_identical(self):
         card = _card_fullscreen_img()

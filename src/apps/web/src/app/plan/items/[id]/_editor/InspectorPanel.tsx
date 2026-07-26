@@ -706,6 +706,21 @@ function OverlayInspector({
         </div>
       </div>
 
+      <label className="mt-3 block border-b border-zinc-100 pb-3 text-[12px] font-semibold text-[#3f3f46]">
+        Exit
+        <select
+          aria-label="Overlay exit"
+          value={overlay.exit_token ?? "none"}
+          onChange={(e) =>
+            onPatch(overlay.id, { exit_token: e.target.value as MediaOverlay["exit_token"] })
+          }
+          className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+        >
+          <option value="none">None</option>
+          <option value="dissolve-out">Dissolve out</option>
+        </select>
+      </label>
+
       {overlay.kind === "video" && overlay.clip_duration_s != null && overlay.clip_duration_s > 0 && (
         <VideoOverlaySourceWindow
           overlay={overlay}

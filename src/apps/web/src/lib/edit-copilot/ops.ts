@@ -203,6 +203,7 @@ const ALLOWED_EFFECTS = new Set([
   "typewriter",
   "stream-in",
   "staggered-slice",
+  "dissolve-out",
   "bounce",
   "slide-in",
 ]);
