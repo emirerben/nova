@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0.0] — 2026-07-26
+
+### Added
+- **Handwriting now draws the letters themselves.** Browser previews and video renders trace the same authored monoline glyph centerlines one character at a time, using a dedicated handwriting face with matching color, tracking, wrapping, alignment, rotation, glow, outline, and shadow. Classic templates automatically route the effect through Skia so exports match the editor.
+- **The original font-preserving reveal remains available as Ink reveal.** It keeps the selected typeface and existing styling while uncovering the finished text from left to right with the same 200ms pause and two-second eased timing. Both write-on effects support long overlays, editorial sequence fade-outs, theme transitions, reduced motion, and text-behind-subject mattes.
+
 ## [0.15.2.1] — 2026-07-26
 
 ### Fixed
