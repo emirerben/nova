@@ -125,12 +125,24 @@ def _patch_reburn_helpers(monkeypatch, tmp_path):
     monkeypatch.setattr(storage, "download_to_file", _fake_download)
 
     # Probe: short video, so reveal_window_s = MAX_INTRO_S = 3.0.
-    monkeypatch.setattr(probe_mod, "probe_video", lambda _: types.SimpleNamespace(duration_s=6.0))
+    monkeypatch.setattr(
+        probe_mod,
+        "probe_video",
+        lambda _: types.SimpleNamespace(duration_s=6.0, width=1080, height=1920),
+    )
 
     # Skia burn: write a differently-sized file so the copy-through guard passes.
     burn_calls: list = []
 
-    def _fake_burn(base, overlays, out, tmpdir, *, matte=None):
+    def _fake_burn(
+        base,
+        overlays,
+        out,
+        tmpdir,
+        *,
+        matte=None,
+        input_probe=None,
+    ):
         burn_calls.append({"base": base, "overlays": overlays})
         with open(out, "wb") as fh:
             fh.write(b"\x01" * 24)

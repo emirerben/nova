@@ -295,6 +295,8 @@ def test_swap_song_happy_path(client: TestClient) -> None:
     assert call.kwargs["render_gen_id"] == job.assembly_plan["variants"][0]["render_generation_id"]
     db.commit.assert_awaited_once()
     variant = job.assembly_plan["variants"][0]
+    assert variant["music_track_id"] == "track-new"
+    assert variant["base_video_stale"] is True
     assert variant["music_start_s"] == pytest.approx(7.2)
     assert "music_window_video_duration_s" not in variant
     assert variant["lyric_line_overrides"] is None

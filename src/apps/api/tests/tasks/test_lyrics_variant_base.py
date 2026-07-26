@@ -223,11 +223,23 @@ def test_reburn_lyrics_variant_only_burns_text_elements(monkeypatch, tmp_path) -
         lambda local, gcs: f"https://signed/{gcs}",
     )
     monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: types.SimpleNamespace(duration_s=3.0, width=1080, height=1920),
+    )
+    monkeypatch.setattr(
         "app.pipeline.generative_overlays.build_persistent_intro_overlays",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("intro synthesized")),
     )
 
-    def _burn(input_path, overlays, output_path, tmpdir, *, matte=None):
+    def _burn(
+        input_path,
+        overlays,
+        output_path,
+        tmpdir,
+        *,
+        matte=None,
+        input_probe=None,
+    ):
         burned.append(overlays)
         with open(output_path, "wb") as f:
             f.write(b"final")
@@ -294,11 +306,23 @@ def test_reburn_lyrics_baked_false_variant_burns_lyric_line_elements(monkeypatch
         lambda local, gcs: f"https://signed/{gcs}",
     )
     monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: types.SimpleNamespace(duration_s=3.0, width=1080, height=1920),
+    )
+    monkeypatch.setattr(
         "app.pipeline.generative_overlays.build_persistent_intro_overlays",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("intro synthesized")),
     )
 
-    def _burn(input_path, overlays, output_path, tmpdir, *, matte=None):
+    def _burn(
+        input_path,
+        overlays,
+        output_path,
+        tmpdir,
+        *,
+        matte=None,
+        input_probe=None,
+    ):
         burned.append(overlays)
         with open(output_path, "wb") as f:
             f.write(b"final")

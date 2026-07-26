@@ -107,6 +107,7 @@ def _set_flag(monkeypatch, enabled: bool) -> None:
     # `settings.GENERATIVE_TIMELINE_EDITOR_ENABLED` directly. A lowercase patch
     # here would pass trivially against dead getattr-with-default code.
     monkeypatch.setattr(settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", enabled)
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, _ttl: f"https://signed/{path}")
 
 
 def _arm(monkeypatch, *, enabled=True, object_exists=True):
@@ -118,7 +119,7 @@ def _arm(monkeypatch, *, enabled=True, object_exists=True):
     persists: list[tuple] = []
     delays: list[tuple] = []
 
-    async def fake_persist(db, job_id, variant_id, slots):
+    async def fake_persist(db, job_id, variant_id, slots, **_kwargs):
         seq.append("persist")
         persists.append((job_id, variant_id, slots))
 
@@ -1072,6 +1073,35 @@ async def test_persist_user_timeline_none_removes_key():
     assert "user_timeline" not in row.assembly_plan["variants"][0]
     assert row.assembly_plan["variants"][0]["music_window_video_duration_s"] == pytest.approx(3.367)
     assert db.committed is True
+
+
+@pytest.mark.asyncio
+async def test_persist_user_timeline_stamps_generation_and_stale_base():
+    row = types.SimpleNamespace(
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "ready",
+                    "base_video_stale": False,
+                }
+            ]
+        }
+    )
+    db = _FakeLockingDB(row)
+
+    await gj.persist_user_timeline(
+        db,
+        str(uuid.uuid4()),
+        "song_text",
+        [{"slot_id": "s1", "duration_s": 1.5}],
+        render_gen_id="timeline-gen",
+    )
+
+    variant = row.assembly_plan["variants"][0]
+    assert variant["render_generation_id"] == "timeline-gen"
+    assert variant["render_status"] == "rendering"
+    assert variant["base_video_stale"] is True
 
 
 # ── Re-sign fix: failed re-render keeps serving the last good video ─────────────

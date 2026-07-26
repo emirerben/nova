@@ -24,6 +24,12 @@ def tmp_workdir():
         yield d
 
 
+@pytest.fixture(autouse=True)
+def _skip_canvas_probe_for_renderer_unit_tests(monkeypatch):
+    """These command-shape tests use one-byte stand-ins instead of real MP4s."""
+    monkeypatch.setattr(tos, "_validate_input_canvas", lambda *_args, **_kwargs: None)
+
+
 class _ConstantMatte:
     """Stub matte provider: reports the same mask value at every timestamp."""
 

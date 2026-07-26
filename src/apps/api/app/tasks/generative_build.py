@@ -109,6 +109,34 @@ _MIN_TALKING_HEAD_SPINE_WITH_BROLL_S = 2.0
 # cap bounds the ORM/JSONB payload materialized by one Smart render.
 _SMART_MUSIC_CANDIDATE_LIMIT = 80
 
+
+class CachedBaseUnusableError(RuntimeError):
+    """The cached fast-reburn substrate cannot be safely reused."""
+
+
+class CachedBaseProbeError(CachedBaseUnusableError):
+    """The cached fast-reburn substrate could not be inspected."""
+
+
+class CachedBaseCanvasMismatchError(CachedBaseUnusableError):
+    """A fast-reburn base belongs to a different output canvas."""
+
+    def __init__(
+        self,
+        *,
+        base_path: str,
+        expected: tuple[int, int],
+        actual: tuple[int, int],
+    ) -> None:
+        self.base_path = base_path
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            "Cached fast-reburn base canvas mismatch: "
+            f"expected {expected[0]}x{expected[1]}, got {actual[0]}x{actual[1]}"
+        )
+
+
 # Voiceover edits: the user's recorded/uploaded voice is the audio bed. `mix` is the
 # voice-prominence slider (1.0 = bed fully ducked, voice only; 0.0 = bed full).
 # Defaults differ per variant: voice-over-footage starts with footage muted, while
@@ -2142,6 +2170,8 @@ def _is_fast_reburn_eligible(
     # base can never be stretched into a landscape encode (or vice versa).
     if orientation_override is not None:
         return False
+    if existing.get("base_video_stale"):
+        return False  # a superseded base-affecting render has not landed yet
     if not existing.get("base_video_path"):
         return False  # no cached base (legacy or lyrics variant)
     text_mode = existing.get("text_mode")
@@ -2285,6 +2315,7 @@ def _run_masonry_audio_only_song_swap(
     patch: dict[str, Any] = {
         "music_track_id": track.id,
         "track_title": track.title,
+        "base_video_stale": False,
         "ok": True,
         "error": None,
         "render_error": None,
@@ -2404,6 +2435,7 @@ def _run_music_window_audio_only_swap(
     patch: dict[str, Any] = {
         "music_track_id": track.id,
         "track_title": track.title,
+        "base_video_stale": False,
         "ok": True,
         "error": None,
         "render_error": None,
@@ -3705,6 +3737,8 @@ def _reburn_text_on_base(
     intro_start_s_override: float | None = None,
     intro_end_s_override: float | None = None,
     text_behind_subject: bool | None = None,
+    storage_generation: str | None = None,
+    created_storage_paths: list[str] | None = None,
 ) -> dict:
     """Fast reburn: download base → rebuild overlay → burn → upload.
 
@@ -3741,37 +3775,120 @@ def _reburn_text_on_base(
     from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
 
     base_gcs_path = existing["base_video_path"]
-    render_base_gcs_path, visual_blocks_cache_path = _ensure_visual_blocks_base(
-        job_id=job_id,
-        variant_id=variant_id,
-        variant=existing,
-        base_gcs_path=base_gcs_path,
+    reburn_generation = storage_generation or uuid.uuid4().hex
+    rank = int(existing.get("rank") or 1)
+    reburn_output_key = _variant_storage_key(
+        job_id,
+        f"variant_{rank}_{variant_id}_text_reburn.mp4",
+        reburn_generation,
     )
-    motion_base_source_path = render_base_gcs_path
-    render_base_gcs_path, motion_cache_path = _ensure_motion_base(
-        job_id=job_id,
-        variant_id=variant_id,
-        variant=existing,
-        base_gcs_path=render_base_gcs_path,
-    )
-    visual_blocks_patch = {
-        "visual_blocks_base_path": visual_blocks_cache_path,
-        "visual_blocks_cache_stale": False,
-        "motion_base_path": motion_cache_path,
-        "motion_base_source_path": (motion_base_source_path if motion_cache_path else None),
-        "motion_cache_stale": False,
-        "motion_applied_runtime_hash": (
-            existing.get("motion_runtime_hash") if motion_cache_path else None
-        ),
-    }
+    if created_storage_paths is not None:
+        created_storage_paths.append(reburn_output_key)
+    previous_video_path = (existing.get("video_path") or "").lstrip("/") or None
     orientation = _resolve_variant_orientation(existing)
     canvas = canvas_for_orientation(orientation)
 
     with tempfile.TemporaryDirectory(prefix="nova_reburn_") as tmpdir:
         local_base = os.path.join(tmpdir, "base.mp4")
 
-        # Download the cached base
-        download_to_file(render_base_gcs_path, local_base)
+        def _download_and_validate_base(base_path: str):
+            download_to_file(base_path, local_base)
+            try:
+                probe = probe_video(local_base)
+            except Exception as exc:  # noqa: BLE001
+                record_pipeline_event(
+                    "render",
+                    "fast_reburn_base_probe_failed",
+                    {
+                        "variant_id": variant_id,
+                        "orientation": orientation,
+                        "base_path": base_path,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                raise CachedBaseProbeError(
+                    f"Cached fast-reburn base could not be probed: {type(exc).__name__}"
+                ) from exc
+            expected_canvas = (canvas.width, canvas.height)
+            actual_canvas = (int(probe.width), int(probe.height))
+            if actual_canvas != expected_canvas:
+                mismatch_data = {
+                    "variant_id": variant_id,
+                    "orientation": orientation,
+                    "base_path": base_path,
+                    "expected_width": expected_canvas[0],
+                    "expected_height": expected_canvas[1],
+                    "actual_width": actual_canvas[0],
+                    "actual_height": actual_canvas[1],
+                }
+                record_pipeline_event(
+                    "render",
+                    "fast_reburn_base_canvas_mismatch",
+                    mismatch_data,
+                )
+                raise CachedBaseCanvasMismatchError(
+                    base_path=base_path,
+                    expected=expected_canvas,
+                    actual=actual_canvas,
+                )
+            return probe
+
+        # Validate the immutable source before any visual-block or motion cache
+        # can be generated from it. A superseded orientation render may leave
+        # this path stale even though the variant's desired orientation changed.
+        base_probe = _download_and_validate_base(base_gcs_path)
+
+        visual_blocks_cache_path = None
+        motion_cache_path = None
+        try:
+            render_base_gcs_path, visual_blocks_cache_path = _ensure_visual_blocks_base(
+                job_id=job_id,
+                variant_id=variant_id,
+                variant=existing,
+                base_gcs_path=base_gcs_path,
+            )
+            if (
+                created_storage_paths is not None
+                and visual_blocks_cache_path
+                and visual_blocks_cache_path != existing.get("visual_blocks_base_path")
+            ):
+                created_storage_paths.append(visual_blocks_cache_path)
+            motion_base_source_path = render_base_gcs_path
+            render_base_gcs_path, motion_cache_path = _ensure_motion_base(
+                job_id=job_id,
+                variant_id=variant_id,
+                variant=existing,
+                base_gcs_path=render_base_gcs_path,
+            )
+            if (
+                created_storage_paths is not None
+                and motion_cache_path
+                and motion_cache_path != existing.get("motion_base_path")
+            ):
+                created_storage_paths.append(motion_cache_path)
+            if render_base_gcs_path != base_gcs_path:
+                base_probe = _download_and_validate_base(render_base_gcs_path)
+        except Exception:
+            from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+            for new_path, old_path in (
+                (visual_blocks_cache_path, existing.get("visual_blocks_base_path")),
+                (motion_cache_path, existing.get("motion_base_path")),
+            ):
+                if new_path and new_path != old_path:
+                    delete_object_best_effort(new_path)
+            raise
+        visual_blocks_patch = {
+            "visual_blocks_base_path": visual_blocks_cache_path,
+            "visual_blocks_cache_stale": False,
+            "motion_base_path": motion_cache_path,
+            "motion_base_source_path": (motion_base_source_path if motion_cache_path else None),
+            "motion_cache_stale": False,
+            "motion_applied_runtime_hash": (
+                existing.get("motion_runtime_hash") if motion_cache_path else None
+            ),
+        }
+        base_duration_s = float(base_probe.duration_s)
 
         def _burn_text_for_variant(
             input_path: str,
@@ -3793,16 +3910,12 @@ def _reburn_text_on_base(
                 overlay_dicts = [
                     {k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlay_dicts
                 ]
-                try:
-                    burn_duration_s = float(probe_video(input_path).duration_s)
-                except Exception:  # noqa: BLE001
-                    burn_duration_s = MAX_INTRO_S
                 burn_masonry_text_overlays(
                     input_path,
                     overlay_dicts,
                     output_path,
                     tmpdir,
-                    duration_s=burn_duration_s,
+                    duration_s=base_duration_s,
                     board_width=masonry_board_width_for_preset(
                         existing.get("montage_preset_rendered")
                     ),
@@ -3814,6 +3927,7 @@ def _reburn_text_on_base(
                 output_path,
                 tmpdir,
                 matte=matte,
+                input_probe=base_probe,
                 **_canvas_kwargs(canvas),
             )
 
@@ -3822,10 +3936,7 @@ def _reburn_text_on_base(
             final_path = os.path.join(tmpdir, "final.mp4")
             _lyrics_matte_path = existing.get("subject_matte_path")
             if _lyrics_burn_dicts:
-                try:
-                    _lyrics_dur = float(probe_video(local_base).duration_s)
-                except Exception:  # noqa: BLE001
-                    _lyrics_dur = MAX_INTRO_S
+                _lyrics_dur = base_duration_s or MAX_INTRO_S
                 _lyrics_matte, _lyrics_matte_path, _lyrics_burn_dicts = (
                     _resolve_subject_matte_for_burn(
                         video_path=local_base,
@@ -3843,19 +3954,20 @@ def _reburn_text_on_base(
                 )
             else:
                 shutil.copy2(local_base, final_path)
-            variant_gcs_key = (existing.get("video_path") or "").lstrip("/")
-            output_url = upload_public_read(final_path, variant_gcs_key)
+            output_url = upload_public_read(final_path, reburn_output_key)
             return {
+                **visual_blocks_patch,
                 "render_status": "ready",
                 "ok": True,
                 "render_finished_at": datetime.utcnow().isoformat() + "Z",
-                "video_path": variant_gcs_key,
+                "video_path": reburn_output_key,
                 "output_url": output_url,
                 "text_mode": text_mode,
                 "style_set_id": resolved_style_set_id,
                 "orientation": orientation,
                 "text_elements_user_edited": bool(existing.get("text_elements_user_edited")),
                 "subject_matte_path": _lyrics_matte_path,
+                "_old_video_path_for_delete": previous_video_path,
             }
 
         # ── TextElement early branch (T3 — plan-item-timeline) ──────────────
@@ -3876,11 +3988,7 @@ def _reburn_text_on_base(
                 )
                 # Subtitled text edits must not overwrite the current key. Signed URLs and
                 # CDN layers may keep serving that object, so mint a new key and delete the old.
-                _rank = int(_fresh_existing.get("rank") or existing.get("rank") or 1)
-                _te_gcs_key = (
-                    f"generative-jobs/{job_id}/variant_{_rank}_{variant_id}_text_"
-                    f"{uuid.uuid4().hex[:8]}.mp4"
-                )
+                _te_gcs_key = reburn_output_key
                 _te_output_url = upload_public_read(_te_final_path, _te_gcs_key)
                 _old_video_path = _fresh_existing.get("video_path") or existing.get("video_path")
                 return {
@@ -3907,10 +4015,7 @@ def _reburn_text_on_base(
 
             _te_burn_dicts = _text_element_burn_dicts(existing)
             _te_final_path = os.path.join(tmpdir, "final.mp4")
-            try:
-                _te_dur = float(probe_video(local_base).duration_s)
-            except Exception:  # noqa: BLE001
-                _te_dur = MAX_INTRO_S
+            _te_dur = base_duration_s
             _te_provider, _te_matte_path, _te_burn_dicts = _resolve_subject_matte_for_burn(
                 video_path=local_base,
                 overlays=_te_burn_dicts,
@@ -3922,7 +4027,7 @@ def _reburn_text_on_base(
                 variant_id=variant_id,
             )
             _burn_text_for_variant(local_base, _te_burn_dicts, _te_final_path, matte=_te_provider)
-            _te_gcs_key = (existing.get("video_path") or "").lstrip("/")
+            _te_gcs_key = reburn_output_key
             _te_output_url = upload_public_read(_te_final_path, _te_gcs_key)
             return {
                 **visual_blocks_patch,
@@ -3939,6 +4044,7 @@ def _reburn_text_on_base(
                 "text_elements_user_edited": True,
                 "text_placement_candidates": existing.get("text_placement_candidates"),
                 "subject_matte_path": _te_matte_path,
+                "_old_video_path_for_delete": previous_video_path,
             }
 
         # Resolve size (pixel-stability rule)
@@ -3956,11 +4062,8 @@ def _reburn_text_on_base(
             final_size_px = existing_size_px  # may be None; resolver handles it
             final_size_source = "computed"
 
-        # Probe base duration for reveal window
-        try:
-            base_dur = float(probe_video(local_base).duration_s)
-        except Exception:  # noqa: BLE001
-            base_dur = MAX_INTRO_S
+        # Reuse the preflight probe for the reveal window.
+        base_dur = base_duration_s
         reveal_window_s = min(base_dur, MAX_INTRO_S) if base_dur > 0 else MAX_INTRO_S
 
         final_path = os.path.join(tmpdir, "final.mp4")
@@ -4138,9 +4241,10 @@ def _reburn_text_on_base(
                     "sequence_quote": None,
                 }
 
-        # Upload final to same variant key
-        variant_gcs_key = (existing.get("video_path") or "").lstrip("/")
-        output_url = upload_public_read(final_path, variant_gcs_key)
+        # Every reburn uses a generation-scoped immutable key. The DB generation
+        # guard runs after upload, so a superseded worker must never be able to
+        # overwrite the bytes referenced by the winning variant row.
+        output_url = upload_public_read(final_path, reburn_output_key)
 
         return {
             **visual_blocks_patch,
@@ -4164,8 +4268,9 @@ def _reburn_text_on_base(
             "render_status": "ready",
             "ok": True,
             "render_finished_at": datetime.utcnow().isoformat() + "Z",
-            "video_path": variant_gcs_key,
+            "video_path": reburn_output_key,
             "output_url": output_url,
+            "_old_video_path_for_delete": previous_video_path,
             # User-pinned independent overrides — persist across re-renders.
             # _reburn_text_on_base receives the RESOLVED sticky values (caller
             # already merged explicit request > existing pin), so writing them
@@ -4978,7 +5083,11 @@ def _run_regenerate_variant(
     # documents.
     if new_track_id is not None and music_window_alignment != "preserve_cuts":
         timeline_override = None
-        _clear_user_timeline(job_id, variant_id)
+        _clear_user_timeline(
+            job_id,
+            variant_id,
+            expected_render_gen_id=render_gen_id,
+        )
     active_timeline_slots: list[dict] | None = None
     if settings.GENERATIVE_TIMELINE_EDITOR_ENABLED and (
         new_track_id is None or music_window_alignment == "preserve_cuts"
@@ -5047,6 +5156,7 @@ def _run_regenerate_variant(
             persisted_word_roles=persisted_word_roles,
         )
         _used_fast_path = False
+        fast_created_storage: list[str] = []
         try:
             result = _reburn_text_on_base(
                 job_id=job_id,
@@ -5072,12 +5182,17 @@ def _run_regenerate_variant(
                 intro_start_s_override=intro_start_s_override,
                 intro_end_s_override=intro_end_s_override,
                 text_behind_subject=text_behind_subject,
+                storage_generation=render_gen_id,
+                created_storage_paths=fast_created_storage,
             )
             _used_fast_path = True
         except Exception as _fast_exc:  # noqa: BLE001
+            _free_uncommitted_storage_paths(fast_created_storage, job_id=job_id)
             # If the base blob is gone (GCS lifecycle, deleted base, etc.), fall
             # through to the full re-render path rather than surfacing an error.
-            # Detect by checking for Google/GCS NotFound or generic download signals.
+            # A canvas mismatch means a superseded orientation render left the
+            # desired orientation paired with the previous render's base; that
+            # state also requires a source rebuild, never a resize of the stale base.
             _exc_type = type(_fast_exc).__name__
             _is_missing = (
                 "NotFound" in _exc_type
@@ -5085,9 +5200,16 @@ def _run_regenerate_variant(
                 or "does not exist" in str(_fast_exc).lower()
                 or "no such object" in str(_fast_exc).lower()
             )
-            if _is_missing:
+            _is_unusable = isinstance(_fast_exc, CachedBaseUnusableError)
+            if _is_missing or _is_unusable:
+                if isinstance(_fast_exc, CachedBaseCanvasMismatchError):
+                    event_name = "generative_fast_reburn_base_canvas_mismatch"
+                elif isinstance(_fast_exc, CachedBaseProbeError):
+                    event_name = "generative_fast_reburn_base_probe_failed"
+                else:
+                    event_name = "generative_fast_reburn_base_missing"
                 log.warning(
-                    "generative_fast_reburn_base_missing",
+                    event_name,
                     job_id=job_id,
                     variant_id=variant_id,
                     error=str(_fast_exc),
@@ -5122,10 +5244,32 @@ def _run_regenerate_variant(
                 expected_render_gen_id=render_gen_id,
                 outcome="reburn",
             ):
+                _discard_uncommitted_reburn_storage(
+                    existing,
+                    result,
+                    job_id=job_id,
+                )
+                _free_uncommitted_storage_paths(
+                    [
+                        path
+                        for path in fast_created_storage
+                        if path
+                        not in {
+                            result.get("video_path"),
+                            result.get("visual_blocks_base_path"),
+                            result.get("motion_base_path"),
+                        }
+                    ],
+                    job_id=job_id,
+                )
                 return
             _free_retired_visual_blocks_base(existing, result.get("visual_blocks_base_path"))
             _free_retired_motion_base(existing, result.get("motion_base_path"))
-            if _old_video_path_for_delete:
+            if (
+                _old_video_path_for_delete
+                and _old_video_path_for_delete != result.get("video_path")
+                and _old_video_path_for_delete != existing.get("base_video_path")
+            ):
                 from app.storage import delete_object_best_effort  # noqa: PLC0415
 
                 delete_object_best_effort(_old_video_path_for_delete)
@@ -5446,6 +5590,7 @@ def _run_regenerate_variant(
     # E1: the token check covers BOTH terminal branches (ready and failed) —
     # a superseded task's output/status must never clobber the newer commit's.
     if result.get("ok"):
+        reburn_intermediate_path: str | None = None
         latest_variant = _fresh_variant_snapshot(job_id, variant_id) or existing
         has_visual_blocks = settings.visual_blocks_enabled and bool(
             latest_variant.get("visual_blocks")
@@ -5466,48 +5611,64 @@ def _run_regenerate_variant(
             result["motion_base_source_path"] = None
             result["motion_cache_stale"] = False
             result["motion_applied_runtime_hash"] = None
+        full_reburn_created_storage: list[str] = []
         if (
             (_TEXT_ELEMENTS_ENABLED and latest_variant.get("text_elements_user_edited"))
             or has_visual_blocks
             or has_motion_scenes
         ) and result.get("base_video_path"):
-            result = {
-                **result,
-                **_reburn_text_on_base(
+            try:
+                result = {
+                    **result,
+                    **_reburn_text_on_base(
+                        job_id=job_id,
+                        variant_id=variant_id,
+                        existing={
+                            **latest_variant,
+                            **result,
+                            "text_elements": latest_variant.get("text_elements") or [],
+                            "text_elements_user_edited": bool(
+                                latest_variant.get("text_elements_user_edited")
+                            ),
+                            # A full assembly minted a new clean base; never reuse a
+                            # block composite whose audio/picture came from the old one.
+                            "visual_blocks_base_path": None,
+                            "motion_base_path": None,
+                            "motion_base_source_path": None,
+                        },
+                        agent_text=agent_text,
+                        agent_form=agent_form,
+                        text_mode=text_mode,
+                        resolved_style_set_id=resolved_style_set_id,
+                        size_override_px=resolved_size_override_px,
+                        settings=settings,
+                        sequence_allowed=allow_sequence,
+                        language=language,
+                        font_family_override=resolved_font_override,
+                        effect_override=resolved_effect_override,
+                        text_color_override=resolved_color_override,
+                        cluster_hero_font_override=resolved_cluster_hero_override,
+                        cluster_body_font_override=resolved_cluster_body_override,
+                        cluster_accent_font_override=resolved_cluster_accent_override,
+                        cluster_hero_size_px_override=resolved_cluster_hero_size_override,
+                        cluster_body_size_px_override=resolved_cluster_body_size_override,
+                        cluster_accent_size_px_override=resolved_cluster_accent_size_override,
+                        storage_generation=render_gen_id,
+                        created_storage_paths=full_reburn_created_storage,
+                    ),
+                }
+            except Exception:
+                _discard_generation_storage(
+                    result,
                     job_id=job_id,
-                    variant_id=variant_id,
-                    existing={
-                        **latest_variant,
-                        **result,
-                        "text_elements": latest_variant.get("text_elements") or [],
-                        "text_elements_user_edited": bool(
-                            latest_variant.get("text_elements_user_edited")
-                        ),
-                        # A full assembly minted a new clean base; never reuse a
-                        # block composite whose audio/picture came from the old one.
-                        "visual_blocks_base_path": None,
-                        "motion_base_path": None,
-                        "motion_base_source_path": None,
-                    },
-                    agent_text=agent_text,
-                    agent_form=agent_form,
-                    text_mode=text_mode,
-                    resolved_style_set_id=resolved_style_set_id,
-                    size_override_px=resolved_size_override_px,
-                    settings=settings,
-                    sequence_allowed=allow_sequence,
-                    language=language,
-                    font_family_override=resolved_font_override,
-                    effect_override=resolved_effect_override,
-                    text_color_override=resolved_color_override,
-                    cluster_hero_font_override=resolved_cluster_hero_override,
-                    cluster_body_font_override=resolved_cluster_body_override,
-                    cluster_accent_font_override=resolved_cluster_accent_override,
-                    cluster_hero_size_px_override=resolved_cluster_hero_size_override,
-                    cluster_body_size_px_override=resolved_cluster_body_size_override,
-                    cluster_accent_size_px_override=resolved_cluster_accent_size_override,
-                ),
-            }
+                    generation=render_gen_id,
+                )
+                _free_uncommitted_storage_paths(
+                    full_reburn_created_storage,
+                    job_id=job_id,
+                )
+                raise
+            reburn_intermediate_path = result.pop("_old_video_path_for_delete", None)
         retired_snapshot_keys: list[str] = []
         # #626: `existing` predates the minutes-long re-render — re-read so a
         # lane edit persisted mid-render (render=False autosave) is neither
@@ -5530,6 +5691,7 @@ def _run_regenerate_variant(
         # describe cuts that don't exist in the new video. (Caption archetypes
         # are rejected above, so no fresh subtitled summary is clobbered.)
         result["silence_cut"] = None
+        result["base_video_stale"] = False
         if not _update_variant_entry(
             job_id,
             variant_id,
@@ -5538,6 +5700,16 @@ def _run_regenerate_variant(
             outcome="full_render",
         ):
             _discard_generation_storage(result, job_id=job_id, generation=render_gen_id)
+            _free_uncommitted_storage_paths(
+                full_reburn_created_storage,
+                job_id=job_id,
+            )
+            if reburn_intermediate_path and reburn_intermediate_path != result.get(
+                "base_video_path"
+            ):
+                from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+                delete_object_best_effort(reburn_intermediate_path)
             return
         # Write accepted — the retired snapshot blobs are unreachable; free them
         # (D16-C) before the reapply pass mints fresh ones.
@@ -5557,6 +5729,15 @@ def _run_regenerate_variant(
             delete_object_best_effort(f"{old_matte_path}.json")
         _free_retired_visual_blocks_base(existing, result.get("visual_blocks_base_path"))
         _free_retired_motion_base(existing, result.get("motion_base_path"))
+        _free_retired_generation_outputs(existing, result, job_id=job_id)
+        if (
+            reburn_intermediate_path
+            and reburn_intermediate_path != result.get("video_path")
+            and reburn_intermediate_path != result.get("base_video_path")
+        ):
+            from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+            delete_object_best_effort(reburn_intermediate_path)
         # A full re-render re-assembles video_path without user media layers.
         _reapply_user_media_layers(
             job_id=job_id,
@@ -5574,12 +5755,25 @@ def _run_regenerate_variant(
             for k, v in result.items()
             if v is not None and k not in ("video_path", "output_url")
         }
-        _update_variant_entry(
+        failure_accepted = _update_variant_entry(
             job_id,
             variant_id,
             failure_patch,
             expected_render_gen_id=render_gen_id,
             outcome="full_render_failed",
+        )
+        if not failure_accepted:
+            _discard_generation_storage(result, job_id=job_id, generation=render_gen_id)
+            return
+        # A failed render deliberately preserves the last good video/output URL,
+        # but may persist a newly-created clean base for a later reburn. Retire
+        # only fields that actually landed, and remove the unpublished video.
+        _free_retired_generation_outputs(existing, failure_patch, job_id=job_id)
+        _discard_generation_storage(
+            result,
+            job_id=job_id,
+            generation=render_gen_id,
+            fields=("video_path",),
         )
 
 
@@ -5619,28 +5813,58 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> None:
         db.commit()
 
 
-def _clear_user_timeline(job_id: str, variant_id: str) -> None:
+def _clear_user_timeline(
+    job_id: str,
+    variant_id: str,
+    *,
+    expected_render_gen_id: str | None = None,
+) -> bool:
     """Remove the persisted `user_timeline` key from one variant entry (row-locked).
 
     `_update_variant_entry` can only merge keys, never drop them — swap-song
     needs a true removal so the variant reads as "no user edits" afterwards
     (mirrors `persist_user_timeline(..., None)` on the route side).
+
+    The generation comparison happens under the same row lock as the removal:
+    a superseded swap worker must never erase a newer editor commit's timeline.
     """
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
-            return
+            return False
         plan = dict(job.assembly_plan or {})
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
-            if v.get("variant_id") == variant_id and "user_timeline" in v:
+            if v.get("variant_id") != variant_id:
+                continue
+            current = v.get("render_generation_id")
+            if (
+                expected_render_gen_id is not None
+                and current is not None
+                and current != expected_render_gen_id
+            ):
+                log.warning(
+                    "stale_render_write_discarded",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    outcome="clear_user_timeline",
+                    expected_gen_id=expected_render_gen_id,
+                    actual_gen_id=current,
+                )
+                return False
+            if "user_timeline" in v:
                 updated = dict(v)
                 updated.pop("user_timeline", None)
                 variants[i] = updated
-                break
+            else:
+                return True
+            break
+        else:
+            return False
         plan["variants"] = variants
         job.assembly_plan = plan
         db.commit()
+    return True
 
 
 def _stale_render_discarded(
@@ -6936,7 +7160,19 @@ def _variant_storage_key(job_id: str, filename: str, generation: object = None) 
     return f"generative-jobs/{job_id}/{filename}"
 
 
-def _discard_generation_storage(result: dict, *, job_id: str, generation: object) -> None:
+def _discard_generation_storage(
+    result: dict,
+    *,
+    job_id: str,
+    generation: object,
+    fields: tuple[str, ...] = (
+        "video_path",
+        "base_video_path",
+        "subject_matte_path",
+        "visual_blocks_base_path",
+        "motion_base_path",
+    ),
+) -> None:
     """Best-effort cleanup for outputs rejected by the generation guard."""
     token = "".join(character for character in str(generation or "") if character.isalnum())[:32]
     if not token:
@@ -6944,7 +7180,7 @@ def _discard_generation_storage(result: dict, *, job_id: str, generation: object
     prefix = f"generative-jobs/{job_id}/"
     keys = {
         value
-        for field in ("video_path", "base_video_path", "subject_matte_path")
+        for field in fields
         if isinstance((value := result.get(field)), str)
         and value.startswith(prefix)
         and token in value
@@ -6957,6 +7193,62 @@ def _discard_generation_storage(result: dict, *, job_id: str, generation: object
         delete_object_best_effort(key)
         if key == result.get("subject_matte_path"):
             delete_object_best_effort(f"{key}.json")
+
+
+def _free_uncommitted_storage_paths(paths: list[str], *, job_id: str) -> None:
+    """Best-effort cleanup for task-owned keys that never won a DB write."""
+    prefix = f"generative-jobs/{job_id}/"
+    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+    for path in set(paths):
+        if path.startswith(prefix):
+            delete_object_best_effort(path)
+
+
+def _free_retired_generation_outputs(previous: dict, result: dict, *, job_id: str) -> None:
+    """Retire the last generation's video/base only after its replacement lands."""
+    prefix = f"generative-jobs/{job_id}/"
+    keep = {
+        result.get("video_path"),
+        result.get("base_video_path"),
+        result.get("visual_blocks_base_path"),
+        result.get("motion_base_path"),
+        previous.get("pre_media_overlay_video_path"),
+        previous.get("pre_sfx_video_path"),
+    }
+    keep.discard(None)
+    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+    for field in ("video_path", "base_video_path"):
+        if not result.get(field):
+            continue
+        path = previous.get(field)
+        if isinstance(path, str) and path.startswith(prefix) and path not in keep:
+            delete_object_best_effort(path)
+
+
+def _discard_uncommitted_reburn_storage(
+    previous: dict,
+    result: dict,
+    *,
+    job_id: str,
+) -> None:
+    """Delete immutable reburn outputs rejected by the DB generation guard."""
+    prefix = f"generative-jobs/{job_id}/"
+    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+    for field, previous_field in (
+        ("video_path", "video_path"),
+        ("visual_blocks_base_path", "visual_blocks_base_path"),
+        ("motion_base_path", "motion_base_path"),
+    ):
+        path = result.get(field)
+        if (
+            isinstance(path, str)
+            and path.startswith(prefix)
+            and path != previous.get(previous_field)
+        ):
+            delete_object_best_effort(path)
 
 
 def _render_generative_variant(
