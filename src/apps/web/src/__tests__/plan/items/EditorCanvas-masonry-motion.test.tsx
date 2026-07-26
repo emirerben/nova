@@ -70,6 +70,39 @@ function canvas(currentTime: number, currentVariant = variant, currentBars = [ba
 }
 
 describe("EditorCanvas masonry board motion", () => {
+  it("settles handwriting immediately when reduced motion is requested", () => {
+    const previousMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: jest.fn().mockReturnValue({
+        matches: true,
+        media: "(prefers-reduced-motion: reduce)",
+        onchange: null,
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+        addListener: jest.fn(),
+        removeListener: jest.fn(),
+        dispatchEvent: jest.fn(),
+      }),
+    });
+
+    try {
+      const handwritingBar = { ...bar, effect: "handwriting" } as TextElementBar;
+      const view = render(canvas(0.5, variant, [handwritingBar]));
+      const paintedText = view.container.querySelector<HTMLElement>(
+        "[data-handwriting-reveal] > div",
+      );
+
+      expect(paintedText).not.toBeNull();
+      expect(paintedText?.style.clipPath).toBe("");
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: previousMatchMedia,
+      });
+    }
+  });
+
   it("matches final-render pan math at 0:00 and 0:02", () => {
     const view = render(canvas(0));
     const overlay = view.container.querySelector<HTMLElement>("[data-text-id='title']");

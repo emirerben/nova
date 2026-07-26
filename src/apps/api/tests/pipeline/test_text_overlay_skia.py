@@ -766,6 +766,22 @@ def test_staggered_slice_is_animated_and_links_settled_hold_frames():
 
 
 def test_handwriting_timing_matches_css_ease_and_short_duration_compression():
+    import json
+    from pathlib import Path
+
+    from app.pipeline import text_overlay as classic_text_overlay
+
+    timing_cases = json.loads(
+        (Path(__file__).parents[1] / "fixtures" / "handwriting_timing.json").read_text()
+    )
+    for case in timing_cases:
+        expected = case["progress"]
+        args = (case["t_local"], case["duration_s"])
+        assert tos._handwriting_progress(*args) == pytest.approx(expected, abs=1e-8)
+        assert classic_text_overlay._handwriting_progress(*args) == pytest.approx(
+            expected, abs=1e-8
+        )
+
     assert tos._handwriting_progress(0.0, 4.0) == 0.0
     assert tos._handwriting_progress(0.199, 4.0) == 0.0
     assert tos._handwriting_progress(1.2, 4.0) == pytest.approx(0.8024, abs=1e-3)
@@ -782,7 +798,7 @@ def test_handwriting_reveal_is_monotonic_and_settled_frame_is_static():
     import io
 
     overlay = {
-        "text": "FIELD NOTES\nNUMBER TWO",
+        "text": "🗣️ FIELD NOTES\nNUMBER TWO",
         "effect": "handwriting",
         "font_family": "Inter",
         "text_size_px": 110,
@@ -836,6 +852,9 @@ def test_handwriting_uses_long_ceiling_and_links_only_safe_settled_frames():
         )
         is None
     )
+    # A persisted behind_subject request with no active matte degrades to normal
+    # text and may still reuse settled frames. Active mattes bypass hold planning
+    # in _generate_overlay_sequence.
     assert (
         tos._handwriting_hold_plan(
             {**overlay, "behind_subject": True},
@@ -843,8 +862,9 @@ def test_handwriting_uses_long_ceiling_and_links_only_safe_settled_frames():
             1.0 / tos.FPS,
             8.0,
         )
-        is None
+        is not None
     )
+    assert 40 * tos.FPS < tos.BEHIND_SUBJECT_FRAME_CEILING
 
 
 def test_sequence_handwriting_combines_reveal_hold_and_fade_out():

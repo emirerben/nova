@@ -480,6 +480,7 @@ export function resolveTextElementYFrac(
 export interface TextElementLayout {
   id: string;
   text: string;
+  effect: TextElement["effect"];
   /** Fractional X center [0,1].  0.5 = horizontal center. */
   xFrac: number;
   /** Fractional Y center [0,1].  Derived from x_frac/y_frac or position preset. */
@@ -539,6 +540,7 @@ export function resolveTextElementsLayout(
       // text_case resolves at layout time — the same compile-time transform
       // build_overlays_from_text_elements applies to the burn dict.
       text: applyTextCase(el.text, el.text_case),
+      effect: el.effect,
       xFrac,
       yFrac,
       xPx: xFrac * canvas.w,

@@ -224,6 +224,7 @@ export function LinearIntroTextPreview({
   const { xFrac, yFrac } = resolveAnchorFrac(params);
   const color = settledColor(params);
   const strokePx = (params.strokeWidth ?? 0) * 2 * scale;
+  const handwritingPaintBleedPx = Math.ceil(Math.max(strokePx + 2 * scale, 30 * scale));
 
   if (scale === 0 && containerWidth === 0) {
     // First paint before the ResizeObserver fires — render the measuring shell only.
@@ -281,8 +282,12 @@ export function LinearIntroTextPreview({
           clipPath:
             playState.revealProgress >= 1
               ? undefined
-              : `inset(0 ${(1 - playState.revealProgress) * 100}% 0 0)`,
-          willChange: "clip-path",
+              : `inset(-${handwritingPaintBleedPx}px calc(${
+                  (1 - playState.revealProgress) * 100
+                }% + ${
+                  (1 - 2 * playState.revealProgress) * handwritingPaintBleedPx
+                }px) -${handwritingPaintBleedPx}px -${handwritingPaintBleedPx}px)`,
+          willChange: playState.revealProgress >= 1 ? undefined : "clip-path",
         }
       : {}),
   };

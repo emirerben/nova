@@ -293,7 +293,7 @@ class TestAnimatedOverlayASS:
                     "font_family": "Inter",
                     "text_size_px": 96,
                     "text_color": "#FF484C",
-                    "outline_px": 3,
+                    "stroke_width": 3,
                     "letter_spacing": 0.04,
                     "rotation_deg": -4,
                 }],

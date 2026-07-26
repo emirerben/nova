@@ -21,6 +21,7 @@ import {
   staggeredSliceStateAt,
   themeTransitionStateAt,
 } from "@/lib/overlay-animation";
+import handwritingTiming from "../../../../api/tests/fixtures/handwriting_timing.json";
 
 describe("easeOutCubic", () => {
   it("t=0 → 0", () => {
@@ -46,6 +47,13 @@ describe("easeOutCubic", () => {
 });
 
 describe("handwritingProgressAt", () => {
+  it.each(handwritingTiming)(
+    "matches the shared renderer fixture at $t_local/$duration_s",
+    ({ t_local: tLocal, duration_s: durationS, progress }) => {
+      expect(handwritingProgressAt(tLocal, durationS)).toBeCloseTo(progress, 8);
+    },
+  );
+
   it("holds for 200ms, follows CSS ease, and settles at 2.2s", () => {
     expect(handwritingProgressAt(0, 4)).toBe(0);
     expect(handwritingProgressAt(0.199, 4)).toBe(0);

@@ -67,6 +67,9 @@ from app.pipeline.generative_overlays import (
     resolve_line_spacing,
     resolve_max_width_frac,
 )
+from app.pipeline.text_animation_math import handwriting_progress as _handwriting_progress
+from app.pipeline.text_animation_math import handwriting_settle_s as _handwriting_settle_s
+from app.pipeline.text_animation_math import motion_cubic_bezier as _motion_cubic_bezier
 from app.pipeline.text_overlay import (
     _FONT_REGISTRY,
     _FONT_SIZE_MAP,
@@ -1423,13 +1426,15 @@ def _draw_centered_text(
     canvas.scale(scale, scale)
     canvas.translate(-origin_x, -origin_y)
     if reveal_progress < 1.0:
+        reveal_left = content_left - horizontal_bleed
+        reveal_full_right = content_right + horizontal_bleed
         reveal_right = min(
-            content_right + horizontal_bleed,
-            content_left + (content_right - content_left) * reveal_progress + horizontal_bleed,
+            reveal_full_right,
+            reveal_left + (reveal_full_right - reveal_left) * reveal_progress,
         )
         canvas.clipRect(
             skia.Rect(
-                content_left - horizontal_bleed,
+                reveal_left,
                 block_top - vertical_bleed,
                 reveal_right,
                 block_top + block["block_h"] + vertical_bleed,
@@ -1785,70 +1790,6 @@ def _ease_in_out_cubic(t: float) -> float:
     if t < 0.5:
         return 4.0 * t**3
     return 1.0 - ((-2.0 * t + 2.0) ** 3) / 2.0
-
-
-def _motion_cubic_bezier(t: float, x1: float, y1: float, x2: float, y2: float) -> float:
-    """Evaluate a Motion/CSS cubic-bezier easing curve at progress t."""
-    target_x = max(0.0, min(1.0, t))
-    if target_x <= 0.0:
-        return 0.0
-    if target_x >= 1.0:
-        return 1.0
-
-    def sample(axis_1: float, axis_2: float, u: float) -> float:
-        inv = 1.0 - u
-        return 3.0 * axis_1 * inv * inv * u + 3.0 * axis_2 * inv * u * u + u**3
-
-    def sample_x(u: float) -> float:
-        return sample(x1, x2, u)
-
-    def sample_y(u: float) -> float:
-        return sample(y1, y2, u)
-
-    def sample_x_derivative(u: float) -> float:
-        inv = 1.0 - u
-        return 3.0 * x1 * inv * inv + 6.0 * (x2 - x1) * inv * u + 3.0 * (1.0 - x2) * u * u
-
-    u = target_x
-    for _ in range(8):
-        error = sample_x(u) - target_x
-        if abs(error) < 1e-6:
-            return sample_y(u)
-        derivative = sample_x_derivative(u)
-        if abs(derivative) < 1e-6:
-            break
-        u = max(0.0, min(1.0, u - error / derivative))
-
-    lower = 0.0
-    upper = 1.0
-    u = target_x
-    for _ in range(12):
-        if sample_x(u) < target_x:
-            lower = u
-        else:
-            upper = u
-        u = (lower + upper) / 2.0
-    return sample_y(u)
-
-
-_HANDWRITING_NOMINAL_DELAY_S = 0.2
-_HANDWRITING_NOMINAL_DRAW_S = 2.0
-_HANDWRITING_NOMINAL_SETTLE_S = _HANDWRITING_NOMINAL_DELAY_S + _HANDWRITING_NOMINAL_DRAW_S
-
-
-def _handwriting_progress(t_local: float, duration_s: float) -> float:
-    """Deterministic CSS-ease write-on progress; TS mirror: handwritingProgressAt."""
-    if duration_s <= 0:
-        return 1.0
-    timing_scale = min(1.0, duration_s / _HANDWRITING_NOMINAL_SETTLE_S)
-    delay_s = _HANDWRITING_NOMINAL_DELAY_S * timing_scale
-    draw_s = _HANDWRITING_NOMINAL_DRAW_S * timing_scale
-    normalized = (max(0.0, t_local) - delay_s) / max(0.001, draw_s)
-    return _motion_cubic_bezier(normalized, 0.25, 0.1, 0.25, 1.0)
-
-
-def _handwriting_settle_s(duration_s: float) -> float:
-    return max(0.0, min(_HANDWRITING_NOMINAL_SETTLE_S, duration_s))
 
 
 def _clamped_keyframes_s(keyframes_s: tuple[float, ...], duration_s: float) -> tuple[float, ...]:
@@ -2594,7 +2535,7 @@ def _handwriting_hold_plan(
         return None
     if overlay.get("role") == SEQUENCE_OVERLAY_ROLE:
         return None
-    if overlay.get("behind_subject") or _theme_transition_type(overlay) is not None:
+    if _theme_transition_type(overlay) is not None:
         return None
     settle_s = _handwriting_settle_s(duration_s)
     settled_idx = min(n_render - 1, int(math.ceil(settle_s / frame_dur - 1e-9)))
@@ -2658,18 +2599,22 @@ def _generate_overlay_sequence(
     # stages) settle visually but must stay present until their audio boundary;
     # applying the ~4s cap there chops late words/tails before the next stage.
     # They instead use a generous sanity ceiling (LONG_RUNNING_TEXT_FRAME_CEILING,
-    # or BEHIND_SUBJECT_FRAME_CEILING for behind_subject overlays — see that
-    # constant's comment) so a malformed transcript with `end_s = 240.0`
+    # or BEHIND_SUBJECT_FRAME_CEILING for behind_subject and handwriting
+    # overlays) so a malformed transcript with `end_s = 240.0`
     # cannot blow scratch disk on the encode worker:
     # 30s × 30fps = 900 frames × ~1MB PNG ≈ 1GB worst case, vs 7200 frames ×
     # 1MB ≈ 7GB unbounded.
     wanted = max(1, int(round(duration_s * FPS)))
     uses_long_ceiling = _uses_long_running_frame_ceiling(overlay)
-    # behind_subject gets the larger BEHIND_SUBJECT_FRAME_CEILING (hold-to-EOF
-    # windows must outlive the video); every other long-running effect keeps
-    # the tighter 30s LONG_RUNNING_TEXT_FRAME_CEILING. Single source of truth
-    # so the clamp below and the +1 seam-frame clamp further down can't drift.
-    long_ceiling = BEHIND_SUBJECT_FRAME_CEILING if wants_behind else LONG_RUNNING_TEXT_FRAME_CEILING
+    # behind_subject and handwriting use the larger ceiling: both can be authored
+    # across a full sub-60s output, and FFmpeg's eof_action=pass would otherwise
+    # make them vanish at 30s. Other long-running effects keep the tighter 30s
+    # ceiling. Single source of truth keeps this clamp and the +1 seam frame aligned.
+    long_ceiling = (
+        BEHIND_SUBJECT_FRAME_CEILING
+        if wants_behind or effect == "handwriting"
+        else LONG_RUNNING_TEXT_FRAME_CEILING
+    )
     if uses_long_ceiling:
         if wanted > long_ceiling:
             log.warning(
@@ -2710,6 +2655,18 @@ def _generate_overlay_sequence(
         if behind and not _is_animated(overlay)
         else None
     )
+    settled_handwriting_behind_arr = (
+        _skia_image_to_rgba_array(
+            _draw_frame(
+                overlay,
+                _handwriting_settle_s(duration_s),
+                duration_s,
+                render_canvas=render_canvas,
+            )
+        )
+        if behind and effect == "handwriting"
+        else None
+    )
     dissolve_source_img = (
         _draw_frame({**overlay, "effect": "static"}, 0.0, duration_s, render_canvas=render_canvas)
         if effect == DISSOLVE_OUT and not behind
@@ -2732,8 +2689,13 @@ def _generate_overlay_sequence(
             arr = (
                 static_behind_arr
                 if static_behind_arr is not None
-                else _skia_image_to_rgba_array(
-                    _draw_frame(overlay, t_local, duration_s, render_canvas=render_canvas)
+                else (
+                    settled_handwriting_behind_arr
+                    if settled_handwriting_behind_arr is not None
+                    and t_local >= _handwriting_settle_s(duration_s)
+                    else _skia_image_to_rgba_array(
+                        _draw_frame(overlay, t_local, duration_s, render_canvas=render_canvas)
+                    )
                 )
             )
             mask = matte.mask_at(start_s + t_local)

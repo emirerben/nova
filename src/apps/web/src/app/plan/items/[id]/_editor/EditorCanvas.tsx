@@ -1204,7 +1204,11 @@ export default function EditorCanvas({
                           }
                           showCursor={animation.showCursor}
                           revealProgress={
-                            effect === "handwriting" ? animation.revealProgress : undefined
+                            effect === "handwriting"
+                              ? reducedMotion
+                                ? 1
+                                : animation.revealProgress
+                              : undefined
                           }
                         >
                           {animation.visibleText}

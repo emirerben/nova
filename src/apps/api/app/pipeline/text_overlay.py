@@ -2,14 +2,15 @@
 
 Two rendering paths:
   - Static effects + font-cycle -> PNG images composited via FFmpeg overlay filter
-  - Animated effects (fade-in, typewriter, slide-up) -> ASS subtitle files
-    burned via FFmpeg subtitles filter
+  - Animated effects -> ASS subtitle files burned via FFmpeg subtitles filter.
+    Handwriting uses frame-sampled rectangular clips so fill, outline, and
+    shadow reveal together.
 
 Supports effects:
   - Static effects (scale-up, none): single PNG for the duration
   - font-cycle: rapid font switching -- generates one PNG per font frame, each
     with a different font, swapped via timed FFmpeg overlays (~7 changes/sec)
-  - Animated effects (fade-in, typewriter, slide-up, slide-down, pop-in, bounce): ASS subtitle files
+  - Animated effects: see ``ASS_ANIMATED_EFFECTS`` below
 
 Fonts loaded from font-registry.json (shared with frontend).
 Fallback: Pillow default if all resolution fails.
@@ -24,6 +25,10 @@ import numpy as np
 import structlog
 
 from app.pipeline.ass_utils import format_ass_time, sanitize_ass_text
+from app.pipeline.text_animation_math import (
+    HANDWRITING_NOMINAL_SETTLE_S as _HANDWRITING_NOMINAL_SETTLE_S,
+)
+from app.pipeline.text_animation_math import handwriting_progress as _handwriting_progress
 from app.pipeline.text_wrap import balanced_word_wrap_indices
 
 log = structlog.get_logger()
@@ -573,8 +578,11 @@ def generate_animated_overlay_ass(
                 position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
                 text_anchor=overlay.get("text_anchor", "center"),
-                vertical_anchor=overlay.get("vertical_anchor"),
-                outline_px=overlay.get("outline_px"),
+                outline_px=(
+                    overlay.get("outline_px")
+                    if overlay.get("outline_px") is not None
+                    else overlay.get("stroke_width")
+                ),
                 # Karaoke needs per-word timings (relative to overlay start)
                 # plus the highlight color used for "already sung" words.
                 word_timings=overlay.get("word_timings"),
@@ -1094,57 +1102,7 @@ def _emit_lyric_line_alpha_tags(
     return "{" + "".join(tags) + "}"
 
 
-_HANDWRITING_NOMINAL_DELAY_S = 0.2
-_HANDWRITING_NOMINAL_DRAW_S = 2.0
-_HANDWRITING_NOMINAL_SETTLE_S = _HANDWRITING_NOMINAL_DELAY_S + _HANDWRITING_NOMINAL_DRAW_S
 _HANDWRITING_ASS_FPS = 30
-
-
-def _handwriting_motion_ease(t: float) -> float:
-    """CSS `ease` cubic-bezier(0.25, 0.1, 0.25, 1); mirrored in Skia/TS."""
-    target_x = max(0.0, min(1.0, t))
-    if target_x <= 0.0:
-        return 0.0
-    if target_x >= 1.0:
-        return 1.0
-
-    def _sample(axis_1: float, axis_2: float, u: float) -> float:
-        inv = 1.0 - u
-        return 3.0 * axis_1 * inv * inv * u + 3.0 * axis_2 * inv * u * u + u**3
-
-    def _sample_x_derivative(u: float) -> float:
-        inv = 1.0 - u
-        return 3.0 * 0.25 * inv * inv + 6.0 * (0.25 - 0.25) * inv * u + 3.0 * (1.0 - 0.25) * u * u
-
-    u = target_x
-    for _ in range(8):
-        error = _sample(0.25, 0.25, u) - target_x
-        if abs(error) < 1e-6:
-            return _sample(0.1, 1.0, u)
-        derivative = _sample_x_derivative(u)
-        if abs(derivative) < 1e-6:
-            break
-        u = max(0.0, min(1.0, u - error / derivative))
-
-    lower = 0.0
-    upper = 1.0
-    u = target_x
-    for _ in range(12):
-        if _sample(0.25, 0.25, u) < target_x:
-            lower = u
-        else:
-            upper = u
-        u = (lower + upper) / 2.0
-    return _sample(0.1, 1.0, u)
-
-
-def _handwriting_progress(t_local: float, duration_s: float) -> float:
-    if duration_s <= 0:
-        return 1.0
-    timing_scale = min(1.0, duration_s / _HANDWRITING_NOMINAL_SETTLE_S)
-    delay_s = _HANDWRITING_NOMINAL_DELAY_S * timing_scale
-    draw_s = _HANDWRITING_NOMINAL_DRAW_S * timing_scale
-    return _handwriting_motion_ease((max(0.0, t_local) - delay_s) / max(0.001, draw_s))
 
 
 def _handwriting_ass_dialogue_events(
@@ -1157,7 +1115,6 @@ def _handwriting_ass_dialogue_events(
     font_family: str | None,
     text_size_px: int | None,
     text_anchor: str,
-    vertical_anchor: str | None,
     position_x_frac: float | None,
     position_y_frac: float | None,
     outline_tag: str,
@@ -1207,26 +1164,41 @@ def _handwriting_ass_dialogue_events(
         )
     block_h = max(line_step, line_step * len(lines))
 
-    anchor_x = int(
-        CANVAS_W * (max(0.0, min(1.0, position_x_frac)) if position_x_frac is not None else 0.5)
-    )
-    y_frac = (
-        max(0.0, min(1.0, position_y_frac))
-        if position_y_frac is not None
-        else _POSITION_Y.get(position, 0.5)
-    )
-    anchor_y = int(CANVAS_H * y_frac)
-    is_top_anchored = vertical_anchor == "top" or (
-        vertical_anchor is None and text_anchor == "left"
-    )
-    block_top = anchor_y if is_top_anchored else anchor_y - block_h / 2.0
+    explicit_position = position_x_frac is not None or position_y_frac is not None
+    if explicit_position:
+        anchor_x = int(
+            CANVAS_W * (max(0.0, min(1.0, position_x_frac)) if position_x_frac is not None else 0.5)
+        )
+        y_frac = (
+            max(0.0, min(1.0, position_y_frac))
+            if position_y_frac is not None
+            else _POSITION_Y.get(position, 0.5)
+        )
+        anchor_y = int(CANVAS_H * y_frac)
+        effective_text_anchor = text_anchor
+        # _write_animated_ass deliberately uses ASS's middle row (an4/5/6)
+        # for explicit positions, regardless of the Skia vertical-anchor hint.
+        block_top = anchor_y - block_h / 2.0
+    else:
+        alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
+        anchor_x = CANVAS_W // 2
+        effective_text_anchor = "center"
+        if alignment >= 7:
+            anchor_y = margin_v
+            block_top = float(anchor_y)
+        elif alignment <= 3:
+            anchor_y = CANVAS_H - margin_v
+            block_top = anchor_y - block_h
+        else:
+            anchor_y = CANVAS_H // 2
+            block_top = anchor_y - block_h / 2.0
 
     line_lefts: list[float] = []
     line_rights: list[float] = []
     for width in line_widths:
-        if text_anchor == "left":
+        if effective_text_anchor == "left":
             left = float(anchor_x)
-        elif text_anchor == "right":
+        elif effective_text_anchor == "right":
             left = anchor_x - width
         else:
             left = anchor_x - width / 2.0
@@ -1234,10 +1206,36 @@ def _handwriting_ass_dialogue_events(
         line_rights.append(left + width)
     content_left = min(line_lefts, default=float(anchor_x))
     content_right = max(line_rights, default=float(anchor_x))
+    content_top = float(block_top)
+    content_bottom = float(block_top + block_h)
+    safe_rotation = _finite_float(rotation_deg, 0.0)
+    if abs(safe_rotation) > 1e-6:
+        radians = math.radians(safe_rotation)
+        cos_angle = math.cos(radians)
+        sin_angle = math.sin(radians)
+        rotated = []
+        for x, y in (
+            (content_left, content_top),
+            (content_right, content_top),
+            (content_right, content_bottom),
+            (content_left, content_bottom),
+        ):
+            dx = x - anchor_x
+            dy = y - anchor_y
+            rotated.append(
+                (
+                    anchor_x + dx * cos_angle - dy * sin_angle,
+                    anchor_y + dx * sin_angle + dy * cos_angle,
+                )
+            )
+        content_left = min(x for x, _ in rotated)
+        content_right = max(x for x, _ in rotated)
+        content_top = min(y for _, y in rotated)
+        content_bottom = max(y for _, y in rotated)
     bleed = max(4.0, float(outline_px or 0) + 2.0, 18.0 if shadow_enabled else 0.0)
     clip_left = max(0, int(math.floor(content_left - bleed)))
-    clip_top = max(0, int(math.floor(block_top - bleed)))
-    clip_bottom = min(CANVAS_H, int(math.ceil(block_top + block_h + bleed)))
+    clip_top = max(0, int(math.floor(content_top - bleed)))
+    clip_bottom = min(CANVAS_H, int(math.ceil(content_bottom + bleed)))
     full_right = min(CANVAS_W, int(math.ceil(content_right + bleed)))
 
     wrapped_text = r"\N".join(lines)
@@ -1268,7 +1266,7 @@ def _handwriting_ass_dialogue_events(
         else:
             clip_right = min(
                 full_right,
-                int(math.ceil(content_left + (content_right - content_left) * progress + bleed)),
+                int(math.ceil(clip_left + (full_right - clip_left) * progress)),
             )
         row_text = (
             f"{{{base_tags}\\clip({clip_left},{clip_top},{clip_right},{clip_bottom})}}"
@@ -1299,7 +1297,6 @@ def _write_animated_ass(
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
     text_anchor: str = "center",
-    vertical_anchor: str | None = None,
     outline_px: int | None = None,
     # Karaoke-only: per-word timings relative to overlay start, and the
     # highlight color used for "already sung" words. None for non-karaoke
@@ -1571,7 +1568,6 @@ def _write_animated_ass(
             font_family=font_family,
             text_size_px=text_size_px,
             text_anchor=text_anchor,
-            vertical_anchor=vertical_anchor,
             position_x_frac=position_x_frac,
             position_y_frac=position_y_frac,
             outline_tag=outline_tag,

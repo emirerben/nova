@@ -91,6 +91,24 @@ describe("TextElementOverlayLayer", () => {
     expect(screen.queryByText("READY NOW")).not.toBeInTheDocument();
   });
 
+  it("animates authoritative handwriting elements from the video playhead", () => {
+    const handwriting = { ...element, effect: "handwriting" as const };
+    const { container, rerender } = render(
+      <TextElementOverlayLayer elements={[handwriting]} currentTime={1} />,
+    );
+    const painted = () =>
+      container.querySelector<HTMLElement>("[data-handwriting-reveal] > div");
+
+    expect(painted()?.style.clipPath).toContain("100%");
+
+    rerender(<TextElementOverlayLayer elements={[handwriting]} currentTime={2.2} />);
+    expect(painted()?.style.clipPath).toContain("calc(");
+    expect(painted()?.style.clipPath).not.toContain("100%");
+
+    rerender(<TextElementOverlayLayer elements={[handwriting]} currentTime={3.3} />);
+    expect(painted()?.style.clipPath).toBe("");
+  });
+
   it.each(["left", "center", "right"] as const)(
     "reserves settled geometry for a partial reveal while preserving %s alignment",
     (alignment) => {
@@ -151,11 +169,37 @@ describe("TextElementOverlayLayer", () => {
         display: "inline-block",
         width: "max-content",
         maxWidth: "100%",
-        clipPath: "inset(0 75% 0 0)",
         letterSpacing: "0.05em",
       });
+      expect((painted as HTMLElement).style.clipPath).toContain("75%");
+      expect((painted as HTMLElement).style.clipPath).toContain("calc(-");
+      expect((painted as HTMLElement).style.willChange).toBe("clip-path");
     },
   );
+
+  it("removes handwriting clipping and paint hints after settlement", () => {
+    const [layout] = resolveTextElementsLayout([{ ...element, text: "SETTLED" }]);
+    const { container } = render(
+      <TextElementOverlayContent layout={layout} fontSize="20px" revealProgress={1} />,
+    );
+    const painted = container.querySelector<HTMLElement>("[data-handwriting-reveal] > div");
+
+    expect(painted?.style.clipPath).toBe("");
+    expect(painted?.style.willChange).toBe("");
+  });
+
+  it("starts the handwriting clip at zero padded width", () => {
+    const [layout] = resolveTextElementsLayout([
+      { ...element, text: "INK", shadow_enabled: true },
+    ]);
+    const { container } = render(
+      <TextElementOverlayContent layout={layout} fontSize="20px" revealProgress={0} />,
+    );
+    const painted = container.querySelector<HTMLElement>("[data-handwriting-reveal] > div");
+
+    expect(painted?.style.clipPath).toContain("100%");
+    expect(painted?.style.clipPath).toContain("+ 42");
+  });
 
   it("honors explicit shadow off when no stroke is present", () => {
     render(

@@ -3909,7 +3909,7 @@ function LiveEditPreview({
       )}
       {/* N-element text overlay (T6): shows all text_elements from the API. */}
       {hasTextElements && textElements ? (
-        <TextElementOverlayLayer elements={textElements} />
+        <TextElementOverlayLayer elements={textElements} currentTime={videoTime} />
       ) : (
         // Legacy single-element preview: driven by the instant-editor draft.
         !burnedSrc && (
