@@ -1,4 +1,8 @@
-import type { Viewport } from "next";
+import type { Metadata, Viewport } from "next";
+
+import { ROUTE_METADATA } from "@/lib/site-metadata";
+
+export const metadata: Metadata = ROUTE_METADATA.renderStatus;
 
 // The render-status flow is the one user-facing dark-theater surface
 // (DESIGN.md §3). Override the global light themeColor so mobile browser

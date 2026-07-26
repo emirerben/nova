@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { type CSSProperties, useId } from "react";
 
 /**
  * Kria logo mark: three 9:16 frames fanned from a bottom pivot.
@@ -7,14 +7,33 @@ import { useId } from "react";
  * className (e.g. text-lime-600 on light surfaces, text-white on dark).
  * Canonical asset: ~/.gstack/projects/emirerben-nova/designs/kria-logo-20260721/final/
  */
-export default function KriaMark({ className }: { className?: string }) {
+export default function KriaMark({
+  className,
+  style,
+}: {
+  className?: string;
+  style?: CSSProperties;
+}) {
   const id = useId();
-  const behindMidAndFront = `${id}-behind-mid-front`;
-  const behindFront = `${id}-behind-front`;
+  return <KriaMarkSvg idPrefix={id} className={className} style={style} />;
+}
+
+export function KriaMarkSvg({
+  idPrefix,
+  className,
+  style,
+}: {
+  idPrefix: string;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  const behindMidAndFront = `${idPrefix}-behind-mid-front`;
+  const behindFront = `${idPrefix}-behind-front`;
   return (
     <svg
       viewBox="-53 -92 110 100"
       className={className}
+      style={style}
       aria-hidden="true"
       focusable="false"
     >
