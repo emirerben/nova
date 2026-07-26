@@ -3497,6 +3497,7 @@ def _resolve_subject_matte_for_burn(
         compute_subject_matte,
         matte_is_sane,
     )
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
     from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
 
     provider = None
@@ -3531,9 +3532,27 @@ def _resolve_subject_matte_for_burn(
             variant_id=variant_id,
             error=str(exc),
         )
+        record_pipeline_event(
+            "overlay",
+            "subject_matte_resolved",
+            {
+                "variant_id": variant_id,
+                "outcome": "fallback_stripped",
+                "error": str(exc)[:200],
+            },
+        )
         stripped = [{k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlays]
         return None, cached_matte_path, stripped
 
+    record_pipeline_event(
+        "overlay",
+        "subject_matte_resolved",
+        {
+            "variant_id": variant_id,
+            "source": "cache" if cached_matte_path else "computed",
+            "matte_path": matte_gcs_path,
+        },
+    )
     return provider, matte_gcs_path, overlays
 
 
@@ -3845,7 +3864,14 @@ def _reburn_text_on_base(
         if _TEXT_ELEMENTS_ENABLED and existing.get("text_elements_user_edited"):
             if _should_compose_subtitled_final(existing):
                 _fresh_existing = _fresh_variant_snapshot(job_id, variant_id) or existing
-                _te_final_path = _compose_subtitled_final(local_base, _fresh_existing, tmpdir)
+                _te_final_path, _te_subtitled_matte_path = _compose_subtitled_final(
+                    local_base,
+                    _fresh_existing,
+                    tmpdir,
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    upload_key_base=base_gcs_path,
+                )
                 # Subtitled text edits must not overwrite the current key. Signed URLs and
                 # CDN layers may keep serving that object, so mint a new key and delete the old.
                 _rank = int(_fresh_existing.get("rank") or existing.get("rank") or 1)
@@ -3869,6 +3895,7 @@ def _reburn_text_on_base(
                     "intro_size_source": existing.get("intro_size_source"),
                     "text_elements": _fresh_existing.get("text_elements") or [],
                     "text_elements_user_edited": True,
+                    "subject_matte_path": _te_subtitled_matte_path,
                     "_old_video_path_for_delete": (
                         _old_video_path
                         if _old_video_path and _old_video_path != _te_gcs_key
@@ -9543,6 +9570,10 @@ def _render_subtitled_variant(
         "mix": 1.0,
         "user_style_knobs": None,
         "base_video_path": None,
+        # GCS key of the cached subject matte ({base_key}.matte.mp4) once a
+        # behind_subject text element has rendered — reburns reuse it instead
+        # of recomputing (same field/semantics as the montage lane).
+        "subject_matte_path": None,
         # Editable caption cues [{text, start_s, end_s}] (base/clip time). Drives the
         # on-video caption editor; reburned onto base_video_path when the creator edits.
         "caption_cues": None,
@@ -10196,17 +10227,37 @@ def _render_subtitled_variant(
                 )
 
         final_path = os.path.join(variant_dir, "final.mp4")
+        # Deterministic caption-free-base key — also the matte cache anchor
+        # (`{key}.matte.mp4`), so build it once here and reuse it for the
+        # conditional base upload below.
+        base_gcs_key = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
+        subtitled_matte_path = base.get("subject_matte_path")
         if getattr(settings, "subtitled_text_lane_enabled", False) or smart_compiled is not None:
             with _stage_timer("composition", counts={"cue_count": len(cues)}):
-                final_path = _compose_subtitled_final(
+                # A camera-warped substrate needs its own matte (the mask must
+                # register to the warped pixels) under a camera-scoped key, and
+                # it must NOT be persisted — reburns run on the clean base and
+                # would inherit a misaligned occlusion.
+                composed_final, composed_matte_path = _compose_subtitled_final(
                     caption_base_path,
                     {
                         **base,
                         "caption_cues": cues or None,
                         "caption_language": detected_lang,
+                        **({"subject_matte_path": None} if camera_render_applied else {}),
                     },
                     variant_dir,
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    upload_key_base=(
+                        f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_camera_base.mp4"
+                        if camera_render_applied
+                        else base_gcs_key
+                    ),
                 )
+                final_path = composed_final
+                if not camera_render_applied:
+                    subtitled_matte_path = composed_matte_path
         elif cues:
             ass_path = os.path.join(variant_dir, "captions.ass")
             ass_font = resolve_caption_font(caption_font)
@@ -10559,7 +10610,7 @@ def _render_subtitled_variant(
         base_gcs: str | None = None
         should_upload_base = bool(cues) or getattr(settings, "subtitled_text_lane_enabled", False)
         if should_upload_base and os.path.exists(base_path) and os.path.getsize(base_path) > 0:
-            base_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
+            base_gcs = base_gcs_key
             with _stage_timer("upload", counts={"artifact": "base"}):
                 upload_public_read(base_path, base_gcs)
 
@@ -10610,6 +10661,7 @@ def _render_subtitled_variant(
                 else {}
             ),
             "base_video_path": base_gcs,
+            "subject_matte_path": subtitled_matte_path,
             "caption_cues": cues or None,
             # The language actually spoken/detected (not the plan language).
             "caption_language": detected_lang,
@@ -10935,20 +10987,69 @@ def _text_element_burn_dicts(variant: dict) -> list[dict]:
     return overlays
 
 
-def _compose_subtitled_final(base_local: str, variant: dict, tmpdir: str) -> str:
-    """Compose a subtitled final: authored text first, persisted captions last."""
+def _compose_subtitled_final(
+    base_local: str,
+    variant: dict,
+    tmpdir: str,
+    *,
+    job_id: str,
+    variant_id: str,
+    upload_key_base: str,
+) -> tuple[str, str | None]:
+    """Compose a subtitled final: authored text first, persisted captions last.
+
+    Authored text elements burn through the Skia renderer, so behind_subject
+    occlusion works here exactly like the montage lane: when any element wants
+    it, `_resolve_subject_matte_for_burn` runs (cache reuse via the variant's
+    `subject_matte_path`, compute + sanity gate + upload next to
+    `upload_key_base` otherwise; any failure strips the flags and burns plain
+    text). Captions burn through libass afterwards and are never occluded.
+
+    Returns ``(final_path, subject_matte_path)``. The matte path is the
+    variant's cached path when no element wants occlusion (or on failure —
+    the resolver never clobbers a good cache), or the freshly-uploaded key on
+    first compute; callers MUST persist it into their variant patch so
+    reburns stay cache-fast. The keyword-only plumbing args are required so a
+    future call site cannot silently reintroduce the no-matte no-op this
+    function shipped with (prod job 1e768d5b).
+    """
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
 
     text_overlays = _text_element_burn_dicts(variant)
+    matte_gcs_path = variant.get("subject_matte_path")
     captions_input = base_local
     if text_overlays:
+        provider = None
+        if any(ov.get("behind_subject") for ov in text_overlays):
+            try:
+                duration_s = float(probe_video(base_local).duration_s)
+            except Exception:  # noqa: BLE001
+                duration_s = float(variant.get("duration_s") or 0.0)
+            provider, matte_gcs_path, text_overlays = _resolve_subject_matte_for_burn(
+                video_path=base_local,
+                overlays=text_overlays,
+                tmpdir=tmpdir,
+                cached_matte_path=matte_gcs_path,
+                upload_key_base=upload_key_base,
+                duration_s=duration_s,
+                job_id=job_id,
+                variant_id=variant_id,
+            )
         text_burned = os.path.join(tmpdir, "subtitled_text_underlay.mp4")
-        burn_text_overlays_skia(base_local, text_overlays, text_burned, tmpdir)
+        burn_text_overlays_skia(
+            base_local,
+            text_overlays,
+            text_burned,
+            tmpdir,
+            matte=provider,
+            canvas=canvas_for_orientation(variant.get("orientation")),
+        )
         captions_input = text_burned
 
     final_path = os.path.join(tmpdir, "subtitled_final.mp4")
     _burn_persisted_captions_onto_base(captions_input, final_path, variant, tmpdir)
-    return final_path
+    return final_path, matte_gcs_path
 
 
 def _should_compose_subtitled_final(variant: dict) -> bool:
@@ -11133,15 +11234,33 @@ def _run_rerender_caption_camera_effects(
             "media_overlays": variant.get("media_overlays"),
             "pre_media_overlay_video_path": variant.get("pre_media_overlay_video_path"),
         }
+        suffix = uuid.uuid4().hex[:8]
+        camera_matte_path: str | None = None
+        camera_matte_persist = False
         if _should_compose_subtitled_final(fresh_variant):
-            final_local = _compose_subtitled_final(caption_base_local, fresh_variant, tmpdir)
+            # With camera effects the substrate is warped — the matte must be
+            # recomputed against the warped pixels under a camera-scoped key,
+            # and NOT persisted (later reburns run on the clean base, where
+            # the variant's cached matte stays valid).
+            final_local, camera_matte_path = _compose_subtitled_final(
+                caption_base_local,
+                {**fresh_variant, "subject_matte_path": None} if effects else fresh_variant,
+                tmpdir,
+                job_id=job_id,
+                variant_id=variant_id,
+                upload_key_base=(
+                    f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_camera_{suffix}.mp4"
+                    if effects
+                    else str(old_base_path)
+                ),
+            )
+            camera_matte_persist = not effects
         else:
             final_local = os.path.join(tmpdir, "out.mp4")
             _burn_persisted_captions_onto_base(
                 caption_base_local, final_local, fresh_variant, tmpdir
             )
 
-        suffix = uuid.uuid4().hex[:8]
         new_video_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_camera_{suffix}.mp4"
         output_url = upload_public_read(final_local, new_video_gcs)
         duration_s = _rendered_duration_s(final_local)
@@ -11158,6 +11277,7 @@ def _run_rerender_caption_camera_effects(
         "pre_sfx_video_path": None,
         "visual_blocks_base_path": None,
         "visual_blocks_cache_stale": False,
+        **({"subject_matte_path": camera_matte_path} if camera_matte_persist else {}),
     }
     if duration_s is not None:
         patch["duration_s"] = duration_s
@@ -11256,9 +11376,19 @@ def _run_reburn_narrated_captions(
     with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(render_base_path, base_local)
+        reburn_matte_path: str | None = None
+        reburn_matte_persist = False
         if _should_compose_subtitled_final(variant):
             variant = _fresh_variant_snapshot(job_id, variant_id) or variant
-            out_local = _compose_subtitled_final(base_local, variant, tmpdir)
+            out_local, reburn_matte_path = _compose_subtitled_final(
+                base_local,
+                variant,
+                tmpdir,
+                job_id=job_id,
+                variant_id=variant_id,
+                upload_key_base=str(base_path),
+            )
+            reburn_matte_persist = True
         else:
             out_local = os.path.join(tmpdir, "out.mp4")
             _burn_persisted_captions_onto_base(base_local, out_local, variant, tmpdir)
@@ -11288,6 +11418,7 @@ def _run_reburn_narrated_captions(
         "pre_sfx_video_path": None,
         "visual_blocks_base_path": visual_blocks_cache_path,
         "visual_blocks_cache_stale": False,
+        **({"subject_matte_path": reburn_matte_path} if reburn_matte_persist else {}),
     }
     if will_reapply:
         # OV-7: the reapply chain owns the final ready/failed — no effect-less
@@ -11816,13 +11947,23 @@ def _run_retranscribe_subtitled(
                 outcome="subtitled_retranscribe_empty",
             )
             return
+        retx_matte_path: str | None = None
+        retx_matte_persist = False
         if getattr(settings, "subtitled_text_lane_enabled", False):
             variant = {
                 **variant,
                 "caption_cues": cues or None,
                 "caption_language": lang,
             }
-            out_local = _compose_subtitled_final(base_local, variant, tmpdir)
+            out_local, retx_matte_path = _compose_subtitled_final(
+                base_local,
+                variant,
+                tmpdir,
+                job_id=job_id,
+                variant_id=variant_id,
+                upload_key_base=str(base_path),
+            )
+            retx_matte_persist = True
         else:
             out_local = os.path.join(tmpdir, "out.mp4")
             ass_path = os.path.join(tmpdir, "captions.ass")
@@ -11871,6 +12012,7 @@ def _run_retranscribe_subtitled(
         # the pre-reburn video (deleted below), so a stale key is a download-404.
         "pre_media_overlay_video_path": None,
         "pre_sfx_video_path": None,
+        **({"subject_matte_path": retx_matte_path} if retx_matte_persist else {}),
     }
     if will_reapply:
         # OV-7: the reapply chain owns the final ready/failed.

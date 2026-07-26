@@ -529,11 +529,11 @@ def _run_text_fast_reburn(monkeypatch, variant):
     monkeypatch.setattr("app.storage.signed_get_url", lambda p, **k: f"https://signed/{p}")
     monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
 
-    def _fake_compose(base_local, v, tmpdir):
+    def _fake_compose(base_local, v, tmpdir, **_matte_kwargs):
         path = f"{tmpdir}/final.mp4"
         with open(path, "wb") as f:
             f.write(b"x")
-        return path
+        return path, v.get("subject_matte_path")
 
     monkeypatch.setattr(gb, "_compose_subtitled_final", _fake_compose)
     gb._run_regenerate_variant(JOB_ID, "subtitled", None, None, False, render_gen_id="tok-1")

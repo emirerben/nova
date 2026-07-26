@@ -120,6 +120,14 @@ class MatteStats:
     # glitch on/off.
     presence_flips: int = 0
     presence_flips_per_s: float = 0.0
+    # Shape-stability signal: median IoU of the binarized mask across
+    # consecutive present-frame pairs (within windows, never across window
+    # boundaries). Presence flips catch a subject blinking in/out; this
+    # catches a silhouette that never disappears but wobbles violently
+    # frame to frame — occlusion registered to a shape that won't hold
+    # still reads as glitching. None when too few pairs to judge.
+    shape_stability_iou: float | None = None
+    iou_pair_count: int = 0
 
 
 class _MatteAbort(RuntimeError):
@@ -135,6 +143,15 @@ _PRESENCE_COVERAGE_FLOOR = 0.0015
 # with segmenter dropouts (visible on/off glitch) = 5 flips / 1.56 per s.
 _MAX_PRESENCE_FLIPS = 2
 _MAX_PRESENCE_FLIPS_PER_S = 0.75
+# Shape-stability gate: a median adjacent-frame IoU below this means the
+# typical consecutive mask pair shares under 40% of its area — violent shape
+# instability no downstream treatment can hide. Real subjects at 30fps keep
+# adjacent-frame IoU well above 0.7 even in fast motion, and the *median* is
+# immune to isolated scene cuts (the Argentina-montage anchor keeps its
+# single cut pair out of the median). Applied only when enough present
+# pairs exist to judge.
+_MIN_SHAPE_STABILITY_IOU = 0.40
+_MIN_IOU_PAIRS = 5
 
 
 def matte_is_sane(stats: MatteStats) -> bool:
@@ -153,6 +170,11 @@ def matte_is_sane(stats: MatteStats) -> bool:
     if (
         stats.presence_flips > _MAX_PRESENCE_FLIPS
         and stats.presence_flips_per_s > _MAX_PRESENCE_FLIPS_PER_S
+    ):
+        return False
+    if (
+        stats.shape_stability_iou is not None
+        and stats.shape_stability_iou < _MIN_SHAPE_STABILITY_IOU
     ):
         return False
     return True
@@ -319,6 +341,7 @@ def _compute_subject_matte_inner(
     frame_count = 0
     presence_flips = 0
     total_produced = 0
+    iou_values: list[float] = []
 
     try:
         proc = _spawn_matte_writer(out_path)
@@ -445,6 +468,7 @@ def _compute_subject_matte_inner(
 
             frame_count += inferences
             prev_present: bool | None = None
+            prev_binary: np.ndarray | None = None
             produced = 0
             for treated_mask in treated:
                 mean_frac = float(np.mean(treated_mask)) / 255.0
@@ -452,7 +476,14 @@ def _compute_subject_matte_inner(
                 present = mean_frac >= _PRESENCE_COVERAGE_FLOOR
                 if prev_present is not None and present != prev_present:
                     presence_flips += 1
+                binary = treated_mask >= 128 if present else None
+                if binary is not None and prev_binary is not None:
+                    union = int(np.count_nonzero(binary | prev_binary))
+                    if union > 0:
+                        intersection = int(np.count_nonzero(binary & prev_binary))
+                        iou_values.append(intersection / union)
                 prev_present = present
+                prev_binary = binary
                 proc.stdin.write(treated_mask.tobytes())
                 produced += 1
 
@@ -488,6 +519,10 @@ def _compute_subject_matte_inner(
         presence_flips_per_s=presence_flips / (total_produced / MATTE_FPS)
         if total_produced
         else 0.0,
+        shape_stability_iou=float(np.median(iou_values))
+        if len(iou_values) >= _MIN_IOU_PAIRS
+        else None,
+        iou_pair_count=len(iou_values),
     )
 
     sidecar = {
@@ -507,6 +542,10 @@ def _spawn_matte_writer(out_path: str) -> subprocess.Popen:
 
     Intermediate artifact (never shown to users directly) — preset
     "ultrafast" is policy-compliant per tests/test_encoder_policy.py.
+    Encoded lossless (-qp 0): the mask carries hard-cut edges with a thin
+    feather, and default-CRF quantization rings along the silhouette
+    differently on every frame — a per-frame edge shimmer the downstream
+    occlusion multiply makes visible.
     """
     cmd = [
         "ffmpeg",
@@ -528,6 +567,8 @@ def _spawn_matte_writer(out_path: str) -> subprocess.Popen:
         "libx264",
         "-preset",
         "ultrafast",
+        "-qp",
+        "0",
         "-pix_fmt",
         "yuv420p",
         "-movflags",

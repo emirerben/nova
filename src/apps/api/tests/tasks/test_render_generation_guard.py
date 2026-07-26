@@ -740,12 +740,12 @@ def test_subtitled_text_fast_reburn_mints_new_key_deletes_old_and_rereads(
             "caption_cues": [{"text": "latest caption", "start_s": 0.0, "end_s": 1.0}],
         }
 
-    def _compose(_base_local, variant, tmpdir):
+    def _compose(_base_local, variant, tmpdir, **_matte_kwargs):
         compose_variants.append(dict(variant))
         out = f"{tmpdir}/out.mp4"
         with open(out, "wb") as f:
             f.write(b"composed")
-        return out
+        return out, variant.get("subject_matte_path")
 
     monkeypatch.setattr("app.storage.download_to_file", _download)
     monkeypatch.setattr(
