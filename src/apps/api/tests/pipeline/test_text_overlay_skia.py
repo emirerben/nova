@@ -127,15 +127,16 @@ def test_font_resolved_event_no_trace_context_does_not_raise(tmp_workdir):
 
 
 def test_dissolve_out_renders_skia_dissolve_sequence(tmp_workdir):
+    render_canvas = tos.Canvas(216, 384)
     overlay = {
         "text": "vanish",
         "effect": "dissolve-out",
-        "text_size_px": 90,
+        "text_size_px": 32,
         "start_s": 0.0,
         "end_s": 0.2,
     }
 
-    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 9)
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 9, render_canvas=render_canvas)
 
     assert seq is not None
     assert seq["effect"] == "dissolve-out"
@@ -143,6 +144,7 @@ def test_dissolve_out_renders_skia_dissolve_sequence(tmp_workdir):
     assert seq["is_animated"] is True
     assert seq["n_frames"] > 1
     first = Image.open(seq["first_frame"]).convert("RGBA")
+    assert first.size == (render_canvas.width, render_canvas.height)
     last_path = os.path.join(
         tmp_workdir,
         f"skia_overlay_{9:03d}_f{seq['n_frames'] - 1:04d}.png",
