@@ -119,6 +119,10 @@ class CameraPolicy(_Strict):
 
 class AudioTreatmentPolicy(_Strict):
     token: Literal["voice_safe_music_bed"]
+    # NOTE: legacy literal name — eligibility no longer requires a license
+    # flag or a publish state, just closed-pool freshness (see
+    # `_smart_music_track_eligible` in generative_build.py). Kept unrenamed
+    # to avoid schema/preset churn for no behavior gain.
     selection_token: Literal["licensed_published_match"]
     music_match_min_score: float = Field(ge=0.0, le=10.0)
     bed_gain_db: float = Field(ge=-40.0, le=0.0)
