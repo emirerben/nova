@@ -61,9 +61,7 @@ def select_thumbnail(
     )
 
 
-def _extract_keyframes(
-    video_path: str, start_s: float, end_s: float, output_dir: str
-) -> list[str]:
+def _extract_keyframes(video_path: str, start_s: float, end_s: float, output_dir: str) -> list[str]:
     """Extract KEYFRAME_COUNT evenly-spaced frames as JPEGs. Never shell=True.
 
     Each ffmpeg `-vframes 1` is independent — extract them in parallel so a
@@ -77,10 +75,14 @@ def _extract_keyframes(
         out_path = os.path.join(output_dir, f"thumb_candidate_{i}.jpg")
         cmd = [
             "ffmpeg",
-            "-ss", str(t),
-            "-i", video_path,
-            "-vframes", "1",
-            "-q:v", "2",
+            "-ss",
+            str(t),
+            "-i",
+            video_path,
+            "-vframes",
+            "1",
+            "-q:v",
+            "2",
             "-y",
             out_path,
         ]
@@ -95,9 +97,7 @@ def _extract_keyframes(
     return [p for p in results if p is not None]
 
 
-def _score_frame(
-    path: str, cut_timestamps: list[float]
-) -> tuple[str, float, bool]:
+def _score_frame(path: str, cut_timestamps: list[float]) -> tuple[str, float, bool]:
     """Return (path, sharpness_score, has_face)."""
     sharpness = _laplacian_variance(path)
     has_face = _detect_face(path)
@@ -124,14 +124,23 @@ def _detect_face(path: str) -> bool:
     try:
         import cv2
 
+        from app.pipeline.face_sampler_worker import (
+            FaceCascadeLoadError,
+            resolve_face_cascade_path,
+        )
+
         img = cv2.imread(path)
         if img is None:
             return False
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
+        cascade_path = resolve_face_cascade_path()
+        cascade = cv2.CascadeClassifier(cascade_path)
+        if cascade.empty():
+            raise FaceCascadeLoadError(
+                f"cv2.CascadeClassifier failed to load cascade at {cascade_path!r}"
+            )
         faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
         return len(faces) > 0
-    except Exception:
+    except Exception as exc:
+        log.warning("face_cascade_detect_failed", error=str(exc))
         return False

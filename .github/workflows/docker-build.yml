@@ -73,6 +73,24 @@ jobs:
           docker run --rm --entrypoint python nova-build-test:ci -c \
             'import cv2, skia, mediapipe; print("cv2/skia/mediapipe import OK")'
 
+      # Face-sampler cascade — the class of bug this workflow exists for: works
+      # locally (dev cv2 wheel ships haarcascades/), breaks only in the built
+      # image (mediapipe's opencv-contrib-python wheel wins dependency
+      # resolution over opencv-python-headless there, and its cv2.data.haarcascades
+      # dir does not ship the cascade XML at all). Prod incident: every job's
+      # face-aware caption/thumbnail placement silently fell back to preset
+      # placement (`caption_placement_chosen: reason=sampler_error`). This
+      # asserts the vendored assets/cv/ cascade actually made it into the
+      # image AND that cv2.CascadeClassifier loads it non-empty.
+      - name: Smoke-check face cascade loads at runtime
+        run: |
+          docker run --rm --entrypoint python nova-build-test:ci -c '
+          from app.pipeline.face_sampler_worker import resolve_face_cascade_path
+          import cv2
+          assert not cv2.CascadeClassifier(resolve_face_cascade_path()).empty()
+          print("face cascade smoke check passed:", resolve_face_cascade_path())
+          '
+
       - name: Smoke-check Python motion runtime discovery
         run: |
           docker run --rm --entrypoint python \

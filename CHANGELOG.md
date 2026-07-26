@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0.1] — 2026-07-26
+
+### Fixed
+- **Face-aware caption and thumbnail placement works in production again.** OpenCV's wheel-bundled cascade directory does not ship the frontal-face detector XML in the prod image (mediapipe's opencv-contrib-python wheel wins dependency resolution over opencv-python-headless there), so every job silently fell back to preset caption placement with zero face protection. The Haar cascade is now vendored directly into the image (`assets/cv/`) and both load sites resolve it through a shared helper that fails loud — naming the broken path — instead of loading an always-empty classifier. Docker CI now asserts the cascade loads inside the built image.
+
 ## [0.15.0.0] — 2026-07-26
 
 ### Added
