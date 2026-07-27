@@ -16,12 +16,78 @@ import skia
 from PIL import Image
 
 from app.pipeline import text_overlay_skia as tos
+from app.pipeline.canvas import LANDSCAPE
 
 
 @pytest.fixture
 def tmp_workdir():
     with tempfile.TemporaryDirectory(prefix="skia_test_") as d:
         yield d
+
+
+_REAL_VALIDATE_INPUT_CANVAS = tos._validate_input_canvas
+
+
+@pytest.fixture(autouse=True)
+def _skip_canvas_probe_for_renderer_unit_tests(monkeypatch):
+    """Most renderer tests use one-byte stand-ins instead of real MP4 files."""
+    monkeypatch.setattr(tos, "_validate_input_canvas", lambda *_args, **_kwargs: None)
+
+
+def test_burn_enforces_canvas_guard_before_render(monkeypatch, tmp_path) -> None:
+    import app.pipeline.probe as probe_mod
+
+    input_path = tmp_path / "portrait-base.mp4"
+    input_path.write_bytes(b"base")
+    monkeypatch.setattr(
+        probe_mod,
+        "probe_video",
+        lambda _path: type("Probe", (), {"width": 1080, "height": 1920})(),
+    )
+    monkeypatch.setattr(tos, "_validate_input_canvas", _REAL_VALIDATE_INPUT_CANVAS)
+    monkeypatch.setattr(
+        tos,
+        "render_text_overlay_sequences",
+        lambda *_args, **_kwargs: pytest.fail("render started before canvas validation"),
+    )
+
+    with pytest.raises(tos.TextOverlayCanvasMismatchError) as exc_info:
+        tos.burn_text_overlays_skia(
+            str(input_path),
+            [{"text": "x"}],
+            str(tmp_path / "out.mp4"),
+            str(tmp_path),
+            canvas=LANDSCAPE,
+        )
+
+    assert exc_info.value.expected == (1920, 1080)
+    assert exc_info.value.actual == (1080, 1920)
+
+
+def test_burn_matching_canvas_proceeds_after_guard(monkeypatch, tmp_path) -> None:
+    import app.pipeline.probe as probe_mod
+
+    input_path = tmp_path / "landscape-base.mp4"
+    output_path = tmp_path / "out.mp4"
+    input_path.write_bytes(b"base")
+    probe = type("Probe", (), {"width": 1920, "height": 1080})()
+    monkeypatch.setattr(probe_mod, "probe_video", lambda _path: probe)
+    monkeypatch.setattr(tos, "_validate_input_canvas", _REAL_VALIDATE_INPUT_CANVAS)
+    monkeypatch.setattr(
+        tos,
+        "render_text_overlay_sequences",
+        lambda *_args, **_kwargs: ([], str(tmp_path / "work")),
+    )
+
+    tos.burn_text_overlays_skia(
+        str(input_path),
+        [{"text": "x"}],
+        str(output_path),
+        str(tmp_path),
+        canvas=LANDSCAPE,
+    )
+
+    assert output_path.read_bytes() == b"base"
 
 
 def _has_gold_pixel(

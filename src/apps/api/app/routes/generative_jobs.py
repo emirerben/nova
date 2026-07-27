@@ -1244,6 +1244,8 @@ async def dispatch_swap_song(
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
             v["render_generation_id"] = render_gen_id
+            v["music_track_id"] = new_track_id
+            v["base_video_stale"] = True
             v["music_start_s"] = round(
                 _recommended_music_start(track, visual_block_variant_duration(variant)), 3
             )
@@ -2791,6 +2793,7 @@ async def dispatch_set_orientation(
             v["orientation"] = validated
             v["render_generation_id"] = render_gen_id
             v["render_status"] = "rendering"
+            v["base_video_stale"] = True
             break
     locked_job.assembly_plan = {**(locked_job.assembly_plan or {}), "variants": variants}
     flag_modified(locked_job, "assembly_plan")
@@ -2853,6 +2856,7 @@ async def dispatch_set_lyrics(
                 v["lyric_line_overrides"] = validated["line_overrides"]
             v["render_generation_id"] = render_gen_id
             v["render_status"] = "rendering"
+            v["base_video_stale"] = True
             break
     locked_job.assembly_plan = {**(locked_job.assembly_plan or {}), "variants": variants}
     flag_modified(locked_job, "assembly_plan")
@@ -3832,7 +3836,12 @@ async def dispatch_get_lyric_seeds(job: Job, variant_id: str, db: AsyncSession) 
 
 
 async def persist_user_timeline(
-    db: AsyncSession, job_id: str, variant_id: str, slots: list[dict] | None
+    db: AsyncSession,
+    job_id: str,
+    variant_id: str,
+    slots: list[dict] | None,
+    *,
+    render_gen_id: str | None = None,
 ) -> None:
     """Row-locked merge of `user_timeline` into the variant entry; None removes it.
 
@@ -3862,6 +3871,10 @@ async def persist_user_timeline(
                     # Persist before enqueue so both old and new workers in a
                     # rolling deploy size recipe/audio from the edited cut.
                     updated["music_window_video_duration_s"] = active_duration_s
+            if render_gen_id is not None:
+                updated["render_generation_id"] = render_gen_id
+                updated["render_status"] = "rendering"
+                updated["base_video_stale"] = True
             variants[i] = updated
             break
     plan["variants"] = variants
@@ -4250,7 +4263,14 @@ async def dispatch_edit_timeline(
 
     resolved = resolve_timeline_slots_for_edit(job, variant, payload.slots)
 
-    await persist_user_timeline(db, str(job.id), variant_id, resolved)
+    render_gen_id = uuid.uuid4().hex
+    await persist_user_timeline(
+        db,
+        str(job.id),
+        variant_id,
+        resolved,
+        render_gen_id=render_gen_id,
+    )
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -4258,6 +4278,7 @@ async def dispatch_edit_timeline(
         str(job.id),
         variant_id,
         timeline_override=_timeline_override_for_reassembly(resolved),
+        render_gen_id=render_gen_id,
     )
 
 
@@ -4277,7 +4298,14 @@ async def dispatch_reset_timeline(job: Job, variant_id: str, *, db: AsyncSession
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
     ai_slots, _, _ = _timeline_parts(variant)
 
-    await persist_user_timeline(db, str(job.id), variant_id, None)
+    render_gen_id = uuid.uuid4().hex
+    await persist_user_timeline(
+        db,
+        str(job.id),
+        variant_id,
+        None,
+        render_gen_id=render_gen_id,
+    )
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -4287,6 +4315,7 @@ async def dispatch_reset_timeline(job: Job, variant_id: str, *, db: AsyncSession
         str(job.id),
         variant_id,
         timeline_override=_timeline_override_for_reassembly(ai_slots),
+        render_gen_id=render_gen_id,
     )
 
 
@@ -4892,6 +4921,17 @@ def prepare_editor_commit(
         or validated_camera_effects is not None
     )
     new_gen = uuid.uuid4().hex if has_render_section else None
+    base_affecting_commit = (
+        resolved_slots is not None
+        or payload.mix is not None
+        or payload.music_track_id is not None
+        or payload.remove_music
+        or payload.music_window is not None
+        or validated_lyrics is not None
+        or validated_orientation is not None
+        or validated_camera_effects is not None
+        or text_requires_full_render
+    )
 
     variants = list((job.assembly_plan or {}).get("variants") or [])
     track_changed = payload.music_track_id is not None and payload.music_track_id != variant.get(
@@ -5022,6 +5062,12 @@ def prepare_editor_commit(
         if new_gen is not None:
             updated["render_generation_id"] = new_gen
             updated["render_status"] = "rendering"
+        if base_affecting_commit:
+            # A newer text-only commit is allowed to supersede this render.
+            # Keep the dirty bit sticky until a token-winning full render lands,
+            # otherwise that newer task can reburn text onto the last-good but
+            # semantically stale footage/audio base.
+            updated["base_video_stale"] = True
         variants[i] = updated
         break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}

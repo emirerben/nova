@@ -406,7 +406,15 @@ def test_render_generative_variant_flag_on_computes_matte_and_burns_with_provide
 
     burn_calls: list = []
 
-    def _fake_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
+    def _fake_burn(
+        base_path,
+        overlays,
+        out_path,
+        tmpdir,
+        *,
+        matte=None,
+        input_probe=None,
+    ):
         burn_calls.append({"overlays": overlays, "matte": matte})
         with open(out_path, "wb") as f:
             f.write(b"\x01" * 24)
@@ -494,7 +502,7 @@ def _patch_reburn_with_real_overlays(monkeypatch, *, base_content=b"\x00" * 32):
             f.write(base_content)
 
     def _fake_probe(path):
-        return types.SimpleNamespace(duration_s=5.0)
+        return types.SimpleNamespace(duration_s=5.0, width=1080, height=1920)
 
     def _fake_overlays(**kwargs):
         bs = bool(kwargs.get("behind_subject"))
@@ -503,7 +511,7 @@ def _patch_reburn_with_real_overlays(monkeypatch, *, base_content=b"\x00" * 32):
             ov["behind_subject"] = True
         return [ov]
 
-    def _fake_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
+    def _fake_burn(base_path, overlays, out_path, tmpdir, *, matte=None, input_probe=None):
         burn_calls.append({"overlays": overlays, "matte": matte})
         with open(out_path, "wb") as f:
             f.write(b"\x01" * (len(base_content) + 8))
@@ -598,7 +606,16 @@ def _patch_subtitled_compose(monkeypatch, burn_seen: dict):
         lambda variant: [dict(d) for d in variant.get("_burn_dicts") or []],
     )
 
-    def _fake_burn(base, overlays, out, tmpdir, *, matte=None, canvas=None):
+    def _fake_burn(
+        base,
+        overlays,
+        out,
+        tmpdir,
+        *,
+        matte=None,
+        canvas=None,
+        input_probe=None,
+    ):
         burn_seen.update({"overlays": overlays, "matte": matte, "canvas": canvas, "out": out})
         with open(out, "wb") as f:
             f.write(b"text")
@@ -614,7 +631,7 @@ def _patch_subtitled_compose(monkeypatch, burn_seen: dict):
     monkeypatch.setattr(
         probe_mod,
         "probe_video",
-        lambda p: types.SimpleNamespace(duration_s=5.0),
+        lambda p: types.SimpleNamespace(duration_s=5.0, width=1080, height=1920),
         raising=False,
     )
 

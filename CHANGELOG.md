@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **The editor now labels AI-authored sequence text.** Text elements written by the editorial transcript-synced sequence (or its rhythm-mode quote fallback) show an "AI sequence" badge in the inspector and a compact marker on their timeline row, so it's clear the text came from the video's own speech rather than something the user typed — the badge is display-only and never touches the saved payload. Ordinary text, including the editor's own "split and place" multi-block composition tool (which reuses the same underlying role), is unaffected.
+## [0.16.1.0] — 2026-07-26
+
+### Fixed
+- **Landscape videos keep their intended proportions after later text edits.** A superseded orientation render can no longer leave a portrait base behind for the fast text renderer to stretch into a landscape frame; incompatible cached canvases now fall back to a full render instead.
+- **Overlapping editor saves consistently keep the newest result.** Orientation, timeline, music, and text edits carry one generation token through rendering and storage cleanup, so an older worker cannot erase newer cuts, overwrite the winning video, or leave its temporary render objects behind.
 
 ## [0.16.0.1] — 2026-07-26
 

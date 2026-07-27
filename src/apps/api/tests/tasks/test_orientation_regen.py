@@ -156,6 +156,118 @@ def test_persisted_landscape_request_rebuilds_from_source_clips(monkeypatch) -> 
     assert update_patches[-1]["base_video_path"] != existing["base_video_path"]
 
 
+@pytest.mark.parametrize("failure_kind", ["canvas_mismatch", "probe_failure"])
+def test_unusable_cached_base_rebuilds_after_superseding_text_edit(
+    monkeypatch,
+    failure_kind,
+) -> None:
+    """A newer text commit can supersede the orientation render before it lands.
+
+    The desired orientation is already landscape, but the persisted base still
+    belongs to the previous portrait generation. The text task has no explicit
+    orientation override, so it first attempts a fast reburn; the canvas guard
+    must redirect that task to a full source rebuild.
+    """
+    job_id = "12345678-1234-5678-1234-567812345678"
+    existing = {
+        "variant_id": "original_text",
+        "rank": 3,
+        "orientation": "landscape",
+        "text_mode": "agent_text",
+        "intro_text": "hook",
+        "base_video_path": f"generative-jobs/{job_id}/portrait-base.mp4",
+        "music_track_id": None,
+        "render_generation_id": "text-commit-newer",
+    }
+    job = types.SimpleNamespace(
+        all_candidates={
+            "clip_paths": [f"generative-jobs/{job_id}/sources/clip.mp4"],
+            "landscape_fit": "fit",
+        },
+        assembly_plan={"variants": [existing]},
+    )
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, model, _pk, **_kwargs):
+            return job if model is gb.Job else None
+
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Session())
+    update_patches: list[dict] = []
+    monkeypatch.setattr(
+        gb,
+        "_update_variant_entry",
+        lambda _job_id, _variant_id, patch, **_kwargs: update_patches.append(patch) or True,
+    )
+    monkeypatch.setattr(gb, "_fresh_variant_snapshot", lambda *_a, **_kw: existing)
+    monkeypatch.setattr(gb, "_resolve_narrative_order", lambda *_a, **_kw: None)
+    monkeypatch.setattr(gb, "_reapply_user_media_layers", lambda **_kw: False)
+    monkeypatch.setattr(gb, "_free_retired_visual_blocks_base", lambda *_a, **_kw: None)
+
+    reburn_calls: list[dict] = []
+
+    def _unusable_reburn(**kwargs):
+        reburn_calls.append(kwargs)
+        if failure_kind == "probe_failure":
+            raise gb.CachedBaseProbeError("corrupt cached base")
+        else:
+            raise gb.CachedBaseCanvasMismatchError(
+                base_path=existing["base_video_path"],
+                expected=(1920, 1080),
+                actual=(1080, 1920),
+            )
+
+    monkeypatch.setattr(gb, "_reburn_text_on_base", _unusable_reburn)
+    ingest_calls: list[str] = []
+
+    def _fake_ingest(_paths, _tmpdir, *, job_id: str):
+        ingest_calls.append(job_id)
+        meta = _Meta("c1")
+        return {
+            "clip_metas": [meta],
+            "clip_id_to_local": {"c1": "/tmp/c1.mp4"},
+            "clip_id_to_gcs": {"c1": "users/u/plan/i/c1.mp4"},
+            "probe_map": {"/tmp/c1.mp4": types.SimpleNamespace(duration_s=6.0)},
+            "hero": meta,
+        }
+
+    monkeypatch.setattr(gb, "_ingest_clips", _fake_ingest)
+    render_kwargs: list[dict] = []
+
+    def _fake_render(**kwargs):
+        render_kwargs.append(kwargs)
+        return {
+            "ok": True,
+            "variant_id": "original_text",
+            "render_status": "ready",
+            "video_path": f"generative-jobs/{job_id}/landscape-new.mp4",
+            "output_url": "https://signed/landscape-new",
+            "base_video_path": f"generative-jobs/{job_id}/landscape-base-new.mp4",
+            "orientation": "landscape",
+        }
+
+    monkeypatch.setattr(gb, "_render_generative_variant", _fake_render)
+
+    gb._run_regenerate_variant(
+        job_id,
+        "original_text",
+        None,
+        None,
+        False,
+        render_gen_id="text-commit-newer",
+    )
+
+    assert len(reburn_calls) == 1
+    assert ingest_calls == [job_id]
+    assert render_kwargs[0]["orientation"] == "landscape"
+    assert update_patches[-1]["base_video_path"].endswith("/landscape-base-new.mp4")
+
+
 def test_render_variant_persists_portrait_orientation_by_default(monkeypatch, tmp_path) -> None:
     _patch_landscape_render_helpers(monkeypatch, assembled_canvases=[], validations=[])
     vdir = tmp_path / "v3"

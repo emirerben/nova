@@ -216,6 +216,34 @@ def test_visual_block_commit_is_atomic_and_invalidates_composite(monkeypatch):
     assert prep["generation"] == variant["render_generation_id"]
 
 
+def test_text_commit_superseding_timeline_render_keeps_base_stale(monkeypatch):
+    """A text Save may supersede an in-flight timeline render but cannot reuse its old base."""
+    _arm(monkeypatch)
+    job = _job()
+
+    timeline_prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(timeline_slots=_slot_edits()),
+    )
+    assert job.assembly_plan["variants"][0]["base_video_stale"] is True
+
+    text_prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            base_generation=timeline_prep["generation"],
+            text_elements=[dict(_VALID_ELEMENT)],
+        ),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert text_prep["sections"]["text_elements"] is True
+    assert text_prep["sections"]["timeline"] is False
+    assert variant["base_video_stale"] is True
+    assert variant["render_generation_id"] == text_prep["generation"]
+
+
 def test_editor_commit_atomically_deletes_text_card_and_linked_generated_text(monkeypatch):
     """Regression: the final linked text delete cascades through both sections.
 
