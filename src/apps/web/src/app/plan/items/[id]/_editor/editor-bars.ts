@@ -54,6 +54,27 @@ export function isCaptionBar(bar: TextElementBar | null | undefined): boolean {
   return bar?.role === "narrated_caption";
 }
 
+/**
+ * True only for the AI-authored editorial sequence text (the transcript-synced
+ * typographic sequence, or its rhythm-mode quote fallback — EDITORIAL_SEQUENCE_ENABLED;
+ * see `text_element.py`'s `source="sequence_scene"` provenance marker persisted
+ * on `source_params`).
+ *
+ * `role === "generative_sequence"` alone is NOT sufficient: the editor's own
+ * "split and place" composition tool (EditorShell.splitAndPlaceText) reuses the
+ * SAME role for ordinary user-typed multi-block text, with no `source_params`.
+ * Without this narrower check, badging every `generative_sequence` bar would
+ * mislabel user-authored text as AI-generated.
+ */
+export function isAiSequenceBar(bar: TextElementBar | null | undefined): boolean {
+  return bar?.role === "generative_sequence" && bar?.source_params?.source === "sequence_scene";
+}
+
+/** Inspector/timeline badge copy for an AI-authored sequence bar. */
+export const AI_SEQUENCE_BADGE_LABEL = "AI sequence";
+export const AI_SEQUENCE_BADGE_TOOLTIP =
+  "Written by AI from your video's speech — edit or delete it freely";
+
 export function captionMetaPatchFromCaptionBarPatch(
   patch: Partial<Omit<TextElementBar, "id" | "role">>,
 ): CaptionMetaPatch {

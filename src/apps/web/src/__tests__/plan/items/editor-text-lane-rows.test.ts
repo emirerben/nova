@@ -1,10 +1,13 @@
 import { describe, expect, it } from "@jest/globals";
 import {
+  AI_SEQUENCE_BADGE_LABEL,
   barsToCaptionCues,
+  barsToTextElements,
   captionMetaPatchFromCaptionBarPatch,
   convertCaptionCues,
   deriveLaneRows,
   deriveTextLaneRows,
+  isAiSequenceBar,
   localCaptionBarPatchFromPatch,
   seedBarsFromVariant,
   smartCaptionPreviewSizePx,
@@ -19,7 +22,13 @@ import {
   undoSnapshot,
   type EditorDocument,
 } from "@/app/plan/items/[id]/_editor/useEditorHistory";
-import type { CaptionCue, MediaOverlay, PlanItemVariant, SoundEffectPlacement } from "@/lib/plan-api";
+import type {
+  CaptionCue,
+  MediaOverlay,
+  PlanItemVariant,
+  SoundEffectPlacement,
+  TextElement,
+} from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 const SFX_SUB_LANE_BASE_HEIGHT_PX = 32;
@@ -436,6 +445,95 @@ describe("smartCaptionPreviewSizePx (4b)", () => {
   it("is a no-op preview for a role-less/absent style", () => {
     expect(smartCaptionPreviewSizePx(64, null)).toBe(64);
     expect(smartCaptionPreviewSizePx(64, undefined)).toBe(64);
+  });
+});
+
+describe("isAiSequenceBar (PR-B: AI sequence badge)", () => {
+  const aiSequenceBar: TextElementBar = {
+    id: "sequence-1",
+    text: "edits and I didn't really like CapCut",
+    start_s: 0.3,
+    end_s: 1.8,
+    role: "generative_sequence",
+    source_params: { source: "sequence_scene", key: "0:1" },
+  };
+
+  it("is true for a generative_sequence bar carrying the sequence_scene provenance marker", () => {
+    expect(isAiSequenceBar(aiSequenceBar)).toBe(true);
+  });
+
+  it("is false for a generative_sequence bar with no source_params (user-typed split & place text)", () => {
+    expect(
+      isAiSequenceBar({
+        id: "user-sequence-1",
+        text: "my own composed beat",
+        start_s: 0,
+        end_s: 2,
+        role: "generative_sequence",
+      }),
+    ).toBe(false);
+  });
+
+  it("is false for a generative_sequence bar whose source_params carries an unrelated source", () => {
+    expect(
+      isAiSequenceBar({
+        id: "projected-caption",
+        text: "duplicate cue",
+        start_s: 0,
+        end_s: 1,
+        role: "generative_sequence",
+        source_params: { source: "caption_cue" },
+      }),
+    ).toBe(false);
+  });
+
+  it("is false for a plain text bar (generative_intro)", () => {
+    expect(
+      isAiSequenceBar({
+        id: "title-1",
+        text: "Big title",
+        start_s: 0,
+        end_s: 2,
+        role: "generative_intro",
+      }),
+    ).toBe(false);
+  });
+
+  it("is false for a caption bar", () => {
+    expect(
+      isAiSequenceBar({
+        id: "caption-0",
+        text: "we flew to Turkey",
+        start_s: 0,
+        end_s: 1,
+        role: "narrated_caption",
+      }),
+    ).toBe(false);
+  });
+
+  it("is false for null/undefined", () => {
+    expect(isAiSequenceBar(null)).toBe(false);
+    expect(isAiSequenceBar(undefined)).toBe(false);
+  });
+
+  it("has a non-empty badge label", () => {
+    expect(AI_SEQUENCE_BADGE_LABEL).toEqual(expect.any(String));
+    expect(AI_SEQUENCE_BADGE_LABEL.length).toBeGreaterThan(0);
+  });
+
+  it("survives the Save round-trip untouched (display-only, no payload change)", () => {
+    const original: TextElement = {
+      id: "sequence-1",
+      text: "edits and I didn't really like CapCut",
+      start_s: 0.3,
+      end_s: 1.8,
+      role: "generative_sequence",
+      source_params: { source: "sequence_scene", key: "0:1" },
+    };
+    const [saved] = barsToTextElements([aiSequenceBar], new Map([[original.id, original]]));
+    expect(saved.source_params).toEqual(original.source_params);
+    expect(saved.role).toBe("generative_sequence");
+    expect(isAiSequenceBar(aiSequenceBar)).toBe(true);
   });
 });
 

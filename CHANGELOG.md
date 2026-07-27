@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0.2] — 2026-07-27
+
+### Added
+- **The editor now labels AI-authored sequence text.** Text elements written by the editorial transcript-synced sequence (or its rhythm-mode quote fallback) show an "AI sequence" badge in the inspector and a compact marker on their timeline row, so it's clear the text came from the video's own speech rather than something the user typed — the badge is display-only and never touches the saved payload. Ordinary text, including the editor's own "split and place" multi-block composition tool (which reuses the same underlying role), is unaffected.
+
 ## [0.16.0.1] — 2026-07-26
 
 ### Fixed

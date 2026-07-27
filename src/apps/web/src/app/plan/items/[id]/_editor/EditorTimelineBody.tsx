@@ -44,8 +44,10 @@ import type {
 import Filmstrip, { allocateFilmstripSeekBudget } from "./Filmstrip";
 import { anchoredTimelineScrollLeft } from "./editor-timeline-scroll";
 import {
+  AI_SEQUENCE_BADGE_TOOLTIP,
   deriveLaneRows,
   deriveTextLaneRows,
+  isAiSequenceBar,
   TEXT_LANE_ROW_GAP_PX,
   TEXT_LANE_BASE_HEIGHT_PX,
 } from "./editor-bars";
@@ -944,6 +946,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                         const flashing = flashIds?.has(b.id) ?? false;
                         const captionLocked = b.id.startsWith("subtitled-caption-");
                         const locked = b.role === "lyric_line" || captionLocked;
+                        const aiSequence = isAiSequenceBar(b);
                         return (
                           <BarButton
                             key={b.id}
@@ -996,6 +999,15 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                                   className="shrink-0 opacity-80"
                                 >
                                   ⧉
+                                </span>
+                              )}
+                              {aiSequence && (
+                                <span
+                                  aria-label="AI sequence"
+                                  title={AI_SEQUENCE_BADGE_TOOLTIP}
+                                  className="shrink-0 opacity-90"
+                                >
+                                  {"✦"}
                                 </span>
                               )}
                             </span>
