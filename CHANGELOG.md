@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.1.0] — 2026-07-26
+
+### Fixed
+- **Landscape videos keep their intended proportions after later text edits.** A superseded orientation render can no longer leave a portrait base behind for the fast text renderer to stretch into a landscape frame; incompatible cached canvases now fall back to a full render instead.
+- **Overlapping editor saves consistently keep the newest result.** Orientation, timeline, music, and text edits carry one generation token through rendering and storage cleanup, so an older worker cannot erase newer cuts, overwrite the winning video, or leave its temporary render objects behind.
+
 ## [0.16.0.1] — 2026-07-26
 
 ### Fixed

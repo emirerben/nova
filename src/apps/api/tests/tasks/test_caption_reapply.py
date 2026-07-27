@@ -11,6 +11,8 @@ burn IO monkeypatched — no DB, no ffmpeg, no network.
 
 from __future__ import annotations
 
+import types
+
 import pytest
 
 import app.tasks.generative_build as gb
@@ -481,6 +483,10 @@ def test_caption_reburn_persisted_overlays_real_chain_applies_onto_new_burn(monk
     _patch_reburn_io(monkeypatch, seen)
     monkeypatch.setattr("app.storage.copy_object", lambda src, dst: None)
     monkeypatch.setattr("app.storage.signed_get_url", lambda p, **k: f"https://signed/{p}")
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: types.SimpleNamespace(duration_s=5.0, width=1080, height=1920),
+    )
     monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
     overlay_applies: list[dict] = []
     monkeypatch.setattr(
@@ -527,6 +533,10 @@ def _run_text_fast_reburn(monkeypatch, variant):
     _patch_storage(monkeypatch, seen)
     monkeypatch.setattr("app.storage.copy_object", lambda src, dst: None)
     monkeypatch.setattr("app.storage.signed_get_url", lambda p, **k: f"https://signed/{p}")
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: types.SimpleNamespace(duration_s=5.0, width=1080, height=1920),
+    )
     monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
 
     def _fake_compose(base_local, v, tmpdir, **_matte_kwargs):

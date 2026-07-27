@@ -96,6 +96,47 @@ from app.pipeline.text_wrap import balanced_word_wrap_indices
 
 log = structlog.get_logger()
 
+
+class TextOverlayCanvasMismatchError(RuntimeError):
+    """The burn substrate does not match the canvas requested by the caller."""
+
+    def __init__(
+        self,
+        *,
+        input_path: str,
+        expected: tuple[int, int],
+        actual: tuple[int, int],
+    ) -> None:
+        self.input_path = input_path
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            "Text-overlay input canvas mismatch: "
+            f"expected {expected[0]}x{expected[1]}, got {actual[0]}x{actual[1]}"
+        )
+
+
+def _validate_input_canvas(
+    input_path: str,
+    canvas: Canvas,
+    *,
+    input_probe: Any | None = None,
+) -> None:
+    """Fail before FFmpeg can non-uniformly resize a mismatched substrate."""
+    if input_probe is None:
+        from app.pipeline.probe import probe_video  # noqa: PLC0415
+
+        input_probe = probe_video(input_path)
+    expected = (canvas.width, canvas.height)
+    actual = (int(input_probe.width), int(input_probe.height))
+    if actual != expected:
+        raise TextOverlayCanvasMismatchError(
+            input_path=input_path,
+            expected=expected,
+            actual=actual,
+        )
+
+
 # Output framerate for animated overlay sequences. 30 fps is enough for the
 # fastest production animation (font-cycle FAST_INTERVAL = 70ms = 14fps native
 # cycle rate) while keeping file count bounded. Frame budget per overlay:
@@ -3626,6 +3667,7 @@ def burn_text_overlays_skia(
     *,
     matte: SubjectMatteProvider | None = None,
     canvas: Canvas = PORTRAIT,
+    input_probe: Any | None = None,
 ) -> None:
     """Drop-in replacement for `text_overlay._burn_text_overlays` when the
     job is agentic or music.
@@ -3643,6 +3685,11 @@ def burn_text_overlays_skia(
     if not overlays:
         shutil.copy2(input_path, output_path)
         return
+
+    # `_encoding_args(..., canvas=canvas)` emits `-s WxH`. Without this
+    # precondition FFmpeg silently stretches a portrait substrate into a
+    # landscape encode (or vice versa) instead of preserving its aspect ratio.
+    _validate_input_canvas(input_path, canvas, input_probe=input_probe)
 
     sequences, work_dir = render_text_overlay_sequences(
         overlays,

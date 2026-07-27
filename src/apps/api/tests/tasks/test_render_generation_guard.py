@@ -82,12 +82,17 @@ def _capture_updates(monkeypatch, job) -> list[dict]:
         expected_render_gen_id=None,
         **_kwargs,
     ):
-        variant = next(
-            (v for v in job.assembly_plan["variants"] if v.get("variant_id") == vid),
+        match = next(
+            (
+                (index, variant)
+                for index, variant in enumerate(job.assembly_plan["variants"])
+                if variant.get("variant_id") == vid
+            ),
             None,
         )
-        if variant is None:
+        if match is None:
             return False
+        index, variant = match
         current = variant.get("render_generation_id")
         if (
             expected_render_gen_id is not None
@@ -96,7 +101,7 @@ def _capture_updates(monkeypatch, job) -> list[dict]:
         ):
             return False
         update = {k: v for k, v in patch.items() if k != "variant_id"}
-        variant.update(update)
+        job.assembly_plan["variants"][index] = {**variant, **update}
         updates.append(dict(patch))
         return True
 
@@ -127,6 +132,37 @@ def test_guard_variant_without_gen_id_writes(monkeypatch):
     """A variant never token-stamped (legacy row) can't be stale-checked — write."""
     _patch_sessions(monkeypatch, _FakeJob([_variant(None)]))
     assert gb._stale_render_discarded(JOB_ID, "original_text", "tok-1", outcome="x") is False
+
+
+def test_stale_swap_worker_does_not_clear_newer_timeline(monkeypatch):
+    timeline = {"slots": [{"clip_index": 0, "duration_s": 1.0}]}
+    job = _FakeJob([_variant("tok-new", user_timeline=timeline)])
+    _patch_sessions(monkeypatch, job)
+
+    assert (
+        gb._clear_user_timeline(
+            JOB_ID,
+            "original_text",
+            expected_render_gen_id="tok-old",
+        )
+        is False
+    )
+    assert job.assembly_plan["variants"][0]["user_timeline"] == timeline
+
+
+def test_current_swap_worker_clears_its_timeline(monkeypatch):
+    job = _FakeJob([_variant("tok-current", user_timeline={"slots": []})])
+    _patch_sessions(monkeypatch, job)
+
+    assert (
+        gb._clear_user_timeline(
+            JOB_ID,
+            "original_text",
+            expected_render_gen_id="tok-current",
+        )
+        is True
+    )
+    assert "user_timeline" not in job.assembly_plan["variants"][0]
 
 
 def test_lock_serialization_requires_real_concurrent_db_sessions():
@@ -317,6 +353,92 @@ def test_stale_task_terminal_write_discarded(monkeypatch):
     assert sfx_calls == []
 
 
+def test_stale_fast_reburn_deletes_only_its_generation_scoped_outputs(monkeypatch):
+    """A loser may upload after the winner, but immutable keys keep winner bytes safe."""
+    stale_result = {
+        **_READY_RESULT,
+        "video_path": f"generative-jobs/{JOB_ID}/variant_tokold.mp4",
+        "visual_blocks_base_path": f"generative-jobs/{JOB_ID}/visual-blocks/tokold.mp4",
+        "motion_base_path": f"generative-jobs/{JOB_ID}/motion/tokold.mp4",
+    }
+    job = _FakeJob([_variant("tok-new")])
+    _arm_reburn(monkeypatch, job, stale_result)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "original_text",
+        None,
+        None,
+        False,
+        render_gen_id="tok-old",
+    )
+
+    assert sorted(deleted) == sorted(
+        [
+            stale_result["video_path"],
+            stale_result["visual_blocks_base_path"],
+            stale_result["motion_base_path"],
+        ]
+    )
+    assert job.assembly_plan["variants"][0]["video_path"].endswith("variant_3_original_text.mp4")
+
+
+def test_fast_reburn_exception_cleans_tracked_generation_storage(monkeypatch):
+    job = _FakeJob([_variant("tok-current")])
+    _patch_sessions(monkeypatch, job)
+    _capture_updates(monkeypatch, job)
+    monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: True)
+    owned_path = f"generative-jobs/{JOB_ID}/visual-blocks/owned.mp4"
+
+    def _failing_reburn(**kwargs):
+        kwargs["created_storage_paths"].append(owned_path)
+        raise RuntimeError("burn failed")
+
+    monkeypatch.setattr(gb, "_reburn_text_on_base", _failing_reburn)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+
+    with pytest.raises(RuntimeError, match="burn failed"):
+        gb._run_regenerate_variant(
+            JOB_ID,
+            "original_text",
+            None,
+            None,
+            False,
+            render_gen_id="tok-current",
+        )
+
+    assert deleted == [owned_path]
+
+
+def test_accepted_full_render_retires_previous_generation_outputs(monkeypatch):
+    previous = {
+        "video_path": f"generative-jobs/{JOB_ID}/variant_old.mp4",
+        "base_video_path": f"generative-jobs/{JOB_ID}/base_old.mp4",
+    }
+    replacement = {
+        "video_path": f"generative-jobs/{JOB_ID}/variant_new.mp4",
+        "base_video_path": f"generative-jobs/{JOB_ID}/base_new.mp4",
+    }
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+
+    gb._free_retired_generation_outputs(previous, replacement, job_id=JOB_ID)
+
+    assert sorted(deleted) == sorted(previous.values())
+
+
 def test_current_task_terminal_write_lands(monkeypatch):
     """Same run with the CURRENT token → ready patch + layer reapply hooks land."""
     job = _FakeJob([_variant("tok-current")])
@@ -463,6 +585,177 @@ def test_full_render_success_write_guarded(monkeypatch):
 
     assert not any(u.get("render_status") == "ready" for u in updates)
     assert sfx_calls == []
+
+
+def _arm_full_render(monkeypatch, job, render_result: dict):
+    _patch_sessions(monkeypatch, job)
+    updates = _capture_updates(monkeypatch, job)
+    monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: False, raising=False)
+    monkeypatch.setattr(
+        gb,
+        "_render_generative_variant",
+        lambda **kw: dict(render_result),
+        raising=False,
+    )
+    monkeypatch.setattr(gb, "_ingest_clips", lambda *a, **k: _fake_ingest(), raising=False)
+    monkeypatch.setattr(gb, "_resolve_narrative_order", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(gb, "_run_text_agents", lambda *a, **k: (None, None), raising=False)
+    monkeypatch.setattr(gb, "_reapply_user_media_layers", lambda **kw: None, raising=False)
+    return updates
+
+
+def test_rejected_full_render_cleans_unscoped_derived_caches(monkeypatch):
+    job = _FakeJob(
+        [
+            _variant(
+                "tok-new",
+                text_elements=[{"id": "t1"}],
+                text_elements_user_edited=True,
+            )
+        ]
+    )
+    render_result = {
+        **_READY_RESULT,
+        "video_path": f"generative-jobs/{JOB_ID}/variant_tokold.mp4",
+        "base_video_path": f"generative-jobs/{JOB_ID}/base_tokold.mp4",
+    }
+    _arm_full_render(monkeypatch, job, render_result)
+    visual_cache = f"generative-jobs/{JOB_ID}/visual-blocks/{'a' * 32}.mp4"
+    motion_cache = f"generative-jobs/{JOB_ID}/motion/{'b' * 32}.mp4"
+
+    def _reburn(**kwargs):
+        kwargs["created_storage_paths"].extend([visual_cache, motion_cache])
+        return {
+            "video_path": f"generative-jobs/{JOB_ID}/reburn_tokold.mp4",
+            "visual_blocks_base_path": visual_cache,
+            "motion_base_path": motion_cache,
+        }
+
+    monkeypatch.setattr(gb, "_reburn_text_on_base", _reburn, raising=False)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "original_text",
+        None,
+        None,
+        False,
+        render_gen_id="tok-old",
+    )
+
+    assert visual_cache in deleted
+    assert motion_cache in deleted
+
+
+def test_post_reburn_exception_cleans_original_full_render_objects(monkeypatch):
+    job = _FakeJob(
+        [
+            _variant(
+                "tok-current",
+                text_elements=[{"id": "t1"}],
+                text_elements_user_edited=True,
+            )
+        ]
+    )
+    render_result = {
+        **_READY_RESULT,
+        "video_path": f"generative-jobs/{JOB_ID}/variant_tokcurrent.mp4",
+        "base_video_path": f"generative-jobs/{JOB_ID}/base_tokcurrent.mp4",
+    }
+    _arm_full_render(monkeypatch, job, render_result)
+    derived_cache = f"generative-jobs/{JOB_ID}/visual-blocks/{'c' * 32}.mp4"
+
+    def _reburn(**kwargs):
+        kwargs["created_storage_paths"].append(derived_cache)
+        raise RuntimeError("post-render reburn failed")
+
+    monkeypatch.setattr(gb, "_reburn_text_on_base", _reburn, raising=False)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+
+    with pytest.raises(RuntimeError, match="post-render reburn failed"):
+        gb._run_regenerate_variant(
+            JOB_ID,
+            "original_text",
+            None,
+            None,
+            False,
+            render_gen_id="tok-current",
+        )
+
+    assert render_result["video_path"] in deleted
+    assert render_result["base_video_path"] in deleted
+    assert derived_cache in deleted
+
+
+def test_rejected_failed_full_render_cleans_generation_objects(monkeypatch):
+    job = _FakeJob([_variant("tok-new")])
+    render_result = {
+        "ok": False,
+        "render_status": "failed",
+        "error": "encode failed",
+        "video_path": f"generative-jobs/{JOB_ID}/variant_tokold.mp4",
+        "base_video_path": f"generative-jobs/{JOB_ID}/base_tokold.mp4",
+    }
+    _arm_full_render(monkeypatch, job, render_result)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "original_text",
+        None,
+        None,
+        False,
+        render_gen_id="tok-old",
+    )
+
+    assert sorted(deleted) == sorted(
+        [render_result["video_path"], render_result["base_video_path"]]
+    )
+
+
+def test_accepted_failed_full_render_retires_old_base_and_unpublished_video(monkeypatch):
+    old_base = f"generative-jobs/{JOB_ID}/base_previous.mp4"
+    job = _FakeJob([_variant("tok-current", base_video_path=old_base)])
+    render_result = {
+        "ok": False,
+        "render_status": "failed",
+        "error": "final encode failed",
+        "video_path": f"generative-jobs/{JOB_ID}/variant_tokcurrent.mp4",
+        "base_video_path": f"generative-jobs/{JOB_ID}/base_tokcurrent.mp4",
+    }
+    _arm_full_render(monkeypatch, job, render_result)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "original_text",
+        None,
+        None,
+        False,
+        render_gen_id="tok-current",
+    )
+
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["base_video_path"] == render_result["base_video_path"]
+    assert old_base in deleted
+    assert render_result["video_path"] in deleted
+    assert render_result["base_video_path"] not in deleted
 
 
 def _fake_ingest() -> dict:
@@ -754,6 +1047,10 @@ def test_subtitled_text_fast_reburn_mints_new_key_deletes_old_and_rereads(
     monkeypatch.setattr(
         "app.storage.delete_object_best_effort",
         lambda path: deleted.append(path) or True,
+    )
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: types.SimpleNamespace(duration_s=5.0, width=1080, height=1920),
     )
     monkeypatch.setattr(gb, "_compose_subtitled_final", _compose)
 

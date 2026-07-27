@@ -2756,6 +2756,16 @@ def test_is_fast_reburn_eligible_returns_true_for_style_change():
     assert gb._is_fast_reburn_eligible(existing, None, None, gb.settings) is True
 
 
+def test_is_fast_reburn_eligible_false_while_base_affecting_render_is_stale():
+    """A newer text commit must rebuild footage/audio if it superseded a full render."""
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/j/base_1_song_text.mp4",
+        "base_video_stale": True,
+    }
+    assert gb._is_fast_reburn_eligible(existing, None, None, gb.settings) is False
+
+
 def test_is_fast_reburn_eligible_false_for_new_track():
     """Audio change (new_track_id) → not eligible."""
     existing = {
@@ -2812,7 +2822,7 @@ def _patch_reburn_helpers(monkeypatch, *, base_content=b"\x00" * 32, final_conte
             f.write(base_content)
 
     def _fake_probe(path):
-        return types.SimpleNamespace(duration_s=5.0)
+        return types.SimpleNamespace(duration_s=5.0, width=1080, height=1920)
 
     def _fake_overlays(**kwargs):
         return [{"type": "text", "text": kwargs.get("text", "hi")}]
@@ -2823,8 +2833,23 @@ def _patch_reburn_helpers(monkeypatch, *, base_content=b"\x00" * 32, final_conte
     else:
         _final = final_content
 
-    def _fake_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
-        burn_calls.append({"base": base_path, "overlays": overlays, "out": out_path})
+    def _fake_burn(
+        base_path,
+        overlays,
+        out_path,
+        tmpdir,
+        *,
+        matte=None,
+        input_probe=None,
+    ):
+        burn_calls.append(
+            {
+                "base": base_path,
+                "overlays": overlays,
+                "out": out_path,
+                "input_probe": input_probe,
+            }
+        )
         with open(out_path, "wb") as f:
             f.write(_final)
 
@@ -2926,6 +2951,215 @@ def test_change_style_takes_fast_path(monkeypatch, tmp_path):
     assert len(burn_calls) == 1
     assert result["render_status"] == "ready"
     assert result["intro_text"] == "My hook"
+
+
+def test_fast_reburn_output_key_is_generation_scoped(monkeypatch):
+    existing = {
+        "variant_id": "song_text",
+        "rank": 1,
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/test-job/base.mp4",
+        "video_path": "generative-jobs/test-job/previous.mp4",
+        "intro_text": "My hook",
+    }
+    _patch_reburn_helpers(monkeypatch)
+
+    def _run(generation: str):
+        return gb._reburn_text_on_base(
+            job_id="test-job",
+            variant_id="song_text",
+            existing=existing,
+            agent_text=types.SimpleNamespace(text="My hook", highlight_word=None),
+            agent_form={"effect": "karaoke-line"},
+            text_mode="agent_text",
+            resolved_style_set_id=None,
+            size_override_px=None,
+            settings=gb.settings,
+            storage_generation=generation,
+        )
+
+    older = _run("generation-older")
+    newer = _run("generation-newer")
+
+    assert older["video_path"] != newer["video_path"]
+    assert "generationolder" in older["video_path"]
+    assert "generationnewer" in newer["video_path"]
+    assert older["_old_video_path_for_delete"] == existing["video_path"]
+
+
+@pytest.mark.parametrize(
+    ("orientation", "actual", "expected"),
+    [
+        ("landscape", (1080, 1920), (1920, 1080)),
+        ("portrait", (1920, 1080), (1080, 1920)),
+    ],
+)
+def test_fast_reburn_rejects_base_from_opposite_canvas(
+    monkeypatch,
+    orientation,
+    actual,
+    expected,
+):
+    import app.pipeline.probe as probe_mod
+
+    existing = {
+        "variant_id": "song_text",
+        "orientation": orientation,
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/opposite-canvas-base.mp4",
+        "video_path": "generative-jobs/x/song_text.mp4",
+        "intro_text": "My hook",
+    }
+    burn_calls = _patch_reburn_helpers(monkeypatch)
+    derived_cache_calls: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_ensure_visual_blocks_base",
+        lambda **_kwargs: derived_cache_calls.append("visual") or ("unused", None),
+    )
+    monkeypatch.setattr(
+        gb,
+        "_ensure_motion_base",
+        lambda **_kwargs: derived_cache_calls.append("motion") or ("unused", None),
+    )
+    monkeypatch.setattr(
+        probe_mod,
+        "probe_video",
+        lambda _path: types.SimpleNamespace(
+            duration_s=5.0,
+            width=actual[0],
+            height=actual[1],
+        ),
+    )
+
+    with pytest.raises(gb.CachedBaseCanvasMismatchError) as exc_info:
+        gb._reburn_text_on_base(
+            job_id="test-job",
+            variant_id="song_text",
+            existing=existing,
+            agent_text=types.SimpleNamespace(text="My hook", highlight_word=None),
+            agent_form={"effect": "karaoke-line"},
+            text_mode="agent_text",
+            resolved_style_set_id=None,
+            size_override_px=None,
+            settings=gb.settings,
+        )
+
+    assert exc_info.value.expected == expected
+    assert exc_info.value.actual == actual
+    assert burn_calls == []
+    assert derived_cache_calls == []
+
+
+def test_fast_reburn_converts_probe_failure_to_safe_fallback_signal(monkeypatch):
+    import app.pipeline.probe as probe_mod
+
+    existing = {
+        "variant_id": "song_text",
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/corrupt-base.mp4",
+        "video_path": "generative-jobs/x/song_text.mp4",
+        "intro_text": "My hook",
+    }
+    burn_calls = _patch_reburn_helpers(monkeypatch)
+    monkeypatch.setattr(
+        probe_mod,
+        "probe_video",
+        lambda _path: (_ for _ in ()).throw(probe_mod.ProbeError("corrupt base")),
+    )
+
+    with pytest.raises(gb.CachedBaseProbeError):
+        gb._reburn_text_on_base(
+            job_id="test-job",
+            variant_id="song_text",
+            existing=existing,
+            agent_text=types.SimpleNamespace(text="My hook", highlight_word=None),
+            agent_form={"effect": "karaoke-line"},
+            text_mode="agent_text",
+            resolved_style_set_id=None,
+            size_override_px=None,
+            settings=gb.settings,
+        )
+
+    assert burn_calls == []
+
+
+def test_fast_reburn_cleans_new_visual_cache_when_motion_setup_fails(monkeypatch):
+    existing = {
+        "variant_id": "song_text",
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/test-job/base.mp4",
+        "video_path": "generative-jobs/test-job/song_text.mp4",
+        "intro_text": "My hook",
+    }
+    _patch_reburn_helpers(monkeypatch)
+    new_visual = "generative-jobs/test-job/visual-blocks/new.mp4"
+    monkeypatch.setattr(
+        gb,
+        "_ensure_visual_blocks_base",
+        lambda **_kwargs: (new_visual, new_visual),
+    )
+    monkeypatch.setattr(
+        gb,
+        "_ensure_motion_base",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("motion failed")),
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+
+    with pytest.raises(RuntimeError, match="motion failed"):
+        gb._reburn_text_on_base(
+            job_id="test-job",
+            variant_id="song_text",
+            existing=existing,
+            agent_text=types.SimpleNamespace(text="My hook", highlight_word=None),
+            agent_form={"effect": "karaoke-line"},
+            text_mode="agent_text",
+            resolved_style_set_id=None,
+            size_override_px=None,
+            settings=gb.settings,
+        )
+
+    assert deleted == [new_visual]
+
+
+def test_fast_reburn_reuses_preflight_probe_for_duration_and_renderer(monkeypatch):
+    import app.pipeline.probe as probe_mod
+
+    existing = {
+        "variant_id": "song_text",
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/base.mp4",
+        "video_path": "generative-jobs/x/song_text.mp4",
+        "intro_text": "My hook",
+    }
+    burn_calls = _patch_reburn_helpers(monkeypatch)
+    probe = types.SimpleNamespace(duration_s=5.0, width=1080, height=1920)
+    probe_calls: list[str] = []
+
+    def _counting_probe(path):
+        probe_calls.append(path)
+        return probe
+
+    monkeypatch.setattr(probe_mod, "probe_video", _counting_probe)
+
+    gb._reburn_text_on_base(
+        job_id="test-job",
+        variant_id="song_text",
+        existing=existing,
+        agent_text=types.SimpleNamespace(text="My hook", highlight_word=None),
+        agent_form={"effect": "karaoke-line"},
+        text_mode="agent_text",
+        resolved_style_set_id=None,
+        size_override_px=None,
+        settings=gb.settings,
+    )
+
+    assert len(probe_calls) == 1
+    assert burn_calls[0]["input_probe"] is probe
 
 
 def test_swap_song_takes_full_path_preserves_text(monkeypatch, tmp_path):
@@ -3193,13 +3427,21 @@ def test_fast_path_burn_copy_through_marks_failed(monkeypatch):
             f.write(base_content)
 
     def _fake_probe(path):
-        return types.SimpleNamespace(duration_s=5.0)
+        return types.SimpleNamespace(duration_s=5.0, width=1080, height=1920)
 
     def _fake_overlays(**kwargs):
         # Return non-empty overlays so the copy-through check fires.
         return [{"type": "text", "text": "hi"}]
 
-    def _copy_through_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
+    def _copy_through_burn(
+        base_path,
+        overlays,
+        out_path,
+        tmpdir,
+        *,
+        matte=None,
+        input_probe=None,
+    ):
         # Write same byte count as base → simulates copy-through (no actual burn).
         with open(out_path, "wb") as f:
             f.write(base_content)
