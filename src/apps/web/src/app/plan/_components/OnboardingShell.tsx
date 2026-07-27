@@ -228,7 +228,9 @@ function WhatYouMakeStep({
 
   return (
     <div>
-      <p className="text-xs font-semibold uppercase tracking-widest text-lime-700">
+      {/* Desktop only — below md the shell renders its own "Step N of 4" marker
+          for every step, and both showing at once reads as a duplicate. */}
+      <p className="hidden text-xs font-semibold uppercase tracking-widest text-lime-700 md:block">
         Step 2 of 4
       </p>
       <h1 className="mt-4 font-display text-4xl font-medium leading-tight tracking-tight text-[#0c0c0e]">
@@ -312,6 +314,7 @@ export default function OnboardingShell({
   onSavePersona,
   onChatComplete,
   onContinueToPlan,
+  onRetune,
   error,
 }: OnboardingShellProps) {
   // Lazy initializers: derive the right step/tiktokStatus from server state on
@@ -406,6 +409,9 @@ export default function OnboardingShell({
           continuing={planBusy}
           tiktokProfile={persona.tiktok_profile}
           variant="reveal"
+          // Reveal only surfaces this when generation produced nothing, as the
+          // "Generate persona" retry — never as a peer of the primary CTA.
+          onRetuneFromFeedback={onRetune}
         />
       );
     }
