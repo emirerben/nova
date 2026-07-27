@@ -4180,7 +4180,24 @@ export default function EditorShell({
   }
 
   if (loading) {
-    return (
+    // The docked skeleton's columns sum to 484px (92 + 320 + 72), so on a phone
+    // the 1fr canvas collapses to zero and the row overflows the viewport. The
+    // loaded editor already branches on layoutMode — and because the real editor
+    // only mounts after the async variant load resolves, this skeleton is the
+    // FIRST thing a phone user sees, so it has to branch too.
+    return layoutMode === "light" ? (
+      <Frame>
+        <div className="flex min-h-0 flex-1 items-center justify-center px-5">
+          <div
+            className="h-[70%] w-auto max-w-full rounded-xl border border-zinc-200 bg-zinc-100 motion-safe:animate-pulse"
+            style={{ aspectRatio: "9 / 16" }}
+          />
+        </div>
+        {/* Light mode has no timeline (useEditorLayoutMode: the heavy timeline
+            must never mount below 1024px) — only the transport strip. */}
+        <div className="h-16 flex-none border-t border-zinc-200 bg-white" />
+      </Frame>
+    ) : (
       <Frame>
         <div className="grid min-h-0 flex-1 grid-cols-[92px_1fr_320px_72px]">
           <div className="border-r border-zinc-200 bg-white" />

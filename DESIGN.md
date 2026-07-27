@@ -204,6 +204,7 @@ Celebrate then recede.
 - **User scaling:** never disable zoom. Do not set `maximumScale` or `user-scalable=no`.
 - **Mobile-first:** single column default, `sm:`/`md:` enhance; landing display type scales via `clamp()`; phone tiles use mobile radii (§2).
 - **Reduced-motion** honored globally — `prefers-reduced-motion` zeroes entrances (globals.css); new shimmer/ping uses `motion-safe:` prefix until D17 lands (see §6).
+- **Enforcement:** `src/apps/web/src/__tests__/plan/mobile-shell.test.tsx` guards the parts of this section that regressed silently for months (plans/013) — the setup shells' rails stay breakpoint-gated with a shrinkable `<main>`, and no form control renders below the 16px zoom floor. The 16px floor is applied once in `globals.css` at the base tier, NOT per call site; a new sub-16px control fails that test until its size class is added to the rule.
 
 | Tier | Width | Canonical use |
 |---|---:|---|
