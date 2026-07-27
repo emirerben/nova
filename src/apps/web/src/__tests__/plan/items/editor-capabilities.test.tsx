@@ -277,9 +277,31 @@ describe("captionToolState", () => {
     ).toBe("editable");
   });
 
-  it("is pending for a caption archetype whose base video has not landed yet", () => {
+  it("is pending for a caption archetype that has neither a base video nor cues yet", () => {
     expect(
       captionToolState({ resolved_archetype: "subtitled" } as PlanItemVariant),
+    ).toBe("pending");
+  });
+
+  it("is editable when cues exist even without a base video — the drawer renders no video", () => {
+    // The variant-wide caption controls live ONLY in this drawer now, and
+    // caption bars appear whenever cues exist. If this returned "pending" the
+    // inspector would offer "This caption" while the global styling had no
+    // reachable home at all.
+    expect(
+      captionToolState({
+        resolved_archetype: "narrated",
+        caption_cues: [{ text: "hi", start_s: 0, end_s: 1 }],
+      } as PlanItemVariant),
+    ).toBe("editable");
+  });
+
+  it("stays pending for an empty cue list (still rendering), not editable", () => {
+    expect(
+      captionToolState({
+        resolved_archetype: "subtitled",
+        caption_cues: [],
+      } as unknown as PlanItemVariant),
     ).toBe("pending");
   });
 

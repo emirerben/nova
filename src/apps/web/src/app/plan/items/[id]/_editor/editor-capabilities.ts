@@ -29,9 +29,24 @@ export function captionToolState(
 ): CaptionToolState {
   if (!variant) return "unavailable";
   if (isCaptionArchetype(variant)) return "editable";
-  // Caption archetype without a base video = still rendering. `isCaptionArchetype`
-  // fails closed on that (correct for routing), so ask the name-only predicate.
-  if (hasCaptionArchetypeName(variant)) return "pending";
+  if (hasCaptionArchetypeName(variant)) {
+    // Cues exist ⇒ editable even without a base video. `isCaptionArchetype`
+    // requires the base because it also routes the item-page CaptionEditor,
+    // which renders its own <video src={base}> and would be an empty panel
+    // without it. This drawer renders no video — it edits cue text and the
+    // variant's caption styling, neither of which needs one, and the canvas
+    // preview independently guards on the base already.
+    //
+    // Load-bearing since the variant-wide caption controls moved OUT of the
+    // inspector: caption BARS appear whenever `caption_cues` exist, so without
+    // this clause a cue-bearing variant with no base would show "This caption"
+    // in the inspector while the only home for the global styling stayed
+    // unreachable. Empirically that combination doesn't occur (the same render
+    // emits both), but nothing enforces it, and the cost of being wrong is a
+    // user with no way to restyle their captions.
+    const hasCues = (variant.caption_cues?.length ?? 0) > 0;
+    return hasCues ? "editable" : "pending";
+  }
   return "unavailable";
 }
 
