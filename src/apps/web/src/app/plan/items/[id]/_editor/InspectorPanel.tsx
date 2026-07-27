@@ -72,6 +72,9 @@ import {
   MEDIA_OVERLAY_MAX_SCALE,
 } from "./editor-media-overlays";
 import {
+  AI_SEQUENCE_BADGE_LABEL,
+  AI_SEQUENCE_BADGE_TOOLTIP,
+  isAiSequenceBar,
   SMART_ROLE_BADGE_LABELS,
   smartCaptionPreviewSizePx,
   smartStyleForRole,
@@ -1141,6 +1144,11 @@ function TextInspector({
   // smartStyleForRole).
   const smartRoleBadge = isCaption && bar.smart_role ? SMART_ROLE_BADGE_LABELS[bar.smart_role] : null;
   const isEmphasized = isCaption && bar.smart_emphasis === true;
+  // AI sequence badge: the transcript-synced editorial sequence / rhythm-mode
+  // quote is server-authored, not user-typed — surface provenance so users
+  // aren't confused by text they never wrote (see isAiSequenceBar's doc comment
+  // for why role alone can't distinguish it from user-composed sequence bars).
+  const isAiSequence = isAiSequenceBar(bar);
 
   const sizeValue = Math.round(bar.size_px ?? 64);
   // Read-only preview: how much bigger this cue burns relative to the base
@@ -1198,6 +1206,15 @@ function TextInspector({
               className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#71717a]"
             >
               {smartRoleBadge}
+            </span>
+          )}
+          {isAiSequence && (
+            <span
+              aria-label={AI_SEQUENCE_BADGE_LABEL}
+              title={AI_SEQUENCE_BADGE_TOOLTIP}
+              className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#71717a]"
+            >
+              {AI_SEQUENCE_BADGE_LABEL}
             </span>
           )}
           {isLyric && (

@@ -19,6 +19,17 @@ function makeCaptionBar(overrides: Partial<TextElementBar> = {}): TextElementBar
   };
 }
 
+function makeTextBar(overrides: Partial<TextElementBar> = {}): TextElementBar {
+  return {
+    id: "text-0",
+    role: "generative_intro",
+    text: "Big title",
+    start_s: 0,
+    end_s: 2,
+    ...overrides,
+  };
+}
+
 function renderCaptionInspector(
   bar: TextElementBar,
   overrides: Partial<React.ComponentProps<typeof InspectorPanel>> = {},
@@ -102,6 +113,41 @@ describe("InspectorPanel caption role badge + Emphasize toggle (4b)", () => {
   it("shows no size preview hint for a plain cue (no smart_style)", () => {
     renderCaptionInspector(makeCaptionBar());
     expect(screen.queryByText(/Burns bigger for this role/)).not.toBeInTheDocument();
+  });
+});
+
+describe("InspectorPanel AI sequence badge (Lane PR-B)", () => {
+  it("shows the AI sequence badge for a backend-projected sequence_scene bar", () => {
+    renderCaptionInspector(
+      makeTextBar({
+        role: "generative_sequence",
+        text: "edits and I didn't really like CapCut",
+        source_params: { source: "sequence_scene", key: "0:1" },
+      }),
+    );
+    const badge = screen.getByLabelText("AI sequence");
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute(
+      "title",
+      "Written by AI from your video's speech — edit or delete it freely",
+    );
+  });
+
+  it("hides the badge for a user-typed generative_sequence bar (split & place, no source_params)", () => {
+    renderCaptionInspector(
+      makeTextBar({ role: "generative_sequence", text: "my own composed beat" }),
+    );
+    expect(screen.queryByLabelText("AI sequence")).not.toBeInTheDocument();
+  });
+
+  it("hides the badge for a plain text bar", () => {
+    renderCaptionInspector(makeTextBar());
+    expect(screen.queryByLabelText("AI sequence")).not.toBeInTheDocument();
+  });
+
+  it("hides the badge for a caption bar", () => {
+    renderCaptionInspector(makeCaptionBar());
+    expect(screen.queryByLabelText("AI sequence")).not.toBeInTheDocument();
   });
 });
 
