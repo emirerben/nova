@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.4.1] — 2026-07-27
+
+### Fixed
+- **The persona reveal looks like it did before, with only the button moved.** Getting "Get my ideas" into the first screen (v0.16.2.0) also quietly restyled the screen around it: the "AI-generated" badge, the "This is who we think you are" subline, and the "Update from feedback" button were dropped, the "Why this lane" card was moved from above the summary to the bottom of the page, and a "What we based it on" heading was introduced. None of that was asked for. All of it is restored to exactly where it was; the reveal is now the same screen as before with one difference — the action row sits above the supporting detail (pillars, tone, audience, sample topics) instead of below it, and pins to the bottom of the viewport only when a long AI-written summary would otherwise push it off the first screen. Verified above the fold at 1440×900, 1280×720, 390×844 and 375×667 with a real generated persona.
+
 ## [0.16.4.0] — 2026-07-27
 
 ### Fixed

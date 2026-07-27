@@ -3,7 +3,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import type { PersonaContent, PersonaStatus, TikTokProfile } from "@/lib/plan-api";
-import { InkButton } from "@/components/ui/InkButton";
 
 const PIN_COMFORT_PX = 24;
 
@@ -174,12 +173,11 @@ export default function PersonaEditor({
   }
 
   if (variant === "reveal" && !editing) {
-    // A generation failure leaves a truthy-but-empty persona (only footage_type_bias),
-    // which OnboardingShell still routes here. With nothing to show, the divider and
-    // the "what we based it on" eyebrow would render as dangling chrome over blank
-    // space, and — because the reveal hides the retune button — the user would be left
-    // with no way to try again. Both are gated on real content instead.
-    const hasSummary = !!draft.summary?.trim();
+    // Identical content and order to the default layout below. The ONLY difference:
+    // the action row moves above the supporting detail (pillars / facts / topics) and
+    // pins to the viewport bottom when the AI-written summary is long enough to push
+    // it off the first screen. Everything else — badge, subline, rationale card,
+    // button set — is deliberately unchanged from the default layout.
     const hasDetail =
       (draft.content_pillars ?? []).some(Boolean) ||
       (draft.sample_topics ?? []).some(Boolean) ||
@@ -191,18 +189,43 @@ export default function PersonaEditor({
         {/* Aha-moment reveal — TikTok stat line */}
         <AhaMoment tiktokProfile={tiktokProfile} />
 
-        <h1
-          className="font-display text-[26px] text-[#0c0c0e] animate-fade-up md:text-3xl"
-          style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
-        >
-          {hasSummary ? "Meet your persona" : "We couldn't build your persona"}
-        </h1>
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <h1
+              className="font-display text-3xl text-[#0c0c0e] animate-fade-up"
+              style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
+            >
+              Meet your persona
+            </h1>
+            <p className="mt-1 text-[#71717a]">
+              This is who we think you are. It guides every video we make for you.
+            </p>
+          </div>
+          <StatusBadge status={status} />
+        </div>
 
-        <p className="mt-5 font-display text-lg leading-relaxed text-[#0c0c0e] md:text-xl">
-          {hasSummary
-            ? draft.summary
-            : "Something went wrong on our side. Generate it again, or write it yourself."}
-        </p>
+        {draft.rationale && (
+          <div className="mb-8 rounded-lg border border-zinc-200 bg-white p-4">
+            <p className="mb-1 text-xs font-medium text-lime-700">Why this lane</p>
+            <p className="text-sm text-[#3f3f46]">{draft.rationale}</p>
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
+            {error}
+          </div>
+        )}
+
+        {draft.summary?.trim() ? (
+          <p className="font-display text-xl leading-relaxed text-[#0c0c0e]">{draft.summary}</p>
+        ) : (
+          <p className="text-[#71717a]">
+            No summary yet — tap{" "}
+            <span className="font-medium text-[#3f3f46]">Generate persona</span> to create one, or{" "}
+            <span className="font-medium text-[#3f3f46]">Tweak</span> to write one manually.
+          </p>
+        )}
 
         <div ref={markerRef} className="h-0" aria-hidden="true" />
         {/* The divider between action and detail lives on the detail wrapper below,
@@ -210,58 +233,61 @@ export default function PersonaEditor({
         <div
           ref={actionRowRef}
           className={cn(
-            "mt-7 mb-7 flex flex-wrap items-center gap-4",
+            "mt-8 mb-8 flex flex-wrap items-center gap-4",
             pinned &&
               "sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#fafaf8] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0",
           )}
         >
-          {/* With no persona, "Get my ideas" is a dead end — plan creation 409s
-              unless the persona is ready/edited — so regenerating becomes the
-              primary action and the CTA is withheld until there is one. */}
-          {hasSummary ? (
-            <InkButton
-              variant="solid"
-              onClick={handleContinue}
-              disabled={continuing || saving}
-              className="min-h-[48px]"
-            >
-              {continuing || saving ? "Starting…" : continueLabel}
-            </InkButton>
-          ) : (
-            onRetuneFromFeedback && (
-              <InkButton
-                variant="solid"
-                onClick={handleRetune}
-                disabled={retuning || continuing || saving}
-                className="min-h-[48px]"
-              >
-                {retuning ? "Generating…" : "Generate persona"}
-              </InkButton>
-            )
-          )}
+          <button
+            onClick={handleContinue}
+            disabled={continuing || saving}
+            className="inline-flex min-h-[44px] items-center rounded-full bg-[#0c0c0e] px-6 py-3 font-medium text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {continuing || saving ? "Starting…" : continueLabel}
+          </button>
 
           <button
             onClick={() => setEditing(true)}
             disabled={continuing || saving}
             className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
           >
-            {hasSummary ? "Tweak" : "Write it myself"}
+            Tweak
           </button>
+
+          {!dirty && status === "edited" && (
+            <span className="text-sm text-emerald-600">Saved ✓</span>
+          )}
+
+          {onRetuneFromFeedback &&
+            (() => {
+              const hasRealContent = !!draft.summary?.trim();
+              const isBlocked = status === "edited" && hasRealContent;
+              return (
+                <button
+                  onClick={handleRetune}
+                  disabled={retuning || continuing || saving || isBlocked}
+                  title={
+                    isBlocked
+                      ? "Your hand-edited persona stays as you wrote it. Reset to AI to retune."
+                      : "Re-tune this persona from your video feedback"
+                  }
+                  className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
+                >
+                  {retuning
+                    ? "Updating…"
+                    : !draft.summary?.trim()
+                      ? "Generate persona"
+                      : "Update from feedback"}
+                </button>
+              );
+            })()}
         </div>
 
+        {/* Gated so a failed generation (empty persona) doesn't render a bare
+            divider over blank space. Invisible on the happy path. */}
         {hasDetail && (
-          <div className="border-t border-zinc-200 pt-7">
-            <p className="mb-4 text-xs font-medium uppercase tracking-[0.08em] text-[#a1a1aa]">
-              What we based it on
-            </p>
+          <div className="border-t border-zinc-200 pt-8">
             <PersonaDetails persona={draft} />
-          </div>
-        )}
-
-        {draft.rationale && (
-          <div className="mt-8 rounded-lg border border-dashed border-zinc-200 bg-transparent p-4">
-            <p className="mb-1 text-xs font-medium text-lime-700">Why this lane</p>
-            <p className="text-sm text-[#3f3f46]">{draft.rationale}</p>
           </div>
         )}
       </div>
