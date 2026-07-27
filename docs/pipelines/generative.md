@@ -135,6 +135,16 @@ After a render, `song_text` / `original_text` montage variants are editable: reo
 beat-quantized duration, in-point scrub, clip swap/add/remove, reset. The editor edits the
 AI's assembly decisions, not pixels.
 
+- **Fast text reburn safety:** only pure text edits may reuse
+  `base_video_path`. Base-affecting commits (orientation, timeline, music,
+  mix, lyrics, or camera changes) set the sticky `base_video_stale` marker;
+  only the token-winning full render clears it. Before burning, the worker
+  probes the cached base and requires an exact match with the requested
+  portrait or landscape canvas. A stale marker, explicit orientation request,
+  probe failure, or canvas mismatch falls back to full assembly instead of
+  letting FFmpeg resize the old base. Reburn outputs and derived visual/motion
+  caches use immutable generation-scoped keys; the `render_generation_id`
+  guard publishes only the newest render and cleans rejected objects.
 - **Contract:** `variants[i]["ai_timeline"]` (written once per assembly — rewritten by any
   match-driven re-render like swap-song) + `variants[i]["user_timeline"]` (the user's
   override, persisted by the route pre-enqueue under the `_update_variant_entry` row-lock
