@@ -63,10 +63,53 @@ function renderCaptionInspector(
 }
 
 describe("InspectorPanel caption section split (Lane PR-A)", () => {
-  it("renders both 'This caption' and 'All captions' section labels", () => {
+  it("keeps 'This caption' but no longer renders the variant-wide 'All captions' section — that moved to the Captions rail tool", () => {
     renderCaptionInspector(makeCaptionBar());
     expect(screen.getByText("This caption")).toBeInTheDocument();
-    expect(screen.getByText("All captions")).toBeInTheDocument();
+    // Globals are GLOBAL: reaching them used to require selecting one arbitrary
+    // cue. The Captions drawer owns them now, so a second home here would mean
+    // two controls writing one value.
+    expect(screen.queryByText("All captions")).not.toBeInTheDocument();
+  });
+
+  it("offers a way to the variant-wide styling when the Captions panel is closed", () => {
+    const onOpenCaptionsPanel = jest.fn();
+    renderCaptionInspector(makeCaptionBar(), {
+      onOpenCaptionsPanel,
+      captionsPanelOpen: false,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /Change font, size or colour for every caption/ }),
+    );
+    expect(onOpenCaptionsPanel).toHaveBeenCalled();
+  });
+
+  it("says nothing about opening the Captions panel while that panel is already open", () => {
+    renderCaptionInspector(makeCaptionBar(), {
+      onOpenCaptionsPanel: jest.fn(),
+      captionsPanelOpen: true,
+    });
+    // Telling someone to open a panel they are looking at reads as a broken
+    // instruction, not a shortcut — this is the confusion the rule removes.
+    expect(screen.queryByText(/Captions panel/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Change font, size or colour/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not advertise a panel the shell cannot open", () => {
+    renderCaptionInspector(makeCaptionBar(), { onOpenCaptionsPanel: undefined });
+    expect(
+      screen.queryByRole("button", { name: /Change font, size or colour/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("points the per-cue hint at a control that exists here, not an 'All captions' section that moved away", () => {
+    renderCaptionInspector(makeCaptionBar());
+    expect(
+      screen.getByText(/Changes only this line\. Use “Match all captions” to clear it\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/below/i)).not.toBeInTheDocument();
   });
 
   it("does not render the section split for a non-caption text bar", () => {
@@ -117,8 +160,9 @@ describe("InspectorPanel caption section split (Lane PR-A)", () => {
     expect(
       screen.getByRole("button", { name: "This caption's font: Inter-Bold" }),
     ).toBeInTheDocument();
-    // The "All captions" picker still shows the unaffected global value.
-    expect(screen.getByRole("button", { name: "Font: Playfair Display" })).toBeInTheDocument();
+    // Exactly ONE font picker on a caption: the per-cue override. The global
+    // picker now lives in the Captions drawer.
+    expect(screen.queryByRole("button", { name: "Font: Playfair Display" })).not.toBeInTheDocument();
   });
 
   it("picking a font in 'This caption' patches cue_font_family, not font_family", () => {
@@ -160,14 +204,29 @@ describe("InspectorPanel caption section split (Lane PR-A)", () => {
     expect(slider.value).toBe("120");
   });
 
-  it("'All captions' Fill color still patches the global color field", () => {
-    const { onPatch } = renderCaptionInspector(makeCaptionBar());
-    // "Fill color hex" is shared with the pre-existing "Highlight" row (a
-    // known, pre-existing label collision, out of scope here) — the Fill row
-    // renders first.
-    const [hexInput] = screen.getAllByLabelText("Fill color hex");
-    fireEvent.change(hexInput, { target: { value: "#ABCDEF" } });
-    fireEvent.blur(hexInput);
-    expect(onPatch).toHaveBeenCalledWith({ color: "#ABCDEF" });
+  it("no longer offers the variant-wide Fill/Highlight/Shadow/Stroke rows on a caption — one home per scope", () => {
+    renderCaptionInspector(makeCaptionBar());
+    // These wrote the VARIANT globals when the selected bar was a caption.
+    // Leaving them here alongside the drawer's copies would be two controls
+    // for one value, which is the confusion this change removes.
+    expect(screen.queryAllByLabelText("Fill color hex")).toHaveLength(0);
+    expect(screen.queryByLabelText("Highlight color")).not.toBeInTheDocument();
+    expect(screen.queryByText("Stroke")).not.toBeInTheDocument();
+    expect(screen.queryByText("Shadow")).not.toBeInTheDocument();
+    // Per-cue colour is untouched — it is scoped to this line, not the variant.
+    expect(screen.getByLabelText("This caption's fill color hex")).toBeInTheDocument();
+  });
+
+  it("keeps the variant-wide styling rows for an ordinary text bar (the removal is caption-scoped)", () => {
+    renderCaptionInspector({
+      id: "text-0",
+      role: "generative_intro",
+      text: "hello",
+      start_s: 0,
+      end_s: 1,
+      color: "#FFFFFF",
+    });
+    expect(screen.getAllByLabelText("Fill color hex").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Highlight color")).toBeInTheDocument();
   });
 });

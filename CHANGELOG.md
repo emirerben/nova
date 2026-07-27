@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.1.0] — 2026-07-27
+
+### Added
+- **Captions are now a tool in the editor's left rail.** On a subtitled or narrated edit, captions were the most-edited thing on screen and the only one with no rail entry — you had to know that the slivers crowding the Text lane were caption cues, click the right one, and work in the right-hand inspector. The new `CC Captions` tool opens a drawer that owns everything caption-scoped: the cue list with inline text editing, find-and-fix across every line (with Replace all as a single undo step), the subtitles switch, the caption language, and the variant-wide font/size/colour/stroke/shadow. Cue rows track the playhead, and clicking one seeks the canvas and opens it for editing in place. The editor already promised this — a locked caption bar's tooltip pointed at a "Captions tab" that only ever existed on the item page.
+- **Captions get their own timeline lane.** Caption cues moved out of the Text lane, which a 45-second talking-head edit was filling with 30–40 six-pixel bars. Collapsed it is a one-line density strip you can click to jump into the Captions tool; with the tool open it expands to selectable, trimmable rows. Hidden when an edit has no cues, dimmed when subtitles are off.
+
+### Changed
+- **"All captions" moved from the right inspector to the Captions drawer.** Variant-wide caption styling is global, so reaching it by first selecting one arbitrary cue inverted the hierarchy. The inspector keeps "This caption" (emphasize, merge, per-cue font/colour/size) and links across. One home per scope.
+
+### Fixed
+- **Changing the caption font or size now repaints every caption, not just the selected one.** Variant-level caption styling wrote the meta patch (what Save sends) but previewed on only the one bar that happened to be patched, so the canvas showed the new font while a single cue was on screen and the old one everywhere else.
+- **Turning subtitles off clears the canvas preview immediately.** The preview was gated on the server's `captions_enabled`, which only changes on Save — so the canvas kept drawing captions after they were switched off.
+- **The per-line caption Font / Colour / Size controls now actually do something.** "This caption" writes `cue_font_family` / `cue_text_color` / `cue_size_px`, but the canvas preview only ever read the variant-wide `font_family` / `color` / `size_px` — so every per-line override changed state the user could never see, and the controls read as dead. The preview now honours the same per-cue-then-global precedence the inspector displays.
+- **The inspector no longer tells you to open a panel you already have open.** The link to the variant-wide caption styling is hidden while the Captions panel is showing, and the per-line hint stopped pointing at an "All captions" section that had moved out of that panel.
 ## [0.17.0.0] — 2026-07-27
 
 ### Added

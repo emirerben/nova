@@ -103,6 +103,44 @@ export function captionMetaPatchFromCaptionBarPatch(
   return metaPatch;
 }
 
+/**
+ * Inverse of `captionMetaPatchFromCaptionBarPatch`: variant-level caption meta
+ * → the LOCAL bar fields that preview it.
+ *
+ * Load-bearing for the Captions drawer's "All captions" section. The meta patch
+ * alone only changes what SAVE sends; the canvas caption preview and the
+ * timeline bars read their styling off the bars themselves (see EditorCanvas's
+ * `captionPreviewStyle`, which resolves `bar?.font_family ?? variant.…`). So a
+ * global font change must be fanned across EVERY caption bar — patching one bar
+ * previews the new font only while that single cue is on screen, which is the
+ * behaviour the drawer replaced.
+ *
+ * `enabled` and `style` are deliberately absent: they have no per-bar
+ * equivalent (the canvas reads caption on/off and sentence-vs-word from the
+ * meta snapshot directly), so mapping them here would invent bar fields.
+ */
+export function captionBarPatchFromMetaPatch(
+  patch: CaptionMetaPatch,
+): Partial<Omit<TextElementBar, "id" | "role">> {
+  const barPatch: Partial<Omit<TextElementBar, "id" | "role">> = {};
+  // hasOwnProperty, not truthiness: `font: null` is "reset to the default
+  // face", a real edit, and must not be dropped as falsy.
+  if (Object.prototype.hasOwnProperty.call(patch, "font")) {
+    barPatch.font_family = patch.font ?? undefined;
+  }
+  if (typeof patch.size_px === "number") barPatch.size_px = patch.size_px;
+  if (typeof patch.color === "string") barPatch.color = patch.color;
+  if (typeof patch.highlight_color === "string") {
+    barPatch.highlight_color = patch.highlight_color;
+  }
+  if (typeof patch.stroke_width === "number") barPatch.stroke_width = patch.stroke_width;
+  if (typeof patch.shadow_enabled === "boolean") {
+    barPatch.shadow_enabled = patch.shadow_enabled;
+  }
+  if (typeof patch.y_frac === "number") barPatch.y_frac = patch.y_frac;
+  return barPatch;
+}
+
 export function localCaptionBarPatchFromPatch(
   patch: Partial<Omit<TextElementBar, "id" | "role">>,
 ): Partial<Omit<TextElementBar, "id" | "role">> {

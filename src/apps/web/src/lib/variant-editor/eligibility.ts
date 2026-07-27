@@ -52,6 +52,18 @@ export function isCaptionArchetype(variant: EditableVariant): boolean {
   );
 }
 
+/**
+ * Archetype name ALONE — deliberately without `isCaptionArchetype`'s base-video
+ * clause. The gap between the two predicates is exactly one state: "this IS a
+ * caption edit, but it hasn't finished rendering yet." Surfaces that must tell
+ * *not a caption edit* apart from *not a caption edit YET* (the editor's
+ * Captions rail entry) need both; everything that only routes caption editing
+ * should keep using `isCaptionArchetype`, which fails closed on a missing base.
+ */
+export function hasCaptionArchetypeName(variant: EditableVariant): boolean {
+  return CAPTION_ARCHETYPES.has(variant.resolved_archetype ?? "");
+}
+
 export function isInstantEditEligible(variant: EditableVariant): boolean {
   return (
     !!variant.base_video_url &&

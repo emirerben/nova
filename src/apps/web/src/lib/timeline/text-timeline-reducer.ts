@@ -181,6 +181,25 @@ export type TextEditorAction =
       patch: Partial<Omit<TextElementBar, "id" | "role">>;
     }
   /**
+   * Patch MANY bars in ONE undoable step, each with its own patch.
+   *
+   * Exists because two caption actions legitimately change several bars at
+   * once and must stay a single Cmd+Z: the "All captions" globals (which have
+   * to repaint EVERY caption cue's preview, not just the selected one) and
+   * find-and-replace-all across the cue list. Looping PATCH_BAR would push one
+   * history entry per bar, so undoing a 12-line replace would take 12 presses.
+   *
+   * Ids absent from `state.bars` are ignored; a no-op set returns state
+   * unchanged so it never pollutes the undo stack.
+   */
+  | {
+      type: "PATCH_BARS";
+      patches: Array<{
+        id: string;
+        patch: Partial<Omit<TextElementBar, "id" | "role">>;
+      }>;
+    }
+  /**
    * Insert seeded lyric_line bars in one undoable step (lyrics-optional
    * elements model: Lyrics toggle ON). Individual lyric bars can't be added
    * via ADD_TEXT-style one-at-a-time flows — the toggle inserts the whole set.
@@ -341,6 +360,24 @@ export function textReducer(
       const next = state.bars.map((b) =>
         b.id === action.id ? { ...b, ...patch } : b,
       );
+      return withHistory(state, next);
+    }
+
+    case "PATCH_BARS": {
+      const byId = new Map(action.patches.map((p) => [p.id, p.patch]));
+      if (byId.size === 0) return state;
+      let touched = false;
+      const next = state.bars.map((b) => {
+        const raw = byId.get(b.id);
+        if (!raw) return b;
+        const patch = isLyricLine(b) ? lyricPatch(raw) : raw;
+        if (Object.keys(patch).length === 0) return b;
+        touched = true;
+        return { ...b, ...patch };
+      });
+      // No matching bar (or every patch filtered to empty) → leave the undo
+      // stack alone rather than recording a step that changes nothing.
+      if (!touched) return state;
       return withHistory(state, next);
     }
 

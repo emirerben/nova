@@ -46,6 +46,8 @@ import {
   type PlanItemVariant,
   type PoolAsset,
   type CaptionCue,
+  type CaptionLanguage,
+  setPlanItemCaptionLanguage,
   type SoundEffectPlacement,
   type TextElement,
   type VisualBlock,
@@ -104,6 +106,7 @@ import {
   barsToPreviewTextElements,
   barsToTextElements,
   buildLyricLineOverrides,
+  captionBarPatchFromMetaPatch,
   captionMetaPatchFromCaptionBarPatch,
   isCaptionBar,
   isLyricBar,
@@ -113,6 +116,7 @@ import {
 } from "./editor-bars";
 import { isCaptionArchetype } from "@/lib/variant-editor/eligibility";
 import {
+  captionToolState,
   computeToolDisabledReasons,
   editorReasonCopy,
   isElementsLyricsModel,
@@ -149,6 +153,11 @@ import { computeReseedSections } from "./editor-reseed";
 import InspectorPanel from "./InspectorPanel";
 import InspectorRail, { type InspectorTab } from "./InspectorRail";
 import ToolDrawer from "./ToolDrawer";
+import type {
+  CaptionCueRow,
+  CaptionsBusyState,
+  CaptionsDrawerControl,
+} from "./CaptionsDrawer";
 import ToolRail, { type EditorTool } from "./ToolRail";
 import type { SongWindowState } from "./SongWindowSelector";
 import PresetGrid, { presetMatchesFields } from "./PresetGrid";
@@ -656,6 +665,11 @@ export default function EditorShell({
   const [captionMeta, setCaptionMeta] = useState<CopilotCaptionMetaSnapshot | null>(null);
   const [captionMetaDirty, setCaptionMetaDirty] = useState(false);
   const [captionMetaPatch, setCaptionMetaPatch] = useState<CaptionMetaPatch>({});
+  // Captions drawer async state. Named stages, not one boolean: "Saving your
+  // edits" and "Re-transcribing" are two steps of the language switch that fail
+  // differently, and the user has to know which one they are in.
+  const [captionsBusy, setCaptionsBusy] = useState<CaptionsBusyState>("idle");
+  const [captionsError, setCaptionsError] = useState<string | null>(null);
   const lyricsCap = variant?.editor_capabilities?.lyrics ?? defaultLyricsCapability(variant);
   // Lyrics-optional "elements" model: dual-gated by the FE flag AND the
   // variant's lyrics_model — flag-off or legacy (baked) variants take every
@@ -2079,6 +2093,92 @@ export default function EditorShell({
     ],
   );
 
+  /**
+   * "All captions" globals, from the Captions drawer — the variant-level
+   * styling that used to live in the inspector behind a cue selection.
+   *
+   * Two writes, both required:
+   *  1. the meta patch, which is what Save actually sends; and
+   *  2. a fan-out of the equivalent styling onto EVERY caption bar, because
+   *     the canvas preview and the timeline read styling off the bars. Without
+   *     (2) a global font change previews on only the one cue that happened to
+   *     be patched — the exact fidelity bug the drawer was built to end.
+   *
+   * PATCH_BARS (not a PATCH_BAR loop) keeps the fan-out one undo step.
+   */
+  const patchCaptionMeta = useCallback(
+    (patch: CaptionMetaPatch) => {
+      if (readOnly) return;
+      if (Object.keys(patch).length === 0) return;
+      history.record();
+      setCaptionMeta((current) => {
+        const base = current ?? (variant ? captionMetaFromVariant(variant) : null);
+        return base ? { ...base, ...patch } : base;
+      });
+      setCaptionMetaPatch((current) => ({ ...current, ...patch }));
+      setCaptionMetaDirty(true);
+      const barPatch = captionBarPatchFromMetaPatch(patch);
+      if (Object.keys(barPatch).length === 0) return; // enabled/style: meta-only
+      const patches = state.bars
+        .filter(isCaptionBar)
+        .map((bar) => ({ id: bar.id, patch: barPatch }));
+      if (patches.length > 0) dispatch({ type: "PATCH_BARS", patches });
+    },
+    [history, readOnly, state.bars, variant],
+  );
+
+  /**
+   * Find-and-replace across the cue list. Returns how many cues changed so the
+   * drawer can report it. One PATCH_BARS = one Cmd+Z for the whole sweep,
+   * which is the only reason a 12-line replace is safe to offer at all.
+   */
+  const replaceInCaptions = useCallback(
+    (find: string, replace: string): number => {
+      if (readOnly) return 0;
+      const needle = find.trim();
+      if (!needle) return 0;
+      const pattern = new RegExp(
+        needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        "gi",
+      );
+      // The REPLACEMENT needs escaping too, not just the needle: String.replace
+      // treats `$&`, `` $` ``, `$'` and `$1` in the replacement as substitution
+      // patterns, so a caption containing those characters would be silently
+      // mangled ("$`" splices in everything before the match). Doubling `$`
+      // makes the user's text literal — this is a bulk edit across every cue,
+      // so a silent corruption here is expensive to notice and undo.
+      const literalReplacement = replace.replace(/\$/g, "$$$$");
+      const patches = state.bars
+        .filter(isCaptionBar)
+        .reduce<Array<{ id: string; patch: { text: string } }>>((acc, bar) => {
+          const next = bar.text.replace(pattern, literalReplacement);
+          if (next !== bar.text) acc.push({ id: bar.id, patch: { text: next } });
+          return acc;
+        }, []);
+      if (patches.length === 0) return 0;
+      history.record();
+      setCaptionDirty(true);
+      dispatch({ type: "PATCH_BARS", patches });
+      return patches.length;
+    },
+    [history, readOnly, state.bars],
+  );
+
+  /** Cue rows for the drawer, chronological (bar array order is insertion order). */
+  const captionCueRows = useMemo<CaptionCueRow[]>(
+    () =>
+      state.bars
+        .filter(isCaptionBar)
+        .map((bar) => ({
+          id: bar.id,
+          text: bar.text,
+          start_s: bar.start_s,
+          end_s: bar.end_s,
+        }))
+        .sort((a, b) => a.start_s - b.start_s),
+    [state.bars],
+  );
+
   // 4b merge-with-neighbor: folds an orphan caption fragment into its
   // chronological prev/next cue (concatenated text, extended end_s), then
   // removes the absorbed bar. One history step, mirroring `deleteSelected`'s
@@ -3277,9 +3377,17 @@ export default function EditorShell({
     capabilities?.split_clips !== undefined
       ? capabilities.split_clips !== false
       : variant?.text_mode === "agent_text";
+  const captionsToolState = useMemo(() => captionToolState(variant), [variant]);
   const toolDisabledReasons = useMemo<Partial<Record<EditorTool, string>>>(
-    () => computeToolDisabledReasons({ capabilities, readOnly, readOnlyReason, isLyrics }),
-    [capabilities, readOnly, readOnlyReason, isLyrics],
+    () =>
+      computeToolDisabledReasons({
+        capabilities,
+        readOnly,
+        readOnlyReason,
+        isLyrics,
+        captions: captionsToolState,
+      }),
+    [capabilities, captionsToolState, readOnly, readOnlyReason, isLyrics],
   );
 
   const buildCopilotDraftSnapshot = useCallback(() => {
@@ -3934,6 +4042,17 @@ export default function EditorShell({
 
   const handleSave = useCallback(async (
     musicAlignment?: "preserve_cuts" | "resync_beats",
+    /**
+     * Runs AFTER the commit lands but BEFORE the redirect to the item page.
+     *
+     * The Captions drawer's "Save & re-transcribe" needs exactly this seam:
+     * re-transcribing replaces every cue server-side while the session may hold
+     * unsaved edits in every lane, so the commit has to go first — but the
+     * redirect has to go last, or the language request would fire after the
+     * editor already unmounted. A throw here reports honestly ("saved, but…")
+     * and suppresses the redirect so the user can retry.
+     */
+    opts?: { afterCommit?: () => Promise<void>; afterCommitFailedMessage?: string },
   ) => {
     if (!variant || saveState === "saving" || readOnly) return;
     const commitMusicWindow = musicWindowDirty && !!songWindowState?.editable;
@@ -4015,6 +4134,21 @@ export default function EditorShell({
         setSaveState("partial");
         setSaveMessage("Saved, but rendering didn't start.");
         return;
+      }
+      // Post-commit side effect (today: re-transcribe in a new caption
+      // language). Runs before any local state is cleared so a failure leaves
+      // the session exactly as the commit left it.
+      if (opts?.afterCommit) {
+        try {
+          await opts.afterCommit();
+        } catch (err) {
+          setSaveState("partial");
+          setSaveMessage(
+            opts.afterCommitFailedMessage ??
+              (err instanceof Error ? err.message : "Saved, but the follow-up step failed."),
+          );
+          return;
+        }
       }
       // Full success: the stack is void (no undoing into a pre-persist world),
       // the draft is spent, and the item-page hero shows the rendering state.
@@ -4104,6 +4238,97 @@ export default function EditorShell({
     titleDirty,
     history,
     clearDraft,
+  ]);
+
+  /**
+   * Language switch = Save & re-transcribe, in that order, as ONE user action.
+   *
+   * Re-transcribing rewrites every cue server-side, and the session can hold
+   * unsaved work in every lane — so committing first is what makes the switch
+   * non-destructive to everything except the caption text it is explicitly
+   * replacing. Riding `handleSave`'s afterCommit seam (rather than calling save
+   * and then the language route separately) matters because a successful save
+   * redirects to the item page; firing the language request after that would
+   * race an unmounting editor.
+   */
+  const handleChangeCaptionLanguage = useCallback(
+    async (language: CaptionLanguage) => {
+      if (!variant || readOnly || captionsBusy !== "idle") return;
+      setCaptionsError(null);
+      setCaptionsBusy("saving");
+      try {
+        await handleSave(undefined, {
+          afterCommit: async () => {
+            setCaptionsBusy("transcribing");
+            await setPlanItemCaptionLanguage(itemId, variant.variant_id, language);
+          },
+          afterCommitFailedMessage:
+            "Couldn't re-transcribe. Your edits were saved.",
+        });
+      } catch (err) {
+        setCaptionsError(
+          err instanceof Error ? err.message : "Couldn't re-transcribe.",
+        );
+      } finally {
+        setCaptionsBusy("idle");
+      }
+    },
+    [captionsBusy, handleSave, itemId, readOnly, variant],
+  );
+
+  const captionsControl = useMemo<CaptionsDrawerControl | undefined>(() => {
+    if (captionsToolState !== "editable") return undefined;
+    return {
+      cues: captionCueRows,
+      selectedId: selection?.kind === "text" ? selection.id : null,
+      currentTime,
+      meta: captionMeta,
+      language: variant?.caption_language ?? null,
+      readOnly,
+      busy: captionsBusy,
+      error: captionsError,
+      onSelectCue: (id: string) => {
+        const cue = captionCueRows.find((c) => c.id === id);
+        if (cue) seekPlaybackTo(cue.start_s + 0.02);
+        // preserveOverlayTool: at 1024-1280px selecting anything normally closes
+        // the drawer (shouldCloseToolOnSelection). Clicking a cue IN the drawer
+        // must not destroy the list you are working through.
+        selectElement("text", id, { preserveOverlayTool: true });
+      },
+      onEditCueText: (id: string, text: string) => patchBar(id, { text }),
+      onPatchMeta: patchCaptionMeta,
+      onReplaceAll: replaceInCaptions,
+      onChangeLanguage: variant?.caption_language
+        ? (language) => void handleChangeCaptionLanguage(language)
+        : undefined,
+      // Zero-cue recovery: re-run transcription in the SAME language. The route
+      // re-transcribes unconditionally (no unchanged-language short-circuit), so
+      // this genuinely retries a transcript that came back empty. Subtitled-only
+      // — the route 422s anything else, and a narrated variant has no language
+      // to re-run with, so it correctly gets no button rather than a broken one.
+      onRetranscribe: variant?.caption_language
+        ? () =>
+            void handleChangeCaptionLanguage(
+              variant.caption_language as CaptionLanguage,
+            )
+        : undefined,
+    };
+  }, [
+    captionCueRows,
+    captionMeta,
+    captionsBusy,
+    captionsError,
+    captionsToolState,
+    currentTime,
+    handleChangeCaptionLanguage,
+    patchBar,
+    patchCaptionMeta,
+    readOnly,
+    replaceInCaptions,
+    seekPlaybackTo,
+    selectElement,
+    selection,
+    variant,
   ]);
 
   // ── Draft recovery (plan §9) ────────────────────────────────────────────────
@@ -4403,6 +4628,14 @@ export default function EditorShell({
     },
     onClear: clear,
     textBars: visibleTextBars,
+    captionsExpanded: activeTool === "captions",
+    captionsEnabled: captionMeta?.enabled ?? true,
+    onOpenCaptionCue: (id: string) => {
+      setActiveTool("captions");
+      const cue = captionCueRows.find((c) => c.id === id);
+      if (cue) seekPlaybackTo(cue.start_s + 0.02);
+      selectElement("text", id, { preserveOverlayTool: true });
+    },
     readOnly,
     onRecordTimelineEdit: recordTimelineDrag,
     onPreviewTextTiming: previewTextTiming,
@@ -4697,6 +4930,7 @@ export default function EditorShell({
             variant={variant}
             elements={previewElements}
             bars={visibleTextBars}
+            captionsEnabled={captionMeta?.enabled}
             visualBlocks={localVisualBlocks}
             motionScenes={localMotionScenes}
             motionRuntimeHash={capabilities?.motion_runtime_hash}
@@ -4762,6 +4996,7 @@ export default function EditorShell({
           (activeTool !== null ? (
             <ToolDrawer
               tool={activeTool}
+              captions={captionsControl}
               sampleWord={sampleWord}
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
@@ -4834,6 +5069,7 @@ export default function EditorShell({
           <div className="absolute bottom-0 left-[92px] top-0 z-40 shadow-[18px_0_36px_rgba(12,12,14,0.16)]">
             <ToolDrawer
               tool={activeTool}
+              captions={captionsControl}
               sampleWord={sampleWord}
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
@@ -4923,6 +5159,7 @@ export default function EditorShell({
             variant={variant}
             elements={previewElements}
             bars={visibleTextBars}
+            captionsEnabled={captionMeta?.enabled}
             visualBlocks={localVisualBlocks}
             motionScenes={localMotionScenes}
             motionRuntimeHash={capabilities?.motion_runtime_hash}
@@ -5017,6 +5254,10 @@ export default function EditorShell({
           }
           onSmartPlace={applySelectedSmartPlacement}
           onMergeCaptionCue={mergeCaptionCue}
+          onOpenCaptionsPanel={
+            captionsControl ? () => setActiveTool("captions") : undefined
+          }
+          captionsPanelOpen={activeTool === "captions"}
           canMergeCaptionPrev={!readOnly && captionMergeAvailability.canMergePrev}
           canMergeCaptionNext={!readOnly && captionMergeAvailability.canMergeNext}
           onClose={clear}
