@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Footage the segmenter definitively can't track is remembered per video, so text edits on those videos re-render instantly as clean front text instead of re-paying a long segmentation attempt every time. Old cached segmentation data migrates automatically on the next edit.
+## [0.16.2.1] — 2026-07-27
+
+### Fixed
+- **A failed persona no longer strands you on a dead end.** When persona generation fails the reveal receives an empty persona, and v0.16.2.0 rendered it as "Meet your persona" with an empty "what we based it on" heading below it, a "Get my ideas" button that could only fail (plan creation is rejected until a persona exists), and no way to retry — the previous layout's "Generate persona" button had been dropped. The reveal now says plainly that generation failed, offers **Generate persona** as the primary action with **Write it myself** beside it, withholds the continue button until there is a persona, and hides the supporting-detail section when there is no detail.
+- **The onboarding step marker no longer appears twice on phones.** "What do you make?" carries its own "Step 2 of 4" eyebrow, which collided with the mobile step marker added in v0.16.2.0. The inline eyebrow is now desktop-only, so exactly one marker shows at every width.
 
 ## [0.16.2.0] — 2026-07-27
 

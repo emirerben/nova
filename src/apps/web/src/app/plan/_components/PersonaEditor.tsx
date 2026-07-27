@@ -174,6 +174,18 @@ export default function PersonaEditor({
   }
 
   if (variant === "reveal" && !editing) {
+    // A generation failure leaves a truthy-but-empty persona (only footage_type_bias),
+    // which OnboardingShell still routes here. With nothing to show, the divider and
+    // the "what we based it on" eyebrow would render as dangling chrome over blank
+    // space, and — because the reveal hides the retune button — the user would be left
+    // with no way to try again. Both are gated on real content instead.
+    const hasSummary = !!draft.summary?.trim();
+    const hasDetail =
+      (draft.content_pillars ?? []).some(Boolean) ||
+      (draft.sample_topics ?? []).some(Boolean) ||
+      FACT_FIELDS.some((f) => (draft[f.key] as string)?.trim()) ||
+      draft.posts_per_week != null;
+
     return (
       <div ref={rootRef} className="animate-fade-up py-2">
         {/* Aha-moment reveal — TikTok stat line */}
@@ -183,11 +195,13 @@ export default function PersonaEditor({
           className="font-display text-[26px] text-[#0c0c0e] animate-fade-up md:text-3xl"
           style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
         >
-          Meet your persona
+          {hasSummary ? "Meet your persona" : "We couldn't build your persona"}
         </h1>
 
         <p className="mt-5 font-display text-lg leading-relaxed text-[#0c0c0e] md:text-xl">
-          {draft.summary?.trim() || "No summary yet — tweak your persona to write one manually."}
+          {hasSummary
+            ? draft.summary
+            : "Something went wrong on our side. Generate it again, or write it yourself."}
         </p>
 
         <div ref={markerRef} className="h-0" aria-hidden="true" />
@@ -201,30 +215,48 @@ export default function PersonaEditor({
               "sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#fafaf8] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0",
           )}
         >
-          <InkButton
-            variant="solid"
-            onClick={handleContinue}
-            disabled={continuing || saving}
-            className="min-h-[48px]"
-          >
-            {continuing || saving ? "Starting…" : continueLabel}
-          </InkButton>
+          {/* With no persona, "Get my ideas" is a dead end — plan creation 409s
+              unless the persona is ready/edited — so regenerating becomes the
+              primary action and the CTA is withheld until there is one. */}
+          {hasSummary ? (
+            <InkButton
+              variant="solid"
+              onClick={handleContinue}
+              disabled={continuing || saving}
+              className="min-h-[48px]"
+            >
+              {continuing || saving ? "Starting…" : continueLabel}
+            </InkButton>
+          ) : (
+            onRetuneFromFeedback && (
+              <InkButton
+                variant="solid"
+                onClick={handleRetune}
+                disabled={retuning || continuing || saving}
+                className="min-h-[48px]"
+              >
+                {retuning ? "Generating…" : "Generate persona"}
+              </InkButton>
+            )
+          )}
 
           <button
             onClick={() => setEditing(true)}
             disabled={continuing || saving}
             className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
           >
-            Tweak
+            {hasSummary ? "Tweak" : "Write it myself"}
           </button>
         </div>
 
-        <div className="border-t border-zinc-200 pt-7">
-          <p className="mb-4 text-xs font-medium uppercase tracking-[0.08em] text-[#a1a1aa]">
-            What we based it on
-          </p>
-          <PersonaDetails persona={draft} />
-        </div>
+        {hasDetail && (
+          <div className="border-t border-zinc-200 pt-7">
+            <p className="mb-4 text-xs font-medium uppercase tracking-[0.08em] text-[#a1a1aa]">
+              What we based it on
+            </p>
+            <PersonaDetails persona={draft} />
+          </div>
+        )}
 
         {draft.rationale && (
           <div className="mt-8 rounded-lg border border-dashed border-zinc-200 bg-transparent p-4">
