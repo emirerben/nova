@@ -1,8 +1,39 @@
 # 013 — Mobile UX baseline: make the phone a first-class surface
 
-**Status:** PLANNED
+**Status:** IMPLEMENTED (F1–F5 landed on `claude/mobile-ux-plan-e7892b`)
 **Owner:** web / light editorial system
 **Flag:** none — CSS/layout only, no render-path or API change
+
+## Outcome
+
+All five fixes landed, plus one addition found during visual verification:
+`WhatYouMakeStep`'s footage cards were `grid-cols-2` with no breakpoint, which
+wrapped "Talking to camera" onto three lines at 390px — now
+`grid-cols-1 sm:grid-cols-2` per §8.
+
+**Overlap with PR #738.** While this was in progress, #738 shipped the same
+class of fix for onboarding only (rail `hidden md:flex`, `px-5 py-6 md:px-12`,
+`min-h-[100dvh]`, plus a static "Step n of 4" line). Reconciled by taking
+origin/main as the merge base — every #738 change is preserved verbatim — and
+re-applying the shared `<StepRail>` on top, dropping only #738's inline counter
+as redundant with the strip's label + counter. The shared rail supersedes the
+onboarding-only fix because it also covers the record flow (untouched by #738,
+and still carrying both the `w-56` overflow and the `100vh` record-button bug)
+and keeps tap-back to a done step on mobile.
+
+**Measured at 390×844** (real Tailwind build, real class strings): horizontal
+overflow 0px (was the bug), strip 45px tall vs 224px of stolen width, dot target
+44×44, `text-sm` input lifted 14px→16px while a `text-lg` input correctly stays
+18px. At 768px the rail returns at exactly 224px with `main` at 544px (= 768,
+zero overflow) and dense inputs return to 14px — desktop is behaviourally
+unchanged. Boundaries checked at 360/390/639/640/767/768/1280.
+
+**Known gap:** 17 Jest suites (the `_editor/` tree) cannot load on this machine
+— `@nova/motion-runtime` and `canvaskit-wasm` are declared in
+`src/apps/web/package.json` but absent from the shared `node_modules`, which
+predates them. Pre-existing and unrelated to this change; CI installs them, so
+it will exercise those suites. F3's skeleton branch is therefore covered here
+only by the source-level assertion in the guard test, not a render test.
 
 ## Problem
 
