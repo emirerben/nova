@@ -19,6 +19,7 @@ from app.agents.edit_copilot import (
     clean_editor_prompt_data,
     editor_effect_catalog,
     editor_font_catalog,
+    editor_operation_contract,
     editor_snapshot_list,
     format_editor_snapshot,
     parse_editor_operation,
@@ -26,7 +27,7 @@ from app.agents.edit_copilot import (
 from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
 
-EDIT_DIRECTOR_PROMPT_VERSION = "2026-07-27-v2"
+EDIT_DIRECTOR_PROMPT_VERSION = "2026-07-27-v3"
 
 SuggestionCategory = Literal["hook_pacing", "text", "audio", "effect", "transition"]
 SuggestionApplyMode = Literal["instant", "omni_async"]
@@ -146,6 +147,7 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
         backoff_s=(2.0,),
         timeout_s=45.0,
         thinking_level="high",
+        enable_json_repair=True,
     )
     Input = EditDirectorInput
     Output = EditDirectorOutput
@@ -170,6 +172,7 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
             omni_enabled="true" if input.omni_enabled else "false",
             font_catalog=editor_font_catalog(),
             effect_catalog=editor_effect_catalog(),
+            operation_contract=editor_operation_contract(input.variant_snapshot),
         )
 
     def parse(self, raw_text: str, input: EditDirectorInput) -> EditDirectorOutput:  # noqa: A002
@@ -328,7 +331,9 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
         return (
             "\nReturn only JSON with a suggestions array containing 3-5 complete, "
             "non-overlapping suggestions. Every instant suggestion needs at least "
-            "one valid operation copied from the provided vocabulary."
+            "one valid operation copied field-for-field from AVAILABLE OPERATIONS. "
+            'The discriminator is "op", never "name" or "action"; use the exact '
+            "index and timing field names shown in those examples."
         )
 
 
@@ -342,4 +347,5 @@ class EditDirectorFallbackAgent(EditDirectorAgent):
         backoff_s=(1.0,),
         timeout_s=25.0,
         thinking_level="medium",
+        enable_json_repair=True,
     )

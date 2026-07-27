@@ -5,8 +5,12 @@ import uuid
 
 import pytest
 
-from app.agents._runtime import ModelClient, SchemaError
-from app.agents.edit_director import EditDirectorAgent, EditDirectorInput
+from app.agents._runtime import ModelClient, ModelInvocation, RunContext, SchemaError
+from app.agents.edit_director import (
+    EditDirectorAgent,
+    EditDirectorFallbackAgent,
+    EditDirectorInput,
+)
 from app.routes import _director
 
 
@@ -106,6 +110,14 @@ def _parse(suggestions: list[dict], **input_overrides):
     )
 
 
+class _RawResponseClient(ModelClient):
+    def __init__(self, raw_text: str) -> None:
+        self.raw_text = raw_text
+
+    def invoke(self, **kwargs) -> ModelInvocation:  # noqa: ARG002
+        return ModelInvocation(raw_text=self.raw_text)
+
+
 def test_director_returns_ranked_validated_bundles() -> None:
     output = _parse(_valid_suggestions())
 
@@ -113,6 +125,50 @@ def test_director_returns_ranked_validated_bundles() -> None:
     assert output.suggestions[2].ops[0]["intensity"] == 0.08
     assert output.suggestions[3].ops[0]["duration_s"] == 0.3
     assert all(item.id.startswith("director-") for item in output.suggestions)
+
+
+def test_director_repairs_truncated_json_before_validation() -> None:
+    raw_text = json.dumps({"suggestions": _valid_suggestions()[:3]})[:-2]
+
+    output = EditDirectorAgent(_RawResponseClient(raw_text)).run(
+        EditDirectorInput(variant_snapshot=_snapshot()),
+        ctx=RunContext(extra={"skip_agent_run_persist": True}),
+    )
+
+    assert len(output.suggestions) == 3
+    assert EditDirectorAgent.spec.enable_json_repair is True
+    assert EditDirectorFallbackAgent.spec.enable_json_repair is True
+
+
+def test_director_prompt_includes_exact_operation_field_contract() -> None:
+    snapshot = _snapshot()
+    snapshot["allowed_op_families"].append("sfx")
+    prompt = EditDirectorAgent(ModelClient()).render_prompt(
+        EditDirectorInput(variant_snapshot=snapshot)
+    )
+
+    assert '{"op":"set_text_timing","bar_index":0,"start_s":0.2,"end_s":2.8}' in prompt
+    assert '{"op":"set_clip_duration","slot_index":1,"duration_s":3.0}' in prompt
+    assert '{"op":"add_sfx","effect_id":"sfx_pop","at_s":1.2,"gain":1.0}' in prompt
+    assert (
+        '{"op":"set_transition","boundary_index":0,'
+        '"transition":"crossfade","duration_s":0.3}' in prompt
+    )
+
+
+def test_director_prompt_omits_unavailable_operation_families() -> None:
+    snapshot = _snapshot()
+    snapshot["allowed_op_families"] = ["text", "clip", "sfx", "music", "title"]
+
+    prompt = EditDirectorAgent(ModelClient()).render_prompt(
+        EditDirectorInput(variant_snapshot=snapshot)
+    )
+
+    assert '{"op":"set_clip_duration"' in prompt
+    assert '{"op":"add_sfx"' in prompt
+    assert '{"op":"set_transition"' not in prompt
+    assert '{"op":"add_camera_effect"' not in prompt
+    assert '{"op":"set_visual_fade"' not in prompt
 
 
 def test_director_filters_dismissed_ids_without_reordering_remaining() -> None:

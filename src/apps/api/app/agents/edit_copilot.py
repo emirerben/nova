@@ -156,6 +156,101 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "set_visual_fade": frozenset({"visual_block_index", "transition_in", "transition_out"}),
 }
 
+# Field-exact examples for proactive Director prompts. Keep these next to the
+# parser contract so a field rename cannot silently leave the model with only
+# operation names. Render and navigation operations are intentionally absent:
+# Director cards must apply an undoable local draft change.
+_DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
+    ("edit_text", '{"op":"edit_text","bar_index":0,"text":"new hook"}'),
+    (
+        "patch_text_style",
+        '{"op":"patch_text_style","bar_index":0,'
+        '"patch":{"size_px":54,"font_family":"Playfair Display"}}',
+    ),
+    (
+        "set_text_timing",
+        '{"op":"set_text_timing","bar_index":0,"start_s":0.2,"end_s":2.8}',
+    ),
+    (
+        "add_text",
+        '{"op":"add_text","text":"new label","start_s":1.0,"end_s":3.0}',
+    ),
+    ("remove_text", '{"op":"remove_text","bar_index":0}'),
+    (
+        "set_clip_duration",
+        '{"op":"set_clip_duration","slot_index":1,"duration_s":3.0}',
+    ),
+    ("set_clip_in", '{"op":"set_clip_in","slot_index":1,"in_s":0.8}'),
+    ("reorder_clip", '{"op":"reorder_clip","from_index":2,"to_index":0}'),
+    ("remove_clip", '{"op":"remove_clip","slot_index":1}'),
+    ("split_clip", '{"op":"split_clip","slot_index":0,"at_s":4.2}'),
+    (
+        "add_sfx",
+        '{"op":"add_sfx","effect_id":"sfx_pop","at_s":1.2,"gain":1.0}',
+    ),
+    (
+        "patch_sfx",
+        '{"op":"patch_sfx","sfx_index":0,"at_s":1.4,"gain":0.8}',
+    ),
+    ("remove_sfx", '{"op":"remove_sfx","sfx_index":0}'),
+    (
+        "add_overlay",
+        '{"op":"add_overlay","asset_id":"asset_1","start_s":1.0,'
+        '"end_s":3.5,"position":"bottom","scale":0.5}',
+    ),
+    (
+        "patch_overlay",
+        '{"op":"patch_overlay","overlay_index":0,'
+        '"patch":{"start_s":1.2,"end_s":4.0,"display_mode":"fullscreen"}}',
+    ),
+    ("remove_overlay", '{"op":"remove_overlay","overlay_index":0}'),
+    (
+        "accept_overlay_suggestion",
+        '{"op":"accept_overlay_suggestion","suggestion_id":"suggestion_1"}',
+    ),
+    (
+        "edit_caption",
+        '{"op":"edit_caption","cue_index":0,"text":"corrected caption text"}',
+    ),
+    (
+        "set_caption_timing",
+        '{"op":"set_caption_timing","cue_index":0,"start_s":0.2,"end_s":1.8}',
+    ),
+    (
+        "set_caption_meta",
+        '{"op":"set_caption_meta",'
+        '"patch":{"enabled":true,"style":"word","font":"TikTok Sans Bold","y_frac":0.82}}',
+    ),
+    (
+        "set_caption_emphasis",
+        '{"op":"set_caption_emphasis","cue_index":0,"emphasis":true}',
+    ),
+    ("swap_music", '{"op":"swap_music","track_id":"track_1"}'),
+    ("set_mix", '{"op":"set_mix","music_level":0.35}'),
+    ("set_title", '{"op":"set_title","title":"new working title"}'),
+    (
+        "add_camera_effect",
+        '{"op":"add_camera_effect","start_s":1.0,"end_s":2.2,"intensity":0.04}',
+    ),
+    (
+        "patch_camera_effect",
+        '{"op":"patch_camera_effect","camera_effect_index":0,"intensity":0.06}',
+    ),
+    (
+        "remove_camera_effect",
+        '{"op":"remove_camera_effect","camera_effect_index":0}',
+    ),
+    (
+        "set_transition",
+        '{"op":"set_transition","boundary_index":0,"transition":"crossfade","duration_s":0.3}',
+    ),
+    (
+        "set_visual_fade",
+        '{"op":"set_visual_fade","visual_block_index":0,'
+        '"transition_in":"fade","transition_out":"cut"}',
+    ),
+)
+
 _STYLE_PATCH_FIELDS = frozenset(
     {
         "font_family",
@@ -1537,6 +1632,16 @@ def editor_effect_catalog() -> str:
 
 def editor_font_catalog() -> str:
     return _font_catalog()
+
+
+def editor_operation_contract(snapshot: dict) -> str:
+    """Return field-exact examples for only the operation families available now."""
+    examples = [
+        f"- {name}: {example}"
+        for name, example in _DIRECTOR_OPERATION_EXAMPLES
+        if _family_allowed(name, snapshot)
+    ]
+    return "\n".join(examples) if examples else "(no instant draft operations available)"
 
 
 def format_editor_snapshot(snapshot: dict) -> str:
