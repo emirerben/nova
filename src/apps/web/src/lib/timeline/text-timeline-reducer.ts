@@ -87,6 +87,19 @@ export interface TextElementBar {
   /** Emphasis flag toggled alongside smart_style — mirrors CaptionCue.smart_emphasis.
    * Same undefined-vs-explicit-value convention as smart_style. */
   smart_emphasis?: boolean | null;
+  /**
+   * Per-cue style overrides (Lane PR-A "This caption" section), narrated_caption
+   * bars only. DISTINCT from `font_family`/`size_px`/`color` above, which on a
+   * caption bar hold the variant-level "All captions" GLOBAL preview (see
+   * `convertCaptionCues`) — these three mirror CaptionCue.font_family/
+   * text_color/size_px instead. Same undefined-vs-explicit-value convention as
+   * smart_style: undefined = untouched (Save preserves the original cue's
+   * override, if any); null = an explicit clear back to "match all captions";
+   * a value = an explicit per-cue override.
+   */
+  cue_font_family?: string | null;
+  cue_text_color?: string | null;
+  cue_size_px?: number | null;
 }
 
 const LYRIC_ALLOWED_PATCH_FIELDS = new Set([

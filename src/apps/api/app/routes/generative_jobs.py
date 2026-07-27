@@ -1386,6 +1386,40 @@ class CaptionCue(BaseModel):
     # lost on the FIRST edit (same trap #699 closed for smart_role/smart_word_ids).
     smart_emphasis: bool | None = None
     smart_keep_together: list[list[int]] | None = None
+    # Lane PR-A — per-cue style overrides ("This caption" section of the editor,
+    # distinct from the variant-level "All captions" globals below on the
+    # variant response: voiceover_caption_font/caption_size_px/caption_text_color/
+    # etc.). None/absent on every field ⇒ the cue inherits the variant defaults,
+    # unchanged from pre-feature behavior — `generate_ass_from_cues` treats an
+    # all-None cue as byte-identical to today (no override tags emitted).
+    # font_family reuses the SAME registry-key contract + validation as the
+    # variant-level `voiceover_caption_font` (see `is_valid_caption_font` /
+    # `resolve_caption_font` in narrated_assembler.py) — not the Skia
+    # TextElement font allowlist, which is a different renderer.
+    font_family: str | None = None
+    text_color: str | None = None
+    size_px: int | None = Field(None, ge=36, le=160)
+
+    @field_validator("font_family")
+    @classmethod
+    def _validate_cue_font_family(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        from app.pipeline.narrated_assembler import is_valid_caption_font  # noqa: PLC0415
+
+        if not is_valid_caption_font(v):
+            raise ValueError("Unknown caption font.")
+        return v
+
+    @field_validator("text_color")
+    @classmethod
+    def _validate_cue_text_color(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        clean = v.strip()
+        if not _HEX_COLOR_RE.match(clean):
+            raise ValueError("Caption text_color must be a #RRGGBB hex color.")
+        return clean.upper()
 
     @field_validator("words")
     @classmethod

@@ -414,6 +414,125 @@ describe("convertCaptionCues smart-caption fields (4b)", () => {
   });
 });
 
+describe("convertCaptionCues per-cue overrides (Lane PR-A)", () => {
+  it("seeds cue_font_family/cue_text_color/cue_size_px from the persisted cue", () => {
+    const cues: CaptionCue[] = [
+      {
+        text: "styled",
+        start_s: 0,
+        end_s: 1,
+        font_family: "Montserrat Bold",
+        text_color: "#00FF00",
+        size_px: 90,
+      },
+    ];
+    const [bar] = convertCaptionCues(cues);
+    expect(bar.cue_font_family).toBe("Montserrat Bold");
+    expect(bar.cue_text_color).toBe("#00FF00");
+    expect(bar.cue_size_px).toBe(90);
+  });
+
+  it("leaves cue_* fields undefined for a cue with no override, distinct from the variant-level globals", () => {
+    const variant = {
+      voiceover_caption_font: "TikTok Sans Bold",
+      caption_text_color: "#FFFFFF",
+      caption_size_px: 72,
+    } as unknown as PlanItemVariant;
+    const [bar] = convertCaptionCues([{ text: "plain", start_s: 0, end_s: 1 }], variant);
+    // The GLOBAL "All captions" preview still seeds font_family/color/size_px...
+    expect(bar.font_family).toBe("TikTok Sans Bold");
+    expect(bar.color).toBe("#FFFFFF");
+    expect(bar.size_px).toBe(72);
+    // ...but the per-cue override fields stay undefined (no override on this cue).
+    expect(bar.cue_font_family).toBeUndefined();
+    expect(bar.cue_text_color).toBeUndefined();
+    expect(bar.cue_size_px).toBeUndefined();
+  });
+});
+
+describe("barsToCaptionCues per-cue overrides (Lane PR-A)", () => {
+  it("writes an explicit per-cue override onto ONLY that cue", () => {
+    const original: CaptionCue = { text: "we flew to Turkey", start_s: 0, end_s: 1 };
+    expect(
+      barsToCaptionCues(
+        [
+          {
+            id: "caption-0",
+            role: "narrated_caption",
+            text: "we flew to Turkey",
+            start_s: 0,
+            end_s: 1,
+            cue_font_family: "Montserrat Bold",
+            cue_text_color: "#00FF00",
+            cue_size_px: 90,
+          },
+        ],
+        new Map([["caption-0", original]]),
+      ),
+    ).toEqual([
+      {
+        ...original,
+        font_family: "Montserrat Bold",
+        text_color: "#00FF00",
+        size_px: 90,
+      },
+    ]);
+  });
+
+  it("an untouched bar (cue_* undefined) preserves the original cue's override exactly", () => {
+    const original: CaptionCue = {
+      text: "we flew to Turkey",
+      start_s: 0,
+      end_s: 1,
+      font_family: "Montserrat Bold",
+      text_color: "#00FF00",
+      size_px: 90,
+    };
+    expect(
+      barsToCaptionCues(
+        [
+          {
+            id: "caption-0",
+            role: "narrated_caption",
+            text: "we flew to Turkey, honestly",
+            start_s: 0,
+            end_s: 1.4,
+          },
+        ],
+        new Map([["caption-0", original]]),
+      ),
+    ).toEqual([{ ...original, text: "we flew to Turkey, honestly", end_s: 1.4 }]);
+  });
+
+  it("an explicit null clears a previously-set override (match all captions)", () => {
+    const original: CaptionCue = {
+      text: "we flew to Turkey",
+      start_s: 0,
+      end_s: 1,
+      font_family: "Montserrat Bold",
+      text_color: "#00FF00",
+      size_px: 90,
+    };
+    expect(
+      barsToCaptionCues(
+        [
+          {
+            id: "caption-0",
+            role: "narrated_caption",
+            text: "we flew to Turkey",
+            start_s: 0,
+            end_s: 1,
+            cue_font_family: null,
+            cue_text_color: null,
+            cue_size_px: null,
+          },
+        ],
+        new Map([["caption-0", original]]),
+      ),
+    ).toEqual([{ ...original, font_family: null, text_color: null, size_px: null }]);
+  });
+});
+
 describe("smartStyleForRole (4b)", () => {
   it("maps every SemanticRole to its closed smart_style token", () => {
     expect(smartStyleForRole("hook")).toBe("hook");

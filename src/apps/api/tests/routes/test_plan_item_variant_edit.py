@@ -1175,6 +1175,94 @@ def test_edit_captions_rejects_smart_style_outside_closed_set(client: TestClient
     assert resp.status_code == 422
 
 
+# ── per-cue style overrides ("This caption" section, plan PR-A) ──────────────
+
+_VALID_CUE_FONT = "TikTok Sans Bold"  # a known non-deprecated registry font
+
+
+def test_edit_captions_persists_per_cue_style_overrides(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job, item], plan)
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/captions",
+        json={
+            "cues": [
+                {
+                    "text": "styled cue",
+                    "start_s": 0.0,
+                    "end_s": 1.0,
+                    "font_family": _VALID_CUE_FONT,
+                    "text_color": "#00ff00",
+                    "size_px": 90,
+                },
+                {"text": "unstyled cue", "start_s": 1.0, "end_s": 2.0},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    cues = job.assembly_plan["variants"][0]["caption_cues"]
+    assert cues[0]["font_family"] == _VALID_CUE_FONT
+    assert cues[0]["text_color"] == "#00FF00"  # normalized upper
+    assert cues[0]["size_px"] == 90
+    # The untouched sibling round-trips WITHOUT gaining any of these keys.
+    assert "font_family" not in cues[1]
+    assert "text_color" not in cues[1]
+    assert "size_px" not in cues[1]
+
+
+def test_caption_cue_rejects_unknown_font_family() -> None:
+    from pydantic import ValidationError
+
+    from app.routes.generative_jobs import CaptionCue
+
+    with pytest.raises(ValidationError):
+        CaptionCue(text="x", start_s=0.0, end_s=1.0, font_family="not-a-real-font")
+
+
+def test_caption_cue_rejects_malformed_text_color() -> None:
+    from pydantic import ValidationError
+
+    from app.routes.generative_jobs import CaptionCue
+
+    with pytest.raises(ValidationError):
+        CaptionCue(text="x", start_s=0.0, end_s=1.0, text_color="green")
+    with pytest.raises(ValidationError):
+        CaptionCue(text="x", start_s=0.0, end_s=1.0, text_color="#12345")  # too short
+
+
+@pytest.mark.parametrize("size_px", [35, 161])
+def test_caption_cue_rejects_out_of_range_size_px(size_px: int) -> None:
+    from pydantic import ValidationError
+
+    from app.routes.generative_jobs import CaptionCue
+
+    with pytest.raises(ValidationError):
+        CaptionCue(text="x", start_s=0.0, end_s=1.0, size_px=size_px)
+
+
+def test_caption_cue_accepts_bounds_of_size_px_range() -> None:
+    from app.routes.generative_jobs import CaptionCue
+
+    CaptionCue(text="x", start_s=0.0, end_s=1.0, size_px=36)
+    CaptionCue(text="x", start_s=0.0, end_s=1.0, size_px=160)
+
+
+def test_edit_captions_rejects_unknown_cue_font_via_route(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)  # Pydantic validation 422s before any DB access
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/captions",
+        json={"cues": [{"text": "x", "start_s": 0.0, "end_s": 1.0, "font_family": "nope"}]},
+    )
+    assert resp.status_code == 422
+
+
 # ── caption font (editor font picker for narrated captions) ───────────────────
 
 _VALID_CAPTION_FONT = "TikTok Sans Bold"  # a known non-deprecated registry font

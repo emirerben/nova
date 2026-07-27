@@ -100,6 +100,11 @@ const EDITABLE_ROW_FIELDS = new Set([
   "max_width_frac",
   "alignment",
   "behind_subject",
+  // Lane PR-A per-cue overrides ("This caption" section) — have their own
+  // dedicated rows below, same reasoning as font_family/size_px/color above.
+  "cue_font_family",
+  "cue_text_color",
+  "cue_size_px",
 ]);
 
 const EDITOR_TEXT_SIZE_MIN = 8;
@@ -1151,6 +1156,14 @@ function TextInspector({
   const isAiSequence = isAiSequenceBar(bar);
 
   const sizeValue = Math.round(bar.size_px ?? 64);
+  // Lane PR-A per-cue overrides ("This caption" section): effective value is
+  // the override when set, else the "All captions" variant default (`bar.*`
+  // above, on a caption bar, already holds that global preview — see
+  // convertCaptionCues). `!= null` treats both undefined (never touched) and
+  // null (explicitly cleared) as "no active override".
+  const hasAnyCueOverride =
+    bar.cue_font_family != null || bar.cue_text_color != null || bar.cue_size_px != null;
+  const cueEffectiveSizePx = Math.round(bar.cue_size_px ?? sizeValue);
   // Read-only preview: how much bigger this cue burns relative to the base
   // caption size, given its smart_style. Not editable here — the chunker/burn
   // owns the real geometry (see smartCaptionPreviewSizePx's doc comment).
@@ -1269,51 +1282,119 @@ function TextInspector({
         </>
       )}
 
-      {/* 4b: Smart Captions emphasis + orphan-fragment merge. Read-only role
-          badge lives in the heading above; this row is the two editable
-          affordances, both persisted through the existing captions PATCH. */}
+      {/* 4b: Smart Captions emphasis + orphan-fragment merge, PLUS (Lane PR-A)
+          per-cue Font/Color/Size overrides — everything here applies to THIS
+          caption line only. Read-only role badge lives in the heading above. */}
       {isCaption && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            aria-pressed={isEmphasized}
-            onClick={() =>
-              onPatch(
+        <div className="mt-4 border-b border-zinc-100 pb-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[13px] font-bold text-[#0c0c0e]">This caption</span>
+            {hasAnyCueOverride && (
+              <button
+                type="button"
+                onClick={() =>
+                  onPatch({ cue_font_family: null, cue_text_color: null, cue_size_px: null })
+                }
+                className="text-[11px] font-semibold text-[#71717a] underline hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              >
+                Match all captions
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              aria-pressed={isEmphasized}
+              onClick={() =>
+                onPatch(
+                  isEmphasized
+                    ? { smart_emphasis: false, smart_style: null }
+                    : { smart_emphasis: true, smart_style: smartStyleForRole(bar.smart_role) },
+                )
+              }
+              className={`min-h-8 rounded-full border px-3 text-[12px] font-semibold transition-colors ${
                 isEmphasized
-                  ? { smart_emphasis: false, smart_style: null }
-                  : { smart_emphasis: true, smart_style: smartStyleForRole(bar.smart_role) },
-              )
-            }
-            className={`min-h-8 rounded-full border px-3 text-[12px] font-semibold transition-colors ${
-              isEmphasized
-                ? "border-lime-600 bg-lime-50 text-lime-700"
-                : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-            } focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500`}
-          >
-            {isEmphasized ? "★ Emphasized" : "Emphasize"}
-          </button>
-          {onMergeCaptionCue && (canMergeCaptionPrev || canMergeCaptionNext) && (
-            <>
-              <button
-                type="button"
-                disabled={!canMergeCaptionPrev}
-                onClick={() => onMergeCaptionCue("prev")}
-                title="Merge with the previous caption"
-                className="min-h-8 rounded-full border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-              >
-                {"←"} Merge
-              </button>
-              <button
-                type="button"
-                disabled={!canMergeCaptionNext}
-                onClick={() => onMergeCaptionCue("next")}
-                title="Merge with the next caption"
-                className="min-h-8 rounded-full border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-              >
-                Merge {"→"}
-              </button>
-            </>
-          )}
+                  ? "border-lime-600 bg-lime-50 text-lime-700"
+                  : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+              } focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500`}
+            >
+              {isEmphasized ? "★ Emphasized" : "Emphasize"}
+            </button>
+            {onMergeCaptionCue && (canMergeCaptionPrev || canMergeCaptionNext) && (
+              <>
+                <button
+                  type="button"
+                  disabled={!canMergeCaptionPrev}
+                  onClick={() => onMergeCaptionCue("prev")}
+                  title="Merge with the previous caption"
+                  className="min-h-8 rounded-full border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                >
+                  {"←"} Merge
+                </button>
+                <button
+                  type="button"
+                  disabled={!canMergeCaptionNext}
+                  onClick={() => onMergeCaptionCue("next")}
+                  title="Merge with the next caption"
+                  className="min-h-8 rounded-full border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                >
+                  Merge {"→"}
+                </button>
+              </>
+            )}
+          </div>
+
+          <div className="mt-3">
+            <FontSelect
+              value={bar.cue_font_family ?? bar.font_family ?? null}
+              onChange={(name) => onPatch({ cue_font_family: name })}
+              ariaLabelPrefix="This caption's font"
+            />
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="color"
+              aria-label="This caption's fill color"
+              value={
+                normalizeEditableHex(bar.cue_text_color ?? bar.color) ?? "#FFFFFF"
+              }
+              onChange={(e) =>
+                onPatch({ cue_text_color: e.target.value.toUpperCase() })
+              }
+              className="h-6 w-8 cursor-pointer rounded border border-zinc-300 bg-white p-0"
+            />
+            <HexInput
+              value={bar.cue_text_color ?? bar.color ?? "#FFFFFF"}
+              onChange={(hex) => onPatch({ cue_text_color: hex })}
+              ariaLabel="This caption's fill color hex"
+            />
+            <span className="text-[11px] text-[#71717a]">Color</span>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="range"
+              aria-label="This caption's font size"
+              min={36}
+              max={160}
+              step={1}
+              value={cueEffectiveSizePx}
+              onChange={(e) => onPatch({ cue_size_px: Number(e.target.value) })}
+              className="min-w-0 flex-1 accent-[#0c0c0e]"
+            />
+            <span className="w-10 text-right text-[12px] tabular-nums text-[#71717a]">
+              {cueEffectiveSizePx}
+            </span>
+            <span className="text-[11px] text-[#71717a]">Size</span>
+          </div>
+          <p className="mt-2 text-[11px] text-[#71717a]">
+            Overrides just this line — leave blank to match &ldquo;All captions&rdquo; below.
+          </p>
+        </div>
+      )}
+
+      {isCaption && (
+        <div className="mt-6 flex items-center justify-between border-b border-zinc-100 pb-2">
+          <span className="text-[13px] font-bold text-[#0c0c0e]">All captions</span>
         </div>
       )}
 
@@ -1531,10 +1612,14 @@ function TextInspector({
         </>
       )}
 
-      {/* Style */}
-      <div className="mt-6 flex items-center justify-between border-b border-zinc-100 pb-2">
-        <span className="text-[13px] font-bold text-[#0c0c0e]">Style</span>
-      </div>
+      {/* Style — for a caption bar the "All captions" header above already
+          labels this same contiguous block (Font/size through Stroke below),
+          so it doesn't get a second, redundant header here. */}
+      {!isCaption && (
+        <div className="mt-6 flex items-center justify-between border-b border-zinc-100 pb-2">
+          <span className="text-[13px] font-bold text-[#0c0c0e]">Style</span>
+        </div>
+      )}
 
       {canEditTextCase && !isLyric && !isCaption && (
         <label className="flex h-11 items-center justify-between border-b border-zinc-100">
@@ -2003,9 +2088,14 @@ function TimingNumberInput({
 function HexInput({
   value,
   onChange,
+  ariaLabel = "Fill color hex",
 }: {
   value: string;
   onChange: (hex: string) => void;
+  /** Disambiguates this input's aria-label when more than one HexInput
+   * renders at once (Lane PR-A: "This caption" adds a second color field
+   * alongside the existing Fill/Highlight rows). Defaults to the original. */
+  ariaLabel?: string;
 }) {
   const [draft, setDraft] = useState(value);
   // Follow external changes (e.g. the swatch or a preset).
@@ -2018,7 +2108,7 @@ function HexInput({
   return (
     <input
       type="text"
-      aria-label="Fill color hex"
+      aria-label={ariaLabel}
       value={draft}
       onChange={(e) => {
         const next = e.target.value;
@@ -2040,9 +2130,14 @@ function HexInput({
 function FontSelect({
   value,
   onChange,
+  ariaLabelPrefix = "Font",
 }: {
   value: string | null;
   onChange: (name: string) => void;
+  /** Disambiguates the trigger button's aria-label when more than one
+   * FontSelect renders at once (Lane PR-A: "This caption" + "All captions"
+   * both show a font picker). Defaults to the original label. */
+  ariaLabelPrefix?: string;
 }) {
   const [open, setOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -2068,7 +2163,7 @@ function FontSelect({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label={`Font: ${current}`}
+        aria-label={`${ariaLabelPrefix}: ${current}`}
         onClick={() => setOpen((o) => !o)}
         className="flex h-9 w-full items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 text-left text-[13px] text-[#0c0c0e] hover:border-zinc-400 focus:border-lime-500/60 focus:outline-none"
       >

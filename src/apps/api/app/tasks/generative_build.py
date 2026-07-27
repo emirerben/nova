@@ -11265,6 +11265,28 @@ def _caption_style_overrides(variant: dict) -> dict[str, Any] | None:
     return appearance if any(value is not None for value in appearance.values()) else None
 
 
+def _resolve_cue_font_overrides(cues: list[dict]) -> list[dict]:
+    """Resolve each cue's per-cue `font_family` override (plan PR-A) from its
+    persisted registry key to the burn-ready libass family name.
+
+    Mirrors the variant-level resolution one line above every call site
+    (``ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))``):
+    the PATCH validates/stores a font-registry KEY (``CaptionCue.font_family`` via
+    ``is_valid_caption_font``); `app.pipeline.captions` treats a cue's
+    `font_family` as already burn-ready, so the key → ass_name mapping happens
+    exactly once, here, right before burning — never persisted back. Cues with no
+    override pass through untouched (dict identity preserved where possible).
+    """
+    from app.pipeline.narrated_assembler import resolve_caption_font  # noqa: PLC0415
+
+    resolved: list[dict] = []
+    for cue in cues:
+        if cue.get("font_family"):
+            cue = {**cue, "font_family": resolve_caption_font(cue["font_family"])}
+        resolved.append(cue)
+    return resolved
+
+
 def _fresh_variant_snapshot(job_id: str, variant_id: str) -> dict | None:
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
@@ -11429,6 +11451,12 @@ def _burn_persisted_captions_onto_base(
         # Off (regardless of stored cue count) or genuinely no cues → caption-free.
         shutil.copy2(base_local, out_local)
         return
+    # Per-cue font_family overrides (plan PR-A) store a registry key, same
+    # contract as `voiceover_caption_font` below — resolve to the libass family
+    # name once, here, before either burn path reads it. A no-op for cues with
+    # no override (the common case) and for the word-pop path, which doesn't
+    # read per-cue style fields at all.
+    cues = _resolve_cue_font_overrides(cues)
     # Subtitled word-by-word (lime pop) is rendered by generate_word_pop_ass, not the
     # plain/word ASS styles — flagged here and branched at burn time below.
     subtitled_word_pop = (
