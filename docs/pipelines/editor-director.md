@@ -119,3 +119,8 @@ cd src/apps/api
 NOVA_EVAL_MODE=live pytest tests/evals/test_edit_director_evals.py \
   -v --eval-mode=live --with-judge
 ```
+
+Changes that touch the shared template orchestration or final transition render
+path also require a real-video `make local-render` pass. Record its run ID in the
+PR body as `Local test: <run_id>` so the Layer-2 release gate can distinguish
+render-verified changes from unit-test-only changes.
