@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.2.0] — 2026-07-27
+
+### Fixed
+- **"Get my ideas" is now on the first screen when your persona appears.** After the onboarding interview, the persona reveal listed every supporting detail — pillars, tone, audience, sample topics, and the "why this lane" rationale — before offering the button that actually builds your plan, so the button landed 324px below the fold on a laptop and over 1200px down on a phone. The reveal now leads with the summary and puts the action directly under it, with the supporting detail moved below as "what we based it on". If the generated summary is long enough to still push the button off-screen, the action row pins to the bottom of the viewport instead; on normal-length content it stays in the page with no bar at all. The returning-user persona page at `/plan/persona` is unchanged.
+- **Onboarding is usable on a phone.** The four-step rail rendered at its full 224px width at every screen size, leaving roughly 55px of usable text column on a 375px device — affecting every onboarding step, not just the persona reveal. The rail is now desktop-only, replaced on small screens by a compact "Step N of 4" marker, with mobile-appropriate padding and a `dvh`-based height so the pinned action row is not hidden behind mobile Safari's collapsing URL bar.
+
 ## [0.16.1.1] — 2026-07-27
 
 ### Added
