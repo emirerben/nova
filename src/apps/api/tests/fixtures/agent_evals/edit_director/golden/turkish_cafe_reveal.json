@@ -1,0 +1,66 @@
+{
+  "agent": "nova.edit.director",
+  "prompt_version": "2026-07-27-v2",
+  "input": {
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "timeline", "effect", "transition", "sfx"],
+      "total_duration_s": 10.5,
+      "transcript": "Burası dışarıdan sıradan görünüyor ama içeri girince manzara tamamen değişiyor.",
+      "text_bars": [
+        {
+          "index": 0,
+          "id": "hook-tr-1",
+          "text": "Yeni bir kafe",
+          "start_s": 0.0,
+          "end_s": 2.6
+        }
+      ],
+      "slots": [
+        {
+          "index": 0,
+          "key": "slot-tr-a",
+          "clip_index": 0,
+          "duration_s": 3.5,
+          "output_start_s": 0.0,
+          "output_end_s": 3.5,
+          "moment": "sade dış cephe",
+          "transition_after": "cut"
+        },
+        {
+          "index": 1,
+          "key": "slot-tr-b",
+          "clip_index": 1,
+          "duration_s": 3.5,
+          "output_start_s": 3.5,
+          "output_end_s": 7.0,
+          "moment": "kapıdan içeri giriş",
+          "transition_after": "cut"
+        },
+        {
+          "index": 2,
+          "key": "slot-tr-c",
+          "clip_index": 2,
+          "duration_s": 3.5,
+          "output_start_s": 7.0,
+          "output_end_s": 10.5,
+          "moment": "boğaz manzarası",
+          "transition_after": "cut"
+        }
+      ],
+      "camera_effects": [],
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {"id": "door-swish", "name": "Yumuşak geçiş", "duration_s": 0.5}
+        ]
+      }
+    },
+    "dismissed_suggestion_ids": [],
+    "omni_enabled": false
+  },
+  "raw_text": "{\"suggestions\":[{\"category\":\"text\",\"title\":\"Merakı ilk cümlede kur\",\"rationale\":\"Mevcut başlık mekânı tanımlıyor ama içerideki sürprizi saklayan bir soru yaratmıyor.\",\"expected_benefit\":\"İzleyiciyi manzara açılana kadar videoda tutar.\",\"confidence\":0.93,\"start_s\":0,\"end_s\":2.6,\"apply_mode\":\"instant\",\"ops\":[{\"op\":\"edit_text\",\"bar_index\":0,\"text\":\"Dışarıdan neden anlaşılmıyor?\"}]},{\"category\":\"hook_pacing\",\"title\":\"Dış cepheyi biraz kısalt\",\"rationale\":\"Mekânın sıradan görünümü iki saniyede anlaşılıyor; kalan süre hikâyeyi bekletiyor.\",\"expected_benefit\":\"Kapıdan girişe daha hızlı ulaşıp sürprizi diri tutar.\",\"confidence\":0.9,\"start_s\":0,\"end_s\":3.5,\"apply_mode\":\"instant\",\"ops\":[{\"op\":\"set_clip_duration\",\"slot_index\":0,\"duration_s\":2.4}]},{\"category\":\"effect\",\"title\":\"Soruyu hafif bir kamera vurgusuyla destekle\",\"rationale\":\"Kısa ve düşük yoğunluklu bir yaklaşma, metni abartmadan ilk ana odak verir.\",\"expected_benefit\":\"Açılışı daha bilinçli ve ritmik hissettirir.\",\"confidence\":0.83,\"start_s\":0.5,\"end_s\":1.5,\"apply_mode\":\"instant\",\"ops\":[{\"op\":\"add_camera_effect\",\"start_s\":0.5,\"end_s\":1.5,\"intensity\":0.035}]},{\"category\":\"transition\",\"title\":\"Manzaraya yumuşak bir kararma ile geç\",\"rationale\":\"Kapıdan giriş ile açık manzara arasındaki ışık farkı kısa bir dip geçişini taşıyor.\",\"expected_benefit\":\"Mekânsal değişimi netleştirirken zarif bir açılış yaratır.\",\"confidence\":0.81,\"start_s\":6.7,\"end_s\":7.3,\"apply_mode\":\"instant\",\"ops\":[{\"op\":\"set_transition\",\"boundary_index\":1,\"transition\":\"dip_to_black\",\"duration_s\":0.3}]},{\"category\":\"audio\",\"title\":\"Kapı geçişine kısa bir ses köprüsü ekle\",\"rationale\":\"Yumuşak bir geçiş sesi, konuşmayı örtmeden dışarıdan içeri hareketini bağlar.\",\"expected_benefit\":\"Görüntü değişimini daha akıcı ve kasıtlı hissettirir.\",\"confidence\":0.76,\"start_s\":3.2,\"end_s\":3.8,\"apply_mode\":\"instant\",\"ops\":[{\"op\":\"add_sfx\",\"effect_id\":\"door-swish\",\"at_s\":3.35,\"gain\":0.5}]}]}",
+  "meta": {
+    "language": "tr",
+    "source": "hand_authored_editor_fixture"
+  }
+}

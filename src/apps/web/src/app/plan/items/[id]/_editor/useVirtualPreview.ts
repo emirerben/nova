@@ -8,8 +8,10 @@ import {
   mapVirtualTimeToMusicTime,
   mapVirtualTime,
   nextVirtualEntry,
+  transitionPreviewAtTime,
   type VirtualTimeline,
   type VirtualTimelineEntry,
+  type VirtualTransitionPreview,
 } from "./virtual-timeline";
 
 type Deck = "a" | "b";
@@ -89,6 +91,7 @@ export interface VirtualPreviewController {
   timeline: VirtualTimeline;
   activeDeck: Deck;
   buffering: boolean;
+  transitionPreview?: VirtualTransitionPreview | null;
   videoAProps: VirtualPreviewVideoProps;
   videoBProps: VirtualPreviewVideoProps;
   musicAudioProps: VirtualPreviewAudioProps | null;
@@ -154,6 +157,10 @@ export function useVirtualPreview({
   const timeline = useMemo(
     () => buildVirtualTimeline(slots, clips, grid),
     [clips, grid, slots],
+  );
+  const transitionPreview = useMemo(
+    () => transitionPreviewAtTime(timeline, currentTime),
+    [currentTime, timeline],
   );
 
   const videoARef = useRef<HTMLVideoElement>(null) as RefObject<HTMLVideoElement>;
@@ -252,6 +259,28 @@ export function useVirtualPreview({
     [loadDeck],
   );
 
+  const syncIncomingDeck = useCallback(
+    (entryIndex: number, virtualTimeS: number, play: boolean) => {
+      const entry = timelineRef.current.entries[entryIndex];
+      const next = nextVirtualEntry(timelineRef.current, entryIndex);
+      if (
+        !entry ||
+        !next ||
+        !next.sourceUrl ||
+        next.overlapBeforeS <= 0 ||
+        virtualTimeS < next.startS ||
+        virtualTimeS >= entry.startS + entry.durationS
+      ) {
+        return false;
+      }
+      const incomingTimeS =
+        next.inS + Math.max(0, Math.min(next.overlapBeforeS, virtualTimeS - next.startS));
+      loadDeck(otherDeck(activeDeckRef.current), next, incomingTimeS, play);
+      return true;
+    },
+    [loadDeck],
+  );
+
   const syncMusicToVirtualTime = useCallback(
     (virtualTimeS: number, play: boolean, mode: "hard" | "soft" = "hard") => {
       const audio = getVirtualMusicAudio(musicAudioRef)[0];
@@ -286,11 +315,20 @@ export function useVirtualPreview({
 
       const deck = activeDeckRef.current;
       loadDeck(deck, mapping.entry, mapping.sourceTimeS, play);
-      preloadNext(otherDeck(deck), mapping.entryIndex);
+      if (!syncIncomingDeck(mapping.entryIndex, mapping.virtualTimeS, play)) {
+        preloadNext(otherDeck(deck), mapping.entryIndex);
+      }
       syncMusicToVirtualTime(mapping.virtualTimeS, play);
       onTimeUpdate(mapping.virtualTimeS);
     },
-    [loadDeck, onSourceError, onTimeUpdate, preloadNext, syncMusicToVirtualTime],
+    [
+      loadDeck,
+      onSourceError,
+      onTimeUpdate,
+      preloadNext,
+      syncIncomingDeck,
+      syncMusicToVirtualTime,
+    ],
   );
 
   const pause = useCallback(() => {
@@ -332,18 +370,23 @@ export function useVirtualPreview({
       const prevDeck = activeDeckRef.current;
       const nextDeck = otherDeck(prevDeck);
       const prevVideo = refForDeck(prevDeck).current;
+      const outgoing = timelineRef.current.entries[entryIndex];
+      const boundaryTimeS = Math.min(
+        timelineRef.current.totalDurationS,
+        (outgoing?.startS ?? next.startS) + (outgoing?.durationS ?? 0),
+      );
 
       prevVideo?.pause();
       // loadDeck owns the seek+play: covered decks seek and play immediately,
       // fresh sources defer to the onLoadedMetadata pending-seek. Seeking or
       // playing the element here as well made a fresh source play from frame
       // 0 and then snap to the in-point (visible "restart"/repeat).
-      loadDeck(nextDeck, next, next.inS, true);
+      loadDeck(nextDeck, next, next.inS + next.overlapBeforeS, true);
       activeDeckRef.current = nextDeck;
       setActiveDeck(nextDeck);
       preloadNext(prevDeck, entryIndex + 1);
-      syncMusicToVirtualTime(next.startS, true, "soft");
-      onTimeUpdate(next.startS);
+      syncMusicToVirtualTime(boundaryTimeS, true, "soft");
+      onTimeUpdate(boundaryTimeS);
     },
     [loadDeck, onTimeUpdate, pause, preloadNext, refForDeck, syncMusicToVirtualTime],
   );
@@ -397,6 +440,7 @@ export function useVirtualPreview({
         entry.startS,
         Math.min(entry.startS + entry.durationS, entry.startS + localOffsetS),
       );
+      syncIncomingDeck(entryIndex, virtualTimeS, playingRef.current);
       const audio = getVirtualMusicAudio(musicAudioRef)[0];
       if (audio && musicAudioUrlRef.current && !audio.paused && playingRef.current) {
         const audioVirtualS = audio.currentTime - Math.max(0, musicStartSRef.current);
@@ -423,7 +467,7 @@ export function useVirtualPreview({
         finishEntry(entryIndex);
       }
     },
-    [finishEntry, onTimeUpdate, refForDeck, showMapping],
+    [finishEntry, onTimeUpdate, refForDeck, showMapping, syncIncomingDeck],
   );
 
   const handleEnded = useCallback(
@@ -524,6 +568,7 @@ export function useVirtualPreview({
     timeline,
     activeDeck,
     buffering,
+    transitionPreview,
     videoAProps: videoProps("a"),
     videoBProps: videoProps("b"),
     musicAudioProps,

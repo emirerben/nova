@@ -111,6 +111,7 @@ class CassetteModelClient(ModelClient):
         response_json: bool = True,
         max_output_tokens: int | None = None,
         thinking_budget: int | None = None,
+        thinking_level: str | None = None,
         timeout_s: float = 30.0,
     ) -> ModelInvocation:
         self.invocations += 1
@@ -308,6 +309,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.edit_copilot import EditCopilotAgent
 
         return EditCopilotAgent
+    if agent_name == "nova.edit.director":
+        from app.agents.edit_director import EditDirectorAgent
+
+        return EditDirectorAgent
     if agent_name == "nova.plan.conformance_feedback":
         from app.agents.conformance_feedback import ConformanceFeedbackAgent
 
@@ -546,6 +551,7 @@ _RUBRIC_FILENAME_OVERRIDES: dict[str, str] = {
     "nova.audio.template_recipe": "audio_template",
     # rsplit would yield "copilot"; the rubric ships as edit_copilot.md.
     "nova.edit.copilot": "edit_copilot",
+    "nova.edit.director": "edit_director",
 }
 
 

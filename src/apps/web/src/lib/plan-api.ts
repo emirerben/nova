@@ -146,6 +146,159 @@ export function editCopilotTurn(
   );
 }
 
+export type SuggestionCategory =
+  | "hook_pacing"
+  | "text"
+  | "audio"
+  | "effect"
+  | "transition";
+
+export type SuggestionApplyMode = "instant" | "omni_async";
+
+export interface OmniEditorSuggestion {
+  action: "generate_insert" | "restyle_segment";
+  prompt: string;
+  insert_at_s: number;
+  duration_s: number;
+  source_clip_index?: number | null;
+  source_start_s?: number | null;
+  source_end_s?: number | null;
+  reference_clip_index?: number | null;
+  reference_frame_s?: number | null;
+}
+
+export interface EditorSuggestion {
+  id: string;
+  category: SuggestionCategory;
+  title: string;
+  rationale: string;
+  expected_benefit: string;
+  confidence: number;
+  start_s: number;
+  end_s: number;
+  apply_mode: SuggestionApplyMode;
+  ops: CopilotOp[];
+  omni?: OmniEditorSuggestion | null;
+}
+
+export interface EditDirectorSuggestionsResponse {
+  suggestions: EditorSuggestion[];
+  snapshot_revision: string;
+  requested_model: string;
+  model_used: string;
+  fallback_reason?: string | null;
+}
+
+export function editDirectorSuggestions(
+  itemId: string,
+  variantId: string,
+  body: {
+    snapshot: CopilotSnapshot;
+    snapshot_revision: string;
+    dismissed_suggestion_ids: string[];
+  },
+  signal?: AbortSignal,
+): Promise<EditDirectorSuggestionsResponse> {
+  return request<EditDirectorSuggestionsResponse>(
+    `/plan-items/${itemId}/variants/${variantId}/director/suggestions`,
+    { method: "POST", body: JSON.stringify(body), signal },
+  );
+}
+
+export async function editDirectorFeedback(
+  itemId: string,
+  variantId: string,
+  body: {
+    suggestion_id: string;
+    action: "accepted" | "dismissed";
+    category: SuggestionCategory;
+    model_used: string;
+  },
+): Promise<void> {
+  await request<unknown>(
+    `/plan-items/${itemId}/variants/${variantId}/director/feedback`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export interface OmniAssetResponse {
+  asset_id: string;
+  status:
+    | "queued"
+    | "generating"
+    | "normalizing"
+    | "ready"
+    | "failed"
+    | "cancellation_requested"
+    | "cancelled";
+  progress: number;
+  model: string;
+  error?: string | null;
+  operation?:
+    | Extract<CopilotOp, { op: "insert_generated_asset" }>
+    | Extract<CopilotOp, { op: "replace_generated_segment" }>
+    | null;
+}
+
+export function startOmniAsset(
+  itemId: string,
+  variantId: string,
+  body: {
+    suggestion_id: string;
+    draft_revision: string;
+    action: OmniEditorSuggestion["action"];
+    prompt: string;
+    insert_at_s: number;
+    duration_s: number;
+    source_clip_index?: number | null;
+    source_start_s?: number | null;
+    source_end_s?: number | null;
+    reference_clip_index?: number | null;
+    reference_frame_s?: number | null;
+  },
+): Promise<OmniAssetResponse> {
+  return request<OmniAssetResponse>(
+    `/plan-items/${itemId}/variants/${variantId}/omni-assets`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export function getOmniAsset(
+  itemId: string,
+  variantId: string,
+  assetId: string,
+): Promise<OmniAssetResponse> {
+  return request<OmniAssetResponse>(
+    `/plan-items/${itemId}/variants/${variantId}/omni-assets/${assetId}`,
+  );
+}
+
+export function cancelOmniAsset(
+  itemId: string,
+  variantId: string,
+  assetId: string,
+): Promise<OmniAssetResponse> {
+  return request<OmniAssetResponse>(
+    `/plan-items/${itemId}/variants/${variantId}/omni-assets/${assetId}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export function claimOmniAsset(
+  itemId: string,
+  variantId: string,
+  assetId: string,
+  draftRevision: string,
+): Promise<OmniAssetResponse> {
+  return request<OmniAssetResponse>(
+    `/plan-items/${itemId}/variants/${variantId}/omni-assets/${assetId}/claim`,
+    {
+      method: "POST",
+      body: JSON.stringify({ draft_revision: draftRevision }),
+    },
+  );
+}
+
 /** Accept a TikTok handle; fires async scrape and returns the persona row. */
 export function tiktokScrape(handle: string): Promise<PersonaResponse> {
   return request<PersonaResponse>("/personas/tiktok-scrape", {

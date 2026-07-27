@@ -22,6 +22,7 @@ XFADE_MAP: dict[str, str] = {
     "fade_black": "fadeblack",
     "wipe_left": "wipeleft",
     "wipe_right": "wiperight",
+    "fade_white": "fadewhite",
 }
 # Backcompat alias for any downstream consumer that imported the
 # underscore name. Safe to delete after one release.
@@ -45,6 +46,9 @@ _GEMINI_TO_INTERNAL: dict[str, str] = {
     "whip-pan": "wipe_left",
     "zoom-in": "crossfade",
     "dissolve": "crossfade",
+    "crossfade": "crossfade",
+    "dip-to-black": "fade_black",
+    "flash": "fade_white",
     "curtain-close": "none",  # handled as interstitial, not xfade
     "speed-ramp": "none",  # mechanic lives on dest slot's speed_factor, not the cut
     "none": "none",
@@ -71,6 +75,7 @@ def join_with_transitions(
     slot_durations: list[float],
     output_path: str,
     transition_duration_s: float | None = None,
+    transition_durations_s: list[float | None] | None = None,
 ) -> None:
     """Join slot video files with xfade transitions. Video-only output (-an).
 
@@ -96,12 +101,12 @@ def join_with_transitions(
     if len(slot_paths) < 2:
         raise ValueError("Need at least 2 slots for transitions")
     if len(transitions) != len(slot_paths) - 1:
-        raise ValueError(
-            f"Expected {len(slot_paths) - 1} transitions, got {len(transitions)}"
-        )
+        raise ValueError(f"Expected {len(slot_paths) - 1} transitions, got {len(transitions)}")
     if len(slot_durations) != len(slot_paths):
+        raise ValueError(f"Expected {len(slot_paths)} durations, got {len(slot_durations)}")
+    if transition_durations_s is not None and len(transition_durations_s) != len(transitions):
         raise ValueError(
-            f"Expected {len(slot_paths)} durations, got {len(slot_durations)}"
+            f"Expected {len(transitions)} transition durations, got {len(transition_durations_s)}"
         )
     if any(t == "none" for t in transitions):
         raise ValueError(
@@ -129,7 +134,12 @@ def join_with_transitions(
     for path in slot_paths:
         cmd.extend(["-i", path])
 
-    filter_complex = _build_xfade_filter(transitions, slot_durations, transition_duration_s)
+    filter_complex = _build_xfade_filter(
+        transitions,
+        slot_durations,
+        transition_duration_s,
+        transition_durations_s,
+    )
 
     # The xfade chain's final output label is [v{N-1}] where N = len(slot_paths).
     # Stamp bt709 onto that frame via setparams: combining two inputs in a
@@ -152,12 +162,16 @@ def join_with_transitions(
     # audio is mixed separately downstream).
     from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
 
-    cmd.extend([
-        "-filter_complex", filter_complex,
-        "-map", final_label,
-        "-an",  # video-only — template audio mixed separately
-        *_encoding_args(output_path, preset="fast", include_audio=False),
-    ])
+    cmd.extend(
+        [
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            final_label,
+            "-an",  # video-only — template audio mixed separately
+            *_encoding_args(output_path, preset="fast", include_audio=False),
+        ]
+    )
 
     log.info(
         "transition_join_start",
@@ -177,6 +191,7 @@ def _build_xfade_filter(
     transitions: list[str],
     slot_durations: list[float],
     transition_duration_s: float | None = None,
+    transition_durations_s: list[float | None] | None = None,
 ) -> str:
     """Build the filter_complex string for chained xfade transitions.
 
@@ -188,12 +203,17 @@ def _build_xfade_filter(
     "fit to time" / faster-transitions knob); it is still clamped to 30% of the
     shorter adjacent slot so a too-large value can never eat the footage.
     """
-    base_dur = transition_duration_s if transition_duration_s else DEFAULT_TRANSITION_DURATION_S
     parts: list[str] = []
     cumulative_dur = slot_durations[0]
     cumulative_trans = 0.0
 
     for i, trans_type in enumerate(transitions):
+        requested_dur = (
+            transition_durations_s[i]
+            if transition_durations_s is not None and transition_durations_s[i] is not None
+            else transition_duration_s
+        )
+        base_dur = requested_dur if requested_dur else DEFAULT_TRANSITION_DURATION_S
         # Clamp transition duration to 30% of the shorter adjacent slot.
         max_dur = min(slot_durations[i], slot_durations[i + 1]) * 0.3
         trans_dur = min(base_dur, max_dur)

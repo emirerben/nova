@@ -1,7 +1,8 @@
 import { beatMarks, type DraftSlot } from "@/app/generative/timeline-math";
-import type { EditorCapabilities, MediaOverlay, OverlaySuggestion, PendingSfxSuggestion, PoolAsset, SoundEffectPlacement, VariantSpeechMap } from "@/lib/plan-api";
+import type { CameraEffect, EditorCapabilities, MediaOverlay, OverlaySuggestion, PendingSfxSuggestion, PoolAsset, SoundEffectPlacement, VariantSpeechMap, VisualBlock } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
+import type { EditorTransition } from "@/lib/generative-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { FONT_SIZE_MAP } from "@/lib/overlay-constants";
 import {
@@ -87,6 +88,26 @@ export interface CopilotSlotSnapshot {
   moment: string | null;
   output_start_s: number | null;
   output_end_s: number | null;
+  transition_after?: EditorTransition;
+  transition_duration_s?: number | null;
+}
+
+export interface CopilotCameraEffectSnapshot {
+  index: number;
+  id: string;
+  start_s: number;
+  end_s: number;
+  intensity: number;
+}
+
+export interface CopilotVisualBlockSnapshot {
+  index: number;
+  id: string;
+  kind: VisualBlock["kind"];
+  start_s: number;
+  end_s: number;
+  transition_in: "cut" | "fade";
+  transition_out: "cut" | "fade";
 }
 
 export interface CopilotSfxPlacementSnapshot {
@@ -244,6 +265,8 @@ export interface CopilotSnapshot {
   };
   intro?: CopilotIntroSnapshot;
   title?: string;
+  camera_effects?: CopilotCameraEffectSnapshot[];
+  visual_blocks?: CopilotVisualBlockSnapshot[];
   open_tools?: Array<"text" | "visuals" | "sounds" | "overlays" | "styles">;
   allowed_op_families: CopilotOpFamily[];
 }
@@ -262,6 +285,9 @@ export interface AllowedOpFamilyOptions {
   openTools?: Array<"text" | "visuals" | "sounds" | "overlays" | "styles">;
   readOnly?: boolean;
   renderLayoutSwitchable?: boolean;
+  cameraEffectsEnabled?: boolean;
+  transitionsEnabled?: boolean;
+  visualBlocksEnabled?: boolean;
 }
 
 export interface CaptionCueLike {
@@ -302,6 +328,8 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
   mixLevel?: number | null;
   intro?: CopilotIntroSnapshot;
   title?: string | null;
+  cameraEffects?: CameraEffect[];
+  visualBlocks?: VisualBlock[];
 }
 
 function effectiveSizePx(bar: TextElementBar): number {
@@ -318,7 +346,9 @@ function allCoreCapabilitiesFalse(capabilities: EditorCapabilities | null | unde
     capabilities.split_clips === false &&
     capabilities.mix === false &&
     capabilities.sfx === false &&
-    capabilities.overlays === false;
+    capabilities.overlays === false &&
+    capabilities.visual_blocks !== true &&
+    capabilities.camera_effects !== true;
 }
 
 export function allowedOpFamiliesFromCapabilities(
@@ -338,6 +368,15 @@ export function allowedOpFamiliesFromCapabilities(
   if (options.musicSwappable || options.mixAllowed) families.push("music");
   if (options.renderLayoutSwitchable) families.push("render");
   if (options.titleEditable !== false) families.push("title");
+  if (capabilities?.camera_effects !== false && options.cameraEffectsEnabled) {
+    families.push("effect");
+  }
+  if (capabilities?.timeline !== false && options.transitionsEnabled) {
+    families.push("transition");
+  }
+  if (capabilities?.visual_blocks !== false && options.visualBlocksEnabled) {
+    families.push("visual");
+  }
   if ((options.openTools?.length ?? 0) > 0) families.push("tool");
   return families;
 }
@@ -472,6 +511,12 @@ export function buildCopilotSnapshot(
         null,
       output_start_s: outputStartS,
       output_end_s: outputStartS == null ? null : roundCopilotNumber(outputStartS + durationS),
+      ...(slot.transitionAfter && slot.transitionAfter !== "cut"
+        ? { transition_after: slot.transitionAfter }
+        : {}),
+      ...(slot.transitionDurationS == null
+        ? {}
+        : { transition_duration_s: roundCopilotNumber(slot.transitionDurationS) }),
     };
   });
 
@@ -602,6 +647,17 @@ export function buildCopilotSnapshot(
       })),
     };
   }
+  if (allowed.has("visual") && options.visualBlocks) {
+    snapshot.visual_blocks = options.visualBlocks.slice(0, 20).map((block, index) => ({
+      index,
+      id: block.id,
+      kind: block.kind,
+      start_s: roundCopilotNumber(block.start_s),
+      end_s: roundCopilotNumber(block.end_s),
+      transition_in: block.transition_in,
+      transition_out: block.transition_out,
+    }));
+  }
   const captionCuesEditable = options.captionCuesEditable !== false;
   if (
     allowed.has("caption") &&
@@ -664,6 +720,15 @@ export function buildCopilotSnapshot(
   }
   if (allowed.has("title") && options.title != null) {
     snapshot.title = options.title.slice(0, 300);
+  }
+  if (allowed.has("effect")) {
+    snapshot.camera_effects = (options.cameraEffects ?? []).slice(0, 20).map((effect, index) => ({
+      index,
+      id: effect.id,
+      start_s: roundCopilotNumber(effect.start_s),
+      end_s: roundCopilotNumber(effect.end_s),
+      intensity: roundCopilotNumber(effect.intensity),
+    }));
   }
   if (allowed.has("tool") && options.openTools) {
     snapshot.open_tools = options.openTools.filter((tool, index, arr) => arr.indexOf(tool) === index);

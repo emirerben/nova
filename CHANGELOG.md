@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.0.0] — 2026-07-27
+
+### Added
+- **Nova now acts as a proactive creative director inside the video editor.** On editable videos, the new “Nova suggests” surface analyzes the current unsaved draft and offers ranked, one-click treatments across hooks and pacing, text, sound and music, visual effects, and transitions. Suggestions remain previews until accepted, apply atomically as one undoable draft change, and can be dismissed or refreshed without interrupting manual editing.
+- **The editor now supports persisted per-cut transitions and exposes more visual treatments to Nova.** Crossfade, dip-to-black, and flash transitions share one clamped timing contract across browser preview and final FFmpeg output; camera effects and visual fades are also available through the validated editor-operation schema.
+- **An opt-in Omni generated-video path is ready for controlled experiments.** Nova can generate a short vertical insert or restyle a bounded selected segment through an asynchronous, provenance-tracked asset job. The capability remains disabled in production until its separate experiment flag is enabled.
+
+### Changed
+- **Nova’s models are now routed by job instead of silently sharing one global Gemini model.** Pro handles background creative direction with high thinking, Flash keeps interactive editing responsive, and Director requests automatically fall back to Flash when Pro times out, is rate-limited, is temporarily unavailable, or returns malformed output. Model choice, fallback reason, latency, usage, prompt version, and suggestion outcomes are recorded for evaluation.
+- Suggestions and generated assets fail closed: unavailable or unsafe ideas are filtered, stale responses are rejected, creative bundles never partially apply, and cancellation or render failure preserves the original draft.
+
 ## [0.16.4.1] — 2026-07-27
 
 ### Fixed

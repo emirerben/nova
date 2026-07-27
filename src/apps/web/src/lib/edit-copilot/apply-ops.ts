@@ -1,13 +1,16 @@
 import { isParityVerified } from "@/lib/parity-verified-fields";
 import type { TextEditorAction, TextElementBar } from "@/lib/timeline/text-timeline-reducer";
-import type { DraftSlot } from "@/app/generative/timeline-math";
+import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
 import type {
+  CameraEffect,
   EditorCapabilities,
   MediaOverlay,
   OverlaySuggestion,
   PoolAsset,
   SoundEffectPlacement,
+  VisualBlock,
 } from "@/lib/plan-api";
+import { normalizeCameraEffect } from "@/lib/camera-effects";
 import type { AcceptedSuggestionRef } from "@/lib/editor-commit";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import {
@@ -91,6 +94,8 @@ export interface ApplyCopilotOpsResult {
   nextSlots: DraftSlot[] | null;
   nextSfx?: SoundEffectPlacement[] | null;
   nextOverlays?: MediaOverlay[] | null;
+  nextCameraEffects?: CameraEffect[] | null;
+  nextVisualBlocks?: VisualBlock[] | null;
   acceptedSuggestionRefs?: AcceptedSuggestionRef[];
   nextMusicTrackId?: string;
   nextMixLevel?: number;
@@ -112,6 +117,8 @@ export interface ApplyCopilotOpsContext {
   sfx?: SoundEffectPlacement[];
   sfxCatalog?: SoundEffectSummary[];
   overlays?: MediaOverlay[];
+  cameraEffects?: CameraEffect[];
+  visualBlocks?: VisualBlock[];
   poolAssets?: PoolAsset[];
   pendingSuggestions?: OverlaySuggestion[];
   musicTrackId?: string | null;
@@ -122,12 +129,14 @@ export interface ApplyCopilotOpsContext {
   makeSlotKey?: (slot: DraftSlot) => string;
   makeSfxPlacementId?: () => string;
   makeOverlayId?: () => string;
+  makeCameraEffectId?: () => string;
 }
 
 let textIdCounter = 0;
 let slotKeyCounter = 0;
 let sfxIdCounter = 0;
 let overlayIdCounter = 0;
+let cameraEffectIdCounter = 0;
 
 function defaultTextBarId(): string {
   textIdCounter += 1;
@@ -151,6 +160,11 @@ function defaultSfxPlacementId(): string {
 function defaultOverlayId(): string {
   overlayIdCounter += 1;
   return globalThis.crypto?.randomUUID?.() ?? `copilot-overlay-${overlayIdCounter}`;
+}
+
+function defaultCameraEffectId(): string {
+  cameraEffectIdCounter += 1;
+  return globalThis.crypto?.randomUUID?.() ?? `copilot-camera-${cameraEffectIdCounter}`;
 }
 
 function fmt(value: unknown): string {
@@ -243,6 +257,8 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "reorder_clip") return `Move clip ${op.from_index + 1}`;
   if (op.op === "remove_clip") return `Remove clip ${op.slot_index + 1}`;
   if (op.op === "split_clip") return `Split clip ${op.slot_index + 1}`;
+  if (op.op === "insert_generated_asset") return "Insert generated clip";
+  if (op.op === "replace_generated_segment") return "Restyle clip";
   if (op.op === "add_sfx") return "Add sound";
   if (op.op === "patch_sfx") return `Sound ${op.sfx_index + 1}`;
   if (op.op === "remove_sfx") return `Remove sound ${op.sfx_index + 1}`;
@@ -258,6 +274,11 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "set_mix") return "Music volume";
   if (op.op === "set_intro_layout") return "Intro layout";
   if (op.op === "set_title") return "Title set";
+  if (op.op === "add_camera_effect") return "Add camera effect";
+  if (op.op === "patch_camera_effect") return `Camera effect ${op.camera_effect_index + 1}`;
+  if (op.op === "remove_camera_effect") return `Remove camera effect ${op.camera_effect_index + 1}`;
+  if (op.op === "set_transition") return `Transition ${op.boundary_index + 1}`;
+  if (op.op === "set_visual_fade") return `Visual block ${op.visual_block_index + 1}`;
   if (op.op === "open_tool") return `Opened ${op.tool[0].toUpperCase()}${op.tool.slice(1)}`;
   const _exhaustive: never = op;
   return _exhaustive;
@@ -475,6 +496,10 @@ export function applyCopilotOps(
   let workingSfx = ctx.sfx ?? [];
   let nextOverlays: MediaOverlay[] | undefined;
   let workingOverlays = ctx.overlays ?? [];
+  let nextCameraEffects: CameraEffect[] | undefined;
+  let workingCameraEffects = ctx.cameraEffects ?? [];
+  let nextVisualBlocks: VisualBlock[] | undefined;
+  let workingVisualBlocks = ctx.visualBlocks ?? [];
   let acceptedSuggestionRefs: AcceptedSuggestionRef[] | undefined;
   let nextMusicTrackId: string | undefined;
   let nextMixLevel: number | undefined;
@@ -501,6 +526,8 @@ export function applyCopilotOps(
       nextSlots !== null ||
       nextSfx !== undefined ||
       nextOverlays !== undefined ||
+      nextCameraEffects !== undefined ||
+      nextVisualBlocks !== undefined ||
       (acceptedSuggestionRefs?.length ?? 0) > 0 ||
       nextMusicTrackId !== undefined ||
       nextMixLevel !== undefined ||
@@ -1076,6 +1103,226 @@ export function applyCopilotOps(
       }
       nextTitle = op.title;
       applied.push({ label: "Title set", from: ctx.title, to: op.title });
+    } else if (op.op === "add_camera_effect") {
+      const effect = normalizeCameraEffect({
+        id: ctx.makeCameraEffectId?.() ?? defaultCameraEffectId(),
+        token: "semantic_crop_pulse",
+        start_s: op.start_s,
+        end_s: op.end_s,
+        intensity: op.intensity ?? 0.04,
+        easing: "sine_pulse",
+        source: "user",
+      });
+      workingCameraEffects = [...workingCameraEffects, effect];
+      nextCameraEffects = workingCameraEffects;
+      applied.push({
+        label: "Camera pulse",
+        from: "none",
+        to: `${fmtSeconds(effect.start_s)}-${fmtSeconds(effect.end_s)}`,
+      });
+    } else if (op.op === "patch_camera_effect") {
+      const snap = ctx.snapshot.camera_effects?.[op.camera_effect_index];
+      const effect = snap
+        ? workingCameraEffects.find((candidate) => candidate.id === snap.id)
+        : null;
+      if (!snap || !effect) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "camera effect no longer exists"));
+        continue;
+      }
+      if (
+        !sameValue(round(effect.start_s), snap.start_s) ||
+        !sameValue(round(effect.end_s), snap.end_s) ||
+        !sameValue(round(effect.intensity), snap.intensity)
+      ) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "camera effect changed after Nova read it"));
+        continue;
+      }
+      const patched = normalizeCameraEffect({
+        ...effect,
+        ...(op.start_s !== undefined ? { start_s: op.start_s } : {}),
+        ...(op.end_s !== undefined ? { end_s: op.end_s } : {}),
+        ...(op.intensity !== undefined ? { intensity: op.intensity } : {}),
+        source: "user",
+      });
+      workingCameraEffects = workingCameraEffects.map((candidate) =>
+        candidate.id === effect.id ? patched : candidate,
+      );
+      nextCameraEffects = workingCameraEffects;
+      applied.push({ label: "Camera pulse", from: "previous", to: "updated" });
+    } else if (op.op === "remove_camera_effect") {
+      const snap = ctx.snapshot.camera_effects?.[op.camera_effect_index];
+      const effect = snap
+        ? workingCameraEffects.find((candidate) => candidate.id === snap.id)
+        : null;
+      if (!snap || !effect) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "camera effect no longer exists"));
+        continue;
+      }
+      workingCameraEffects = workingCameraEffects.filter((candidate) => candidate.id !== effect.id);
+      nextCameraEffects = workingCameraEffects;
+      applied.push({ label: "Camera pulse", from: "present", to: "removed" });
+    } else if (op.op === "set_transition") {
+      const slots = currentSlots();
+      const activeSnapshotSlots = ctx.snapshot.slots.filter((slot) => !slot.removed);
+      const leftSnap = activeSnapshotSlots[op.boundary_index];
+      const rightSnap = activeSnapshotSlots[op.boundary_index + 1];
+      const leftIndex = leftSnap ? currentSlotIndex(slots, leftSnap.key) : -1;
+      const rightIndex = rightSnap ? currentSlotIndex(slots, rightSnap.key) : -1;
+      const activeCurrentSlots = slots.filter((slot) => !slot.removed);
+      const activeLeftIndex = leftSnap
+        ? currentSlotIndex(activeCurrentSlots, leftSnap.key)
+        : -1;
+      const activeRightIndex = rightSnap
+        ? currentSlotIndex(activeCurrentSlots, rightSnap.key)
+        : -1;
+      if (
+        leftIndex < 0 ||
+        rightIndex < 0 ||
+        activeLeftIndex < 0 ||
+        activeRightIndex !== activeLeftIndex + 1
+      ) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip order changed after Nova read it"));
+        continue;
+      }
+      const left = slots[leftIndex];
+      const currentTransition = left.transitionAfter ?? "cut";
+      const currentDuration = left.transitionDurationS ?? null;
+      if (
+        currentTransition !== (leftSnap.transition_after ?? "cut") ||
+        !sameValue(currentDuration, leftSnap.transition_duration_s ?? null)
+      ) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "transition changed after Nova read it"));
+        continue;
+      }
+      const duration = op.transition === "cut" ? null : (op.duration_s ?? 0.3);
+      workingSlots = slots.map((slot, index) =>
+        index === leftIndex
+          ? { ...slot, transitionAfter: op.transition, transitionDurationS: duration }
+          : slot,
+      );
+      nextSlots = workingSlots;
+      applied.push({
+        label: `Transition ${op.boundary_index + 1}`,
+        from: currentTransition.replaceAll("_", " "),
+        to: op.transition.replaceAll("_", " "),
+      });
+    } else if (op.op === "set_visual_fade") {
+      const snap = ctx.snapshot.visual_blocks?.[op.visual_block_index];
+      const block = snap
+        ? workingVisualBlocks.find((candidate) => candidate.id === snap.id)
+        : null;
+      if (!snap || !block) {
+        rejected.push(
+          reject(op.op, labelForOp(op), "target_missing", "visual block no longer exists"),
+        );
+        continue;
+      }
+      if (
+        block.transition_in !== snap.transition_in ||
+        block.transition_out !== snap.transition_out
+      ) {
+        rejected.push(
+          reject(op.op, labelForOp(op), "user_changed", "visual fade changed after Nova read it"),
+        );
+        continue;
+      }
+      const patched = {
+        ...block,
+        ...(op.transition_in ? { transition_in: op.transition_in } : {}),
+        ...(op.transition_out ? { transition_out: op.transition_out } : {}),
+      } as VisualBlock;
+      workingVisualBlocks = workingVisualBlocks.map((candidate) =>
+        candidate.id === block.id ? patched : candidate,
+      );
+      nextVisualBlocks = workingVisualBlocks;
+      applied.push({
+        label: "Visual fade",
+        from: `${block.transition_in}/${block.transition_out}`,
+        to: `${patched.transition_in}/${patched.transition_out}`,
+      });
+    } else if (op.op === "insert_generated_asset") {
+      const slots = currentSlots();
+      const layout = sequentialSlotLayout(slots, ctx.grid ?? []);
+      const boundaries: Array<{ at: number; index: number }> = [];
+      const firstActive = slots.findIndex((slot) => !slot.removed);
+      boundaries.push({ at: 0, index: firstActive >= 0 ? firstActive : slots.length });
+      layout.windows.forEach((window, index) => {
+        if (window.startS == null || window.durationS <= 0) return;
+        boundaries.push({ at: window.startS + window.durationS, index: index + 1 });
+      });
+      const target = boundaries.reduce((best, candidate) =>
+        Math.abs(candidate.at - op.insert_at_s) < Math.abs(best.at - op.insert_at_s)
+          ? candidate
+          : best,
+      );
+      const generatedSlot: DraftSlot = {
+        key: `generated-${op.asset_id}`,
+        slotId: null,
+        clipIndex: op.clip_index,
+        inS: 0,
+        durationBeats: null,
+        durationS: op.duration_s,
+        removed: false,
+        momentDescription: "Generated by Nova",
+        transitionAfter: "cut",
+        transitionDurationS: null,
+      };
+      workingSlots = [
+        ...slots.slice(0, target.index),
+        generatedSlot,
+        ...slots.slice(target.index),
+      ];
+      nextSlots = workingSlots;
+      applied.push({
+        label: "Generated clip",
+        from: "not in timeline",
+        to: `${fmtSeconds(target.at)} · ${fmtSeconds(op.duration_s)}`,
+      });
+    } else if (op.op === "replace_generated_segment") {
+      const slots = currentSlots();
+      const sourceSnap = ctx.snapshot.slots.find(
+        (slot) =>
+          !slot.removed &&
+          slot.clip_index === op.source_clip_index &&
+          Math.abs(slot.in_s - op.source_start_s) <= 0.05 &&
+          Math.abs(slot.in_s + slot.duration_s - op.source_end_s) <= 0.05,
+      );
+      const sourceIndex = sourceSnap ? currentSlotIndex(slots, sourceSnap.key) : -1;
+      const source = sourceIndex >= 0 ? slots[sourceIndex] : null;
+      const sourceWindow = sourceIndex >= 0 ? slotWindows(slots, grid)[sourceIndex] : null;
+      if (
+        !sourceSnap ||
+        !source ||
+        !sourceWindow ||
+        source.removed ||
+        source.clipIndex !== op.source_clip_index ||
+        Math.abs(source.inS - op.source_start_s) > 0.05 ||
+        Math.abs(source.inS + sourceWindow.durationS - op.source_end_s) > 0.05
+      ) {
+        rejected.push(
+          reject(op.op, labelForOp(op), "user_changed", "restyle source changed after Nova read it"),
+        );
+        continue;
+      }
+      const replacement: DraftSlot = {
+        key: `generated-${op.asset_id}`,
+        slotId: null,
+        clipIndex: op.clip_index,
+        inS: 0,
+        durationBeats: null,
+        durationS: op.duration_s,
+        removed: false,
+        momentDescription: "Restyled by Nova",
+        transitionAfter: source.transitionAfter ?? "cut",
+        transitionDurationS: source.transitionDurationS ?? null,
+      };
+      workingSlots = slots.map((slot, index) => (index === sourceIndex ? replacement : slot));
+      nextSlots = workingSlots;
+      applied.push({
+        label: "Restyled clip",
+        from: `${fmtSeconds(sourceSnap.output_start_s ?? 0)} · ${fmtSeconds(sourceSnap.duration_s)}`,
+        to: `${fmtSeconds(sourceSnap.output_start_s ?? 0)} · ${fmtSeconds(op.duration_s)}`,
+      });
     } else if (op.op === "open_tool") {
       if (!ctx.snapshot.open_tools?.includes(op.tool)) {
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "tool is not available"));
@@ -1091,6 +1338,8 @@ export function applyCopilotOps(
     nextSlots,
     nextSfx,
     nextOverlays,
+    nextCameraEffects,
+    nextVisualBlocks,
     acceptedSuggestionRefs,
     nextMusicTrackId,
     nextMixLevel,
@@ -1100,5 +1349,22 @@ export function applyCopilotOps(
     openTool,
     applied: consolidateChips(applied),
     rejected,
+  };
+}
+
+/** Director suggestions are transactional: one invalid or stale operation
+ * rejects the entire bundle. `applyCopilotOps` is pure, so discarding its
+ * staged result guarantees no partial draft mutation. */
+export function applyCopilotOpsAtomic(
+  rawOps: readonly unknown[],
+  ctx: ApplyCopilotOpsContext,
+): ApplyCopilotOpsResult {
+  const result = applyCopilotOps(rawOps, ctx);
+  if (result.rejected.length === 0) return result;
+  return {
+    textActions: [],
+    nextSlots: null,
+    applied: [],
+    rejected: result.rejected,
   };
 }

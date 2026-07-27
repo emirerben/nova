@@ -73,7 +73,12 @@ import { FONT_FACES } from "@/lib/font-faces";
 import { type GenerativeStyleSet } from "@/lib/generative-api";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
-import { applyCopilotOps, type ApplyCopilotOpsResult } from "@/lib/edit-copilot/apply-ops";
+import {
+  applyCopilotOps,
+  applyCopilotOpsAtomic,
+  type ApplyCopilotOpsContext,
+  type ApplyCopilotOpsResult,
+} from "@/lib/edit-copilot/apply-ops";
 import {
   allowedOpFamiliesFromCapabilities,
   buildCopilotSnapshot,
@@ -81,6 +86,7 @@ import {
   type CopilotSnapshot,
 } from "@/lib/edit-copilot/snapshot";
 import { useEditCopilot } from "@/lib/edit-copilot/useEditCopilot";
+import { useEditDirector } from "@/lib/edit-copilot/useEditDirector";
 import type { CaptionMetaPatch, CopilotOp } from "@/lib/edit-copilot/ops";
 import {
   initTextEditorState,
@@ -190,6 +196,12 @@ const MEDIA_OVERLAYS_RAW = (process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED ?? ""
 const MEDIA_OVERLAYS_UI_ENABLED =
   MEDIA_OVERLAYS_RAW.toLowerCase() === "true" || MEDIA_OVERLAYS_RAW === "1";
 const SOUND_EFFECTS_UI_ENABLED = process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
+const EDIT_TRANSITIONS_UI_ENABLED =
+  process.env.NEXT_PUBLIC_EDIT_TRANSITIONS_ENABLED === "true";
+const EDIT_DIRECTOR_UI_ENABLED =
+  process.env.NEXT_PUBLIC_EDIT_DIRECTOR_ENABLED === "true";
+const OMNI_GENERATED_VIDEO_UI_ENABLED =
+  process.env.NEXT_PUBLIC_OMNI_GENERATED_VIDEO_ENABLED === "true";
 const VISUAL_BLOCKS_UI_ENABLED =
   process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
 const MOTION_SCENES_UI_ENABLED =
@@ -3327,6 +3339,10 @@ export default function EditorShell({
       musicSwappable,
       mixAllowed,
       renderLayoutSwitchable,
+      cameraEffectsEnabled: capabilities?.camera_effects !== false,
+      transitionsEnabled: EDIT_TRANSITIONS_UI_ENABLED,
+      visualBlocksEnabled:
+        VISUAL_BLOCKS_UI_ENABLED && capabilities?.visual_blocks !== false,
       titleEditable: !readOnly,
       openTools,
       readOnly,
@@ -3365,6 +3381,8 @@ export default function EditorShell({
       intro,
       renderLayoutSwitchable,
       title,
+      cameraEffects: localCameraEffects,
+      visualBlocks: localVisualBlocks,
       readOnly: readOnly || allowedFamilies.length === 0,
     });
   }, [
@@ -3377,6 +3395,8 @@ export default function EditorShell({
     effectiveMusicTrackId,
     dirty,
     localOverlays,
+    localCameraEffects,
+    localVisualBlocks,
     localSfx,
     mixLevel,
     musicTracks,
@@ -3392,9 +3412,8 @@ export default function EditorShell({
     variant,
   ]);
 
-  const applyCopilotDraftOps = useCallback(
-    (ops: CopilotOp[], snapshot: CopilotSnapshot) =>
-      applyCopilotOps(ops, {
+  const buildCopilotApplyContext = useCallback(
+    (snapshot: CopilotSnapshot): ApplyCopilotOpsContext => ({
         bars: state.bars,
         slots,
         snapshot,
@@ -3404,6 +3423,8 @@ export default function EditorShell({
         sfx: localSfx,
         sfxCatalog: sfxGlossaryEffects,
         overlays: localOverlays,
+        cameraEffects: localCameraEffects,
+        visualBlocks: localVisualBlocks,
         poolAssets,
         pendingSuggestions: overlaySuggestions.rows,
         musicTrackId: effectiveMusicTrackId,
@@ -3414,6 +3435,7 @@ export default function EditorShell({
         makeSlotKey: (slot) => `${slot.key}-split-${crypto.randomUUID()}`,
         makeSfxPlacementId: () => crypto.randomUUID(),
         makeOverlayId: () => crypto.randomUUID(),
+        makeCameraEffectId: () => crypto.randomUUID(),
       }),
     [
       capabilities,
@@ -3421,6 +3443,8 @@ export default function EditorShell({
       clip.state.grid,
       effectiveMusicTrackId,
       localOverlays,
+      localCameraEffects,
+      localVisualBlocks,
       localSfx,
       mixLevel,
       overlaySuggestions.rows,
@@ -3431,6 +3455,18 @@ export default function EditorShell({
       state.bars,
       title,
     ],
+  );
+
+  const applyCopilotDraftOps = useCallback(
+    (ops: CopilotOp[], snapshot: CopilotSnapshot) =>
+      applyCopilotOps(ops, buildCopilotApplyContext(snapshot)),
+    [buildCopilotApplyContext],
+  );
+
+  const applyDirectorDraftOps = useCallback(
+    (ops: CopilotOp[], snapshot: CopilotSnapshot) =>
+      applyCopilotOpsAtomic(ops, buildCopilotApplyContext(snapshot)),
+    [buildCopilotApplyContext],
   );
 
   const flashTimerRef = useRef<number | null>(null);
@@ -3493,6 +3529,8 @@ export default function EditorShell({
         result.nextSlots !== null ||
         result.nextSfx != null ||
         result.nextOverlays != null ||
+        result.nextCameraEffects != null ||
+        result.nextVisualBlocks != null ||
         (result.acceptedSuggestionRefs?.length ?? 0) > 0 ||
         result.nextMusicTrackId !== undefined ||
         result.nextMixLevel !== undefined ||
@@ -3533,6 +3571,14 @@ export default function EditorShell({
       if (result.nextOverlays) {
         setLocalOverlays(result.nextOverlays);
         setOverlaysDirty(true);
+      }
+      if (result.nextCameraEffects) {
+        setLocalCameraEffects(result.nextCameraEffects);
+        setCameraEffectsDirty(true);
+      }
+      if (result.nextVisualBlocks) {
+        setLocalVisualBlocks(result.nextVisualBlocks);
+        setVisualBlocksDirty(true);
       }
       if (result.acceptedSuggestionRefs?.length) {
         setAcceptedSuggestions((cur) => {
@@ -3631,6 +3677,17 @@ export default function EditorShell({
     buildSnapshot: buildCopilotDraftSnapshot,
     applyOps: applyCopilotDraftOps,
     onApplied: handleCopilotOps,
+  });
+  const director = useEditDirector({
+    enabled: EDIT_DIRECTOR_UI_ENABLED && !readOnly,
+    omniEnabled: OMNI_GENERATED_VIDEO_UI_ENABLED,
+    itemId,
+    variantId: variant?.variant_id ?? variantParam ?? "",
+    materialRevision: history.version,
+    buildSnapshot: buildCopilotDraftSnapshot,
+    applyOpsAtomic: applyDirectorDraftOps,
+    onApplied: handleCopilotOps,
+    onGeneratedAssetReady: reloadClipTimeline,
   });
 
   const deleteSelected = useCallback(() => {
@@ -4766,6 +4823,7 @@ export default function EditorShell({
                 onStop: copilot.stop,
                 onUndo: history.undo,
                 onClearRestoredInput: copilot.clearRestoredInput,
+                director,
               }}
               onClose={() => setActiveTool(null)}
             />
@@ -4851,6 +4909,7 @@ export default function EditorShell({
                 onStop: copilot.stop,
                 onUndo: history.undo,
                 onClearRestoredInput: copilot.clearRestoredInput,
+                director,
               }}
               onClose={() => setActiveTool(null)}
             />
@@ -5102,6 +5161,7 @@ export default function EditorShell({
             onStop: copilot.stop,
             onUndo: history.undo,
             onClearRestoredInput: copilot.clearRestoredInput,
+            director,
           }}
           onClose={() => setActiveTool(null)}
         />

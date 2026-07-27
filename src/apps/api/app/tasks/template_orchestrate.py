@@ -3073,6 +3073,7 @@ def _build_single_pass_spec(
     #     behavior at template_orchestrate.py:2204-2209 where
     #     prev_had_interstitial forces transition_types[i] = "none")
     transitions: list[str] = []
+    transition_durations_s: list[float | None] = []
 
     for plan, step in zip(plans, steps):
         # Decide the transition INTO this clip. For slot 0 there's nothing
@@ -3083,9 +3084,14 @@ def _build_single_pass_spec(
         if inputs:
             if inputs[-1].kind == "color_hold":
                 transitions.append("none")
+                transition_durations_s.append(None)
             else:
                 raw_transition = str(step.slot.get("transition_in", "none"))
                 transitions.append(translate_transition(raw_transition))
+                raw_duration = step.slot.get("transition_duration_s")
+                transition_durations_s.append(
+                    float(raw_duration) if raw_duration is not None else None
+                )
 
         # Append the clip itself.
         inputs.append(
@@ -3146,6 +3152,7 @@ def _build_single_pass_spec(
         # clip → hold transition is always hard cut; the hold animation
         # itself is the effect.
         transitions.append("none")
+        transition_durations_s.append(None)
         inputs.append(
             SinglePassInput(
                 kind="color_hold",
@@ -3173,6 +3180,7 @@ def _build_single_pass_spec(
         fonts_dir=fonts_dir,
         output_duration_s=total_dur,
         transition_duration_s=transition_duration_s,
+        transition_durations_s=transition_durations_s,
         canvas=canvas,
     )
 
@@ -3409,6 +3417,7 @@ def _assemble_clips(
     reframed_paths: list[str] = []
     slot_durations: list[float] = []
     transition_types: list[str] = []
+    transition_durations_s: list[float | None] = []
     # Original per-slot durations (excluding interstitials) for overlay timing.
     original_slot_durations: list[float] = []
     # When True, the previous slot had an interstitial after it, so the
@@ -3524,9 +3533,14 @@ def _assemble_clips(
         if i > 0:
             if prev_had_interstitial:
                 transition_types.append("none")
+                transition_durations_s.append(None)
             else:
                 raw_transition = str(step.slot.get("transition_in", "none"))
                 transition_types.append(translate_transition(raw_transition))
+                raw_duration = step.slot.get("transition_duration_s")
+                transition_durations_s.append(
+                    float(raw_duration) if raw_duration is not None else None
+                )
 
         # Insert interstitial clip AFTER this slot if one is defined.
         # When hold_s=0 the curtain animation (already baked into the slot
@@ -3544,6 +3558,7 @@ def _assemble_clips(
                     reframed_paths,
                     slot_durations,
                     transition_types,
+                    transition_durations_s,
                     tmpdir,
                     canvas=canvas,
                 )
@@ -3579,6 +3594,7 @@ def _assemble_clips(
             tmpdir,
             has_interstitials=bool(interstitial_map),
             transition_duration_s=transition_duration_s,
+            transition_durations_s=transition_durations_s,
         )
     _phase_done("join", _phase_t0, job_id=job_id, clips=len(reframed_paths))
 
@@ -3641,6 +3657,7 @@ def _insert_interstitial(
     reframed_paths: list[str],
     slot_durations: list[float],
     transition_types: list[str],
+    transition_durations_s: list[float | None],
     tmpdir: str,
     *,
     canvas: Canvas | None = None,
@@ -3700,6 +3717,7 @@ def _insert_interstitial(
     slot_durations.append(hold_s)
     # Hard cut into and out of the interstitial
     transition_types.append("none")
+    transition_durations_s.append(None)
 
     log.info(
         "interstitial_inserted",
@@ -3717,6 +3735,7 @@ def _join_or_concat(
     tmpdir: str,
     has_interstitials: bool = False,
     transition_duration_s: float | None = None,
+    transition_durations_s: list[float | None] | None = None,
 ) -> None:
     """Join slots, splitting hard-cut runs from real visual transitions.
 
@@ -3756,6 +3775,11 @@ def _join_or_concat(
             f"slot_durations length {len(slot_durations)} != "
             f"len(reframed_paths) {len(reframed_paths)}"
         )
+    if transition_durations_s is not None and len(transition_durations_s) != len(transition_types):
+        raise ValueError(
+            f"transition_durations_s length {len(transition_durations_s)} != "
+            f"transition_types length {len(transition_types)}"
+        )
 
     if len(reframed_paths) == 1:
         shutil.copy2(reframed_paths[0], output_path)
@@ -3765,6 +3789,7 @@ def _join_or_concat(
     # "none" land in the same group; visual transitions split groups.
     groups: list[tuple[list[str], list[float]]] = []
     boundary_transitions: list[str] = []
+    boundary_transition_durations_s: list[float | None] = []
 
     cur_paths = [reframed_paths[0]]
     cur_durs = [slot_durations[0]]
@@ -3775,6 +3800,9 @@ def _join_or_concat(
         else:
             groups.append((cur_paths, cur_durs))
             boundary_transitions.append(t)
+            boundary_transition_durations_s.append(
+                transition_durations_s[i] if transition_durations_s is not None else None
+            )
             cur_paths = [reframed_paths[i + 1]]
             cur_durs = [slot_durations[i + 1]]
     groups.append((cur_paths, cur_durs))
@@ -3814,6 +3842,7 @@ def _join_or_concat(
             group_durs,
             output_path,
             transition_duration_s=transition_duration_s,
+            transition_durations_s=boundary_transition_durations_s,
         )
     except Exception as exc:
         # Last-resort fallback: drop visual transitions, concat all original

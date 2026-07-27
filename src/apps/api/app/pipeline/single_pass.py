@@ -161,6 +161,9 @@ class SinglePassSpec:
     # faster-transitions knob). None → DEFAULT_TRANSITION_DURATION_S. Still
     # clamped to 30% of the shorter adjacent group in _build_xfade_chain.
     transition_duration_s: float | None = None
+    # Optional per-boundary durations aligned with `transitions`. A non-None
+    # value wins over the recipe-level duration for that one boundary.
+    transition_durations_s: list[float | None] = dataclasses.field(default_factory=list)
     canvas: Canvas | None = None
 
     def __post_init__(self) -> None:
@@ -170,6 +173,13 @@ class SinglePassSpec:
             raise ValueError(
                 f"transitions length ({len(self.transitions)}) must be "
                 f"inputs length ({len(self.inputs)}) - 1"
+            )
+        if self.transition_durations_s and len(self.transition_durations_s) != len(
+            self.transitions
+        ):
+            raise ValueError(
+                f"transition_durations_s length ({len(self.transition_durations_s)}) "
+                f"must equal transitions length ({len(self.transitions)})"
             )
 
 
@@ -318,6 +328,7 @@ def _build_xfade_chain(
     transitions: list[str],
     final_label: str = "vout",
     transition_duration_s: float | None = None,
+    transition_durations_s: list[float | None] | None = None,
 ) -> tuple[list[str], str]:
     """Build the concat-then-xfade filter graph fragments.
 
@@ -354,6 +365,14 @@ def _build_xfade_chain(
     # order in `transitions` matches the order of the gaps between
     # consecutive groups in `groups`.
     visual_transitions = [t for t in transitions if t != "none"]
+    visual_transition_durations_s = [
+        duration
+        for transition, duration in zip(
+            transitions,
+            transition_durations_s or [None] * len(transitions),
+        )
+        if transition != "none"
+    ]
     if not visual_transitions:
         # Pure-"none" inputs route through the M2 concat path; this helper
         # should not have been called. Raise rather than silently emit a
@@ -362,12 +381,13 @@ def _build_xfade_chain(
             "_build_xfade_chain called with all-'none' transitions; use the M2 concat path instead"
         )
 
-    base_dur = transition_duration_s if transition_duration_s else DEFAULT_TRANSITION_DURATION_S
     cumulative_dur = group_durations[0]
     cumulative_trans = 0.0
     current_label = group_labels[0]
 
     for i, trans in enumerate(visual_transitions):
+        requested_dur = visual_transition_durations_s[i] or transition_duration_s
+        base_dur = requested_dur if requested_dur else DEFAULT_TRANSITION_DURATION_S
         # xfade overlap duration is bounded by 30% of the shorter adjacent
         # group; clip to base_dur (default 0.3s, or the recipe override).
         # Mirrors transitions._build_xfade_filter so visual results match
@@ -563,6 +583,7 @@ def build_single_pass_command(
             spec.transitions,
             final_label=join_out_label,
             transition_duration_s=spec.transition_duration_s,
+            transition_durations_s=spec.transition_durations_s or None,
         )
         filter_chains.extend(xfade_fragments)
     else:

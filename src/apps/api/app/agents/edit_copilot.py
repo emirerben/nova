@@ -21,11 +21,12 @@ from pydantic import BaseModel, Field
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.agents.music_matcher import _sanitize_text
+from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-07-26-v10"
+EDIT_COPILOT_PROMPT_VERSION = "2026-07-27-v12"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -57,6 +58,9 @@ _MUSIC_OPS = {"swap_music", "set_mix"}
 _RENDER_OPS = frozenset({"set_intro_layout"})
 _TITLE_OPS = {"set_title"}
 _TOOL_OPS = {"open_tool"}
+_EFFECT_OPS = {"add_camera_effect", "patch_camera_effect", "remove_camera_effect"}
+_TRANSITION_OPS = {"set_transition"}
+_VISUAL_OPS = {"set_visual_fade"}
 _VALID_OPS = (
     _TEXT_OPS
     | _STYLE_OPS
@@ -68,6 +72,9 @@ _VALID_OPS = (
     | _RENDER_OPS
     | _TITLE_OPS
     | _TOOL_OPS
+    | _EFFECT_OPS
+    | _TRANSITION_OPS
+    | _VISUAL_OPS
 )
 
 _OP_REQUIRED: dict[str, frozenset[str]] = {
@@ -97,6 +104,11 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "set_intro_layout": frozenset({"layout"}),
     "set_title": frozenset({"title"}),
     "open_tool": frozenset({"tool"}),
+    "add_camera_effect": frozenset({"start_s", "end_s"}),
+    "patch_camera_effect": frozenset({"camera_effect_index"}),
+    "remove_camera_effect": frozenset({"camera_effect_index"}),
+    "set_transition": frozenset({"boundary_index", "transition"}),
+    "set_visual_fade": frozenset({"visual_block_index"}),
 }
 
 _OP_FIELDS: dict[str, frozenset[str]] = {
@@ -137,6 +149,11 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "set_intro_layout": frozenset({"layout"}),
     "set_title": frozenset({"title"}),
     "open_tool": frozenset({"tool"}),
+    "add_camera_effect": frozenset({"start_s", "end_s", "intensity"}),
+    "patch_camera_effect": frozenset({"camera_effect_index", "start_s", "end_s", "intensity"}),
+    "remove_camera_effect": frozenset({"camera_effect_index"}),
+    "set_transition": frozenset({"boundary_index", "transition", "duration_s"}),
+    "set_visual_fade": frozenset({"visual_block_index", "transition_in", "transition_out"}),
 }
 
 _STYLE_PATCH_FIELDS = frozenset(
@@ -378,12 +395,51 @@ def _format_snapshot(snapshot: dict) -> str:
             in_s = _first_number(slot, ("in_s", "source_start_s", "sourceStartS"))
             start, end = _slot_window(slot)
             moment = _clean_prompt_data(slot.get("moment") or slot.get("label") or "")
+            transition = _clean_prompt_data(
+                slot.get("transition_after") or "cut",
+                max_chars=30,
+            )
             lines.append(
                 f"{i}. output={_fmt_range(start, end)} duration={_fmt_num(duration)}s "
-                f"in={_fmt_num(in_s)}s source={_fmt_num(source)}s moment={moment!r}"
+                f"in={_fmt_num(in_s)}s source={_fmt_num(source)}s moment={moment!r} "
+                f"transition_after={transition!r} "
+                f"transition_duration_s={_fmt_num(_first_number(slot, ('transition_duration_s',)))}"
             )
     else:
         lines.append("(none)")
+
+    camera_effects = snapshot.get("camera_effects")
+    if isinstance(camera_effects, list):
+        lines.append("\nCAMERA EFFECTS (indices are authoritative for this turn):")
+        if not camera_effects:
+            lines.append("(none)")
+        for i, effect in enumerate(camera_effects[:20]):
+            if not isinstance(effect, dict):
+                continue
+            effect_range = _fmt_range(
+                _first_number(effect, ("start_s",)),
+                _first_number(effect, ("end_s",)),
+            )
+            lines.append(
+                f"{i}. {effect_range} intensity={_fmt_num(_first_number(effect, ('intensity',)))}"
+            )
+
+    visual_blocks = snapshot.get("visual_blocks")
+    if isinstance(visual_blocks, list):
+        lines.append("\nVISUAL BLOCKS (indices are authoritative for this turn):")
+        if not visual_blocks:
+            lines.append("(none)")
+        for i, block in enumerate(visual_blocks[:20]):
+            if not isinstance(block, dict):
+                continue
+            lines.append(
+                f"{i}. id={_clean_prompt_data(block.get('id'), max_chars=80)!r} "
+                f"kind={_clean_prompt_data(block.get('kind'), max_chars=30)!r} "
+                "time="
+                f"{_fmt_range(_as_float(block.get('start_s')), _as_float(block.get('end_s')))} "
+                f"transition_in={_clean_prompt_data(block.get('transition_in'), max_chars=20)!r} "
+                f"transition_out={_clean_prompt_data(block.get('transition_out'), max_chars=20)!r}"
+            )
 
     beat_marks = snapshot.get("beat_marks")
     if isinstance(beat_marks, list):
@@ -704,11 +760,11 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         name="nova.edit.copilot",
         prompt_id="edit_copilot",
         prompt_version=EDIT_COPILOT_PROMPT_VERSION,
-        model="gemini-2.5-flash",
+        model=settings.edit_copilot_model,
         max_attempts=3,
         backoff_s=(2.0, 6.0),
         timeout_s=20.0,
-        thinking_budget=512,
+        thinking_level="low",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
     )
@@ -875,6 +931,12 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         aliases = {"title"}
     elif name in _TOOL_OPS:
         aliases = {"tool", "open_tool", "navigation"}
+    elif name in _EFFECT_OPS:
+        aliases = {"effect", "effects", "camera_effects"}
+    elif name in _TRANSITION_OPS:
+        aliases = {"transition", "transitions", "timeline"}
+    elif name in _VISUAL_OPS:
+        aliases = {"visual", "visuals", "visual_blocks"}
     else:
         aliases = {"clip", "clips", "timeline"}
     return bool(allowed & aliases)
@@ -887,6 +949,15 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
     sfx_count = _section_len(snapshot, "sfx", "placements")
     overlay_count = _section_len(snapshot, "overlays", "cards")
     cue_count = _section_len(snapshot, "captions", "cues")
+    camera_effect_count = len(snapshot.get("camera_effects") or [])
+    visual_block_count = len(snapshot.get("visual_blocks") or [])
+    transition_slot_count = len(
+        [
+            slot
+            for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+            if isinstance(slot, dict) and not slot.get("removed")
+        ]
+    )
     for key in ("bar_index",):
         if key in payload and not _index_in_bounds(payload[key], text_count):
             log.warning("edit_copilot.drop_text_index_oob", op=name, index=payload.get(key))
@@ -917,6 +988,33 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
         return False
     if "cue_index" in payload and not _index_in_bounds(payload["cue_index"], cue_count):
         log.warning("edit_copilot.drop_cue_index_oob", op=name, index=payload.get("cue_index"))
+        return False
+    if "camera_effect_index" in payload and not _index_in_bounds(
+        payload["camera_effect_index"], camera_effect_count
+    ):
+        log.warning(
+            "edit_copilot.drop_camera_effect_index_oob",
+            op=name,
+            index=payload.get("camera_effect_index"),
+        )
+        return False
+    if "boundary_index" in payload and not _index_in_bounds(
+        payload["boundary_index"], max(0, transition_slot_count - 1)
+    ):
+        log.warning(
+            "edit_copilot.drop_boundary_index_oob",
+            op=name,
+            index=payload.get("boundary_index"),
+        )
+        return False
+    if "visual_block_index" in payload and not _index_in_bounds(
+        payload["visual_block_index"], visual_block_count
+    ):
+        log.warning(
+            "edit_copilot.drop_visual_block_index_oob",
+            op=name,
+            index=payload.get("visual_block_index"),
+        )
         return False
     return True
 
@@ -965,6 +1063,9 @@ def _coerce_payload(
         "sfx_index",
         "overlay_index",
         "cue_index",
+        "camera_effect_index",
+        "boundary_index",
+        "visual_block_index",
     ):
         if key in out:
             try:
@@ -1018,7 +1119,17 @@ def _coerce_payload(
             state.invalid_value()
             return None
 
-    for key in ("start_s", "end_s", "in_s", "duration_s", "at_s", "gain", "music_level", "scale"):
+    for key in (
+        "start_s",
+        "end_s",
+        "in_s",
+        "duration_s",
+        "at_s",
+        "gain",
+        "music_level",
+        "scale",
+        "intensity",
+    ):
         if key in out:
             try:
                 out[key] = float(out[key])
@@ -1050,6 +1161,8 @@ def _coerce_payload(
         out["gain"] = 1.0
     if "music_level" in out:
         out["music_level"] = max(0.0, min(1.0, out["music_level"]))
+    if "intensity" in out:
+        out["intensity"] = max(0.01, min(0.08, out["intensity"]))
 
     if name in _SFX_OPS and "at_s" in out:
         total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
@@ -1137,6 +1250,74 @@ def _coerce_payload(
         if isinstance(slot, dict):
             start, end = _slot_window(slot)
             if start is not None and end is not None and not (start < out["at_s"] < end):
+                state.invalid_value()
+                return None
+
+    if name in {"add_camera_effect", "patch_camera_effect"}:
+        total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
+        if total_s is not None and total_s > 0:
+            for key in ("start_s", "end_s"):
+                if key in out:
+                    out[key] = min(out[key], total_s)
+        start_s = out.get("start_s")
+        end_s = out.get("end_s")
+        if name == "patch_camera_effect":
+            effects = _snapshot_list(snapshot, ("camera_effects",))
+            effect_index = out.get("camera_effect_index")
+            current = (
+                effects[effect_index]
+                if isinstance(effect_index, int) and effect_index < len(effects)
+                else {}
+            )
+            if isinstance(current, dict):
+                start_s = start_s if start_s is not None else _as_float(current.get("start_s"))
+                end_s = end_s if end_s is not None else _as_float(current.get("end_s"))
+        if start_s is not None and end_s is not None and end_s <= start_s:
+            state.invalid_value()
+            return None
+        if name == "add_camera_effect" and "intensity" not in out:
+            out["intensity"] = 0.04
+
+    if name == "set_transition":
+        if out.get("transition") not in {"cut", "crossfade", "dip_to_black", "flash"}:
+            state.invalid_value()
+            return None
+        slots = [
+            slot
+            for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+            if isinstance(slot, dict) and not slot.get("removed")
+        ]
+        boundary_index = out["boundary_index"]
+        left = slots[boundary_index] if boundary_index < len(slots) else {}
+        right = slots[boundary_index + 1] if boundary_index + 1 < len(slots) else {}
+        if not isinstance(left, dict) or not isinstance(right, dict):
+            state.invalid_value()
+            return None
+        left_start, left_end = _slot_window(left) if isinstance(left, dict) else (None, None)
+        right_start, right_end = _slot_window(right) if isinstance(right, dict) else (None, None)
+        adjacent_durations = [
+            end - start
+            for start, end in ((left_start, left_end), (right_start, right_end))
+            if start is not None and end is not None
+        ]
+        if len(adjacent_durations) != 2:
+            state.invalid_value()
+            return None
+        max_duration = min([0.3, *(duration * 0.3 for duration in adjacent_durations)])
+        if out["transition"] != "cut" and max_duration < 0.1:
+            state.invalid_value()
+            return None
+        requested_duration = max(0.1, float(out.get("duration_s") or 0.3))
+        out["duration_s"] = (
+            0.3 if out["transition"] == "cut" else min(0.3, max_duration, requested_duration)
+        )
+
+    if name == "set_visual_fade":
+        if "transition_in" not in out and "transition_out" not in out:
+            state.invalid_value()
+            return None
+        for key in ("transition_in", "transition_out"):
+            if key in out and out[key] not in {"cut", "fade"}:
                 state.invalid_value()
                 return None
 
@@ -1338,3 +1519,37 @@ def _as_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+# Public shared editor-operation contract used by the proactive Director.
+# Copilot prompt/retry behavior stays private to this module; these wrappers
+# are the stable validation and snapshot-formatting boundary.
+EditorOperationParseState = _ParseState
+
+
+def clean_editor_prompt_data(value: object, *, max_chars: int = 220) -> str:
+    return _clean_prompt_data(value, max_chars=max_chars)
+
+
+def editor_effect_catalog() -> str:
+    return _effect_catalog()
+
+
+def editor_font_catalog() -> str:
+    return _font_catalog()
+
+
+def format_editor_snapshot(snapshot: dict) -> str:
+    return _format_snapshot(snapshot)
+
+
+def parse_editor_operation(
+    raw: object,
+    snapshot: dict,
+    state: EditorOperationParseState,
+) -> dict | None:
+    return _parse_op(raw, snapshot, state)
+
+
+def editor_snapshot_list(snapshot: dict, keys: Iterable[str]) -> list:
+    return _snapshot_list(snapshot, keys)

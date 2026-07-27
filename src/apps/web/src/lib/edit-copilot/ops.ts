@@ -1,4 +1,5 @@
 import fontRegistryJson from "@/data/font-registry.json";
+import type { EditorTransition } from "@/lib/generative-api";
 
 export type CopilotOpFamily =
   | "text"
@@ -9,7 +10,10 @@ export type CopilotOpFamily =
   | "music"
   | "render"
   | "title"
-  | "tool";
+  | "tool"
+  | "effect"
+  | "transition"
+  | "visual";
 
 export const TEXT_STYLE_PATCH_KEYS = [
   "font_family",
@@ -131,6 +135,43 @@ export type CopilotOp =
   | { op: "set_mix"; music_level: number }
   | { op: "set_intro_layout"; layout: "linear" | "cluster" }
   | { op: "set_title"; title: string }
+  | { op: "add_camera_effect"; start_s: number; end_s: number; intensity?: number }
+  | {
+      op: "patch_camera_effect";
+      camera_effect_index: number;
+      start_s?: number;
+      end_s?: number;
+      intensity?: number;
+    }
+  | { op: "remove_camera_effect"; camera_effect_index: number }
+  | {
+      op: "set_visual_fade";
+      visual_block_index: number;
+      transition_in?: "cut" | "fade";
+      transition_out?: "cut" | "fade";
+    }
+  | {
+      op: "set_transition";
+      boundary_index: number;
+      transition: EditorTransition;
+      duration_s?: number;
+    }
+  | {
+      op: "insert_generated_asset";
+      asset_id: string;
+      clip_index: number;
+      insert_at_s: number;
+      duration_s: number;
+    }
+  | {
+      op: "replace_generated_segment";
+      asset_id: string;
+      clip_index: number;
+      source_clip_index: number;
+      source_start_s: number;
+      source_end_s: number;
+      duration_s: number;
+    }
   | {
       op: "open_tool";
       tool: "text" | "visuals" | "sounds" | "overlays" | "styles";
@@ -173,9 +214,18 @@ export interface CopilotValidationSnapshot {
   total_duration_s?: number | null;
   text_bars?: unknown[];
   slots?: Array<{
+    key?: string;
+    clip_index?: number;
+    in_s?: number;
+    duration_s?: number;
     output_start_s?: number | null;
     output_end_s?: number | null;
+    removed?: boolean;
+    transition_after?: string | null;
+    transition_duration_s?: number | null;
   }>;
+  camera_effects?: unknown[];
+  visual_blocks?: unknown[];
   sfx?: {
     placements?: unknown[];
   };
@@ -455,7 +505,9 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
     op.op === "set_clip_in" ||
     op.op === "reorder_clip" ||
     op.op === "remove_clip" ||
-    op.op === "split_clip"
+    op.op === "split_clip" ||
+    op.op === "insert_generated_asset" ||
+    op.op === "replace_generated_segment"
   ) {
     return "clip";
   }
@@ -480,6 +532,13 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
   if (op.op === "set_intro_layout") return "render";
   if (op.op === "set_title") return "title";
   if (op.op === "open_tool") return "tool";
+  if (
+    op.op === "add_camera_effect" ||
+    op.op === "patch_camera_effect" ||
+    op.op === "remove_camera_effect"
+  ) return "effect";
+  if (op.op === "set_transition") return "transition";
+  if (op.op === "set_visual_fade") return "visual";
   return null;
 }
 
@@ -804,6 +863,247 @@ export function validateCopilotOp(
       const title = cleanUserText(raw.title, 300);
       if (!title) return reject("invalid_value", "title must be non-empty", opName);
       return { ok: true, op: { op: opName, title } };
+    }
+    case "add_camera_effect": {
+      if (!nonNegativeNumber(raw.start_s) || !nonNegativeNumber(raw.end_s)) {
+        return reject("missing_required", "add_camera_effect requires start_s and end_s", opName);
+      }
+      if (raw.end_s <= raw.start_s) {
+        return reject("invalid_time", "camera effect end_s must be after start_s", opName);
+      }
+      const intensity = raw.intensity === undefined ? 0.04 : raw.intensity;
+      if (!finiteNumber(intensity)) {
+        return reject("invalid_type", "camera effect intensity must be a number", opName);
+      }
+      const startS = clampAtS(raw.start_s, snapshot);
+      const endS = clampAtS(raw.end_s, snapshot);
+      if (endS <= startS) {
+        return reject(
+          "invalid_time",
+          "camera effect timing collapses outside the current timeline",
+          opName,
+        );
+      }
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          start_s: startS,
+          end_s: endS,
+          intensity: clamp(intensity, 0.01, 0.08),
+        },
+      };
+    }
+    case "patch_camera_effect": {
+      if (!integerIndex(raw.camera_effect_index)) {
+        return reject("missing_required", "patch_camera_effect requires camera_effect_index", opName);
+      }
+      if (snapshot?.camera_effects && raw.camera_effect_index >= snapshot.camera_effects.length) {
+        return reject("invalid_index", "camera_effect_index is outside the snapshot", opName);
+      }
+      const hasStart = raw.start_s !== undefined;
+      const hasEnd = raw.end_s !== undefined;
+      const hasIntensity = raw.intensity !== undefined;
+      if (!hasStart && !hasEnd && !hasIntensity) {
+        return reject("missing_required", "patch_camera_effect requires a changed field", opName);
+      }
+      if (
+        (hasStart && !nonNegativeNumber(raw.start_s)) ||
+        (hasEnd && !nonNegativeNumber(raw.end_s)) ||
+        (hasIntensity && !finiteNumber(raw.intensity))
+      ) {
+        return reject("invalid_type", "camera effect patch values must be numbers", opName);
+      }
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          camera_effect_index: raw.camera_effect_index,
+          ...(hasStart ? { start_s: clampAtS(raw.start_s as number, snapshot) } : {}),
+          ...(hasEnd ? { end_s: clampAtS(raw.end_s as number, snapshot) } : {}),
+          ...(hasIntensity ? { intensity: clamp(raw.intensity as number, 0.01, 0.08) } : {}),
+        },
+      };
+    }
+    case "remove_camera_effect": {
+      if (!integerIndex(raw.camera_effect_index)) {
+        return reject("missing_required", "remove_camera_effect requires camera_effect_index", opName);
+      }
+      if (snapshot?.camera_effects && raw.camera_effect_index >= snapshot.camera_effects.length) {
+        return reject("invalid_index", "camera_effect_index is outside the snapshot", opName);
+      }
+      return { ok: true, op: { op: opName, camera_effect_index: raw.camera_effect_index } };
+    }
+    case "set_transition": {
+      if (!integerIndex(raw.boundary_index)) {
+        return reject("missing_required", "set_transition requires boundary_index", opName);
+      }
+      const activeSlots = snapshot?.slots?.filter((slot) => !slot.removed);
+      if (!activeSlots || raw.boundary_index >= Math.max(0, activeSlots.length - 1)) {
+        return reject("invalid_index", "boundary_index must point between two clips", opName);
+      }
+      const allowed = new Set(["cut", "crossfade", "dip_to_black", "flash"]);
+      if (typeof raw.transition !== "string" || !allowed.has(raw.transition)) {
+        return reject("invalid_value", "transition is not supported", opName);
+      }
+      if (raw.duration_s !== undefined && !finiteNumber(raw.duration_s)) {
+        return reject("invalid_type", "transition duration_s must be a number", opName);
+      }
+      const left = activeSlots[raw.boundary_index];
+      const right = activeSlots[raw.boundary_index + 1];
+      const leftDuration =
+        finiteNumber(left?.output_start_s) && finiteNumber(left?.output_end_s)
+          ? left.output_end_s - left.output_start_s
+          : Infinity;
+      const rightDuration =
+        finiteNumber(right?.output_start_s) && finiteNumber(right?.output_end_s)
+          ? right.output_end_s - right.output_start_s
+          : Infinity;
+      if (!Number.isFinite(leftDuration) || !Number.isFinite(rightDuration)) {
+        return reject(
+          "invalid_time",
+          "both adjacent clip durations are required for a transition",
+          opName,
+        );
+      }
+      const maxDuration = Math.min(0.3, leftDuration * 0.3, rightDuration * 0.3);
+      if (raw.transition !== "cut" && maxDuration < 0.1) {
+        return reject(
+          "invalid_time",
+          "adjacent clips are too short for a render-safe transition",
+          opName,
+        );
+      }
+      const requestedDuration =
+        raw.duration_s === undefined ? 0.3 : Math.max(0.1, raw.duration_s);
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          boundary_index: raw.boundary_index,
+          transition: raw.transition as Extract<CopilotOp, { op: "set_transition" }>["transition"],
+          // FFmpeg's render-safe transition contract uses a single 300ms
+          // boundary and clamps it further for very short adjacent clips.
+          duration_s:
+            raw.transition === "cut"
+              ? 0.3
+              : Math.min(0.3, maxDuration, requestedDuration),
+        },
+      };
+    }
+    case "set_visual_fade": {
+      if (!integerIndex(raw.visual_block_index)) {
+        return reject("missing_required", "set_visual_fade requires visual_block_index", opName);
+      }
+      if (
+        snapshot?.visual_blocks &&
+        raw.visual_block_index >= snapshot.visual_blocks.length
+      ) {
+        return reject("invalid_index", "visual_block_index is outside the snapshot", opName);
+      }
+      const valid = new Set(["cut", "fade"]);
+      const hasIn = raw.transition_in !== undefined;
+      const hasOut = raw.transition_out !== undefined;
+      if (!hasIn && !hasOut) {
+        return reject("missing_required", "set_visual_fade requires an entrance or exit", opName);
+      }
+      if (
+        (hasIn && (typeof raw.transition_in !== "string" || !valid.has(raw.transition_in))) ||
+        (hasOut && (typeof raw.transition_out !== "string" || !valid.has(raw.transition_out)))
+      ) {
+        return reject("invalid_value", "visual fade must be cut or fade", opName);
+      }
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          visual_block_index: raw.visual_block_index,
+          ...(hasIn ? { transition_in: raw.transition_in as "cut" | "fade" } : {}),
+          ...(hasOut ? { transition_out: raw.transition_out as "cut" | "fade" } : {}),
+        },
+      };
+    }
+    case "insert_generated_asset": {
+      if (
+        typeof raw.asset_id !== "string" ||
+        raw.asset_id.trim() === "" ||
+        !integerIndex(raw.clip_index) ||
+        !nonNegativeNumber(raw.insert_at_s) ||
+        !finiteNumber(raw.duration_s)
+      ) {
+        return reject(
+          "missing_required",
+          "insert_generated_asset requires asset_id, clip_index, insert_at_s, and duration_s",
+          opName,
+        );
+      }
+      if (raw.duration_s <= 0 || raw.duration_s > 10) {
+        return reject("invalid_value", "generated asset duration must be 0-10 seconds", opName);
+      }
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          asset_id: raw.asset_id.trim().slice(0, 100),
+          clip_index: raw.clip_index,
+          insert_at_s: clampAtS(raw.insert_at_s, snapshot),
+          duration_s: raw.duration_s,
+        },
+      };
+    }
+    case "replace_generated_segment": {
+      if (
+        typeof raw.asset_id !== "string" ||
+        raw.asset_id.trim() === "" ||
+        !integerIndex(raw.clip_index) ||
+        !integerIndex(raw.source_clip_index) ||
+        !nonNegativeNumber(raw.source_start_s) ||
+        !nonNegativeNumber(raw.source_end_s) ||
+        !finiteNumber(raw.duration_s)
+      ) {
+        return reject(
+          "missing_required",
+          "replace_generated_segment requires source and generated clip fields",
+          opName,
+        );
+      }
+      if (
+        raw.source_end_s <= raw.source_start_s ||
+        raw.duration_s <= 0 ||
+        raw.duration_s > 10
+      ) {
+        return reject("invalid_time", "generated replacement timing is invalid", opName);
+      }
+      const sourceStartS = raw.source_start_s as number;
+      const sourceEndS = raw.source_end_s as number;
+      const target = snapshot?.slots?.find(
+        (slot) =>
+          !slot.removed &&
+          slot.clip_index === raw.source_clip_index &&
+          finiteNumber(slot.in_s) &&
+          finiteNumber(slot.duration_s) &&
+          Math.abs(slot.in_s - sourceStartS) <= 0.05 &&
+          Math.abs(slot.in_s + slot.duration_s - sourceEndS) <= 0.05,
+      );
+      if (!target) {
+        return reject(
+          "invalid_index",
+          "restyle source no longer matches a complete timeline clip",
+          opName,
+        );
+      }
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          asset_id: raw.asset_id.trim().slice(0, 100),
+          clip_index: raw.clip_index,
+          source_clip_index: raw.source_clip_index,
+          source_start_s: sourceStartS,
+          source_end_s: sourceEndS,
+          duration_s: raw.duration_s,
+        },
+      };
     }
     case "open_tool": {
       if (typeof raw.tool !== "string" || !ALLOWED_TOOLS.has(raw.tool)) {

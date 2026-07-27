@@ -4729,7 +4729,7 @@ def _prepare_timeline_assembly(
         _probe_clips,
     )
 
-    resolved: list[tuple[int, float, float, Any, Any]] = []
+    resolved: list[tuple[int, float, float, Any, Any, str, float | None]] = []
     for slot in timeline_slots:
         try:
             clip_index = int(slot["clip_index"])
@@ -4754,6 +4754,17 @@ def _prepare_timeline_assembly(
                 duration_s,
                 slot.get("moment_energy"),
                 slot.get("moment_description"),
+                (
+                    str(slot.get("transition_after") or "cut")
+                    if settings.edit_transitions_enabled
+                    else "cut"
+                ),
+                (
+                    float(slot["transition_duration_s"])
+                    if settings.edit_transitions_enabled
+                    and slot.get("transition_duration_s") is not None
+                    else None
+                ),
             )
         )
     if not resolved:
@@ -4775,8 +4786,16 @@ def _prepare_timeline_assembly(
     # bounds checks on clips the AI never probed (its comment promises "the
     # worker's probe will clamp"; this is that clamp). Slots that collapse
     # below 0.1s after clamping are dropped with a warning.
-    clamped: list[tuple[int, float, float, Any, Any]] = []
-    for clip_index, in_s, duration_s, moment_energy, moment_description in resolved:
+    clamped: list[tuple[int, float, float, Any, Any, str, float | None]] = []
+    for (
+        clip_index,
+        in_s,
+        duration_s,
+        moment_energy,
+        moment_description,
+        transition_after,
+        transition_duration_s,
+    ) in resolved:
         probe = probe_map.get(clip_id_to_local[f"clip_{clip_index}"])
         probe_duration = float(getattr(probe, "duration_s", 0.0) or 0.0)
         if probe_duration > 0:
@@ -4792,9 +4811,39 @@ def _prepare_timeline_assembly(
                 probe_duration_s=probe_duration,
             )
             continue
-        clamped.append((clip_index, in_s, duration_s, moment_energy, moment_description))
+        clamped.append(
+            (
+                clip_index,
+                in_s,
+                duration_s,
+                moment_energy,
+                moment_description,
+                transition_after,
+                transition_duration_s,
+            )
+        )
     if not clamped:
         return None
+
+    boundary_transitions: list[tuple[str, float | None]] = [("hard-cut", None)]
+    transition_names = {
+        "crossfade": "crossfade",
+        "dip_to_black": "dip-to-black",
+        "flash": "flash",
+    }
+    for index in range(1, len(clamped)):
+        transition_name = transition_names.get(clamped[index - 1][5], "hard-cut")
+        if transition_name == "hard-cut":
+            boundary_transitions.append(("hard-cut", None))
+            continue
+        max_duration_s = min(0.3, clamped[index - 1][2] * 0.3, clamped[index][2] * 0.3)
+        if max_duration_s < 0.1:
+            boundary_transitions.append(("hard-cut", None))
+            continue
+        requested_duration_s = clamped[index - 1][6] or 0.3
+        boundary_transitions.append(
+            (transition_name, round(min(requested_duration_s, max_duration_s), 3))
+        )
 
     from app.pipeline.agents.gemini_analyzer import AssemblyStep  # noqa: PLC0415
 
@@ -4807,6 +4856,11 @@ def _prepare_timeline_assembly(
                 # exact_window: _plan_slots renders this verbatim source range —
                 # no beat-snap, no cursor sharing, no speed ramp.
                 "exact_window": True,
+                # The renderer expresses a boundary on the destination slot.
+                # User state stores it after the source slot, so read the prior
+                # row while materializing AssemblySteps.
+                "transition_in": boundary_transitions[i][0],
+                "transition_duration_s": boundary_transitions[i][1],
             },
             clip_id=f"clip_{clip_index}",
             moment={
@@ -4816,9 +4870,15 @@ def _prepare_timeline_assembly(
                 "description": moment_description or "",
             },
         )
-        for i, (clip_index, in_s, duration_s, moment_energy, moment_description) in enumerate(
-            clamped
-        )
+        for i, (
+            clip_index,
+            in_s,
+            duration_s,
+            moment_energy,
+            moment_description,
+            _transition_after,
+            _transition_duration_s,
+        ) in enumerate(clamped)
     ]
     return {
         "steps": steps,

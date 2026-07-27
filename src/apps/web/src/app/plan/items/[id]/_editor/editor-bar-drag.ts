@@ -37,8 +37,6 @@ export function sequentialSlotLayout(
   const baseWindows = slotWindows(slots, grid);
   const windows: SlotWindow[] = [];
   const rangeParts: string[] = [];
-  let startS = 0;
-
   slots.forEach((slot, index) => {
     const base = baseWindows[index] ?? {
       startS: null,
@@ -54,7 +52,7 @@ export function sequentialSlotLayout(
 
     const durationS = roundTiming(base.durationS);
     windows.push({
-      startS: roundTiming(startS),
+      startS: base.startS == null ? null : roundTiming(base.startS),
       durationS,
       offsetBeats: base.offsetBeats,
     });
@@ -64,14 +62,16 @@ export function sequentialSlotLayout(
         roundTiming(slot.inS),
         durationS,
         slot.durationBeats ?? "s",
+        slot.transitionAfter ?? "cut",
+        roundTiming(slot.transitionDurationS ?? 0),
       ].join(":"),
     );
-    startS += durationS;
   });
 
+  const last = [...windows].reverse().find((window) => window.startS != null);
   return {
     windows,
-    totalDurationS: roundTiming(startS),
+    totalDurationS: last?.startS == null ? 0 : roundTiming(last.startS + last.durationS),
     sourceRangeKey: rangeParts.join("|"),
   };
 }

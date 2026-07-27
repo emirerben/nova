@@ -99,6 +99,11 @@ class AgentSpec:
     # Ignored by non-Gemini clients (Whisper). Quality-sensitive: validate via
     # the agent's eval suite before lowering. See the generative speed work.
     thinking_budget: int | None = None
+    # Gemini 3 thinking control. Values are the provider vocabulary
+    # ("minimal"|"low"|"medium"|"high"); ignored by Gemini 2.5 and non-Gemini
+    # clients. Kept separate from `thinking_budget` so older agents remain
+    # byte-identical while editor agents can use current Gemini SKUs.
+    thinking_level: str | None = None
     # When True (default): on SchemaError/RefusalError, retry once with a
     # clarification suffix. When False: raise TerminalError immediately so
     # the caller can fall through to a cheaper backup path. Used for agents
@@ -135,11 +140,8 @@ class ModelInvocation:
     tokens_in: int = 0
     tokens_out: int = 0
     raw_response: Any = None  # SDK-specific; used for finish_reason inspection
-    # `GeminiClient.invoke()` rewrites the requested model to
-    # `settings.gemini_model` for all gemini-* calls. When that happens, the
-    # client SHOULD populate `model_used` so the runtime's logs + Langfuse
-    # trace reflect the model the HTTP call actually hit, not the spec's
-    # declared model. None means "no override; the spec model was used".
+    # Effective provider model. Clients populate this when the provider
+    # reports an alias/version that differs from the requested model.
     model_used: str | None = None
 
 
@@ -152,10 +154,9 @@ class _RunStats:
     schema_retries: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    # Effective model name as reported by the client (e.g. when GeminiClient
-    # rewrites gemini-2.5-flash → gemini-2.5-pro via settings.gemini_model).
-    # When set, used for the agent_run log + Langfuse trace instead of the
-    # spec-declared model so observability stops drifting from reality.
+    # Effective model name as reported by the client. When set, it is used for
+    # the agent_run log + Langfuse trace while `requested_model` remains the
+    # immutable per-agent configuration.
     model_used: str | None = None
     # Truncated preview of the most recent successful invoke's `raw_text`.
     # Captured on every model invocation so that if `_check_refusal` or
@@ -199,6 +200,7 @@ class ModelClient:
         response_json: bool = True,
         max_output_tokens: int | None = None,
         thinking_budget: int | None = None,
+        thinking_level: str | None = None,
         timeout_s: float = 30.0,
     ) -> ModelInvocation:
         raise NotImplementedError
@@ -415,6 +417,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     response_json=self.response_json,
                     max_output_tokens=self.max_output_tokens,
                     thinking_budget=self.spec.thinking_budget,
+                    thinking_level=self.spec.thinking_level,
                     timeout_s=self.spec.timeout_s,
                 )
             except TransientError as exc:
@@ -634,6 +637,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
         payload = {
             "agent": self.spec.name,
             "prompt_version": self.spec.prompt_version,
+            "requested_model": self.spec.model,
             "model": model,
             "outcome": outcome,
             "attempts": stats.attempts,
@@ -648,6 +652,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
             "segment_idx": ctx.segment_idx,
             "request_id": ctx.request_id,
         }
+        if ctx.extra.get("fallback_reason"):
+            payload["fallback_reason"] = str(ctx.extra["fallback_reason"])[:120]
         if error is not None:
             payload["error"] = error
         if stats.json_repairs_applied:

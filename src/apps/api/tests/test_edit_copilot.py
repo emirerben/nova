@@ -34,9 +34,27 @@ def _snapshot(*, allowed=None) -> dict:
             {"text": "second", "start_s": 3.0, "end_s": 5.0, "size_px": 44},
         ],
         "slots": [
-            {"output_start_s": 0.0, "output_end_s": 3.0, "duration_s": 3.0},
-            {"output_start_s": 3.0, "output_end_s": 7.0, "duration_s": 4.0},
-            {"output_start_s": 7.0, "output_end_s": 10.0, "duration_s": 3.0},
+            {
+                "clip_index": 0,
+                "output_start_s": 0.0,
+                "output_end_s": 3.0,
+                "duration_s": 3.0,
+            },
+            {
+                "clip_index": 1,
+                "output_start_s": 3.0,
+                "output_end_s": 7.0,
+                "duration_s": 4.0,
+            },
+            {
+                "clip_index": 2,
+                "output_start_s": 7.0,
+                "output_end_s": 10.0,
+                "duration_s": 3.0,
+            },
+        ],
+        "camera_effects": [
+            {"start_s": 0.5, "end_s": 2.0, "intensity": 1.0},
         ],
         "total_duration_s": 10.0,
     }
@@ -62,6 +80,9 @@ def _full_snapshot(*, allowed=None) -> dict:
             "render",
             "title",
             "tool",
+            "effect",
+            "transition",
+            "visual",
         ]
     )
     snap.update(
@@ -123,6 +144,16 @@ def _full_snapshot(*, allowed=None) -> dict:
             "intro": _intro(),
             "title": "Old title",
             "open_tools": ["text", "sounds", "overlays", "styles"],
+            "visual_blocks": [
+                {
+                    "id": "visual-1",
+                    "kind": "montage",
+                    "start_s": 2.0,
+                    "end_s": 5.0,
+                    "transition_in": "cut",
+                    "transition_out": "cut",
+                }
+            ],
         }
     )
     return snap
@@ -972,7 +1003,7 @@ def test_prompt_version_bumped_for_caption_emphasis_and_effect_catalog() -> None
     # the combined prompt to the next unique version.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-07-26-v10"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-07-27-v12"
 
 
 def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:

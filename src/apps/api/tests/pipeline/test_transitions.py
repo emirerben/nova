@@ -17,12 +17,33 @@ from app.pipeline.transitions import (
     TransitionError,
     _build_xfade_filter,
     join_with_transitions,
+    translate_transition,
 )
 
 # ── _build_xfade_filter unit tests ───────────────────────────────────────────
 
 
 class TestBuildXfadeFilter:
+    @pytest.mark.parametrize(
+        ("public_name", "internal_name", "xfade_name"),
+        [
+            ("crossfade", "crossfade", "fade"),
+            ("dip-to-black", "fade_black", "fadeblack"),
+            ("flash", "fade_white", "fadewhite"),
+        ],
+    )
+    def test_editor_transition_contract(
+        self,
+        public_name,
+        internal_name,
+        xfade_name,
+    ):
+        assert translate_transition(public_name) == internal_name
+        assert f"transition={xfade_name}" in _build_xfade_filter(
+            [internal_name],
+            [3.0, 3.0],
+        )
+
     def test_two_slots_crossfade(self):
         """Happy path: 2 slots with a crossfade between them."""
         result = _build_xfade_filter(["crossfade"], [5.0, 5.0])
@@ -92,6 +113,17 @@ class TestBuildXfadeFilter:
         result = _build_xfade_filter(["crossfade"], [5.0, 5.0], None)
         assert "duration=0.300" in result
 
+    def test_per_boundary_durations_override_the_recipe_default(self):
+        result = _build_xfade_filter(
+            ["crossfade", "fade_black"],
+            [3.0, 3.0, 3.0],
+            0.3,
+            [0.1, 0.2],
+        )
+        first, second = result.split(";")
+        assert "duration=0.100" in first
+        assert "duration=0.200" in second
+
 
 # ── join_with_transitions integration tests ──────────────────────────────────
 
@@ -103,22 +135,16 @@ class TestJoinWithTransitions:
 
     def test_input_validation_transition_count_mismatch(self):
         with pytest.raises(ValueError, match="Expected 1 transitions"):
-            join_with_transitions(
-                ["a.mp4", "b.mp4"], ["crossfade", "extra"], [5.0, 5.0], "out.mp4"
-            )
+            join_with_transitions(["a.mp4", "b.mp4"], ["crossfade", "extra"], [5.0, 5.0], "out.mp4")
 
     def test_input_validation_duration_count_mismatch(self):
         with pytest.raises(ValueError, match="Expected 2 durations"):
-            join_with_transitions(
-                ["a.mp4", "b.mp4"], ["crossfade"], [5.0], "out.mp4"
-            )
+            join_with_transitions(["a.mp4", "b.mp4"], ["crossfade"], [5.0], "out.mp4")
 
     @patch("app.pipeline.transitions.subprocess.run")
     def test_happy_path_calls_ffmpeg(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
-        join_with_transitions(
-            ["a.mp4", "b.mp4"], ["crossfade"], [5.0, 5.0], "out.mp4"
-        )
+        join_with_transitions(["a.mp4", "b.mp4"], ["crossfade"], [5.0, 5.0], "out.mp4")
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "ffmpeg"
@@ -127,20 +153,14 @@ class TestJoinWithTransitions:
 
     @patch("app.pipeline.transitions.subprocess.run")
     def test_ffmpeg_failure_raises_transition_error(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=1, stderr=b"error details"
-        )
+        mock_run.return_value = MagicMock(returncode=1, stderr=b"error details")
         with pytest.raises(TransitionError, match="xfade join failed"):
-            join_with_transitions(
-                ["a.mp4", "b.mp4"], ["crossfade"], [5.0, 5.0], "out.mp4"
-            )
+            join_with_transitions(["a.mp4", "b.mp4"], ["crossfade"], [5.0, 5.0], "out.mp4")
 
     @patch("app.pipeline.transitions.subprocess.run")
     def test_an_flag_strips_audio(self, mock_run):
         """Video-only output — template audio mixed separately."""
         mock_run.return_value = MagicMock(returncode=0)
-        join_with_transitions(
-            ["a.mp4", "b.mp4"], ["crossfade"], [5.0, 5.0], "out.mp4"
-        )
+        join_with_transitions(["a.mp4", "b.mp4"], ["crossfade"], [5.0, 5.0], "out.mp4")
         cmd = mock_run.call_args[0][0]
         assert "-an" in cmd

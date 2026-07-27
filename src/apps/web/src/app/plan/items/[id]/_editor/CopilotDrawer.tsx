@@ -6,6 +6,8 @@ import type {
   QueuedCopilotMessage,
 } from "@/lib/edit-copilot/useEditCopilot";
 import type { EditorLayoutMode } from "./useEditorLayoutMode";
+import DirectorSuggestions from "./DirectorSuggestions";
+import type { UseEditDirectorResult } from "@/lib/edit-copilot/useEditDirector";
 
 const STARTERS = [
   "Make the hook punchier",
@@ -82,6 +84,7 @@ export default function CopilotDrawer({
   onUndo,
   onClose,
   onClearRestoredInput,
+  director,
 }: {
   layoutMode: EditorLayoutMode;
   open?: boolean;
@@ -100,6 +103,7 @@ export default function CopilotDrawer({
   onUndo: () => void;
   onClose: () => void;
   onClearRestoredInput: () => void;
+  director?: UseEditDirectorResult;
 }) {
   const [draft, setDraft] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -168,6 +172,21 @@ export default function CopilotDrawer({
         ref={threadRef}
         className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 pb-3"
       >
+        {director && (
+          <DirectorSuggestions
+            suggestions={director.suggestions}
+            loading={director.loading}
+            error={director.error}
+            modelUsed={director.modelUsed}
+            fallbackReason={director.fallbackReason}
+            generation={director.generation}
+            onAccept={director.accept}
+            onDismiss={director.dismiss}
+            onRefresh={director.refresh}
+            onCancelGeneration={director.cancelGeneration}
+          />
+        )}
+
         {starterVisible && (
           <div className="mr-auto max-w-[85%] rounded-[18px] rounded-bl-md bg-zinc-100 px-3.5 py-2.5 text-[13.5px] leading-5 text-[#0c0c0e]">
             <p>What should we change?</p>

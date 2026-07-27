@@ -394,6 +394,23 @@ export default function EditorCanvas({
   const virtualMusicAudioProps = virtualPreview?.musicAudioProps
     ? { ...virtualPreview.musicAudioProps, ref: undefined }
     : null;
+  const virtualTransition = virtualPreview?.transitionPreview ?? null;
+  const transitionProgress = virtualTransition?.progress ?? 0;
+  const transitionOverlayOpacity =
+    virtualTransition?.kind === "dip_to_black" || virtualTransition?.kind === "flash"
+      ? 1 - Math.abs(transitionProgress * 2 - 1)
+      : 0;
+  const virtualDeckStyle = (deck: "a" | "b"): React.CSSProperties => {
+    const isActive = virtualPreview?.activeDeck === deck;
+    const opacity = virtualTransition
+      ? isActive
+        ? 1 - transitionProgress
+        : transitionProgress
+      : isActive
+        ? 1
+        : 0;
+    return { ...cameraTransform, opacity };
+  };
   const identity = variant.base_video_url
     ? (variant.base_video_path ?? undefined)
     : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
@@ -917,19 +934,28 @@ export default function EditorCanvas({
                   ref={virtualVideoARef}
                   className={[
                     `pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`,
-                    virtualPreview.activeDeck === "a" ? "opacity-100" : "opacity-0",
                   ].join(" ")}
-                  style={cameraTransform}
+                  style={virtualDeckStyle("a")}
                 />
                 <video
                   {...virtualVideoBProps}
                   ref={virtualVideoBRef}
                   className={[
                     `pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`,
-                    virtualPreview.activeDeck === "b" ? "opacity-100" : "opacity-0",
                   ].join(" ")}
-                  style={cameraTransform}
+                  style={virtualDeckStyle("b")}
                 />
+                {transitionOverlayOpacity > 0 && (
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0"
+                    style={{
+                      backgroundColor:
+                        virtualTransition?.kind === "flash" ? "#ffffff" : "#000000",
+                      opacity: transitionOverlayOpacity,
+                    }}
+                  />
+                )}
                 {virtualMusicAudioProps && (
                   <audio
                     {...virtualMusicAudioProps}

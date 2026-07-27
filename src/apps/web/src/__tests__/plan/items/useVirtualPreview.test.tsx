@@ -37,6 +37,10 @@ const DEFAULT_CLIPS = [
 const ONE_SLOT = [SLOT];
 const EMPTY_GRID: number[] = [];
 const TWO_SLOTS = [SLOT, SLOT_2];
+const TRANSITION_SLOTS: DraftSlot[] = [
+  { ...SLOT, transitionAfter: "crossfade", transitionDurationS: 0.3 },
+  SLOT_2,
+];
 
 // Stable callbacks — inline jest.fn() props change identity every render,
 // which re-fires the hook's timeline effect and skews play/pause counts
@@ -52,6 +56,7 @@ function Harness({
   musicTrackActive = false,
   musicAudioUrl = "https://cdn.example.test/music.m4a",
   onMusicError,
+  onTimeUpdate = NOOP_TIME_UPDATE,
   slots = ONE_SLOT,
 }: {
   onPlayingChange: (playing: boolean) => void;
@@ -60,6 +65,7 @@ function Harness({
   musicTrackActive?: boolean;
   musicAudioUrl?: string | null;
   onMusicError?: () => void;
+  onTimeUpdate?: (timeS: number) => void;
   slots?: DraftSlot[];
 }) {
   const preview = useVirtualPreview({
@@ -73,7 +79,7 @@ function Harness({
     musicStartS: 55.71,
     soundMuted,
     musicTrackActive,
-    onTimeUpdate: NOOP_TIME_UPDATE,
+    onTimeUpdate,
     onDuration: NOOP_DURATION,
     onPlayingChange,
     onSourceError: NOOP_SOURCE_ERROR,
@@ -462,5 +468,34 @@ describe("useVirtualPreview transport", () => {
 
     expect(playsOn(deckB)).toBe(1);
     expect(Math.abs(deckB.currentTime - 0.5)).toBeLessThan(0.05);
+  });
+
+  it("advances both decks through a transition without rewinding output time", () => {
+    const onTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        musicTrackActive
+        onTimeUpdate={onTimeUpdate}
+        slots={TRANSITION_SLOTS}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const deckB = screen.getByTestId("deck-b") as HTMLVideoElement;
+
+    // The overlap begins at output t=1.7. Both source clocks should advance
+    // from their own in-points while the canvas blends the decks.
+    deckA.currentTime = 1.4 + 1.75;
+    fireEvent.timeUpdate(deckA);
+    expect(playsOn(deckB)).toBeGreaterThan(0);
+    expect(deckB.currentTime).toBeCloseTo(0.5 + 0.05, 2);
+
+    deckA.currentTime = 1.4 + 2;
+    fireEvent.ended(deckA);
+
+    expect(deckB.currentTime).toBeCloseTo(0.5 + 0.3, 2);
+    expect(onTimeUpdate).toHaveBeenLastCalledWith(2);
   });
 });

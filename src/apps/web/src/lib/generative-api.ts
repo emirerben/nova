@@ -414,6 +414,8 @@ export type TimelineErrorCode =
   | "masonry_preset"
   | "sources_expired";
 
+export type EditorTransition = "cut" | "crossfade" | "dip_to_black" | "flash";
+
 export interface TimelineSlot {
   slot_id: string;
   clip_index: number;
@@ -428,6 +430,8 @@ export interface TimelineSlot {
   moment_energy: number | null;
   moment_description: string | null;
   removed?: boolean;
+  transition_after?: EditorTransition;
+  transition_duration_s?: number | null;
 }
 
 export interface TimelineClip {
@@ -457,6 +461,8 @@ export interface TimelineEditSlotPayload {
   duration_beats: number | null;
   duration_s: number | null;
   removed: boolean;
+  transition_after?: EditorTransition;
+  transition_duration_s?: number | null;
 }
 
 /** Timeline error with the machine code preserved (404 → code null). */

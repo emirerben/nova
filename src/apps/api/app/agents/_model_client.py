@@ -17,7 +17,10 @@ inputs for the per-segment loop.
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
+from threading import BoundedSemaphore
 from typing import Any
 
 import structlog
@@ -31,6 +34,12 @@ from app.agents._runtime import (
 from app.config import settings
 
 log = structlog.get_logger()
+_GEMINI_INVOKE_WORKERS = 8
+_GEMINI_INVOKE_POOL = ThreadPoolExecutor(
+    max_workers=_GEMINI_INVOKE_WORKERS,
+    thread_name_prefix="gemini-invoke",
+)
+_GEMINI_INVOKE_SLOTS = BoundedSemaphore(_GEMINI_INVOKE_WORKERS)
 
 
 @dataclass(slots=True)
@@ -156,25 +165,13 @@ class GeminiClient(ModelClient):
         response_json: bool = True,
         max_output_tokens: int | None = None,
         thinking_budget: int | None = None,
-        timeout_s: float = 30.0,  # noqa: ARG002 — genai SDK doesn't accept per-call timeout currently
+        thinking_level: str | None = None,
+        timeout_s: float = 30.0,
     ) -> ModelInvocation:
         from google.genai import errors as genai_errors  # type: ignore[import]
         from google.genai import types as genai_types  # type: ignore[import]
 
         client = self._get()
-
-        # All gemini-* calls funnel through the deployed model setting. This
-        # preserves the legacy behavior — every Gemini invocation uses
-        # `settings.gemini_model`, settable per-deploy via env var.
-        # We look up settings via the gemini_analyzer module so existing tests
-        # that `patch("app.pipeline.agents.gemini_analyzer.settings")` continue
-        # to drive the model selection through the agent path. When a real
-        # cross-SKU fallback (Flash → Pro) is needed, add a per-family setting.
-        requested_model = model
-        if model.startswith("gemini-"):
-            from app.pipeline.agents import gemini_analyzer as _ga  # noqa: PLC0415
-
-            model = getattr(_ga.settings, "gemini_model", None) or model
 
         contents: list[Any] = []
         if media_uri:
@@ -201,18 +198,36 @@ class GeminiClient(ModelClient):
             cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(
                 thinking_budget=thinking_budget
             )
+        elif thinking_level is not None and model.startswith("gemini-3"):
+            level = thinking_level.strip().upper()
+            if level not in {"MINIMAL", "LOW", "MEDIUM", "HIGH"}:
+                raise TerminalError(f"invalid Gemini thinking level: {thinking_level!r}")
+            cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_level=level)
 
+        if not _GEMINI_INVOKE_SLOTS.acquire(timeout=min(1.0, max(0.1, timeout_s))):
+            raise TransientError("gemini concurrency limit reached")
+        future = None
         try:
-            response = client.models.generate_content(
+            future = _GEMINI_INVOKE_POOL.submit(
+                client.models.generate_content,
                 model=model,
                 contents=contents,
                 config=genai_types.GenerateContentConfig(**cfg_kwargs),
             )
+            future.add_done_callback(lambda _: _GEMINI_INVOKE_SLOTS.release())
+            response = future.result(timeout=max(0.1, timeout_s))
+        except FutureTimeoutError as exc:
+            future.cancel()
+            raise TransientError(f"gemini request timed out after {timeout_s:.1f}s") from exc
         except genai_errors.APIError as exc:
             if _is_genai_transient(exc):
                 raise TransientError(f"gemini transient: {exc}") from exc
             raise TerminalError(f"gemini terminal: {exc}") from exc
         except Exception as exc:  # noqa: BLE001 — unknown SDK error class
+            if future is None:
+                _GEMINI_INVOKE_SLOTS.release()
+            if isinstance(exc, (TransientError, TerminalError)):
+                raise
             # Network / parse / timeout errors at the SDK boundary count as transient.
             raise TransientError(f"gemini sdk error: {exc}") from exc
 
@@ -221,18 +236,12 @@ class GeminiClient(ModelClient):
         tokens_in = int(getattr(usage, "prompt_token_count", 0) or 0) if usage else 0
         tokens_out = int(getattr(usage, "candidates_token_count", 0) or 0) if usage else 0
 
-        # Report the actually-invoked model (not the spec's declared model) so
-        # the runtime's `agent_run` log + Langfuse trace reflect reality. Only
-        # set when the rewrite kicked in — keeps the contract that
-        # `model_used is None` means "no override happened".
-        model_used = model if model != requested_model else None
-
         return ModelInvocation(
             raw_text=raw_text,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             raw_response=response,
-            model_used=model_used,
+            model_used=model,
         )
 
 
@@ -280,6 +289,7 @@ class WhisperClient(ModelClient):
         response_json: bool = True,  # noqa: ARG002 — Whisper returns its own JSON shape
         max_output_tokens: int | None = None,  # noqa: ARG002
         thinking_budget: int | None = None,  # noqa: ARG002 — Whisper has no thinking
+        thinking_level: str | None = None,  # noqa: ARG002 — Whisper has no thinking
         timeout_s: float = 30.0,  # noqa: ARG002
     ) -> ModelInvocation:
         if not media_uri:
@@ -345,6 +355,7 @@ class ModelDispatcher(ModelClient):
         response_json: bool = True,
         max_output_tokens: int | None = None,
         thinking_budget: int | None = None,
+        thinking_level: str | None = None,
         timeout_s: float = 30.0,
     ) -> ModelInvocation:
         if model.startswith("gemini"):
@@ -356,6 +367,7 @@ class ModelDispatcher(ModelClient):
                 response_json=response_json,
                 max_output_tokens=max_output_tokens,
                 thinking_budget=thinking_budget,
+                thinking_level=thinking_level,
                 timeout_s=timeout_s,
             )
         if model == "whisper-1":
@@ -367,6 +379,7 @@ class ModelDispatcher(ModelClient):
                 response_json=response_json,
                 max_output_tokens=max_output_tokens,
                 thinking_budget=thinking_budget,
+                thinking_level=thinking_level,
                 timeout_s=timeout_s,
             )
         raise TerminalError(f"unknown model: {model!r}")

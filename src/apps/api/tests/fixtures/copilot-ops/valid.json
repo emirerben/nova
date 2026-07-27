@@ -51,6 +51,26 @@
     {
       "name": "set intro layout classic",
       "op": {"op": "set_intro_layout", "layout": "linear"}
+    },
+    {
+      "name": "add camera effect",
+      "op": {"op": "add_camera_effect", "start_s": 0.5, "end_s": 2.5, "intensity": 1.2}
+    },
+    {
+      "name": "patch camera effect",
+      "op": {"op": "patch_camera_effect", "camera_effect_index": 0, "start_s": 0.8}
+    },
+    {
+      "name": "remove camera effect",
+      "op": {"op": "remove_camera_effect", "camera_effect_index": 0}
+    },
+    {
+      "name": "set transition",
+      "op": {"op": "set_transition", "boundary_index": 0, "transition": "flash", "duration_s": 0.3}
+    },
+    {
+      "name": "set visual fade",
+      "op": {"op": "set_visual_fade", "visual_block_index": 0, "transition_in": "fade"}
     }
   ]
 }
