@@ -1293,3 +1293,32 @@ def test_v2_cache_broken_blob_recomputes_instead_of_poisoning(monkeypatch, tmp_p
     assert provider == "FRESH"
     assert matte_path == cached
     assert out_overlays[0].get("behind_subject") is True
+
+
+def test_matte_insane_after_coverage_miss_keeps_v2_cache_no_sentinel(monkeypatch, tmp_path):
+    """Codex P2: a window-local gate failure (coverage-miss recompute after a
+    text-timing move) must NOT poison a base whose existing v2 cache still
+    covers the original span — keep the path, stay retryable."""
+    import app.pipeline.subject_matte as sm_mod
+
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    _patch_matte_module(monkeypatch, sane=False)
+    narrow = types.SimpleNamespace(window_spans=lambda: [(50.0, 60.0)])
+    monkeypatch.setattr(
+        sm_mod.SubjectMatteProvider, "open", staticmethod(lambda path: narrow), raising=False
+    )
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=cached,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+        cut_boundaries_s=[1.0],
+    )
+    assert provider is None
+    assert matte_path == cached  # v2 cache kept, no .unstable sentinel
+    assert "behind_subject" not in out_overlays[0]

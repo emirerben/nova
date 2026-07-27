@@ -3699,6 +3699,16 @@ def _resolve_subject_matte_for_burn(
             )
             if stats is None:
                 raise RuntimeError("matte compute failed")
+            had_v2_cache = bool(
+                original_matte_path and original_matte_path.endswith(_MATTE_CACHE_SUFFIX)
+            )
+            if not matte_is_sane(stats) and had_v2_cache:
+                # A v2 cache existed and only this recompute (typically a
+                # coverage-miss after a text-timing move) failed the gate —
+                # the failure is window-local, not a property of the whole
+                # base. Keep the old cache: text moved back into its span
+                # works instantly, and the moved window stays retryable.
+                raise RuntimeError(f"matte insane for new windows (keeping v2 cache): {stats}")
             if not matte_is_sane(stats) and not cut_boundaries_s:
                 # Gate rejection WITHOUT cut hints is ambiguous: on legacy
                 # variants (no persisted timeline) and subtitled silence-cut
