@@ -22,12 +22,17 @@ const noopProps = {
 };
 
 describe("OnboardingShell — rail", () => {
-  it("renders all 4 step labels in the left rail", () => {
+  /**
+   * The rail renders two breakpoint-gated presentations (DESIGN.md §8): the
+   * phone strip and the docked desktop rail. jsdom applies no CSS, so both are
+   * in the DOM here and every label matches twice — in a real browser the
+   * hidden one is `display:none` and drops out of the a11y tree entirely.
+   */
+  it("renders all 4 step labels, in both the phone strip and the desktop rail", () => {
     render(<OnboardingShell {...noopProps} />);
-    expect(screen.getByText("TikTok")).toBeInTheDocument();
-    expect(screen.getByText("What you make")).toBeInTheDocument();
-    expect(screen.getByText("Style")).toBeInTheDocument();
-    expect(screen.getByText("First plan")).toBeInTheDocument();
+    for (const label of ["TikTok", "What you make", "Style", "First plan"]) {
+      expect(screen.getAllByText(label)).toHaveLength(2);
+    }
   });
 });
 

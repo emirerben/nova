@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.4.0] — 2026-07-27
+
+### Fixed
+- **You can now record a voiceover on your phone.** The record flow had the same 224px step rail that made onboarding unusable, and its recorder box was sized with `100vh` — which on mobile Safari and Chrome measures the viewport *without* the browser toolbar, so the record button sat underneath the toolbar and could not be tapped. Recording is the one step you inherently do on a phone, and it was the last surface still broken there. The rail now collapses to a compact strip and the recorder is sized so the controls always stay on screen.
+- **Focusing any text field on iPhone no longer zooms the page.** Mobile Safari zooms in whenever you tap a field whose text is smaller than 16px, and it stays zoomed — you then have to pinch back out to see the rest of the screen. Around sixty fields across the product were under that threshold. Every text field now reads at 16px on phones while keeping its denser size on desktop.
+- **Opening a video in the editor no longer overflows on a phone.** The editor's loading screen reserved 484px of fixed side panels, so on a 390px phone the video preview was squeezed to nothing and the page scrolled sideways. It now shows just the preview and transport while loading, and the panels appear only on wide screens.
+
+### Changed
+- **The onboarding step marker is now a tappable progress strip on phones.** 0.16.2.0 replaced the oversized rail with a static "Step N of 4" line; it is now a row of step dots plus the current step's name, and tapping a completed dot takes you back to it — something the static line could not do. Because that line is gone, the "Step 2 of 4" eyebrow on "What do you make?" is visible at every width again (0.16.2.1 had made it desktop-only to avoid showing two markers at once; there is only one now). The onboarding and record flows share a single rail, so they cannot drift apart again.
+- **Onboarding's "What do you make?" cards are one per row on phones.** Two columns at phone width broke "Talking to camera" across three lines.
+
 ## [0.16.3.0] — 2026-07-27
 
 ### Fixed
@@ -9,6 +20,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Footage the segmenter definitively can't track is remembered per video, so text edits on those videos re-render instantly as clean front text instead of re-paying a long segmentation attempt every time. Old cached segmentation data migrates automatically on the next edit.
+
 ## [0.16.2.1] — 2026-07-27
 
 ### Fixed
