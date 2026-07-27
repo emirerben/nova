@@ -879,6 +879,18 @@ export interface CaptionCue {
    */
   smart_emphasis?: boolean | null;
   smart_keep_together?: number[][] | null;
+  /**
+   * Per-cue style overrides (Lane PR-A "This caption" section) — distinct from
+   * the variant-level "All captions" globals (voiceover_caption_font,
+   * caption_size_px, caption_text_color, ...). Absent/undefined on every field
+   * means the cue inherits those variant defaults; a set value overrides ONLY
+   * this cue. `font_family` is a font-registry KEY, same contract as the
+   * variant-level `voiceover_caption_font`. Mirrors
+   * `app/routes/generative_jobs.py` CaptionCue.
+   */
+  font_family?: string | null;
+  text_color?: string | null;
+  size_px?: number | null;
 }
 
 /**

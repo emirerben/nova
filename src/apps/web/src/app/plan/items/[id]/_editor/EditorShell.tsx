@@ -2025,7 +2025,14 @@ export default function EditorShell({
           // 4b Emphasize toggle: sets/clears smart_emphasis + smart_style,
           // which persist through the same cue-list PATCH as text/timing.
           Object.prototype.hasOwnProperty.call(patch, "smart_style") ||
-          Object.prototype.hasOwnProperty.call(patch, "smart_emphasis");
+          Object.prototype.hasOwnProperty.call(patch, "smart_emphasis") ||
+          // Lane PR-A "This caption" per-cue overrides: same cue-list PATCH,
+          // NEVER the variant-level meta patch (captionMetaPatchFromCaptionBarPatch
+          // below only reads the OLD font_family/size_px/color keys, which this
+          // patch never sets when it's a per-cue-only edit).
+          Object.prototype.hasOwnProperty.call(patch, "cue_font_family") ||
+          Object.prototype.hasOwnProperty.call(patch, "cue_text_color") ||
+          Object.prototype.hasOwnProperty.call(patch, "cue_size_px");
         const metaPatch = captionMetaPatchFromCaptionBarPatch(patch);
         if (!hasCaptionCuePatch && Object.keys(metaPatch).length === 0) {
           return;

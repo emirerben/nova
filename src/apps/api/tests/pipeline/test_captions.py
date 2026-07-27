@@ -671,6 +671,148 @@ def test_unknown_smart_caption_style_is_byte_identical_to_legacy(tmp_path) -> No
     assert baseline.read_bytes() == unknown.read_bytes()
 
 
+# ── per-cue style overrides ("This caption" section, plan PR-A) ──────────────
+
+
+def test_cue_with_no_override_fields_is_byte_identical_to_before(tmp_path) -> None:
+    """A cue carrying none of font_family/text_color/size_px burns exactly like
+    pre-feature output — the pin the plan asked for."""
+    baseline = tmp_path / "baseline.ass"
+    untouched = tmp_path / "untouched.ass"
+    cue = {"text": "plain caption", "start_s": 0.0, "end_s": 1.0}
+    generate_ass_from_cues([cue], str(baseline), font_name="TikTok Sans")
+    # Cues round-tripped through model_dump(exclude_none=True) never carry these
+    # keys at all when unset — simulate that (no keys present).
+    generate_ass_from_cues([dict(cue)], str(untouched), font_name="TikTok Sans")
+    assert baseline.read_bytes() == untouched.read_bytes()
+
+
+def test_cue_font_and_color_override_emit_inline_ass_tags(tmp_path) -> None:
+    out = tmp_path / "cap.ass"
+    generate_ass_from_cues(
+        [
+            {
+                "text": "styled line",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "font_family": "Inter-Bold",
+                "text_color": "#00FF00",
+            }
+        ],
+        str(out),
+        font_name="TikTok Sans",
+    )
+    content = out.read_text(encoding="utf-8")
+    assert "\\fnInter-Bold" in content
+    assert "\\c&H0000FF00&" in content  # #00FF00 -> BGR &H00FF00 with alpha prefix
+    assert "styled line" in content
+
+
+def test_cue_without_overrides_emits_no_override_tags_alongside_styled_sibling(
+    tmp_path,
+) -> None:
+    """One cue with overrides and a sibling without — the sibling stays untouched."""
+    out = tmp_path / "cap.ass"
+    generate_ass_from_cues(
+        [
+            {"text": "styled", "start_s": 0.0, "end_s": 1.0, "text_color": "#FF0000"},
+            {"text": "plain", "start_s": 1.0, "end_s": 2.0},
+        ],
+        str(out),
+        font_name="TikTok Sans",
+    )
+    lines = [
+        line
+        for line in out.read_text(encoding="utf-8").splitlines()
+        if line.startswith("Dialogue:")
+    ]
+    assert len(lines) == 2
+    assert "\\c" in lines[0]
+    assert "\\c" not in lines[1]
+    assert "\\fn" not in lines[1]
+
+
+def test_cue_size_override_wins_over_legacy_smart_style_role_tag(tmp_path) -> None:
+    """A closed-role cue (hook -> fixed {\\fs82\\bord8\\shad2}) with an explicit
+    per-cue size_px override still gets the LATER \\fs applied (ASS applies scalar
+    overrides in text order) — user intent beats the AI-authored role size."""
+    out = tmp_path / "cap.ass"
+    generate_ass_from_cues(
+        [
+            {
+                "text": "big reveal",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "smart_style": "hook",
+                "size_px": 50,
+            }
+        ],
+        str(out),
+        font_name="TikTok Sans",
+    )
+    content = out.read_text(encoding="utf-8")
+    assert "\\fs82" in content  # the role tag is still emitted, unaffected...
+    idx82 = content.index("\\fs82")
+    idx50 = content.index("\\fs50")
+    assert idx50 > idx82  # ...but the override comes AFTER, so it wins
+    assert "\\bord8\\shad2" in content  # non-size role styling survives
+
+
+def test_cue_size_override_wins_over_smart_policy_measured_size() -> None:
+    from app.pipeline.captions import SmartCaptionRenderPolicy, _format_cue_lines
+
+    policy = SmartCaptionRenderPolicy.from_value(
+        {
+            "font_family": "TikTok Sans",
+            "font_size_px": 64,
+            "y_frac": 0.7,
+            "width_frac": 0.85,
+            "max_lines": 2,
+            "color": "#FFFFFF",
+            "stroke_color": "#000000",
+            "stroke_width": 6,
+        }
+    )
+    cue = {
+        "text": "explicit wins",
+        "start_s": 0.0,
+        "end_s": 1.5,
+        "smart_style": "hook",
+        "smart_render_font_size_px": 82,  # what measurement would otherwise pick
+        "size_px": 50,  # the user's explicit per-cue override
+    }
+    lines = _format_cue_lines([cue], smart_policy=policy)
+    assert len(lines) == 1
+    assert "\\fs50" in lines[0]
+    assert "\\fs82" not in lines[0]  # only one \fs tag: the override replaced it
+
+
+def test_cue_without_size_override_keeps_smart_policy_measured_size() -> None:
+    from app.pipeline.captions import SmartCaptionRenderPolicy, _format_cue_lines
+
+    policy = SmartCaptionRenderPolicy.from_value(
+        {
+            "font_family": "TikTok Sans",
+            "font_size_px": 64,
+            "y_frac": 0.7,
+            "width_frac": 0.85,
+            "max_lines": 2,
+            "color": "#FFFFFF",
+            "stroke_color": "#000000",
+            "stroke_width": 6,
+        }
+    )
+    cue = {
+        "text": "no override",
+        "start_s": 0.0,
+        "end_s": 1.5,
+        "smart_style": "hook",
+        "smart_render_font_size_px": 82,
+    }
+    lines = _format_cue_lines([cue], smart_policy=policy)
+    assert "\\fs82" in lines[0]
+
+
 def test_generate_ass_from_cues_skips_blank_text(tmp_path) -> None:
     out = tmp_path / "cap.ass"
     generate_ass_from_cues(

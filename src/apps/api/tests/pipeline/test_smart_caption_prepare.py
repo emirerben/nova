@@ -130,3 +130,56 @@ def test_flag_off_no_persisted_is_byte_identical_to_bare_measure(monkeypatch) ->
     assert prepared["smart_render_lines"] == list(bare.lines)
     assert prepared["smart_render_font_size_px"] == bare.font_size_px
     assert prepared["smart_render_box"] == bare.box.as_dict()
+
+
+# ── per-cue font_family/size_px overrides become the measurement base (PR-A) ──
+
+
+def test_cue_without_override_still_measures_at_the_policy_font_and_size(monkeypatch) -> None:
+    real = render_geometry.measure_caption
+    seen: list[dict] = []
+
+    def spy(text, **kwargs):
+        seen.append(kwargs)
+        return real(text, **kwargs)
+
+    monkeypatch.setattr(render_geometry, "measure_caption", spy)
+    prepare_smart_caption_cues([{"text": "no override here"}], _POLICY)
+    assert seen[0]["font_family"] == "Montserrat Bold"
+    assert seen[0]["font_size_px"] == 64
+
+
+def test_cue_override_replaces_font_family_and_size_px_passed_to_measure_caption(
+    monkeypatch,
+) -> None:
+    real = render_geometry.measure_caption
+    seen: list[dict] = []
+
+    def spy(text, **kwargs):
+        seen.append(kwargs)
+        return real(text, **kwargs)
+
+    monkeypatch.setattr(render_geometry, "measure_caption", spy)
+    cue = {"text": "custom look", "font_family": "Inter-Bold", "size_px": 120}
+    prepare_smart_caption_cues([cue], _POLICY)
+    assert seen[0]["font_family"] == "Inter-Bold"
+    assert seen[0]["font_size_px"] == 120
+
+
+def test_cue_font_override_metacharacters_stripped_before_measuring(monkeypatch) -> None:
+    # Same metacharacter set `SmartCaptionRenderPolicy.font_family` strips
+    # (`,{}[]\r\n`) — braces are what delimits an ASS override block, so
+    # stripping them is what makes the raw string safe to interpolate.
+    real = render_geometry.measure_caption
+    seen: list[dict] = []
+
+    def spy(text, **kwargs):
+        seen.append(kwargs)
+        return real(text, **kwargs)
+
+    monkeypatch.setattr(render_geometry, "measure_caption", spy)
+    cue = {"text": "sanitize me", "font_family": "Evil}{Font,Name"}
+    prepare_smart_caption_cues([cue], _POLICY)
+    assert "}" not in seen[0]["font_family"]
+    assert "{" not in seen[0]["font_family"]
+    assert "," not in seen[0]["font_family"]

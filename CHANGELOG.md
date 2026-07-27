@@ -2,10 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.1.1] — 2026-07-27
+
+### Added
+- **The caption inspector now clearly separates "This caption" from "All captions."** Font, color, and size controls that previously looked per-line but actually rewrote every caption on the variant now split into two labeled sections: a new per-cue override (font/color/size, clearable back to "match all captions") for the selected line only, and the existing global controls — now honestly labeled — for every caption. The per-cue override is a real, persisted field on the caption cue (validated the same way the variant-level caption font/color/size already are) and an explicit per-cue size always wins over AI-authored role sizing at burn time. Absent on every cue by default — burns byte-identical to before.
+
 ## [0.16.0.2] — 2026-07-27
 
 ### Added
 - **The editor now labels AI-authored sequence text.** Text elements written by the editorial transcript-synced sequence (or its rhythm-mode quote fallback) show an "AI sequence" badge in the inspector and a compact marker on their timeline row, so it's clear the text came from the video's own speech rather than something the user typed — the badge is display-only and never touches the saved payload. Ordinary text, including the editor's own "split and place" multi-block composition tool (which reuses the same underlying role), is unaffected.
+
 ## [0.16.1.0] — 2026-07-26
 
 ### Fixed

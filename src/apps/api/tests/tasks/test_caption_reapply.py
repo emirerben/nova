@@ -235,6 +235,36 @@ def _run_path(monkeypatch, path: str, variant: dict, *, render_gen_id="tok-1", u
     return job, seen
 
 
+# ── per-cue font override resolution (plan PR-A) ──────────────────────────────
+
+
+def test_resolve_cue_font_overrides_maps_registry_key_to_libass_name():
+    """A cue's font_family override is a registry KEY (same contract as the
+    variant-level voiceover_caption_font) — resolved to the libass family name
+    once, here, before either burn path reads it."""
+    from app.pipeline.narrated_assembler import resolve_caption_font
+
+    cues = [{"text": "styled", "font_family": "TikTok Sans Bold"}]
+    resolved = gb._resolve_cue_font_overrides(cues)
+    assert resolved[0]["font_family"] == resolve_caption_font("TikTok Sans Bold")
+    # The input list/dict is untouched (a fresh dict is returned for the mutated cue).
+    assert cues[0]["font_family"] == "TikTok Sans Bold"
+
+
+def test_resolve_cue_font_overrides_unknown_key_falls_back_to_default():
+    from app.pipeline.narrated_assembler import CAPTION_FONT
+
+    cues = [{"text": "styled", "font_family": "not-a-real-font"}]
+    resolved = gb._resolve_cue_font_overrides(cues)
+    assert resolved[0]["font_family"] == CAPTION_FONT
+
+
+def test_resolve_cue_font_overrides_passes_through_cues_without_override():
+    cues = [{"text": "plain"}, {"text": "also plain", "smart_style": "hook"}]
+    resolved = gb._resolve_cue_font_overrides(cues)
+    assert resolved == cues
+
+
 # ── CRITICAL wipe regression: lanes reapplied after every caption re-render ────
 
 

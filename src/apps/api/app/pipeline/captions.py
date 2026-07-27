@@ -417,6 +417,64 @@ def _cue_keep_together_pairs(cue: dict[str, Any]) -> list[tuple[int, int]]:
     return pairs
 
 
+# Per-cue style overrides (plan PR-A "This caption" section). A cue's font_family/
+# text_color/size_px are OPTIONAL — absent (the common case) means "inherit the
+# variant defaults" and must burn byte-identical to pre-feature output. The three
+# helpers below are the single place that reads these keys off a cue dict, shared
+# by the prepare pass (measurement) and the dialogue-line emitter (inline tags).
+
+
+def _cue_font_family_override(cue: dict[str, Any]) -> str | None:
+    """A cue's font_family override, sanitized for ASS interpolation, or None.
+
+    By the time a cue reaches this module the field is already a burn-ready
+    libass family name (the orchestrator resolves the persisted registry key via
+    `resolve_caption_font` before burning — mirrors how the variant-level
+    `voiceover_caption_font` is resolved once at the same call site). The
+    metacharacter strip here is defense in depth, matching
+    `SmartCaptionRenderPolicy.font_family`'s cleaning.
+    """
+    font_family = cue.get("font_family")
+    if not font_family:
+        return None
+    safe = re.sub(r"[,{}\[\]\r\n]", "", str(font_family)).strip()
+    return safe or None
+
+
+def _cue_size_override(cue: dict[str, Any]) -> int | None:
+    """A cue's explicit size_px override, or None. Bounds are enforced at the API
+    edge (``CaptionCue.size_px``, ge=36 le=160) — trusted here like other persisted
+    JSONB cue fields (smart_style, smart_render_font_size_px, ...)."""
+    value = cue.get("size_px")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cue_style_override_tags(cue: dict[str, Any]) -> str:
+    """Inline ASS override block for a cue's font_family/text_color overrides
+    (size is handled separately by the caller — see ``_cue_size_override`` — so a
+    single ``\\fs`` tag decision point stays authoritative per Dialogue line).
+
+    Emitted AFTER any role/smart-policy tag: ASS applies each scalar override in
+    text order, so a later ``\\fn``/``\\c`` in the same run replaces an earlier
+    one — this is what lets an explicit per-cue choice win without touching the
+    role/policy tag itself. Absent overrides emit nothing, so an untouched cue's
+    Dialogue line is byte-identical to pre-feature output.
+    """
+    tags: list[str] = []
+    font_family = _cue_font_family_override(cue)
+    if font_family:
+        tags.append(f"{{\\fn{font_family}}}")
+    text_color = cue.get("text_color")
+    if text_color:
+        tags.append("{" + _ass_color_tag(text_color) + "}")
+    return "".join(tags)
+
+
 def prepare_smart_caption_cues(
     cues: list[dict[str, Any]],
     policy_value: SmartCaptionRenderPolicy | dict[str, Any],
@@ -428,6 +486,11 @@ def prepare_smart_caption_cues(
     emphasis brain ran) are always respected; the deterministic digit+word rule
     and the widow penalty apply only under ``SMART_CAPTION_LAYOUT_BALANCE_ENABLED``.
     With neither present the wrapping is byte-identical to the pre-feature output.
+
+    A cue's per-cue font_family/size_px override (plan PR-A), when present,
+    becomes the MEASUREMENT base instead of the policy's — so wrapping and the
+    text-fit shrink stay correct for the font/size that will actually burn. No
+    override on a cue ⇒ measured exactly as before.
     """
 
     from app.config import settings  # noqa: PLC0415
@@ -446,8 +509,8 @@ def prepare_smart_caption_cues(
             pairs.extend(digit_word_keep_together(text.split()))
         measurement = measure_caption(
             text,
-            font_family=policy.font_family,
-            font_size_px=policy.font_size_px,
+            font_family=_cue_font_family_override(cue) or policy.font_family,
+            font_size_px=_cue_size_override(cue) or policy.font_size_px,
             width_frac=policy.width_frac,
             y_frac=policy.y_frac,
             max_lines=policy.max_lines,
@@ -823,18 +886,30 @@ def _format_cue_lines(
             continue
         start = max(0.0, float(c["start_s"]))
         end = max(start + 0.01, float(c["end_s"]))
+        # An explicit per-cue size_px override (plan PR-A "This caption" — user intent)
+        # wins over the AI-authored role/policy sizing below. It is None on every cue
+        # that hasn't set one, which is the common case and keeps this a no-op.
+        cue_size_override = _cue_size_override(c)
         if smart_policy:
-            # Colour is never overridden here — the base Style line already carries
-            # `smart_policy.color` (see `_ass_header_smart`), so every cue, emphasized
-            # or not, renders in the user's policy colour. Only the size override
-            # survives to express the hook/context/payoff/cta role hierarchy.
-            size = int(c.get("smart_render_font_size_px") or smart_policy.font_size_px)
+            # Colour is never AUTOMATICALLY overridden here — the base Style line
+            # already carries `smart_policy.color` (see `_ass_header_smart`), so every
+            # cue, emphasized or not, renders in the user's policy colour by default.
+            # A per-cue `text_color` override (below, via `_cue_style_override_tags`)
+            # is a DIFFERENT, explicit user choice — not the removed automatic role
+            # colour hack — and is allowed to win.
+            size = cue_size_override or int(
+                c.get("smart_render_font_size_px") or smart_policy.font_size_px
+            )
             smart_tags = f"{{\\fs{size}}}"
         else:
             smart_tags = _SMART_CAPTION_TAGS.get(str(c.get("smart_style") or ""), "")
+            if cue_size_override is not None:
+                # Append AFTER the closed role-tag set's fixed \fs (if any) — ASS
+                # applies scalar overrides in text order, so this later tag wins.
+                smart_tags = f"{smart_tags}{{\\fs{cue_size_override}}}"
         lines.append(
             f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,0,,"
-            f"{prefix_tags}{smart_tags}{text}"
+            f"{prefix_tags}{smart_tags}{_cue_style_override_tags(c)}{text}"
         )
     return lines
 

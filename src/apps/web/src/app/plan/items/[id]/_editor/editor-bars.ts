@@ -123,6 +123,11 @@ export function localCaptionBarPatchFromPatch(
     // explicit null/false clear-emphasis patch through, not just a truthy set.
     "smart_style",
     "smart_emphasis",
+    // Lane PR-A per-cue overrides ("This caption" section) — hasOwnProperty lets
+    // an explicit null clear-override patch through, same convention as above.
+    "cue_font_family",
+    "cue_text_color",
+    "cue_size_px",
   ] as const) {
     if (Object.prototype.hasOwnProperty.call(patch, key)) {
       (localPatch as Record<string, unknown>)[key] = patch[key];
@@ -249,6 +254,13 @@ export function convertCaptionCues(
     smart_role: c.smart_role ?? undefined,
     smart_style: c.smart_style ?? undefined,
     smart_emphasis: c.smart_emphasis ?? undefined,
+    // Lane PR-A per-cue overrides ("This caption" section) — DISTINCT from the
+    // font_family/size_px/color above, which hold the variant-level "All
+    // captions" GLOBAL preview. undefined (not null) so an untouched bar's
+    // Save round-trips through the ORIGINAL cue's override (see barsToCaptionCues).
+    cue_font_family: c.font_family ?? undefined,
+    cue_text_color: c.text_color ?? undefined,
+    cue_size_px: c.size_px ?? undefined,
   }));
 }
 
@@ -549,6 +561,13 @@ export function barsToCaptionCues(
       // (including explicit null/false from clearing) is the user's edit.
       if (bar.smart_style !== undefined) cue.smart_style = bar.smart_style;
       if (bar.smart_emphasis !== undefined) cue.smart_emphasis = bar.smart_emphasis;
+      // Lane PR-A per-cue overrides: same undefined-vs-explicit convention.
+      // undefined ⇒ untouched (the original spread above already carries
+      // whatever this cue had); null ⇒ an explicit "match all captions" clear;
+      // a value ⇒ an explicit per-cue override.
+      if (bar.cue_font_family !== undefined) cue.font_family = bar.cue_font_family;
+      if (bar.cue_text_color !== undefined) cue.text_color = bar.cue_text_color;
+      if (bar.cue_size_px !== undefined) cue.size_px = bar.cue_size_px;
       return cue;
     });
 }
