@@ -41,6 +41,9 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
   - Eyebrows: `text-[11px] font-semibold uppercase tracking-[0.18em]` (dominant, 5× in section cards); hero eyebrow uses `tracking-[0.24em]` — see §10 ledger
 - **CTA (InkButton):** ink pill `rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80`.
   **Single-primary-CTA rule on landing:** one CTA to `/plan`, proof via showcase — never a second CTA alongside it.
+- **Primary-action viewport budget:** on any flow step whose purpose is a single next action, keep that action visible in the first viewport at 1280×720 and 375×667, using realistic maximum AI-generated content length.
+- **Light-surface pinned action bar:** when adaptive pinning is needed on `#fafaf8`, use `sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#fafaf8] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0` (bleeds to the pane edge on mobile, aligns to the text column on desktop). The bar's `border-t` is its only divider — never pair it with a `border-t` on the section that follows.
+  Apply it only when the action would otherwise fall below the fold; the existing always-on variant lives in `ChatInterview.tsx`.
 - **Touch pressed state:** on touch surfaces, pressed/drag state replaces hover affordance. Active handles solidify and scale slightly; active chips go `opacity-100`; drags show a floating value readout offset from the thumb.
 - **Section rhythm:** `max-w-[900px]` hero, alternating two-column steps, `FadeInOnScroll` (IO threshold 0.12) on every section.
 - **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat).

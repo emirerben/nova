@@ -93,7 +93,13 @@ describe("split-rail shells cannot overflow a phone viewport", () => {
     const src = readSrc(rel);
 
     // Outer container stacks on phones instead of forcing a side-by-side row.
-    expect(src).toMatch(/min-h-screen flex-col[^"]*md:flex-row/);
+    // Asserted independently of the height utility (min-h-screen vs the dvh
+    // form) — the stacking is the property that keeps the rail from eating
+    // 57% of the viewport width.
+    const outer = src.match(/<div className="(flex min-h-[^"]*)"/);
+    expect(outer).not.toBeNull();
+    expect(outer?.[1]).toContain("flex-col");
+    expect(outer?.[1]).toContain("md:flex-row");
 
     // <main> carries min-w-0, or a wide child's min-content re-inflates the row.
     const main = src.match(/<main\s+className="([^"]*)"/);

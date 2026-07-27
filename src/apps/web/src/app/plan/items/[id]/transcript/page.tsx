@@ -262,7 +262,7 @@ export default function TranscriptTakeoverPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#fafaf8] md:flex-row">
+    <div className="flex min-h-[100dvh] flex-col bg-[#fafaf8] md:flex-row">
       <StepRail
         steps={transcriptSteps(step)}
         onGoBack={(key) => goBack(key as Step)}

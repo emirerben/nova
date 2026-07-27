@@ -5,8 +5,9 @@
  *
  * Layout (responsive — DESIGN.md §8):
  *   STEP RAIL — shared <StepRail>. From `md` up it is the docked w-56 vertical
- *     rail; below `md` it collapses to a horizontal strip above the pane, so it
- *     costs one row of height instead of 57% of a phone's width.
+ *     rail; below `md` it collapses to a horizontal dot strip above the pane, so
+ *     it costs one 45px row instead of 57% of a phone's width. The strip keeps
+ *     tap-back on done steps, which a plain "Step n of 4" line cannot.
  *     Done → lime dot + checkmark; Active → ink dot; Upcoming → zinc dot.
  *     Clicking a DONE step goes back to it; upcoming steps are non-interactive.
  *
@@ -278,7 +279,6 @@ export default function OnboardingShell({
   onSavePersona,
   onChatComplete,
   onContinueToPlan,
-  onRetune,
   error,
 }: OnboardingShellProps) {
   // Lazy initializers: derive the right step/tiktokStatus from server state on
@@ -371,8 +371,8 @@ export default function OnboardingShell({
           onContinue={handlePersonaContinue}
           continueLabel="Get my ideas →"
           continuing={planBusy}
-          onRetuneFromFeedback={onRetune}
           tiktokProfile={persona.tiktok_profile}
+          variant="reveal"
         />
       );
     }
@@ -384,15 +384,16 @@ export default function OnboardingShell({
   // ── Layout ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#fafaf8] md:flex-row">
+    <div className="flex min-h-[100dvh] flex-col bg-[#fafaf8] md:flex-row">
       <StepRail
         steps={onboardingSteps(step, tiktokStatus)}
         onGoBack={(key) => goBack(key as OnboardingStep)}
       />
 
-      {/* Right pane — min-w-0 lets the flex child shrink below its content's
-          min-content width instead of overflowing the viewport on phones. */}
-      <main className="flex min-w-0 flex-1 items-start justify-center px-5 py-10 md:px-12 md:py-16">
+      {/* Right pane */}
+      {/* min-w-0 lets this flex child shrink below its content's min-content
+          width instead of overflowing the viewport on phones. */}
+      <main className="flex min-w-0 flex-1 items-start justify-center px-5 py-6 md:px-12 md:py-16">
         <div className="w-full max-w-lg">
           {/* Error banner (outside the slide so it doesn't re-animate on step change) */}
           {error && (
