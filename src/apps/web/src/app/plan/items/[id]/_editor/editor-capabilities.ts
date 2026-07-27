@@ -6,9 +6,49 @@
  */
 
 import type { EditorCapabilities, PlanItemVariant } from "@/lib/plan-api";
+import { hasCaptionArchetypeName, isCaptionArchetype } from "@/lib/variant-editor/eligibility";
 import type { EditorTool } from "./ToolRail";
 
 export const CAPTIONS_TAB_REASON = "Captions can be selected and edited in this editor";
+
+/** Captions rail entry: honest copy for each unavailable reason. */
+export const CAPTIONS_PENDING_COPY = "waiting for this edit to finish rendering";
+export const CAPTIONS_UNAVAILABLE_COPY =
+  "this edit has no captions — captions come from a voiceover or a talk-to-camera clip";
+
+/**
+ * Whether the Captions tool is usable, and if not, WHY — the rail needs to
+ * distinguish "this edit will never have captions" (a montage) from "this
+ * caption edit hasn't rendered yet", because the two deserve different copy
+ * and only one of them resolves on its own.
+ */
+export type CaptionToolState = "editable" | "pending" | "unavailable";
+
+export function captionToolState(
+  variant: PlanItemVariant | null | undefined,
+): CaptionToolState {
+  if (!variant) return "unavailable";
+  if (isCaptionArchetype(variant)) return "editable";
+  if (hasCaptionArchetypeName(variant)) {
+    // Cues exist ⇒ editable even without a base video. `isCaptionArchetype`
+    // requires the base because it also routes the item-page CaptionEditor,
+    // which renders its own <video src={base}> and would be an empty panel
+    // without it. This drawer renders no video — it edits cue text and the
+    // variant's caption styling, neither of which needs one, and the canvas
+    // preview independently guards on the base already.
+    //
+    // Load-bearing since the variant-wide caption controls moved OUT of the
+    // inspector: caption BARS appear whenever `caption_cues` exist, so without
+    // this clause a cue-bearing variant with no base would show "This caption"
+    // in the inspector while the only home for the global styling stayed
+    // unreachable. Empirically that combination doesn't occur (the same render
+    // emits both), but nothing enforces it, and the cost of being wrong is a
+    // user with no way to restyle their captions.
+    const hasCues = (variant.caption_cues?.length ?? 0) > 0;
+    return hasCues ? "editable" : "pending";
+  }
+  return "unavailable";
+}
 
 /**
  * Text-lane fallback (review fix round on plan 010): when `text_elements` is
@@ -108,13 +148,25 @@ export function computeToolDisabledReasons({
   readOnly,
   readOnlyReason,
   isLyrics = false,
+  captions = "unavailable",
 }: {
   capabilities: EditorCapabilities | null | undefined;
   readOnly: boolean;
   readOnlyReason: string;
   isLyrics?: boolean;
+  captions?: CaptionToolState;
 }): Partial<Record<EditorTool, string>> {
   const out: Partial<Record<EditorTool, string>> = {};
+  // Captions are text, so a read-only shell locks them like Text/Styles.
+  // Otherwise the archetype decides, and each unavailable reason gets its own
+  // copy — a montage's "never" must not read like a caption edit's "not yet".
+  if (readOnly) {
+    out.captions = readOnlyReason;
+  } else if (captions === "pending") {
+    out.captions = CAPTIONS_PENDING_COPY;
+  } else if (captions !== "editable") {
+    out.captions = CAPTIONS_UNAVAILABLE_COPY;
+  }
   if (readOnly) {
     out.nova = readOnlyReason;
     out.text = readOnlyReason;

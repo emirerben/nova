@@ -26,6 +26,7 @@ import {
 } from "@/lib/text-presets";
 import PresetGrid from "./PresetGrid";
 import StylesDrawer from "./StylesDrawer";
+import CaptionsDrawer, { type CaptionsDrawerControl } from "./CaptionsDrawer";
 import CopilotDrawer from "./CopilotDrawer";
 import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
 import type { EditorTool } from "./ToolRail";
@@ -94,6 +95,7 @@ export default function ToolDrawer({
   onDeleteVisualBlock,
   onRetimeVisualBlock,
   layoutMode = "full",
+  captions,
   copilot,
   onClose,
 }: {
@@ -161,6 +163,9 @@ export default function ToolDrawer({
   onDeleteVisualBlock?: (id: string) => void;
   onRetimeVisualBlock?: (id: string) => void;
   layoutMode?: EditorLayoutMode;
+  /** Captions tool. Absent = the shell had no caption state to give us, which
+   *  the rail already surfaces as a disabled tool, so the pane stays empty. */
+  captions?: CaptionsDrawerControl;
   copilot?: {
     messages: CopilotMessage[];
     sending: boolean;
@@ -362,6 +367,12 @@ export default function ToolDrawer({
             onToggleFavorite={toggleFavorite}
             onPick={onPickPreset}
           />
+        </div>
+      )}
+
+      {tool === "captions" && captions && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <CaptionsDrawer {...captions} />
         </div>
       )}
 

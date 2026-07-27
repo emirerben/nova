@@ -20,13 +20,25 @@ import { useEffect, useMemo, useState } from "react";
  * pointer bonus.
  */
 
-export type EditorTool = "nova" | "text" | "visuals" | "sounds" | "overlays" | "styles";
+export type EditorTool =
+  | "nova"
+  | "text"
+  | "captions"
+  | "visuals"
+  | "sounds"
+  | "overlays"
+  | "styles";
 
 export const NOVA_TOOL_SEEN_KEY = "nova-tool-seen";
 
+// Captions sit next to Text, not at the end: both are typography, and on a
+// subtitled/narrated edit captions are the most-edited object on screen. The
+// glyph stays in the rail's text-glyph family (`T`, `Aa` in InspectorRail) —
+// "CC" reads as captions everywhere without importing an icon set.
 const TOOLS: Array<{ id: EditorTool; icon: string; label: string }> = [
   { id: "nova", icon: "✧", label: "Nova" },
   { id: "text", icon: "T", label: "Text" },
+  { id: "captions", icon: "CC", label: "Captions" },
   { id: "visuals", icon: "▦", label: "Visuals" },
   { id: "sounds", icon: "♫", label: "Sounds" },
   { id: "overlays", icon: "▤", label: "Overlays" },

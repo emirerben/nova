@@ -13,14 +13,17 @@ import "@testing-library/jest-dom";
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import {
+  CAPTIONS_PENDING_COPY,
   CAPTIONS_TAB_REASON,
+  CAPTIONS_UNAVAILABLE_COPY,
   TEXT_ELEMENTS_LOCKED_FALLBACK,
+  captionToolState,
   computeToolDisabledReasons,
   editorReasonCopy,
   textElementsLockedCopy,
 } from "@/app/plan/items/[id]/_editor/editor-capabilities";
 import ToolRail from "@/app/plan/items/[id]/_editor/ToolRail";
-import type { EditorCapabilities } from "@/lib/plan-api";
+import type { EditorCapabilities, PlanItemVariant } from "@/lib/plan-api";
 
 /** Subtitled variant after the plan-010 gate lift: effects live, text gated. */
 const SUBTITLED_EFFECTS_LIVE: EditorCapabilities = {
@@ -123,6 +126,7 @@ describe("computeToolDisabledReasons", () => {
         capabilities: SUBTITLED_EFFECTS_LIVE,
         readOnly: false,
         readOnlyReason: CAPTIONS_TAB_REASON,
+        captions: "editable",
       }),
     ).toEqual({
       text: CAPTIONS_TAB_REASON,
@@ -136,6 +140,7 @@ describe("computeToolDisabledReasons", () => {
         capabilities: { ...SUBTITLED_EFFECTS_LIVE, reason: undefined },
         readOnly: false,
         readOnlyReason: "This version can't be edited.",
+        captions: "editable",
       }),
     ).toEqual({
       text: TEXT_ELEMENTS_LOCKED_FALLBACK,
@@ -185,6 +190,7 @@ describe("computeToolDisabledReasons", () => {
         },
         readOnly: false,
         readOnlyReason: CAPTIONS_TAB_REASON,
+        captions: "editable",
       }),
     ).toEqual({
       sounds: "sound effects aren't available for this edit",
@@ -199,6 +205,7 @@ describe("computeToolDisabledReasons", () => {
         readOnly: false,
         readOnlyReason: "lyrics are synced to the song",
         isLyrics: true,
+        captions: "editable",
       }),
     ).toEqual({
       text: "lyrics are synced to the song",
@@ -212,6 +219,7 @@ describe("computeToolDisabledReasons", () => {
         capabilities: LYRICS_SYNC_EFFECTS_LIVE,
         readOnly: false,
         readOnlyReason: "lyrics are synced to the song",
+        captions: "editable",
       }),
     ).toEqual({
       text: "lyrics are synced to the song",
@@ -226,6 +234,7 @@ describe("computeToolDisabledReasons", () => {
         readOnly: false,
         readOnlyReason: CAPTIONS_TAB_REASON,
         isLyrics: false,
+        captions: "editable",
       }),
     ).toEqual({
       text: CAPTIONS_TAB_REASON,
@@ -246,8 +255,127 @@ describe("computeToolDisabledReasons", () => {
         },
         readOnly: false,
         readOnlyReason: "This version can't be edited.",
+        captions: "editable",
       }),
     ).toEqual({});
+  });
+});
+
+describe("captionToolState", () => {
+  it("is editable for a caption archetype that has a base video", () => {
+    expect(
+      captionToolState({
+        resolved_archetype: "subtitled",
+        base_video_url: "https://example.test/base.mp4",
+      } as PlanItemVariant),
+    ).toBe("editable");
+    expect(
+      captionToolState({
+        resolved_archetype: "narrated",
+        base_video_url: "https://example.test/base.mp4",
+      } as PlanItemVariant),
+    ).toBe("editable");
+  });
+
+  it("is pending for a caption archetype that has neither a base video nor cues yet", () => {
+    expect(
+      captionToolState({ resolved_archetype: "subtitled" } as PlanItemVariant),
+    ).toBe("pending");
+  });
+
+  it("is editable when cues exist even without a base video — the drawer renders no video", () => {
+    // The variant-wide caption controls live ONLY in this drawer now, and
+    // caption bars appear whenever cues exist. If this returned "pending" the
+    // inspector would offer "This caption" while the global styling had no
+    // reachable home at all.
+    expect(
+      captionToolState({
+        resolved_archetype: "narrated",
+        caption_cues: [{ text: "hi", start_s: 0, end_s: 1 }],
+      } as PlanItemVariant),
+    ).toBe("editable");
+  });
+
+  it("stays pending for an empty cue list (still rendering), not editable", () => {
+    expect(
+      captionToolState({
+        resolved_archetype: "subtitled",
+        caption_cues: [],
+      } as unknown as PlanItemVariant),
+    ).toBe("pending");
+  });
+
+  it("is unavailable for a non-caption archetype, and for a missing variant", () => {
+    expect(
+      captionToolState({
+        resolved_archetype: "montage",
+        base_video_url: "https://example.test/base.mp4",
+      } as PlanItemVariant),
+    ).toBe("unavailable");
+    expect(captionToolState(null)).toBe("unavailable");
+    expect(captionToolState(undefined)).toBe("unavailable");
+  });
+});
+
+describe("computeToolDisabledReasons — captions branch", () => {
+  const CAPABLE: EditorCapabilities = {
+    text_elements: true,
+    timeline: true,
+    split_clips: true,
+    mix: true,
+    sfx: true,
+    overlays: true,
+  };
+
+  it("leaves Captions out of the disabled map when the state is editable", () => {
+    expect(
+      computeToolDisabledReasons({
+        capabilities: CAPABLE,
+        readOnly: false,
+        readOnlyReason: "This version can't be edited.",
+        captions: "editable",
+      }).captions,
+    ).toBeUndefined();
+  });
+
+  it("tells a still-rendering caption edit apart from an edit that will never have captions", () => {
+    const pending = computeToolDisabledReasons({
+      capabilities: CAPABLE,
+      readOnly: false,
+      readOnlyReason: "This version can't be edited.",
+      captions: "pending",
+    });
+    const unavailable = computeToolDisabledReasons({
+      capabilities: CAPABLE,
+      readOnly: false,
+      readOnlyReason: "This version can't be edited.",
+      captions: "unavailable",
+    });
+    expect(pending.captions).toBe(CAPTIONS_PENDING_COPY);
+    expect(unavailable.captions).toBe(CAPTIONS_UNAVAILABLE_COPY);
+    // The whole point of the split: a montage's "never" must not read as "not yet".
+    expect(pending.captions).not.toBe(unavailable.captions);
+  });
+
+  it("fails closed — an omitted captions state disables the tool rather than exposing it", () => {
+    expect(
+      computeToolDisabledReasons({
+        capabilities: CAPABLE,
+        readOnly: false,
+        readOnlyReason: "This version can't be edited.",
+      }).captions,
+    ).toBe(CAPTIONS_UNAVAILABLE_COPY);
+  });
+
+  it("locks Captions with the read-only reason when the whole shell is read-only, even on an editable caption variant", () => {
+    expect(
+      computeToolDisabledReasons({
+        capabilities: CAPABLE,
+        readOnly: true,
+        readOnlyReason: "the source clips are no longer available",
+        captions: "editable",
+      }).captions,
+    ).toBe("the source clips are no longer available");
   });
 });
 
@@ -288,11 +416,25 @@ describe("ToolRail with the subtitled effects-live disable map", () => {
           capabilities: SUBTITLED_EFFECTS_LIVE,
           readOnly: false,
           readOnlyReason: CAPTIONS_TAB_REASON,
+          captions: "editable",
         })}
         onToggleTool={onToggleTool}
       />,
     );
   }
+
+  it("offers Captions as a live rail entry — the tool the locked Text/Styles copy points at", () => {
+    const onToggleTool = jest.fn();
+    renderRail(onToggleTool);
+
+    const captions = screen.getByRole("button", { name: "Captions tool" });
+    expect(captions).toBeEnabled();
+    expect(captions).not.toHaveAttribute("aria-disabled");
+    expect(captions).toHaveAttribute("title", "Captions");
+
+    fireEvent.click(captions);
+    expect(onToggleTool).toHaveBeenCalledWith("captions");
+  });
 
   it("marks Text/Styles focusable-disabled (aria-disabled, not disabled) while Sounds/Overlays stay enabled", () => {
     renderRail();

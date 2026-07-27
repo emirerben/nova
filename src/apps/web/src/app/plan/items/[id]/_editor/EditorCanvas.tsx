@@ -215,6 +215,7 @@ export default function EditorCanvas({
   virtualPreview,
   allowManipulation = true,
   stageHeightCss,
+  captionsEnabled,
   canvas = DEFAULT_CANVAS,
 }: {
   variant: PlanItemVariant;
@@ -265,6 +266,17 @@ export default function EditorCanvas({
   allowManipulation?: boolean;
   /** Shell-specific chrome height for sizing the 9:16 stage. */
   stageHeightCss?: string;
+  /**
+   * LOCAL subtitles on/off from the editing session, which wins over the
+   * server's `variant.captions_enabled`.
+   *
+   * Load-bearing for the Captions drawer's Subtitles switch: the server flag
+   * only changes on Save, so reading it alone leaves the canvas drawing
+   * captions after the user has turned them off — the preview would contradict
+   * the control that was just toggled. Undefined = no local override yet, fall
+   * back to the server value (every non-caption caller).
+   */
+  captionsEnabled?: boolean;
   /** Output canvas dimensions used for layout projection. Defaults to portrait. */
   canvas?: OverlayCanvas;
 }) {
@@ -326,11 +338,14 @@ export default function EditorCanvas({
     bar: TextElementBar;
     wordMode: boolean;
   } | null => {
+    // Local session state wins: the drawer's Subtitles switch must clear the
+    // preview on the same frame, not on Save.
+    const captionsOn = captionsEnabled ?? variant.captions_enabled !== false;
     if (
       !captionPreviewUsesCleanBase ||
       (variant.resolved_archetype !== "subtitled" &&
         variant.resolved_archetype !== "narrated") ||
-      variant.captions_enabled === false ||
+      !captionsOn ||
       !bars.some(isCaptionBar)
     ) {
       return null;
@@ -353,12 +368,19 @@ export default function EditorCanvas({
       return activeWord ? { text: activeWord, bar, wordMode: true } : null;
     }
     return { text: bar.text, bar, wordMode: false };
-  }, [bars, captionPreviewUsesCleanBase, currentTime, variant]);
+  }, [bars, captionPreviewUsesCleanBase, captionsEnabled, currentTime, variant]);
   const captionPreviewStyle = useMemo(() => {
     const bar = visibleCaption?.bar;
-    const fontName = bar?.font_family ?? variant.voiceover_caption_font;
+    // Per-cue override BEFORE the variant-wide value, matching the inspector's
+    // own precedence for the "This caption" section (`cue_* ?? global`).
+    // Without the cue_* leg the override fields write state the preview never
+    // renders, so changing this line's font/colour/size looks like a dead
+    // control (shipped that way in the Lane PR-A caption split).
+    const fontName =
+      bar?.cue_font_family ?? bar?.font_family ?? variant.voiceover_caption_font;
     const selected = INTRO_FONTS.find((font) => font.name === fontName);
-    const sizePx = bar?.size_px ?? variant.caption_size_px ?? DEFAULT_CAPTION_SIZE_PX;
+    const sizePx =
+      bar?.cue_size_px ?? bar?.size_px ?? variant.caption_size_px ?? DEFAULT_CAPTION_SIZE_PX;
     const strokeWidth =
       bar?.stroke_width ?? variant.caption_stroke_width ?? DEFAULT_CAPTION_STROKE_WIDTH;
     const scaledStroke = stageSize.h > 0 ? (strokeWidth / canvas.h) * stageSize.h : 0;
@@ -373,7 +395,10 @@ export default function EditorCanvas({
           ? bar?.highlight_color ??
             variant.caption_highlight_color ??
             DEFAULT_CAPTION_HIGHLIGHT_COLOR
-          : bar?.color ?? variant.caption_text_color ?? DEFAULT_CAPTION_COLOR,
+          : bar?.cue_text_color ??
+            bar?.color ??
+            variant.caption_text_color ??
+            DEFAULT_CAPTION_COLOR,
       fontFamily: selected?.cssFamily ?? "'TikTok Sans', 'Inter', system-ui, sans-serif",
       fontSizePx: stageSize.h > 0 ? (sizePx / canvas.h) * stageSize.h : 0,
       textShadow: captionPreviewShadow(scaledStroke, shadowEnabled),

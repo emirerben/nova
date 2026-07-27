@@ -48,6 +48,7 @@ import {
   deriveLaneRows,
   deriveTextLaneRows,
   isAiSequenceBar,
+  isCaptionBar,
   TEXT_LANE_ROW_GAP_PX,
   TEXT_LANE_BASE_HEIGHT_PX,
 } from "./editor-bars";
@@ -72,6 +73,25 @@ import {
 const GUTTER_PX = 64;
 const SFX_SUB_LANE_BASE_HEIGHT_PX = 32;
 const MUSIC_BED_HEIGHT_PX = 32;
+/**
+ * Collapsed Captions lane: one condensed strip of ticks. A 45s talking-head
+ * edit carries 30-40 cues, so the lane only earns full rows while the user is
+ * actually working on captions (the Captions tool open) — the rest of the time
+ * it exists to show caption DENSITY against the clip cuts, which is how you
+ * spot a stretch where the transcript dropped a sentence.
+ */
+const CAPTIONS_LANE_COLLAPSED_HEIGHT_PX = 20;
+/**
+ * Expanded Captions lane: ONE row, always.
+ *
+ * Caption cues are a transcript stream — strictly sequential, never
+ * overlapping (verified against production data: a 74-cue variant has 0
+ * overlapping pairs). `deriveTextLaneRows` exists for AUTHORED text, which can
+ * overlap, so it assigns one row per bar unconditionally; running caption cues
+ * through it produces a 74 x 26px = 2070px lane inside a 260px timeline region.
+ * Cues share a single row because they cannot collide.
+ */
+const CAPTIONS_LANE_EXPANDED_HEIGHT_PX = 28;
 
 const TEXT_BEHIND_SUBJECT_UI_ENABLED =
   process.env.NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED === "true";
@@ -117,6 +137,13 @@ export interface EditorTimelineBodyProps {
   onClear: () => void;
 
   textBars: TextElementBar[];
+  /** Captions tool open ⇒ the Captions lane expands to selectable rows. */
+  captionsExpanded?: boolean;
+  /** Local subtitles on/off. Off dims the lane rather than hiding it —
+   *  a lane that vanishes reads as breakage, not as a setting. */
+  captionsEnabled?: boolean;
+  /** Click on the collapsed strip: open the Captions tool at that cue. */
+  onOpenCaptionCue?: (id: string) => void;
   readOnly?: boolean;
   onRecordTimelineEdit?: () => void;
   onPreviewTextTiming?: (
@@ -252,6 +279,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     onSelect,
     onClear,
     textBars,
+    captionsExpanded = false,
+    captionsEnabled = true,
+    onOpenCaptionCue,
     readOnly = false,
     onRecordTimelineEdit,
     onPreviewTextTiming,
@@ -440,7 +470,17 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   );
   const tickInterval = tickIntervalForScale(pps);
   const ticks = rulerTicks(effectiveDurationS, pps);
-  const textLane = deriveTextLaneRows(textBars);
+  // Captions get their own lane. Before this split they shared the Text lane,
+  // where 30-40 cues crushed the creator's own text into unreadable slivers.
+  const captionBars = textBars.filter(isCaptionBar);
+  const plainTextBars = textBars.filter((bar) => !isCaptionBar(bar));
+  const hasCaptionLane = captionBars.length > 0;
+  const captionsLaneHeight = !hasCaptionLane
+    ? 0
+    : captionsExpanded
+      ? CAPTIONS_LANE_EXPANDED_HEIGHT_PX
+      : CAPTIONS_LANE_COLLAPSED_HEIGHT_PX;
+  const textLane = deriveTextLaneRows(plainTextBars);
   const visualLane = deriveLaneRows(visualBlocks, {
     baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX,
   });
@@ -456,6 +496,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   });
   const laneRows = [
     { label: "Text", heightPx: textLane.totalHeightPx },
+    ...(hasCaptionLane ? [{ label: "Captions", heightPx: captionsLaneHeight }] : []),
     ...(showVisualBlocks
       ? [{ label: "Visuals", heightPx: visualLane.totalHeightPx }]
       : []),
@@ -842,6 +883,12 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
           <div className="min-h-0 flex-1 overflow-hidden">
             <div ref={gutterRowsRef} style={{ height: lanesHeight }}>
               <GutterRow label="Text" heightPx={textLane.totalHeightPx} />
+              {hasCaptionLane && (
+                <GutterRow
+                  label={captionsEnabled ? "Captions" : "Captions · off"}
+                  heightPx={captionsLaneHeight}
+                />
+              )}
               {showVisualBlocks && (
                 <GutterRow label="Visuals" heightPx={visualLane.totalHeightPx} />
               )}
@@ -915,7 +962,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 testId="editor-text-lane"
               >
                 <Playline px={playheadPx} />
-                {textBars.length === 0 ? (
+                {plainTextBars.length === 0 ? (
                   <GhostRow text="Add text from the Text tool" />
                 ) : (
                   <>
@@ -984,7 +1031,11 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                                   }
                                   title={
                                     captionLocked
-                                      ? "Caption timing is edited from the Captions tab"
+                                      ? // Names the Captions rail tool. This used
+                                        // to say "the Captions tab", which only
+                                        // ever existed on the item page — in the
+                                        // editor it pointed at nothing.
+                                        "Caption timing is edited in the Captions panel"
                                       : "Lyric timing is locked to the vocal"
                                   }
                                   className="shrink-0 rounded border border-white/30 px-1 text-[9px] opacity-90"
@@ -1018,6 +1069,85 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   </>
                 )}
               </LaneTrack>
+
+              {/* ── Captions lane ──
+                  Collapsed: a density strip you can click to jump into the
+                  Captions tool. Expanded (tool open): full selectable,
+                  trimmable rows. Dimmed, never hidden, when subtitles are off. */}
+              {hasCaptionLane && (
+                <LaneTrack
+                  trackW={trackW}
+                  heightPx={captionsLaneHeight}
+                  testId="editor-captions-lane"
+                >
+                  <Playline px={playheadPx} />
+                  <div
+                    className={captionsEnabled ? undefined : "opacity-40"}
+                    style={{ height: captionsLaneHeight }}
+                  >
+                    {captionsExpanded
+                      ? captionBars.map((b, i) => {
+                          const left = secondsToPx(b.start_s, pps);
+                          const width = Math.max(
+                            6,
+                            secondsToPx(b.end_s - b.start_s, pps),
+                          );
+                          return (
+                            <BarButton
+                              key={b.id}
+                              left={left}
+                              width={width}
+                              // Single row: cues never overlap, so they cannot
+                              // collide on one line (see the constant's note).
+                              top={0}
+                              height={CAPTIONS_LANE_EXPANDED_HEIGHT_PX}
+                              selected={isSel("text", b.id)}
+                              ringCls={ringCls}
+                              ariaLabel={`Caption ${i + 1}, ${b.text.slice(0, 24)}, ${formatTimecode(b.start_s)}–${formatTimecode(b.end_s)}`}
+                              onSelect={() => onSelect("text", b.id)}
+                              dataKind="text"
+                              dataId={b.id}
+                              dataRowIndex={0}
+                              onPointerDown={(e) => startTextDrag(e, b)}
+                              onPointerMove={(e) => updateDrag(e.clientX)}
+                              onPointerUp={(e) => finishDrag(e, "text", b.id)}
+                              onPointerCancel={cancelDrag}
+                              suppressClickRef={suppressClickRef}
+                              showTrimHandles
+                              flashing={flashIds?.has(b.id) ?? false}
+                              className="bg-[#0c0c0e] text-white"
+                            >
+                              <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
+                                <span className="font-semibold">C</span>
+                                <span className="truncate">{b.text || "Caption"}</span>
+                              </span>
+                            </BarButton>
+                          );
+                        })
+                      : captionBars.map((b) => {
+                          const left = secondsToPx(b.start_s, pps);
+                          const width = Math.max(
+                            3,
+                            secondsToPx(b.end_s - b.start_s, pps),
+                          );
+                          const playing =
+                            currentTimeS >= b.start_s && currentTimeS < b.end_s;
+                          return (
+                            <button
+                              key={b.id}
+                              type="button"
+                              aria-label={`Caption at ${formatTimecode(b.start_s)}, ${b.text.slice(0, 40)}`}
+                              onClick={() => onOpenCaptionCue?.(b.id)}
+                              style={{ left, width, top: 4, height: 12 }}
+                              className={`absolute rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 ${
+                                playing ? "bg-lime-600" : "bg-[#0c0c0e]/70 hover:bg-[#0c0c0e]"
+                              }`}
+                            />
+                          );
+                        })}
+                  </div>
+                </LaneTrack>
+              )}
 
               {/* ── Visual replacement blocks, below authored text ── */}
               {showVisualBlocks && <LaneTrack

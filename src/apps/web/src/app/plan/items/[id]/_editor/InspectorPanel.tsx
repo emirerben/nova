@@ -19,12 +19,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  INTRO_ANIMATIONS,
-  INTRO_FONTS,
-  THEME_TRANSITIONS,
-  resolveCssFont,
-} from "@/lib/overlay-constants";
+import { INTRO_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
 import {
   LETTER_SPACING_MAX_EM,
   LETTER_SPACING_MIN_EM,
@@ -60,6 +55,7 @@ import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { EditorSelection } from "./useEditorSelection";
 import type { InspectorTab } from "./InspectorRail";
 import { normalizeEditableHex } from "./editor-color";
+import { FontSelect, HexInput } from "./inspector-fields";
 import {
   applyClipSourceWindowDrag,
   CLIP_MIN_DURATION_S,
@@ -177,6 +173,8 @@ export default function InspectorPanel({
   smartPlaceAvailable = false,
   onSmartPlace,
   onMergeCaptionCue,
+  onOpenCaptionsPanel,
+  captionsPanelOpen = false,
   canMergeCaptionPrev = false,
   canMergeCaptionNext = false,
   onClose,
@@ -231,6 +229,11 @@ export default function InspectorPanel({
    * chronological prev/next cue. Availability flags computed by the shell
    * (needs the full bar list, which this panel doesn't have). */
   onMergeCaptionCue?: (direction: "prev" | "next") => void;
+  /** Opens the Captions rail tool, which owns the variant-wide caption
+   *  styling this panel used to duplicate. */
+  onOpenCaptionsPanel?: () => void;
+  /** True when that panel is already open, so this panel stops advertising it. */
+  captionsPanelOpen?: boolean;
   canMergeCaptionPrev?: boolean;
   canMergeCaptionNext?: boolean;
   /** Close X clears the selection — the column stays (D6). */
@@ -267,6 +270,8 @@ export default function InspectorPanel({
           smartPlaceAvailable={smartPlaceAvailable}
           onSmartPlace={onSmartPlace}
           onMergeCaptionCue={onMergeCaptionCue}
+          onOpenCaptionsPanel={onOpenCaptionsPanel}
+          captionsPanelOpen={captionsPanelOpen}
           canMergeCaptionPrev={canMergeCaptionPrev}
           canMergeCaptionNext={canMergeCaptionNext}
           onClose={onClose}
@@ -1122,6 +1127,8 @@ function TextInspector({
   smartPlaceAvailable,
   onSmartPlace,
   onMergeCaptionCue,
+  onOpenCaptionsPanel,
+  captionsPanelOpen = false,
   canMergeCaptionPrev = false,
   canMergeCaptionNext = false,
   onClose,
@@ -1136,6 +1143,8 @@ function TextInspector({
   smartPlaceAvailable: boolean;
   onSmartPlace?: () => void;
   onMergeCaptionCue?: (direction: "prev" | "next") => void;
+  onOpenCaptionsPanel?: () => void;
+  captionsPanelOpen?: boolean;
   canMergeCaptionPrev?: boolean;
   canMergeCaptionNext?: boolean;
   onClose: () => void;
@@ -1386,53 +1395,75 @@ function TextInspector({
             </span>
             <span className="text-[11px] text-[#71717a]">Size</span>
           </div>
+          {/* Self-contained: points at the "Match all captions" control right
+              above, NOT at an "All captions" section — that moved to the
+              Captions panel, so "below" named something no longer here. */}
           <p className="mt-2 text-[11px] text-[#71717a]">
-            Overrides just this line — leave blank to match &ldquo;All captions&rdquo; below.
+            Changes only this line. Use &ldquo;Match all captions&rdquo; to clear it.
           </p>
         </div>
       )}
 
-      {isCaption && (
-        <div className="mt-6 flex items-center justify-between border-b border-zinc-100 pb-2">
-          <span className="text-[13px] font-bold text-[#0c0c0e]">All captions</span>
+      {/* Variant-wide caption styling lives in the Captions rail tool: it is
+          GLOBAL, so requiring a cue selection to reach it inverted the
+          hierarchy.
+
+          Shown ONLY when that panel is closed. With the panel already open on
+          the left, "Open the Captions panel" points at something the user is
+          demonstrably already looking at — it reads as a broken instruction,
+          not a shortcut. Nothing to say in that case: the controls are on
+          screen. */}
+      {isCaption && !captionsPanelOpen && onOpenCaptionsPanel && (
+        <div className="mt-6 border-t border-zinc-100 pt-3">
+          <button
+            type="button"
+            onClick={onOpenCaptionsPanel}
+            className="text-[12px] font-semibold text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          >
+            Change font, size or colour for every caption →
+          </button>
         </div>
       )}
 
       {/* Font + size */}
-      <div className="mt-3">
-        <FontSelect
-          value={bar.font_family ?? null}
-          onChange={(name) => onPatch({ font_family: name })}
-        />
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        <select
-          aria-label="Font size"
-          value={SIZE_OPTIONS.includes(sizeValue) ? sizeValue : ""}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            if (Number.isFinite(v) && v > 0) onPatch({ size_px: v, size_class: undefined });
-          }}
-          className="h-9 w-[72px] rounded-lg border border-zinc-200 bg-white px-2 text-[13px] text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
-        >
-          {!SIZE_OPTIONS.includes(sizeValue) && <option value="">{sizeValue}</option>}
-          {SIZE_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-        <input
-          type="range"
-          aria-label="Font size (fine)"
-          min={EDITOR_TEXT_SIZE_MIN}
-          max={EDITOR_TEXT_SIZE_MAX}
-          step={1}
-          value={clampedSlider}
-          onChange={(e) => onPatch({ size_px: Number(e.target.value), size_class: undefined })}
-          className="min-w-0 flex-1 accent-[#0c0c0e]"
-        />
-      </div>
+      {!isCaption && (
+        <>
+          <div className="mt-3">
+            <FontSelect
+              value={bar.font_family ?? null}
+              onChange={(name) => onPatch({ font_family: name })}
+            />
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <select
+              aria-label="Font size"
+              value={SIZE_OPTIONS.includes(sizeValue) ? sizeValue : ""}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (Number.isFinite(v) && v > 0) onPatch({ size_px: v, size_class: undefined });
+              }}
+              className="h-9 w-[72px] rounded-lg border border-zinc-200 bg-white px-2 text-[13px] text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+            >
+              {!SIZE_OPTIONS.includes(sizeValue) && <option value="">{sizeValue}</option>}
+              {SIZE_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <input
+              type="range"
+              aria-label="Font size (fine)"
+              min={EDITOR_TEXT_SIZE_MIN}
+              max={EDITOR_TEXT_SIZE_MAX}
+              step={1}
+              value={clampedSlider}
+              onChange={(e) => onPatch({ size_px: Number(e.target.value), size_class: undefined })}
+              className="min-w-0 flex-1 accent-[#0c0c0e]"
+            />
+          </div>
+        </>
+      )}
       {isCaption && smartPreviewSizePx !== sizeValue && (
         <p className="mt-1 text-[11px] text-[#71717a]">
           Burns bigger for this role — ~{smartPreviewSizePx}px, not editable here
@@ -1673,42 +1704,49 @@ function TextInspector({
         </div>
       )}
 
-      {/* Fill — visible by default (progressive disclosure) */}
-      <div className="flex h-11 items-center justify-between border-b border-zinc-100">
-        <span className="text-[13px] text-[#3f3f46]">Fill</span>
-        <span className="flex items-center gap-2">
-          <input
-            type="color"
-            aria-label="Fill color"
-            value={normalizeEditableHex(bar.color) ?? "#FFFFFF"}
-            onChange={(e) => onPatch({ color: e.target.value.toUpperCase() })}
-            className="h-6 w-8 cursor-pointer rounded border border-zinc-300 bg-white p-0"
-          />
-          <HexInput
-            value={bar.color ?? "#FFFFFF"}
-            onChange={(hex) => onPatch({ color: hex })}
-          />
-        </span>
-      </div>
+      {/* Fill — visible by default (progressive disclosure).
+          Caption bars are excluded: on a caption these write the VARIANT-level
+          globals, which the Captions panel owns. Per-cue colour lives in the
+          "This caption" section above. */}
+      {!isCaption && (
+        <div className="flex h-11 items-center justify-between border-b border-zinc-100">
+          <span className="text-[13px] text-[#3f3f46]">Fill</span>
+          <span className="flex items-center gap-2">
+            <input
+              type="color"
+              aria-label="Fill color"
+              value={normalizeEditableHex(bar.color) ?? "#FFFFFF"}
+              onChange={(e) => onPatch({ color: e.target.value.toUpperCase() })}
+              className="h-6 w-8 cursor-pointer rounded border border-zinc-300 bg-white p-0"
+            />
+            <HexInput
+              value={bar.color ?? "#FFFFFF"}
+              onChange={(hex) => onPatch({ color: hex })}
+            />
+          </span>
+        </div>
+      )}
 
-      <div className="flex h-11 items-center justify-between border-b border-zinc-100">
-        <span className="text-[13px] text-[#3f3f46]">Highlight</span>
-        <span className="flex items-center gap-2">
-          <input
-            type="color"
-            aria-label="Highlight color"
-            value={normalizeEditableHex(bar.highlight_color) ?? "#A3E635"}
-            onChange={(e) => onPatch({ highlight_color: e.target.value.toUpperCase() })}
-            className="h-6 w-8 cursor-pointer rounded border border-zinc-300 bg-white p-0"
-          />
-          <HexInput
-            value={bar.highlight_color ?? "#A3E635"}
-            onChange={(hex) => onPatch({ highlight_color: hex })}
-          />
-        </span>
-      </div>
+      {!isCaption && (
+        <div className="flex h-11 items-center justify-between border-b border-zinc-100">
+          <span className="text-[13px] text-[#3f3f46]">Highlight</span>
+          <span className="flex items-center gap-2">
+            <input
+              type="color"
+              aria-label="Highlight color"
+              value={normalizeEditableHex(bar.highlight_color) ?? "#A3E635"}
+              onChange={(e) => onPatch({ highlight_color: e.target.value.toUpperCase() })}
+              className="h-6 w-8 cursor-pointer rounded border border-zinc-300 bg-white p-0"
+            />
+            <HexInput
+              value={bar.highlight_color ?? "#A3E635"}
+              onChange={(hex) => onPatch({ highlight_color: hex })}
+            />
+          </span>
+        </div>
+      )}
 
-      {!isLyric && (
+      {!isLyric && !isCaption && (
         <label className="flex h-11 items-center justify-between border-b border-zinc-100">
           <span className="text-[13px] text-[#3f3f46]">Shadow</span>
           <input
@@ -1733,7 +1771,7 @@ function TextInspector({
       )}
 
       {/* Stroke — collapsed behind + */}
-      {!isLyric && (
+      {!isLyric && !isCaption && (
         <div className="border-b border-zinc-100">
           <div className="flex h-11 items-center justify-between">
             <span className="text-[13px] text-[#3f3f46]">Stroke</span>
@@ -2082,131 +2120,5 @@ function TimingNumberInput({
         className="mt-1 h-8 w-full rounded-lg border border-zinc-200 px-2 text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
       />
     </label>
-  );
-}
-
-function HexInput({
-  value,
-  onChange,
-  ariaLabel = "Fill color hex",
-}: {
-  value: string;
-  onChange: (hex: string) => void;
-  /** Disambiguates this input's aria-label when more than one HexInput
-   * renders at once (Lane PR-A: "This caption" adds a second color field
-   * alongside the existing Fill/Highlight rows). Defaults to the original. */
-  ariaLabel?: string;
-}) {
-  const [draft, setDraft] = useState(value);
-  // Follow external changes (e.g. the swatch or a preset).
-  useEffect(() => setDraft(value), [value]);
-  function commit() {
-    const hex = normalizeEditableHex(draft);
-    if (hex) onChange(hex);
-    else setDraft(value);
-  }
-  return (
-    <input
-      type="text"
-      aria-label={ariaLabel}
-      value={draft}
-      onChange={(e) => {
-        const next = e.target.value;
-        setDraft(next);
-        const hex = normalizeEditableHex(next);
-        if (hex) onChange(hex);
-      }}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-      }}
-      className="h-7 w-[76px] rounded-md border border-zinc-200 px-2 text-[12px] uppercase text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
-    />
-  );
-}
-
-/** Font picker: button showing the current family in its REAL face, opening a
- * CSS-previewed option list (each INTRO_FONTS entry rendered in itself). */
-function FontSelect({
-  value,
-  onChange,
-  ariaLabelPrefix = "Font",
-}: {
-  value: string | null;
-  onChange: (name: string) => void;
-  /** Disambiguates the trigger button's aria-label when more than one
-   * FontSelect renders at once (Lane PR-A: "This caption" + "All captions"
-   * both show a font picker). Defaults to the original label. */
-  ariaLabelPrefix?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const listRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [open]);
-
-  const current = value ?? "Playfair Display";
-  const { family, weight } = resolveCssFont(current);
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={`${ariaLabelPrefix}: ${current}`}
-        onClick={() => setOpen((o) => !o)}
-        className="flex h-9 w-full items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 text-left text-[13px] text-[#0c0c0e] hover:border-zinc-400 focus:border-lime-500/60 focus:outline-none"
-      >
-        <span className="truncate" style={{ fontFamily: family, fontWeight: weight }}>
-          {current}
-        </span>
-        <span aria-hidden className="text-[9px] text-[#a1a1aa]">
-          ⌄
-        </span>
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" aria-hidden onClick={() => setOpen(false)} />
-          <div
-            ref={listRef}
-            role="listbox"
-            aria-label="Fonts"
-            className="absolute left-0 right-0 z-20 mt-1 max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg"
-          >
-            {INTRO_FONTS.map((f) => {
-              const selected = f.name === current;
-              return (
-                <button
-                  key={f.name}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  onClick={() => {
-                    onChange(f.name);
-                    setOpen(false);
-                  }}
-                  className={`block w-full truncate px-3 py-1.5 text-left text-[14px] hover:bg-zinc-50 ${
-                    selected ? "bg-lime-50 text-[#0c0c0e]" : "text-[#3f3f46]"
-                  }`}
-                  style={{ fontFamily: f.cssFamily, fontWeight: f.weight }}
-                >
-                  {f.name}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
   );
 }
