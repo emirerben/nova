@@ -391,6 +391,17 @@ class Settings(BaseSettings):
     # then restart workers) to disable instantly.
     text_behind_subject_enabled: bool = False
 
+    # Subject-matte segmentation backbone selector. When True (default), the
+    # matte engine uses RobustVideoMatting (onnxruntime CPU, recurrent —
+    # temporally stable; assets/models/rvm_mobilenetv3_fp32.onnx). When False
+    # or when onnxruntime / the model file is unavailable, it falls back to
+    # the MediaPipe selfie-segmenter path automatically (the pre-RVM
+    # behavior). Kill switch for the backbone only — TEXT_BEHIND_SUBJECT_ENABLED
+    # above still gates the whole effect. Flip on Fly
+    # (`fly secrets set MATTE_RVM_ENABLED=false --app nova-video` then
+    # restart workers); read lazily per matte compute, no deploy needed.
+    matte_rvm_enabled: bool = True
+
     # Linear LRCLIB re-anchor for synced lyrics. When True (default), the
     # alignment layer can fit a small per-time drift curve before falling
     # back to the existing uniform median / single-L0 paths. This catches

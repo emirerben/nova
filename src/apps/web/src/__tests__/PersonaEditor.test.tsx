@@ -81,3 +81,44 @@ describe("PersonaEditor", () => {
     expect(onContinue).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * A failed generation leaves a truthy-but-empty persona (only footage_type_bias),
+ * which OnboardingShell still routes into the reveal. Observed live: status
+ * "failed", persona {footage_type_bias: [...]}, summary null.
+ */
+describe("PersonaEditor — reveal with an empty persona", () => {
+  const empty = { footage_type_bias: ["talking_head"] } as unknown as PersonaContent;
+  const emptyProps = { ...baseProps, persona: empty, status: "failed" as const };
+
+  it("offers a way to retry instead of stranding the user", () => {
+    render(
+      <PersonaEditor {...emptyProps} variant="reveal" onRetuneFromFeedback={async () => {}} />,
+    );
+    expect(screen.getByRole("button", { name: /Generate persona/i })).toBeInTheDocument();
+  });
+
+  it("withholds the continue CTA, which would 409 with no persona", () => {
+    render(
+      <PersonaEditor {...emptyProps} variant="reveal" onRetuneFromFeedback={async () => {}} />,
+    );
+    expect(screen.queryByRole("button", { name: "Get my ideas →" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Write it myself/i })).toBeInTheDocument();
+  });
+
+  it("does not show the retry button once there is a real persona", () => {
+    render(<PersonaEditor {...baseProps} variant="reveal" onRetuneFromFeedback={async () => {}} />);
+    expect(screen.queryByRole("button", { name: /Generate persona/i })).not.toBeInTheDocument();
+  });
+
+  it("omits the supporting-detail section when there is nothing to support", () => {
+    render(<PersonaEditor {...emptyProps} variant="reveal" />);
+    expect(screen.queryByText("What we based it on")).not.toBeInTheDocument();
+    expect(screen.queryByText("Content pillars")).not.toBeInTheDocument();
+  });
+
+  it("still renders the supporting-detail section for a real persona", () => {
+    render(<PersonaEditor {...baseProps} variant="reveal" />);
+    expect(screen.getByText("What we based it on")).toBeInTheDocument();
+  });
+});

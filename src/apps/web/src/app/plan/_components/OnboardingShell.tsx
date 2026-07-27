@@ -184,6 +184,10 @@ function WhatYouMakeStep({
 
   return (
     <div>
+      {/* Visible at every width again. #739 hid this below md because the shell
+          also rendered a "Step N of 4" marker there and the pair read as a
+          duplicate; the shared StepRail replaced that marker with dots plus the
+          step's name, so this is now the only step count on the screen. */}
       <p className="text-xs font-semibold uppercase tracking-widest text-lime-700">
         Step 2 of 4
       </p>
@@ -270,6 +274,7 @@ export default function OnboardingShell({
   onSavePersona,
   onChatComplete,
   onContinueToPlan,
+  onRetune,
   error,
 }: OnboardingShellProps) {
   // Lazy initializers: derive the right step/tiktokStatus from server state on
@@ -364,6 +369,9 @@ export default function OnboardingShell({
           continuing={planBusy}
           tiktokProfile={persona.tiktok_profile}
           variant="reveal"
+          // Reveal only surfaces this when generation produced nothing, as the
+          // "Generate persona" retry — never as a peer of the primary CTA.
+          onRetuneFromFeedback={onRetune}
         />
       );
     }

@@ -10,15 +10,28 @@ failure (missing model, unreadable video, mediapipe not installed, wall-clock
 budget blown, corrupt matte file) and never raises. A matte failure must
 never fail a render job — it just means the occlusion effect is skipped.
 
-Uses MediaPipe's ImageSegmenter task (selfie segmenter, stateless IMAGE
-running mode — one independent segmentation per frame).
+Segmentation backbone: RobustVideoMatting (rvm_mobilenetv3, onnxruntime CPU,
+recurrent — temporally stable by construction) is primary; MediaPipe's
+ImageSegmenter (selfie segmenter, stateless IMAGE mode) is the fallback when
+RVM is disabled (``MATTE_RVM_ENABLED=false``) or unavailable. The selfie
+segmenter's confidence oscillates en masse on person-adjacent textures (beach
+sand/rock read like skin over ~5–9 frame periods — prod job add80a9c), which
+no per-frame treatment can hide; RVM's recurrence eliminates it (measured
+median adjacent-frame IoU 0.980 vs area flapping 7%↔63% on the same footage).
 Masks are sampled time-aligned at (up to) every source frame, temporally
 median-filtered over 3 samples, hard-cut at 0.40 confidence, cleaned of tiny
 fragments, and lightly feathered — the "solid object" treatment. The stored
 matte already carries this treatment, so ``mask_at`` readers and both text
-renderers stay treatment-agnostic. ``mediapipe`` is imported lazily inside
-functions so this module can be imported without it installed (the
-structural eval-CI constraint other lazy-imported pipeline deps share).
+renderers stay treatment-agnostic. ``mediapipe`` and ``onnxruntime`` are
+imported lazily inside functions so this module can be imported without them
+installed (the structural eval-CI constraint other lazy-imported pipeline
+deps share).
+
+Recurrent state and the temporal median are RESET at known hard-cut
+boundaries (``cut_boundaries_s``, montage slot joins passed in by the
+orchestrator) so a clip's silhouette never bleeds into the next clip —
+without the reset, ~2 frames of the previous clip's mask occlude text at
+every cut.
 
 CRITICAL: Never use MoviePy — see CLAUDE.md. Decoding goes through
 cv2.VideoCapture; the matte is muxed via a direct ffmpeg subprocess.
@@ -43,6 +56,29 @@ MATTE_FPS = 30
 # Resolved relative to the api app root (src/apps/api/), same pattern as
 # FONTS_DIR in text_overlay.py.
 MATTE_MODEL_PATH = "assets/models/selfie_segmenter.tflite"
+# RobustVideoMatting mobilenetv3 (ONNX, GPL-3.0 weights — server-side use
+# only, never distributed; see agents/DECISIONS.md).
+MATTE_RVM_MODEL_PATH = "assets/models/rvm_mobilenetv3_fp32.onnx"
+# Frames are pre-downscaled to this fraction of source resolution (natural
+# aspect preserved) and fed with downsample_ratio=1.0. Feeding full-res
+# frames with downsample_ratio=0.25 runs the SAME encoder resolution but
+# makes RVM's guided-filter refiner upsample pha (and a never-used fgr) back
+# to full res — ~25MB float32 tensors per frame, all discarded by the
+# 270x480 store resize. Pre-downscaling skips that entirely.
+_RVM_INPUT_SCALE = 0.25
+# ORT threading: pin intra-op threads and disable spin-waiting — the worker
+# shares 4 Fly vCPUs with the ffmpeg mux subprocess; default all-cores
+# spinning starves everything else on the machine. 3 threads measured 30fps
+# inference-only on M-series (2 threads: 22fps; 4: 32fps — diminishing and
+# it would leave nothing for the mux).
+_RVM_INTRA_OP_THREADS = 3
+# RVM inference budget guard: windows totalling more than this many output
+# ticks fall back to the mediapipe backbone (the new stability gates still
+# protect quality). Measured (pre-downscaled input, 3 pinned threads,
+# M-series): ~30fps inference, ~20fps end-to-end with decode; assume Fly
+# shared vCPUs ~half that (~10fps end-to-end) → 900 ticks ≈ 90s — the edge
+# of the budget. Typical intro windows are 300-400 ticks.
+_RVM_MAX_TOTAL_TICKS = 900
 MATTE_WALL_CLOCK_BUDGET_S = 90
 
 # Stored matte resolution (~1/4 of 1080x1920). Hold-to-EOF overlays (see
@@ -128,6 +164,15 @@ class MatteStats:
     # still reads as glitching. None when too few pairs to judge.
     shape_stability_iou: float | None = None
     iou_pair_count: int = 0
+    # Oscillation signal: adjacent present-pair IoU below _LARGE_JUMP_IOU is
+    # one "large jump" — the silhouette teleported between consecutive
+    # frames. The MEDIAN IoU gate above is blind to multi-frame oscillation
+    # (prod job add80a9c: mask area flapping 7%↔63% every ~5–9 frames kept
+    # median IoU 0.927 because ~15 jump pairs hid among 308 stable ones);
+    # counting the jumps directly is not. Boundary-crossing pairs at known
+    # hard cuts are excluded, so legit montage cuts don't inflate the count.
+    large_jump_count: int = 0
+    large_jumps_per_s: float = 0.0
 
 
 class _MatteAbort(RuntimeError):
@@ -152,6 +197,18 @@ _MAX_PRESENCE_FLIPS_PER_S = 0.75
 # pairs exist to judge.
 _MIN_SHAPE_STABILITY_IOU = 0.40
 _MIN_IOU_PAIRS = 5
+# Oscillation gate on the large-jump stats above. The rate is a FRACTION of
+# present adjacent pairs, not jumps-per-second — a per-second rate dilutes
+# linearly with window length, so the beach strobe (15 jumps in an 11s
+# matte, prod job add80a9c) would pass inside a 60s hold-to-EOF window.
+# Measured anchors: beach matte (RVM-era mediapipe control) 48/307 ≈ 15.6%
+# → reject; original beach matte ≈ 15/308 ≈ 4.9% → reject; stable footage
+# ≈ 0; a single whip-pan in a 10s window ≈ 1-2/300 < 1% → keep. AND-gate
+# (count + fraction) mirrors the presence-flip gate so short windows with a
+# couple of abrupt legit events can't trip it.
+_LARGE_JUMP_IOU = 0.50
+_MAX_LARGE_JUMPS = 3
+_MAX_LARGE_JUMP_FRAC = 0.02
 
 
 def matte_is_sane(stats: MatteStats) -> bool:
@@ -177,7 +234,16 @@ def matte_is_sane(stats: MatteStats) -> bool:
         and stats.shape_stability_iou < _MIN_SHAPE_STABILITY_IOU
     ):
         return False
+    if stats.large_jump_count > _MAX_LARGE_JUMPS and stats.large_jump_count > (
+        _MAX_LARGE_JUMP_FRAC * max(1, stats.iou_pair_count)
+    ):
+        return False
     return True
+
+
+def _resolve_asset_path(rel_path: str) -> str:
+    """An assets/ path resolved relative to the api app root."""
+    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", rel_path))
 
 
 def _resolve_model_path() -> str:
@@ -186,7 +252,35 @@ def _resolve_model_path() -> str:
     Reads the module-level constant fresh on every call (not cached) so
     tests can monkeypatch ``MATTE_MODEL_PATH`` to point at a missing file.
     """
-    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", MATTE_MODEL_PATH))
+    return _resolve_asset_path(MATTE_MODEL_PATH)
+
+
+# More hint entries than this and the hint list is ignored wholesale: a
+# flooded list (boundary per tick) would exclude every pair from the
+# stability stats and degrade the recurrent backbone to stateless.
+_MAX_CUT_BOUNDARIES = 60
+
+
+def _window_boundary_ticks(window: MatteWindow, cut_boundaries_s: list[float] | None) -> set[int]:
+    """Output-tick indices inside ``window`` where a source hard cut lands.
+
+    Best-effort: garbage entries (non-numeric, out of window, unsorted) are
+    simply ignored; an implausibly long list (> _MAX_CUT_BOUNDARIES) is
+    ignored wholesale. Slot durations are rounded to 3dp upstream and CFR
+    normalization can shift the encoded cut by ±1 frame — a reset one frame
+    early/late still removes the cross-clip ghost.
+    """
+    if not cut_boundaries_s or len(cut_boundaries_s) > _MAX_CUT_BOUNDARIES:
+        return set()
+    ticks: set[int] = set()
+    for b in cut_boundaries_s:
+        try:
+            t = float(b)
+        except (TypeError, ValueError):
+            continue
+        if window.start_s < t < window.end_s:
+            ticks.add(int(round((t - window.start_s) * MATTE_FPS)))
+    return ticks
 
 
 def _cleanup_partial(out_path: str) -> None:
@@ -202,6 +296,7 @@ def compute_subject_matte(
     video_path: str,
     windows: list[MatteWindow],
     out_path: str,
+    cut_boundaries_s: list[float] | None = None,
 ) -> MatteStats | None:
     """Compute a person-segmentation matte for ``windows`` of ``video_path``.
 
@@ -209,10 +304,17 @@ def compute_subject_matte(
     gaps for the time between windows) to ``out_path`` at MATTE_FPS, plus a
     sidecar JSON at ``out_path + ".json"``. Returns MatteStats on success,
     ``None`` on any failure — never raises.
+
+    ``cut_boundaries_s``: output-timeline timestamps of hard cuts in
+    ``video_path`` (montage slot joins). Best-effort hint: resets the
+    temporal median + backbone recurrence at each cut and excludes the
+    crossing frame-pair from stability stats. ``None``/garbage tolerated.
     """
     start_time = time.monotonic()
     try:
-        stats = _compute_subject_matte_inner(video_path, windows, out_path, start_time)
+        stats = _compute_subject_matte_inner(
+            video_path, windows, out_path, start_time, cut_boundaries_s=cut_boundaries_s
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning(
             "subject_matte_compute_failed",
@@ -291,18 +393,154 @@ def _small_subject_roi(
     return (fx0, fx1, fy0, fy1)
 
 
+class _RvmBackbone:
+    """RobustVideoMatting via onnxruntime — recurrent, temporally stable.
+
+    ``infer`` takes an RGB uint8 frame and returns a float32 [0,1] soft
+    alpha at the DOWNSCALED inference resolution (natural aspect,
+    ``_RVM_INPUT_SCALE`` of the source — the caller resizes to matte
+    storage). The frame is pre-downscaled here and fed with
+    ``downsample_ratio=1.0``: same encoder resolution as full-res +
+    ratio-0.25, minus the discarded full-res guided-filter/fgr work.
+    The four recurrent states carry frame to frame; ``reset()`` zeroes
+    them (window starts and hard-cut boundaries — state must never bleed
+    across a cut).
+    """
+
+    kind = "rvm"
+
+    def __init__(self, session: object) -> None:
+        self._session = session
+        self._rec: list[np.ndarray] = []
+        self.reset()
+
+    def reset(self) -> None:
+        self._rec = [np.zeros([1, 1, 1, 1], dtype=np.float32) for _ in range(4)]
+
+    def infer(self, rgb: np.ndarray) -> np.ndarray:
+        h, w = rgb.shape[:2]
+        small = cv2.resize(
+            rgb,
+            (max(2, round(w * _RVM_INPUT_SCALE)), max(2, round(h * _RVM_INPUT_SCALE))),
+            interpolation=cv2.INTER_AREA,
+        )
+        src = np.ascontiguousarray((small.astype(np.float32) / 255.0).transpose(2, 0, 1)[None])
+        # Named outputs: positional unpack would silently read the red
+        # foreground channel as "pha" if a re-exported asset reordered the
+        # graph; naming also lets ORT prune the unused fgr subgraph.
+        pha, *rec = self._session.run(
+            ["pha", "r1o", "r2o", "r3o", "r4o"],
+            {
+                "src": src,
+                "r1i": self._rec[0],
+                "r2i": self._rec[1],
+                "r3i": self._rec[2],
+                "r4i": self._rec[3],
+                "downsample_ratio": np.array([1.0], dtype=np.float32),
+            },
+        )
+        self._rec = list(rec)
+        return np.asarray(pha[0, 0], dtype=np.float32)
+
+    def close(self) -> None:
+        self._session = None
+
+
+class _MediapipeBackbone:
+    """Stateless selfie-segmenter fallback (the pre-RVM path).
+
+    IMAGE running mode — one independent segmentation per frame. VIDEO
+    mode's internal temporal filter balloons and oscillates on busy footage
+    (night crowd scenes); frame-to-frame stability comes from the temporal
+    median in _postprocess_mask instead.
+    """
+
+    kind = "mediapipe"
+
+    def __init__(self, mp_module: object, segmenter: object) -> None:
+        self._mp = mp_module
+        self._segmenter = segmenter
+
+    def reset(self) -> None:  # stateless — nothing to reset
+        pass
+
+    def infer(self, rgb: np.ndarray) -> np.ndarray:
+        mp_image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
+        return self._segmenter.segment(mp_image).confidence_masks[0].numpy_view().copy()
+
+    def close(self) -> None:
+        self._segmenter.close()
+
+
+def _rvm_enabled() -> bool:
+    try:
+        from app.config import settings  # noqa: PLC0415
+
+        return bool(getattr(settings, "matte_rvm_enabled", True))
+    except Exception:  # noqa: BLE001 — config import must never break the matte
+        return True
+
+
+def _create_backbone(prefer_rvm: bool = True) -> _RvmBackbone | _MediapipeBackbone:
+    """RVM when enabled/preferred and loadable, else the mediapipe fallback.
+
+    Raises (any exception) only when NO backbone can be created —
+    best-effort contract: the caller degrades to no occlusion, never a
+    failed render. ``prefer_rvm=False`` forces the mediapipe path (used
+    when the requested window total exceeds the RVM inference budget).
+    """
+    if prefer_rvm and _rvm_enabled():
+        rvm_path = _resolve_asset_path(MATTE_RVM_MODEL_PATH)
+        try:
+            if not os.path.isfile(rvm_path):
+                raise FileNotFoundError(rvm_path)
+            import onnxruntime as ort  # noqa: PLC0415 — lazy: eval CI has no onnxruntime
+
+            opts = ort.SessionOptions()
+            # Pinned threads + no spin-wait: the worker shares 4 vCPUs with
+            # the ffmpeg mux subprocess; ORT's all-cores spinning default
+            # starves the box for the whole compute.
+            opts.intra_op_num_threads = _RVM_INTRA_OP_THREADS
+            opts.inter_op_num_threads = 1
+            try:
+                opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+            except Exception:  # noqa: BLE001 — config entry name varies across ORT versions
+                pass
+            session = ort.InferenceSession(
+                rvm_path, sess_options=opts, providers=["CPUExecutionProvider"]
+            )
+            return _RvmBackbone(session)
+        except Exception as exc:  # noqa: BLE001 — fall back to mediapipe
+            log.warning("subject_matte_rvm_unavailable", error=str(exc), model_path=rvm_path)
+
+    model_path = _resolve_model_path()
+    if not os.path.isfile(model_path):
+        raise _MatteAbort(f"matte model not found at {model_path}")
+
+    # Lazy import — module import must succeed without mediapipe installed.
+    import mediapipe as mp  # noqa: PLC0415
+    from mediapipe.tasks import python as mp_python  # noqa: PLC0415
+    from mediapipe.tasks.python import vision as mp_vision  # noqa: PLC0415
+
+    base_options = mp_python.BaseOptions(model_asset_path=model_path)
+    options = mp_vision.ImageSegmenterOptions(
+        base_options=base_options,
+        running_mode=mp_vision.RunningMode.IMAGE,
+        output_confidence_masks=True,
+        output_category_mask=False,
+    )
+    return _MediapipeBackbone(mp, mp_vision.ImageSegmenter.create_from_options(options))
+
+
 def _compute_subject_matte_inner(
     video_path: str,
     windows: list[MatteWindow],
     out_path: str,
     start_time: float,
+    cut_boundaries_s: list[float] | None = None,
 ) -> MatteStats:
     if not windows:
         raise _MatteAbort("no windows requested")
-
-    model_path = _resolve_model_path()
-    if not os.path.isfile(model_path):
-        raise _MatteAbort(f"matte model not found at {model_path}")
 
     _budget_check(start_time)
 
@@ -313,25 +551,18 @@ def _compute_subject_matte_inner(
 
     _budget_check(start_time)
 
-    # Lazy import — module import must succeed without mediapipe installed.
-    import mediapipe as mp  # noqa: PLC0415
-    from mediapipe.tasks import python as mp_python  # noqa: PLC0415
-    from mediapipe.tasks.python import vision as mp_vision  # noqa: PLC0415
-
-    # IMAGE running mode — stateless, one independent segmentation per frame.
-    # VIDEO mode's internal temporal filter balloons and oscillates on busy
-    # footage (night crowd scenes): its propagated state alternately swallowed
-    # and released the whole text region, which survived every downstream
-    # cleanup. Frame-to-frame stability comes from our own temporal median in
-    # _postprocess_mask instead, which we can reason about and test.
-    base_options = mp_python.BaseOptions(model_asset_path=model_path)
-    options = mp_vision.ImageSegmenterOptions(
-        base_options=base_options,
-        running_mode=mp_vision.RunningMode.IMAGE,
-        output_confidence_masks=True,
-        output_category_mask=False,
+    # RVM budget guard: very long window totals (hold-to-EOF overlays) can't
+    # finish RVM inference inside the wall-clock budget on prod vCPUs — fall
+    # back to mediapipe up front instead of burning 90s and aborting.
+    total_ticks = sum(
+        max(1, round((w.end_s - w.start_s) * MATTE_FPS)) for w in windows if w.end_s > w.start_s
     )
-    segmenter = mp_vision.ImageSegmenter.create_from_options(options)
+    try:
+        backbone = _create_backbone(prefer_rvm=total_ticks <= _RVM_MAX_TOTAL_TICKS)
+    except Exception:
+        cap.release()
+        raise
+    log.info("subject_matte_backbone", kind=backbone.kind, total_ticks=total_ticks)
 
     src_fps = _source_fps(cap)
 
@@ -370,18 +601,30 @@ def _compute_subject_matte_inner(
             frame and the result is pasted back into a full-frame mask (the
             small-subject refinement pass — everything outside the padded
             union of pass-1 detections is known background).
+
+            At every known hard-cut boundary tick the temporal-median deque
+            AND the backbone's recurrent state are reset — median/recurrence
+            across a cut occludes text with the PREVIOUS clip's silhouette
+            for ~2 frames at every montage slot join.
             """
             cap.set(cv2.CAP_PROP_POS_MSEC, window.start_s * 1000.0)
             num_output_frames = max(1, round((window.end_s - window.start_s) * MATTE_FPS))
+            boundary_ticks = _window_boundary_ticks(window, cut_boundaries_s)
             masks: list[np.ndarray] = []
             recent_soft: deque[np.ndarray] = deque(maxlen=_TEMPORAL_MEDIAN_FRAMES)
             frames_read = 0
             inferences = 0
             last: np.ndarray | None = None
             source_exhausted = False
+            backbone.reset()
 
+            cut_pending = False
             for i in range(num_output_frames):
                 _budget_check(start_time)
+                if i in boundary_ticks:
+                    recent_soft.clear()
+                    backbone.reset()
+                    cut_pending = True
                 # Epsilon guards float floor error: (1/30)*30 == 0.999...,
                 # which would silently halve the sampling rate on exact-30fps
                 # sources.
@@ -407,8 +650,7 @@ def _compute_subject_matte_inner(
                         rgb = cv2.cvtColor(
                             np.ascontiguousarray(frame[y0:y1, x0:x1]), cv2.COLOR_BGR2RGB
                         )
-                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                    mask = segmenter.segment(mp_image).confidence_masks[0].numpy_view().copy()
+                    mask = backbone.infer(rgb)
                     inferences += 1
                     if roi_frac is None:
                         soft = cv2.resize(
@@ -431,9 +673,17 @@ def _compute_subject_matte_inner(
                 elif last is None:
                     # Video shorter than the window — nothing usable yet.
                     break
+                elif cut_pending:
+                    # No fresh frame at the cut tick (sub-src_fps source or
+                    # decode hiccup): never re-emit the PRE-cut silhouette —
+                    # that ghost is exactly what the reset removes. Hold
+                    # empty until a real post-cut frame arrives.
+                    last = np.zeros_like(last)
                 # else: video exhausted mid-window (or a sub-src_fps tick);
                 # hold the last treated mask.
 
+                if frame is not None:
+                    cut_pending = False
                 if last is None:
                     break
                 masks.append(last)
@@ -453,7 +703,12 @@ def _compute_subject_matte_inner(
             if not treated:
                 continue
 
-            roi = _small_subject_roi(treated)
+            # Small-subject ROI refinement is a mediapipe-only workaround (its
+            # ~256px model input loses distant subjects). RVM's downsample
+            # ratio + recurrence keeps them stable full-frame — and a single
+            # window-wide crop across a multi-clip montage would zero out any
+            # clip whose subject sits outside it.
+            roi = _small_subject_roi(treated) if backbone.kind == "mediapipe" else None
             if roi is not None:
                 roi_treated, roi_inferences = collect_window_masks(window, roi)
                 if roi_treated:
@@ -467,17 +722,25 @@ def _compute_subject_matte_inner(
                     )
 
             frame_count += inferences
+            # Pairs that straddle a known hard cut are legit discontinuities,
+            # not segmenter instability — exclude them from every stability
+            # stat so montage cuts can't inflate flip/jump counts. The
+            # post-cut warmup tick is excluded too: its median is built from
+            # 1-2 samples and settles on the next frame.
+            cut_ticks = _window_boundary_ticks(window, cut_boundaries_s)
+            stat_boundary_ticks = cut_ticks | {t + 1 for t in cut_ticks}
             prev_present: bool | None = None
             prev_binary: np.ndarray | None = None
             produced = 0
-            for treated_mask in treated:
+            for tick, treated_mask in enumerate(treated):
+                at_cut = tick in stat_boundary_ticks
                 mean_frac = float(np.mean(treated_mask)) / 255.0
                 coverages.append(mean_frac)
                 present = mean_frac >= _PRESENCE_COVERAGE_FLOOR
-                if prev_present is not None and present != prev_present:
+                if prev_present is not None and present != prev_present and not at_cut:
                     presence_flips += 1
                 binary = treated_mask >= 128 if present else None
-                if binary is not None and prev_binary is not None:
+                if binary is not None and prev_binary is not None and not at_cut:
                     union = int(np.count_nonzero(binary | prev_binary))
                     if union > 0:
                         intersection = int(np.count_nonzero(binary & prev_binary))
@@ -500,7 +763,7 @@ def _compute_subject_matte_inner(
         if proc.returncode != 0:
             raise _MatteAbort(f"ffmpeg matte mux failed: {stderr.decode(errors='replace')[:500]}")
     finally:
-        segmenter.close()
+        backbone.close()
         cap.release()
         if proc is not None and proc.poll() is None:
             proc.kill()
@@ -509,6 +772,7 @@ def _compute_subject_matte_inner(
     if not written_windows or frame_count == 0:
         raise _MatteAbort("no matte frames produced")
 
+    large_jump_count = sum(1 for v in iou_values if v < _LARGE_JUMP_IOU)
     stats = MatteStats(
         mean_coverage=float(np.mean(coverages)),
         min_coverage=float(np.min(coverages)),
@@ -523,6 +787,10 @@ def _compute_subject_matte_inner(
         if len(iou_values) >= _MIN_IOU_PAIRS
         else None,
         iou_pair_count=len(iou_values),
+        large_jump_count=large_jump_count,
+        large_jumps_per_s=large_jump_count / (total_produced / MATTE_FPS)
+        if total_produced
+        else 0.0,
     )
 
     sidecar = {
@@ -639,6 +907,21 @@ class SubjectMatteProvider:
         if not frames:
             return None
 
+        # A mixed pair (matte blob from one burn, sidecar from another —
+        # non-atomic uploads at a deterministic key) serves silently shifted
+        # masks if reconciled; the writer emits exactly the sidecar's frame
+        # total, so any real mismatch means corruption. Reject; the resolver
+        # treats an unopenable cache as a miss and recomputes.
+        expected_total = sum(max(1, round((e - st) * fps)) for st, e in raw_windows)
+        if abs(len(frames) - expected_total) > 2:
+            log.warning(
+                "subject_matte_sidecar_frame_mismatch",
+                matte_path=matte_path,
+                expected=expected_total,
+                actual=len(frames),
+            )
+            return None
+
         stored_windows: list[_StoredWindow] = []
         offset = 0
         for start_s, end_s in raw_windows:
@@ -657,6 +940,11 @@ class SubjectMatteProvider:
             return None
 
         return cls(frames=frames, windows=stored_windows, fps=fps)
+
+    def window_spans(self) -> list[tuple[float, float]]:
+        """Stored [start_s, end_s] spans — lets callers check whether a
+        cached matte covers the windows a burn is about to request."""
+        return [(w.start_s, w.end_s) for w in self._windows]
 
     def _find_window(self, t_abs: float) -> _StoredWindow | None:
         for window in self._windows:
@@ -680,7 +968,12 @@ class SubjectMatteProvider:
             return None
 
         t_clamped = min(max(t_abs, window.start_s), window.end_s)
-        offset = round((t_clamped - window.start_s) * self._fps)
+        # Half-up, not round(): banker's rounding at a constant half-frame
+        # offset (a 0.25s window pad = 7.5 frames) makes the index sequence
+        # repeat-then-skip (8, 8, 10, 10, ...) — a 15fps judder of the mask
+        # edge against 30fps text. floor(x + 0.5) keeps it monotonic with
+        # +1 steps for any constant fractional offset.
+        offset = int(np.floor((t_clamped - window.start_s) * self._fps + 0.5))
         offset = max(0, min(offset, window.frame_count - 1))
         global_index = window.first_frame_index + offset
 
