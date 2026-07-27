@@ -92,6 +92,12 @@ dependencies = [
     # ImageSegmenter task API path does not import cv2 itself (only
     # mediapipe's drawing_utils / legacy solutions API + its own tests do).
     "mediapipe>=0.10,<0.11",
+    # onnxruntime CPU for the RobustVideoMatting subject-matte backbone
+    # (app.pipeline.subject_matte, MATTE_RVM_ENABLED). Imported LAZILY like
+    # mediapipe above; pure-CPU provider, no GL/system deps. Model asset:
+    # assets/models/rvm_mobilenetv3_fp32.onnx (~15MB, committed like the
+    # selfie segmenter tflite).
+    "onnxruntime>=1.17,<2",
     "regex>=2024.11",
 ]
 
