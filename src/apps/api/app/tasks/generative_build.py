@@ -3460,20 +3460,78 @@ def _maybe_add_text_elements_snapshot(result: dict) -> None:
 # is actually on screen (reveal/hold crossfade edges, frame-rounding at burn time).
 _SUBJECT_MATTE_WINDOW_PAD_S = 0.25
 
+# Matte cache-key suffix. v2: RVM backbone + boundary-aware temporal reset +
+# oscillation gate + frame-aligned windows (the beach-glitch fix, prod job
+# add80a9c). A persisted subject_matte_path WITHOUT this suffix predates the
+# fix and may be a glitching matte the old gate accepted — treated as a cache
+# miss so the next matte-needing burn recomputes under the v2 key.
+_MATTE_CACHE_SUFFIX = ".matte.v2.mp4"
+
+# Persisted marker (a path-shaped sentinel, no GCS object behind it) recorded
+# when a freshly computed matte DEFINITIVELY fails the sanity gate (stats
+# computed, matte_is_sane False — a property of the footage, not a transient
+# error). Reburns reuse the same base video, so recomputing on every text
+# edit would fail the same way while burning the full matte budget each time;
+# the sentinel short-circuits straight to plain text. Full re-renders reset
+# subject_matte_path to None, so new footage retries naturally. Transient
+# failures (download/upload/budget/compute error) never mint the sentinel.
+_MATTE_UNSTABLE_SUFFIX = ".matte.v2.unstable"
+
+
+def _matte_delete_allowed(path: str) -> bool:
+    """Only job-scoped matte blobs may be deleted by the migration cleanup.
+
+    Prefix guard: `subject_matte_path` comes from persisted variant state,
+    and curated `music/*` / `templates/*` assets live in the same bucket —
+    a corrupted or maliciously-planted path must never turn this best-effort
+    delete into an arbitrary-object delete."""
+    return path.startswith("generative-jobs/") and ".matte." in path
+
+
+# Coverage tolerance when checking a cached matte against freshly derived
+# windows: grid snapping + 3dp rounding keep unchanged timings well inside
+# this; a genuinely moved overlay lands frames outside it.
+_MATTE_COVERAGE_TOLERANCE_S = 0.1
+
+
+def _matte_covers_windows(provider: Any, windows: list) -> bool:
+    """True when every requested window fits inside a stored matte span.
+
+    Duck-typed: providers without ``window_spans`` (test fakes) are assumed
+    covered — the check exists to catch text-timing edits after a matte was
+    cached, where ``mask_at`` would return None mid-overlay."""
+    spans_fn = getattr(provider, "window_spans", None)
+    if spans_fn is None:
+        return True
+    try:
+        spans = spans_fn()
+    except Exception:  # noqa: BLE001 — best-effort check, never blocks a burn
+        return True
+    tol = _MATTE_COVERAGE_TOLERANCE_S
+    return all(any(s - tol <= w.start_s and w.end_s <= e + tol for s, e in spans) for w in windows)
+
 
 def _behind_subject_windows(overlays: list[dict], duration_s: float) -> list:
     """Union of padded, duration-clamped windows for every `behind_subject: True`
     overlay. Adjacent/overlapping windows are merged so `compute_subject_matte`
     never re-computes the same span twice. `duration_s` <= 0 skips the upper
     clamp (caller couldn't probe the video — matte compute will still bound
-    itself against the actual decoded frame count)."""
-    from app.pipeline.subject_matte import MatteWindow  # noqa: PLC0415
+    itself against the actual decoded frame count).
+
+    Window starts are snapped DOWN to the 1/MATTE_FPS frame grid: the 0.25s
+    pad is 7.5 frames at 30fps, so an un-snapped start hands `mask_at` a
+    constant half-frame offset whose rounding repeats/skips mask indices
+    every ~3 frames — a visible judder of the occlusion edge against smooth
+    video. Flooring keeps the effective pad >= _SUBJECT_MATTE_WINDOW_PAD_S.
+    """
+    from app.pipeline.subject_matte import MATTE_FPS, MatteWindow  # noqa: PLC0415
 
     raw: list[tuple[float, float]] = []
     for ov in overlays:
         if not ov.get("behind_subject"):
             continue
         start_s = max(0.0, float(ov.get("start_s", 0.0)) - _SUBJECT_MATTE_WINDOW_PAD_S)
+        start_s = math.floor(start_s * MATTE_FPS + 1e-6) / MATTE_FPS
         end_s = float(ov.get("end_s", 0.0)) + _SUBJECT_MATTE_WINDOW_PAD_S
         if duration_s > 0:
             end_s = min(end_s, duration_s)
@@ -3491,6 +3549,40 @@ def _behind_subject_windows(overlays: list[dict], duration_s: float) -> list:
     return [MatteWindow(start_s=s, end_s=e) for s, e in merged]
 
 
+def _cut_boundaries_from_durations(durations: list[float]) -> list[float] | None:
+    """Interior hard-cut times on the output timeline of a cut-only montage
+    (cumulative slot durations, last slot's end excluded — it isn't a cut)."""
+    out: list[float] = []
+    t = 0.0
+    for d in durations[:-1]:
+        t += float(d or 0.0)
+        if t > 0:
+            out.append(round(t, 3))
+    return out or None
+
+
+def _variant_slot_boundaries(existing: dict) -> list[float] | None:
+    """Cut times for an already-rendered montage variant, from its persisted
+    timeline (user_timeline wins over ai_timeline, same precedence as the
+    cut-preserving reburn path). ``None`` for collage/legacy variants —
+    boundary hints are best-effort by design. Slot durations are 3dp-rounded
+    and CFR normalization can shift the encoded cut by ±1 frame; a matte
+    reset one frame off still removes the cross-clip ghost."""
+    try:
+        if is_collage_montage_preset(existing.get("montage_preset_rendered")):
+            return None
+        slots = ((existing.get("user_timeline") or {}).get("slots")) or (
+            (existing.get("ai_timeline") or {}).get("slots")
+        )
+        if not slots:
+            return None
+        ordered = sorted(slots, key=lambda s: s.get("order", 0))
+        durations = [float(s.get("duration_s") or 0.0) for s in ordered if not s.get("removed")]
+        return _cut_boundaries_from_durations(durations)
+    except Exception:  # noqa: BLE001 — a boundary hint must never break a burn
+        return None
+
+
 def _resolve_subject_matte_for_burn(
     *,
     video_path: str,
@@ -3501,6 +3593,7 @@ def _resolve_subject_matte_for_burn(
     duration_s: float,
     job_id: str,
     variant_id: str,
+    cut_boundaries_s: list[float] | None = None,
 ) -> tuple[Any, str | None, list[dict]]:
     """Best-effort matte resolution for a burn about to happen.
 
@@ -3512,11 +3605,23 @@ def _resolve_subject_matte_for_burn(
     is logged with the reason. `matte_gcs_path` is `cached_matte_path` unchanged
     on failure (a bad recompute must never clobber a previously-good cache).
 
-    Cache contract: `cached_matte_path` set → downloaded and opened, never
-    recomputed (the "steady state" fast-reburn path). `None` → a fresh matte is
-    computed over the union of `behind_subject` windows (padded, duration-
-    clamped), sanity-gated, uploaded next to `upload_key_base`, and returned as
-    the new `matte_gcs_path` for the caller to persist.
+    Cache contract: `cached_matte_path` set AND carrying the current
+    `_MATTE_CACHE_SUFFIX` → downloaded and opened, never recomputed (the
+    "steady state" fast-reburn path). A path WITHOUT the suffix is a v1
+    matte from before the beach-glitch fix — possibly a glitching matte the
+    old sanity gate accepted — so it is treated as a cache miss: a fresh
+    matte is computed under the v2 key and the v1 blob is deleted
+    best-effort after a successful upload. On recompute failure the ORIGINAL
+    (possibly v1) path is returned unchanged so the next matte-needing burn
+    retries the migration. `None` → a fresh matte is computed over the union
+    of `behind_subject` windows (padded, duration-clamped), sanity-gated,
+    uploaded next to `upload_key_base`, and returned as the new
+    `matte_gcs_path` for the caller to persist.
+
+    `cut_boundaries_s` (output-timeline hard-cut times, best-effort) is
+    forwarded to `compute_subject_matte` so the segmenter's temporal state
+    resets at montage slot joins instead of ghosting the previous clip's
+    silhouette across the cut.
     """
     if not getattr(settings, "text_behind_subject_enabled", False):
         return None, cached_matte_path, overlays
@@ -3532,31 +3637,132 @@ def _resolve_subject_matte_for_burn(
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
     from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
 
+    original_matte_path = cached_matte_path
+
+    # Known-unstable footage (a prior compute's stats definitively failed the
+    # sanity gate): burn plain text immediately — no download, no recompute.
+    if cached_matte_path and cached_matte_path.endswith(_MATTE_UNSTABLE_SUFFIX):
+        record_pipeline_event(
+            "overlay",
+            "subject_matte_resolved",
+            {
+                "variant_id": variant_id,
+                "outcome": "cached_unstable",
+                "matte_path": cached_matte_path,
+            },
+        )
+        stripped = [{k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlays]
+        return None, cached_matte_path, stripped
+
+    stale_matte_path: str | None = None
+    if cached_matte_path and not cached_matte_path.endswith(_MATTE_CACHE_SUFFIX):
+        stale_matte_path = cached_matte_path
+        cached_matte_path = None  # v1 matte — force a recompute under the v2 key
+
     provider = None
-    matte_gcs_path = cached_matte_path
+    matte_gcs_path = original_matte_path
     try:
+        windows = _behind_subject_windows(behind, duration_s)
+        if not windows:
+            raise RuntimeError("no renderable behind_subject windows")
         if cached_matte_path:
-            local_matte = os.path.join(tmpdir, "cached_subject_matte.mp4")
-            download_to_file(cached_matte_path, local_matte)
-            download_to_file(f"{cached_matte_path}.json", f"{local_matte}.json")
-            provider = SubjectMatteProvider.open(local_matte)
-            if provider is None:
-                raise RuntimeError("cached matte failed to open")
-        else:
-            windows = _behind_subject_windows(behind, duration_s)
-            if not windows:
-                raise RuntimeError("no renderable behind_subject windows")
+            try:
+                local_matte = os.path.join(tmpdir, "cached_subject_matte.mp4")
+                download_to_file(cached_matte_path, local_matte)
+                download_to_file(f"{cached_matte_path}.json", f"{local_matte}.json")
+                provider = SubjectMatteProvider.open(local_matte)
+                if provider is None:
+                    raise RuntimeError("cached matte failed to open")
+                if not _matte_covers_windows(provider, windows):
+                    # Text timing moved since the matte was computed — a
+                    # cached matte that doesn't span the requested windows
+                    # makes mask_at return None mid-overlay (occlusion
+                    # silently drops out). Recompute for the new windows.
+                    raise RuntimeError("cached matte does not cover requested windows")
+            except Exception as cache_exc:  # noqa: BLE001 — treat as a miss
+                # A broken blob/sidecar (or stale coverage) must not poison
+                # the cache forever: recompute under the same v2 key
+                # (overwrites in place) instead of failing this and every
+                # future burn the same way.
+                log.warning(
+                    "text_behind_subject_cache_miss_recompute",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(cache_exc),
+                )
+                provider = None
+                cached_matte_path = None
+        if provider is None:
             local_matte = os.path.join(tmpdir, "computed_subject_matte.mp4")
-            stats = compute_subject_matte(video_path, windows, local_matte)
-            if stats is None or not matte_is_sane(stats):
-                raise RuntimeError(f"matte compute failed or insane: {stats}")
-            upload_key = f"{upload_key_base}.matte.mp4"
+            stats = compute_subject_matte(
+                video_path, windows, local_matte, cut_boundaries_s=cut_boundaries_s
+            )
+            if stats is None:
+                raise RuntimeError("matte compute failed")
+            had_v2_cache = bool(
+                original_matte_path and original_matte_path.endswith(_MATTE_CACHE_SUFFIX)
+            )
+            if not matte_is_sane(stats) and had_v2_cache:
+                # A v2 cache existed and only this recompute (typically a
+                # coverage-miss after a text-timing move) failed the gate —
+                # the failure is window-local, not a property of the whole
+                # base. Keep the old cache: text moved back into its span
+                # works instantly, and the moved window stays retryable.
+                raise RuntimeError(f"matte insane for new windows (keeping v2 cache): {stats}")
+            if not matte_is_sane(stats) and not cut_boundaries_s:
+                # Gate rejection WITHOUT cut hints is ambiguous: on legacy
+                # variants (no persisted timeline) and subtitled silence-cut
+                # joins, real cuts count as jumps/flips, so the rejection may
+                # be the hints' absence, not the footage. Fall back for this
+                # burn only — never mint the permanent sentinel from
+                # known-incomplete inputs.
+                raise RuntimeError(f"matte insane (no cut hints): {stats}")
+            if not matte_is_sane(stats):
+                # Definitive footage-level rejection — persist the sentinel so
+                # every later reburn of this base skips straight to plain text
+                # instead of recomputing (and failing) the matte each time.
+                sentinel = f"{upload_key_base}{_MATTE_UNSTABLE_SUFFIX}"
+                if stale_matte_path and _matte_delete_allowed(stale_matte_path):
+                    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+                    delete_object_best_effort(stale_matte_path)
+                    delete_object_best_effort(f"{stale_matte_path}.json")
+                log.warning(
+                    "text_behind_subject_unstable_footage",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    stats=str(stats)[:300],
+                )
+                record_pipeline_event(
+                    "overlay",
+                    "subject_matte_resolved",
+                    {
+                        "variant_id": variant_id,
+                        "outcome": "unstable_rejected",
+                        "matte_path": sentinel,
+                        "stats": str(stats)[:200],
+                    },
+                )
+                stripped = [
+                    {k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlays
+                ]
+                return None, sentinel, stripped
+            upload_key = f"{upload_key_base}{_MATTE_CACHE_SUFFIX}"
             upload_public_read(local_matte, upload_key)
             upload_public_read(f"{local_matte}.json", f"{upload_key}.json")
             provider = SubjectMatteProvider.open(local_matte)
             if provider is None:
                 raise RuntimeError("freshly computed matte failed to open")
             matte_gcs_path = upload_key
+            if (
+                stale_matte_path
+                and stale_matte_path != upload_key
+                and _matte_delete_allowed(stale_matte_path)
+            ):
+                from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+                delete_object_best_effort(stale_matte_path)
+                delete_object_best_effort(f"{stale_matte_path}.json")
     except Exception as exc:  # noqa: BLE001 — best-effort, never fails the burn
         log.warning(
             "text_behind_subject_fallback",
@@ -3574,7 +3780,7 @@ def _resolve_subject_matte_for_burn(
             },
         )
         stripped = [{k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlays]
-        return None, cached_matte_path, stripped
+        return None, original_matte_path, stripped
 
     record_pipeline_event(
         "overlay",
@@ -3947,6 +4153,7 @@ def _reburn_text_on_base(
                         duration_s=_lyrics_dur,
                         job_id=job_id,
                         variant_id=variant_id,
+                        cut_boundaries_s=_variant_slot_boundaries(existing),
                     )
                 )
                 _burn_text_for_variant(
@@ -4025,6 +4232,7 @@ def _reburn_text_on_base(
                 duration_s=_te_dur,
                 job_id=job_id,
                 variant_id=variant_id,
+                cut_boundaries_s=_variant_slot_boundaries(existing),
             )
             _burn_text_for_variant(local_base, _te_burn_dicts, _te_final_path, matte=_te_provider)
             _te_gcs_key = reburn_output_key
@@ -4215,6 +4423,7 @@ def _reburn_text_on_base(
                 duration_s=base_dur,
                 job_id=job_id,
                 variant_id=variant_id,
+                cut_boundaries_s=_variant_slot_boundaries(existing),
             )
             _burn_text_for_variant(local_base, overlays, final_path, matte=_matte_provider)
 
@@ -5775,14 +5984,19 @@ def _run_regenerate_variant(
         # (D16-C) before the reapply pass mints fresh ones.
         _free_media_snapshot_keys(retired_snapshot_keys)
         # Text-behind-subject: a full re-render's matte upload key is deterministic
-        # (base_video_path + ".matte.mp4", same as `base_gcs` itself), so a fresh
-        # recompute overwrites the SAME blob — no orphan there. The orphan case is
-        # the OTHER direction: the previous render had a matte and this one didn't
-        # recompute one (behind_subject/flag now off, or no overlay needs it), so
-        # the old blob at that deterministic key is unreferenced from here on.
+        # (base_video_path + _MATTE_CACHE_SUFFIX), so a fresh recompute overwrites
+        # the SAME blob — no orphan there. The orphan cases the old!=new delete
+        # below covers: the previous render had a matte and this one didn't
+        # recompute one (behind_subject/flag now off, or no overlay needs it),
+        # and the v1→v2 suffix migration (old ".matte.mp4" key retired when the
+        # recompute lands under ".matte.v2.mp4").
         old_matte_path = existing.get("subject_matte_path")
         new_matte_path = result.get("subject_matte_path")
-        if old_matte_path and old_matte_path != new_matte_path:
+        if (
+            old_matte_path
+            and old_matte_path != new_matte_path
+            and _matte_delete_allowed(old_matte_path)
+        ):
             from app.storage import delete_object_best_effort  # noqa: PLC0415
 
             delete_object_best_effort(old_matte_path)
@@ -8136,6 +8350,15 @@ def _render_generative_variant(
                     duration_s=base_dur,
                     job_id=job_id,
                     variant_id=variant_id,
+                    # Slot joins in a classic cut-only assembly are exact cut
+                    # times; masonry/collage boards have no timeline cuts.
+                    cut_boundaries_s=(
+                        _cut_boundaries_from_durations(
+                            [float(p.get("duration_s") or 0.0) for p in resolved_plans]
+                        )
+                        if classic_assembly_done and not masonry_applied
+                        else None
+                    ),
                 )
                 base["subject_matte_path"] = matte_path
                 _burn_agent_text_overlays(overlay_dicts, output_path, matte=provider)
@@ -11446,6 +11669,10 @@ def _compose_subtitled_final(
                 duration_s=duration_s,
                 job_id=job_id,
                 variant_id=variant_id,
+                # Subtitled variants are single-clip — no interior hard cuts.
+                # (Silence-cut keep-segment joins are a known unmodeled
+                # discontinuity; acceptable, boundary hints are best-effort.)
+                cut_boundaries_s=None,
             )
         text_burned = os.path.join(tmpdir, "subtitled_text_underlay.mp4")
         burn_text_overlays_skia(

@@ -407,3 +407,53 @@ swap-song/retext regen (clip_metas re-analysis already does; cacheable later).
 **Decision:** Ship `haarcascade_frontalface_default.xml` in the repo/image at `src/apps/api/assets/cv/` and resolve it via `resolve_face_cascade_path()` (`app/pipeline/face_sampler_worker.py`), preferring the bundled asset over `cv2.data.haarcascades`.
 **Why:** Prod job `1e768d5b-3c82-499e-9063-c25449562844` showed `worker_error: rc_1 ... Can't open file '/usr/local/lib/python3.11/site-packages/cv2/data/haarc...'` — face-aware caption/thumbnail placement silently fell back to preset placement (`reason=sampler_error`) on every prod job. Root cause: `pyproject.toml`'s documented collision (mediapipe pulls `opencv-contrib-python` alongside `opencv-python-headless`) means whichever `cv2` package wins dependency resolution in the built image, its `cv2.data.haarcascades` directory does not reliably ship the cascade XML — a wheel-packaging detail outside our control that only reproduces in the built image, not local dev. `_load_cascade()` also now checks `cascade.empty()` and raises `FaceCascadeLoadError` naming the resolved path instead of silently constructing an always-empty classifier (the class of failure that produced the opaque `rc_1` in the first place).
 **Revisit if:** the opencv/mediapipe dependency collision gets a real fix upstream (e.g. mediapipe drops its own opencv pin) — at that point the vendored asset becomes a belt-and-braces fallback rather than the primary path, but keeping it costs ~1MB and removes a wheel-packaging dependency either way.
+
+## [2026-07-27] Behind-subject glitch: RVM backbone + boundary resets + oscillation gate (prod job add80a9c)
+
+Plan item 9f51eee2 (4-clip landscape beach montage, one behind_subject
+element spanning all clips) rendered with visibly strobing occlusion. The
+matte showed the selfie segmenter's confidence oscillating en masse every
+~5–9 frames (mask area 7%↔63% — sand/rock read like skin), which the 3-frame
+median can't suppress and BOTH sanity gates missed: presence never flipped
+(mask never vanished; 4 flips @ 0.365/s under the AND-gate) and the median
+IoU stayed 0.927 (~15 jump pairs hidden among 308 stable ones). Two more
+mechanisms compounded it: the temporal median carried ~2 frames of the
+previous clip's silhouette across every slot cut, and the 0.25s window pad
+(7.5 frames) put mask_at on a half-frame offset where banker's rounding
+repeats/skips mask indices every ~3 frames.
+
+Decisions:
+- **Swap the segmentation backbone to RobustVideoMatting** (onnxruntime CPU,
+  recurrent) — measured on the exact failing footage: median adjacent-frame
+  IoU 0.980 vs the flapping selfie-segmenter mask, 30fps on M-series CPU at
+  downsample 0.25. Mediapipe stays as the automatic fallback +
+  `MATTE_RVM_ENABLED=false` kill switch. RVM weights are **GPL-3.0**: used
+  server-side only, never distributed to users, and our inference code is
+  written fresh against onnxruntime — acceptable; revisit if we ever ship
+  the model client-side.
+- **Reset temporal state at known cuts** (`cut_boundaries_s` threaded from
+  variant timelines / assembly plans into `compute_subject_matte`) instead of
+  detecting scene cuts in the matte engine — the orchestrator already knows
+  the exact slot joins.
+- **Add the large-jump oscillation gate** (adjacent-pair IoU < 0.5 count +
+  rate AND-gate, cut pairs excluded) so any backbone that oscillates falls
+  back to text-in-front rather than shipping a strobing occlusion.
+- **Version the matte cache key** (`.matte.v2.mp4`): old cached mattes may be
+  glitching mattes the old gate accepted; suffix mismatch = cache miss +
+  recompute + best-effort v1 delete. Chosen over sidecar re-validation (old
+  sidecars lack the new stats — defaults would always pass).
+
+Trade-off accepted: RVM mattes people, not arbitrary objects — the "behind
+the rock" look on clip 1 of the beach montage was the broken model
+hallucinating and is gone. Behind-arbitrary-objects would need a
+salient-object/video-segmentation model (follow-up if ever wanted).
+
+Ship-review addenda (same day): pre-downscale frames to 0.25 natural aspect +
+`downsample_ratio=1.0` (kills the discarded full-res guided-filter/fgr work —
+review measured the full-res path infeasible for the 90s budget on Fly
+vCPUs); ORT threads pinned (2 intra-op, spinning off) for the shared-vCPU
+worker; windows totalling >1800 ticks fall back to mediapipe up front; a
+definitive sanity-gate rejection persists a `.matte.v2.unstable` sentinel so
+reburns of the same base stop re-paying the recompute (transient failures
+still retry); matte-migration deletes are prefix-guarded to
+`generative-jobs/*.matte.*`.

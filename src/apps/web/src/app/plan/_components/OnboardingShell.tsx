@@ -3,13 +3,15 @@
 /**
  * OnboardingShell — Split-rail onboarding wrapper (Build Goal #1).
  *
- * Layout:
- *   LEFT RAIL (w-56, fixed, full height):
- *     4 steps as a vertical progress rail (dot + label).
+ * Layout (responsive — DESIGN.md §8):
+ *   STEP RAIL — shared <StepRail>. From `md` up it is the docked w-56 vertical
+ *     rail; below `md` it collapses to a horizontal dot strip above the pane, so
+ *     it costs one 45px row instead of 57% of a phone's width. The strip keeps
+ *     tap-back on done steps, which a plain "Step n of 4" line cannot.
  *     Done → lime dot + checkmark; Active → ink dot; Upcoming → zinc dot.
  *     Clicking a DONE step goes back to it; upcoming steps are non-interactive.
  *
- *   RIGHT PANE (flex-1, max-w-lg centered):
+ *   PANE (flex-1 min-w-0, max-w-lg centered):
  *     Step 1 — TikTok: <TikTokPreScreen>
  *     Step 2 — What you make: 4 multi-select toggle cards
  *     Step 3 — Style: <ChatInterview> while persona building, then <PersonaEditor>
@@ -35,6 +37,7 @@ import TikTokPreScreen from "./TikTokPreScreen";
 import ChatInterview from "./ChatInterview";
 import PersonaEditor from "./PersonaEditor";
 import { GeneratingStateLight } from "./GeneratingStateLight";
+import { StepRail, stepState, type StepRailStep } from "./ui/StepRail";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -123,79 +126,32 @@ const STEP_LABELS: Record<OnboardingStep, string> = {
   4: "First plan",
 };
 
-function StepRail({
-  current,
-  tiktokStatus,
-  onGoBack,
-}: {
-  current: OnboardingStep;
-  tiktokStatus: TikTokStatus;
-  onGoBack: (step: OnboardingStep) => void;
-}) {
-  return (
-    <aside className="hidden w-56 shrink-0 flex-col border-r border-zinc-200 bg-white px-8 py-10 md:flex">
-      <p className="text-xs font-semibold uppercase tracking-widest text-[#3f3f46]">Kria</p>
+/**
+ * Map onboarding state onto the shared rail's step model. Step 1 is "skipped"
+ * when the user bypassed the TikTok lookup; only done, non-skipped earlier
+ * steps are revisitable.
+ */
+function onboardingSteps(
+  current: OnboardingStep,
+  tiktokStatus: TikTokStatus,
+): StepRailStep<OnboardingStep>[] {
+  return ([1, 2, 3, 4] as OnboardingStep[]).map((n) => {
+    const isDone = n < current;
+    const isSkipped = n === 1 && tiktokStatus === "skipped";
 
-      <ol className="mt-10 flex flex-col gap-6">
-        {([1, 2, 3, 4] as OnboardingStep[]).map((n) => {
-          const isDone = n < current;
-          const isActive = n === current;
-          const isSkipped = n === 1 && tiktokStatus === "skipped";
-          // Only done (non-skipped) steps before current are clickable.
-          const isClickable = isDone && !isSkipped && n < current;
+    let note: StepRailStep["note"];
+    if (isSkipped) note = { text: "(skipped)", tone: "zinc" };
+    else if (isDone) note = { text: "✓", tone: "lime" };
 
-          let dotColor: string;
-          if (isSkipped) {
-            dotColor = "bg-zinc-300";
-          } else if (isDone) {
-            dotColor = "bg-lime-600";
-          } else if (isActive) {
-            dotColor = "bg-[#0c0c0e]";
-          } else {
-            dotColor = "bg-zinc-300";
-          }
-
-          let textColor: string;
-          if (isActive) {
-            textColor = "text-[#0c0c0e] font-semibold";
-          } else if (isDone && !isSkipped) {
-            textColor = "text-[#3f3f46]";
-          } else {
-            textColor = "text-[#a1a1aa]";
-          }
-
-          return (
-            <li key={n}>
-              <button
-                type="button"
-                disabled={!isClickable}
-                onClick={() => isClickable && onGoBack(n)}
-                className={cn(
-                  "flex items-center gap-3 text-left text-sm",
-                  isClickable && "cursor-pointer transition-opacity hover:opacity-70",
-                  !isClickable && "cursor-default",
-                  textColor,
-                )}
-              >
-                <span
-                  className={cn("h-[7px] w-[7px] shrink-0 rounded-full", dotColor)}
-                />
-                <span>
-                  {STEP_LABELS[n]}
-                  {isSkipped && (
-                    <span className="ml-1 text-xs text-[#a1a1aa]">(skipped)</span>
-                  )}
-                  {isDone && !isSkipped && (
-                    <span className="ml-1 text-xs text-lime-600">✓</span>
-                  )}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ol>
-    </aside>
-  );
+    return {
+      key: n,
+      label: STEP_LABELS[n],
+      // Skipped is onboarding-only; everything else is the shared derivation.
+      state: isSkipped ? "skipped" : stepState(n, current),
+      clickable: isDone && !isSkipped,
+      note,
+    };
+  });
 }
 
 // ── Step 2: What you make (multi-select) ─────────────────────────────────────
@@ -228,6 +184,10 @@ function WhatYouMakeStep({
 
   return (
     <div>
+      {/* Visible at every width again. #739 hid this below md because the shell
+          also rendered a "Step N of 4" marker there and the pair read as a
+          duplicate; the shared StepRail replaced that marker with dots plus the
+          step's name, so this is now the only step count on the screen. */}
       <p className="text-xs font-semibold uppercase tracking-widest text-lime-700">
         Step 2 of 4
       </p>
@@ -238,7 +198,9 @@ function WhatYouMakeStep({
         Pick all that apply — Kria adapts edits to your style.
       </p>
 
-      <div className="mt-10 grid grid-cols-2 gap-4">
+      {/* DESIGN.md §8 "mobile-first: single column default, sm:/md: enhance" —
+          two columns at 390px wrapped "Talking to camera" onto three lines. */}
+      <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2">
         {FOOTAGE_OPTIONS.map((opt) => {
           const isSelected = selected.includes(opt.value);
           return (
@@ -312,6 +274,7 @@ export default function OnboardingShell({
   onSavePersona,
   onChatComplete,
   onContinueToPlan,
+  onRetune,
   error,
 }: OnboardingShellProps) {
   // Lazy initializers: derive the right step/tiktokStatus from server state on
@@ -406,6 +369,9 @@ export default function OnboardingShell({
           continuing={planBusy}
           tiktokProfile={persona.tiktok_profile}
           variant="reveal"
+          // Reveal only surfaces this when generation produced nothing, as the
+          // "Generate persona" retry — never as a peer of the primary CTA.
+          onRetuneFromFeedback={onRetune}
         />
       );
     }
@@ -417,15 +383,14 @@ export default function OnboardingShell({
   // ── Layout ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex min-h-[100dvh] bg-[#fafaf8]">
-      <StepRail current={step} tiktokStatus={tiktokStatus} onGoBack={goBack} />
+    <div className="flex min-h-[100dvh] flex-col bg-[#fafaf8] md:flex-row">
+      <StepRail steps={onboardingSteps(step, tiktokStatus)} onGoBack={goBack} />
 
       {/* Right pane */}
-      <main className="flex flex-1 items-start justify-center px-5 py-6 md:px-12 md:py-16">
+      {/* min-w-0 lets this flex child shrink below its content's min-content
+          width instead of overflowing the viewport on phones. */}
+      <main className="flex min-w-0 flex-1 items-start justify-center px-5 py-6 md:px-12 md:py-16">
         <div className="w-full max-w-lg">
-          <p className="mb-5 text-xs font-medium uppercase tracking-[0.08em] text-[#a1a1aa] md:hidden">
-            Step {step} of 4
-          </p>
           {/* Error banner (outside the slide so it doesn't re-animate on step change) */}
           {error && (
             <div className="mb-6 rounded border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">

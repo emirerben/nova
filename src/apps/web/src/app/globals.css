@@ -64,6 +64,41 @@
   initial-value: 0deg;
 }
 
+/* ── Base tier: form controls never trip iOS zoom-on-focus ──────────────────
+   DESIGN.md §8: "inputs on touch viewports are ≥44px tall with ≥16px font to
+   prevent iOS Safari zoom-on-focus." Mobile Safari zooms the viewport whenever
+   a focused control's font-size resolves below 16px — and stays zoomed, which
+   is most of what makes a page feel broken on a phone. Dense UI keeps its
+   11–15px type on desktop; below `sm` (640px, §8 table) it floors at 16px.
+
+   Fixed at the mechanism, not at ~60 call sites — but deliberately NOT a
+   blanket `input { font-size: 16px }`:
+
+     - A bare element selector (0,0,1) loses to `.text-sm` (0,1,0), so a blanket
+       rule silently does nothing. `:is(input,…):is(.text-sm,…)` is (0,1,1) and
+       wins, without needing !important.
+     - A blanket 16px would also shrink controls that are deliberately LARGER
+       (TikTokPreScreen's handle field is `text-lg`). Listing only the offending
+       size utilities raises the too-small and leaves the rest alone.
+     - Controls with no size class are already covered: Tailwind's preflight
+       sets `font-size: 100%` on input/textarea/select, so they inherit 16px
+       rather than the ~13.3px UA default.
+
+   The class list is closed, so a NEW sub-16px control would slip through — that
+   is what the guard test covers (src/__tests__/plan/mobile-shell.test.tsx). */
+@media (max-width: 639px) {
+  :is(input, textarea, select):is(
+      .text-xs,
+      .text-sm,
+      .text-\[11px\],
+      .text-\[12px\],
+      .text-\[13px\],
+      .text-\[15px\]
+    ) {
+    font-size: 16px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up {
     animation: none;

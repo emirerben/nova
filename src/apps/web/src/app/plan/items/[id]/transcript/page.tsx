@@ -3,8 +3,12 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { cn } from "@/lib/cn";
 import type { AudioTake } from "@/hooks/useAudioRecorder";
+import {
+  StepRail,
+  stepState,
+  type StepRailStep,
+} from "@/app/plan/_components/ui/StepRail";
 import {
   getPlanItem,
   getPlanItemJobStatus,
@@ -47,63 +51,22 @@ function StepSlide({ children }: { children: React.ReactNode }) {
   return <div className={`step-slide${entered ? " is-entered" : ""}`}>{children}</div>;
 }
 
-// ── Step rail (mirrors OnboardingShell.StepRail) ──────────────────────────────
+// ── Step rail ─────────────────────────────────────────────────────────────────
 
-function StepRail({
-  current,
-  onGoBack,
-}: {
-  current: Step;
-  onGoBack: (step: Step) => void;
-}) {
-  return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white px-8 py-10">
-      <p className="text-xs font-semibold uppercase tracking-widest text-[#3f3f46]">Kria</p>
+/** Map record-flow state onto the shared rail's step model. */
+function transcriptSteps(current: Step): StepRailStep<Step>[] {
+  return STEP_LABELS.map((label, i) => {
+    const n = i as Step;
+    const isDone = n < current;
 
-      <ol className="mt-10 flex flex-col gap-6">
-        {STEP_LABELS.map((label, i) => {
-          const n = i as Step;
-          const isDone = n < current;
-          const isActive = n === current;
-          const isClickable = isDone;
-
-          let dotColor: string;
-          if (isDone) dotColor = "bg-lime-600";
-          else if (isActive) dotColor = "bg-[#0c0c0e]";
-          else dotColor = "bg-zinc-300";
-
-          let textColor: string;
-          if (isActive) textColor = "text-[#0c0c0e] font-semibold";
-          else if (isDone) textColor = "text-[#3f3f46]";
-          else textColor = "text-[#a1a1aa]";
-
-          return (
-            <li key={label}>
-              <button
-                type="button"
-                disabled={!isClickable}
-                onClick={() => isClickable && onGoBack(n)}
-                className={cn(
-                  "flex items-center gap-3 text-left text-sm",
-                  isClickable && "cursor-pointer transition-opacity hover:opacity-70",
-                  !isClickable && "cursor-default",
-                  textColor,
-                )}
-              >
-                <span className={cn("h-[7px] w-[7px] shrink-0 rounded-full", dotColor)} />
-                <span>
-                  {label}
-                  {isDone && <span className="ml-1 text-xs text-lime-600">✓</span>}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ol>
-
-      <div className="mt-auto pt-10" />
-    </aside>
-  );
+    return {
+      key: n,
+      label,
+      state: stepState(n, current),
+      clickable: isDone,
+      note: isDone ? ({ text: "✓", tone: "lime" } as const) : undefined,
+    };
+  });
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -261,8 +224,11 @@ export default function TranscriptTakeoverPage() {
           />
         )}
 
+        {/* dvh, not vh: on mobile Safari/Chrome `100vh` ignores the browser
+            toolbar, which pushed the 44px record targets off-screen. Matches
+            the editor's dvh convention (EditorShell, CopilotDrawer). */}
         {step === 3 && script && (
-          <div className="h-[calc(100vh-8rem)]">
+          <div className="h-[calc(100dvh-8rem)]">
             <TeleprompterRecorder
               itemId={itemId}
               script={script}
@@ -291,10 +257,11 @@ export default function TranscriptTakeoverPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-[#fafaf8]">
-      <StepRail current={step} onGoBack={goBack} />
+    <div className="flex min-h-[100dvh] flex-col bg-[#fafaf8] md:flex-row">
+      <StepRail steps={transcriptSteps(step)} onGoBack={goBack} />
 
-      <main className="flex flex-1 flex-col px-8 py-10 sm:px-12">
+      {/* min-w-0 lets this flex child shrink instead of overflowing on phones. */}
+      <main className="flex min-w-0 flex-1 flex-col px-5 py-8 md:px-12 md:py-10">
         <div className="mb-8">
           <Link
             href={backToItem}

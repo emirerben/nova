@@ -57,20 +57,36 @@ agnostic.
 
 Public surface of `subject_matte.py`:
 
-- `compute_subject_matte(video_path, windows, out_path) -> MatteStats |
-  None` — runs MediaPipe's `ImageSegmenter` (selfie segmenter, stateless
-  `IMAGE` running mode — VIDEO mode's internal temporal filter balloons on
-  busy footage) over the given `MatteWindow`s,
+- `compute_subject_matte(video_path, windows, out_path, cut_boundaries_s=None)
+  -> MatteStats | None` — segments the given `MatteWindow`s with the
+  **RobustVideoMatting backbone** (rvm_mobilenetv3, onnxruntime CPU,
+  `downsample_ratio=0.25`, recurrent — temporally stable by construction;
+  model asset `assets/models/rvm_mobilenetv3_fp32.onnx`, GPL-3.0 weights used
+  server-side only). When `MATTE_RVM_ENABLED=false` or onnxruntime/the model
+  is unavailable it falls back to MediaPipe's `ImageSegmenter` (selfie
+  segmenter, stateless `IMAGE` running mode — VIDEO mode's internal temporal
+  filter balloons on busy footage; the selfie segmenter's confidence also
+  oscillates en masse on person-adjacent textures — beach sand/rock — which
+  is what shipped the prod-job `add80a9c` glitch and motivated the RVM swap).
+  `cut_boundaries_s` (output-timeline hard-cut times, best-effort) resets the
+  temporal median AND the RVM recurrent state at each montage slot join —
+  without the reset, ~2 frames of the previous clip's silhouette occlude text
+  at every cut — and excludes boundary-crossing pairs from the stability
+  stats. Sampling is
   time-aligned to the source fps (`CAP_PROP_FPS`; a tick only advances the
   capture as far as real time has advanced — never sequential half-rate
-  reads), applies the v3 mask treatment, and writes a grayscale H.264 mp4 +
-  sidecar JSON. When the full-frame pass detects only a
+  reads); the v3 mask treatment applies to both backbones, and the output is
+  a grayscale H.264 mp4 + sidecar JSON. On the **mediapipe path only**: when
+  the full-frame pass detects only a
   small subject region (union bbox < 25% of frame), a second pass re-segments
   a zoomed crop around it (2x-padded, min 20% side) — a distant person is a
   handful of pixels in the model's ~256px input and confidence flaps
   0.0→1.0→0.0 full-frame, but fills the input and holds 1.00 when zoomed
   (`_small_subject_roi` + the `roi_frac` path; log event
-  `subject_matte_roi_refined`). Best-effort:
+  `subject_matte_roi_refined`). The RVM path skips the ROI pass — recurrence
+  + downsample keeps distant subjects stable full-frame, and a window-wide
+  crop would zero any clip of a multi-clip montage whose subject sits outside
+  it. Best-effort:
   every failure mode (missing model, unreadable video, mediapipe not
   installed, wall-clock budget blown) returns `None` and never raises.
 - `matte_is_sane(stats) -> bool` — the sanity gate (see below).
@@ -105,9 +121,26 @@ here.
    occluded overlay (`_behind_subject_windows` in `generative_build.py`,
    merges overlapping windows so no span computes twice).
 2. **GCS cache next to `base_video_path`.** The matte mp4 + sidecar upload to
-   `{base_gcs_path}.matte.mp4` (+ `.json`) — same key prefix as the text-free
-   audio-mixed base, so it lives and dies with that variant's base artifact.
-   The GCS key persists on the variant as `subject_matte_path`.
+   `{base_gcs_path}.matte.v2.mp4` (+ `.json`) — same key prefix as the
+   text-free audio-mixed base, so it lives and dies with that variant's base
+   artifact. The GCS key persists on the variant as `subject_matte_path`.
+   The `.v2` segment is a **cache version** (`_MATTE_CACHE_SUFFIX`): a
+   persisted path without it predates the beach-glitch fix (RVM backbone +
+   boundary resets + oscillation gate) and may be a glitching matte the old
+   gate accepted, so the resolver treats it as a cache miss, recomputes under
+   the v2 key, and best-effort deletes the v1 blob + sidecar after a
+   successful upload. A failed migration returns the original v1 path
+   unchanged for TRANSIENT failures (burn falls back to plain text this
+   once, retry next burn). A DEFINITIVE failure — stats computed but
+   `matte_is_sane` False — persists the `.matte.v2.unstable` sentinel
+   (`_MATTE_UNSTABLE_SUFFIX`, a path-shaped marker with no GCS object):
+   reburns reuse the same base video, so the gate would reject the same way
+   on every text edit while burning the full matte budget each time; the
+   sentinel short-circuits straight to plain text (trace outcomes
+   `unstable_rejected` / `cached_unstable`). Full re-renders reset
+   `subject_matte_path` to None, so new footage retries naturally. Migration
+   deletes are prefix-guarded by `_matte_delete_allowed` (job-scoped
+   `generative-jobs/*.matte.*` only — curated assets share the bucket).
 3. **Reuse on reburn.** Any fast-reburn (font/text/size edit, style change)
    downloads the cached matte and opens it via `SubjectMatteProvider.open` —
    no recompute. This is the "steady state" path and is why matte compute
@@ -118,8 +151,16 @@ here.
    at reburn time, exactly like a first render.
 
 The shared resolver for both paths is `_resolve_subject_matte_for_burn` in
-`generative_build.py`: cache-hit → download + open, never recompute;
-cache-miss → compute + sanity-gate + upload + open. **Any** step failing
+`generative_build.py`: cache-hit (current-suffix path) → download + open,
+never recompute; cache-miss (or v1 path) → compute + sanity-gate + upload +
+open. Montage call sites pass `cut_boundaries_s` derived from the variant
+timeline (`_variant_slot_boundaries`: user_timeline wins over ai_timeline,
+removed slots skipped, collage presets → None) or, on first render, from the
+resolved assembly plans (`_cut_boundaries_from_durations`); subtitled passes
+None (single clip). Window starts are snapped down to the 1/30 frame grid in
+`_behind_subject_windows` — the raw 0.25s pad is 7.5 frames, and a constant
+half-frame offset made `mask_at`'s rounding repeat/skip mask indices every
+~3 frames (a 15fps judder of the occlusion edge). **Any** step failing
 (download, compute, sanity check, upload, provider open) strips
 `behind_subject` from every overlay about to burn and logs
 `text_behind_subject_fallback` — the render always finishes as plain text,
@@ -190,6 +231,19 @@ have). The gate rejects below `_MIN_SHAPE_STABILITY_IOU = 0.40`
 (conservative: real subjects at 30fps keep adjacent-frame IoU well above
 0.7 even in fast motion, and the median is immune to isolated scene cuts —
 the Argentina anchor's single cut pair can't drag it down).
+
+**Oscillation (large-jump) gate:** the median is also blind to *periodic*
+multi-frame oscillation — prod job `add80a9c` (beach montage) flapped its
+mask area 7%↔63% every ~5–9 frames yet kept median IoU 0.927, because ~15
+jump pairs hid among 308 stable ones; presence never flipped (the mask never
+fully vanished), so that gate was blind too. `MatteStats` therefore also
+counts `large_jump_count` / `large_jumps_per_s`: adjacent present-pairs with
+IoU < `_LARGE_JUMP_IOU = 0.50`, boundary-crossing pairs at known cuts
+excluded. The gate rejects when count > `_MAX_LARGE_JUMPS = 3` AND rate >
+`_MAX_LARGE_JUMPS_PER_S = 0.60` (AND-gate, same shape as the presence gate).
+Anchors: beach matte ≈ 15 jumps @ 1.34/s (reject); stable footage ≈ 0; a
+single in-window whip-pan ≈ 0.1/s (keep). With cut boundaries provided,
+legit montage cuts contribute zero jumps.
 
 ## Visibility policy (anti-strobe hide)
 
