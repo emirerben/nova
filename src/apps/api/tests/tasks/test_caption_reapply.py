@@ -512,6 +512,7 @@ def test_caption_reburn_persisted_overlays_real_chain_applies_onto_new_burn(monk
     seen: dict = {}
     _patch_reburn_io(monkeypatch, seen)
     monkeypatch.setattr("app.storage.copy_object", lambda src, dst: None)
+    monkeypatch.setattr("app.storage.object_exists", lambda _path: False)
     monkeypatch.setattr("app.storage.signed_get_url", lambda p, **k: f"https://signed/{p}")
     monkeypatch.setattr(
         "app.pipeline.probe.probe_video",
@@ -562,6 +563,7 @@ def _run_text_fast_reburn(monkeypatch, variant):
     seen: dict = {}
     _patch_storage(monkeypatch, seen)
     monkeypatch.setattr("app.storage.copy_object", lambda src, dst: None)
+    monkeypatch.setattr("app.storage.object_exists", lambda _path: False)
     monkeypatch.setattr("app.storage.signed_get_url", lambda p, **k: f"https://signed/{p}")
     monkeypatch.setattr(
         "app.pipeline.probe.probe_video",
@@ -1157,6 +1159,7 @@ def test_caption_reburn_with_lanes_real_chain_ends_ready_with_effects(monkeypatc
     seen: dict = {}
     _patch_reburn_io(monkeypatch, seen)
     monkeypatch.setattr("app.storage.copy_object", lambda src, dst: None)
+    monkeypatch.setattr("app.storage.object_exists", lambda _path: False)
     monkeypatch.setattr("app.storage.signed_get_url", lambda p, **k: f"https://signed/{p}")
     monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
     overlay_applies: list[dict] = []

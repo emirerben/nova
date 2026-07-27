@@ -104,6 +104,7 @@ def _patch_common(monkeypatch, job, *, sfx_apply, sound_effects_enabled=True):
     )
     monkeypatch.setattr("app.pipeline.sound_effects.apply_sound_effects", sfx_apply)
     monkeypatch.setattr("app.storage.copy_object", lambda src, dst: None)
+    monkeypatch.setattr("app.storage.object_exists", lambda _path: False)
     monkeypatch.setattr("app.storage.signed_get_url", lambda path, **kw: "gs://bucket/signed")
     monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
     # FakeJob is not an ORM-mapped instance; neutralise the dirty-flag call.

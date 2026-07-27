@@ -75,6 +75,7 @@ def _patch_common(monkeypatch, job, *, mutate_during_apply=None):
     monkeypatch.setattr(gb.settings, "sound_effects_enabled", False, raising=False)
     monkeypatch.setattr("app.pipeline.media_overlay.apply_media_overlays", _apply)
     monkeypatch.setattr("app.storage.copy_object", lambda src, dst: None)
+    monkeypatch.setattr("app.storage.object_exists", lambda _path: False)
     monkeypatch.setattr("app.storage.signed_get_url", lambda path, **kw: "gs://bucket/signed")
     monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
     monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda obj, key: None)
