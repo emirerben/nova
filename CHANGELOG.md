@@ -2,7 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.16.2.0] — 2026-07-27
+## [0.16.4.0] — 2026-07-27
+
+### Fixed
+- **You can now record a voiceover on your phone.** The record flow had the same 224px step rail that made onboarding unusable, and its recorder box was sized with `100vh` — which on mobile Safari and Chrome measures the viewport *without* the browser toolbar, so the record button sat underneath the toolbar and could not be tapped. Recording is the one step you inherently do on a phone, and it was the last surface still broken there. The rail now collapses to a compact strip and the recorder is sized so the controls always stay on screen.
+- **Focusing any text field on iPhone no longer zooms the page.** Mobile Safari zooms in whenever you tap a field whose text is smaller than 16px, and it stays zoomed — you then have to pinch back out to see the rest of the screen. Around sixty fields across the product were under that threshold. Every text field now reads at 16px on phones while keeping its denser size on desktop.
+- **The onboarding step rail is now a tappable progress strip on phones.** 0.16.2.0 replaced the oversized rail with a static "Step N of 4" line; it is now a row of step dots plus the current step's name, and tapping a completed dot takes you back to it — something the static line could not do. Both the onboarding and record flows share one rail now, so they cannot drift apart again.
+- **Opening a video in the editor no longer overflows on a phone.** The editor's loading screen reserved 484px of fixed side panels, so on a 390px phone the video preview was squeezed to nothing and the page scrolled sideways. It now shows just the preview and transport while loading, and the panels appear only on wide screens.
+
+### Changed
+- **Onboarding's "What do you make?" cards are one per row on phones.** Two columns at phone width broke "Talking to camera" across three lines.
 
 ### Fixed
 - **"Get my ideas" is now on the first screen when your persona appears.** After the onboarding interview, the persona reveal listed every supporting detail — pillars, tone, audience, sample topics, and the "why this lane" rationale — before offering the button that actually builds your plan, so the button landed 324px below the fold on a laptop and over 1200px down on a phone. The reveal now leads with the summary and puts the action directly under it, with the supporting detail moved below as "what we based it on". If the generated summary is long enough to still push the button off-screen, the action row pins to the bottom of the viewport instead; on normal-length content it stays in the page with no bar at all. The returning-user persona page at `/plan/persona` is unchanged.
