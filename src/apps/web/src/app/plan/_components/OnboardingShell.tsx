@@ -133,7 +133,7 @@ function StepRail({
   onGoBack: (step: OnboardingStep) => void;
 }) {
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white px-8 py-10">
+    <aside className="hidden w-56 shrink-0 flex-col border-r border-zinc-200 bg-white px-8 py-10 md:flex">
       <p className="text-xs font-semibold uppercase tracking-widest text-[#3f3f46]">Kria</p>
 
       <ol className="mt-10 flex flex-col gap-6">
@@ -312,7 +312,6 @@ export default function OnboardingShell({
   onSavePersona,
   onChatComplete,
   onContinueToPlan,
-  onRetune,
   error,
 }: OnboardingShellProps) {
   // Lazy initializers: derive the right step/tiktokStatus from server state on
@@ -405,8 +404,8 @@ export default function OnboardingShell({
           onContinue={handlePersonaContinue}
           continueLabel="Get my ideas →"
           continuing={planBusy}
-          onRetuneFromFeedback={onRetune}
           tiktokProfile={persona.tiktok_profile}
+          variant="reveal"
         />
       );
     }
@@ -418,12 +417,15 @@ export default function OnboardingShell({
   // ── Layout ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex min-h-screen bg-[#fafaf8]">
+    <div className="flex min-h-[100dvh] bg-[#fafaf8]">
       <StepRail current={step} tiktokStatus={tiktokStatus} onGoBack={goBack} />
 
       {/* Right pane */}
-      <main className="flex flex-1 items-start justify-center px-12 py-16">
+      <main className="flex flex-1 items-start justify-center px-5 py-6 md:px-12 md:py-16">
         <div className="w-full max-w-lg">
+          <p className="mb-5 text-xs font-medium uppercase tracking-[0.08em] text-[#a1a1aa] md:hidden">
+            Step {step} of 4
+          </p>
           {/* Error banner (outside the slide so it doesn't re-animate on step change) */}
           {error && (
             <div className="mb-6 rounded border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">
