@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.1.2] — 2026-07-27
+
+### Fixed
+- **The Nova drawer no longer shows an unexplained error when the API can't serve it.** The drawer and the proactive director are gated on `NEXT_PUBLIC_EDIT_COPILOT_ENABLED` / `NEXT_PUBLIC_EDIT_DIRECTOR_ENABLED`, while the routes they call are gated separately on `EDIT_COPILOT_ENABLED` / `EDIT_DIRECTOR_ENABLED` on the API. With only the web half enabled, a fully working-looking chat box rendered against endpoints that can only answer 404, and because the director re-runs after every material edit it repainted its failure before the user had typed anything. A flag-off response (or a bare `Not Found` from an API deployed before these routes existed) now disables the Nova rail entry with a reason, stops the director polling, drops any queued follow-up, and leaves the composer inert instead of inviting a retry that cannot win. A deliberate Refresh still re-checks, so a mid-session API deploy recovers without reopening the editor.
+- **Editor errors now say what actually went wrong.** The drawer rendered one hardcoded sentence for every failure and discarded the message it had already computed, so a disabled feature, a missing render, and a dropped connection all read identically. Real route messages ("No render to edit yet", "Plan item not found") now surface, while internal diagnostics (`edit_copilot_failed`) and bare HTTP fallbacks (`Request failed (429)`) stay behind friendly copy rather than reaching creators.
+
 ## [0.17.1.1] — 2026-07-27
 
 ### Fixed

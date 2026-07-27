@@ -13,6 +13,7 @@ import {
 } from "@/lib/plan-api";
 import type { ApplyCopilotOpsResult } from "./apply-ops";
 import type { CopilotSnapshot } from "./snapshot";
+import { isFeatureUnavailable } from "./availability";
 
 export interface UseEditDirectorOptions {
   enabled: boolean;
@@ -40,6 +41,8 @@ export interface UseEditDirectorResult {
   suggestions: EditorSuggestion[];
   loading: boolean;
   error: string | null;
+  /** The API cannot serve director reviews at all; polling has been stopped. */
+  unavailable: boolean;
   modelUsed: string;
   fallbackReason: string | null;
   generation: DirectorGenerationState | null;
@@ -76,8 +79,13 @@ function writeDismissed(itemId: string, variantId: string, ids: string[]): void 
   }
 }
 
+/** Shown once when the API has no director route, in place of a dead retry. */
+export const DIRECTOR_UNAVAILABLE_MESSAGE =
+  "Nova's proactive review isn't enabled on this server yet.";
+
 function friendlyDirectorError(caught: unknown): string {
   if (caught instanceof DOMException && caught.name === "AbortError") return "";
+  if (isFeatureUnavailable(caught)) return DIRECTOR_UNAVAILABLE_MESSAGE;
   return "Nova couldn't review this draft just now. Your edit is unchanged.";
 }
 
@@ -104,6 +112,7 @@ export function useEditDirector(
   const [suggestions, setSuggestions] = useState<EditorSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
   const [modelUsed, setModelUsed] = useState("");
   const [fallbackReason, setFallbackReason] = useState<string | null>(null);
   const [generation, setGeneration] = useState<DirectorGenerationState | null>(null);
@@ -119,6 +128,7 @@ export function useEditDirector(
   useEffect(() => {
     setSuggestions([]);
     setError(null);
+    setUnavailable(false);
     setModelUsed("");
     setFallbackReason(null);
     firstLoadRef.current = true;
@@ -132,6 +142,11 @@ export function useEditDirector(
 
   useEffect(() => {
     if (!opts.enabled || !opts.itemId || !opts.variantId) return;
+    // This effect re-runs on every material revision. Without this guard a
+    // flag-off API re-fires a doomed request after each keystroke-sized edit
+    // and repaints the failure, which is what put an error in the drawer
+    // before the user had typed anything.
+    if (unavailable) return;
     const controller = new AbortController();
     const delay = firstLoadRef.current ? 250 : 1200;
     const timer = window.setTimeout(() => {
@@ -175,6 +190,7 @@ export function useEditDirector(
         })
         .catch((caught) => {
           if (requestId !== requestIdRef.current || controller.signal.aborted) return;
+          if (isFeatureUnavailable(caught)) setUnavailable(true);
           setError(friendlyDirectorError(caught));
         })
         .finally(() => {
@@ -192,6 +208,7 @@ export function useEditDirector(
     opts.variantId,
     opts.materialRevision,
     refreshKey,
+    unavailable,
   ]);
 
   const feedback = useCallback(
@@ -416,10 +433,18 @@ export function useEditDirector(
       suggestions,
       loading,
       error,
+      unavailable,
       modelUsed,
       fallbackReason,
       generation,
-      refresh: () => setRefreshKey((value) => value + 1),
+      // Clearing the latch keeps the visible Refresh button honest: the guard
+      // exists to stop AUTOMATIC re-firing on every material revision, not to
+      // veto one deliberate click. Also lets a mid-session API deploy recover
+      // without reopening the editor.
+      refresh: () => {
+        setUnavailable(false);
+        setRefreshKey((value) => value + 1);
+      },
       accept,
       dismiss,
       cancelGeneration,
@@ -428,6 +453,7 @@ export function useEditDirector(
       suggestions,
       loading,
       error,
+      unavailable,
       modelUsed,
       fallbackReason,
       generation,
