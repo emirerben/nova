@@ -2,13 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.16.2.0] — 2026-07-27
+## [0.16.3.0] — 2026-07-27
 
 ### Fixed
 - **Text placed behind people no longer glitches.** Behind-subject text on montage edits used to flicker, strobe, and blink — chunks of the text appeared and disappeared as the segmentation flapped (worst on beach/sand footage, where the old person-detector confused sand and rock for people), and every clip change briefly cut the text with the previous clip's silhouette. The segmentation engine is now RobustVideoMatting (temporally stable by construction), its memory resets exactly at clip cuts so silhouettes never bleed across a cut, mask timing is frame-exact (no more repeat/skip judder), and a new stability gate catches any remaining unstable footage and renders the text cleanly in front instead of glitching behind.
 
 ### Changed
 - Footage the segmenter definitively can't track is remembered per video, so text edits on those videos re-render instantly as clean front text instead of re-paying a long segmentation attempt every time. Old cached segmentation data migrates automatically on the next edit.
+
+## [0.16.2.0] — 2026-07-27
+
+### Fixed
+- **"Get my ideas" is now on the first screen when your persona appears.** After the onboarding interview, the persona reveal listed every supporting detail — pillars, tone, audience, sample topics, and the "why this lane" rationale — before offering the button that actually builds your plan, so the button landed 324px below the fold on a laptop and over 1200px down on a phone. The reveal now leads with the summary and puts the action directly under it, with the supporting detail moved below as "what we based it on". If the generated summary is long enough to still push the button off-screen, the action row pins to the bottom of the viewport instead; on normal-length content it stays in the page with no bar at all. The returning-user persona page at `/plan/persona` is unchanged.
+- **Onboarding is usable on a phone.** The four-step rail rendered at its full 224px width at every screen size, leaving roughly 55px of usable text column on a 375px device — affecting every onboarding step, not just the persona reveal. The rail is now desktop-only, replaced on small screens by a compact "Step N of 4" marker, with mobile-appropriate padding and a `dvh`-based height so the pinned action row is not hidden behind mobile Safari's collapsing URL bar.
 
 ## [0.16.1.1] — 2026-07-27
 

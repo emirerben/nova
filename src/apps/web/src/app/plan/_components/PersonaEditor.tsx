@@ -1,8 +1,11 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import type { PersonaContent, PersonaStatus, TikTokProfile } from "@/lib/plan-api";
+import { InkButton } from "@/components/ui/InkButton";
+
+const PIN_COMFORT_PX = 24;
 
 const TEXT_FIELDS: { key: keyof PersonaContent; label: string }[] = [
   { key: "summary", label: "Summary" },
@@ -44,6 +47,7 @@ export default function PersonaEditor({
   onRetuneFromFeedback,
   tiktokProfile,
   onUpdateAnswers,
+  variant = "manage",
 }: {
   persona: PersonaContent;
   status: PersonaStatus;
@@ -60,6 +64,7 @@ export default function PersonaEditor({
   tiktokProfile?: TikTokProfile | null;
   // Navigates back to the TikTok pre-screen so returning users can restart the chat.
   onUpdateAnswers?: () => void;
+  variant?: "reveal" | "manage";
 }) {
   const [draft, setDraft] = useState<PersonaContent>(persona);
   const [lastSaved, setLastSaved] = useState<PersonaContent>(persona);
@@ -67,6 +72,53 @@ export default function PersonaEditor({
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(startInEdit);
   const [retuning, setRetuning] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const markerRef = useRef<HTMLDivElement>(null);
+  const actionRowRef = useRef<HTMLDivElement>(null);
+  const [pinned, setPinned] = useState(false);
+
+  useEffect(() => {
+    if (variant !== "reveal" || editing) {
+      setPinned(false);
+      return;
+    }
+    if (typeof window === "undefined") return;
+
+    let raf = 0;
+    const measure = () => {
+      if (typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(raf);
+      }
+      const update = () => {
+        const marker = markerRef.current;
+        const row = actionRowRef.current;
+        if (!marker || !row) return;
+        const naturalTop = marker.getBoundingClientRect().top + window.scrollY;
+        const naturalBottom = naturalTop + row.offsetHeight;
+        setPinned(naturalBottom > window.innerHeight - PIN_COMFORT_PX);
+      };
+      if (typeof window.requestAnimationFrame === "function") {
+        raf = window.requestAnimationFrame(update);
+      } else {
+        update();
+      }
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    if (ro && rootRef.current) ro.observe(rootRef.current);
+    window.addEventListener("resize", measure);
+    // Fraunces loads async; the summary's height changes when it swaps in.
+    if (typeof document !== "undefined" && "fonts" in document) {
+      (document as Document & { fonts: FontFaceSet }).fonts.ready.then(measure).catch(() => {});
+    }
+    return () => {
+      if (typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(raf);
+      }
+      ro?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [variant, editing, persona, draft.summary]);
 
   async function handleRetune() {
     if (!onRetuneFromFeedback) return;
@@ -121,8 +173,71 @@ export default function PersonaEditor({
     onContinue();
   }
 
+  if (variant === "reveal" && !editing) {
+    return (
+      <div ref={rootRef} className="animate-fade-up py-2">
+        {/* Aha-moment reveal — TikTok stat line */}
+        <AhaMoment tiktokProfile={tiktokProfile} />
+
+        <h1
+          className="font-display text-[26px] text-[#0c0c0e] animate-fade-up md:text-3xl"
+          style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
+        >
+          Meet your persona
+        </h1>
+
+        <p className="mt-5 font-display text-lg leading-relaxed text-[#0c0c0e] md:text-xl">
+          {draft.summary?.trim() || "No summary yet — tweak your persona to write one manually."}
+        </p>
+
+        <div ref={markerRef} className="h-0" aria-hidden="true" />
+        {/* The divider between action and detail lives on the detail wrapper below,
+            so the pinned bar's own top border is never doubled up with it. */}
+        <div
+          ref={actionRowRef}
+          className={cn(
+            "mt-7 mb-7 flex flex-wrap items-center gap-4",
+            pinned &&
+              "sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#fafaf8] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0",
+          )}
+        >
+          <InkButton
+            variant="solid"
+            onClick={handleContinue}
+            disabled={continuing || saving}
+            className="min-h-[48px]"
+          >
+            {continuing || saving ? "Starting…" : continueLabel}
+          </InkButton>
+
+          <button
+            onClick={() => setEditing(true)}
+            disabled={continuing || saving}
+            className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
+          >
+            Tweak
+          </button>
+        </div>
+
+        <div className="border-t border-zinc-200 pt-7">
+          <p className="mb-4 text-xs font-medium uppercase tracking-[0.08em] text-[#a1a1aa]">
+            What we based it on
+          </p>
+          <PersonaDetails persona={draft} />
+        </div>
+
+        {draft.rationale && (
+          <div className="mt-8 rounded-lg border border-dashed border-zinc-200 bg-transparent p-4">
+            <p className="mb-1 text-xs font-medium text-lime-700">Why this lane</p>
+            <p className="text-sm text-[#3f3f46]">{draft.rationale}</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="animate-fade-up py-2">
+    <div ref={rootRef} className="animate-fade-up py-2">
       {/* Aha-moment reveal — TikTok stat line */}
       <AhaMoment tiktokProfile={tiktokProfile} />
 
@@ -284,6 +399,40 @@ function PersonaSummary({ persona }: { persona: PersonaContent }) {
       {pillars.length > 0 && (
         <ChipGroup label="Content pillars" items={pillars} />
       )}
+
+      {facts.length > 0 && (
+        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {facts.map((f) => (
+            <div key={f.label}>
+              <dt className="text-xs font-medium uppercase tracking-wide text-[#a1a1aa]">
+                {f.label}
+              </dt>
+              <dd className="mt-1 text-sm text-[#3f3f46]">{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {topics.length > 0 && <ChipGroup label="Sample topics" items={topics} />}
+    </div>
+  );
+}
+
+function PersonaDetails({ persona }: { persona: PersonaContent }) {
+  const pillars = (persona.content_pillars ?? []).filter(Boolean);
+  const topics = (persona.sample_topics ?? []).filter(Boolean);
+  const facts = FACT_FIELDS.map((f) => ({
+    label: f.label,
+    value: (persona[f.key] as string)?.trim(),
+  })).filter((f) => f.value);
+
+  if (persona.posts_per_week != null) {
+    facts.push({ label: "Posts/week", value: String(persona.posts_per_week) });
+  }
+
+  return (
+    <div className="space-y-8">
+      {pillars.length > 0 && <ChipGroup label="Content pillars" items={pillars} />}
 
       {facts.length > 0 && (
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
