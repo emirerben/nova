@@ -8,7 +8,7 @@ import {
   StepRail,
   type StepRailState,
   type StepRailStep,
-} from "../../../_components/ui/StepRail";
+} from "@/app/plan/_components/ui/StepRail";
 import {
   getPlanItem,
   getPlanItemJobStatus,
