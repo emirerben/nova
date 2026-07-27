@@ -4180,34 +4180,32 @@ export default function EditorShell({
   }
 
   if (loading) {
-    // The docked skeleton's columns sum to 484px (92 + 320 + 72), so on a phone
-    // the 1fr canvas collapses to zero and the row overflows the viewport. The
-    // loaded editor already branches on layoutMode — and because the real editor
-    // only mounts after the async variant load resolves, this skeleton is the
-    // FIRST thing a phone user sees, so it has to branch too.
-    return layoutMode === "light" ? (
+    // The old skeleton hardcoded `grid-cols-[92px_1fr_320px_72px]` — 484px of
+    // columns — so on a phone the 1fr canvas collapsed to zero and the row
+    // overflowed. Since the real editor only mounts after the async variant
+    // load resolves, this skeleton is the FIRST thing a phone user sees.
+    //
+    // Gated in CSS rather than on `layoutMode`: useEditorLayoutMode's server
+    // snapshot is "full", so a JS branch would paint the 484px columns on the
+    // hydration render and only correct afterwards — a flash of exactly the
+    // overflow this fixes. The skeleton is decorative, so it needs no JS state.
+    // `xl:` matches the hook's FULL_QUERY (1280px).
+    return (
       <Frame>
-        <div className="flex min-h-0 flex-1 items-center justify-center px-5">
-          <div
-            className="h-[70%] w-auto max-w-full rounded-xl border border-zinc-200 bg-zinc-100 motion-safe:animate-pulse"
-            style={{ aspectRatio: "9 / 16" }}
-          />
-        </div>
-        {/* Light mode has no timeline (useEditorLayoutMode: the heavy timeline
-            must never mount below 1024px) — only the transport strip. */}
-        <div className="h-16 flex-none border-t border-zinc-200 bg-white" />
-      </Frame>
-    ) : (
-      <Frame>
-        <div className="grid min-h-0 flex-1 grid-cols-[92px_1fr_320px_72px]">
-          <div className="border-r border-zinc-200 bg-white" />
-          <div className="flex items-center justify-center">
-            <div className="h-[70%] w-auto rounded-xl border border-zinc-200 bg-zinc-100 motion-safe:animate-pulse" style={{ aspectRatio: "9 / 16" }} />
+        <div className="flex min-h-0 flex-1">
+          <div className="hidden w-[92px] shrink-0 border-r border-zinc-200 bg-white xl:block" />
+          <div className="flex min-w-0 flex-1 items-center justify-center px-5">
+            <div
+              className="h-[70%] w-auto max-w-full rounded-xl border border-zinc-200 bg-zinc-100 motion-safe:animate-pulse"
+              style={{ aspectRatio: "9 / 16" }}
+            />
           </div>
-          <div className="border-l border-zinc-200 bg-white" />
-          <div className="border-l border-zinc-200 bg-white" />
+          <div className="hidden w-[320px] shrink-0 border-l border-zinc-200 bg-white xl:block" />
+          <div className="hidden w-[72px] shrink-0 border-l border-zinc-200 bg-white xl:block" />
         </div>
-        <div className="h-[260px] border-t border-zinc-200 bg-white" />
+        {/* Below xl there is no docked timeline to stand in for (the heavy
+            timeline never mounts under 1024px) — just the transport strip. */}
+        <div className="h-16 flex-none border-t border-zinc-200 bg-white xl:h-[260px]" />
       </Frame>
     );
   }

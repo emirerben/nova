@@ -16,10 +16,32 @@ class of fix for onboarding only (rail `hidden md:flex`, `px-5 py-6 md:px-12`,
 `min-h-[100dvh]`, plus a static "Step n of 4" line). Reconciled by taking
 origin/main as the merge base — every #738 change is preserved verbatim — and
 re-applying the shared `<StepRail>` on top, dropping only #738's inline counter
-as redundant with the strip's label + counter. The shared rail supersedes the
-onboarding-only fix because it also covers the record flow (untouched by #738,
-and still carrying both the `w-56` overflow and the `100vh` record-button bug)
-and keeps tap-back to a done step on mobile.
+as redundant with the strip. The shared rail supersedes the onboarding-only fix
+because it also covers the record flow (untouched by #738, and still carrying
+both the `w-56` overflow and the `100vh` record-button bug) and keeps tap-back
+to a done step on mobile.
+
+**Review round (4 specialists, 15 findings, all actioned).** The changes that
+landed on top of the first implementation:
+
+| Finding | Change |
+|---|---|
+| Strip counter used `text-[#a1a1aa]` on white — ~2.6:1, under §8's 4.5:1 floor, and §2 forbids faint ink for readable content | Counter removed entirely. The dots convey position and each step's own eyebrow states it in words, so this also fixed the "2 of 4" duplication against `WhatYouMakeStep` |
+| Dot boxes were `w-11` when clickable, `w-8` when not, with no `gap` — uneven rhythm | Uniform 44×44 box on every dot; measured gaps now 44/44/44 |
+| `note` is desktop-only, so a skipped step looked identical to an unreached one on mobile | Skipped steps carry an sr-only "(skipped)" suffix on the strip |
+| Interactive dots had no focus ring (§8 requires visible focus) | Shared `FOCUS_RING` on strip + rail buttons |
+| `onGoBack: (key: string \| number)` forced an unchecked `as` cast at both call sites | `StepRail<K extends string \| number>`; both casts gone |
+| done/active/upcoming chain duplicated across the two step builders | Shared `stepState(n, current)` export |
+| Skeleton branched on `layoutMode`, whose server snapshot is `"full"` — a phone would paint the 484px columns on the hydration render before correcting | Skeleton is now CSS-gated (`xl:`), depends on no JS state, and cannot flash |
+| Guard's className regex matched only bare strings and template literals, so `className={cn("text-sm", …)}` — the dominant form here — was invisible | Brace-aware opening-tag scanner + literal extraction; mutation-tested against a `cn()`-wrapped `text-[10px]` |
+| Guard's offender regex flagged `md:text-sm` (harmless above 640px) | Variant-prefixed tokens skipped |
+| F3 assertion matched a ternary's text, so swapping the two JSX bodies kept it green; F4 (dvh) and the grid fix had no coverage at all | Assertions now anchor on the rendered gate rather than branch text; dvh and single-column grid pinned |
+
+Two findings were logged and not acted on: the strip renders both presentations
+into the DOM (bounded, ~4 extra nodes, and `display:none` keeps the hidden one
+out of the a11y tree), and skipped-vs-upcoming remains visually identical on the
+strip (distinct only to screen readers) rather than introducing a fourth dot
+colour into the system.
 
 **Measured at 390×844** (real Tailwind build, real class strings): horizontal
 overflow 0px (was the bug), strip 45px tall vs 224px of stolen width, dot target

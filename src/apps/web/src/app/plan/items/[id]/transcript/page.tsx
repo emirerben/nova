@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AudioTake } from "@/hooks/useAudioRecorder";
 import {
   StepRail,
-  type StepRailState,
+  stepState,
   type StepRailStep,
 } from "@/app/plan/_components/ui/StepRail";
 import {
@@ -54,20 +54,15 @@ function StepSlide({ children }: { children: React.ReactNode }) {
 // ── Step rail ─────────────────────────────────────────────────────────────────
 
 /** Map record-flow state onto the shared rail's step model. */
-function transcriptSteps(current: Step): StepRailStep[] {
+function transcriptSteps(current: Step): StepRailStep<Step>[] {
   return STEP_LABELS.map((label, i) => {
     const n = i as Step;
     const isDone = n < current;
 
-    let state: StepRailState;
-    if (isDone) state = "done";
-    else if (n === current) state = "active";
-    else state = "upcoming";
-
     return {
       key: n,
       label,
-      state,
+      state: stepState(n, current),
       clickable: isDone,
       note: isDone ? ({ text: "✓", tone: "lime" } as const) : undefined,
     };
@@ -263,10 +258,7 @@ export default function TranscriptTakeoverPage() {
 
   return (
     <div className="flex min-h-[100dvh] flex-col bg-[#fafaf8] md:flex-row">
-      <StepRail
-        steps={transcriptSteps(step)}
-        onGoBack={(key) => goBack(key as Step)}
-      />
+      <StepRail steps={transcriptSteps(step)} onGoBack={goBack} />
 
       {/* min-w-0 lets this flex child shrink instead of overflowing on phones. */}
       <main className="flex min-w-0 flex-1 flex-col px-5 py-8 md:px-12 md:py-10">

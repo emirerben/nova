@@ -37,11 +37,7 @@ import TikTokPreScreen from "./TikTokPreScreen";
 import ChatInterview from "./ChatInterview";
 import PersonaEditor from "./PersonaEditor";
 import { GeneratingStateLight } from "./GeneratingStateLight";
-import {
-  StepRail,
-  type StepRailState,
-  type StepRailStep,
-} from "./ui/StepRail";
+import { StepRail, stepState, type StepRailStep } from "./ui/StepRail";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -138,16 +134,10 @@ const STEP_LABELS: Record<OnboardingStep, string> = {
 function onboardingSteps(
   current: OnboardingStep,
   tiktokStatus: TikTokStatus,
-): StepRailStep[] {
+): StepRailStep<OnboardingStep>[] {
   return ([1, 2, 3, 4] as OnboardingStep[]).map((n) => {
     const isDone = n < current;
     const isSkipped = n === 1 && tiktokStatus === "skipped";
-
-    let state: StepRailState;
-    if (isSkipped) state = "skipped";
-    else if (isDone) state = "done";
-    else if (n === current) state = "active";
-    else state = "upcoming";
 
     let note: StepRailStep["note"];
     if (isSkipped) note = { text: "(skipped)", tone: "zinc" };
@@ -156,7 +146,8 @@ function onboardingSteps(
     return {
       key: n,
       label: STEP_LABELS[n],
-      state,
+      // Skipped is onboarding-only; everything else is the shared derivation.
+      state: isSkipped ? "skipped" : stepState(n, current),
       clickable: isDone && !isSkipped,
       note,
     };
@@ -385,10 +376,7 @@ export default function OnboardingShell({
 
   return (
     <div className="flex min-h-[100dvh] flex-col bg-[#fafaf8] md:flex-row">
-      <StepRail
-        steps={onboardingSteps(step, tiktokStatus)}
-        onGoBack={(key) => goBack(key as OnboardingStep)}
-      />
+      <StepRail steps={onboardingSteps(step, tiktokStatus)} onGoBack={goBack} />
 
       {/* Right pane */}
       {/* min-w-0 lets this flex child shrink below its content's min-content
