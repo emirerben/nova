@@ -27,6 +27,20 @@ export class NotAuthenticatedError extends Error {
   }
 }
 
+/**
+ * The route exists but its server-side feature flag is off.
+ *
+ * Distinct from a plain failure because retrying never clears it: the fix is a
+ * deploy-config change. Callers disable the affordance instead of offering the
+ * user a retry they cannot win.
+ */
+export class FeatureDisabledError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "FeatureDisabledError";
+  }
+}
+
 export interface PersonaQuestionnaire {
   work: string;
   school: string;
@@ -333,6 +347,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (body?.detail) detail = body.detail;
     } catch {
       // non-JSON error body; keep the generic message
+    }
+    // A 404 whose detail ends in `_not_enabled` is the backend's feature-flag
+    // gate, not a missing resource. Kept deliberately narrow: ordinary 404s on
+    // the same routes carry real details ("Plan item not found", "No render to
+    // edit yet", "Variant not found") and must stay retryable errors.
+    if (res.status === 404 && detail.endsWith("_not_enabled")) {
+      throw new FeatureDisabledError(detail);
     }
     throw new Error(detail);
   }

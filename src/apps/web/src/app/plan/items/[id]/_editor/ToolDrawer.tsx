@@ -171,6 +171,7 @@ export default function ToolDrawer({
     sending: boolean;
     queued: QueuedCopilotMessage | null;
     error: string | null;
+    unavailable?: boolean;
     restoredInput: string;
     suggestions: string[];
     historyVersion: number;
@@ -224,6 +225,7 @@ export default function ToolDrawer({
         sending={copilot.sending}
         queued={copilot.queued}
         error={copilot.error}
+        unavailable={copilot.unavailable}
         restoredInput={copilot.restoredInput}
         suggestions={copilot.suggestions}
         historyVersion={copilot.historyVersion}

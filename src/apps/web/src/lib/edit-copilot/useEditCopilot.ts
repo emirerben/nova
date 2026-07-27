@@ -9,6 +9,34 @@ import {
 import type { CopilotOp } from "./ops";
 import type { ApplyCopilotOpsResult } from "./apply-ops";
 import type { CopilotSnapshot } from "./snapshot";
+import { isFeatureUnavailable } from "./availability";
+
+/** Shown once when the API has no copilot route, in place of a dead retry. */
+export const COPILOT_UNAVAILABLE_MESSAGE =
+  "Nova editing isn't enabled on this server yet.";
+
+/** Fallback copy for failures with nothing worth showing the user. */
+export const COPILOT_GENERIC_ERROR =
+  "I couldn't reach Nova just now. Your edit is untouched — try again.";
+
+/**
+ * Pick what the drawer actually shows.
+ *
+ * The route's own 404s are human copy worth surfacing verbatim ("Plan item not
+ * found", "No render to edit yet", "Variant not found"). Two things are NOT:
+ * snake_case sentinels the backend uses as diagnostics (`edit_copilot_failed`
+ * from the 502 in routes/_copilot.py) and the `Request failed (NNN)` fallback
+ * request() writes when the body carries no `detail` at all — which is exactly
+ * what a slowapi 429 does, since it returns `{"error": ...}`, not `{"detail": ...}`.
+ * Showing either to a creator is worse than saying nothing useful.
+ */
+export function copilotErrorMessage(caught: unknown): string {
+  if (!(caught instanceof Error) || !caught.message) return COPILOT_GENERIC_ERROR;
+  const opaque =
+    /^[a-z0-9_]+$/.test(caught.message) ||
+    caught.message.startsWith("Request failed (");
+  return opaque ? COPILOT_GENERIC_ERROR : caught.message;
+}
 
 export type CopilotMessageRole = "user" | "assistant";
 
@@ -48,6 +76,8 @@ export interface UseEditCopilotResult {
   sending: boolean;
   queued: QueuedCopilotMessage | null;
   error: string | null;
+  /** The API cannot serve copilot turns at all; retrying will not help. */
+  unavailable: boolean;
   restoredInput: string;
   suggestions: string[];
   send: (text: string) => Promise<void>;
@@ -169,6 +199,7 @@ export function useEditCopilot(
   const [sending, setSending] = useState(false);
   const [queued, setQueued] = useState<QueuedCopilotMessage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
   const [restoredInput, setRestoredInput] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
 
@@ -182,6 +213,7 @@ export function useEditCopilot(
     userMessageId: string;
   } | null>(null);
   const abandonedTurnsRef = useRef(new Set<number>());
+  const unavailableRef = useRef(false);
   const turnIdRef = useRef(0);
   const runTurnRef = useRef<(text: string) => Promise<void>>(async () => {});
   const skipNextPersistRef = useRef(false);
@@ -201,6 +233,11 @@ export function useEditCopilot(
     setQueued(null);
     queuedRef.current = null;
     setError(null);
+    // Availability is a property of the API, not of one item — but re-probing
+    // once per item is cheap and keeps a mid-session deploy from leaving the
+    // drawer latched off.
+    setUnavailable(false);
+    unavailableRef.current = false;
     setRestoredInput("");
   }, [opts.itemId, opts.variantId]);
 
@@ -216,6 +253,9 @@ export function useEditCopilot(
     const trimmed = text.trim();
     if (!trimmed) return;
     if (!optsRef.current.itemId || !optsRef.current.variantId) return;
+    // Latched off: the route 404s for this API build, so a turn would only
+    // re-render the same failure and drop the user's text.
+    if (unavailableRef.current) return;
 
     setSending(true);
     sendingRef.current = true;
@@ -297,11 +337,17 @@ export function useEditCopilot(
       );
       messagesRef.current = nextMessages;
       setMessages(nextMessages);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "I couldn't reach Nova just now. Your edit is untouched - try again.",
-      );
+      if (isFeatureUnavailable(err)) {
+        unavailableRef.current = true;
+        setUnavailable(true);
+        setError(COPILOT_UNAVAILABLE_MESSAGE);
+        // The composer is about to go inert, so a queued follow-up can never be
+        // sent. Drop it instead of leaving a chip the user can only cancel.
+        queuedRef.current = null;
+        setQueued(null);
+      } else {
+        setError(copilotErrorMessage(err));
+      }
       setRestoredInput(trimmed);
     } finally {
       if (activeTurnRef.current?.id === turnId) {
@@ -414,6 +460,7 @@ export function useEditCopilot(
       sending,
       queued,
       error,
+      unavailable,
       restoredInput,
       suggestions,
       send,
@@ -428,6 +475,7 @@ export function useEditCopilot(
       sending,
       queued,
       error,
+      unavailable,
       restoredInput,
       suggestions,
       send,

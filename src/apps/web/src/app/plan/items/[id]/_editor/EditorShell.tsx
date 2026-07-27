@@ -87,7 +87,10 @@ import {
   type CopilotCaptionMetaSnapshot,
   type CopilotSnapshot,
 } from "@/lib/edit-copilot/snapshot";
-import { useEditCopilot } from "@/lib/edit-copilot/useEditCopilot";
+import {
+  COPILOT_UNAVAILABLE_MESSAGE,
+  useEditCopilot,
+} from "@/lib/edit-copilot/useEditCopilot";
 import { useEditDirector } from "@/lib/edit-copilot/useEditDirector";
 import type { CaptionMetaPatch, CopilotOp } from "@/lib/edit-copilot/ops";
 import {
@@ -3798,6 +3801,16 @@ export default function EditorShell({
     onGeneratedAssetReady: reloadClipTimeline,
   });
 
+  // Derived after the hook, not folded into toolDisabledReasons: that memo
+  // feeds buildCopilotDraftSnapshot, which the copilot hook itself depends on.
+  const railDisabledReasons = useMemo(
+    () =>
+      copilot.unavailable
+        ? { ...toolDisabledReasons, nova: COPILOT_UNAVAILABLE_MESSAGE }
+        : toolDisabledReasons,
+    [toolDisabledReasons, copilot.unavailable],
+  );
+
   const deleteSelected = useCallback(() => {
     if (!selection || readOnly) return;
     if (selection.kind === "text") {
@@ -4989,7 +5002,7 @@ export default function EditorShell({
         >
         <ToolRail
           activeTool={activeTool}
-          disabledTools={toolDisabledReasons}
+          disabledTools={railDisabledReasons}
           onToggleTool={(tool) => setActiveTool((cur) => (cur === tool ? null : tool))}
         />
         {layoutMode === "full" &&
@@ -5048,6 +5061,7 @@ export default function EditorShell({
                 sending: copilot.sending,
                 queued: copilot.queued,
                 error: copilot.error,
+                unavailable: copilot.unavailable,
                 restoredInput: copilot.restoredInput,
                 suggestions: copilot.suggestions,
                 historyVersion: history.version,
@@ -5135,6 +5149,7 @@ export default function EditorShell({
                 sending: copilot.sending,
                 queued: copilot.queued,
                 error: copilot.error,
+                unavailable: copilot.unavailable,
                 restoredInput: copilot.restoredInput,
                 suggestions: copilot.suggestions,
                 historyVersion: history.version,
@@ -5392,6 +5407,7 @@ export default function EditorShell({
             sending: copilot.sending,
             queued: copilot.queued,
             error: copilot.error,
+            unavailable: copilot.unavailable,
             restoredInput: copilot.restoredInput,
             suggestions: copilot.suggestions,
             historyVersion: history.version,

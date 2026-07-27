@@ -73,6 +73,7 @@ export default function CopilotDrawer({
   sending,
   queued,
   error,
+  unavailable = false,
   restoredInput,
   suggestions,
   historyVersion,
@@ -92,6 +93,8 @@ export default function CopilotDrawer({
   sending: boolean;
   queued: QueuedCopilotMessage | null;
   error: string | null;
+  /** API has no copilot route: composer goes inert rather than dead-ending. */
+  unavailable?: boolean;
   restoredInput: string;
   suggestions: string[];
   historyVersion: number;
@@ -300,7 +303,7 @@ export default function CopilotDrawer({
             aria-live="polite"
             className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12.5px] text-[#3f3f46]"
           >
-            I couldn&apos;t reach Nova just now. Your edit is untouched — try again.
+            {error}
           </div>
         )}
       </div>
@@ -316,7 +319,7 @@ export default function CopilotDrawer({
           <button
             key={suggestion}
             type="button"
-            disabled={!!queued}
+            disabled={unavailable || !!queued}
             onClick={() => onSend(suggestion)}
             className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
           >
@@ -345,7 +348,14 @@ export default function CopilotDrawer({
               // it (review F2). Queued edits happen only on explicit submit.
               setDraft(e.target.value.slice(0, MAX_CHARS));
             }}
-            placeholder={sending ? "Add more while I work..." : "Tell me what to change..."}
+            disabled={unavailable}
+            placeholder={
+              unavailable
+                ? "Nova editing is unavailable"
+                : sending
+                  ? "Add more while I work..."
+                  : "Tell me what to change..."
+            }
             aria-label="Tell Nova what to change"
             className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[16px] text-[#0c0c0e] outline-none placeholder:text-[#a1a1aa] focus:border-lime-500 focus:ring-2 focus:ring-lime-500/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 md:text-[13px]"
           />
@@ -357,7 +367,7 @@ export default function CopilotDrawer({
         </div>
         <button
           type="submit"
-          disabled={draft.trim().length === 0}
+          disabled={unavailable || draft.trim().length === 0}
           aria-label={sending ? "Queue message" : "Send message"}
           className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-[#0c0c0e] text-[15px] font-semibold text-white hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-35"
         >
