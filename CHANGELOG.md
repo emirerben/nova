@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.1.1] — 2026-07-27
+
+### Fixed
+- **A brief database outage can no longer leave a completed rerender stuck forever.** Media-overlay and sound-effect passes now release database connections before GCS and FFmpeg work, reopen a short row-locked transaction only to publish the result, and let transient PostgreSQL failures reach Celery's seven-attempt retry policy. Terminal failure writes also retry with fresh sessions, while invalid media and FFmpeg failures still end normally as failed renders.
+
 ## [0.17.1.0] — 2026-07-27
 
 ### Added
