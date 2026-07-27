@@ -62,6 +62,8 @@ class TestRetryDecoratorConfig:
             "app.tasks.auto_music_orchestrate.orchestrate_auto_music_job",
             # Agentic build path.
             "app.tasks.agentic_template_build.agentic_template_build_task",
+            # Generative per-variant rerenders.
+            "app.tasks.generative_build.regenerate_generative_variant",
             # Legacy single-video + Drive-import path (still live —
             # drive_import.py:279 enqueues orchestrate.orchestrate_job).
             "app.tasks.orchestrate.orchestrate_job",
@@ -114,6 +116,8 @@ class TestRetryDecoratorConfig:
             "app.tasks.auto_music_orchestrate.orchestrate_auto_music_job",
             # Agentic build path.
             "app.tasks.agentic_template_build.agentic_template_build_task",
+            # Generative per-variant rerenders.
+            "app.tasks.generative_build.regenerate_generative_variant",
             # Legacy single-video + Drive-import path (still live —
             # drive_import.py:279 enqueues orchestrate.orchestrate_job).
             "app.tasks.orchestrate.orchestrate_job",
@@ -332,3 +336,353 @@ class TestMarkFailedRobustness:
 
         with patch.object(auto_music_orchestrate, "_sync_session", side_effect=factory):
             auto_music_orchestrate._fail_job(str(uuid.uuid4()), "msg")
+
+
+class TestGenerativeVariantDbResilience:
+    """Regression coverage for the 2026-07-27 stuck subtitled rerender.
+
+    The render and media-overlay encode completed, then Postgres disappeared
+    during the terminal SELECT FOR UPDATE. The media reapply catch-all swallowed
+    OperationalError, `_mark_variant_failed` swallowed the second DB failure,
+    and Celery acknowledged the task as successful with the variant still
+    `rendering`.
+    """
+
+    @staticmethod
+    def _variant_job(*, media: bool = False, sfx: bool = False):
+        from tests.tasks.conftest import FakeJob
+
+        variant = {
+            "variant_id": "subtitled",
+            "render_generation_id": "gen-1",
+            "render_status": "rendering",
+            "video_path": "generative-jobs/j/subtitled.mp4",
+        }
+        if media:
+            variant["media_overlays"] = [
+                {
+                    "id": "card-1",
+                    "kind": "image",
+                    "src_gcs_path": "users/u/plan/p/overlays/card.png",
+                    "start_s": 0.0,
+                    "end_s": 2.0,
+                }
+            ]
+        if sfx:
+            variant["sound_effects"] = [
+                {
+                    "id": "sfx-1",
+                    "src_gcs_path": "sound-effects/click.mp3",
+                    "at_s": 1.0,
+                    "gain": 1.0,
+                }
+            ]
+        return FakeJob(assembly_plan={"variants": [variant]})
+
+    def test_media_reapply_reraises_operational_error_to_celery(self, monkeypatch):
+        from app.tasks import generative_build
+        from tests.tasks.conftest import patch_job_session
+
+        job = self._variant_job(media=True)
+        patch_job_session(monkeypatch, job, noop_flag_modified=True)
+        monkeypatch.setattr(
+            generative_build.settings, "media_overlays_enabled", True, raising=False
+        )
+        op_err = _operational_error()
+        monkeypatch.setattr(
+            generative_build,
+            "_run_media_overlay_pass",
+            MagicMock(side_effect=op_err),
+        )
+        mark_failed = MagicMock()
+        monkeypatch.setattr(generative_build, "_mark_variant_failed", mark_failed)
+
+        with pytest.raises(OperationalError):
+            generative_build._reapply_persisted_media_overlays_if_any(
+                job_id=str(uuid.uuid4()),
+                variant_id="subtitled",
+                expected_render_gen_id="gen-1",
+            )
+
+        mark_failed.assert_not_called()
+
+    def test_media_terminal_row_lock_failure_retries_from_clean_copy(self, monkeypatch):
+        """Encode succeeds, DB fails, then Celery retry publishes without double-applying."""
+        from app.tasks import generative_build
+
+        job = self._variant_job(media=True)
+        op_err = _operational_error()
+        session_calls = 0
+
+        class SnapshotSession:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def get(self, _model, _pk, **_kwargs):
+                return job
+
+            def commit(self):
+                return None
+
+        def session_factory():
+            nonlocal session_calls
+            session_calls += 1
+            if session_calls == 2:
+                raise op_err
+            return SnapshotSession()
+
+        encode_bases: list[str] = []
+
+        def encode(**kwargs):
+            encode_bases.append(kwargs["base_gcs_path"])
+            return "https://signed/media"
+
+        copy_object = MagicMock()
+        object_exists = MagicMock(side_effect=[False, True])
+        mark_failed = MagicMock()
+        monkeypatch.setattr(generative_build, "_sync_session", session_factory)
+        monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *a, **k: None)
+        monkeypatch.setattr("app.storage.copy_object", copy_object)
+        monkeypatch.setattr("app.storage.object_exists", object_exists)
+        monkeypatch.setattr("app.pipeline.media_overlay.apply_media_overlays", encode)
+        monkeypatch.setattr(generative_build, "_mark_variant_failed", mark_failed)
+        monkeypatch.setattr(
+            generative_build, "_reapply_persisted_sfx_if_any", lambda **_kwargs: False
+        )
+
+        with pytest.raises(OperationalError):
+            generative_build._run_media_overlay_pass(
+                job_id=str(uuid.uuid4()),
+                variant_id="subtitled",
+                overlays_raw=job.assembly_plan["variants"][0]["media_overlays"],
+                expected_render_gen_id="gen-1",
+            )
+
+        mark_failed.assert_not_called()
+        assert session_calls == 2
+
+        # Celery invokes the task again after the transient outage. The durable
+        # pre-overlay blob from attempt one must be reused, not overwritten from
+        # the already-composited output path.
+        generative_build._run_media_overlay_pass(
+            job_id=str(uuid.uuid4()),
+            variant_id="subtitled",
+            overlays_raw=job.assembly_plan["variants"][0]["media_overlays"],
+            expected_render_gen_id="gen-1",
+        )
+
+        clean_path = "generative-jobs/j/subtitled.mp4_pre_overlay"
+        assert encode_bases == [clean_path, clean_path]
+        copy_object.assert_called_once_with(
+            "generative-jobs/j/subtitled.mp4",
+            clean_path,
+        )
+        assert job.assembly_plan["variants"][0]["render_status"] == "ready"
+
+    def test_sfx_reapply_reraises_operational_error_to_celery(self, monkeypatch):
+        from app.tasks import generative_build
+        from tests.tasks.conftest import patch_job_session
+
+        job = self._variant_job(sfx=True)
+        patch_job_session(monkeypatch, job, noop_flag_modified=True)
+        monkeypatch.setattr(generative_build.settings, "sound_effects_enabled", True, raising=False)
+        monkeypatch.setattr(
+            generative_build,
+            "_run_sfx_pass",
+            MagicMock(side_effect=_operational_error()),
+        )
+        mark_failed = MagicMock()
+        monkeypatch.setattr(generative_build, "_mark_variant_failed", mark_failed)
+
+        with pytest.raises(OperationalError):
+            generative_build._reapply_persisted_sfx_if_any(
+                job_id=str(uuid.uuid4()),
+                variant_id="subtitled",
+                expected_render_gen_id="gen-1",
+            )
+
+        mark_failed.assert_not_called()
+
+    def test_sfx_terminal_row_lock_failure_retries_from_clean_copy(self, monkeypatch):
+        """An audio-only Celery retry must not mix the same SFX into its own output."""
+        from app.tasks import generative_build
+
+        job = self._variant_job(sfx=True)
+        op_err = _operational_error()
+        session_calls = 0
+
+        class SnapshotSession:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def get(self, _model, _pk, **_kwargs):
+                return job
+
+            def commit(self):
+                return None
+
+        def session_factory():
+            nonlocal session_calls
+            session_calls += 1
+            if session_calls == 2:
+                raise op_err
+            return SnapshotSession()
+
+        encode_bases: list[str] = []
+
+        def encode(**kwargs):
+            encode_bases.append(kwargs["base_gcs_path"])
+            return "https://signed/sfx"
+
+        copy_object = MagicMock()
+        monkeypatch.setattr(generative_build, "_sync_session", session_factory)
+        monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *a, **k: None)
+        monkeypatch.setattr("app.storage.copy_object", copy_object)
+        monkeypatch.setattr(
+            "app.storage.object_exists",
+            MagicMock(side_effect=[False, True]),
+        )
+        monkeypatch.setattr("app.pipeline.sound_effects.apply_sound_effects", encode)
+
+        with pytest.raises(OperationalError):
+            generative_build._run_sfx_pass(
+                job_id=str(uuid.uuid4()),
+                variant_id="subtitled",
+                sfx_raw=job.assembly_plan["variants"][0]["sound_effects"],
+                expected_render_gen_id="gen-1",
+            )
+
+        generative_build._run_sfx_pass(
+            job_id=str(uuid.uuid4()),
+            variant_id="subtitled",
+            sfx_raw=job.assembly_plan["variants"][0]["sound_effects"],
+            expected_render_gen_id="gen-1",
+        )
+
+        clean_path = "generative-jobs/j/subtitled.mp4_pre_sfx"
+        assert encode_bases == [clean_path, clean_path]
+        copy_object.assert_called_once_with(
+            "generative-jobs/j/subtitled.mp4",
+            clean_path,
+        )
+        assert job.assembly_plan["variants"][0]["render_status"] == "ready"
+
+    def test_mark_variant_failed_retries_with_fresh_sessions(self, monkeypatch):
+        from app.tasks import generative_build
+        from tests.tasks.conftest import patch_job_session
+
+        job = self._variant_job()
+        op_err = _operational_error()
+        sequence: list[object] = [op_err, op_err]
+        patch_job_session(monkeypatch, job, noop_flag_modified=True)
+        good_factory = generative_build._sync_session
+
+        def session_factory():
+            if sequence:
+                raise sequence.pop(0)
+            return good_factory()
+
+        monkeypatch.setattr(generative_build, "_sync_session", session_factory)
+        sleep = MagicMock()
+        monkeypatch.setattr(generative_build.time, "sleep", sleep)
+
+        generative_build._mark_variant_failed(
+            job_id=str(uuid.uuid4()),
+            variant_id="subtitled",
+            error="render failed",
+            expected_render_gen_id="gen-1",
+        )
+
+        variant = job.assembly_plan["variants"][0]
+        assert variant["render_status"] == "failed"
+        assert variant["render_error"] == "render failed"
+        assert sleep.call_count == 2
+
+    def test_mark_variant_failed_exhaustion_reaches_celery(self, monkeypatch):
+        from app.tasks import generative_build
+
+        op_err = _operational_error()
+        session_factory = MagicMock(side_effect=op_err)
+        monkeypatch.setattr(generative_build, "_sync_session", session_factory)
+        monkeypatch.setattr(generative_build.time, "sleep", MagicMock())
+
+        with pytest.raises(OperationalError):
+            generative_build._mark_variant_failed(
+                job_id=str(uuid.uuid4()),
+                variant_id="subtitled",
+                error="render failed",
+                expected_render_gen_id="gen-1",
+            )
+
+        assert session_factory.call_count > 1
+
+    @pytest.mark.parametrize("pass_name", ["media", "sfx"])
+    def test_expensive_media_work_runs_without_open_db_session(self, monkeypatch, pass_name):
+        from app.tasks import generative_build
+
+        job = self._variant_job(media=pass_name == "media", sfx=pass_name == "sfx")
+        active_sessions = 0
+        observed_during_external_work: list[int] = []
+
+        class TrackingSession:
+            def __enter__(self):
+                nonlocal active_sessions
+                active_sessions += 1
+                return self
+
+            def __exit__(self, *args):
+                nonlocal active_sessions
+                active_sessions -= 1
+                return False
+
+            def get(self, _model, _pk, **_kwargs):
+                return job
+
+            def commit(self):
+                return None
+
+            def expire_all(self):
+                return None
+
+        monkeypatch.setattr(generative_build, "_sync_session", TrackingSession)
+        monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *a, **k: None)
+        monkeypatch.setattr("app.storage.copy_object", lambda *a, **k: None)
+        monkeypatch.setattr("app.storage.object_exists", lambda _path: False)
+
+        if pass_name == "media":
+            monkeypatch.setattr(
+                "app.pipeline.media_overlay.apply_media_overlays",
+                lambda **_kwargs: (
+                    observed_during_external_work.append(active_sessions) or "https://signed/media"
+                ),
+            )
+            monkeypatch.setattr(
+                generative_build, "_reapply_persisted_sfx_if_any", lambda **_kwargs: False
+            )
+            generative_build._run_media_overlay_pass(
+                job_id=str(uuid.uuid4()),
+                variant_id="subtitled",
+                overlays_raw=job.assembly_plan["variants"][0]["media_overlays"],
+                expected_render_gen_id="gen-1",
+            )
+        else:
+            monkeypatch.setattr(
+                "app.pipeline.sound_effects.apply_sound_effects",
+                lambda **_kwargs: (
+                    observed_during_external_work.append(active_sessions) or "https://signed/sfx"
+                ),
+            )
+            generative_build._run_sfx_pass(
+                job_id=str(uuid.uuid4()),
+                variant_id="subtitled",
+                sfx_raw=job.assembly_plan["variants"][0]["sound_effects"],
+                expected_render_gen_id="gen-1",
+            )
+
+        assert observed_during_external_work == [0]

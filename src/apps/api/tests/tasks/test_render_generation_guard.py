@@ -231,6 +231,7 @@ def _arm_direct_passes(monkeypatch, job):
     _patch_sessions(monkeypatch, job)
     monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *a, **k: None)
     monkeypatch.setattr("app.storage.copy_object", lambda *a, **k: None)
+    monkeypatch.setattr("app.storage.object_exists", lambda _path: False)
     monkeypatch.setattr("app.storage.signed_get_url", lambda path, **kw: f"https://signed/{path}")
     monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
     monkeypatch.setattr(

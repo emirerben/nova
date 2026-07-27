@@ -2517,204 +2517,65 @@ def _run_media_overlay_pass(
     from app.agents._schemas.media_overlay import coerce_media_overlays  # noqa: PLC0415
     from app.pipeline.media_overlay import apply_media_overlays  # noqa: PLC0415
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
-    from app.storage import copy_object  # noqa: PLC0415
+    from app.storage import copy_object, object_exists  # noqa: PLC0415
 
     pass_t0 = time.monotonic()
+
+    # Snapshot only. Never hold a checked-out connection or row lock across GCS
+    # copies / FFmpeg: a database restart during a long encode otherwise poisons
+    # the session before the terminal write (prod incident 2026-07-27).
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id), with_for_update=expected_render_gen_id is not None)
+        job = db.get(Job, uuid.UUID(job_id))
         if job is None:
             log.error("media_overlay_job_not_found", job_id=job_id)
             return
-        variants = list((job.assembly_plan or {}).get("variants") or [])
-        existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
-        if existing is None:
-            log.error("media_overlay_variant_not_found", job_id=job_id, variant_id=variant_id)
-            return
+        persisted = (job.assembly_plan or {}).get("variants") or []
+        found = next((v for v in persisted if v.get("variant_id") == variant_id), None)
+        existing = dict(found) if found is not None else None
+    if existing is None:
+        log.error("media_overlay_variant_not_found", job_id=job_id, variant_id=variant_id)
+        return
 
-        current_video_path = existing.get("video_path")
-        if not current_video_path:
-            log.error("media_overlay_no_video_path", job_id=job_id, variant_id=variant_id)
-            return
+    current_video_path = existing.get("video_path")
+    if not current_video_path:
+        log.error("media_overlay_no_video_path", job_id=job_id, variant_id=variant_id)
+        return
 
-        cards = coerce_media_overlays(overlays_raw)
+    cards = coerce_media_overlays(overlays_raw)
 
-        # Stale-bake detection baseline (plan 009 E5): snapshot the PERSISTED
-        # card list before the long ffmpeg run. If the user autosaves an edit
-        # (e.g. a PiP↔fullscreen toggle) while the bake runs, the write-back
-        # below must NOT clobber it with this task's older list.
-        import json as _json_e5  # noqa: PLC0415
+    # Stale-bake detection baseline (plan 009 E5): if the user edits cards while
+    # FFmpeg runs, preserve their newer metadata during the terminal commit.
+    import json as _json_e5  # noqa: PLC0415
 
-        def _canon_cards(raw: object) -> str:
-            try:
-                return _json_e5.dumps(raw or [], sort_keys=True)
-            except (TypeError, ValueError):
-                return "[]"
+    def _canon_cards(raw: object) -> str:
+        try:
+            return _json_e5.dumps(raw or [], sort_keys=True)
+        except (TypeError, ValueError):
+            return "[]"
 
-        overlays_at_start = _canon_cards(existing.get("media_overlays"))
+    overlays_at_start = _canon_cards(existing.get("media_overlays"))
 
-        # When SFX are persisted, the terminal SFX reapply pass (the hook at the
-        # end of both branches below) owns the final render_status. Keep THIS
-        # overlay pass non-terminal ("rendering") so the frontend download poll
-        # never observes the intermediate overlay-only "ready" before SFX are
-        # remixed on top — otherwise it can download a file missing its SFX
-        # (two-pass observability). When no SFX are persisted the reapply is a
-        # no-op, so this pass stays terminal as before.
+    def _persist_result(
+        *,
+        output_url: str,
+        pre_clean: str | None,
+        clear: bool,
+    ) -> tuple[bool, bool, bool]:
+        """Return (accepted, will_reapply_sfx, stale_card_metadata_skipped)."""
+        from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
         from app.config import settings as _settings_ov  # noqa: PLC0415
 
-        will_reapply_sfx = (
-            (
-                bool(existing.get("background_music_treatment"))
-                or bool(existing.get("smart_music_treatment"))
-            )
-            and _settings_ov.smart_music_bed_enabled
-        ) or (bool(existing.get("sound_effects")) and _settings_ov.sound_effects_enabled)
-
-        # ── Clear path: remove all cards ──────────────────────────────────────
-        if not cards:
-            clean_path = existing.get("pre_media_overlay_video_path")
-            if clean_path and clean_path != current_video_path:
-                # Restore the clean variant by overwriting current with the clean copy.
-                copy_object(clean_path, current_video_path)
-                # Re-sign for 1 day (matches PLAYBACK_URL_TTL_MIN in generative_jobs.py).
-                from app.storage import signed_get_url  # noqa: PLC0415
-
-                signed_url = signed_get_url(current_video_path, expiration_minutes=60 * 24)
-            else:
-                signed_url = existing.get("output_url", "")
-
-            # Patch the variant.
-            for v in variants:
-                if v.get("variant_id") == variant_id:
-                    current = v.get("render_generation_id")
-                    if (
-                        expected_render_gen_id is not None
-                        and current is not None
-                        and current != expected_render_gen_id
-                    ):
-                        log.warning(
-                            "stale_render_write_discarded",
-                            job_id=job_id,
-                            variant_id=variant_id,
-                            outcome="media_overlay_clear",
-                            expected_gen_id=expected_render_gen_id,
-                            actual_gen_id=current,
-                        )
-                        return
-                    v["media_overlays"] = None
-                    v["output_url"] = signed_url
-                    if will_reapply_sfx:
-                        v["render_status"] = "rendering"  # SFX reapply sets terminal "ready"
-                    else:
-                        v["render_status"] = "ready"
-                        v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
-                    break
-            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
-            flag_modified(job, "assembly_plan")
-            db.commit()
-            record_pipeline_event(
-                "media_overlay",
-                "cards_cleared",
-                {"variant_id": variant_id, "elapsed_ms": _elapsed_ms(pass_t0)},
-            )
-            # Terminal hook: re-apply persisted SFX on top of the restored clean variant.
-            sfx_owned = _reapply_persisted_sfx_if_any(
-                job_id=job_id,
-                variant_id=variant_id,
-                expected_render_gen_id=expected_render_gen_id,
-            )
-            if will_reapply_sfx and not sfx_owned:
-                _finalize_overlay_deferred_terminal(
-                    job_id=job_id,
-                    variant_id=variant_id,
-                    expected_render_gen_id=expected_render_gen_id,
-                )
-            return
-
-        # ── Apply path: composite cards onto the clean base ──────────────────
-        pre_clean = existing.get("pre_media_overlay_video_path")
-        if not pre_clean:
-            # First apply-pass: durable-copy the base.
-            # Source from pre_sfx_video_path when present so the overlay clean copy
-            # is never SFX-contaminated (SFX is the outermost layer).
-            base_for_clean = existing.get("pre_sfx_video_path") or current_video_path
-            pre_clean = current_video_path + "_pre_overlay"
-            try:
-                copy_object(base_for_clean, pre_clean)
-                log.info("media_overlay_clean_copy_created", job_id=job_id, dst=pre_clean)
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "media_overlay_clean_copy_failed",
-                    job_id=job_id,
-                    error=str(exc),
-                )
-                # Continue with current_video_path as the base (no restore on clear).
-                pre_clean = current_video_path
-
-        try:
-            overlay_canvas = canvas_for_orientation(existing.get("orientation"))
-            new_url = apply_media_overlays(
-                base_gcs_path=pre_clean,
-                cards=cards,
-                output_gcs_path=current_video_path,
-                job_id=job_id,
-                deadline_monotonic=deadline_monotonic,
-                **_canvas_kwargs(overlay_canvas),
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.error(
-                "media_overlay_apply_failed",
-                job_id=job_id,
-                variant_id=variant_id,
-                error=str(exc),
-                exc_info=True,
-            )
-            for v in variants:
-                if v.get("variant_id") == variant_id:
-                    current = v.get("render_generation_id")
-                    if (
-                        expected_render_gen_id is not None
-                        and current is not None
-                        and current != expected_render_gen_id
-                    ):
-                        log.warning(
-                            "stale_render_write_discarded",
-                            job_id=job_id,
-                            variant_id=variant_id,
-                            outcome="media_overlay_failed",
-                            expected_gen_id=expected_render_gen_id,
-                            actual_gen_id=current,
-                        )
-                        return
-                    v["render_status"] = "failed"
-                    v["render_error"] = str(exc)[:500]
-                    break
-            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
-            flag_modified(job, "assembly_plan")
-            db.commit()
-            record_pipeline_event(
-                "media_overlay",
-                "apply_failed",
-                {"error": str(exc)[:200], "elapsed_ms": _elapsed_ms(pass_t0)},
-            )
-            return
-
-        # Re-read FRESH under a row lock before writing back (plan 009 E5): the
-        # ffmpeg run above took minutes; autosaves may have landed since. The
-        # variants list loaded at task start is stale — never write it back.
-        if hasattr(db, "expire_all"):
-            db.expire_all()
-        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
-        if job is None:
-            return
-        variants = list((job.assembly_plan or {}).get("variants") or [])
-        stale_write_skipped = False
-        for v in variants:
-            if v.get("variant_id") == variant_id:
-                current = v.get("render_generation_id")
+        with _sync_session() as db:
+            locked_job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            if locked_job is None:
+                return False, False, False
+            variants = list((locked_job.assembly_plan or {}).get("variants") or [])
+            stale_write_skipped = False
+            for variant in variants:
+                if variant.get("variant_id") != variant_id:
+                    continue
+                current = variant.get("render_generation_id")
                 if (
                     expected_render_gen_id is not None
                     and current is not None
@@ -2724,45 +2585,69 @@ def _run_media_overlay_pass(
                         "stale_render_write_discarded",
                         job_id=job_id,
                         variant_id=variant_id,
-                        outcome="media_overlay_apply",
+                        outcome="media_overlay_clear" if clear else "media_overlay_apply",
                         expected_gen_id=expected_render_gen_id,
                         actual_gen_id=current,
                     )
-                    return
-                if _canon_cards(v.get("media_overlays")) == overlays_at_start:
-                    v["media_overlays"] = [c.model_dump() for c in cards]
-                    # A user-driven rebake has no arbitration pass — the
-                    # first-render applied manifest no longer describes this
-                    # video. Null it rather than let it go stale.
-                    v["media_overlays_applied_ids"] = None
-                else:
-                    # User edited during the bake — their metadata wins; the
-                    # video shows this bake's cards until the next Download.
-                    stale_write_skipped = True
-                v["pre_media_overlay_video_path"] = pre_clean
-                v["output_url"] = new_url
-                if will_reapply_sfx:
-                    v["render_status"] = "rendering"  # SFX reapply sets terminal "ready"
-                else:
-                    v["render_status"] = "ready"
-                    v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
-                break
-        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-        from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+                    return False, False, False
 
-        flag_modified(job, "assembly_plan")
-        db.commit()
+                will_reapply_sfx = (
+                    (
+                        bool(variant.get("background_music_treatment"))
+                        or bool(variant.get("smart_music_treatment"))
+                    )
+                    and _settings_ov.smart_music_bed_enabled
+                ) or (bool(variant.get("sound_effects")) and _settings_ov.sound_effects_enabled)
+                if clear:
+                    variant["media_overlays"] = None
+                elif _canon_cards(variant.get("media_overlays")) == overlays_at_start:
+                    variant["media_overlays"] = [card.model_dump() for card in cards or []]
+                    variant["media_overlays_applied_ids"] = None
+                else:
+                    stale_write_skipped = True
+                if pre_clean is not None:
+                    variant["pre_media_overlay_video_path"] = pre_clean
+                variant["output_url"] = output_url
+                if will_reapply_sfx:
+                    variant["render_status"] = "rendering"
+                else:
+                    variant["render_status"] = "ready"
+                    variant["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+                break
+            else:
+                return False, False, False
+
+            locked_job.assembly_plan = {
+                **(locked_job.assembly_plan or {}),
+                "variants": variants,
+            }
+            flag_modified(locked_job, "assembly_plan")
+            db.commit()
+            return True, will_reapply_sfx, stale_write_skipped
+
+    # ── Clear path: remove all cards ──────────────────────────────────────────
+    if not cards:
+        clean_path = existing.get("pre_media_overlay_video_path")
+        if clean_path and clean_path != current_video_path:
+            copy_object(clean_path, current_video_path)
+            from app.storage import signed_get_url  # noqa: PLC0415
+
+            signed_url = signed_get_url(current_video_path, expiration_minutes=60 * 24)
+        else:
+            signed_url = existing.get("output_url", "")
+
+        accepted, will_reapply_sfx, _ = _persist_result(
+            output_url=signed_url,
+            pre_clean=None,
+            clear=True,
+        )
+        if not accepted:
+            return
         record_pipeline_event(
             "media_overlay",
-            "cards_applied",
-            {
-                "variant_id": variant_id,
-                "card_count": len(cards),
-                "stale_write_skipped": stale_write_skipped,
-                "elapsed_ms": _elapsed_ms(pass_t0),
-            },
+            "cards_cleared",
+            {"variant_id": variant_id, "elapsed_ms": _elapsed_ms(pass_t0)},
         )
-        # Terminal hook: re-apply persisted SFX on top of the newly composited video.
         sfx_owned = _reapply_persisted_sfx_if_any(
             job_id=job_id,
             variant_id=variant_id,
@@ -2774,6 +2659,84 @@ def _run_media_overlay_pass(
                 variant_id=variant_id,
                 expected_render_gen_id=expected_render_gen_id,
             )
+        return
+
+    # ── Apply path: composite cards onto the clean base ───────────────────────
+    pre_clean = existing.get("pre_media_overlay_video_path")
+    if not pre_clean:
+        base_for_clean = existing.get("pre_sfx_video_path") or current_video_path
+        pre_clean = current_video_path + "_pre_overlay"
+        try:
+            if object_exists(pre_clean):
+                log.info("media_overlay_clean_copy_reused", job_id=job_id, dst=pre_clean)
+            else:
+                copy_object(base_for_clean, pre_clean)
+                log.info("media_overlay_clean_copy_created", job_id=job_id, dst=pre_clean)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("media_overlay_clean_copy_failed", job_id=job_id, error=str(exc))
+            pre_clean = current_video_path
+
+    try:
+        overlay_canvas = canvas_for_orientation(existing.get("orientation"))
+        new_url = apply_media_overlays(
+            base_gcs_path=pre_clean,
+            cards=cards,
+            output_gcs_path=current_video_path,
+            job_id=job_id,
+            deadline_monotonic=deadline_monotonic,
+            **_canvas_kwargs(overlay_canvas),
+        )
+    except OperationalError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.error(
+            "media_overlay_apply_failed",
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        _mark_variant_failed(
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            expected_render_gen_id=expected_render_gen_id,
+        )
+        record_pipeline_event(
+            "media_overlay",
+            "apply_failed",
+            {"error": str(exc)[:200], "elapsed_ms": _elapsed_ms(pass_t0)},
+        )
+        return
+
+    accepted, will_reapply_sfx, stale_write_skipped = _persist_result(
+        output_url=new_url,
+        pre_clean=pre_clean,
+        clear=False,
+    )
+    if not accepted:
+        return
+    record_pipeline_event(
+        "media_overlay",
+        "cards_applied",
+        {
+            "variant_id": variant_id,
+            "card_count": len(cards),
+            "stale_write_skipped": stale_write_skipped,
+            "elapsed_ms": _elapsed_ms(pass_t0),
+        },
+    )
+    sfx_owned = _reapply_persisted_sfx_if_any(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=expected_render_gen_id,
+    )
+    if will_reapply_sfx and not sfx_owned:
+        _finalize_overlay_deferred_terminal(
+            job_id=job_id,
+            variant_id=variant_id,
+            expected_render_gen_id=expected_render_gen_id,
+        )
 
 
 def _finalize_overlay_deferred_terminal(
@@ -3016,6 +2979,8 @@ def _reapply_persisted_media_overlays_if_any(
             flag_modified(job, "assembly_plan")
             db.commit()
         _free_media_snapshot_keys(retired_keys)
+    except OperationalError:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.warning("media_overlay_reapply_prep_failed", job_id=job_id, error=str(exc))
         _mark_variant_failed(
@@ -3034,6 +2999,8 @@ def _reapply_persisted_media_overlays_if_any(
             expected_render_gen_id=expected_render_gen_id,
             deadline_monotonic=deadline_monotonic,
         )
+    except OperationalError:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.warning("media_overlay_reapply_failed", job_id=job_id, error=str(exc))
         _mark_variant_failed(
@@ -3110,6 +3077,8 @@ def _reapply_persisted_sfx_if_any(
             flag_modified(job, "assembly_plan")
             db.commit()
         _free_media_snapshot_keys(retired_keys)
+    except OperationalError:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.warning("sfx_reapply_prep_failed", job_id=job_id, error=str(exc))
         # The overlay pass deferred its terminal state to this reapply (it left
@@ -3131,6 +3100,8 @@ def _reapply_persisted_sfx_if_any(
             sfx_raw=sfx_raw,
             expected_render_gen_id=expected_render_gen_id,
         )
+    except OperationalError:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.warning("sfx_reapply_failed", job_id=job_id, error=str(exc))
         # _run_sfx_pass sets render_status="failed" itself on a HANDLED apply
@@ -3152,45 +3123,72 @@ def _mark_variant_failed(
     error: str,
     expected_render_gen_id: str | None = None,
 ) -> None:
-    """Best-effort flip of a variant to render_status="failed".
+    """Flip a variant to render_status="failed", retrying transient DB loss.
 
     Used when a pass that DEFERRED its terminal render_status (e.g. an overlay
     pass that handed off to a failing SFX reapply) would otherwise strand the
-    variant in "rendering". Never raises.
+    variant in "rendering". OperationalError propagates after the local retry
+    budget so the owning Celery task's autoretry policy can take over.
     """
-    try:
-        with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
-            if job is None:
-                return
-            variants = list((job.assembly_plan or {}).get("variants") or [])
-            for v in variants:
-                if v.get("variant_id") == variant_id:
-                    current = v.get("render_generation_id")
-                    if (
-                        expected_render_gen_id is not None
-                        and current is not None
-                        and current != expected_render_gen_id
-                    ):
-                        log.warning(
-                            "stale_render_write_discarded",
-                            job_id=job_id,
-                            variant_id=variant_id,
-                            outcome="sfx_failed",
-                            expected_gen_id=expected_render_gen_id,
-                            actual_gen_id=current,
-                        )
-                        return
-                    v["render_status"] = "failed"
-                    v["render_error"] = error[:500]
-                    break
-            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+    retry_delays_s = (1, 2, 4)
+    for attempt in range(len(retry_delays_s) + 1):
+        try:
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                if job is None:
+                    return
+                variants = list((job.assembly_plan or {}).get("variants") or [])
+                for v in variants:
+                    if v.get("variant_id") == variant_id:
+                        current = v.get("render_generation_id")
+                        if (
+                            expected_render_gen_id is not None
+                            and current is not None
+                            and current != expected_render_gen_id
+                        ):
+                            log.warning(
+                                "stale_render_write_discarded",
+                                job_id=job_id,
+                                variant_id=variant_id,
+                                outcome="variant_failed",
+                                expected_gen_id=expected_render_gen_id,
+                                actual_gen_id=current,
+                            )
+                            return
+                        v["render_status"] = "failed"
+                        v["render_error"] = error[:500]
+                        break
+                job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+                from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
-            flag_modified(job, "assembly_plan")
-            db.commit()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("mark_variant_failed_error", job_id=job_id, error=str(exc))
+                flag_modified(job, "assembly_plan")
+                db.commit()
+            return
+        except OperationalError as exc:
+            if attempt == len(retry_delays_s):
+                log.error(
+                    "variant_db_write_retry_exhausted",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    operation="mark_failed",
+                    attempts=attempt + 1,
+                    error=str(exc),
+                )
+                raise
+            delay_s = retry_delays_s[attempt]
+            log.warning(
+                "variant_db_write_retry",
+                job_id=job_id,
+                variant_id=variant_id,
+                operation="mark_failed",
+                attempt=attempt + 1,
+                delay_s=delay_s,
+                error=str(exc),
+            )
+            time.sleep(delay_s)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mark_variant_failed_error", job_id=job_id, error=str(exc))
+            return
 
 
 def _run_sfx_pass(
@@ -3222,206 +3220,163 @@ def _run_sfx_pass(
         apply_sound_effects,
     )
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
-    from app.storage import copy_object  # noqa: PLC0415
+    from app.storage import copy_object, object_exists  # noqa: PLC0415
 
     pass_t0 = time.monotonic()
+
+    # Snapshot only. The expensive audio encode runs after this context exits;
+    # the terminal write uses _update_variant_entry's fresh row-locked session.
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id), with_for_update=expected_render_gen_id is not None)
+        job = db.get(Job, uuid.UUID(job_id))
         if job is None:
             log.error("sfx_job_not_found", job_id=job_id)
             return
-        variants = list((job.assembly_plan or {}).get("variants") or [])
-        existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
-        if existing is None:
-            log.error("sfx_variant_not_found", job_id=job_id, variant_id=variant_id)
+        persisted = (job.assembly_plan or {}).get("variants") or []
+        found = next((v for v in persisted if v.get("variant_id") == variant_id), None)
+        existing = dict(found) if found is not None else None
+    if existing is None:
+        log.error("sfx_variant_not_found", job_id=job_id, variant_id=variant_id)
+        return
+
+    current_video_path = existing.get("video_path")
+    if not current_video_path:
+        log.error("sfx_no_video_path", job_id=job_id, variant_id=variant_id)
+        return
+
+    placements = coerce_sound_effects(sfx_raw) or []
+    music_treatment = (
+        existing.get("background_music_treatment") or existing.get("smart_music_treatment")
+        if settings.smart_music_bed_enabled
+        else None
+    )
+
+    # ── Clear path: remove all effects ────────────────────────────────────────
+    if not placements and not music_treatment:
+        clean_path = existing.get("pre_sfx_video_path")
+        if clean_path and clean_path != current_video_path:
+            copy_object(clean_path, current_video_path)
+            from app.storage import signed_get_url  # noqa: PLC0415
+
+            signed_url = signed_get_url(current_video_path, expiration_minutes=60 * 24)
+        else:
+            signed_url = existing.get("output_url", "")
+
+        if not _update_variant_entry(
+            job_id,
+            variant_id,
+            {
+                "sound_effects": None,
+                "output_url": signed_url,
+                "render_status": "ready",
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            },
+            expected_render_gen_id=expected_render_gen_id,
+            outcome="sfx_clear",
+        ):
             return
-
-        current_video_path = existing.get("video_path")
-        if not current_video_path:
-            log.error("sfx_no_video_path", job_id=job_id, variant_id=variant_id)
-            return
-
-        placements = coerce_sound_effects(sfx_raw) or []
-        # Kill switch: with the bed disabled the treatment stays persisted (so
-        # re-enabling restores it) but this pass mixes as if it were absent.
-        music_treatment = (
-            existing.get("background_music_treatment") or existing.get("smart_music_treatment")
-            if settings.smart_music_bed_enabled
-            else None
-        )
-
-        # ── Clear path: remove all effects ───────────────────────────────────
-        if not placements and not music_treatment:
-            clean_path = existing.get("pre_sfx_video_path")
-            if clean_path and clean_path != current_video_path:
-                copy_object(clean_path, current_video_path)
-                from app.storage import signed_get_url  # noqa: PLC0415
-
-                signed_url = signed_get_url(current_video_path, expiration_minutes=60 * 24)
-            else:
-                signed_url = existing.get("output_url", "")
-
-            for v in variants:
-                if v.get("variant_id") == variant_id:
-                    current = v.get("render_generation_id")
-                    if (
-                        expected_render_gen_id is not None
-                        and current is not None
-                        and current != expected_render_gen_id
-                    ):
-                        log.warning(
-                            "stale_render_write_discarded",
-                            job_id=job_id,
-                            variant_id=variant_id,
-                            outcome="sfx_clear",
-                            expected_gen_id=expected_render_gen_id,
-                            actual_gen_id=current,
-                        )
-                        return
-                    v["sound_effects"] = None
-                    v["output_url"] = signed_url
-                    v["render_status"] = "ready"
-                    v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
-                    break
-            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
-            flag_modified(job, "assembly_plan")
-            db.commit()
-            record_pipeline_event(
-                "sound_effects",
-                "effects_cleared",
-                {"variant_id": variant_id, "elapsed_ms": _elapsed_ms(pass_t0)},
-            )
-            return
-
-        # ── Apply path: mix effects onto the clean base ───────────────────────
-        # pre_sfx_video_path is the variant with overlays but WITHOUT SFX.
-        pre_clean = existing.get("pre_sfx_video_path")
-        if not pre_clean:
-            # First apply-pass: durable-copy the current variant.
-            pre_clean = current_video_path + "_pre_sfx"
-            try:
-                copy_object(current_video_path, pre_clean)
-                log.info("sfx_clean_copy_created", job_id=job_id, dst=pre_clean)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("sfx_clean_copy_failed", job_id=job_id, error=str(exc))
-                pre_clean = current_video_path
-
-        try:
-            from app.agents._schemas.visual_block import coerce_visual_blocks  # noqa: PLC0415
-
-            muted_sfx_intervals = (
-                [
-                    (block.start_s, block.end_s)
-                    for block in coerce_visual_blocks(existing.get("visual_blocks") or [])
-                    if block.audio_policy.sfx == "mute"
-                ]
-                if settings.visual_blocks_enabled
-                else []
-            )
-            if music_treatment:
-                new_url, audio_receipt = apply_smart_audio_treatment(
-                    base_gcs_path=pre_clean,
-                    effects=placements,
-                    output_gcs_path=current_video_path,
-                    music_bed=music_treatment,
-                    job_id=job_id,
-                    mute_intervals=muted_sfx_intervals,
-                )
-            else:
-                new_url = apply_sound_effects(
-                    base_gcs_path=pre_clean,
-                    effects=placements,
-                    output_gcs_path=current_video_path,
-                    job_id=job_id,
-                    mute_intervals=muted_sfx_intervals,
-                )
-                audio_receipt = None
-        except Exception as exc:  # noqa: BLE001
-            log.error(
-                "sfx_apply_failed",
-                job_id=job_id,
-                variant_id=variant_id,
-                error=str(exc),
-                exc_info=True,
-            )
-            for v in variants:
-                if v.get("variant_id") == variant_id:
-                    current = v.get("render_generation_id")
-                    if (
-                        expected_render_gen_id is not None
-                        and current is not None
-                        and current != expected_render_gen_id
-                    ):
-                        log.warning(
-                            "stale_render_write_discarded",
-                            job_id=job_id,
-                            variant_id=variant_id,
-                            outcome="sfx_failed",
-                            expected_gen_id=expected_render_gen_id,
-                            actual_gen_id=current,
-                        )
-                        return
-                    v["render_status"] = "failed"
-                    v["render_error"] = str(exc)[:500]
-                    break
-            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
-            flag_modified(job, "assembly_plan")
-            db.commit()
-            record_pipeline_event(
-                "sound_effects",
-                "apply_failed",
-                {"error": str(exc)[:200], "elapsed_ms": _elapsed_ms(pass_t0)},
-            )
-            return
-
-        for v in variants:
-            if v.get("variant_id") == variant_id:
-                current = v.get("render_generation_id")
-                if (
-                    expected_render_gen_id is not None
-                    and current is not None
-                    and current != expected_render_gen_id
-                ):
-                    log.warning(
-                        "stale_render_write_discarded",
-                        job_id=job_id,
-                        variant_id=variant_id,
-                        outcome="sfx_apply",
-                        expected_gen_id=expected_render_gen_id,
-                        actual_gen_id=current,
-                    )
-                    return
-                if placements or settings.sound_effects_enabled:
-                    # Empty placements with the lane ON is an explicit clear.
-                    # With the lane OFF the list was emptied by the kill switch
-                    # (music-bed-only reapply) — never wipe the creator's
-                    # persisted SFX; re-enabling the flag must restore them.
-                    v["sound_effects"] = [p.model_dump() for p in placements]
-                v["pre_sfx_video_path"] = pre_clean
-                v["output_url"] = new_url
-                if audio_receipt is not None:
-                    v["smart_audio_receipt"] = audio_receipt
-                v["render_status"] = "ready"
-                v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
-                break
-        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-        from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
-        flag_modified(job, "assembly_plan")
-        db.commit()
         record_pipeline_event(
             "sound_effects",
-            "effects_applied",
-            {
-                "variant_id": variant_id,
-                "effect_count": len(placements),
-                "elapsed_ms": _elapsed_ms(pass_t0),
-            },
+            "effects_cleared",
+            {"variant_id": variant_id, "elapsed_ms": _elapsed_ms(pass_t0)},
         )
+        return
+
+    # ── Apply path: mix effects onto the clean base ───────────────────────────
+    pre_clean = existing.get("pre_sfx_video_path")
+    if not pre_clean:
+        pre_clean = current_video_path + "_pre_sfx"
+        try:
+            if object_exists(pre_clean):
+                log.info("sfx_clean_copy_reused", job_id=job_id, dst=pre_clean)
+            else:
+                copy_object(current_video_path, pre_clean)
+                log.info("sfx_clean_copy_created", job_id=job_id, dst=pre_clean)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("sfx_clean_copy_failed", job_id=job_id, error=str(exc))
+            pre_clean = current_video_path
+
+    try:
+        from app.agents._schemas.visual_block import coerce_visual_blocks  # noqa: PLC0415
+
+        muted_sfx_intervals = (
+            [
+                (block.start_s, block.end_s)
+                for block in coerce_visual_blocks(existing.get("visual_blocks") or [])
+                if block.audio_policy.sfx == "mute"
+            ]
+            if settings.visual_blocks_enabled
+            else []
+        )
+        if music_treatment:
+            new_url, audio_receipt = apply_smart_audio_treatment(
+                base_gcs_path=pre_clean,
+                effects=placements,
+                output_gcs_path=current_video_path,
+                music_bed=music_treatment,
+                job_id=job_id,
+                mute_intervals=muted_sfx_intervals,
+            )
+        else:
+            new_url = apply_sound_effects(
+                base_gcs_path=pre_clean,
+                effects=placements,
+                output_gcs_path=current_video_path,
+                job_id=job_id,
+                mute_intervals=muted_sfx_intervals,
+            )
+            audio_receipt = None
+    except OperationalError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.error(
+            "sfx_apply_failed",
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        _mark_variant_failed(
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            expected_render_gen_id=expected_render_gen_id,
+        )
+        record_pipeline_event(
+            "sound_effects",
+            "apply_failed",
+            {"error": str(exc)[:200], "elapsed_ms": _elapsed_ms(pass_t0)},
+        )
+        return
+
+    patch: dict[str, Any] = {
+        "pre_sfx_video_path": pre_clean,
+        "output_url": new_url,
+        "render_status": "ready",
+        "render_finished_at": datetime.utcnow().isoformat() + "Z",
+    }
+    if placements or settings.sound_effects_enabled:
+        # Empty placements with the lane ON is an explicit clear. With the lane
+        # OFF, placements were emptied by the kill switch and persisted SFX stay.
+        patch["sound_effects"] = [placement.model_dump() for placement in placements]
+    if audio_receipt is not None:
+        patch["smart_audio_receipt"] = audio_receipt
+    if not _update_variant_entry(
+        job_id,
+        variant_id,
+        patch,
+        expected_render_gen_id=expected_render_gen_id,
+        outcome="sfx_apply",
+    ):
+        return
+    record_pipeline_event(
+        "sound_effects",
+        "effects_applied",
+        {
+            "variant_id": variant_id,
+            "effect_count": len(placements),
+            "elapsed_ms": _elapsed_ms(pass_t0),
+        },
+    )
 
 
 def _maybe_add_text_elements_snapshot(result: dict) -> None:
