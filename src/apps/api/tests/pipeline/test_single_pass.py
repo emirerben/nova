@@ -23,8 +23,9 @@ from app.pipeline.single_pass import (
 )
 
 
-def _clip(path: str = "/tmp/clip.mp4", start: float = 0.0, end: float = 2.0,
-          **overrides) -> SinglePassInput:
+def _clip(
+    path: str = "/tmp/clip.mp4", start: float = 0.0, end: float = 2.0, **overrides
+) -> SinglePassInput:
     return SinglePassInput(
         kind="clip",
         clip_path=path,
@@ -68,9 +69,7 @@ def test_single_pass_one_input_per_slot():
     cmd = build_single_pass_command(spec, "/tmp/out.mp4")
     # Count -i occurrences that name a clip path (not lavfi anullsrc / color).
     clip_input_count = sum(
-        1
-        for i, arg in enumerate(cmd)
-        if arg == "-i" and cmd[i + 1].endswith(".mp4")
+        1 for i, arg in enumerate(cmd) if arg == "-i" and cmd[i + 1].endswith(".mp4")
     )
     assert clip_input_count == 3, cmd
 
@@ -89,8 +88,7 @@ def test_color_holds_use_lavfi_not_files():
     assert ":d=1.0" in cmd_str
     # Only one clip-mp4 path means the hold isn't a pre-rendered file.
     clip_paths = [
-        cmd[i + 1] for i, a in enumerate(cmd)
-        if a == "-i" and cmd[i + 1].endswith(".mp4")
+        cmd[i + 1] for i, a in enumerate(cmd) if a == "-i" and cmd[i + 1].endswith(".mp4")
     ]
     assert len(clip_paths) == 2  # the two clip inputs, not the hold
 
@@ -121,6 +119,19 @@ def test_xfade_crossfade_emits_xfade_filter_node():
     assert "[vout]" in fc
     # No naked concat=n=2 filter — that's the M2 path we deliberately took.
     assert "concat=n=2" not in fc
+
+
+def test_xfade_uses_per_boundary_duration() -> None:
+    spec = SinglePassSpec(
+        inputs=[_clip(), _clip(), _clip()],
+        transitions=["crossfade", "fade_black"],
+        transition_duration_s=0.3,
+        transition_durations_s=[0.1, 0.2],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    fragments = [fragment for fragment in fc.split(";") if "xfade=" in fragment]
+    assert "duration=0.100" in fragments[0]
+    assert "duration=0.200" in fragments[1]
 
 
 def test_per_clip_chain_forces_cfr_before_xfade():
@@ -404,7 +415,9 @@ def test_dual_output_when_base_path_and_overlays_set():
         abs_pngs=[{"png_path": "/tmp/p.png", "start_s": 0.0, "end_s": 1.0}],
     )
     argv = build_single_pass_command(
-        spec, "/tmp/out.mp4", base_output_path="/tmp/base.mp4",
+        spec,
+        "/tmp/out.mp4",
+        base_output_path="/tmp/base.mp4",
     )
     # Two -map [base] / -map [vout] pairs (each followed by audio map).
     base_idx = argv.index("[base]")
@@ -425,7 +438,9 @@ def test_no_dual_output_when_base_path_set_but_no_overlays():
     and ffmpeg fails with 'Unable to find output stream for label base'."""
     spec = SinglePassSpec(inputs=[_clip(), _clip()])
     argv = build_single_pass_command(
-        spec, "/tmp/out.mp4", base_output_path="/tmp/base.mp4",
+        spec,
+        "/tmp/out.mp4",
+        base_output_path="/tmp/base.mp4",
     )
     # Only [vout] map; no [base] map.
     assert "[base]" not in argv
@@ -446,9 +461,13 @@ def test_dual_output_filter_graph_forks_base_via_split():
         inputs=[_clip(), _clip()],
         abs_pngs=[{"png_path": "/tmp/p.png", "start_s": 0.0, "end_s": 1.0}],
     )
-    fc = _argv_filter_complex(build_single_pass_command(
-        spec, "/tmp/out.mp4", base_output_path="/tmp/base.mp4",
-    ))
+    fc = _argv_filter_complex(
+        build_single_pass_command(
+            spec,
+            "/tmp/out.mp4",
+            base_output_path="/tmp/base.mp4",
+        )
+    )
     # Join goes to [base_pre], split forks into [base] and [base_for_overlay].
     assert "[base_pre]" in fc
     assert "[base_pre]split=2[base][base_for_overlay]" in fc
@@ -467,9 +486,13 @@ def test_dual_output_filter_graph_forks_via_split_with_xfade():
         transitions=["crossfade"],
         abs_pngs=[{"png_path": "/tmp/p.png", "start_s": 1.0, "end_s": 2.0}],
     )
-    fc = _argv_filter_complex(build_single_pass_command(
-        spec, "/tmp/out.mp4", base_output_path="/tmp/base.mp4",
-    ))
+    fc = _argv_filter_complex(
+        build_single_pass_command(
+            spec,
+            "/tmp/out.mp4",
+            base_output_path="/tmp/base.mp4",
+        )
+    )
     # xfade chain must PRODUCE [base_pre] (not just have it appear as the
     # split's consumer pad). A hardcoded "[vout]" sink on the last xfade
     # node — the original M3+M6 bug — would leave [base_pre] as a consumer
@@ -484,8 +507,7 @@ def test_dual_output_filter_graph_forks_via_split_with_xfade():
     xfade_fragments = [f for f in fc.split(";") if "xfade=" in f]
     assert xfade_fragments, "expected at least one xfade fragment"
     assert xfade_fragments[-1].endswith("[base_pre]"), (
-        f"xfade chain must emit [base_pre] in dual-output mode; "
-        f"got: {xfade_fragments[-1]}"
+        f"xfade chain must emit [base_pre] in dual-output mode; got: {xfade_fragments[-1]}"
     )
     assert "[vout]" not in ";".join(xfade_fragments), (
         "xfade chain must not emit [vout] when final_label is base_pre"
@@ -517,13 +539,38 @@ def test_dual_output_executes_real_ffmpeg(tmp_path):
     # source files needed. yuv420p+aac to match SinglePassInput defaults
     # (color_space/color_range/colorspace are applied per-clip).
     for path, color in ((clip_a, "red"), (clip_b, "blue")):
-        subprocess.run([
-            "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-            "-f", "lavfi", "-i", f"color=c={color}:s=1080x1920:r=30:d=0.5",
-            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100:d=0.5",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(path),
-        ], check=True, capture_output=True, timeout=20)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c={color}:s=1080x1920:r=30:d=0.5",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=channel_layout=stereo:sample_rate=44100:d=0.5",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "30",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=20,
+        )
 
     # 1x1 transparent PNG so the overlay chain has something to apply
     # without changing the visible output.
@@ -614,6 +661,7 @@ def test_filter_complex_label_uniqueness():
     graph = cmd[fc_idx + 1]
     # Extract everything between brackets — both [N:v] input refs and [vN] outputs.
     import re
+
     labels = re.findall(r"\[([a-zA-Z_0-9]+)\]", graph)
     # Output labels are v0..v3 + vout — each must appear exactly twice (once
     # as the chain's output, once as the concat's input). vout appears once
@@ -630,17 +678,18 @@ def test_filter_complex_label_uniqueness():
 
 def test_slot_order_matches_recipe():
     """Input order in argv == order in spec.inputs (off-by-one swap protection)."""
-    spec = SinglePassSpec(inputs=[
-        _clip(path="/tmp/A.mp4"),
-        _hold(),
-        _clip(path="/tmp/B.mp4"),
-        _clip(path="/tmp/C.mp4"),
-    ])
+    spec = SinglePassSpec(
+        inputs=[
+            _clip(path="/tmp/A.mp4"),
+            _hold(),
+            _clip(path="/tmp/B.mp4"),
+            _clip(path="/tmp/C.mp4"),
+        ]
+    )
     cmd = build_single_pass_command(spec, "/tmp/out.mp4")
     # Pull the clip paths from -i flags, in argv order.
     clip_paths = [
-        cmd[i + 1] for i, a in enumerate(cmd)
-        if a == "-i" and cmd[i + 1].endswith(".mp4")
+        cmd[i + 1] for i, a in enumerate(cmd) if a == "-i" and cmd[i + 1].endswith(".mp4")
     ]
     assert clip_paths == ["/tmp/A.mp4", "/tmp/B.mp4", "/tmp/C.mp4"]
 
@@ -662,10 +711,12 @@ def test_concat_fragment_present_with_correct_n():
 
 def test_ss_before_i_for_each_clip():
     """`-ss <start>` precedes `-i <path>` for each clip (matches reframe:250)."""
-    spec = SinglePassSpec(inputs=[
-        _clip(path="/tmp/A.mp4", start=3.0, end=5.0),
-        _clip(path="/tmp/B.mp4", start=12.5, end=14.0),
-    ])
+    spec = SinglePassSpec(
+        inputs=[
+            _clip(path="/tmp/A.mp4", start=3.0, end=5.0),
+            _clip(path="/tmp/B.mp4", start=12.5, end=14.0),
+        ]
+    )
     cmd = build_single_pass_command(spec, "/tmp/out.mp4")
     # For clip A: find "-ss 3.0" then "-t" then "-i /tmp/A.mp4".
     idx = cmd.index("/tmp/A.mp4")
@@ -704,9 +755,11 @@ def test_zero_duration_hold_raises():
 
 def test_per_clip_chain_includes_setpts_for_speed_factor():
     """Speed-factored clips emit a setpts segment (_build_video_filter contract)."""
-    spec = SinglePassSpec(inputs=[
-        _clip(speed_factor=1.5, aspect_ratio="16:9"),
-    ])
+    spec = SinglePassSpec(
+        inputs=[
+            _clip(speed_factor=1.5, aspect_ratio="16:9"),
+        ]
+    )
     cmd = build_single_pass_command(spec, "/tmp/out.mp4")
     fc_idx = cmd.index("-filter_complex")
     graph = cmd[fc_idx + 1]
@@ -748,8 +801,14 @@ class TestGatePoint:
         clip_file = tmp_path / f"clip_{slot_idx}.mp4"
         clip_file.write_bytes(b"fake")
         probe = VideoProbe(
-            duration_s=10.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=10.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = MagicMock()
         step.clip_id = f"clip_{slot_idx}"
@@ -812,13 +871,13 @@ class TestGatePoint:
         [
             # (force, settings.single_pass_encode_enabled, template.single_pass_enabled, expected)
             (False, False, False, False),  # default state — multi-pass
-            (False, True, False, False),   # env flipped alone — no-op (template not allow-listed)
-            (False, False, True, False),   # template flipped alone — no-op (env off)
-            (False, True, True, True),     # both flags True — single-pass (the rollout case)
-            (True, False, False, True),    # force overrides env=False
-            (True, True, False, True),     # force overrides template=False
-            (True, False, True, True),     # force overrides env=False (with template=True)
-            (True, True, True, True),      # everything True
+            (False, True, False, False),  # env flipped alone — no-op (template not allow-listed)
+            (False, False, True, False),  # template flipped alone — no-op (env off)
+            (False, True, True, True),  # both flags True — single-pass (the rollout case)
+            (True, False, False, True),  # force overrides env=False
+            (True, True, False, True),  # force overrides template=False
+            (True, False, True, True),  # force overrides env=False (with template=True)
+            (True, True, True, True),  # everything True
         ],
     )
     def test_effective_single_pass_truth_table(self, force, env, template, expected):
@@ -832,7 +891,8 @@ class TestGatePoint:
         from app.tasks.template_orchestrate import _resolve_effective_single_pass
 
         with patch(
-            "app.tasks.template_orchestrate.settings.single_pass_encode_enabled", env,
+            "app.tasks.template_orchestrate.settings.single_pass_encode_enabled",
+            env,
         ):
             assert _resolve_effective_single_pass(force, template) is expected
 
@@ -887,7 +947,9 @@ class TestGatePoint:
             # to the internal "crossfade" xfade family. Using the internal
             # name directly would fall through to "none" — the
             # _GEMINI_TO_INTERNAL map only knows the Gemini-side keys.
-            tmp_path, slot_idx=2, transition_in="dissolve",
+            tmp_path,
+            slot_idx=2,
+            transition_in="dissolve",
         )
         with (
             patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
@@ -991,8 +1053,13 @@ class TestGatePoint:
         step1, probe1, file1 = self._make_step_and_probe(tmp_path, slot_idx=1)
         step2, probe2, file2 = self._make_step_and_probe(tmp_path, slot_idx=2)
         interstitials = [
-            {"after_slot": 1, "type": "barn-door-open", "animate_s": 4.0, "hold_s": 0.5,
-             "hold_color": "#000000"},
+            {
+                "after_slot": 1,
+                "type": "barn-door-open",
+                "animate_s": 4.0,
+                "hold_s": 0.5,
+                "hold_color": "#000000",
+            },
         ]
         with (
             patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
@@ -1032,10 +1099,12 @@ class TestBuildSinglePassSpec:
     @staticmethod
     def _plan(slot_idx: int = 0, **overrides):
         from app.tasks.template_orchestrate import SlotPlan
+
         defaults = dict(
             slot_idx=slot_idx,
             clip_path=f"/tmp/clip_{slot_idx}.mp4",
-            start_s=0.0, end_s=3.0,
+            start_s=0.0,
+            end_s=3.0,
             speed_factor=1.0,
             slot_target_dur=3.0,
             cumulative_s=0.0,
@@ -1060,6 +1129,7 @@ class TestBuildSinglePassSpec:
 
     def test_single_clip_produces_one_input(self):
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         spec = _build_single_pass_spec(
             plans=[self._plan(slot_idx=0)],
             interstitial_map={},
@@ -1072,6 +1142,7 @@ class TestBuildSinglePassSpec:
 
     def test_three_clips_in_slot_order(self):
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         spec = _build_single_pass_spec(
             plans=[
                 self._plan(slot_idx=0, clip_path="/tmp/A.mp4"),
@@ -1082,12 +1153,15 @@ class TestBuildSinglePassSpec:
             steps=[self._step(1), self._step(2), self._step(3)],
         )
         assert [i.clip_path for i in spec.inputs] == [
-            "/tmp/A.mp4", "/tmp/B.mp4", "/tmp/C.mp4",
+            "/tmp/A.mp4",
+            "/tmp/B.mp4",
+            "/tmp/C.mp4",
         ]
 
     def test_color_hold_interstitial_interleaved(self):
         """Non-curtain interstitial after slot 1 → color_hold input between clips."""
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         interstitial_map = {1: {"type": "fade-black-hold", "hold_s": 0.75, "hold_color": "#000000"}}
         spec = _build_single_pass_spec(
             plans=[self._plan(slot_idx=0), self._plan(slot_idx=1)],
@@ -1100,6 +1174,7 @@ class TestBuildSinglePassSpec:
 
     def test_white_color_hold_mapped_correctly(self):
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         interstitial_map = {1: {"type": "fade-white-hold", "hold_s": 0.5, "hold_color": "#FFFFFF"}}
         spec = _build_single_pass_spec(
             plans=[self._plan(slot_idx=0)],
@@ -1110,6 +1185,7 @@ class TestBuildSinglePassSpec:
 
     def test_curtain_close_raises_unsupported(self):
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         interstitial_map = {1: {"type": "curtain-close", "animate_s": 4.0}}
         with pytest.raises(SinglePassUnsupportedError, match="curtain-close"):
             _build_single_pass_spec(
@@ -1125,6 +1201,7 @@ class TestBuildSinglePassSpec:
         missing the hero reveal animation. No production template uses
         barn-door-open today (PR #134, May 2026); this is the future-proof."""
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         interstitial_map = {1: {"type": "barn-door-open", "animate_s": 4.0}}
         with pytest.raises(SinglePassUnsupportedError, match="barn-door-open"):
             _build_single_pass_spec(
@@ -1141,6 +1218,7 @@ class TestBuildSinglePassSpec:
         transitions._GEMINI_TO_INTERNAL — covered here so spec.transitions
         accurately reflects what xfade filter type will be emitted."""
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         spec = _build_single_pass_spec(
             plans=[self._plan(slot_idx=0), self._plan(slot_idx=1)],
             interstitial_map={},
@@ -1155,6 +1233,7 @@ class TestBuildSinglePassSpec:
         """Gemini ``whip-pan`` → internal ``wipe_left`` → xfade wipeleft.
         Pins the translation chain so the wipe direction doesn't drift."""
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         spec = _build_single_pass_spec(
             plans=[self._plan(slot_idx=0), self._plan(slot_idx=1)],
             interstitial_map={},
@@ -1173,6 +1252,7 @@ class TestBuildSinglePassSpec:
         forces transition_types[i] = "none". Without this, single-pass
         would emit an xfade ON TOP OF the hold, double-stacking effects."""
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         interstitial_map = {1: {"type": "fade-black-hold", "hold_s": 0.5, "hold_color": "#000000"}}
         spec = _build_single_pass_spec(
             plans=[self._plan(slot_idx=0), self._plan(slot_idx=1)],
@@ -1191,6 +1271,7 @@ class TestBuildSinglePassSpec:
     def test_first_slot_transition_in_is_ignored(self):
         """slot_idx=0 never has a transition (nothing precedes it)."""
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         spec = _build_single_pass_spec(
             plans=[self._plan(slot_idx=0)],
             interstitial_map={},
@@ -1201,6 +1282,7 @@ class TestBuildSinglePassSpec:
 
     def test_grid_params_passthrough_when_has_grid(self):
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         plan = self._plan(
             slot_idx=0,
             has_grid=True,
@@ -1226,6 +1308,7 @@ class TestBuildSinglePassSpec:
 
     def test_grid_params_empty_when_no_grid(self):
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         plan = self._plan(slot_idx=0, has_grid=False)
         spec = _build_single_pass_spec(
             plans=[plan],
@@ -1237,6 +1320,7 @@ class TestBuildSinglePassSpec:
     def test_output_duration_includes_speed_factor(self):
         """duration = (end_s - start_s) / speed_factor — speed-2x halves it."""
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         spec = _build_single_pass_spec(
             plans=[
                 self._plan(slot_idx=0, start_s=0.0, end_s=4.0, speed_factor=1.0),
@@ -1250,6 +1334,7 @@ class TestBuildSinglePassSpec:
 
     def test_output_duration_includes_hold_s(self):
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         inter = {"type": "fade-black-hold", "hold_s": 1.5, "hold_color": "#000000"}
         spec = _build_single_pass_spec(
             plans=[self._plan(slot_idx=0, start_s=0.0, end_s=3.0)],
@@ -1265,6 +1350,7 @@ class TestBuildSinglePassSpec:
         match positions, not loop indices. Confirm we look it up correctly.
         """
         from app.tasks.template_orchestrate import _build_single_pass_spec
+
         # Slot at position 5 (not 1!) has interstitial after_slot=5.
         interstitial_map = {5: {"type": "fade-black-hold", "hold_s": 0.5, "hold_color": "#000000"}}
         spec = _build_single_pass_spec(

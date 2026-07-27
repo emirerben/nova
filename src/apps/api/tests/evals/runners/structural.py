@@ -31,6 +31,7 @@ from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
 from app.agents.edit_copilot import _MAX_OPS as _EDIT_COPILOT_MAX_OPS
 from app.agents.edit_copilot import EditCopilotOutput
+from app.agents.edit_director import EditDirectorInput, EditDirectorOutput
 from app.agents.idea_expander import IdeaExpanderInput, IdeaExpanderOutput
 from app.agents.intro_writer import (
     _MAX_WORDS as INTRO_MAX_WORDS,
@@ -1695,6 +1696,10 @@ def check_edit_copilot(output: Any) -> list[str]:
         "set_intro_layout",
         "set_title",
         "open_tool",
+        "add_camera_effect",
+        "patch_camera_effect",
+        "remove_camera_effect",
+        "set_transition",
     }
     failures: list[str] = []
 
@@ -1715,6 +1720,42 @@ def check_edit_copilot(output: Any) -> list[str]:
         name = op.get("op") if isinstance(op, dict) else None
         if name not in valid_ops:
             failures.append(f"op {idx}: {name!r} not in v1 vocabulary")
+    return failures
+
+
+def check_edit_director(
+    output: Any,
+    input: EditDirectorInput,  # noqa: A002
+) -> list[str]:
+    if not isinstance(output, EditDirectorOutput):
+        return [f"output is {type(output).__name__}, not EditDirectorOutput"]
+    failures: list[str] = []
+    suggestions = output.suggestions
+    total = float(input.variant_snapshot.get("total_duration_s") or 0.0)
+    if not 3 <= len(suggestions) <= 5:
+        failures.append(f"suggestions has {len(suggestions)} items, expected 3-5")
+    if len({item.id for item in suggestions}) != len(suggestions):
+        failures.append("suggestion ids are not unique")
+    if len({item.title.casefold() for item in suggestions}) != len(suggestions):
+        failures.append("suggestion titles are duplicated")
+    if len({item.category for item in suggestions}) < min(3, len(suggestions)):
+        failures.append("suggestions cover fewer than three creative categories")
+
+    for index, item in enumerate(suggestions):
+        if item.start_s > item.end_s:
+            failures.append(f"suggestion {index}: start_s is after end_s")
+        if total > 0 and item.end_s > total:
+            failures.append(f"suggestion {index}: end_s exceeds the timeline")
+        if item.apply_mode == "instant":
+            if not item.ops:
+                failures.append(f"suggestion {index}: instant suggestion has no operations")
+            if item.omni is not None:
+                failures.append(f"suggestion {index}: instant suggestion carries Omni input")
+        elif item.apply_mode == "omni_async":
+            if not input.omni_enabled:
+                failures.append(f"suggestion {index}: Omni suggestion emitted while disabled")
+            if item.omni is None or item.ops:
+                failures.append(f"suggestion {index}: malformed Omni suggestion contract")
     return failures
 
 
@@ -2124,6 +2165,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_style_intent(output)
     if agent_name == "nova.edit.copilot":
         return check_edit_copilot(output)
+    if agent_name == "nova.edit.director":
+        return check_edit_director(output, input)
     if agent_name == "nova.plan.conformance_feedback":
         return check_conformance_feedback(output)
     if agent_name == "nova.video.style_observation":

@@ -921,8 +921,73 @@ async def test_edit_persists_before_enqueue(monkeypatch):
         "moment_energy",
         "moment_description",
         "removed",
+        "transition_after",
+        "transition_duration_s",
     }
     assert persisted[0]["moment_description"] == "crowd wave"
+
+
+@pytest.mark.asyncio
+async def test_transition_duration_is_flag_gated_and_clamped_per_boundary(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "edit_transitions_enabled", True)
+    _, persists, _ = _arm(monkeypatch)
+    await gj.dispatch_edit_timeline(
+        _timeline_job(),
+        "song_text",
+        _req(
+            [
+                {
+                    "slot_id": "s1",
+                    "clip_index": 0,
+                    "in_s": 0.0,
+                    "duration_beats": 2,
+                    "transition_after": "flash",
+                    "transition_duration_s": 1.0,
+                },
+                {
+                    "slot_id": "s2",
+                    "clip_index": 1,
+                    "in_s": 1.0,
+                    "duration_beats": 3,
+                },
+            ]
+        ),
+        db=None,
+    )
+    assert persists[0][2][0]["transition_after"] == "flash"
+    assert persists[0][2][0]["transition_duration_s"] == 0.3
+    assert gj._active_timeline_duration_s(persists[0][2]) == pytest.approx(2.7)
+
+    monkeypatch.setattr(settings, "edit_transitions_enabled", False)
+    _, disabled_persists, _ = _arm(monkeypatch)
+    await gj.dispatch_edit_timeline(
+        _timeline_job(),
+        "song_text",
+        _req(
+            [
+                {
+                    "slot_id": "s1",
+                    "clip_index": 0,
+                    "in_s": 0.0,
+                    "duration_beats": 2,
+                    "transition_after": "flash",
+                    "transition_duration_s": 0.2,
+                },
+                {
+                    "slot_id": "s2",
+                    "clip_index": 1,
+                    "in_s": 1.0,
+                    "duration_beats": 3,
+                },
+            ]
+        ),
+        db=None,
+    )
+    assert disabled_persists[0][2][0]["transition_after"] == "cut"
+    assert disabled_persists[0][2][0]["transition_duration_s"] is None
+    assert gj._active_timeline_duration_s(disabled_persists[0][2]) == pytest.approx(3.0)
 
 
 # ── DELETE: reset ────────────────────────────────────────────────────────────────

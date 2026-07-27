@@ -21,6 +21,7 @@ from app.pipeline.agents.gemini_analyzer import (
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_file_ref(state: str = "ACTIVE", name: str = "files/abc123") -> MagicMock:
     ref = MagicMock()
     ref.name = name
@@ -40,6 +41,7 @@ def _make_gemini_response(data: dict, finish_reason: str = "STOP") -> MagicMock:
 
 
 # ── gemini_upload_and_wait ─────────────────────────────────────────────────────
+
 
 class TestGeminiUploadAndWait:
     def test_happy_path_returns_active_ref(self):
@@ -825,12 +827,14 @@ class TestCacheLoadValidation:
         assert slots[0]["speed_factor"] == 4.0
 
 
-# ── Hardcoded model tests ────────────────────────────────────────────────────
+# ── Per-agent model isolation ────────────────────────────────────────────────
 
 
-class TestAnalyzeTemplateUsesSettingsModel:
-    def test_analyze_template_uses_settings_model(self):
-        """analyze_template should use settings.gemini_model, not hardcoded string."""
+class TestAnalyzeTemplateUsesDeclaredAgentModel:
+    def test_analyze_template_uses_template_recipe_model(self):
+        """The global GEMINI_MODEL must not rewrite a migrated agent's model."""
+        from app.agents.template_recipe import TemplateRecipeAgent
+
         file_ref = _make_file_ref()
         data = _base_template_data()
 
@@ -845,12 +849,14 @@ class TestAnalyzeTemplateUsesSettingsModel:
 
             analyze_template(file_ref)
 
-        # Verify generate_content was called with the settings model
         call_args = mock_client.models.generate_content.call_args
-        assert call_args.kwargs["model"] == "gemini-2.5-pro"
+        assert call_args.kwargs["model"] == TemplateRecipeAgent.spec.model
+        assert call_args.kwargs["model"] != "gemini-2.5-pro"
 
-    def test_two_pass_both_calls_use_settings_model(self):
-        """Both pass-1 and pass-2 of two_pass analysis use settings.gemini_model."""
+    def test_two_pass_uses_each_agents_declared_model(self):
+        from app.agents.creative_direction import CreativeDirectionAgent
+        from app.agents.template_recipe import TemplateRecipeAgent
+
         file_ref = _make_file_ref()
         pass1_response = MagicMock()
         pass1_response.text = "Creative direction text"
@@ -871,9 +877,14 @@ class TestAnalyzeTemplateUsesSettingsModel:
 
             analyze_template(file_ref, analysis_mode="two_pass")
 
-        # Both calls should use settings.gemini_model
-        for call in mock_client.models.generate_content.call_args_list:
-            assert call.kwargs["model"] == "gemini-2.5-pro"
+        models = [
+            call.kwargs["model"] for call in mock_client.models.generate_content.call_args_list
+        ]
+        assert models == [
+            CreativeDirectionAgent.spec.model,
+            TemplateRecipeAgent.spec.model,
+        ]
+        assert "gemini-2.5-pro" not in models
 
 
 # ── Slot semantic validation tests ───────────────────────────────────────────

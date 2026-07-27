@@ -10,7 +10,7 @@
  * offset. Nudges step 0.5s with a positive 0.1s floor; total ≤ 60s.
  */
 
-import type { TimelineResponse, TimelineSlot } from "@/lib/generative-api";
+import type { EditorTransition, TimelineResponse, TimelineSlot } from "@/lib/generative-api";
 
 // ── No-grid (original_text) constraints ──────────────────────────────────────
 export const SECONDS_STEP = 0.5;
@@ -29,6 +29,9 @@ export interface DraftSlot {
   removed: boolean;
   /** Why the AI picked this moment (null for user-added slots). */
   momentDescription: string | null;
+  /** Visual treatment after this slot. Omitted is the legacy hard cut. */
+  transitionAfter?: EditorTransition;
+  transitionDurationS?: number | null;
 }
 
 let addCounter = 0;
@@ -49,6 +52,8 @@ export function draftFromTimeline(timeline: TimelineResponse): DraftSlot[] {
       durationS: s.duration_s,
       removed: s.removed ?? false,
       momentDescription: s.moment_description,
+      transitionAfter: s.transition_after ?? "cut",
+      transitionDurationS: s.transition_duration_s ?? null,
     }));
 }
 
@@ -63,6 +68,21 @@ export interface SlotWindow {
   offsetBeats: number | null;
 }
 
+export function transitionOverlapS(
+  left: DraftSlot,
+  leftDurationS: number,
+  rightDurationS: number,
+): number {
+  if ((left.transitionAfter ?? "cut") === "cut") return 0;
+  const overlap = Math.min(
+    0.3,
+    left.transitionDurationS ?? 0.3,
+    leftDurationS * 0.3,
+    rightDurationS * 0.3,
+  );
+  return overlap >= 0.1 ? Math.round(overlap * 1000) / 1000 : 0;
+}
+
 /**
  * Walk the (non-uniform) beat grid across the non-removed slots, in order.
  * Returns one window per slot, aligned by index with the input array.
@@ -72,13 +92,12 @@ export interface SlotWindow {
  * walk in dispatch_edit_timeline.
  */
 export function slotWindows(slots: DraftSlot[], grid: number[]): SlotWindow[] {
-  const out: SlotWindow[] = [];
-  let startS = 0;
+  const derived: SlotWindow[] = [];
   let offset = 0;
   const hasGrid = grid.length > 0;
   for (const slot of slots) {
     if (slot.removed) {
-      out.push({ startS: null, durationS: 0, offsetBeats: null });
+      derived.push({ startS: null, durationS: 0, offsetBeats: null });
       continue;
     }
     if (hasGrid && slot.durationBeats != null) {
@@ -86,15 +105,35 @@ export function slotWindows(slots: DraftSlot[], grid: number[]): SlotWindow[] {
       const from = grid[Math.min(offset, grid.length - 1)];
       const to = grid[Math.min(offset + beats, grid.length - 1)];
       const dur = Math.max(0, to - from);
-      out.push({ startS, durationS: dur, offsetBeats: offset });
-      startS += dur;
+      derived.push({ startS: 0, durationS: dur, offsetBeats: offset });
       offset += beats;
     } else {
       const dur = slot.durationS ?? 0;
-      out.push({ startS, durationS: dur, offsetBeats: null });
-      startS += dur;
+      derived.push({ startS: 0, durationS: dur, offsetBeats: null });
     }
   }
+
+  const out: SlotWindow[] = [];
+  let startS = 0;
+  let previousActiveIndex: number | null = null;
+  slots.forEach((slot, index) => {
+    const base = derived[index];
+    if (slot.removed || base.durationS <= 0) {
+      out.push({ ...base, startS: null, durationS: 0 });
+      return;
+    }
+    if (previousActiveIndex != null) {
+      const previous = derived[previousActiveIndex];
+      startS -= transitionOverlapS(
+        slots[previousActiveIndex],
+        previous.durationS,
+        base.durationS,
+      );
+    }
+    out.push({ ...base, startS });
+    startS += base.durationS;
+    previousActiveIndex = index;
+  });
   return out;
 }
 
@@ -140,7 +179,13 @@ export function beatMarks(slots: DraftSlot[], grid: number[]): number[] {
 /** Total seconds of the current (non-removed) cut. */
 export function totalDurationS(slots: DraftSlot[], grid: number[]): number {
   const windows = slotWindows(slots, grid);
-  return windows.reduce((acc, w) => acc + w.durationS, 0);
+  for (let index = windows.length - 1; index >= 0; index -= 1) {
+    const window = windows[index];
+    if (window.startS != null && window.durationS > 0) {
+      return window.startS + window.durationS;
+    }
+  }
+  return 0;
 }
 
 /** Total beats consumed by non-removed slots. */

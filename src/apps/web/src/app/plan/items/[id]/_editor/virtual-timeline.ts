@@ -1,5 +1,5 @@
-import type { TimelineClip } from "@/lib/generative-api";
-import type { DraftSlot } from "@/app/generative/timeline-math";
+import type { EditorTransition, TimelineClip } from "@/lib/generative-api";
+import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
 
 const EPSILON = 1e-6;
 
@@ -11,6 +11,9 @@ export interface VirtualTimelineEntry {
   durationS: number;
   inS: number;
   sourceUrl: string | null;
+  transitionAfter: EditorTransition;
+  transitionDurationS: number | null;
+  overlapBeforeS: number;
 }
 
 export interface VirtualTimeline {
@@ -27,21 +30,17 @@ export interface VirtualTimeMapping {
   sourceTimeS: number;
 }
 
+export interface VirtualTransitionPreview {
+  kind: Exclude<EditorTransition, "cut">;
+  durationS: number;
+  progress: number;
+}
+
 export function mapVirtualTimeToMusicTime(
   virtualTimeS: number,
   sectionStartS: number,
 ): number {
   return Math.max(0, sectionStartS) + Math.max(0, virtualTimeS);
-}
-
-function durationForSlot(slot: DraftSlot, grid: number[], offsetBeats: number): number {
-  if (slot.removed) return 0;
-  if (grid.length > 0 && slot.durationBeats != null) {
-    const from = grid[Math.min(offsetBeats, grid.length - 1)] ?? 0;
-    const to = grid[Math.min(offsetBeats + slot.durationBeats, grid.length - 1)] ?? from;
-    return Math.max(0, to - from);
-  }
-  return Math.max(0, slot.durationS ?? 0);
 }
 
 export function buildVirtualTimeline(
@@ -50,35 +49,72 @@ export function buildVirtualTimeline(
   grid: number[] = [],
 ): VirtualTimeline {
   const clipUrlByIndex = new Map(clips.map((clip) => [clip.clip_index, clip.signed_url]));
+  const windows = slotWindows(slots, grid);
   const entries: VirtualTimelineEntry[] = [];
-  let startS = 0;
-  let offsetBeats = 0;
 
   slots.forEach((slot, slotIndex) => {
-    const durationS = durationForSlot(slot, grid, offsetBeats);
-    if (slot.removed || durationS <= 0) {
+    const window = windows[slotIndex];
+    if (slot.removed || !window || window.startS == null || window.durationS <= 0) {
       return;
     }
+    const previous = entries.at(-1);
+    const overlapBeforeS = previous
+      ? Math.round(
+          Math.max(0, previous.startS + previous.durationS - window.startS) * 1000,
+        ) / 1000
+      : 0;
     entries.push({
       slotIndex,
       slotKey: slot.key,
       clipIndex: slot.clipIndex,
-      startS,
-      durationS,
+      startS: window.startS,
+      durationS: window.durationS,
       inS: Math.max(0, slot.inS),
       sourceUrl: clipUrlByIndex.get(slot.clipIndex) ?? null,
+      transitionAfter: slot.transitionAfter ?? "cut",
+      transitionDurationS: slot.transitionDurationS ?? null,
+      overlapBeforeS,
     });
-    startS += durationS;
-    if (grid.length > 0 && slot.durationBeats != null) {
-      offsetBeats += slot.durationBeats;
-    }
   });
+  const last = entries.at(-1);
 
   return {
     entries,
-    totalDurationS: startS,
+    totalDurationS: last ? last.startS + last.durationS : 0,
     hasMissingSource: entries.some((entry) => !entry.sourceUrl),
   };
+}
+
+/**
+ * Preview the same render-safe boundary contract used by FFmpeg: at most
+ * 300ms and at most 30% of either adjacent active clip. The next deck is
+ * already preloaded, so the canvas can blend it under the outgoing deck.
+ */
+export function transitionPreviewAtTime(
+  timeline: VirtualTimeline,
+  timeS: number,
+): VirtualTransitionPreview | null {
+  for (let index = 0; index < timeline.entries.length - 1; index += 1) {
+    const entry = timeline.entries[index];
+    const next = timeline.entries[index + 1];
+    if (entry.transitionAfter === "cut") continue;
+    const durationS = Math.min(
+      0.3,
+      entry.transitionDurationS ?? 0.3,
+      entry.durationS * 0.3,
+      next.durationS * 0.3,
+    );
+    if (durationS < 0.1) continue;
+    const boundaryS = entry.startS + entry.durationS;
+    const startS = next.startS;
+    if (timeS < startS || timeS >= boundaryS) continue;
+    return {
+      kind: entry.transitionAfter,
+      durationS,
+      progress: Math.max(0, Math.min(1, (timeS - startS) / durationS)),
+    };
+  }
+  return null;
 }
 
 export function mapVirtualTime(
@@ -140,7 +176,9 @@ export function slotsDifferFromBaseline(
       Math.abs(a.inS - b.inS) > EPSILON ||
       Math.abs((a.durationS ?? 0) - (b.durationS ?? 0)) > EPSILON ||
       a.durationBeats !== b.durationBeats ||
-      a.removed !== b.removed
+      a.removed !== b.removed ||
+      (a.transitionAfter ?? "cut") !== (b.transitionAfter ?? "cut") ||
+      Math.abs((a.transitionDurationS ?? 0) - (b.transitionDurationS ?? 0)) > EPSILON
     ) {
       return true;
     }

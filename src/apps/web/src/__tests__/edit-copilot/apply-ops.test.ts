@@ -1,9 +1,13 @@
 import { describe, expect, it } from "@jest/globals";
-import { applyCopilotOps, snapToBeatMark } from "@/lib/edit-copilot/apply-ops";
+import {
+  applyCopilotOps,
+  applyCopilotOpsAtomic,
+  snapToBeatMark,
+} from "@/lib/edit-copilot/apply-ops";
 import { buildCopilotSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
-import type { MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
+import type { MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement, VisualBlock } from "@/lib/plan-api";
 
 function bar(over: Partial<TextElementBar> = {}): TextElementBar {
   return {
@@ -840,6 +844,213 @@ function suggestion(over: Partial<OverlaySuggestion> = {}): OverlaySuggestion {
     ...over,
   };
 }
+
+describe("Director editor operations", () => {
+  const cameraEffect = {
+    id: "camera-1",
+    token: "semantic_crop_pulse",
+    start_s: 0.5,
+    end_s: 1.5,
+    intensity: 0.04,
+    easing: "sine_pulse" as const,
+    source: "user",
+  };
+  const visualBlock: VisualBlock = {
+    version: 1,
+    id: "visual-1",
+    kind: "montage",
+    start_s: 2,
+    end_s: 5,
+    timing_mode: "manual",
+    origin: "user",
+    transition_in: "cut",
+    transition_out: "cut",
+    audio_policy: { base: "continue", sfx: "continue" },
+    shots: [],
+  };
+
+  function directorCtx() {
+    const slots = [
+      slot({ key: "a", slotId: "a", durationS: 3 }),
+      slot({ key: "b", slotId: "b", clipIndex: 1, durationS: 3 }),
+      slot({ key: "c", slotId: "c", clipIndex: 2, durationS: 3 }),
+    ];
+    const bars = [bar()];
+    return {
+      bars,
+      slots,
+      snapshot: buildCopilotSnapshot(
+        bars,
+        slots,
+        clips,
+        { text_elements: true, timeline: true, camera_effects: true, visual_blocks: true },
+        [],
+        {
+          cameraEffectsEnabled: true,
+          transitionsEnabled: true,
+          visualBlocksEnabled: true,
+          cameraEffects: [cameraEffect],
+          visualBlocks: [visualBlock],
+        },
+      ),
+      capabilities: { text_elements: true, timeline: true, camera_effects: true, visual_blocks: true },
+      cameraEffects: [cameraEffect],
+      visualBlocks: [visualBlock],
+      makeTextBarId: () => "new-text",
+      makeSlotKey: (s: DraftSlot) => `${s.key}-split`,
+      makeCameraEffectId: () => "camera-2",
+    };
+  }
+
+  it("adds, patches, and removes persisted camera effects", () => {
+    const added = applyCopilotOps(
+      [{ op: "add_camera_effect", start_s: 2, end_s: 3.5, intensity: 0.05 }],
+      directorCtx(),
+    );
+    expect(added.rejected).toEqual([]);
+    expect(added.nextCameraEffects).toHaveLength(2);
+    expect(added.nextCameraEffects?.[1]).toMatchObject({
+      id: "camera-2",
+      start_s: 2,
+      end_s: 3.5,
+      intensity: 0.05,
+    });
+
+    const patched = applyCopilotOps(
+      [{ op: "patch_camera_effect", camera_effect_index: 0, intensity: 0.07 }],
+      directorCtx(),
+    );
+    expect(patched.nextCameraEffects?.[0]).toMatchObject({ id: "camera-1", intensity: 0.07 });
+
+    const removed = applyCopilotOps(
+      [{ op: "remove_camera_effect", camera_effect_index: 0 }],
+      directorCtx(),
+    );
+    expect(removed.nextCameraEffects).toEqual([]);
+  });
+
+  it("stores the transition on the left side of the selected boundary", () => {
+    const result = applyCopilotOps(
+      [{ op: "set_transition", boundary_index: 1, transition: "flash", duration_s: 0.3 }],
+      directorCtx(),
+    );
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots?.[0].transitionAfter).toBeUndefined();
+    expect(result.nextSlots?.[1]).toMatchObject({
+      transitionAfter: "flash",
+      transitionDurationS: 0.3,
+    });
+  });
+
+  it("applies visual-block entrance and exit fades as draft state", () => {
+    const result = applyCopilotOpsAtomic(
+      [{
+        op: "set_visual_fade",
+        visual_block_index: 0,
+        transition_in: "fade",
+        transition_out: "fade",
+      }],
+      directorCtx(),
+    );
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextVisualBlocks?.[0]).toMatchObject({
+      id: "visual-1",
+      transition_in: "fade",
+      transition_out: "fade",
+    });
+  });
+
+  it("indexes transitions across active clips when a removed slot sits between them", () => {
+    const ctx = directorCtx();
+    ctx.slots = ctx.slots.map((item, index) =>
+      index === 1 ? { ...item, removed: true } : item
+    );
+    ctx.snapshot = buildCopilotSnapshot(
+      ctx.bars,
+      ctx.slots,
+      clips,
+      { text_elements: true, timeline: true, camera_effects: true },
+      [],
+      {
+        cameraEffectsEnabled: true,
+        transitionsEnabled: true,
+        cameraEffects: [cameraEffect],
+      },
+    );
+    const result = applyCopilotOps(
+      [{ op: "set_transition", boundary_index: 0, transition: "crossfade" }],
+      ctx,
+    );
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots?.[0].transitionAfter).toBe("crossfade");
+    expect(result.nextSlots?.[1].removed).toBe(true);
+  });
+
+  it("rejects the whole creative bundle when any operation is invalid or stale", () => {
+    const result = applyCopilotOpsAtomic(
+      [
+        { op: "edit_text", bar_index: 0, text: "A stronger hook" },
+        { op: "set_transition", boundary_index: 99, transition: "flash" },
+      ],
+      directorCtx(),
+    );
+
+    expect(result.textActions).toEqual([]);
+    expect(result.nextSlots).toBeNull();
+    expect(result.applied).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+  });
+
+  it("inserts a completed generated asset at the nearest clip boundary", () => {
+    const result = applyCopilotOpsAtomic(
+      [{
+        op: "insert_generated_asset",
+        asset_id: "asset-omni-1",
+        clip_index: 3,
+        insert_at_s: 3.1,
+        duration_s: 5,
+      }],
+      directorCtx(),
+    );
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots).toHaveLength(4);
+    expect(result.nextSlots?.[1]).toMatchObject({
+      key: "generated-asset-omni-1",
+      clipIndex: 3,
+      durationS: 5,
+      momentDescription: "Generated by Nova",
+    });
+  });
+
+  it("replaces the selected source segment for an Omni restyle", () => {
+    const result = applyCopilotOpsAtomic(
+      [{
+        op: "replace_generated_segment",
+        asset_id: "asset-omni-restyle",
+        clip_index: 3,
+        source_clip_index: 1,
+        source_start_s: 0,
+        source_end_s: 3,
+        duration_s: 4,
+      }],
+      directorCtx(),
+    );
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots).toHaveLength(3);
+    expect(result.nextSlots?.[1]).toMatchObject({
+      key: "generated-asset-omni-restyle",
+      clipIndex: 3,
+      durationS: 4,
+      momentDescription: "Restyled by Nova",
+    });
+    expect(result.nextSlots?.some((item) => item.clipIndex === 1)).toBe(false);
+  });
+});
 
 describe("slot-less variants (zero layout duration)", () => {
   // Regression: subtitled talk-to-camera variants have no clip slots, so the

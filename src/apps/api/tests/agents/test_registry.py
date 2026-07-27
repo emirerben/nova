@@ -47,6 +47,8 @@ _EXPECTED = {
     "nova.plan.conformance_feedback",
     # Edit Copilot v1 — full-editor chat turns into draft ops
     "nova.edit.copilot",
+    # Proactive ranked editor suggestions
+    "nova.edit.director",
 }
 
 

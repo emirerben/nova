@@ -147,6 +147,22 @@ describe("slotWindows beat walk (non-uniform grid)", () => {
     expect(windows[2].startS).toBeCloseTo(4);
     expect(totalDurationS(state.slots, [])).toBeCloseTo(6);
   });
+
+  it("subtracts render-safe transition overlaps from the shared total", () => {
+    const state = init(secondsTimeline());
+    state.slots[0] = {
+      ...state.slots[0],
+      transitionAfter: "crossfade",
+      transitionDurationS: 0.3,
+    };
+    state.slots[1] = {
+      ...state.slots[1],
+      transitionAfter: "flash",
+      transitionDurationS: 0.2,
+    };
+
+    expect(totalDurationS(state.slots, [])).toBeCloseTo(5.5);
+  });
 });
 
 // ── Null-beats slots on a grid timeline (footage-trimmed AI slots) ────────────

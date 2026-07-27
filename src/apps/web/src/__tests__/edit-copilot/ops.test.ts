@@ -7,9 +7,9 @@ const validationSnapshot: CopilotValidationSnapshot = {
   total_duration_s: 10,
   text_bars: [{ id: "bar-0" }, { id: "bar-1" }],
   slots: [
-    { output_start_s: 0, output_end_s: 3 },
-    { output_start_s: 3, output_end_s: 6 },
-    { output_start_s: 6, output_end_s: 8 },
+    { key: "a", clip_index: 0, in_s: 0, duration_s: 3, output_start_s: 0, output_end_s: 3 },
+    { key: "b", clip_index: 1, in_s: 1, duration_s: 3, output_start_s: 3, output_end_s: 6 },
+    { key: "c", clip_index: 2, in_s: 0, duration_s: 2, output_start_s: 6, output_end_s: 8 },
   ],
   sfx: { placements: [{ id: "sfx-1" }] },
   overlays: {
@@ -17,6 +17,8 @@ const validationSnapshot: CopilotValidationSnapshot = {
     pending_suggestions: [{ id: "suggestion-1" }],
   },
   captions: { cues: [{ id: "caption-1" }] },
+  camera_effects: [{ start_s: 0.5, end_s: 2, intensity: 1 }],
+  visual_blocks: [{ id: "visual-1" }],
 };
 
 describe("edit-copilot op contract fixtures", () => {
@@ -98,6 +100,12 @@ describe("edit-copilot extended op validation", () => {
       ok: false,
       rejection: { message: "Lyric timing is locked to the vocal." },
     });
+    expect(
+      validateCopilotOp(
+        { op: "set_transition", boundary_index: 0, transition: "crossfade", duration_s: 0.12 },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { duration_s: 0.12 } });
     expect(
       validateCopilotOp({ op: "remove_text", bar_index: 0 }, lyricSnapshot),
     ).toMatchObject({
@@ -189,6 +197,140 @@ describe("edit-copilot extended op validation", () => {
       .toMatchObject({ ok: false, rejection: { reason: "missing_required" } });
     expect(validateCopilotOp({ op: "set_intro_layout", layout: "stacked" }, validationSnapshot))
       .toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+  });
+
+  it("clamps camera effects and validates effect patches against the snapshot", () => {
+    expect(
+      validateCopilotOp(
+        { op: "add_camera_effect", start_s: 0.5, end_s: 2, intensity: 4 },
+        validationSnapshot,
+      ),
+    ).toMatchObject({
+      ok: true,
+      op: { op: "add_camera_effect", start_s: 0.5, end_s: 2, intensity: 0.08 },
+    });
+    expect(
+      validateCopilotOp(
+        { op: "patch_camera_effect", camera_effect_index: 0, intensity: -2 },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { intensity: 0.01 } });
+    expect(
+      validateCopilotOp(
+        { op: "remove_camera_effect", camera_effect_index: 2 },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_index" } });
+    expect(
+      validateCopilotOp(
+        { op: "add_camera_effect", start_s: 9.95, end_s: 12 },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_time" } });
+  });
+
+  it("uses the shared render-safe transition contract", () => {
+    expect(
+      validateCopilotOp(
+        { op: "set_transition", boundary_index: 0, transition: "dip_to_black", duration_s: 2 },
+        validationSnapshot,
+      ),
+    ).toMatchObject({
+      ok: true,
+      op: { boundary_index: 0, transition: "dip_to_black", duration_s: 0.3 },
+    });
+    expect(
+      validateCopilotOp(
+        { op: "set_transition", boundary_index: 2, transition: "flash" },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_index" } });
+    expect(
+      validateCopilotOp(
+        { op: "set_transition", boundary_index: 0, transition: "spin" },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+    expect(
+      validateCopilotOp(
+        { op: "set_transition", boundary_index: 0, transition: "crossfade" },
+        {
+          ...validationSnapshot,
+          slots: [
+            { output_start_s: 0, output_end_s: 0.2 },
+            { output_start_s: 0.2, output_end_s: 2 },
+          ],
+        },
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_time" } });
+
+    expect(
+      validateCopilotOp(
+        { op: "set_transition", boundary_index: 0, transition: "crossfade" },
+        {
+          ...validationSnapshot,
+          slots: [
+            { output_start_s: 0, output_end_s: 2 },
+            { removed: true, output_start_s: null, output_end_s: null },
+            { output_start_s: 2, output_end_s: 4 },
+          ],
+        },
+      ),
+    ).toMatchObject({ ok: true, op: { boundary_index: 0, duration_s: 0.3 } });
+  });
+
+  it("accepts only complete normalized generated-asset operations", () => {
+    expect(
+      validateCopilotOp(
+        {
+          op: "insert_generated_asset",
+          asset_id: "asset-1",
+          clip_index: 3,
+          insert_at_s: 4,
+          duration_s: 5,
+        },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { clip_index: 3, duration_s: 5 } });
+    expect(
+      validateCopilotOp(
+        { op: "insert_generated_asset", asset_id: "asset-1", insert_at_s: 4 },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "missing_required" } });
+    expect(
+      validateCopilotOp(
+        {
+          op: "replace_generated_segment",
+          asset_id: "asset-2",
+          clip_index: 3,
+          source_clip_index: 1,
+          source_start_s: 1,
+          source_end_s: 4,
+          duration_s: 3.5,
+        },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { source_clip_index: 1, duration_s: 3.5 } });
+  });
+
+  it("validates visual-block fade patches", () => {
+    expect(
+      validateCopilotOp(
+        {
+          op: "set_visual_fade",
+          visual_block_index: 0,
+          transition_in: "fade",
+        },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { transition_in: "fade" } });
+    expect(
+      validateCopilotOp(
+        { op: "set_visual_fade", visual_block_index: 0, transition_out: "spin" },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false });
   });
 });
 

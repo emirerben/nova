@@ -33,6 +33,22 @@ from app.database import get_db
 from app.limiter import limiter
 from app.models import ContentPlan, Job, MusicTrack, Persona, PlanItem, PlanItemAsset
 from app.routes._copilot import CopilotTurnBody, CopilotTurnResponse, run_copilot_turn
+from app.routes._director import (
+    DirectorFeedbackBody,
+    DirectorSuggestionsBody,
+    DirectorSuggestionsResponse,
+    record_director_feedback,
+    run_director,
+)
+from app.routes._omni import (
+    OmniAssetClaimBody,
+    OmniAssetResponse,
+    OmniAssetStartBody,
+    cancel_omni_asset,
+    claim_omni_asset,
+    get_omni_asset,
+    start_omni_asset,
+)
 from app.routes.generative_jobs import (
     CAPTION_EDIT_ARCHETYPES,
     BedLevelRequest,
@@ -1755,6 +1771,130 @@ async def plan_item_copilot_turn(
     require_editable_variant(job, variant_id)
     # agent_run.job_id FKs jobs.id — pass the render job, never the plan-item id.
     return await run_copilot_turn(body, job_id=job.id)
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/director/suggestions",
+    response_model=DirectorSuggestionsResponse,
+)
+@limiter.limit("10/minute", key_func=get_real_ip)
+async def plan_item_director_suggestions(
+    request: Request,
+    item_id: str,
+    variant_id: str,
+    body: DirectorSuggestionsBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> DirectorSuggestionsResponse:
+    """Return proactive, read-only editorial suggestion bundles."""
+    from app.config import settings  # noqa: PLC0415
+
+    _ = request
+    if not settings.edit_director_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="edit_director_not_enabled",
+        )
+    job = await _owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+    return await run_director(body, job_id=job.id)
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/director/feedback",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def plan_item_director_feedback(
+    item_id: str,
+    variant_id: str,
+    body: DirectorFeedbackBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Record acceptance/dismissal without mutating the draft or variant."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.edit_director_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="edit_director_not_enabled",
+        )
+    job = await _owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+    record_director_feedback(body, job_id=job.id)
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/omni-assets",
+    response_model=OmniAssetResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+@limiter.limit("3/minute", key_func=get_real_ip)
+async def start_plan_item_omni_asset(
+    request: Request,
+    item_id: str,
+    variant_id: str,
+    body: OmniAssetStartBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> OmniAssetResponse:
+    """Start an opt-in generated insert without changing the editor draft."""
+    _ = request
+    job = await _owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+    return await start_omni_asset(job, variant_id, body, db)
+
+
+@router.get(
+    "/{item_id}/variants/{variant_id}/omni-assets/{asset_id}",
+    response_model=OmniAssetResponse,
+)
+async def plan_item_omni_asset_status(
+    item_id: str,
+    variant_id: str,
+    asset_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> OmniAssetResponse:
+    """Poll one generated asset; only ready responses contain an editor op."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+    return get_omni_asset(job, asset_id)
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/omni-assets/{asset_id}/cancel",
+    response_model=OmniAssetResponse,
+)
+async def cancel_plan_item_omni_asset(
+    item_id: str,
+    variant_id: str,
+    asset_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> OmniAssetResponse:
+    """Request cancellation and leave the current draft untouched."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+    return await cancel_omni_asset(job, asset_id, db)
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/omni-assets/{asset_id}/claim",
+    response_model=OmniAssetResponse,
+)
+async def claim_plan_item_omni_asset(
+    item_id: str,
+    variant_id: str,
+    asset_id: str,
+    body: OmniAssetClaimBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> OmniAssetResponse:
+    """Claim one completed generated clip after the draft revision is verified."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+    return await claim_omni_asset(job, asset_id, body, db)
 
 
 @router.post("/{item_id}/variants/{variant_id}/edit", response_model=PlanItemResponse)

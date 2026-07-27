@@ -34,6 +34,7 @@ import type {
   CopilotMessage,
   QueuedCopilotMessage,
 } from "@/lib/edit-copilot/useEditCopilot";
+import type { UseEditDirectorResult } from "@/lib/edit-copilot/useEditDirector";
 import {
   MOTION_FPS,
   type MotionPresetInstanceV1,
@@ -175,6 +176,7 @@ export default function ToolDrawer({
     onStop: () => void;
     onUndo: () => void;
     onClearRestoredInput: () => void;
+    director?: UseEditDirectorResult;
   };
   onClose: () => void;
 }) {
@@ -227,6 +229,7 @@ export default function ToolDrawer({
         onStop={copilot.onStop}
         onUndo={copilot.onUndo}
         onClearRestoredInput={copilot.onClearRestoredInput}
+        director={copilot.director}
         onClose={onClose}
       />
     );

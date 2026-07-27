@@ -1,0 +1,66 @@
+{
+  "agent": "nova.edit.director",
+  "prompt_version": "2026-07-27-v2",
+  "input": {
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "timeline", "effect", "transition", "sfx"],
+      "total_duration_s": 12.0,
+      "transcript": "I thought the market would be quiet, but then I found this stall.",
+      "text_bars": [
+        {
+          "index": 0,
+          "id": "hook-1",
+          "text": "Sunday market",
+          "start_s": 0.0,
+          "end_s": 2.8
+        }
+      ],
+      "slots": [
+        {
+          "index": 0,
+          "key": "slot-a",
+          "clip_index": 0,
+          "duration_s": 4.0,
+          "output_start_s": 0.0,
+          "output_end_s": 4.0,
+          "moment": "wide market entrance",
+          "transition_after": "cut"
+        },
+        {
+          "index": 1,
+          "key": "slot-b",
+          "clip_index": 1,
+          "duration_s": 4.0,
+          "output_start_s": 4.0,
+          "output_end_s": 8.0,
+          "moment": "quiet aisle before reveal",
+          "transition_after": "cut"
+        },
+        {
+          "index": 2,
+          "key": "slot-c",
+          "clip_index": 2,
+          "duration_s": 4.0,
+          "output_start_s": 8.0,
+          "output_end_s": 12.0,
+          "moment": "colorful ceramic stall reveal",
+          "transition_after": "cut"
+        }
+      ],
+      "camera_effects": [],
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {"id": "soft-whoosh", "name": "Soft whoosh", "duration_s": 0.6}
+        ]
+      }
+    },
+    "dismissed_suggestion_ids": [],
+    "omni_enabled": false
+  },
+  "raw_text": "{\"suggestions\":[{\"category\":\"text\",\"title\":\"Turn the label into a question\",\"rationale\":\"The current title names the place but gives viewers no reason to wait for the reveal.\",\"expected_benefit\":\"Creates an open loop in the first second.\",\"confidence\":0.94,\"start_s\":0,\"end_s\":2.8,\"apply_mode\":\"instant\",\"ops\":[{\"op\":\"edit_text\",\"bar_index\":0,\"text\":\"The stall I almost missed\"}]},{\"category\":\"hook_pacing\",\"title\":\"Reach the quiet aisle sooner\",\"rationale\":\"The entrance shot holds after its establishing information is clear.\",\"expected_benefit\":\"Moves the story toward the surprise without feeling rushed.\",\"confidence\":0.88,\"start_s\":0,\"end_s\":4,\"apply_mode\":\"instant\",\"ops\":[{\"op\":\"set_clip_duration\",\"slot_index\":0,\"duration_s\":2.6}]},{\"category\":\"effect\",\"title\":\"Give the hook a gentle push\",\"rationale\":\"A restrained camera pulse supports the new opening line without turning it into a gimmick.\",\"expected_benefit\":\"Adds emphasis at the exact moment the question lands.\",\"confidence\":0.82,\"start_s\":0.4,\"end_s\":1.5,\"apply_mode\":\"instant\",\"ops\":[{\"op\":\"add_camera_effect\",\"start_s\":0.4,\"end_s\":1.5,\"intensity\":0.04}]},{\"category\":\"transition\",\"title\":\"Flash into the ceramic reveal\",\"rationale\":\"The color jump at the final stall can carry one deliberate accent after the quiet aisle.\",\"expected_benefit\":\"Makes the payoff feel earned and visually decisive.\",\"confidence\":0.8,\"start_s\":7.7,\"end_s\":8.3,\"apply_mode\":\"instant\",\"ops\":[{\"op\":\"set_transition\",\"boundary_index\":1,\"transition\":\"flash\",\"duration_s\":0.3}]},{\"category\":\"audio\",\"title\":\"Lead the reveal with a soft whoosh\",\"rationale\":\"A short cue can bridge the quiet setup and the visual reveal without covering speech.\",\"expected_benefit\":\"Improves anticipation and makes the cut feel intentional.\",\"confidence\":0.78,\"start_s\":7.7,\"end_s\":8.3,\"apply_mode\":\"instant\",\"ops\":[{\"op\":\"add_sfx\",\"effect_id\":\"soft-whoosh\",\"at_s\":7.8,\"gain\":0.55}]}]}",
+  "meta": {
+    "language": "en",
+    "source": "hand_authored_editor_fixture"
+  }
+}

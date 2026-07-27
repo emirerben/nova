@@ -40,6 +40,7 @@ from app.agents._schemas.text_element import (
     merge_projected_text_elements_for_variant,
 )
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
+from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack, User
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
@@ -539,7 +540,7 @@ def visual_block_variant_duration(variant: dict) -> float:
         return explicit
     timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
     slots = [slot for slot in timeline.get("slots") or [] if not slot.get("removed")]
-    slot_total = sum(float(slot.get("duration_s") or 0.0) for slot in slots)
+    slot_total = _active_timeline_duration_s(slots)
     if slot_total > 0:
         return slot_total
     timed_rows = (
@@ -567,6 +568,8 @@ class TimelineSlotEdit(BaseModel):
     duration_beats: int | None = None
     duration_s: float | None = None
     removed: bool = False
+    transition_after: Literal["cut", "crossfade", "dip_to_black", "flash"] = "cut"
+    transition_duration_s: float | None = Field(default=None, ge=0.1, le=1.0)
 
 
 class TimelineEditRequest(BaseModel):
@@ -3720,7 +3723,7 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
     has_user_edits = bool(user_slots)
     effective = user_slots if has_user_edits else ai_slots
     active = [s for s in effective if not s.get("removed")]
-    total = sum(float(s.get("duration_s") or 0.0) for s in active)
+    total = _active_timeline_duration_s(active)
     used_indices = {s.get("clip_index") for s in active}
 
     # Source durations are only known where the worker probed them (ai_timeline).
@@ -3923,10 +3926,21 @@ _TIMELINE_REASSEMBLY_SENTINEL = {
 
 
 def _active_timeline_duration_s(slots: list[dict]) -> float:
-    return round(
-        sum(float(slot.get("duration_s") or 0.0) for slot in slots if not slot.get("removed")),
-        3,
-    )
+    active = [slot for slot in slots if not slot.get("removed")]
+    total = sum(float(slot.get("duration_s") or 0.0) for slot in active)
+    if settings.edit_transitions_enabled:
+        for left, right in zip(active, active[1:]):
+            if str(left.get("transition_after") or "cut") == "cut":
+                continue
+            overlap_s = min(
+                0.3,
+                float(left.get("transition_duration_s") or 0.3),
+                float(left.get("duration_s") or 0.0) * 0.3,
+                float(right.get("duration_s") or 0.0) * 0.3,
+            )
+            if overlap_s >= 0.1:
+                total -= overlap_s
+    return round(max(0.0, total), 3)
 
 
 def _timeline_override_for_reassembly(slots: list[dict]) -> list[dict]:
@@ -4256,10 +4270,43 @@ def resolve_timeline_slots_for_edit(
                 "moment_energy": meta.get("moment_energy"),
                 "moment_description": meta.get("moment_description"),
                 "removed": bool(e.removed),
+                "transition_after": (
+                    e.transition_after if settings.edit_transitions_enabled else "cut"
+                ),
+                "transition_duration_s": (
+                    e.transition_duration_s or 0.3
+                    if settings.edit_transitions_enabled and e.transition_after != "cut"
+                    else None
+                ),
             }
         )
     if total > TIMELINE_MAX_TOTAL_S + 1e-6:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_LONG")
+
+    # A transition belongs to the boundary after its source slot. Clamp each
+    # active boundary against both adjacent resolved clips so preview and the
+    # final FFmpeg graph share the same duration contract.
+    active_indices = [index for index, slot in enumerate(resolved) if not slot["removed"]]
+    for left_index, right_index in zip(active_indices, active_indices[1:]):
+        left = resolved[left_index]
+        right = resolved[right_index]
+        transition = str(left.get("transition_after") or "cut")
+        if transition == "cut":
+            left["transition_duration_s"] = None
+            continue
+        max_duration_s = min(
+            0.3,
+            float(left.get("duration_s") or 0.0) * 0.3,
+            float(right.get("duration_s") or 0.0) * 0.3,
+        )
+        if max_duration_s < 0.1:
+            left["transition_after"] = "cut"
+            left["transition_duration_s"] = None
+            continue
+        left["transition_duration_s"] = round(
+            min(float(left.get("transition_duration_s") or 0.3), max_duration_s),
+            3,
+        )
 
     # Hard existence check on every durable source we're about to cut from — a
     # manually deleted blob must fail HERE, not 12 minutes into a worker render.

@@ -91,6 +91,8 @@ describe("buildEditorCommitRequest", () => {
           duration_s: 1.2,
           duration_beats: null,
           removed: false,
+          transition_after: "cut",
+          transition_duration_s: null,
         },
         {
           slot_id: null,
@@ -99,9 +101,15 @@ describe("buildEditorCommitRequest", () => {
           duration_s: null,
           duration_beats: 4,
           removed: true,
+          transition_after: "cut",
+          transition_duration_s: null,
         },
       ],
       mix: { music_level: 0.0 },
+      music_track_id: undefined,
+      remove_music: undefined,
+      music_window: undefined,
+      background_music: undefined,
       sound_effects: [
         {
           id: "sfx-1",
@@ -128,7 +136,14 @@ describe("buildEditorCommitRequest", () => {
           z: 0,
         },
       ],
+      visual_blocks: undefined,
+      motion_scenes: undefined,
+      motion_runtime_hash: undefined,
+      camera_effects: undefined,
+      accepted_suggestion_ids: undefined,
       title: "Fresh title",
+      lyrics: undefined,
+      orientation: undefined,
       base_generation: "gen-current",
     });
   });
@@ -511,6 +526,8 @@ describe("buildEditorCommitRequest", () => {
         duration_s: 2,
         duration_beats: null,
         removed: false,
+        transition_after: "cut",
+        transition_duration_s: null,
       },
     ]);
     expect(body.music_track_id).toBeUndefined();

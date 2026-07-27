@@ -765,6 +765,34 @@ def test_prepare_timeline_assembly_clamps_windows_to_probe(monkeypatch, tmp_path
     assert s1.moment["end_s"] == 3.0
 
 
+def test_prepare_timeline_assembly_preserves_per_boundary_transition_duration(
+    monkeypatch,
+    tmp_path,
+):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "edit_transitions_enabled", True)
+    _patch_timeline_io(monkeypatch, duration_s=6.0)
+    out = gb._prepare_timeline_assembly(
+        [
+            _tl_slot(
+                0,
+                duration_s=2.0,
+                transition_after="dip_to_black",
+                transition_duration_s=0.12,
+            ),
+            _tl_slot(1, duration_s=2.0),
+        ],
+        CLIP_PATHS,
+        str(tmp_path),
+        job_id="j",
+    )
+    assert out is not None
+    destination = out["steps"][1].slot
+    assert destination["transition_in"] == "dip-to-black"
+    assert destination["transition_duration_s"] == 0.12
+
+
 def test_prepare_timeline_assembly_drops_collapsed_slots(monkeypatch, tmp_path):
     """Slots that clamp below 0.1s are dropped (warning); all-dropped → None
     (caller falls back to a fresh match). Survivors are renumbered."""

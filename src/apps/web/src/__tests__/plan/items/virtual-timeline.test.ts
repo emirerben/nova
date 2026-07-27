@@ -5,6 +5,7 @@ import {
   mapVirtualTimeToMusicTime,
   mapVirtualTime,
   slotsDifferFromBaseline,
+  transitionPreviewAtTime,
 } from "@/app/plan/items/[id]/_editor/virtual-timeline";
 
 function slot(over: Partial<DraftSlot> = {}): DraftSlot {
@@ -157,5 +158,71 @@ describe("virtual timeline", () => {
     expect(slotsDifferFromBaseline(baseline, [slot({ key: "a", durationS: 4 })])).toBe(false);
     expect(slotsDifferFromBaseline(baseline, [slot({ key: "a", durationS: 3.5 })])).toBe(true);
     expect(slotsDifferFromBaseline(baseline, [slot({ key: "a", removed: true })])).toBe(true);
+    expect(
+      slotsDifferFromBaseline(baseline, [
+        slot({ key: "a", transitionAfter: "crossfade", transitionDurationS: 0.3 }),
+      ]),
+    ).toBe(true);
+  });
+
+  it("previews the render-safe transition duration at an active boundary", () => {
+    const timeline = buildVirtualTimeline(
+      [
+        slot({
+          key: "a",
+          clipIndex: 0,
+          durationS: 0.5,
+          transitionAfter: "flash",
+          transitionDurationS: 0.3,
+        }),
+        slot({ key: "b", clipIndex: 1, durationS: 2 }),
+      ],
+      clips,
+    );
+
+    expect(transitionPreviewAtTime(timeline, 0.4)).toEqual({
+      kind: "flash",
+      durationS: 0.15,
+      progress: expect.closeTo(1 / 3, 5),
+    });
+    expect(transitionPreviewAtTime(timeline, 0.2)).toBeNull();
+    expect(transitionPreviewAtTime(timeline, 0.5)).toBeNull();
+  });
+
+  it("projects multiple mixed transition overlaps into preview timing", () => {
+    const timeline = buildVirtualTimeline(
+      [
+        slot({
+          key: "a",
+          clipIndex: 0,
+          durationS: 2,
+          transitionAfter: "crossfade",
+          transitionDurationS: 0.2,
+        }),
+        slot({
+          key: "b",
+          clipIndex: 1,
+          durationS: 3,
+          transitionAfter: "dip_to_black",
+          transitionDurationS: 0.3,
+        }),
+        slot({ key: "c", clipIndex: 2, durationS: 4 }),
+      ],
+      clips,
+    );
+
+    expect(timeline.entries.map((entry) => entry.startS)).toEqual([0, 1.8, 4.5]);
+    expect(timeline.entries.map((entry) => entry.overlapBeforeS)).toEqual([0, 0.2, 0.3]);
+    expect(timeline.totalDurationS).toBe(8.5);
+    expect(transitionPreviewAtTime(timeline, 1.9)).toMatchObject({
+      kind: "crossfade",
+      durationS: 0.2,
+      progress: expect.closeTo(0.5, 5),
+    });
+    expect(transitionPreviewAtTime(timeline, 4.65)).toMatchObject({
+      kind: "dip_to_black",
+      durationS: 0.3,
+      progress: expect.closeTo(0.5, 5),
+    });
   });
 });

@@ -152,6 +152,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         "shot_ranker",
         "text_designer",
         "transition_picker",
+        "edit_director",
     ):
         fixture_paths.extend(discover_fixtures(agent_dir))
 

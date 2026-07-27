@@ -44,6 +44,31 @@
       "name": "intro layout invalid layout",
       "reason": "layout must be linear or cluster",
       "op": {"op": "set_intro_layout", "layout": "stacked"}
+    },
+    {
+      "name": "collapsed camera effect",
+      "reason": "camera effect end must remain after start after clamping",
+      "op": {"op": "add_camera_effect", "start_s": 4.0, "end_s": 4.0}
+    },
+    {
+      "name": "camera effect out of bounds",
+      "reason": "camera_effect_index must point into the snapshot effects",
+      "op": {"op": "remove_camera_effect", "camera_effect_index": 99}
+    },
+    {
+      "name": "transition after final slot",
+      "reason": "boundary_index must identify two adjacent active clips",
+      "op": {"op": "set_transition", "boundary_index": 2, "transition": "crossfade"}
+    },
+    {
+      "name": "unsafe transition",
+      "reason": "transition must use the render-safe allowlist",
+      "op": {"op": "set_transition", "boundary_index": 0, "transition": "spin"}
+    },
+    {
+      "name": "unsafe visual fade",
+      "reason": "visual fade must be cut or fade",
+      "op": {"op": "set_visual_fade", "visual_block_index": 0, "transition_in": "spin"}
     }
   ]
 }

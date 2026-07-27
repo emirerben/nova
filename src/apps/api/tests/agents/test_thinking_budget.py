@@ -1,28 +1,31 @@
 """GeminiClient.invoke thinking-budget plumbing.
 
 The gemini-2.5 default dynamic thinking burned ~6.6k thought-tokens / ~30s on the
-music_matcher call (measured A/B on the real 34-track prod input). A per-agent
-`thinking_budget` on AgentSpec caps that. These tests lock the wiring: the budget
-reaches `GenerateContentConfig.thinking_config` for gemini-2.5 models, is omitted
-when unset, and is omitted for non-2.5 models (where it would be meaningless).
+music_matcher call (measured A/B on the real 34-track prod input). Gemini 3 adds
+named thinking levels. These tests lock both configurations and ensure the
+per-agent model declaration reaches the SDK unchanged.
 """
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from app.agents._model_client import GeminiClient
+from app.agents._runtime import TransientError
 from app.agents.music_matcher import MusicMatcherAgent
 
 
 class _CapturingModels:
     def __init__(self) -> None:
         self.captured_config: Any = None
+        self.captured_model: str | None = None
 
     def generate_content(self, *, model: str, contents: Any, config: Any):  # noqa: ARG002
+        self.captured_model = model
         self.captured_config = config
         return SimpleNamespace(text='{"ranked": []}', usage_metadata=None)
 
@@ -38,12 +41,6 @@ def capturing_client(monkeypatch) -> _CapturingModels:
     # _get() delegates to gemini_analyzer._get_client; patch that.
     monkeypatch.setattr(
         "app.pipeline.agents.gemini_analyzer._get_client", lambda: fake, raising=True
-    )
-    # Stop the model-rewrite from swapping our model name out.
-    monkeypatch.setattr(
-        "app.pipeline.agents.gemini_analyzer.settings",
-        SimpleNamespace(gemini_model=None),
-        raising=False,
     )
     return fake.models
 
@@ -67,6 +64,32 @@ def test_thinking_budget_ignored_for_non_2_5_model(capturing_client):
     # The param is meaningless on non-2.5 SKUs; don't attach it.
     GeminiClient().invoke(model="gemini-1.5-flash", prompt="hi", thinking_budget=256)
     assert getattr(capturing_client.captured_config, "thinking_config", None) is None
+
+
+def test_gemini_3_thinking_level_and_declared_model_reach_sdk(capturing_client):
+    GeminiClient().invoke(
+        model="gemini-3.1-pro-preview",
+        prompt="hi",
+        thinking_level="high",
+    )
+
+    assert capturing_client.captured_model == "gemini-3.1-pro-preview"
+    thinking = capturing_client.captured_config.thinking_config
+    assert str(thinking.thinking_level).endswith("HIGH")
+
+
+def test_per_agent_timeout_is_enforced(capturing_client, monkeypatch):
+    def slow_generate(**kwargs):  # noqa: ARG001
+        time.sleep(0.2)
+        return SimpleNamespace(text='{"ranked": []}', usage_metadata=None)
+
+    monkeypatch.setattr(capturing_client, "generate_content", slow_generate)
+    with pytest.raises(TransientError, match="timed out after 0.1s"):
+        GeminiClient().invoke(
+            model="gemini-3.6-flash",
+            prompt="hi",
+            timeout_s=0.1,
+        )
 
 
 def test_matcher_spec_caps_thinking_budget():

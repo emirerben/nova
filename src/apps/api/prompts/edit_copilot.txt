@@ -86,6 +86,20 @@ Title:
 
 - set_title: {"op":"set_title","title":"new working title"}
 
+Effects and transitions:
+
+- add_camera_effect: {"op":"add_camera_effect","start_s":1.0,"end_s":2.2,"intensity":0.04}
+- patch_camera_effect: {"op":"patch_camera_effect","camera_effect_index":0,"intensity":0.06}
+- remove_camera_effect: {"op":"remove_camera_effect","camera_effect_index":0}
+- set_transition: {"op":"set_transition","boundary_index":0,"transition":"crossfade","duration_s":0.3}
+- set_visual_fade: {"op":"set_visual_fade","visual_block_index":0,"transition_in":"fade","transition_out":"cut"}
+
+Camera effects are short semantic crop pulses; keep them between 0.4s and 2.0s
+and intensity between 0.01 and 0.08. boundary_index 0 is the boundary after
+clip 1. Supported transitions are cut, crossfade, dip_to_black, and flash.
+Visual fades address only an existing VISUAL BLOCK index and may change its
+entrance, exit, or both between cut and fade.
+
 Tools:
 
 - open_tool: {"op":"open_tool","tool":"sounds"}

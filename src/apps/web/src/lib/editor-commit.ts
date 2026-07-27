@@ -26,6 +26,7 @@ import {
   type TextElement,
   type VisualBlock,
 } from "@/lib/plan-api";
+import type { EditorTransition } from "@/lib/generative-api";
 import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
 
 const PLAN_BASE = "/api/plan";
@@ -41,6 +42,8 @@ export interface EditorTimelineSlot {
   duration_s: number | null;
   duration_beats: number | null;
   removed: boolean;
+  transition_after?: EditorTransition;
+  transition_duration_s?: number | null;
 }
 
 export interface EditorCommitMix {
@@ -185,6 +188,8 @@ export interface EditorCommitDraftSlot {
   durationS: number | null;
   durationBeats: number | null;
   removed: boolean;
+  transitionAfter?: EditorTransition;
+  transitionDurationS?: number | null;
 }
 
 export interface EditorCommitVariantBaseline {
@@ -339,6 +344,8 @@ export function buildEditorCommitRequest({
           duration_s: s.durationS,
           duration_beats: s.durationBeats,
           removed: s.removed,
+          transition_after: s.transitionAfter ?? "cut",
+          transition_duration_s: s.transitionDurationS ?? null,
         }))
       : undefined,
     mix: mixDirty && mixEditable && normalizedMix != null

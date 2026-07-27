@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     # Gemini
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"  # "gemini-2.5-flash" | "gemini-2.5-pro"
+    # Editor agents intentionally bypass the fleet-wide `gemini_model` setting:
+    # the chat executor optimizes for latency while the proactive director
+    # optimizes for editorial judgment. Keep these independently reversible.
+    edit_copilot_model: str = "gemini-3.6-flash"
+    edit_director_model: str = "gemini-3.1-pro-preview"
+    edit_director_fallback_model: str = "gemini-3.6-flash"
+    edit_omni_model: str = "gemini-omni-flash-preview"
 
     # Admin
     admin_api_key: str = ""
@@ -599,6 +606,14 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_EDIT_COPILOT_ENABLED gates the Nova drawer. Default off until
     # localhost QA validates the local-op applier and save parity.
     edit_copilot_enabled: bool = False
+    # Proactive, read-only editorial suggestions. The backend and frontend each
+    # have a gate; accepting a suggestion still changes only the local draft.
+    edit_director_enabled: bool = False
+    # Per-boundary transition operations authored by the editor/copilot.
+    edit_transitions_enabled: bool = False
+    # Async Gemini Omni short-video generation. Deliberately separate from the
+    # Director: the Director returns structured ops; Omni returns video bytes.
+    omni_generated_video_enabled: bool = False
 
     # Creator Agent M4: ConformanceFeedbackAgent at clip-attach time (best-effort).
     # Ships OFF — fires async after attach_clips, never blocks the 200 response.
