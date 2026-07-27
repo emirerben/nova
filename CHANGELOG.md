@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.3.0] — 2026-07-27
+
+### Fixed
+- **Text placed behind people no longer glitches.** Behind-subject text on montage edits used to flicker, strobe, and blink — chunks of the text appeared and disappeared as the segmentation flapped (worst on beach/sand footage, where the old person-detector confused sand and rock for people), and every clip change briefly cut the text with the previous clip's silhouette. The segmentation engine is now RobustVideoMatting (temporally stable by construction), its memory resets exactly at clip cuts so silhouettes never bleed across a cut, mask timing is frame-exact (no more repeat/skip judder), and a new stability gate catches any remaining unstable footage and renders the text cleanly in front instead of glitching behind.
+
+### Changed
+- Footage the segmenter definitively can't track is remembered per video, so text edits on those videos re-render instantly as clean front text instead of re-paying a long segmentation attempt every time. Old cached segmentation data migrates automatically on the next edit.
 ## [0.16.2.1] — 2026-07-27
 
 ### Fixed

@@ -193,9 +193,11 @@ def test_behind_subject_windows_pads_clamps_and_merges_overlaps():
     windows = gb._behind_subject_windows(overlays, duration_s=120.0)
     assert len(windows) == 2
     assert all(isinstance(w, MatteWindow) for w in windows)
-    assert windows[0].start_s == pytest.approx(0.75)
+    # Starts are grid-snapped DOWN from the raw pad (0.75 → 22/30, 99.75 →
+    # 2992/30) so mask_at offsets stay frame-integral.
+    assert windows[0].start_s == pytest.approx(22 / 30)
     assert windows[0].end_s == pytest.approx(3.25)
-    assert windows[1].start_s == pytest.approx(99.75)
+    assert windows[1].start_s == pytest.approx(2992 / 30)
     assert windows[1].end_s == 120.0
 
 
@@ -204,16 +206,31 @@ def test_behind_subject_windows_empty_when_no_overlay_requests_occlusion():
     assert gb._behind_subject_windows(overlays, duration_s=10.0) == []
 
 
+def test_behind_subject_windows_starts_are_frame_aligned():
+    """Any overlay start must yield a window start that is an integral number
+    of matte frames — a half-frame offset (the raw 0.25s pad = 7.5 frames)
+    made mask_at's rounding repeat/skip mask indices every ~3 frames."""
+    for start in (0.0, 0.4, 1.0, 3.337, 12.517):
+        overlays = [{"behind_subject": True, "start_s": start, "end_s": start + 2.0}]
+        windows = gb._behind_subject_windows(overlays, duration_s=120.0)
+        assert len(windows) == 1
+        ticks = windows[0].start_s * 30
+        assert abs(ticks - round(ticks)) < 1e-6, f"start {start} → non-integral {ticks}"
+        # Effective pad never shrinks below the nominal 0.25s.
+        assert windows[0].start_s <= max(0.0, start - 0.25) + 1e-9
+
+
 # ── _resolve_subject_matte_for_burn: cache / compute / strip-on-failure ─────────
 
 
 def _patch_matte_module(monkeypatch, *, compute=None, sane=True, provider="PROVIDER"):
     import app.pipeline.subject_matte as sm_mod
 
-    calls: dict = {"compute": [], "downloads": [], "uploads": []}
+    calls: dict = {"compute": [], "compute_kw": [], "downloads": [], "uploads": [], "deletes": []}
 
     def _fake_compute(video_path, windows, out_path, **kw):
         calls["compute"].append((video_path, windows, out_path))
+        calls["compute_kw"].append(kw)
         if compute == "none":
             return None
         return types.SimpleNamespace(mean_coverage=0.3, max_coverage=0.5)
@@ -239,6 +256,12 @@ def _patch_matte_module(monkeypatch, *, compute=None, sane=True, provider="PROVI
         storage,
         "upload_public_read",
         lambda local, gcs: calls["uploads"].append(gcs) or f"https://signed/{gcs}",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        storage,
+        "delete_object_best_effort",
+        lambda gcs: calls["deletes"].append(gcs) or True,
         raising=False,
     )
     return calls
@@ -286,7 +309,7 @@ def test_matte_reburn_with_cache_downloads_never_recomputes(monkeypatch, tmp_pat
     monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
     calls = _patch_matte_module(monkeypatch)
     overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
-    cached = "generative-jobs/j/base_1_x.mp4.matte.mp4"
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
     provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
         overlays=overlays,
@@ -319,11 +342,11 @@ def test_matte_reburn_toggle_on_without_cache_computes_and_persists(monkeypatch,
         variant_id="v",
     )
     assert provider == "PROVIDER"
-    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.mp4"
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
     assert len(calls["compute"]) == 1
     assert calls["uploads"] == [
-        "generative-jobs/j/base_1_x.mp4.matte.mp4",
-        "generative-jobs/j/base_1_x.mp4.matte.mp4.json",
+        "generative-jobs/j/base_1_x.mp4.matte.v2.mp4",
+        "generative-jobs/j/base_1_x.mp4.matte.v2.mp4.json",
     ]
     assert out_overlays is overlays
 
@@ -349,9 +372,13 @@ def test_matte_compute_none_strips_keys_falls_back_no_raise(monkeypatch, tmp_pat
     assert overlays[0]["behind_subject"] is True  # original never mutated
 
 
-def test_matte_insane_stats_strips_keys_falls_back_no_raise(monkeypatch, tmp_path):
+def test_matte_insane_stats_strips_and_persists_unstable_sentinel(monkeypatch, tmp_path):
+    """A DEFINITIVE sanity-gate rejection (stats computed, matte_is_sane
+    False, cut hints provided) persists the unstable sentinel so later
+    reburns of the same base skip straight to plain text instead of
+    recomputing every time."""
     monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
-    _patch_matte_module(monkeypatch, sane=False)
+    calls = _patch_matte_module(monkeypatch, sane=False)
     overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
     provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
@@ -362,9 +389,85 @@ def test_matte_insane_stats_strips_keys_falls_back_no_raise(monkeypatch, tmp_pat
         duration_s=5.0,
         job_id="j",
         variant_id="v",
+        cut_boundaries_s=[1.0],
     )
     assert provider is None
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v2.unstable"
     assert "behind_subject" not in out_overlays[0]
+    assert calls["uploads"] == []  # sentinel is a marker, not an object
+
+
+def test_matte_insane_without_cut_hints_never_mints_sentinel(monkeypatch, tmp_path):
+    """Gate rejection WITHOUT cut hints is ambiguous (legacy variants,
+    subtitled silence-cut joins: real cuts count as jumps) — fall back for
+    this burn only, keep the path retryable, never the permanent sentinel."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    _patch_matte_module(monkeypatch, sane=False)
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=None,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert provider is None
+    assert matte_path is None  # unchanged — retries next burn
+    assert "behind_subject" not in out_overlays[0]
+
+
+def test_matte_cached_unstable_sentinel_short_circuits(monkeypatch, tmp_path):
+    """A persisted unstable sentinel burns plain text with no download and
+    no recompute — the fix for the pay-90s-per-reburn migration retry loop."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    sentinel = "generative-jobs/j/base_1_x.mp4.matte.v2.unstable"
+    overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=overlays,
+        tmpdir=str(tmp_path),
+        cached_matte_path=sentinel,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert provider is None
+    assert matte_path == sentinel  # persists unchanged
+    assert "behind_subject" not in out_overlays[0]
+    assert calls["compute"] == [] and calls["downloads"] == []
+
+
+def test_matte_insane_migration_deletes_v1_and_persists_sentinel(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch, sane=False)
+    v1 = "generative-jobs/j/base_1_x.mp4.matte.mp4"
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=v1,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+        cut_boundaries_s=[1.0],
+    )
+    assert provider is None
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v2.unstable"
+    assert calls["deletes"] == [v1, f"{v1}.json"]  # glitchy v1 freed
+
+
+def test_matte_delete_guard_blocks_foreign_paths():
+    """The migration cleanup may only ever delete job-scoped matte blobs —
+    curated music/* and templates/* live in the same bucket."""
+    assert gb._matte_delete_allowed("generative-jobs/j/base_1_x.mp4.matte.mp4") is True
+    assert gb._matte_delete_allowed("music/curated-track.mp3") is False
+    assert gb._matte_delete_allowed("templates/tpl.mp4") is False
+    assert gb._matte_delete_allowed("generative-jobs/j/base.mp4") is False  # not a matte
 
 
 def test_matte_cache_open_failure_falls_back_keeps_old_cache_path(monkeypatch, tmp_path):
@@ -373,7 +476,7 @@ def test_matte_cache_open_failure_falls_back_keeps_old_cache_path(monkeypatch, t
     monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
     _patch_matte_module(monkeypatch, provider=None)  # SubjectMatteProvider.open → None
     overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
-    cached = "generative-jobs/j/base_1_x.mp4.matte.mp4"
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
     provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
         overlays=overlays,
@@ -440,7 +543,7 @@ def test_render_generative_variant_flag_on_computes_matte_and_burns_with_provide
     )
     assert res["ok"] is True
     assert res["intro_behind_subject"] is True
-    assert res["subject_matte_path"] == "generative-jobs/j/base_3_original_text.mp4.matte.mp4"
+    assert res["subject_matte_path"] == "generative-jobs/j/base_3_original_text.mp4.matte.v2.mp4"
     assert burn_calls, "burn_text_overlays_skia was never called"
     assert burn_calls[-1]["matte"] == "PROVIDER"
     assert any(ov.get("behind_subject") for ov in burn_calls[-1]["overlays"])
@@ -479,9 +582,7 @@ def test_render_generative_variant_flag_off_no_matte_no_key(monkeypatch, tmp_pat
     # No extra GCS object: `calls["uploads"]` captures ALL upload_public_read calls
     # (matte-specific and the ordinary base_video_path upload alike, since this
     # fixture's mock is installed globally) — assert none of them is a matte key.
-    assert not any(
-        key.endswith(".matte.mp4") or key.endswith(".matte.mp4.json") for key in calls["uploads"]
-    )
+    assert not any(".matte." in key for key in calls["uploads"])
 
 
 # ── _reburn_text_on_base: wiring smoke test (matte param threads through) ───────
@@ -553,7 +654,7 @@ def test_reburn_text_on_base_toggle_on_computes_matte_and_persists_path(monkeypa
     )
     assert result["render_status"] == "ready"
     assert result["intro_behind_subject"] is True
-    assert result["subject_matte_path"] == "generative-jobs/j/base_1_song_text.mp4.matte.mp4"
+    assert result["subject_matte_path"] == "generative-jobs/j/base_1_song_text.mp4.matte.v2.mp4"
     assert burn_calls[-1]["matte"] == "PROVIDER"
 
 
@@ -669,8 +770,10 @@ def test_compose_subtitled_resolves_matte_and_passes_provider(monkeypatch, tmp_p
 
     assert len(calls["compute"]) == 1
     assert burn_seen["matte"] == "PROVIDER"
-    assert matte_path == "generative-jobs/j/variant_1_subtitled_base.mp4.matte.mp4"
+    assert matte_path == "generative-jobs/j/variant_1_subtitled_base.mp4.matte.v2.mp4"
     assert final.endswith("subtitled_final.mp4")
+    # Subtitled variants are single-clip — the resolver forwards no cut hints.
+    assert calls["compute_kw"][-1].get("cut_boundaries_s") is None
     # Captions burn onto the text-burned underlay, never with a matte.
     assert burn_seen["captions_input"] == burn_seen["out"]
 
@@ -680,7 +783,7 @@ def test_compose_subtitled_cached_matte_reused_no_recompute(monkeypatch, tmp_pat
     calls = _patch_matte_module(monkeypatch)
     burn_seen: dict = {}
     _patch_subtitled_compose(monkeypatch, burn_seen)
-    cached = "generative-jobs/j/variant_1_subtitled_base.mp4.matte.mp4"
+    cached = "generative-jobs/j/variant_1_subtitled_base.mp4.matte.v2.mp4"
 
     _final, matte_path = gb._compose_subtitled_final(
         str(tmp_path / "base.mp4"),
@@ -822,7 +925,7 @@ def test_resolver_records_computed_trace_event(monkeypatch, tmp_path):
             {
                 "variant_id": "v",
                 "source": "computed",
-                "matte_path": "generative-jobs/j/base_1_x.mp4.matte.mp4",
+                "matte_path": "generative-jobs/j/base_1_x.mp4.matte.v2.mp4",
             },
         )
     ]
@@ -832,7 +935,7 @@ def test_resolver_records_cache_trace_event(monkeypatch, tmp_path):
     monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
     _patch_matte_module(monkeypatch)
     events = _capture_trace_events(monkeypatch)
-    cached = "generative-jobs/j/base_1_x.mp4.matte.mp4"
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
     gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
         overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
@@ -882,3 +985,340 @@ def test_resolver_flag_off_records_no_trace_event(monkeypatch, tmp_path):
         variant_id="v",
     )
     assert events == []
+
+
+# ── v1 → v2 matte-cache migration + cut-boundary plumbing ─────────────────────
+
+
+def test_stale_v1_cache_triggers_recompute_under_v2_key(monkeypatch, tmp_path):
+    """A persisted `.matte.mp4` path predates the beach-glitch fix and may be
+    a glitching matte the old gate accepted — it must be treated as a cache
+    miss, recomputed under the v2 key, and the v1 blob freed."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    v1 = "generative-jobs/j/base_1_x.mp4.matte.mp4"
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=v1,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert provider == "PROVIDER"
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    assert len(calls["compute"]) == 1  # v1 cache did NOT satisfy the burn
+    assert v1 not in calls["downloads"]
+    assert calls["deletes"] == [v1, f"{v1}.json"]
+
+
+def test_stale_v1_cache_recompute_failure_keeps_v1_path_and_strips(monkeypatch, tmp_path):
+    """Failed migration: burn falls back to plain text for THIS render but the
+    persisted v1 path survives untouched, so the next burn retries."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch, compute="none")
+    v1 = "generative-jobs/j/base_1_x.mp4.matte.mp4"
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=v1,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert provider is None
+    assert matte_path == v1  # NOT clobbered — migration retries next burn
+    assert "behind_subject" not in out_overlays[0]
+    assert calls["deletes"] == []  # never delete what we couldn't replace
+
+
+def test_resolver_forwards_cut_boundaries_to_compute(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=None,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+        cut_boundaries_s=[2.0, 5.0],
+    )
+    assert calls["compute_kw"] == [{"cut_boundaries_s": [2.0, 5.0]}]
+
+
+# ── boundary derivation helpers ───────────────────────────────────────────────
+
+
+def test_cut_boundaries_from_durations_cumulative_interior_cuts():
+    assert gb._cut_boundaries_from_durations([2.0, 3.0, 2.5]) == [2.0, 5.0]
+
+
+def test_cut_boundaries_from_durations_single_slot_is_none():
+    assert gb._cut_boundaries_from_durations([4.0]) is None
+    assert gb._cut_boundaries_from_durations([]) is None
+
+
+def test_variant_slot_boundaries_from_ai_timeline():
+    existing = {
+        "ai_timeline": {
+            "slots": [
+                {"order": 1, "duration_s": 3.0},
+                {"order": 0, "duration_s": 2.0},
+                {"order": 2, "duration_s": 2.5},
+            ]
+        }
+    }
+    assert gb._variant_slot_boundaries(existing) == [2.0, 5.0]
+
+
+def test_variant_slot_boundaries_user_timeline_wins_and_skips_removed():
+    existing = {
+        "user_timeline": {
+            "slots": [
+                {"order": 0, "duration_s": 1.0},
+                {"order": 1, "duration_s": 2.0, "removed": True},
+                {"order": 2, "duration_s": 4.0},
+            ]
+        },
+        "ai_timeline": {"slots": [{"order": 0, "duration_s": 9.0}]},
+    }
+    assert gb._variant_slot_boundaries(existing) == [1.0]
+
+
+def test_variant_slot_boundaries_collage_and_legacy_are_none():
+    assert gb._variant_slot_boundaries({}) is None
+    assert (
+        gb._variant_slot_boundaries(
+            {
+                "montage_preset_rendered": "masonry_percent_flash",
+                "ai_timeline": {"slots": [{"order": 0, "duration_s": 2.0}]},
+            }
+        )
+        is None
+    )
+
+
+def test_variant_slot_boundaries_garbage_timeline_is_none():
+    """Boundary hints are best-effort by design — a malformed persisted
+    timeline (non-dict slots) must resolve to None, never raise into the
+    burn path."""
+    assert (
+        gb._variant_slot_boundaries({"user_timeline": {"slots": [{"order": 0}, "garbage"]}}) is None
+    )
+
+
+def test_cut_boundaries_from_durations_zero_duration_slots_skipped():
+    """A leading zero-duration slot produces no t=0 'cut'; None durations
+    coerce to 0.0 instead of raising."""
+    assert gb._cut_boundaries_from_durations([0.0, 2.0, 3.0]) == [2.0]
+    assert gb._cut_boundaries_from_durations([None, 4.0]) is None  # type: ignore[list-item]
+
+
+# ── call-site wiring: cut boundaries actually reach compute ───────────────────
+
+
+def test_render_generative_variant_forwards_slot_cut_boundaries(monkeypatch, tmp_path):
+    """First-render path (the beach-glitch scenario): a classic cut-only
+    assembly must forward its slot joins — cumulative resolved-plan durations,
+    last slot excluded — into compute_subject_matte."""
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+
+    # The shared fake assembler ignores resolved_plans_out; this variant fills
+    # it like the real _assemble_clips does, so the boundary derivation at the
+    # matte call site has real slot durations to work from.
+    import app.tasks.template_orchestrate as to
+
+    def _fake_assemble(steps, c2l, probe, out_path, tmpdir, **kw):
+        sink = kw.get("resolved_plans_out")
+        if sink is not None:
+            sink.extend([{"duration_s": 2.0}, {"duration_s": 3.0}, {"duration_s": 2.5}])
+        with open(out_path, "wb") as f:
+            f.write(b"\x00" * 16)
+
+    monkeypatch.setattr(to, "_assemble_clips", _fake_assemble, raising=False)
+
+    vdir = tmp_path / "v"
+    vdir.mkdir()
+    spec = {"variant_id": "original_text", "rank": 3, "text_mode": "agent_text", "track": None}
+    agent_text = types.SimpleNamespace(text="My hook", highlight_word=None, word_roles=None)
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=3,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=agent_text,
+        agent_form={"effect": "karaoke-line", "behind_subject": True},
+        variant_dir=str(vdir),
+    )
+    assert res["ok"] is True
+    assert calls["compute_kw"] == [{"cut_boundaries_s": [2.0, 5.0]}]
+
+
+def test_reburn_forwards_variant_slot_boundaries_from_existing(monkeypatch):
+    """Reburn path: cut hints come from the persisted timeline on `existing`
+    (user_timeline precedence, same as the cut-preserving reburn) and must
+    reach compute_subject_matte."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    _patch_reburn_with_real_overlays(monkeypatch)
+    calls = _patch_matte_module(monkeypatch)
+
+    existing = {
+        "base_video_path": "generative-jobs/j/base_1_song_text.mp4",
+        "video_path": "generative-jobs/j/variant_1_song_text.mp4",
+        "intro_text_size_px": 60,
+        "intro_size_source": "computed",
+        "intro_layout": "linear",
+        "subject_matte_path": None,
+        "user_timeline": {
+            "slots": [
+                {"order": 0, "duration_s": 1.5},
+                {"order": 1, "duration_s": 2.0},
+                {"order": 2, "duration_s": 3.0},
+            ]
+        },
+    }
+    result = gb._reburn_text_on_base(
+        job_id="j",
+        variant_id="song_text",
+        existing=existing,
+        agent_text=types.SimpleNamespace(text="Hi", highlight_word=None),
+        agent_form={"effect": "karaoke-line"},
+        text_mode="agent_text",
+        resolved_style_set_id=None,
+        size_override_px=None,
+        settings=gb.settings,
+        text_behind_subject=True,
+    )
+    assert result["render_status"] == "ready"
+    assert calls["compute_kw"] == [{"cut_boundaries_s": [1.5, 3.5]}]
+
+
+def test_v2_cache_coverage_mismatch_triggers_recompute(monkeypatch, tmp_path):
+    """A cached v2 matte whose stored windows don't span the requested
+    overlay windows (text timing moved since compute) must be treated as a
+    miss — otherwise mask_at returns None mid-overlay and occlusion silently
+    drops out."""
+    import app.pipeline.subject_matte as sm_mod
+
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    narrow = types.SimpleNamespace(window_spans=lambda: [(5.0, 6.0)])
+
+    def _open(path):
+        return narrow if "cached" in path else "FRESH"
+
+    monkeypatch.setattr(sm_mod.SubjectMatteProvider, "open", staticmethod(_open), raising=False)
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=cached,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert len(calls["compute"]) == 1  # coverage miss → recompute
+    assert provider == "FRESH"
+    assert matte_path == cached  # same v2 key, overwritten in place
+    assert out_overlays[0].get("behind_subject") is True
+
+
+def test_v2_cache_matching_coverage_reused(monkeypatch, tmp_path):
+    """Control: a cached matte whose spans cover the requested windows is
+    reused — no recompute (the steady-state fast reburn)."""
+    import app.pipeline.subject_matte as sm_mod
+
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    covering = types.SimpleNamespace(window_spans=lambda: [(0.0, 4.0)])
+    monkeypatch.setattr(
+        sm_mod.SubjectMatteProvider, "open", staticmethod(lambda path: covering), raising=False
+    )
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    provider, matte_path, _ = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.5, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=cached,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert calls["compute"] == []
+    assert provider is covering
+    assert matte_path == cached
+
+
+def test_v2_cache_broken_blob_recomputes_instead_of_poisoning(monkeypatch, tmp_path):
+    """A corrupt v2 blob/sidecar must be treated as a cache miss (recompute
+    under the same key), not returned as a permanent failure on every burn."""
+    import app.pipeline.subject_matte as sm_mod
+
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+
+    def _open(path):
+        return None if "cached" in path else "FRESH"
+
+    monkeypatch.setattr(sm_mod.SubjectMatteProvider, "open", staticmethod(_open), raising=False)
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=cached,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert len(calls["compute"]) == 1
+    assert provider == "FRESH"
+    assert matte_path == cached
+    assert out_overlays[0].get("behind_subject") is True
+
+
+def test_matte_insane_after_coverage_miss_keeps_v2_cache_no_sentinel(monkeypatch, tmp_path):
+    """Codex P2: a window-local gate failure (coverage-miss recompute after a
+    text-timing move) must NOT poison a base whose existing v2 cache still
+    covers the original span — keep the path, stay retryable."""
+    import app.pipeline.subject_matte as sm_mod
+
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    _patch_matte_module(monkeypatch, sane=False)
+    narrow = types.SimpleNamespace(window_spans=lambda: [(50.0, 60.0)])
+    monkeypatch.setattr(
+        sm_mod.SubjectMatteProvider, "open", staticmethod(lambda path: narrow), raising=False
+    )
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=cached,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+        cut_boundaries_s=[1.0],
+    )
+    assert provider is None
+    assert matte_path == cached  # v2 cache kept, no .unstable sentinel
+    assert "behind_subject" not in out_overlays[0]

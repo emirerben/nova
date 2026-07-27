@@ -92,6 +92,58 @@ class TestMatteIsSane:
         stats.presence_flips_per_s = 0.2
         assert matte_is_sane(stats) is True
 
+    def test_oscillating_shape_rejected(self) -> None:
+        # Beach-montage anchor (prod job add80a9c): the selfie segmenter's
+        # confidence on sand/rock oscillated en masse every ~5-9 frames, area
+        # flapping 7%<->63%. The presence gate saw only 4 flips at 0.365/s
+        # (below the AND-gate) and the MEDIAN IoU stayed 0.927 because ~15
+        # jump pairs hid among 308 stable ones — this matte shipped and the
+        # burned text visibly strobed. The large-jump gate is the stat that
+        # actually catches it.
+        stats = _stats(0.123, max_=0.671)
+        stats.presence_flips = 4
+        stats.presence_flips_per_s = 0.365
+        stats.shape_stability_iou = 0.927
+        stats.iou_pair_count = 308
+        stats.large_jump_count = 15
+        stats.large_jumps_per_s = 1.34
+        assert matte_is_sane(stats) is False
+
+    def test_few_jumps_at_high_fraction_kept(self) -> None:
+        # AND-gate: a short window with a couple of abrupt legit events (an
+        # in-window whip-pan) has a high pair-FRACTION but a count at the
+        # threshold — both clauses must trip.
+        stats = _stats(0.1, max_=0.4)
+        stats.large_jump_count = 3
+        stats.iou_pair_count = 30  # 10% of pairs, but only 3 events
+        assert matte_is_sane(stats) is True
+
+    def test_many_jumps_at_low_fraction_kept(self) -> None:
+        # Long window, occasional hard events — the FRACTION stays low even
+        # though the raw count exceeds the threshold. This is why the gate
+        # normalizes by pair count and not seconds: a per-second rate would
+        # also dilute the beach strobe inside a 60s hold-to-EOF window.
+        stats = _stats(0.1, max_=0.4)
+        stats.large_jump_count = 6
+        stats.iou_pair_count = 600  # 1% of pairs
+        assert matte_is_sane(stats) is True
+
+    def test_beach_strobe_in_long_window_still_rejected(self) -> None:
+        # The prod strobe density (15 jumps / 308 pairs ≈ 4.9%) must reject
+        # regardless of how long the surrounding window is — scaled to a 60s
+        # window the same density is 82/1770, still 4.6% of pairs.
+        stats = _stats(0.1, max_=0.4)
+        stats.large_jump_count = 82
+        stats.iou_pair_count = 1770
+        assert matte_is_sane(stats) is False
+
+    def test_legacy_stats_without_jump_fields_kept(self) -> None:
+        # Old sidecars predate the jump stats — dataclass defaults (0) must
+        # never reject what the stat cannot judge.
+        stats = _stats(0.1, max_=0.4)
+        assert stats.large_jump_count == 0
+        assert matte_is_sane(stats) is True
+
 
 # ---------------------------------------------------------------------------
 # _postprocess_mask — pure numpy/cv2, no fixtures, no mediapipe.
@@ -370,6 +422,30 @@ class TestMaskAt:
         assert first is not second  # not cached, distinct arrays
         assert np.array_equal(first, second)
 
+    def test_half_frame_offset_indices_monotonic(self, tmp_path: Path) -> None:
+        """A constant half-frame offset between render ticks and the window
+        start (the 0.25s pad = 7.5 frames) must resolve to a MONOTONIC mask
+        index sequence with +1 steps. Python's banker's round() produced
+        0, 2, 2, 4, 4, ... here — the mask repeated then skipped every other
+        frame, a 15fps judder of the occlusion edge against 30fps text."""
+        matte_path = _build_synthetic_matte(tmp_path, [(0.0, 1.0)])
+        provider = SubjectMatteProvider.open(str(matte_path))
+        assert provider is not None
+
+        resolved_values = []
+        for i in range(28):
+            mask = provider.mask_at((i + 0.5) / 30.0)
+            assert mask is not None
+            resolved_values.append(float(mask[0, 0]) * 255.0)
+
+        # Stored frame k holds value (k+1)*5 — recover indices from values.
+        indices = [round(v / 5.0) - 1 for v in resolved_values]
+        deltas = [b - a for a, b in zip(indices, indices[1:])]
+        assert all(d == 1 for d in deltas), (
+            f"mask index sequence not monotonic with +1 steps: {indices} — "
+            "half-frame rounding regressed to repeat/skip"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Time-alignment regression — fake mediapipe injected via sys.modules, so it
@@ -427,33 +503,48 @@ def _install_fake_mediapipe(
     calls: list[float],
     shapes: list[tuple[int, int]] | None = None,
     mask_value: np.ndarray | None = None,
+    mask_fn: object | None = None,
 ) -> None:
     """Fake mediapipe module tree that records the input brightness (and
     optionally input shape) per segment() call and returns `mask_value`
-    (an empty mask by default)."""
+    (an empty mask by default), or `mask_fn(call_index)` when given.
+
+    Also points MATTE_RVM_MODEL_PATH at a missing file so the backbone
+    selector deterministically falls back to this fake mediapipe path —
+    these tests pin the mediapipe backbone regardless of whether
+    onnxruntime + the real RVM model are present on the host."""
     import sys
     import types
+
+    monkeypatch.setattr(subject_matte, "MATTE_RVM_MODEL_PATH", "assets/models/_missing_rvm.onnx")
 
     class _FakeImage:
         def __init__(self, image_format: object = None, data: np.ndarray | None = None) -> None:
             self.data = data
 
     class _FakeMask:
+        def __init__(self, array: np.ndarray) -> None:
+            self._array = array
+
         def numpy_view(self) -> np.ndarray:
-            if mask_value is not None:
-                return mask_value
-            return np.zeros((16, 16), dtype=np.float32)
+            return self._array
 
     class _FakeResult:
-        confidence_masks = [_FakeMask()]
+        def __init__(self, array: np.ndarray) -> None:
+            self.confidence_masks = [_FakeMask(array)]
 
     class _FakeSegmenter:
         def segment(self, image: _FakeImage) -> _FakeResult:
             assert image.data is not None
+            index = len(calls)
             calls.append(float(image.data.mean()))
             if shapes is not None:
                 shapes.append(image.data.shape[:2])
-            return _FakeResult()
+            if mask_fn is not None:
+                return _FakeResult(mask_fn(index))
+            if mask_value is not None:
+                return _FakeResult(mask_value)
+            return _FakeResult(np.zeros((16, 16), dtype=np.float32))
 
         def close(self) -> None:
             pass
@@ -802,3 +893,457 @@ class TestMatteWriterLossless:
                 )
         finally:
             cap.release()
+
+
+# ---------------------------------------------------------------------------
+# Boundary-aware compute (cut_boundaries_s) — fake mediapipe, runs everywhere.
+# Pins the per-clip ghost fix: temporal state must reset at known hard cuts
+# and boundary-crossing pairs must not pollute the stability stats.
+# ---------------------------------------------------------------------------
+
+
+def _left_mask() -> np.ndarray:
+    m = np.zeros((16, 16), dtype=np.float32)
+    m[:, :8] = 0.95
+    return m
+
+
+def _right_mask() -> np.ndarray:
+    m = np.zeros((16, 16), dtype=np.float32)
+    m[:, 8:] = 0.95
+    return m
+
+
+@needs_ffmpeg
+class TestBoundaryAwareCompute:
+    def test_median_resets_at_boundary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Clip A (left silhouette) cuts to clip B (right silhouette) at
+        t=0.5. Without a reset, the 3-frame trailing median keeps A's
+        silhouette alive for 2 ticks past the cut — the previous clip's
+        subject occludes text in the next clip. With the boundary hint, the
+        very first tick of clip B is pure B."""
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        calls: list[float] = []
+        _install_fake_mediapipe(
+            monkeypatch,
+            calls,
+            mask_fn=lambda i: _left_mask() if i < 15 else _right_mask(),
+        )
+
+        out_path = tmp_path / "matte.mp4"
+        result = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(out_path),
+            cut_boundaries_s=[0.5],
+        )
+        assert result is not None
+
+        import cv2
+
+        cap = cv2.VideoCapture(str(out_path))
+        try:
+            frames = []
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+        finally:
+            cap.release()
+        assert len(frames) == 30
+
+        h, w = frames[0].shape
+        # Tick 15 is clip B's first frame: right side solid, left side empty.
+        # Without the reset the median of {A, A, B} keeps the LEFT half solid
+        # here (verified by test_no_boundaries_median_carries_across_cut).
+        boundary_frame = frames[15]
+        assert float(boundary_frame[:, : w // 4].mean()) < 30.0
+        assert float(boundary_frame[:, 3 * w // 4 :].mean()) > 180.0
+
+    def test_no_boundaries_median_carries_across_cut(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Control for the test above: WITHOUT the boundary hint the median
+        really does ghost the previous clip's silhouette across the cut —
+        proving the reset (not something else) removes it."""
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        calls: list[float] = []
+        _install_fake_mediapipe(
+            monkeypatch,
+            calls,
+            mask_fn=lambda i: _left_mask() if i < 15 else _right_mask(),
+        )
+
+        out_path = tmp_path / "matte.mp4"
+        result = compute_subject_matte(str(video_path), [MatteWindow(0.0, 1.0)], str(out_path))
+        assert result is not None
+
+        import cv2
+
+        cap = cv2.VideoCapture(str(out_path))
+        try:
+            frames = []
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+        finally:
+            cap.release()
+
+        h, w = frames[0].shape
+        # Median of {A[13], A[14], B[15]} at tick 15 → LEFT half still solid.
+        assert float(frames[15][:, : w // 4].mean()) > 180.0
+
+    def test_boundary_pair_excluded_from_stats(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Subject present in clip 1, absent in clip 2. With the boundary
+        hint the transition is a legit cut, not a presence flip; without it
+        the same footage counts one flip."""
+        blob = np.zeros((16, 16), dtype=np.float32)
+        blob[4:12, 4:12] = 0.95
+
+        def _mask_fn(i: int) -> np.ndarray:
+            return blob if i < 15 else np.zeros((16, 16), dtype=np.float32)
+
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+
+        calls_a: list[float] = []
+        _install_fake_mediapipe(monkeypatch, calls_a, mask_fn=_mask_fn)
+        with_hint = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(tmp_path / "matte_a.mp4"),
+            cut_boundaries_s=[0.5],
+        )
+        assert with_hint is not None
+        assert with_hint.presence_flips == 0
+
+        calls_b: list[float] = []
+        _install_fake_mediapipe(monkeypatch, calls_b, mask_fn=_mask_fn)
+        without_hint = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(tmp_path / "matte_b.mp4"),
+        )
+        assert without_hint is not None
+        assert without_hint.presence_flips == 1
+
+    def test_garbage_boundaries_never_raise(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, calls)
+        result = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(tmp_path / "matte.mp4"),
+            cut_boundaries_s=["x", None, -3.0, 99.0, 0.5],  # type: ignore[list-item]
+        )
+        assert result is not None
+
+    def test_sidecar_carries_large_jump_stats(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        calls: list[float] = []
+        blob = np.zeros((16, 16), dtype=np.float32)
+        blob[4:12, 4:12] = 0.95
+        _install_fake_mediapipe(monkeypatch, calls, mask_value=blob)
+
+        out_path = tmp_path / "matte.mp4"
+        result = compute_subject_matte(str(video_path), [MatteWindow(0.0, 1.0)], str(out_path))
+        assert result is not None
+        assert result.large_jump_count == 0
+        assert result.large_jumps_per_s == 0.0
+
+        sidecar = json.loads((tmp_path / "matte.mp4.json").read_text())
+        assert sidecar["stats"]["large_jump_count"] == 0
+        assert sidecar["stats"]["large_jumps_per_s"] == 0.0
+
+    def test_oscillating_masks_produce_rejecting_stats(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Synthetic reproduction of the beach failure shape: the mask
+        teleports left<->right every 3 ticks (period longer than the 3-frame
+        median can suppress). The computed stats must trip the oscillation
+        gate even though presence never flips."""
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        calls: list[float] = []
+        _install_fake_mediapipe(
+            monkeypatch,
+            calls,
+            mask_fn=lambda i: _left_mask() if (i // 3) % 2 == 0 else _right_mask(),
+        )
+        result = compute_subject_matte(
+            str(video_path), [MatteWindow(0.0, 1.0)], str(tmp_path / "matte.mp4")
+        )
+        assert result is not None
+        assert result.presence_flips == 0  # the old gates' blind spot
+        assert result.large_jump_count > subject_matte._MAX_LARGE_JUMPS
+        assert result.large_jump_count > (
+            subject_matte._MAX_LARGE_JUMP_FRAC * result.iou_pair_count
+        )
+        assert matte_is_sane(result) is False
+
+    def test_oscillation_gate_accepts_stable_matte_with_cuts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A montage whose mask is stable WITHIN each clip but changes at
+        every cut must pass the gate when boundaries are provided — legit
+        cuts are not segmenter instability."""
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        calls: list[float] = []
+        _install_fake_mediapipe(
+            monkeypatch,
+            calls,
+            mask_fn=lambda i: _left_mask() if (i // 10) % 2 == 0 else _right_mask(),
+        )
+        result = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(tmp_path / "matte.mp4"),
+            cut_boundaries_s=[10 / 30, 20 / 30],
+        )
+        assert result is not None
+        assert result.large_jump_count == 0
+        assert matte_is_sane(result) is True
+
+
+# ---------------------------------------------------------------------------
+# RVM backbone — fake onnxruntime injected via sys.modules, runs everywhere.
+# ---------------------------------------------------------------------------
+
+
+class _FakeRvmSession:
+    """Mimics the RVM ONNX graph contract: run(None, feeds) -> [fgr, pha,
+    r1o..r4o]. Recurrent outputs are r_in + 1, so the r1i value observed at
+    call k equals the number of frames since the last reset — a direct probe
+    of reset behavior. pha is a fixed blob at input resolution."""
+
+    def __init__(self) -> None:
+        self.rec_values: list[float] = []
+        self.downsample_ratios: list[float] = []
+        self.input_shapes: list[tuple[int, int]] = []
+
+    def run(self, outputs: object, feeds: dict) -> list:
+        src = feeds["src"]
+        assert src.ndim == 4 and src.shape[0] == 1 and src.shape[1] == 3
+        h, w = src.shape[2], src.shape[3]
+        self.input_shapes.append((h, w))
+        self.rec_values.append(float(feeds["r1i"].flat[0]))
+        self.downsample_ratios.append(float(feeds["downsample_ratio"][0]))
+        pha = np.zeros((1, 1, h, w), dtype=np.float32)
+        pha[0, 0, h // 4 : 3 * h // 4, w // 4 : 3 * w // 4] = 0.95
+        fgr = np.zeros((1, 3, h, w), dtype=np.float32)
+        rec_out = [feeds[k] + 1.0 for k in ("r1i", "r2i", "r3i", "r4i")]
+        by_name = {
+            "fgr": fgr,
+            "pha": pha,
+            "r1o": rec_out[0],
+            "r2o": rec_out[1],
+            "r3o": rec_out[2],
+            "r4o": rec_out[3],
+        }
+        if outputs:
+            # Production requests named outputs (pha first) so a re-exported
+            # graph with a different declaration order can't silently swap
+            # channels — the fake honors the same contract.
+            return [by_name[name] for name in outputs]
+        return [fgr, pha, *rec_out]
+
+
+class _FakeSessionOptions:
+    def __init__(self) -> None:
+        self.intra_op_num_threads = 0
+        self.inter_op_num_threads = 0
+        self.config_entries: dict[str, str] = {}
+
+    def add_session_config_entry(self, key: str, value: str) -> None:
+        self.config_entries[key] = value
+
+
+def _install_fake_onnxruntime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _FakeRvmSession:
+    """Fake onnxruntime + an existing dummy model file so _create_backbone
+    deterministically picks the RVM path."""
+    import sys
+    import types
+
+    session = _FakeRvmSession()
+    ort_mod = types.ModuleType("onnxruntime")
+    ort_mod.InferenceSession = (  # type: ignore[attr-defined]
+        lambda path, sess_options=None, providers=None: session
+    )
+    ort_mod.SessionOptions = _FakeSessionOptions  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort_mod)
+
+    model_file = tmp_path / "fake_rvm.onnx"
+    model_file.write_bytes(b"onnx")
+    # MATTE_RVM_MODEL_PATH is joined against the api app root — an absolute
+    # path survives normpath and hits our tmp file.
+    monkeypatch.setattr(subject_matte, "MATTE_RVM_MODEL_PATH", str(model_file))
+    return session
+
+
+@needs_ffmpeg
+class TestRvmBackbone:
+    def test_recurrent_state_carries_and_resets_at_boundaries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        session = _install_fake_onnxruntime(monkeypatch, tmp_path)
+
+        result = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(tmp_path / "matte.mp4"),
+            cut_boundaries_s=[0.5],
+        )
+        assert result is not None
+        # 30 calls; state counts 0..14 within each clip, reset at the cut.
+        assert session.rec_values == [float(i % 15) for i in range(30)]
+        # Frames are pre-downscaled (64x64 * 0.25 = 16x16) and fed with
+        # downsample_ratio=1.0 — the full-res guided-filter/fgr work the
+        # old full-res + ratio-0.25 shape paid for is gone.
+        assert all(r == pytest.approx(1.0) for r in session.downsample_ratios)
+        assert all(shape == (16, 16) for shape in session.input_shapes)
+
+    def test_state_resets_between_windows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        session = _install_fake_onnxruntime(monkeypatch, tmp_path)
+
+        result = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 0.5), MatteWindow(0.5, 1.0)],
+            str(tmp_path / "matte.mp4"),
+        )
+        assert result is not None
+        assert session.rec_values == [float(i % 15) for i in range(30)]
+
+    def test_output_matte_format_unchanged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        _install_fake_onnxruntime(monkeypatch, tmp_path)
+
+        out_path = tmp_path / "matte.mp4"
+        result = compute_subject_matte(str(video_path), [MatteWindow(0.0, 1.0)], str(out_path))
+        assert result is not None
+        sidecar = json.loads((tmp_path / "matte.mp4.json").read_text())
+        assert sidecar["size"] == [subject_matte._MATTE_WIDTH, subject_matte._MATTE_HEIGHT]
+        assert sidecar["fps"] == subject_matte.MATTE_FPS
+        provider = SubjectMatteProvider.open(str(out_path))
+        assert provider is not None
+        mask = provider.mask_at(0.5)
+        assert mask is not None and mask.shape == (1920, 1080)
+
+    def test_rvm_skips_roi_second_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The window-wide ROI crop is a mediapipe-only workaround; on a
+        multi-clip montage it zeroes any clip whose subject sits outside the
+        crop. RVM must run exactly one pass even for a small subject."""
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        session = _install_fake_onnxruntime(monkeypatch, tmp_path)
+
+        class _SmallBlobSession(_FakeRvmSession):
+            def run(self, outputs: object, feeds: dict) -> list:
+                out = super().run(outputs, feeds)
+                src = feeds["src"]
+                h, w = src.shape[2], src.shape[3]
+                pha = np.zeros((1, 1, h, w), dtype=np.float32)
+                pha[0, 0, h // 2 : h // 2 + 4, w // 2 : w // 2 + 4] = 0.95
+                out[1] = pha
+                return out
+
+        small = _SmallBlobSession()
+        import sys
+
+        sys.modules["onnxruntime"].InferenceSession = (  # type: ignore[attr-defined]
+            lambda path, sess_options=None, providers=None: small
+        )
+        result = compute_subject_matte(
+            str(video_path), [MatteWindow(0.0, 1.0)], str(tmp_path / "matte.mp4")
+        )
+        assert result is not None
+        assert len(small.rec_values) == 30  # single pass — no ROI re-run
+        assert result.frame_count == 30
+        assert session.rec_values == []  # first fake never used
+
+    def test_kill_switch_falls_back_to_mediapipe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.config import settings
+
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        session = _install_fake_onnxruntime(monkeypatch, tmp_path)
+        monkeypatch.setattr(settings, "matte_rvm_enabled", False, raising=False)
+
+        mp_calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls)
+        # _install_fake_mediapipe points MATTE_RVM_MODEL_PATH at a missing
+        # file; restore the existing fake model so the FLAG is the only
+        # reason RVM is skipped — otherwise this test is indistinguishable
+        # from test_missing_rvm_model_falls_back_to_mediapipe.
+        monkeypatch.setattr(subject_matte, "MATTE_RVM_MODEL_PATH", str(tmp_path / "fake_rvm.onnx"))
+
+        result = compute_subject_matte(
+            str(video_path), [MatteWindow(0.0, 1.0)], str(tmp_path / "matte.mp4")
+        )
+        assert result is not None
+        assert session.rec_values == []  # RVM never touched
+        assert len(mp_calls) == 30
+
+    def test_long_window_total_falls_back_to_mediapipe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Window totals beyond _RVM_MAX_TOTAL_TICKS can't finish RVM
+        inference inside the wall-clock budget on prod vCPUs — the budget
+        guard must pick mediapipe up front instead of burning 90s and
+        aborting."""
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        session = _install_fake_onnxruntime(monkeypatch, tmp_path)
+        mp_calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls)
+        monkeypatch.setattr(subject_matte, "MATTE_RVM_MODEL_PATH", str(tmp_path / "fake_rvm.onnx"))
+        monkeypatch.setattr(subject_matte, "_RVM_MAX_TOTAL_TICKS", 10)
+
+        result = compute_subject_matte(
+            str(video_path), [MatteWindow(0.0, 1.0)], str(tmp_path / "matte.mp4")
+        )
+        assert result is not None
+        assert session.rec_values == []  # RVM skipped by the tick guard
+        assert len(mp_calls) == 30
+
+    def test_missing_rvm_model_falls_back_to_mediapipe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        mp_calls: list[float] = []
+        # _install_fake_mediapipe already points MATTE_RVM_MODEL_PATH at a
+        # missing file — exactly the unavailable-RVM production shape.
+        _install_fake_mediapipe(monkeypatch, mp_calls)
+        result = compute_subject_matte(
+            str(video_path), [MatteWindow(0.0, 1.0)], str(tmp_path / "matte.mp4")
+        )
+        assert result is not None
+        assert len(mp_calls) == 30
+
+    def test_rvm_enabled_defaults_true_on_config_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Config import must never break the matte: a broken app.config
+        (no `settings` attr → ImportError) defaults the backbone selector to
+        RVM-on rather than raising."""
+        import sys
+        import types
+
+        monkeypatch.setitem(sys.modules, "app.config", types.ModuleType("app.config"))
+        assert subject_matte._rvm_enabled() is True
