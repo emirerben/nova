@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.1.3] — 2026-07-28
+
+### Fixed
+- **Captions no longer land on your face when the face detector runs out of time.** Nova samples your clip to find where you are in frame and moves the caption band clear of you. That sampler runs under a hard time limit on a machine that is also encoding video, and when it ran over, everything it had already measured was thrown away and the caption went back to its default spot, which on a close-up talking-head shot sits right at chin height. One recent render missed the limit by fifteen milliseconds and put the caption over the speaker's mouth. The sampler now reports each moment as it measures it, so running over the limit costs the last few samples instead of all of them, and the limit itself now accounts for the time the detector spends starting up before it can look at a single frame. When the detector genuinely cannot report at all, the caption drops to the low, platform-safe position it has always used outside Smart Captions rather than staying high on the face. A clip the detector read and found clear is left exactly where it was.
+- **A caption position you set by hand is no longer overwritten by a re-render.** Automatic placement was documented to defer to a creator-chosen position but never actually checked, so re-rendering an edit could silently move a caption you had already placed.
+
 ## [0.17.1.2] — 2026-07-27
 
 ### Fixed

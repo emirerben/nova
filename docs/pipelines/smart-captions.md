@@ -176,14 +176,36 @@ feature required.
   mirrored to `caption_margin_v` (so the position UI tracks it) but deliberately
   does NOT set `caption_position_user_edited` — a non-null `caption_margin_v` no
   longer implies the creator pinned it. Precedence:
-  `caption_position_user_edited` > face-chosen > preset. Reburns and
+  `caption_position_user_edited` > face-chosen > preset, and the render gate
+  ENFORCES it — a pinned position skips placement entirely. Reburns and
   re-transcribes read the persisted policy and never recompute.
-- **Fail-open, never raises.** The receipt (`smart_validation_receipts
-  .caption_placement`) carries a `reason` enum — `no_face | sampler_timeout |
-  sampler_error | insufficient_anchors` — plus the embedded raw sampler receipt,
-  so a broken cv2 worker image is distinguishable from well-framed clips in
-  `/admin/jobs`. `base` is mutated only after every fallible step succeeds, so a
-  mid-flight error truly leaves the preset geometry intact.
+- **A timeout degrades, it does not blank.** The worker streams one flushed JSON
+  line per anchor, so `subprocess.TimeoutExpired` keeps what it already measured
+  (`face_sampler.partial: True`) and the chooser judges it on the usual
+  presence/anchor floors. `sampler_timeout` now means the kill landed before the
+  FIRST anchor. Losing partials was catastrophic rather than degrading: prod job
+  b2a815e8 was killed at 6265ms against a 6250ms budget with the speaker's face
+  already found, reported `detected: 0`, and put the caption on the chin.
+  The budget's base term (`_FACE_PLACEMENT_TIMEOUT_BASE_S`) is sized for the
+  subprocess's own cold start — interpreter boot plus `import cv2` measured
+  ~1.7s in the prod image, so the original 1.0s was spent before the first
+  frame decoded.
+- **Fail-open splits on whether the sampler produced INFORMATION.** The receipt
+  (`smart_validation_receipts.caption_placement`) carries a `reason` enum —
+  `no_face | sampler_timeout | sampler_error | insufficient_anchors` — plus the
+  embedded raw sampler receipt, so a broken cv2 worker image is distinguishable
+  from well-framed clips in `/admin/jobs`.
+  - `no_face` / `insufficient_anchors` — it looked and the frame is clear ⇒
+    `status: preset`, geometry unchanged.
+  - `sampler_timeout` / `sampler_error` — it could not look at all ⇒
+    `status: safe_fallback` at `CAPTION_UNKNOWN_FALLBACK_Y_FRAC` (0.80, the same
+    band `SUBTITLED_CAPTION_MARGIN_V` has burned on the non-smart path for
+    months), unless that would push a cue under the platform UI
+    (`safe_fallback_rejected: chrome` ⇒ preset). Returning the preset here was
+    the original defect: the preset is 182px HIGHER than the plain default, so
+    the protection's failure mode was the exact position it exists to avoid.
+  `base` is mutated only after every fallible step succeeds, so a mid-flight
+  error truly leaves the preset geometry intact.
 - **Kill switch:** `SMART_CAPTION_FACE_PLACEMENT_ENABLED=false` (default) ⇒
   geometry, the sampler's anchor-list argument, and receipts byte-identical.
   Render-only; no `NEXT_PUBLIC` twin. Guards:

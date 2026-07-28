@@ -825,8 +825,14 @@ def test_face_placement_anchor_union_dedupes_and_scales_timeout(monkeypatch, tmp
     assert anchors == sorted(anchors)
     # No two anchors sit within 0.25s of each other (dedupe held).
     assert all(b - a >= 0.25 for a, b in zip(anchors, anchors[1:]))
-    # timeout_s scales with the anchor count.
-    assert captured["kwargs"]["timeout_s"] == pytest.approx(1.0 + 0.35 * len(anchors))
+    # timeout_s scales with the anchor count on top of a cold-start base term.
+    assert captured["kwargs"]["timeout_s"] == pytest.approx(
+        gb._FACE_PLACEMENT_TIMEOUT_BASE_S + gb._FACE_PLACEMENT_TIMEOUT_PER_ANCHOR_S * len(anchors)
+    )
+    # The base term must cover interpreter boot + `import cv2` (~1.7s in the prod
+    # image) before the first frame decodes — the original 1.0s did not, and the
+    # kills that followed sent captions back onto the speaker's face.
+    assert gb._FACE_PLACEMENT_TIMEOUT_BASE_S >= 2.0
     assert captured["kwargs"]["max_samples"] >= len(anchors)
 
 
@@ -1186,3 +1192,232 @@ def test_face_placement_failure_falls_open_to_preset_geometry(monkeypatch, tmp_p
     assert captured["anchors"] == [3.0, 5.0]
     assert captured["kwargs"] == {}
     assert "source" not in result["smart_validation_receipts"]["geometry_prepare"]
+
+
+# ── partial-sample recovery on a timeout (T-CAP011-2, prod job b2a815e8) ──────
+#
+# The worker streams one line per anchor. A kill used to discard all of them, so
+# a run that had already found the speaker reported detected:0 and the caption
+# went back to the preset band — onto the face. 6265ms against a 6250ms budget.
+
+
+def _anchor_line(at_s: float, decoded: bool = True, box: dict | None = None) -> str:
+    import json as json_lib
+
+    return json_lib.dumps({"anchor": {"at_s": at_s, "decoded": decoded, "box": box}})
+
+
+def _face_box(top: float = 0.02, bottom: float = 0.68) -> dict:
+    return {"left": 0.10, "top": top, "right": 0.92, "bottom": bottom}
+
+
+def _timeout_with_stdout(stdout: str):
+    import subprocess
+
+    def _run(command, **_kwargs):
+        raise subprocess.TimeoutExpired(command, 0.01, output=stdout)
+
+    return _run
+
+
+def test_sampler_timeout_keeps_partial_samples(monkeypatch) -> None:
+    from app.pipeline import render_geometry as rg
+
+    streamed = "\n".join(_anchor_line(float(i), True, _face_box()) for i in range(5)) + "\n"
+    monkeypatch.setattr(rg.subprocess, "run", _timeout_with_stdout(streamed))
+
+    regions, receipt = rg.sample_face_regions(
+        "/slow.mp4", [float(i) for i in range(15)], max_samples=15, count_decoded=True
+    )
+
+    assert receipt["timed_out"] is True
+    assert receipt["partial"] is True
+    assert receipt["attempted"] == 5
+    assert receipt["decoded"] == 5
+    assert receipt["detected"] == 5
+    assert len(regions) == 5
+    # Recovered regions go through the SAME padding/clamping and time window as
+    # the happy path — a partial result must not be a second, looser geometry.
+    from app.pipeline.render_geometry import _face_protection_box
+
+    assert regions[0].kind == "face"
+    assert regions[0].start_s == pytest.approx(-0.5 + 0.5)  # anchor 0.0, clamped at 0
+    assert regions[0].end_s == pytest.approx(0.5)
+    assert regions[0].box == _face_protection_box(NormalizedBox(**_face_box()))
+
+
+def test_sampler_timeout_counts_undecodable_anchors_without_a_face_region(monkeypatch) -> None:
+    """A silence-cut base seeks past EOF on late anchors: attempted counts them,
+    decoded does not, and neither invents a face box."""
+    from app.pipeline import render_geometry as rg
+
+    streamed = "\n".join(
+        [
+            _anchor_line(0.0, True, _face_box()),
+            _anchor_line(1.0, True, None),  # decoded, no face found
+            _anchor_line(2.0, False, None),  # seek past EOF
+        ]
+    )
+    monkeypatch.setattr(rg.subprocess, "run", _timeout_with_stdout(streamed))
+
+    regions, receipt = rg.sample_face_regions("/cut.mp4", [0.0, 1.0, 2.0], count_decoded=True)
+
+    assert receipt["attempted"] == 3
+    assert receipt["decoded"] == 2
+    assert len(regions) == 1
+
+
+def test_sampler_timeout_with_no_output_keeps_todays_empty_receipt(monkeypatch) -> None:
+    """Byte-identity pin: a kill before the first flush must produce exactly the
+    pre-feature timeout receipt — no `partial`, no `decoded`."""
+    from app.pipeline import render_geometry as rg
+
+    monkeypatch.setattr(rg.subprocess, "run", _timeout_with_stdout(""))
+
+    regions, receipt = rg.sample_face_regions("/slow.mp4", [0.0, 1.0], count_decoded=True)
+
+    assert regions == []
+    assert receipt["attempted"] == 2
+    assert receipt["detected"] == 0
+    assert receipt["timed_out"] is True
+    assert "partial" not in receipt
+    assert "decoded" not in receipt
+
+
+def test_sampler_timeout_ignores_a_truncated_trailing_line(monkeypatch) -> None:
+    """The kill can cut a line mid-write; a half-written JSON object must be
+    skipped, never raised, and never counted."""
+    from app.pipeline import render_geometry as rg
+
+    streamed = _anchor_line(0.0, True, _face_box()) + '\n{"anchor": {"at_s": 1.0, "dec'
+    monkeypatch.setattr(rg.subprocess, "run", _timeout_with_stdout(streamed))
+
+    regions, receipt = rg.sample_face_regions("/slow.mp4", [0.0, 1.0], count_decoded=True)
+
+    assert receipt["attempted"] == 1
+    assert len(regions) == 1
+
+
+def test_happy_path_ignores_the_anchor_stream_and_reads_the_summary(monkeypatch) -> None:
+    """The per-anchor lines precede the summary; the successful path must still
+    read the summary object alone so existing receipts stay byte-identical."""
+    import json as json_lib
+
+    from app.pipeline import render_geometry as rg
+
+    summary = {
+        "attempted": 2,
+        "decoded": 2,
+        "samples": [{"at_s": 1.0, "box": _face_box()}],
+    }
+    stdout = (
+        _anchor_line(1.0, True, _face_box())
+        + "\n"
+        + _anchor_line(2.0, True, None)
+        + "\n"
+        + json_lib.dumps(summary)
+        + "\n"
+    )
+    monkeypatch.setattr(
+        rg.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+    )
+
+    regions, receipt = rg.sample_face_regions("/v.mp4", [1.0, 2.0], count_decoded=True)
+
+    assert receipt["timed_out"] is False
+    assert "partial" not in receipt
+    assert receipt["attempted"] == 2
+    assert receipt["decoded"] == 2
+    assert len(regions) == 1  # from the summary's samples, not the stream
+
+
+def test_partial_timeout_still_moves_the_caption_off_a_close_up_face() -> None:
+    """END-TO-END regression for prod job b2a815e8.
+
+    15 anchors, the sampler is killed at the budget, but the worker had already
+    streamed the speaker's face. Before partial recovery this reported detected:0
+    and the caption stayed at the preset 0.705 — 68% covered by that face band.
+    """
+    from app.pipeline.captions import clamp_caption_y_frac  # noqa: F401 — contract doc
+    from app.pipeline.render_geometry import (
+        NormalizedBox,
+        ProtectedRegion,
+        choose_caption_y_frac,
+    )
+
+    close_up = NormalizedBox(0.10, 0.02, 0.92, 0.68)
+    recovered = [ProtectedRegion(float(i), float(i) + 1, close_up, kind="face") for i in range(10)]
+    # What sample_face_regions now returns for that kill.
+    receipt = {"attempted": 10, "decoded": 10, "detected": 10, "timed_out": True, "partial": True}
+    probe = NormalizedBox(0.06, 0.626, 0.94, 0.705)  # measured 2-line cue at the preset
+
+    chosen, placement = choose_caption_y_frac(
+        recovered, receipt, [probe], [], (0.705, 0.62, 0.78, 0.55, 0.86)
+    )
+
+    assert chosen == pytest.approx(0.78)
+    assert placement["status"] == "moved"
+    assert placement["coverage"] <= 0.05
+    # The old behaviour, pinned so a regression is loud: the preset it used to
+    # return is two thirds covered by this face band.
+    assert probe.coverage_by(close_up) > 0.6
+
+
+def test_user_pinned_caption_position_skips_face_placement(monkeypatch, tmp_path) -> None:
+    """Documented precedence: caption_position_user_edited > face-chosen > preset.
+
+    The gate never checked the flag, so a full re-render silently overrode a
+    position the creator had set by hand — and with the safe fallback in place a
+    sampler failure could have moved a pinned caption too.
+    """
+    from app.config import settings
+    from app.pipeline.captions import margin_v_to_y_frac, y_frac_to_margin_v
+    from app.tasks import generative_build as gb
+
+    _patch_subtitled_render(monkeypatch, tmp_path, media_overlays=[{"start_s": 5.0, "z": 1}])
+    monkeypatch.setattr(settings, "smart_caption_face_placement_enabled", True, raising=False)
+
+    # A spy that MOVES the caption, not one that raises: the call site wraps this
+    # helper in a fail-open `except Exception`, so a raising spy is swallowed and
+    # the test would pass against the unfixed gate.
+    calls: list[int] = []
+
+    def _spy(*, base, cues, **_kwargs):
+        calls.append(1)
+        base["smart_caption_policy"]["y_frac"] = 0.86
+        base["caption_margin_v"] = y_frac_to_margin_v(0.86)
+        base.setdefault("smart_validation_receipts", {})["caption_placement"] = {"status": "moved"}
+        return [], {}, cues
+
+    monkeypatch.setattr(gb, "_apply_face_aware_caption_placement", _spy, raising=False)
+
+    pinned_margin_v = y_frac_to_margin_v(0.66)  # the editor's "Middle" preset
+    vdir = tmp_path / "variant_pinned"
+    vdir.mkdir(exist_ok=True)
+    (tmp_path / "clip.mp4").write_bytes(b"\x00" * 8)
+
+    result = gb._render_subtitled_variant(
+        job_id="00000000-0000-0000-0000-000000000000",
+        rank=1,
+        spec={
+            "variant_id": "subtitled",
+            "archetype": "subtitled",
+            "caption_style": "sentence",
+            "caption_margin_v": pinned_margin_v,
+            "caption_position_user_edited": True,
+        },
+        clip_id_to_local={"c1": str(tmp_path / "clip.mp4")},
+        variant_dir=str(vdir),
+        language="en",
+        smart_captions={"preset_id": "cigdem", "preset_version": "v2", "sound_design": "off"},
+    )
+
+    assert result["ok"] is True
+    assert calls == []  # the gate, not the fail-open, is what stopped it
+    assert "caption_placement" not in result["smart_validation_receipts"]
+    assert result["caption_margin_v"] == pinned_margin_v
+    assert result["smart_caption_policy"]["y_frac"] == pytest.approx(
+        margin_v_to_y_frac(pinned_margin_v)
+    )
