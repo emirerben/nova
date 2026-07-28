@@ -58,6 +58,21 @@ def _load_cascade():
     return cascade
 
 
+def _emit_anchor(at_s: float, decoded: bool, box: dict | None) -> None:
+    """Stream ONE anchor's result the instant it is known.
+
+    The parent kills this process on a hard deadline. Buffered output would die
+    with it, so a marginal timeout used to discard every anchor already measured
+    and report zero faces — which sent the caption back to the preset band, i.e.
+    onto the speaker. `flush=True` is load-bearing: stdout is a pipe here, so it
+    is block-buffered and ~90-byte lines would otherwise sit in the buffer until
+    exit. `render_geometry.sample_face_regions` rebuilds partial results from
+    these lines on `TimeoutExpired`.
+    """
+    payload = {"anchor": {"at_s": at_s, "decoded": decoded, "box": box}}
+    print(json.dumps(payload, separators=(",", ":")), flush=True)
+
+
 def sample(video_path: str, anchors: list[float]) -> dict:
     import cv2
 
@@ -76,6 +91,7 @@ def sample(video_path: str, anchors: list[float]) -> dict:
                 # corrupt frame — NOT a decodable anchor. Reporting decoded lets
                 # the placement chooser use it as the coverage denominator instead
                 # of attempted (plan 011 Feature C — silence-cut safe).
+                _emit_anchor(at_s, False, None)
                 continue
             decoded += 1
             height, width = frame.shape[:2]
@@ -84,20 +100,18 @@ def sample(video_path: str, anchors: list[float]) -> dict:
             gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
             faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
             if len(faces) == 0:
+                _emit_anchor(at_s, True, None)
                 continue
             x, y, face_w, face_h = max(faces, key=lambda face: face[2] * face[3])
             sw, sh = small.shape[1], small.shape[0]
-            samples.append(
-                {
-                    "at_s": at_s,
-                    "box": {
-                        "left": x / sw,
-                        "top": y / sh,
-                        "right": (x + face_w) / sw,
-                        "bottom": (y + face_h) / sh,
-                    },
-                }
-            )
+            box = {
+                "left": x / sw,
+                "top": y / sh,
+                "right": (x + face_w) / sw,
+                "bottom": (y + face_h) / sh,
+            }
+            _emit_anchor(at_s, True, box)
+            samples.append({"at_s": at_s, "box": box})
     finally:
         capture.release()
     return {"attempted": attempted, "decoded": decoded, "samples": samples}

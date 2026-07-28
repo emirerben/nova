@@ -327,6 +327,47 @@ def _face_protection_box(raw: NormalizedBox) -> NormalizedBox:
     )
 
 
+def _face_region_at(at_s: float, raw_box: dict[str, Any]) -> ProtectedRegion:
+    return ProtectedRegion(
+        start_s=max(0.0, at_s - 0.5),
+        end_s=at_s + 0.5,
+        box=_face_protection_box(NormalizedBox(**raw_box)),
+        kind="face",
+    )
+
+
+def _partial_samples_from_stream(stdout: str | None) -> tuple[list[ProtectedRegion], int, int]:
+    """Rebuild whatever the worker streamed before it was killed.
+
+    The worker emits one ``{"anchor": {...}}`` line per anchor (flushed), so a
+    timeout is a DEGRADED result, not a lost one. A kill can cut the final line
+    mid-write, so anything unparseable is skipped rather than raised. Returns
+    (regions, attempted, decoded).
+    """
+
+    regions: list[ProtectedRegion] = []
+    attempted = 0
+    decoded = 0
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            anchor = json.loads(line).get("anchor")
+            if not isinstance(anchor, dict):
+                continue  # the trailing summary object, not a per-anchor line
+            at_s = max(0.0, float(anchor["at_s"]))
+            attempted += 1
+            if anchor.get("decoded"):
+                decoded += 1
+            raw_box = anchor.get("box")
+            if raw_box:
+                regions.append(_face_region_at(at_s, raw_box))
+        except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+    return regions, attempted, decoded
+
+
 def sample_face_regions(
     video_path: str,
     anchor_times_s: list[float],
@@ -341,6 +382,12 @@ def sample_face_regions(
     identical) adds a ``decoded`` field — the number of anchors that produced a
     decodable frame — which the caption-placement chooser uses as its coverage
     denominator (plan 011 Feature C).
+
+    A timeout keeps the anchors the worker already streamed (``partial: True``)
+    instead of reporting zero. Losing them was catastrophic rather than
+    degrading: prod job b2a815e8 was killed at 6265ms against a 6250ms budget
+    with the speaker's face already found, reported ``detected: 0``, and the
+    caption went back to the preset band — onto the face.
     """
 
     started = time.monotonic()
@@ -360,36 +407,41 @@ def sample_face_regions(
             timeout=max(0.01, timeout_s),
             check=False,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         elapsed_ms = round((time.monotonic() - started) * 1000)
-        return [], {
-            "attempted": len(anchors),
-            "detected": 0,
+        # `subprocess.run` kills the child and re-collects its output before
+        # re-raising, so partial stdout is available here.
+        partial, partial_attempted, partial_decoded = _partial_samples_from_stream(
+            exc.stdout if isinstance(exc.stdout, str) else None
+        )
+        receipt: dict[str, Any] = {
+            "attempted": partial_attempted or len(anchors),
+            "detected": len(partial),
             "elapsed_ms": elapsed_ms,
             "timed_out": True,
         }
+        if partial_attempted:
+            # Only on the recovered path — a zero-output timeout keeps the
+            # pre-existing receipt shape exactly.
+            receipt["partial"] = True
+            if count_decoded:
+                receipt["decoded"] = partial_decoded
+        return partial, receipt
     regions: list[ProtectedRegion] = []
     attempted = len(anchors)
     decoded: int | None = None
     worker_error: str | None = None
     if result.returncode == 0:
         try:
-            payload = json.loads(result.stdout)
+            # The per-anchor stream precedes it; the summary is always the last line.
+            lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
+            payload = json.loads(lines[-1] if lines else "")
             attempted = int(payload.get("attempted") or attempted)
             raw_decoded = payload.get("decoded")
             if raw_decoded is not None:
                 decoded = int(raw_decoded)
             for sample in payload.get("samples") or []:
-                at_s = max(0.0, float(sample["at_s"]))
-                box = _face_protection_box(NormalizedBox(**sample["box"]))
-                regions.append(
-                    ProtectedRegion(
-                        start_s=max(0.0, at_s - 0.5),
-                        end_s=at_s + 0.5,
-                        box=box,
-                        kind="face",
-                    )
-                )
+                regions.append(_face_region_at(max(0.0, float(sample["at_s"])), sample["box"]))
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             regions = []
             worker_error = f"bad_payload:{type(exc).__name__}"
@@ -435,6 +487,18 @@ _FACE_OVERLAP_MAX_COVERAGE = 0.05
 _DOMINANT_FACE_MIN_PRESENCE = 0.60
 # Fewer than three decodable anchors is too little signal — keep the preset.
 _MIN_USABLE_ANCHORS = 3
+# Where the caption retreats when the sampler could not report at all (timeout /
+# broken worker). This is the SAME platform-safe band the non-smart subtitled path
+# has burned for months (captions.SUBTITLED_CAPTION_MARGIN_V = 384 ⇒ y_frac 0.80),
+# so it is empirically safe for the talking-head framing this archetype ships.
+#
+# It is deliberately NOT the preset. A detector failure means "we could not look",
+# and the preset (0.705 on cigdem/v2) sits 182px HIGHER — on a close-up that is
+# chin height, measured at 68% face coverage. Falling back to the position the
+# feature exists to avoid made the failure mode indistinguishable from having no
+# feature at all. `no_face` / `insufficient_anchors` are the opposite case — real
+# information that the frame is clear — and still keep the preset.
+CAPTION_UNKNOWN_FALLBACK_Y_FRAC = 0.80
 # Two detections belong to the same face when their boxes overlap this much.
 # Haar occasionally fires once on background texture; a blind union of every
 # detection would let that single spurious box inflate the band across half the
@@ -501,10 +565,22 @@ def choose_caption_y_frac(
     at the evaluation loop for why no single box is the worst case. Every receipt
     embeds the raw sampler receipt under
     ``face_sampler`` so a structurally broken cv2 worker is distinguishable from a
-    genuinely well-framed clip in /admin/jobs (finding QUAL-2). On any of
-    no-face / timeout / error / < 3 usable anchors the preset is returned with a
-    ``reason`` in ``{no_face, sampler_timeout, sampler_error, insufficient_anchors}``;
-    when a real band exists but no candidate is both clear and chrome-safe, the
+    genuinely well-framed clip in /admin/jobs (finding QUAL-2).
+
+    Failure splits on whether the sampler produced INFORMATION:
+
+    - ``no_face`` / ``insufficient_anchors`` — it looked and the frame is clear, so
+      the preset stands (``status == "preset"``).
+    - ``sampler_timeout`` / ``sampler_error`` — it could not look at all, so the band
+      retreats to ``CAPTION_UNKNOWN_FALLBACK_Y_FRAC`` (``status == "safe_fallback"``),
+      unless that would push a cue under the platform UI, in which case the preset
+      stands with ``safe_fallback_rejected``. Returning the preset here was the
+      original defect: it put the caption exactly where the feature exists to avoid.
+
+    ``sampler_timeout`` now only fires when the worker streamed NOTHING before the
+    kill — partial anchors are recovered by ``sample_face_regions``.
+
+    When a real band exists but no candidate is both clear and chrome-safe, the
     least-overlap candidate is returned with ``status == "best_effort"``.
     """
 
@@ -512,6 +588,23 @@ def choose_caption_y_frac(
 
     ladder = tuple(clamp_caption_y_frac(value) for value in candidates) or (0.705,)
     preset_y = ladder[0]
+
+    # EVERY distinct cue shape is probed, not just the tallest. The gate divides by
+    # the probe's OWN area, so no single cue is the universal worst case: against a
+    # face band near the caption's bottom edge a SHORT one-line cue reports far more
+    # coverage than a tall two-line one, while a band higher up only collides with
+    # the tall box — and the true maximum can fall at an intermediate height. A
+    # candidate must therefore clear the gate for ALL shapes.
+    probes = list(caption_probe_boxes) or [NormalizedBox(0.3, 0.58, 0.7, 0.705)]
+
+    def _boxes_clear_chrome(boxes: Sequence[NormalizedBox]) -> bool:
+        return all(
+            box.top >= _CAPTION_TOP_SAFE_FRAC and box.bottom <= _CAPTION_BOTTOM_SAFE_FRAC
+            for box in boxes
+        )
+
+    def _clears_chrome(y_frac: float) -> bool:
+        return _boxes_clear_chrome([_translate_box_to_y(probe, y_frac) for probe in probes])
 
     def _preset(reason: str, **extra: Any) -> tuple[float, dict[str, Any]]:
         receipt: dict[str, Any] = {
@@ -525,10 +618,30 @@ def choose_caption_y_frac(
         receipt.update(extra)
         return preset_y, receipt
 
-    if face_receipt.get("timed_out"):
-        return _preset("sampler_timeout")
+    def _unknown(reason: str) -> tuple[float, dict[str, Any]]:
+        """The sampler reported nothing — retreat instead of assuming it's clear."""
+
+        safe_y = clamp_caption_y_frac(CAPTION_UNKNOWN_FALLBACK_Y_FRAC)
+        if not _clears_chrome(safe_y):
+            # An unusually tall cue set could push the safe band under the
+            # platform UI. Unreadable beats overlapping, so keep the preset.
+            return _preset(reason, safe_fallback_rejected="chrome")
+        return safe_y, {
+            "status": "safe_fallback",
+            "reason": reason,
+            "chosen_y_frac": safe_y,
+            "preset_y_frac": preset_y,
+            "candidates": list(ladder),
+            "face_sampler": dict(face_receipt),
+        }
+
+    # A timeout that still recovered anchors is DATA, not a blank — fall through
+    # and judge it on the usual presence/anchor floors. Only a kill that streamed
+    # nothing is genuinely "could not look".
+    if face_receipt.get("timed_out") and not face_receipt.get("partial"):
+        return _unknown("sampler_timeout")
     if face_receipt.get("worker_error"):
-        return _preset("sampler_error")
+        return _unknown("sampler_error")
     raw_decoded = face_receipt.get("decoded")
     if raw_decoded is not None:
         decoded = int(raw_decoded)
@@ -553,14 +666,6 @@ def choose_caption_y_frac(
     band = _union_box(cluster)
     protected = [band, *[title.box for title in title_boxes]]
 
-    # EVERY distinct cue shape is probed, not just the tallest. The gate divides by
-    # the probe's OWN area, so no single cue is the universal worst case: against a
-    # face band near the caption's bottom edge a SHORT one-line cue reports far more
-    # coverage than a tall two-line one, while a band higher up only collides with
-    # the tall box — and the true maximum can fall at an intermediate height. A
-    # candidate must therefore clear the gate for ALL shapes.
-    probes = list(caption_probe_boxes) or [NormalizedBox(0.3, 0.58, 0.7, 0.705)]
-
     evaluated: list[dict[str, Any]] = []
     for index, y_frac in enumerate(ladder):
         translated = [_translate_box_to_y(probe, y_frac) for probe in probes]
@@ -571,10 +676,7 @@ def choose_caption_y_frac(
             ),
             5,
         )
-        clears_chrome = all(
-            box.top >= _CAPTION_TOP_SAFE_FRAC and box.bottom <= _CAPTION_BOTTOM_SAFE_FRAC
-            for box in translated
-        )
+        clears_chrome = _boxes_clear_chrome(translated)
         evaluated.append({"y_frac": y_frac, "coverage": coverage, "clears_chrome": clears_chrome})
         if coverage <= _FACE_OVERLAP_MAX_COVERAGE and clears_chrome:
             return y_frac, {

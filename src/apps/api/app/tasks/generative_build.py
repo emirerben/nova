@@ -9789,6 +9789,13 @@ _FACE_PLACEMENT_EXTRA_CANDIDATES: tuple[float, ...] = (0.62, 0.78, 0.55, 0.86)
 # Dedupe can only shrink the union, so 12 + 8 is a hard ceiling (timeout <= 8s).
 _FACE_PLACEMENT_MAX_INTENT_ANCHORS = 12
 _FACE_PLACEMENT_SPACED_ANCHORS = 8
+# The sampler is a COLD-START subprocess: the base term has to cover interpreter
+# boot plus `import cv2` before a single frame is decoded. Prod stderr stamps put
+# that at ~1.7s in the prod image, so the original 1.0s was already spent by the
+# time real work began — on a 4-shared-vCPU worker also running FFmpeg, healthy
+# runs (130-185ms/anchor) and killed ones sat on either side of the same line.
+_FACE_PLACEMENT_TIMEOUT_BASE_S = 2.5
+_FACE_PLACEMENT_TIMEOUT_PER_ANCHOR_S = 0.35
 _FACE_PLACEMENT_MAX_ANCHORS = _FACE_PLACEMENT_MAX_INTENT_ANCHORS + _FACE_PLACEMENT_SPACED_ANCHORS
 
 
@@ -9931,13 +9938,17 @@ def _apply_face_aware_caption_placement(
         intent_anchors + _evenly_spaced_anchors(base_duration, n=_FACE_PLACEMENT_SPACED_ANCHORS)
     )
 
-    # Timeout scales with the (now bounded) anchor count; streaming deferred —
-    # T-CAP011-2. max_samples matches the union so the cap above is the only limit.
+    # Timeout scales with the (now bounded) anchor count on top of a base term
+    # sized for the subprocess's own cold start. max_samples matches the union so
+    # the cap above is the only limit. A kill no longer discards the anchors the
+    # worker already streamed (T-CAP011-2, shipped).
     face_regions, face_receipt = sample_face_regions(
         base_path,
         anchors,
         max_samples=max(len(anchors), 1),
-        timeout_s=1.0 + 0.35 * len(anchors),
+        timeout_s=(
+            _FACE_PLACEMENT_TIMEOUT_BASE_S + _FACE_PLACEMENT_TIMEOUT_PER_ANCHOR_S * len(anchors)
+        ),
         count_decoded=True,
     )
 
@@ -10770,6 +10781,12 @@ def _render_subtitled_variant(
             and smart_compiled is not None
             and isinstance(base.get("smart_caption_policy"), dict)
             and cues
+            # Documented precedence (docs/pipelines/smart-captions.md):
+            # caption_position_user_edited > face-chosen > preset. The gate never
+            # enforced it, so a re-render silently overrode a position the creator
+            # had pinned by hand — and with the safe fallback below it could
+            # overwrite that pin on a sampler failure too.
+            and not base.get("caption_position_user_edited")
         ):
             try:
                 with _stage_timer("caption_effect_preparation", counts={"cue_count": len(cues)}):

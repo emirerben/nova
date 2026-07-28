@@ -106,7 +106,8 @@ docs/pipelines/generative.md "Speech map + SFX auto-suggestions". Remaining foll
 **Why:** Feature C shipped with the flag OFF (a byte-identical no-op), so this is a pre-FLIP gate, not a pre-merge one — plan 011 §Rollout sequences it exactly this way. It could not run on the authoring machine (no Docker), and the Skia/FFmpeg/font stack only matches production inside the prod image.
 **How:** `make local-render CLIP=<talking_head.mp4> TEMPLATE=<cigdem uuid> MODE=generative`, then `make verify-overlays`; read `.overlay-verify/report.json` + `montage.png`. Then flip the flag and watch `caption_placement` receipts in `/admin/jobs` (`reason` enum distribution, anchor counts, timeout rate — a real timeout rate is the trigger for T-CAP011-2).
 **Context:** plans/011-smart-caption-contextual-cues.md §Feature C + §Rollout; `docs/pipelines/smart-captions.md` "Face-aware caption placement".
-**Effort:** S (CC: ~30 min, needs Docker) **Priority:** P1 **Depends on:** Feature C merged (this PR)
+**Effort:** S (CC: ~30 min, needs Docker) **Priority:** P1 **Depends on:** Feature C merged
+**Status (2026-07-28):** the flag is ON in prod and this parity render was never run. It is now a POST-flip verification, not a pre-flip gate — and the fallback fix (v0.17.1.3) landed without it for the same reason (no Docker on the authoring machine).
 
 ### T-CAP011-1 — Emphasis styling lane for standalone cues
 **What:** Standalone emphasis cues ("Messi" alone) currently inherit generic role tags; add a dedicated style treatment (bigger size / color pop / preset token) driven by the persisted `smart_emphasis` cue field.
@@ -121,12 +122,12 @@ docs/pipelines/generative.md "Speech map + SFX auto-suggestions". Remaining foll
 **How:** Pure extraction, no behavior change; keep the existing byte-identity + merge-back tests green. Related: the shared list-marker/function-word vocabulary is hand-mirrored across `_LONE_MARKER_TOKENS`, `_NAME_STOP`, and `compiler._KEYWORD_STOP` — consider a single `smart_edit` lexicon constant while in here.
 **Effort:** S (CC: ~45 min) **Priority:** P3 **Depends on:** nothing (safe anytime)
 
-### T-CAP011-2 — Per-anchor streaming face sampler
-**What:** `face_sampler_worker.py` emits JSON once at exit, so a subprocess timeout discards ALL partial anchor results. Stream one JSON line per anchor so timeouts keep completed samples.
-**Why:** Plan 011 scales the timeout with anchor count instead, and the shipped code caps the anchor union at 20 (12 intent + 8 evenly-spaced, `_FACE_PLACEMENT_MAX_ANCHORS`) so the budget tops out around 8s; streaming becomes worth it only if `caption_placement` receipts show meaningful timeout rates after the Fly flip.
-**How:** Worker prints per-anchor lines; `sample_face_regions` parses incrementally and keeps whatever arrived before the kill.
-**Context:** plans/011-smart-caption-contextual-cues.md "NOT in scope"; perf finding PERF-1 (all-or-nothing 2.0s timeout).
-**Effort:** S (CC: ~45 min) **Priority:** P3 **Depends on:** observed timeout receipts in /admin/jobs (don't build speculatively)
+### T-CAP011-4 — Card-arbitration face sampler still runs on the 2.0s default
+**What:** The media-card arbitration branch in `_render_subtitled_variant` calls `sample_face_regions(caption_base_path, anchor_times)` with the module default `timeout_s=2.0`. The caption lane's budget was raised to `_FACE_PLACEMENT_TIMEOUT_BASE_S` (2.5s) + 0.35s/anchor because 2.0s does not even cover the subprocess's cold start (interpreter boot + `import cv2` ≈ 1.7s in the prod image); this lane has the same exposure and was left alone to keep the caption fix scoped.
+**Why:** If it is timing out, cards are being arbitrated against ZERO face boxes — i.e. pip cards may be landing on the speaker's face for the same reason captions were. Unmeasured: `geometry_prepare` receipts in `/admin/jobs` carry `timed_out` / `elapsed_ms` and will say.
+**How:** Read the `geometry_prepare` timeout rate first. If it is real, give this lane the same base-term treatment (do NOT change the module default blindly — other callers share it).
+**Context:** `app/tasks/generative_build.py` (arbitration branch); `app/pipeline/render_geometry.py::sample_face_regions`.
+**Effort:** S (CC: ~30 min) **Priority:** P2 **Depends on:** reading prod `geometry_prepare` receipts
 
 ## Editor virtual preview — follow-ups (from v0.7.30.1)
 

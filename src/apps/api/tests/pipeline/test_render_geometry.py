@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from app.pipeline.render_geometry import (
+    CAPTION_UNKNOWN_FALLBACK_Y_FRAC,
     NormalizedBox,
     ProtectedRegion,
     _is_widow,
@@ -375,3 +376,78 @@ def test_dominant_face_cluster_tie_breaks_to_the_earliest_cluster() -> None:
 
     assert len(cluster) == 2
     assert cluster[0] == left  # earliest cluster wins the tie
+
+
+# ── unknown-vs-clear fallback split (prod job b2a815e8) ───────────────────────
+#
+# The sampler has two kinds of failure and they are NOT the same fact. "I looked
+# and there is no face" is information; "I could not look" is the absence of it.
+# Both used to return the preset — which on cigdem/v2 is y=0.705, measured at 68%
+# face coverage on a talking-head close-up. So the protection's failure mode was
+# the exact position it exists to avoid.
+
+
+def test_sampler_timeout_falls_back_to_the_safe_low_band() -> None:
+    probe = NormalizedBox(0.3, 0.626, 0.7, 0.705)
+    chosen, receipt = choose_caption_y_frac(
+        [], {"timed_out": True, "attempted": 15}, [probe], [], _CANDIDATES
+    )
+    assert chosen == pytest.approx(CAPTION_UNKNOWN_FALLBACK_Y_FRAC)
+    assert chosen > 0.705  # retreated DOWN, away from the face, not up onto it
+    assert receipt["status"] == "safe_fallback"
+    assert receipt["reason"] == "sampler_timeout"
+    assert receipt["preset_y_frac"] == pytest.approx(0.705)
+
+
+def test_sampler_error_falls_back_to_the_safe_low_band() -> None:
+    probe = NormalizedBox(0.3, 0.626, 0.7, 0.705)
+    chosen, receipt = choose_caption_y_frac(
+        [],
+        {"timed_out": False, "worker_error": "rc_1:cascade missing", "attempted": 8},
+        [probe],
+        [],
+        _CANDIDATES,
+    )
+    assert chosen == pytest.approx(CAPTION_UNKNOWN_FALLBACK_Y_FRAC)
+    assert receipt["status"] == "safe_fallback"
+    assert receipt["reason"] == "sampler_error"
+
+
+def test_no_face_still_keeps_the_preset() -> None:
+    """The other half of the split: a clip the sampler READ and found clear must
+    stay exactly where it was, or every faceless b-roll caption would move."""
+    chosen, receipt = choose_caption_y_frac(
+        [], _receipt(detected=0), [NormalizedBox(0.3, 0.58, 0.7, 0.705)], [], _CANDIDATES
+    )
+    assert chosen == pytest.approx(0.705)
+    assert receipt["status"] == "preset"
+    assert receipt["reason"] == "no_face"
+
+
+def test_insufficient_anchors_still_keeps_the_preset() -> None:
+    faces = [_face(NormalizedBox(0.35, 0.60, 0.65, 0.88))] * 2
+    chosen, receipt = choose_caption_y_frac(
+        faces,
+        {"timed_out": False, "attempted": 2, "decoded": 2},
+        [NormalizedBox(0.3, 0.58, 0.7, 0.705)],
+        [],
+        _CANDIDATES,
+    )
+    assert chosen == pytest.approx(0.705)
+    assert receipt["status"] == "preset"
+    assert receipt["reason"] == "insufficient_anchors"
+
+
+def test_safe_fallback_keeps_the_preset_when_it_would_break_chrome() -> None:
+    """A caption tall enough that the safe band pushes it under the platform UI
+    keeps the preset — unreadable is worse than overlapping."""
+    # 0.95 tall: translated to the safe band its top lands at 0.80 - 0.95 → 0.0,
+    # well above the 0.10 top-chrome margin, so the safe y is refused.
+    taller_than_the_band = NormalizedBox(0.3, 0.0, 0.7, 0.95)
+    chosen, receipt = choose_caption_y_frac(
+        [], {"timed_out": True, "attempted": 9}, [taller_than_the_band], [], _CANDIDATES
+    )
+    assert chosen == pytest.approx(0.705)
+    assert receipt["status"] == "preset"
+    assert receipt["reason"] == "sampler_timeout"
+    assert receipt["safe_fallback_rejected"] == "chrome"
