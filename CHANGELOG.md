@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.1.0] — 2026-07-29
+
+### Changed
+- **The mobile pocket editor is now on for everyone.** v0.18.0.0 shipped full phone editing behind an environment flag that was never set in production, so phones kept showing only the video and the chat. The flag's default is now flipped: the pocket editor is active out of the box, and `NEXT_PUBLIC_MOBILE_EDITOR_ENABLED="false"` (plus a redeploy) becomes the kill switch that restores the old chat-only mobile view unchanged. Desktop is unaffected.
+
 ## [0.18.0.0] — 2026-07-29
 
 ### Added
