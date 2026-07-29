@@ -4060,6 +4060,9 @@ export default function EditorShell({
         return;
       }
       if (e.key === "Escape") {
+        // Pocket sheets own their Escape (one press, one effect): the Sheet
+        // closes itself; the shell must not ALSO clear the selection.
+        if (pocketSheetOpen) return;
         if (layoutMode === "light" && lightSheetOpen) {
           e.preventDefault();
           setLightSheetOpen(false);
@@ -4094,6 +4097,7 @@ export default function EditorShell({
     deleteSelected,
     canDelete,
     history,
+    pocketSheetOpen,
     layoutMode,
     lightSheetOpen,
     nudgeSelectedText,
