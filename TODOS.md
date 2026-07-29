@@ -8,6 +8,39 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Pocket editor PR2 — declared follow-ups (from mobile-editor PR, 2026-07-29)
+
+Design + engineering plan: `~/.claude/plans/when-you-sign-in-abundant-marble.md`
+(full reviewed spec: §4 timeline, §3 sheet restructure, §14 eng corrections).
+PR1 shipped the capability-complete core behind `NEXT_PUBLIC_MOBILE_EDITOR_ENABLED`.
+
+- **Mobile timeline takeover (P1, L).** Full-screen center-playhead timeline
+  (lanes reuse `editor-bar-drag`/`text-timeline-reducer` — NOT
+  `sfx-timeline-reducer`, an item-page-only store with its own undo stack).
+  Eng-review constraints baked into the plan: playhead auto-scroll is imperative
+  (rAF reads deck currentTime → writes scrollLeft; never React state per frame —
+  `currentTime` is top-level EditorShell state and nothing in `_editor/` is
+  memoized), lanes in React.memo, ≥44px invisible hit areas (editor lanes use
+  24px edge zones today), mobile media budget (≤4 attached videos; Filmstrip
+  pool never evicts today), compact preview pane above the ruler, Visuals lane
+  included. De-risk with a `/dev-qa/mobile-timeline` fixture FIRST.
+- **Sheet section restructure (P2, M).** Eyebrow-token collapsible headers,
+  per-entry default expansion, timecode-tap-to-seek in cue/SFX lists, ≥44px
+  density pass on InspectorPanel's h-8/h-9 inner controls (requires extracting
+  its file-local sub-inspectors WITH desktop snapshot pinning first), mini-strip
+  filmstrip thumbnails (deferred decode: post-canplay, bounded seeks, release
+  sources after raster).
+- **Playwright touch e2e (P2, M).** Mechanism decided in the plan: shared
+  `e2e/fixture-routes.ts` with `page.route` on the plan API's relative URLs +
+  `dev-qa/mobile-editor` fixture with a runtime flag override (`?pocket=0/1`) so
+  flag-on specs and the flag-off smoke share one webServer (NEXT_PUBLIC_* is
+  build-time). Jest render suites cover the contracts meanwhile.
+- **Save-flow polish (P3, S).** Conflict tile → choice cards with consequences;
+  alignment dialog restyled as a choice sheet; audio one-source rule for
+  Sounds-sheet previews; first-run hint chips.
+- **LightTransport accent (P3, XS).** `accent-lime-500` → `accent-lime-600`
+  (D16); deviation documented in DESIGN.md §14.
+
 ## Text-behind-subject consistency train — deferrals (from behind-subject-consistency PR, 2026-07-26)
 
 ### Matte cache staleness vs visual-blocks / motion / camera bases
