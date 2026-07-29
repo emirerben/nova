@@ -308,6 +308,50 @@ voiceover section (narrated formats only), flag-gated by
 
 ---
 
+## §14 Pocket editor (mobile light mode)
+
+Flag: `NEXT_PUBLIC_MOBILE_EDITOR_ENABLED`. The `<1024px` editor gains full manual
+editing when on; off ⇒ legacy light mode (canvas + Nova chat only) unchanged.
+Rules supplement §2.
+
+- **Tool dock** (`_editor/ToolDock.tsx`): `bg-[#fafaf8] border-t border-zinc-200
+  pb-[max(8px,env(safe-area-inset-bottom))]` — deliberate 8px safe-area floor vs
+  the pinned-bar's 16px (56px tool targets + label descenders already provide the
+  visual bottom space). 7 tools in desktop rail order; 24px icon +
+  `text-[11px] font-medium` label; active = ink + 2px ink underline; disabled =
+  icon `opacity-50`, label stays `#71717a`, honest reason via toast on tap.
+- **Sheet primitive** (`_editor/Sheet.tsx`, generalizes the Nova drawer):
+  `rounded-t-2xl bg-white border-t border-zinc-200`, grabber `bg-zinc-300`.
+  Detents: **half 54dvh non-modal** (no scrim, no focus trap — canvas and
+  transport stay interactive; the shell squeezes above via `padding-bottom`) /
+  **full 88dvh modal** (`bg-[#0c0c0e]/15` scrim, focus trap, compact transport in
+  the title row). Motion = `t-modal` tokens, transform/opacity only; heights
+  snap, never tween. Keyboard promotes half→full for its lifetime.
+- **Context strip** (`_editor/ContextStrip.tsx`): `role="toolbar"` selection
+  quick actions; 44px pills; the first pill per type is the ink primary
+  (text→Edit, caption→Edit cue, overlay→Edit, clip→Adjust); **Delete is always
+  the word Delete** (§9: never an icon or emoji). Caption and clip selections
+  flip the strip to the canvas top so it never covers what it acts on.
+- **Mini strip** (`_editor/MiniStrip.tsx`): 44px proportional clip segments
+  (alternating zinc-300/zinc-200), lime-600 playhead + presence dots + selected
+  outline; drag = scrub (one playhead, two views — always in sync with the
+  transport thumb), tap = select clip + seek. Filmstrip thumbnails are PR2.
+- **Icons** (`_editor/editor-icons.tsx`): stroke SVGs, 24px / 1.6 /
+  `currentColor` — supersedes ToolRail's no-icon-set note for mobile chrome; raw
+  unicode glyphs take emoji presentation on iOS Safari.
+- **Focus-visible:** pocket controls use the editor's shipped lime outline
+  (`focus-visible:outline-lime-500`), matching sibling editor chrome — an
+  editor-scoped deviation from the §12 ink-outline precedent, documented here.
+- **Deviation (ledger-style):** LightTransport's shipped `accent-lime-500`
+  predates D16 (fills = lime-600); new pocket fills are lime-600. Normalize the
+  transport opportunistically.
+- **PR2 (declared, not silent):** full-screen mobile timeline takeover
+  (center-playhead, imperative rAF scroll, media budget, preview pane), sheet
+  section restructure (Eyebrow headers, default expansion, ≥44px inner-control
+  density), conflict choice-cards, Playwright touch e2e.
+
+---
+
 ## §11 Calibration examples
 
 Quick right/wrong pairs for common review questions.

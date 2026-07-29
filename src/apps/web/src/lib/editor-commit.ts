@@ -521,19 +521,54 @@ export class EditorCommitConflictError extends Error {
   }
 }
 
+/** Thrown when the commit never reached the server (offline, DNS failure, or
+ * the request timed out). The working state is untouched — callers keep edits
+ * and offer a retry. Distinct from server-side validation errors, which keep
+ * their curated copy. */
+export class EditorCommitNetworkError extends Error {
+  constructor() {
+    super("Couldn't reach Kria — your edits are still here.");
+    this.name = "EditorCommitNetworkError";
+  }
+}
+
+/** Hard ceiling on how long a commit POST may hang before it's surfaced as a
+ * network failure (mobile radio dead zones leave fetch pending forever). */
+export const EDITOR_COMMIT_TIMEOUT_MS = 20_000;
+
 export async function commitEditorSession(
   planItemId: string,
   variantId: string,
   body: EditorCommitRequest,
 ): Promise<EditorCommitResponse> {
-  const res = await fetch(
-    `${PLAN_BASE}/plan-items/${planItemId}/variants/${variantId}/editor-commit`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
+  // NOT AbortSignal.timeout(): jsdom 20 lacks it, it rejects with the wrong
+  // error name ("TimeoutError"), and Safari < 16 doesn't support it.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), EDITOR_COMMIT_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(
+      `${PLAN_BASE}/plan-items/${planItemId}/variants/${variantId}/editor-commit`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      },
+    );
+  } catch (err) {
+    // Timeout (our abort) or transport failure ("Failed to fetch" /
+    // "Load failed") — the request never produced a server response.
+    const aborted =
+      (err instanceof DOMException || err instanceof Error) &&
+      err.name === "AbortError";
+    if (aborted || err instanceof TypeError) {
+      throw new EditorCommitNetworkError();
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   if (res.status === 401) throw new NotAuthenticatedError();
   if (res.status === 409) {
     let detail: string | undefined;

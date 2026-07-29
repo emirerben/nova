@@ -62,6 +62,7 @@ import {
   commitEditorSession,
   editorCommitBaseGeneration,
   EditorCommitConflictError,
+  EditorCommitNetworkError,
   type AcceptedSuggestionRef,
   type EditorCommitBackgroundMusic,
   type EditorCommitLyricsRequest,
@@ -156,6 +157,16 @@ import { computeReseedSections } from "./editor-reseed";
 import InspectorPanel from "./InspectorPanel";
 import InspectorRail, { type InspectorTab } from "./InspectorRail";
 import ToolDrawer from "./ToolDrawer";
+import Sheet from "./Sheet";
+import { ToolDock, type DockTool } from "./ToolDock";
+import { ContextStrip, type StripSelection } from "./ContextStrip";
+import { MiniStrip, type MiniStripSegment } from "./MiniStrip";
+import {
+  initialPocketState,
+  pocketReducer,
+  type PocketTool,
+} from "./mobile-editor-state";
+import { PauseIcon, PlayIcon, RedoIcon, UndoIcon } from "./editor-icons";
 import type {
   CaptionCueRow,
   CaptionsBusyState,
@@ -225,6 +236,17 @@ const LYRICS_EDITOR_UI = process.env.NEXT_PUBLIC_LYRICS_EDITOR_ENABLED === "true
 // lyricsFeatureAvailable/isElementsLyricsModel in editor-capabilities.ts.
 const LYRICS_OPTIONAL_UI = process.env.NEXT_PUBLIC_LYRICS_OPTIONAL_ENABLED === "true";
 const LANDSCAPE_UI = process.env.NEXT_PUBLIC_LANDSCAPE_OUTPUT_ENABLED === "true";
+/** Pocket editor (mobile full-parity light mode). Off ⇒ legacy light mode
+ * (canvas + chat only) is byte-identical — the reversibility lever. */
+const POCKET_UI = process.env.NEXT_PUBLIC_MOBILE_EDITOR_ENABLED === "true";
+const POCKET_TOOL_TITLES: Record<PocketTool, string> = {
+  text: "Text",
+  captions: "Captions",
+  visuals: "Visuals",
+  sounds: "Sounds",
+  overlays: "Overlays",
+  styles: "Styles",
+};
 
 type EditorOrientation = "portrait" | "landscape";
 
@@ -817,6 +839,14 @@ export default function EditorShell({
   // ── View state ──────────────────────────────────────────────────────────────
   const layoutMode = useEditorLayoutMode();
   const { selection, select, clear } = useEditorSelection();
+  // Pocket-editor chrome state (which sheet, which detent). Deliberately NOT
+  // in useEditorHistory — chrome state is not undoable document state.
+  const [pocket, dispatchPocket] = useReducer(pocketReducer, initialPocketState);
+  const pocketActive = POCKET_UI && layoutMode === "light";
+  const pocketSheetOpen = pocketActive && pocket.sheet !== null;
+  /** True while the save that failed was a network-class failure (drives the
+   * one-shot auto-retry when the browser comes back online). */
+  const networkSaveErrorRef = useRef(false);
   const [activeTool, setActiveTool] = useState<EditorTool | null>(null); // drawer CLOSED at first paint
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("basic");
   const [lightSheetOpen, setLightSheetOpen] = useState(false);
@@ -1735,12 +1765,38 @@ export default function EditorShell({
 
   useEffect(() => {
     if (layoutMode === "light") {
-      setActiveTool((tool) => (tool === "nova" ? tool : null));
+      // Pocket mode routes every tool through sheets instead of force-closing
+      // them; legacy light mode keeps the nova-only gate.
+      if (!POCKET_UI) setActiveTool((tool) => (tool === "nova" ? tool : null));
       setCanvasTool("select");
     } else {
       setLightSheetOpen(false);
+      dispatchPocket({ type: "CLOSE_SHEET" });
     }
   }, [layoutMode]);
+
+  // Pocket: the inspector sheet is selection-scoped — deselection closes it.
+  useEffect(() => {
+    if (pocketActive && selection === null && pocket.sheet?.kind === "inspector") {
+      dispatchPocket({ type: "CLOSE_SHEET" });
+    }
+  }, [pocketActive, selection, pocket.sheet]);
+
+  // Pocket lifecycle delta (§5): backgrounding pauses playback. The draft
+  // already persists continuously on document change; nothing extra to flush.
+  useEffect(() => {
+    if (!pocketActive) return;
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") pausePlayback();
+    };
+    const onPageHide = () => pausePlayback();
+    document.addEventListener("visibilitychange", onHidden);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [pocketActive, pausePlayback]);
 
   useEffect(() => {
     if (!panEnabled && canvasTool === "pan") {
@@ -2008,7 +2064,9 @@ export default function EditorShell({
       }
       if (kind === "text") {
         setInspectorTab("basic"); // selecting anything activates + switches to Basic (D6)
-        if (layoutMode === "light") setLightSheetOpen(true);
+        // Pocket mode surfaces the context strip on selection instead of
+        // auto-opening the edit sheet (legacy light keeps tap-opens-sheet).
+        if (layoutMode === "light" && !POCKET_UI) setLightSheetOpen(true);
       } else if (kind === "clip") {
         setInspectorTab("basic");
         const startS = outputTimeForSlotBoundary({
@@ -4002,6 +4060,9 @@ export default function EditorShell({
         return;
       }
       if (e.key === "Escape") {
+        // Pocket sheets own their Escape (one press, one effect): the Sheet
+        // closes itself; the shell must not ALSO clear the selection.
+        if (pocketSheetOpen) return;
         if (layoutMode === "light" && lightSheetOpen) {
           e.preventDefault();
           setLightSheetOpen(false);
@@ -4036,6 +4097,7 @@ export default function EditorShell({
     deleteSelected,
     canDelete,
     history,
+    pocketSheetOpen,
     layoutMode,
     lightSheetOpen,
     nudgeSelectedText,
@@ -4199,6 +4261,9 @@ export default function EditorShell({
         setSaveState("conflict");
         setSaveMessage(err.message);
       } else {
+        // Network-class failures (typed by editor-commit) arm the one-shot
+        // auto-retry-on-online below; their message is already the fixed copy.
+        networkSaveErrorRef.current = err instanceof EditorCommitNetworkError;
         setSaveState("error");
         setSaveMessage(
           err instanceof Error ? err.message : "Couldn't save your edits.",
@@ -4457,6 +4522,21 @@ export default function EditorShell({
   }, [dirty, router, itemId]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
+
+  // §5: one silent auto-retry when the browser comes back online after a
+  // network-failed save. If the original POST actually landed, the stale
+  // base_generation 409s into the conflict tile — expected and safe.
+  // (Placed before the loading/auth early returns per rules-of-hooks.)
+  useEffect(() => {
+    if (!POCKET_UI) return;
+    if (saveState !== "error" || !networkSaveErrorRef.current) return;
+    const onOnline = () => {
+      networkSaveErrorRef.current = false;
+      void handleSave();
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [saveState, handleSave]);
 
   if (needsAuth) {
     return (
@@ -4731,6 +4811,108 @@ export default function EditorShell({
     flashIds: flashTimelineIds,
   };
 
+  // ── Pocket editor derivations (light mode + NEXT_PUBLIC_MOBILE_EDITOR_ENABLED) ──
+  const pocketStripSelection: StripSelection | null =
+    !pocketActive || pocketSheetOpen || readOnly
+      ? null
+      : (() => {
+          if (selection?.kind === "text" && selectedBar) {
+            if (isCaptionBar(selectedBar)) {
+              return {
+                type: "caption" as const,
+                onEditCue: () => dispatchPocket({ type: "OPEN_INSPECTOR" }),
+                onAllCaptions: () =>
+                  dispatchPocket({ type: "OPEN_TOOL", tool: "captions" }),
+              };
+            }
+            return {
+              type: "text" as const,
+              onEdit: () => {
+                dispatchPocket({ type: "OPEN_INSPECTOR" });
+                focusContent();
+              },
+              onStyle: () => {
+                setInspectorTab("presets");
+                dispatchPocket({ type: "OPEN_INSPECTOR" });
+              },
+              onTiming: () => dispatchPocket({ type: "OPEN_INSPECTOR" }),
+              onDelete: deleteSelected,
+            };
+          }
+          if (selection?.kind === "overlay") {
+            return {
+              type: "overlay" as const,
+              onEdit: () => dispatchPocket({ type: "OPEN_INSPECTOR" }),
+              onTiming: () => dispatchPocket({ type: "OPEN_INSPECTOR" }),
+              onDelete: deleteSelected,
+            };
+          }
+          if (selection?.kind === "clip") {
+            return {
+              type: "clip" as const,
+              onAdjust: () => dispatchPocket({ type: "OPEN_INSPECTOR" }),
+              onSplit: splitAtPlayhead,
+              splitDisabledReason: canSplit
+                ? null
+                : (splitReason ?? "Move the playhead inside this clip to split."),
+              muted: videoMuted,
+              onToggleMute: () => {
+                if (readOnly) return;
+                history.record();
+                setVideoMuted((m) => !m);
+              },
+              onDelete: deleteSelected,
+            };
+          }
+          return null;
+        })();
+  // Captions render at the canvas bottom — flip the strip to the top so the
+  // quick actions never cover the cue they act on.
+  const pocketStripOnTop =
+    pocketStripSelection?.type === "caption" || pocketStripSelection?.type === "clip";
+  const miniStripSegments: MiniStripSegment[] = pocketActive
+    ? slots.flatMap((slot, idx) => {
+        const win = slotLayout.windows[idx];
+        if (!win || win.startS == null || win.durationS <= 0) return [];
+        const startS = win.startS;
+        const endS = win.startS + win.durationS;
+        const hasMarks = visibleTextBars.some(
+          (b) => b.start_s < endS && b.end_s > startS,
+        );
+        return [{ id: slot.key, startS, endS, hasMarks }];
+      })
+    : [];
+  const pocketTransportSlot = pocketActive ? (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        aria-label={playing ? "Pause video" : "Play video"}
+        aria-pressed={playing}
+        onClick={togglePlay}
+        className="flex h-11 w-11 items-center justify-center rounded-full bg-[#0c0c0e] text-white active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+      >
+        {playing ? <PauseIcon className="h-5 w-5" /> : <PlayIcon className="h-5 w-5" />}
+      </button>
+      <span className="text-[12px] tabular-nums text-[#3f3f46]">
+        {formatTimecode(currentTime)}
+      </span>
+    </div>
+  ) : null;
+  const pocketInspectorTitle =
+    selection?.kind === "text"
+      ? selectedBar && isCaptionBar(selectedBar)
+        ? "Edit caption"
+        : "Edit text"
+      : selection?.kind === "clip"
+        ? "Edit clip"
+        : selection?.kind === "overlay"
+          ? "Edit overlay"
+          : selection?.kind === "sfx"
+            ? "Edit sound"
+            : selection?.kind === "camera"
+              ? "Edit effect"
+              : "Edit";
+
   return (
     <div
       className="fixed inset-0 z-50 grid overflow-hidden bg-[#fafaf8]"
@@ -4739,6 +4921,11 @@ export default function EditorShell({
           layoutMode === "light"
             ? "56px minmax(0, 1fr) auto"
             : "56px minmax(0, 1fr) clamp(220px, 30dvh, 260px)",
+        // Half detent is non-modal (§3): canvas + transport squeeze above the
+        // sheet so playback stays visible and controllable while editing.
+        ...(pocketSheetOpen && pocket.detent === "half"
+          ? { paddingBottom: "54dvh" }
+          : null),
       }}
     >
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
@@ -4966,21 +5153,68 @@ export default function EditorShell({
             videoRef={videoRef}
             onSelectText={selectText}
             onSelectOverlay={(id) => selectElement("overlay", id)}
+            captionTapSelect={POCKET_UI}
             onClearSelection={() => {
               clear();
               setLightSheetOpen(false);
             }}
             onPatchBar={patchBar}
-            onFocusContent={() => setLightSheetOpen(true)}
+            onPatchOverlay={POCKET_UI ? patchOverlay : undefined}
+            onFocusContent={() => {
+              if (POCKET_UI) {
+                dispatchPocket({ type: "OPEN_INSPECTOR" });
+                focusContent();
+              } else {
+                setLightSheetOpen(true);
+              }
+            }}
             onTimeUpdate={setCurrentTime}
             onDuration={setDuration}
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
             virtualPreview={virtualPreviewActive ? virtualPreview : null}
-            allowManipulation={false}
-            stageHeightCss="100dvh - 152px"
+            allowManipulation={POCKET_UI ? !readOnly : false}
+            stageHeightCss={
+              POCKET_UI
+                ? pocketSheetOpen && pocket.detent === "half"
+                  ? "46dvh - 128px"
+                  : "100dvh - 260px"
+                : "100dvh - 152px"
+            }
             canvas={activeCanvas}
           />
+          {pocketActive && !pocketSheetOpen && history.canUndo && (
+            <button
+              type="button"
+              aria-label="Undo"
+              onClick={history.undo}
+              className="absolute left-3 top-3 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-[#3f3f46] shadow-sm active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              <UndoIcon className="h-5 w-5" />
+            </button>
+          )}
+          {pocketActive && !pocketSheetOpen && history.canRedo && (
+            <button
+              type="button"
+              aria-label="Redo"
+              onClick={history.redo}
+              className="absolute left-[60px] top-3 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-[#3f3f46] shadow-sm active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              <RedoIcon className="h-5 w-5" />
+            </button>
+          )}
+          {pocketStripSelection && (
+            <div
+              className={`absolute left-1/2 z-20 -translate-x-1/2 ${
+                pocketStripOnTop ? "top-3" : "bottom-3"
+              }`}
+            >
+              <ContextStrip
+                selection={pocketStripSelection}
+                onDisabledTap={setToast}
+              />
+            </div>
+          )}
           {visibleTextBars.length === 0 && !readOnly && !textElementsLocked && (
             <button
               type="button"
@@ -5289,13 +5523,73 @@ export default function EditorShell({
       {/* ── Timeline region (260px): TransportBar + scale-driven editor
              timeline (Text → Video → Sound → Overlays), plan §6. ── */}
       {layoutMode === "light" ? (
-        <LightTransport
-          playing={playing}
-          currentTime={currentTime}
-          duration={previewDuration}
-          onPlayPause={togglePlay}
-          onScrub={seekTo}
-        />
+        POCKET_UI ? (
+          <div className="relative flex min-h-0 flex-col">
+            <LightTransport
+              playing={playing}
+              currentTime={currentTime}
+              duration={previewDuration}
+              onPlayPause={togglePlay}
+              onScrub={seekTo}
+            />
+            {!pocketSheetOpen && miniStripSegments.length > 0 && (
+              <div className="bg-white px-4 pb-2">
+                <MiniStrip
+                  segments={miniStripSegments}
+                  durationS={timelineDuration || previewDuration}
+                  currentTimeS={currentTime}
+                  selectedClipId={selection?.kind === "clip" ? selection.id : null}
+                  onScrubStart={pausePlayback}
+                  onScrub={seekTo}
+                  onSelectClip={(id, seconds) => {
+                    selectElement("clip", id);
+                    seekTo(seconds);
+                  }}
+                />
+              </div>
+            )}
+            {!pocketSheetOpen && (
+              <ToolDock
+                activeTool={
+                  activeTool === "nova"
+                    ? "nova"
+                    : pocket.sheet?.kind === "tool"
+                      ? pocket.sheet.tool
+                      : null
+                }
+                disabledTools={railDisabledReasons}
+                novaEnabled={process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true"}
+                onToggleTool={(tool: DockTool) => {
+                  if (tool === "nova") {
+                    dispatchPocket({ type: "CLOSE_SHEET" });
+                    setActiveTool((cur) => (cur === "nova" ? null : "nova"));
+                  } else {
+                    setActiveTool(null);
+                    dispatchPocket({ type: "TOGGLE_TOOL", tool });
+                  }
+                }}
+                onDisabledTap={setToast}
+              />
+            )}
+            {toast && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="pointer-events-none absolute bottom-24 left-1/2 z-[120] -translate-x-1/2 whitespace-nowrap rounded-lg bg-[#0c0c0e] px-3 py-1.5 text-[12px] text-white shadow-lg"
+              >
+                {toast}
+              </div>
+            )}
+          </div>
+        ) : (
+          <LightTransport
+            playing={playing}
+            currentTime={currentTime}
+            duration={previewDuration}
+            onPlayPause={togglePlay}
+            onScrub={seekTo}
+          />
+        )
       ) : (
       <div
         data-region="timeline"
@@ -5369,7 +5663,7 @@ export default function EditorShell({
       )}
 
       <LightEditSheet
-        open={layoutMode === "light" && lightSheetOpen && !!selectedBar}
+        open={layoutMode === "light" && !POCKET_UI && lightSheetOpen && !!selectedBar}
         bar={selectedBar}
         sampleWord={sampleWord}
         appliedPresetId={appliedPresetId}
@@ -5422,6 +5716,156 @@ export default function EditorShell({
           }}
           onClose={() => setActiveTool(null)}
         />
+      )}
+
+      {/* ── Pocket tool sheet: the whole ToolDrawer hosted in the Sheet
+             primitive (presentation="sheet" drops its desktop wrapper). ── */}
+      {pocketActive && pocket.sheet?.kind === "tool" && (
+        <Sheet
+          open
+          title={POCKET_TOOL_TITLES[pocket.sheet.tool]}
+          detent={pocket.detent}
+          onDetentChange={(detent) => dispatchPocket({ type: "SET_DETENT", detent })}
+          onClose={() => dispatchPocket({ type: "CLOSE_SHEET" })}
+          transportSlot={pocketTransportSlot}
+        >
+          <ToolDrawer
+            tool={pocket.sheet.tool}
+            presentation="sheet"
+            captions={captionsControl}
+            sampleWord={sampleWord}
+            appliedPresetId={appliedPresetId}
+            onAddText={() => addTextAtPlayhead()}
+            lyricsToggle={lyricsToggle}
+            onSplitPlaceText={splitAndPlaceText}
+            splitSmartPlaceAvailable={!readOnly && !textElementsLocked}
+            onSmartPlaceAll={applySmartPlacement}
+            smartPlaceAllAvailable={smartPlaceAllAvailable}
+            onPickPreset={pickPreset}
+            appliedStyleSetId={appliedStyleSetId}
+            onRestyleAll={onRestyleAll}
+            sfxEffects={sfxGlossaryEffects}
+            sfxLoading={sfxGlossaryLoading}
+            onAddSfx={addSfxFromGlossary}
+            musicTracks={musicTracks}
+            musicLoading={musicTracksLoading}
+            currentMusicTrackId={effectiveAudioTrackId}
+            musicEditable={musicSwapEditable}
+            onPickMusic={pickMusicTrack}
+            onRemoveMusic={removeMusic}
+            musicWindow={musicWindowControl}
+            overlayUploading={overlayUploading}
+            onOverlayUpload={handleOverlayUpload}
+            overlaySuggestions={overlaySuggestionsNode}
+            visualBlocks={localVisualBlocks}
+            motionScenes={localMotionScenes}
+            motionDurationS={previewDuration}
+            motionAvailable={capabilities?.motion_scenes === true}
+            motionRuntimeCompatible={motionRuntimeCompatible}
+            onAddMotion={addRouteTraceMotion}
+            onPatchMotion={patchMotionScene}
+            onRemoveMotion={removeMotionScene}
+            visualAssets={poolAssets}
+            visualTextElements={state.bars}
+            visualUploading={pendingPoolUploads.length > 0}
+            onVisualUpload={handlePoolFiles}
+            onAddMontage={addMontageBlock}
+            onAddTextCard={addTextCard}
+            onAddVisualBlockText={addVisualBlockText}
+            onSelectVisualBlockText={selectText}
+            onSaveVisualAssetContext={handleSavePoolAssetContext}
+            onPatchVisualBlock={patchVisualBlock}
+            onDuplicateVisualBlock={duplicateVisualBlock}
+            onDeleteVisualBlock={deleteVisualBlock}
+            onRetimeVisualBlock={retimeBlock}
+            layoutMode={layoutMode}
+            onClose={() => dispatchPocket({ type: "CLOSE_SHEET" })}
+          />
+        </Sheet>
+      )}
+
+      {/* ── Pocket inspector sheet: selection editing (whole InspectorPanel,
+             retargets across selection kinds natively). ── */}
+      {pocketActive && pocket.sheet?.kind === "inspector" && selection && (
+        <Sheet
+          open
+          title={pocketInspectorTitle}
+          detent={pocket.detent}
+          onDetentChange={(detent) => dispatchPocket({ type: "SET_DETENT", detent })}
+          onClose={() => dispatchPocket({ type: "CLOSE_SHEET" })}
+          transportSlot={pocketTransportSlot}
+        >
+          <InspectorPanel
+            presentation="sheet"
+            onTab={setInspectorTab}
+            selection={selection}
+            bar={selectedBar}
+            clipTiming={selectedClip}
+            sfx={selectedSfx}
+            overlay={selectedOverlay}
+            cameraEffect={selectedCameraEffect}
+            tab={inspectorTab}
+            sampleWord={sampleWord}
+            appliedPresetId={appliedPresetId}
+            contentRef={contentRef}
+            onEditText={(text) => {
+              if (selectedBar && !readOnly) {
+                history.record(`text:${selectedBar.id}`);
+                if (isCaptionBar(selectedBar)) {
+                  setCaptionDirty(true);
+                } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
+                  setTextDirty(true);
+                }
+                dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
+              }
+            }}
+            onPatch={(patch) => {
+              if (selectedBar) patchBar(selectedBar.id, patch);
+            }}
+            onSetTextBoxPosition={setSelectedTextBoxPosition}
+            boxPositionXFrac={selectedTextBoxScreenXFrac}
+            onPatchTextTiming={patchSelectedTextTiming}
+            onPatchClipTiming={patchSelectedClipTiming}
+            onPreviewClipTiming={previewSelectedClipTiming}
+            onRecordClipTiming={recordTimelineDrag}
+            onPatchSfx={patchSfx}
+            onDeleteSfx={removeSfx}
+            onPatchOverlay={patchOverlay}
+            onPreviewOverlay={previewOverlayPatch}
+            onRecordOverlay={recordTimelineDrag}
+            onDeleteOverlay={removeOverlay}
+            onPatchCameraEffect={patchCameraEffect}
+            onDeleteCameraEffect={deleteCameraEffect}
+            mixLevel={mixLevel}
+            mixEditable={capabilities?.mix !== false && mixLevel != null}
+            mixLabel={soundBedLabel}
+            musicTracks={musicTracks}
+            musicLoading={musicTracksLoading}
+            currentMusicTrackId={effectiveAudioTrackId}
+            musicEditable={musicSwapEditable}
+            backgroundMusic={backgroundMusic}
+            backgroundMusicTrackDurationS={backgroundMusicTrackDurationS}
+            onPickMusic={pickMusicTrack}
+            onRemoveMusic={removeMusic}
+            onPatchBackgroundMusic={patchBackgroundMusic}
+            onRemoveBackgroundMusic={removeBackgroundMusic}
+            musicWindow={musicWindowControl}
+            onPatchMix={patchMixLevel}
+            smartPlaceAvailable={
+              !!selectedBar && !readOnly && (isMasonryVariant(variant) || !!smartPlacementCandidate)
+            }
+            onSmartPlace={applySelectedSmartPlacement}
+            onMergeCaptionCue={mergeCaptionCue}
+            onOpenCaptionsPanel={
+              captionsControl
+                ? () => dispatchPocket({ type: "OPEN_TOOL", tool: "captions" })
+                : undefined
+            }
+            captionsPanelOpen={false /* one-sheet rule: never open alongside */}
+            onClose={() => dispatchPocket({ type: "CLOSE_SHEET" })}
+            onPickPreset={pickPreset}
+          />
+        </Sheet>
       )}
 
       {/* ── Read-only banner (ineligible variant, plan §9 / E4) ── */}

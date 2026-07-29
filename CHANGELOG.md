@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.0.0] — 2026-07-29
+
+### Added
+- **Full editing on your phone (behind a flag).** Until now, opening the editor in a mobile browser showed only the video and the Nova chat — every manual tool lived on desktop. With `NEXT_PUBLIC_MOBILE_EDITOR_ENABLED` on, phones get the whole toolkit: a thumb-reach dock with all seven tools, bottom sheets carrying the same text, caption, visual, sound, overlay, and style controls the desktop drawers have, a quick-action strip on whatever you select (with plain-word Delete and honest disabled reasons), a mini timeline strip you can scrub and tap to pick a clip, drag-and-pinch-free touch editing on the video itself — including tapping a caption to select it, which desktop never allowed — floating undo/redo, and a sheet design that keeps the video playing and the play controls reachable while you edit. Backgrounding the tab pauses playback and your draft is preserved; the flag off leaves the current mobile experience untouched. The full-screen mobile timeline and sheet polish land in a follow-up.
+
+### Fixed
+- **Saving on a bad connection no longer spins forever or shows browser gibberish.** A save that can't reach the server now gives up after twenty seconds and says "Couldn't reach Kria — your edits are still here." instead of an endless "Saving…" or a raw "Failed to fetch". Your edits and undo history survive, and on phones the save retries by itself the moment the connection comes back. Real validation messages ("Ran out of song to sync clips to") still come through untouched.
+
 ## [0.17.1.3] — 2026-07-28
 
 ### Fixed

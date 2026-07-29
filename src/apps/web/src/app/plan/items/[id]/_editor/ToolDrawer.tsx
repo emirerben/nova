@@ -95,6 +95,7 @@ export default function ToolDrawer({
   onDeleteVisualBlock,
   onRetimeVisualBlock,
   layoutMode = "full",
+  presentation = "panel",
   captions,
   copilot,
   onClose,
@@ -163,6 +164,10 @@ export default function ToolDrawer({
   onDeleteVisualBlock?: (id: string) => void;
   onRetimeVisualBlock?: (id: string) => void;
   layoutMode?: EditorLayoutMode;
+  /** "sheet" when hosted inside the mobile bottom-sheet primitive, which owns
+   *  the chrome (width, entrance animation, title row, close button). Default
+   *  "panel" renders the docked desktop drawer unchanged. */
+  presentation?: "panel" | "sheet";
   /** Captions tool. Absent = the shell had no caption state to give us, which
    *  the rail already surfaces as a disabled tool, so the pane stays empty. */
   captions?: CaptionsDrawerControl;
@@ -242,52 +247,72 @@ export default function ToolDrawer({
     );
   }
 
+  // Functional header control — kept in BOTH presentations (only the
+  // duplicated chrome — title text + close ✕ — drops in sheet mode, since the
+  // Sheet draws its own title row and close button).
+  const lyricsToggleControl =
+    tool === "text" && lyricsToggle?.visible ? (
+      <div
+        className="flex min-h-11 items-center gap-2 rounded-lg px-1"
+        title={lyricsToggle.disabled ? lyricsToggle.hint ?? undefined : undefined}
+      >
+        <span className="text-[12px] font-semibold text-[#3f3f46]">Lyrics</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={lyricsToggle.enabled}
+          aria-label="Lyrics"
+          disabled={lyricsToggle.disabled}
+          onClick={() => lyricsToggle.onToggle(!lyricsToggle.enabled)}
+          className={`relative h-6 w-11 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 ${
+            lyricsToggle.enabled ? "bg-[#0c0c0e]" : "bg-zinc-200"
+          }`}
+        >
+          <span
+            aria-hidden
+            className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-transform ${
+              lyricsToggle.enabled ? "translate-x-6" : "translate-x-1"
+            }`}
+          />
+        </button>
+      </div>
+    ) : null;
+
   return (
     <div
       data-region="tool-drawer"
-      className="flex h-full w-[360px] flex-col border-r border-zinc-200 bg-white motion-safe:animate-fade-up"
+      className={
+        presentation === "sheet"
+          ? "flex h-full w-full flex-col bg-white"
+          : "flex h-full w-[360px] flex-col border-r border-zinc-200 bg-white motion-safe:animate-fade-up"
+      }
     >
-      <div className="flex flex-none items-center justify-between px-5 pb-3 pt-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <h2 className="font-display text-[18px] text-[#0c0c0e]">
-            {title}
-          </h2>
-          {tool === "text" && lyricsToggle?.visible && (
-            <div
-              className="flex min-h-11 items-center gap-2 rounded-lg px-1"
-              title={lyricsToggle.disabled ? lyricsToggle.hint ?? undefined : undefined}
-            >
-              <span className="text-[12px] font-semibold text-[#3f3f46]">Lyrics</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={lyricsToggle.enabled}
-                aria-label="Lyrics"
-                disabled={lyricsToggle.disabled}
-                onClick={() => lyricsToggle.onToggle(!lyricsToggle.enabled)}
-                className={`relative h-6 w-11 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 ${
-                  lyricsToggle.enabled ? "bg-[#0c0c0e]" : "bg-zinc-200"
-                }`}
-              >
-                <span
-                  aria-hidden
-                  className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-transform ${
-                    lyricsToggle.enabled ? "translate-x-6" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </div>
-          )}
+      {presentation === "sheet" ? (
+        // Sheet owns title + close; only functional controls survive, on
+        // their own right-aligned row.
+        lyricsToggleControl && (
+          <div className="flex flex-none items-center justify-end px-5 pb-3 pt-1">
+            {lyricsToggleControl}
+          </div>
+        )
+      ) : (
+        <div className="flex flex-none items-center justify-between px-5 pb-3 pt-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <h2 className="font-display text-[18px] text-[#0c0c0e]">
+              {title}
+            </h2>
+            {lyricsToggleControl}
+          </div>
+          <button
+            type="button"
+            aria-label="Close drawer"
+            onClick={onClose}
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-[13px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          >
+            ✕
+          </button>
         </div>
-        <button
-          type="button"
-          aria-label="Close drawer"
-          onClick={onClose}
-          className="flex h-11 w-11 items-center justify-center rounded-lg text-[13px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-        >
-          ✕
-        </button>
-      </div>
+      )}
 
       {tool === "text" && (
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">

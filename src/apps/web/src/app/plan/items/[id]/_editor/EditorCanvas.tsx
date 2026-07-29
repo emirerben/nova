@@ -114,8 +114,15 @@ function captionPreviewShadow(strokePx: number, shadowEnabled: boolean): string 
 }
 
 /** Pointer movement (px) under which a pointerdown+up counts as a CLICK
- * (triggers overlap cycling) rather than a drag. */
+ * (triggers overlap cycling) rather than a drag. Finger taps wobble 5–15px
+ * between down and up, so touch gets a wider slop — 3px would turn most
+ * select-taps into accidental micro-drags that commit a position patch. */
 const CLICK_SLOP_PX = 3;
+const TOUCH_CLICK_SLOP_PX = 10;
+
+function slopForPointer(e: React.PointerEvent): number {
+  return e.pointerType === "touch" ? TOUCH_CLICK_SLOP_PX : CLICK_SLOP_PX;
+}
 
 interface DragState {
   target: "text" | "overlay";
@@ -137,6 +144,8 @@ interface DragState {
   startMaxWidthFrac: number;
   widthSide: "left" | "right" | null;
   moved: boolean;
+  /** Click-vs-drag slop for THIS gesture (pointer-type aware). */
+  slopPx: number;
   /** Hits (topmost first) captured at pointerdown — used for click-cycling. */
   hits: string[];
 }
@@ -204,6 +213,7 @@ export default function EditorCanvas({
   videoRef,
   onSelectText,
   onSelectOverlay,
+  captionTapSelect = false,
   onClearSelection,
   onPatchBar,
   onPatchOverlay,
@@ -249,6 +259,10 @@ export default function EditorCanvas({
   videoRef: React.RefObject<HTMLVideoElement>;
   onSelectText: (id: string) => void;
   onSelectOverlay?: (id: string) => void;
+  /** Pocket editor only: the caption preview becomes a tap target that selects
+   * the current cue's bar (desktop keeps it pointer-events-none). Tap-select
+   * only — captions never gain drag/scale handles. */
+  captionTapSelect?: boolean;
   onClearSelection: () => void;
   onPatchBar: (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
   onPatchOverlay?: (id: string, patch: Partial<MediaOverlay>) => void;
@@ -498,6 +512,7 @@ export default function EditorCanvas({
       startMaxWidthFrac: bar?.max_width_frac ?? layout.maxWidthFrac,
       widthSide: null,
       moved: false,
+      slopPx: slopForPointer(e),
       hits,
     };
     (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -554,6 +569,7 @@ export default function EditorCanvas({
       startMaxWidthFrac: barById.get(id)?.max_width_frac ?? layout.maxWidthFrac,
       widthSide: null,
       moved: false,
+      slopPx: slopForPointer(e),
       hits: [],
     };
     (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -588,6 +604,7 @@ export default function EditorCanvas({
       startMaxWidthFrac: bar?.max_width_frac ?? layout.maxWidthFrac,
       widthSide: side,
       moved: false,
+      slopPx: slopForPointer(e),
       hits: [],
     };
     (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -616,6 +633,7 @@ export default function EditorCanvas({
       startMaxWidthFrac: MAX_LINE_W_FRAC,
       widthSide: null,
       moved: false,
+      slopPx: slopForPointer(e),
       hits: [],
     };
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -649,6 +667,7 @@ export default function EditorCanvas({
       startMaxWidthFrac: MAX_LINE_W_FRAC,
       widthSide: null,
       moved: false,
+      slopPx: slopForPointer(e),
       hits: [],
     };
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -660,7 +679,7 @@ export default function EditorCanvas({
     if (!drag) return;
     const dx = e.clientX - drag.startClientX;
     const dy = e.clientY - drag.startClientY;
-    if (Math.hypot(dx, dy) > CLICK_SLOP_PX) drag.moved = true;
+    if (Math.hypot(dx, dy) > drag.slopPx) drag.moved = true;
     if (!drag.moved) return;
     if (drag.mode === "move") {
       if (stageSize.w === 0 || stageSize.h === 0) return;
@@ -1070,20 +1089,53 @@ export default function EditorCanvas({
                       zIndex: EDITOR_STAGE_Z.textOverlay + 10,
                     }}
                   >
-                    <span
-                      style={{
-                        color: captionPreviewStyle.color,
-                        fontFamily: captionPreviewStyle.fontFamily,
-                        fontSize: `${captionPreviewStyle.fontSizePx}px`,
-                        fontWeight: 700,
-                        lineHeight: 1.18,
-                        maxWidth: "100%",
-                        textShadow: captionPreviewStyle.textShadow,
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {visibleCaption.text}
-                    </span>
+                    {captionTapSelect ? (
+                      <button
+                        type="button"
+                        data-caption-tap-target="true"
+                        aria-label="Select this caption"
+                        onPointerDown={(e) => {
+                          // Selection only — never a drag source; stop the
+                          // deselect layer underneath from clearing it.
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectText(visibleCaption.bar.id);
+                        }}
+                        className="pointer-events-auto -m-2 min-h-11 min-w-11 cursor-pointer appearance-none border-0 bg-transparent p-2 text-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                      >
+                        <span
+                          style={{
+                            color: captionPreviewStyle.color,
+                            fontFamily: captionPreviewStyle.fontFamily,
+                            fontSize: `${captionPreviewStyle.fontSizePx}px`,
+                            fontWeight: 700,
+                            lineHeight: 1.18,
+                            maxWidth: "100%",
+                            textShadow: captionPreviewStyle.textShadow,
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {visibleCaption.text}
+                        </span>
+                      </button>
+                    ) : (
+                      <span
+                        style={{
+                          color: captionPreviewStyle.color,
+                          fontFamily: captionPreviewStyle.fontFamily,
+                          fontSize: `${captionPreviewStyle.fontSizePx}px`,
+                          fontWeight: 700,
+                          lineHeight: 1.18,
+                          maxWidth: "100%",
+                          textShadow: captionPreviewStyle.textShadow,
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {visibleCaption.text}
+                      </span>
+                    )}
                   </div>
                 )}
                 {visibleMediaOverlays.map((overlay) => (
