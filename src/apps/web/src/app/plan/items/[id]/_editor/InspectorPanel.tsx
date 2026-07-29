@@ -18,7 +18,7 @@
  * `onEditText` → the canvas updates instantly. Persistence only on Save.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { INTRO_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
 import {
   LETTER_SPACING_MAX_EM,
@@ -109,6 +109,11 @@ const EDITOR_TEXT_SIZE_MAX = 300;
 const TEXT_BEHIND_SUBJECT_UI_ENABLED =
   process.env.NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED === "true";
 
+/** How the panel is hosted. Every sub-inspector's CloseX reads this so sheet
+ *  mode can drop the internal close buttons (the Sheet owns close; deselection
+ *  happens on canvas) without threading a prop through each inspector. */
+const InspectorPresentationContext = createContext<"panel" | "sheet">("panel");
+
 export interface InspectorClipTiming {
   slot: DraftSlot;
   clipNumber: number;
@@ -136,6 +141,8 @@ export default function InspectorPanel({
   overlay,
   cameraEffect = null,
   tab,
+  presentation = "panel",
+  onTab,
   sampleWord,
   appliedPresetId,
   contentRef,
@@ -188,6 +195,14 @@ export default function InspectorPanel({
   overlay: MediaOverlay | null;
   cameraEffect?: CameraEffect | null;
   tab: InspectorTab;
+  /** "sheet" when hosted inside the mobile bottom-sheet primitive, which owns
+   *  the chrome (width, close). Default "panel" renders the docked desktop
+   *  column unchanged. */
+  presentation?: "panel" | "sheet";
+  /** Sheet mode only: renders a Basic/Presets segmented control at the top of
+   *  the panel (the desktop tab switch lives in InspectorRail, which the sheet
+   *  doesn't show). Never rendered in panel mode. */
+  onTab?: (tab: InspectorTab) => void;
   sampleWord: string | null;
   appliedPresetId: string | null;
   /** Exposed so double-click-on-canvas can focus + select-all (plan §5). */
@@ -241,10 +256,47 @@ export default function InspectorPanel({
   onPickPreset: (preset: TextPreset) => void;
 }) {
   return (
+    <InspectorPresentationContext.Provider value={presentation}>
     <div
       data-region="inspector"
-      className="flex w-[320px] flex-col border-l border-zinc-200 bg-white"
+      className={
+        presentation === "sheet"
+          ? "flex w-full flex-col bg-white"
+          : "flex w-[320px] flex-col border-l border-zinc-200 bg-white"
+      }
     >
+      {/* Sheet mode only: the Basic/Presets switch normally lives in the
+          desktop InspectorRail, unreachable from the sheet. Pattern copied
+          from ToolDrawer's preset-category tablist. */}
+      {presentation === "sheet" && onTab && (
+        <div className="flex flex-none px-5 pb-3 pt-1">
+          <div
+            role="tablist"
+            aria-label="Inspector sections"
+            className="flex w-full gap-1 rounded-full border border-zinc-200 p-1"
+          >
+            {(["basic", "presets"] as const).map((nextTab) => {
+              const selected = tab === nextTab;
+              return (
+                <button
+                  key={nextTab}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => onTab(nextTab)}
+                  className={`inline-flex min-h-11 flex-1 items-center justify-center rounded-full px-4 text-[12px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                    selected
+                      ? "bg-[#0c0c0e] font-semibold text-white"
+                      : "text-[#3f3f46] hover:bg-zinc-100"
+                  }`}
+                >
+                  {nextTab === "basic" ? "Basic" : "Presets"}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {tab === "presets" ? (
         <PresetsTab
           sampleWord={sampleWord}
@@ -342,6 +394,7 @@ export default function InspectorPanel({
         </div>
       )}
     </div>
+    </InspectorPresentationContext.Provider>
   );
 }
 
@@ -567,6 +620,10 @@ function MixInspector({
 }
 
 function CloseX({ onClose }: { onClose: () => void }) {
+  // Sheet mode: the Sheet's own 44px close button is the close affordance;
+  // rendering a second ✕ here would duplicate chrome.
+  const presentation = useContext(InspectorPresentationContext);
+  if (presentation === "sheet") return null;
   return (
     <button
       type="button"
