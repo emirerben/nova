@@ -236,9 +236,11 @@ const LYRICS_EDITOR_UI = process.env.NEXT_PUBLIC_LYRICS_EDITOR_ENABLED === "true
 // lyricsFeatureAvailable/isElementsLyricsModel in editor-capabilities.ts.
 const LYRICS_OPTIONAL_UI = process.env.NEXT_PUBLIC_LYRICS_OPTIONAL_ENABLED === "true";
 const LANDSCAPE_UI = process.env.NEXT_PUBLIC_LANDSCAPE_OUTPUT_ENABLED === "true";
-/** Pocket editor (mobile full-parity light mode). Off ⇒ legacy light mode
- * (canvas + chat only) is byte-identical — the reversibility lever. */
-const POCKET_UI = process.env.NEXT_PUBLIC_MOBILE_EDITOR_ENABLED === "true";
+/** Pocket editor (mobile full-parity light mode). Default ON — the env var is
+ * the KILL SWITCH: set NEXT_PUBLIC_MOBILE_EDITOR_ENABLED="false" (+ redeploy;
+ * NEXT_PUBLIC vars bake at build time) to restore the legacy light mode
+ * (canvas + chat only), byte-identical. */
+const POCKET_UI = process.env.NEXT_PUBLIC_MOBILE_EDITOR_ENABLED !== "false";
 const POCKET_TOOL_TITLES: Record<PocketTool, string> = {
   text: "Text",
   captions: "Captions",

@@ -1,12 +1,13 @@
 /**
  * Pocket editor — flag OFF pinning (the IRON RULE regression guard).
  *
- * NEXT_PUBLIC_MOBILE_EDITOR_ENABLED is UNSET (jest.setup.ts never sets it; the
- * explicit delete below also hardens against same-worker process.env leakage
- * from the flag-on suite — Jest isolates module registries per test file, but
- * process.env is shared per worker process). EditorShell reads the flag into
- * the module const POCKET_UI at load time, so it is deleted BEFORE the
- * explicit require() of EditorShell below (deletion-test pattern).
+ * The pocket editor defaults ON; NEXT_PUBLIC_MOBILE_EDITOR_ENABLED="false" is
+ * the kill switch. This suite pins the kill-switch path: the env var is set to
+ * the literal "false" below (which also hardens against same-worker
+ * process.env leakage from the flag-on suite — Jest isolates module registries
+ * per test file, but process.env is shared per worker process). EditorShell
+ * reads the flag into the module const POCKET_UI at load time, so it is set
+ * BEFORE the explicit require() of EditorShell below (deletion-test pattern).
  *
  * Pinned legacy contract in light mode (wideViewport=false):
  *  1. No pocket chrome ever renders: "pocket-dock", "pocket-ministrip",
@@ -26,7 +27,7 @@
  *     path. Both paths funnel into setLightSheetOpen(true) in legacy mode.)
  */
 
-delete process.env.NEXT_PUBLIC_MOBILE_EDITOR_ENABLED;
+process.env.NEXT_PUBLIC_MOBILE_EDITOR_ENABLED = "false";
 
 import "@testing-library/jest-dom";
 import React from "react";

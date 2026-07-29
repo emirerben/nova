@@ -310,8 +310,9 @@ voiceover section (narrated formats only), flag-gated by
 
 ## §14 Pocket editor (mobile light mode)
 
-Flag: `NEXT_PUBLIC_MOBILE_EDITOR_ENABLED`. The `<1024px` editor gains full manual
-editing when on; off ⇒ legacy light mode (canvas + Nova chat only) unchanged.
+Default **ON** since v0.18.1.0. Kill switch: `NEXT_PUBLIC_MOBILE_EDITOR_ENABLED="false"`
+in Vercel + redeploy (build-time var) ⇒ legacy light mode (canvas + Nova chat only),
+byte-identical. The `<1024px` editor carries full manual editing.
 Rules supplement §2.
 
 - **Tool dock** (`_editor/ToolDock.tsx`): `bg-[#fafaf8] border-t border-zinc-200
