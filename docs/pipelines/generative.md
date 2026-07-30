@@ -45,6 +45,19 @@ re-center it; folding "center" is deliberately suppressed because it would flip
 `_finalize_job`'s allowlist and in sync with `_INTRO_PLACEMENT_ADAPTER_KEYS` —
 both pinned by `tests/tasks/test_intro_placement_parity.py`.
 
+Companion reader fix in the same release: `_burn_dict_position` now takes a
+half-pinned overlay's missing y from the renderer's `_POSITION_Y` table instead
+of a hardcoded `0.5` (`center` is 0.45, `bottom` is 0.85). It is shared with the
+lyric-seed adapter, so every style set that pins x with a null y (`word_reveal`,
+`typewriter`, `ai_answer`, `lyric_word_pop_punchy`) was saving the invented y
+through `GET .../lyric-seeds`; guard
+`test_seed_elements_half_pinned_style_set_uses_the_renderers_y` in
+`tests/pipeline/test_lyric_seed_elements.py`. Zero-valued fracs are no longer
+truthiness-coerced (`0.0` is reachable and meaningful).
+
+See agents/DECISIONS.md (2026-07-30) for the reusable rules: the `_finalize_job`
+allowlist trap, and why a burn-dict reader must mirror the renderer's fallbacks.
+
 ## Three variants
 
 - `song_lyrics` — matched song + its lyrics
