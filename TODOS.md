@@ -1498,11 +1498,24 @@ deferred; the fix itself is complete and guarded.
 
 - **T-PLACE-4 (P2)** — `_finalize_job`'s allowlist also drops `intro_behind_subject`,
   `subject_matte_path`, and `text_placement_candidates` (verified by AST walk over
-  `_finalize_job`, lines 13372-13562). `intro_placement` was added to the allowlist in
+  `_finalize_job`, `tasks/generative_build.py:13420-13611`). `intro_placement` was added to the allowlist in
   this change; the other three are the same bug class and were left alone. Each needs its
   own reachability check before adding — `text_placement_candidates` in particular is what
   the editor's legacy projection falls back to, so preserving it would make the declined-
   candidate divergence permanent rather than fixing it. **Effort:** M (CC: ~20 min)
+
+- **T-PLACE-7 (P3)** — `_intro_placement_from_params`'s docstring states "Every shipped
+  style set pins `intro.position="center"`, which makes `has_explicit_position` True and
+  the resolver SKIP the candidate branch". False: 3 of the 21 sets in
+  `assets/style_sets/style-sets.json` leave `roles.intro.position` null
+  (`lyric_karaoke_bold`, `lyric_line_calm`, `lyric_word_pop_punchy`), so
+  `has_explicit_position` is False and the resolver DOES take the candidate branch for
+  them. Behavior is still correct either way (the resulting placement is non-default and
+  gets snapshotted regardless), but this sentence is the stated rationale for the
+  `has_candidates` parameter, and `docs/pipelines/generative.md` + agents/DECISIONS.md
+  both point readers at it. Found by the /document-release doc review. Fix: correct the
+  docstring to "every NON-lyric set", or drop the universal claim.
+  **Effort:** S (CC: ~5 min)
 
 ### Frontend / design (informational)
 - **T-REV-10 (P3)** — pre-existing (flagged because the lane is now the suggestion showcase): manual pip chips cycle a rainbow TRACK_COLORS palette starting violet #8B5CF6 (AI-slop signal per DESIGN.md); consider a calmer palette.

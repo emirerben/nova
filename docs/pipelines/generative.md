@@ -37,7 +37,11 @@ position/fracs/max_width/anchor/rotation onto the variant so the editor's read
 adapter (`_base_text_elements_for_variant`) projects the element where the burn
 actually put it — it used to re-guess and always land on "center", drawing a
 `bottom` hook at mid-frame. `None` for the plain centered placement (the majority),
-which keeps those variants on the legacy projection path byte-identically. A no-LLM
+which keeps those variants on the legacy projection path byte-identically — EXCEPT
+when the variant carries `text_placement_candidates`, where even a centered
+resolution is persisted (`has_candidates=True`), deliberately moving it OFF the
+legacy path so the adapter stops reading candidate fracs the resolver declined
+(guard: `test_declined_candidates_do_not_leak_into_the_editor`). A no-LLM
 re-render folds the persisted **non-center** position back in at the ADVISORY tier
 (`_persisted_intro_position` → `_resolve_regen_text`), so a text edit can't silently
 re-center it; folding "center" is deliberately suppressed because it would flip
