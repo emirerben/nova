@@ -29,6 +29,39 @@ Net-new render behavior:
   text editor gates on `intro_layout == "cluster"` (server reburn instead of local
   preview). Kill switch: `GENERATIVE_CLUSTER_INTRO_ENABLED`.
 
+### Intro placement snapshot (`intro_placement`)
+
+`_resolve_intro_overlay_params` folds knobs > curated set > agent advisory into one
+placement; `_intro_placement_from_params` snapshots the resolved
+position/fracs/max_width/anchor/rotation onto the variant so the editor's read
+adapter (`_base_text_elements_for_variant`) projects the element where the burn
+actually put it — it used to re-guess and always land on "center", drawing a
+`bottom` hook at mid-frame. `None` for the plain centered placement (the majority),
+which keeps those variants on the legacy projection path byte-identically — EXCEPT
+when the variant carries `text_placement_candidates`, where even a centered
+resolution is persisted (`has_candidates=True`), deliberately moving it OFF the
+legacy path so the adapter stops reading candidate fracs the resolver declined
+(guard: `test_declined_candidates_do_not_leak_into_the_editor`). A no-LLM
+re-render folds the persisted **non-center** position back in at the ADVISORY tier
+(`_persisted_intro_position` → `_resolve_regen_text`), so a text edit can't silently
+re-center it; folding "center" is deliberately suppressed because it would flip
+`has_explicit_position` and drop masonry placement candidates. The key must stay in
+`_finalize_job`'s allowlist and in sync with `_INTRO_PLACEMENT_ADAPTER_KEYS` —
+both pinned by `tests/tasks/test_intro_placement_parity.py`.
+
+Companion reader fix in the same release: `_burn_dict_position` now takes a
+half-pinned overlay's missing y from the renderer's `_POSITION_Y` table instead
+of a hardcoded `0.5` (`center` is 0.45, `bottom` is 0.85). It is shared with the
+lyric-seed adapter, so every style set that pins x with a null y (`word_reveal`,
+`typewriter`, `ai_answer`, `lyric_word_pop_punchy`) was saving the invented y
+through `GET .../lyric-seeds`; guard
+`test_seed_elements_half_pinned_style_set_uses_the_renderers_y` in
+`tests/pipeline/test_lyric_seed_elements.py`. Zero-valued fracs are no longer
+truthiness-coerced (`0.0` is reachable and meaningful).
+
+See agents/DECISIONS.md (2026-07-30) for the reusable rules: the `_finalize_job`
+allowlist trap, and why a burn-dict reader must mirror the renderer's fallbacks.
+
 ## Three variants
 
 - `song_lyrics` — matched song + its lyrics

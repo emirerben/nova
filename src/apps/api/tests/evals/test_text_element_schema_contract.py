@@ -40,3 +40,59 @@ def test_burn_dict_adapter_preserves_shadow_enabled_false() -> None:
 
     assert elem is not None
     assert elem.shadow_enabled is False
+
+
+def test_burn_dict_adapter_takes_the_renderers_y_for_a_half_pinned_overlay() -> None:
+    """A burn dict that pins x but not y must project at the y the RENDERER uses.
+
+    `_resolve_anchor` (text_overlay_skia.py) falls back to `_POSITION_Y[position]`
+    when `position_y_frac` is absent — 0.45 for "center", 0.85 for "bottom". The
+    adapter used to invent 0.5 for any partially-pinned overlay, so the projected
+    element disagreed with the burn. Curated style sets ship exactly this shape
+    (`word_reveal` / `typewriter` / `ai_answer` pin x = 0.06 with a null y), and
+    both the intro adapter and the lyric-seed adapter read through this helper.
+    """
+    from app.pipeline.text_overlay import _POSITION_Y
+
+    centered = _burn_dict_to_text_element(
+        {
+            "text": "Clean text",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "center",
+            "position_x_frac": 0.06,
+        }
+    )
+    assert centered is not None
+    assert centered.position == "custom"
+    assert centered.x_frac == 0.06
+    assert centered.y_frac == _POSITION_Y["center"] != 0.5
+
+    bottom = _burn_dict_to_text_element(
+        {
+            "text": "Clean text",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "bottom",
+            "position_x_frac": 0.06,
+        }
+    )
+    assert bottom is not None
+    assert bottom.y_frac == _POSITION_Y["bottom"] != 0.5
+
+
+def test_burn_dict_adapter_keeps_a_zero_valued_frac() -> None:
+    """0.0 is a position, not an absence — an edge-pinned overlay must stay pinned."""
+    elem = _burn_dict_to_text_element(
+        {
+            "text": "Clean text",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "center",
+            "position_x_frac": 0.0,
+            "position_y_frac": 0.0,
+        }
+    )
+
+    assert elem is not None
+    assert (elem.x_frac, elem.y_frac) == (0.0, 0.0)

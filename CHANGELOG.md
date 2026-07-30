@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.1.3] — 2026-07-30
+
+### Fixed
+- **The text you can drag now sits where the text in the video actually is.** Nova sometimes places your opening line low in the frame, or off to one side, or tilted into a gap between clips, depending on the look you picked. The editor did not know that: it always drew the draggable copy dead centre. So you would open the editor, see your line floating in the middle, nudge it a little, and get back a video where the line was somewhere else entirely. Nova now remembers exactly where it put the line when it made the video, and the editor puts the handle in that same spot. What you drag is what you get.
+- **Editing the words no longer quietly moves the line back to the middle.** If Nova had placed your line near the bottom and you changed the wording, the new version came back centred, even though you had only touched the text. Nova now keeps the position it chose the first time, so a wording change moves the words and nothing else.
+- **Lines pinned near an edge no longer drift.** A few looks pin the text a fixed distance from the left edge and leave the up-down position to Nova. The editor was guessing that missing half wrong, so it drew the line in the wrong place: a little below where the video had it for an opening line, and far above it for editable lyric lines, which these looks park near the bottom. Saving from that view then made the wrong position permanent. Both now line up with the video.
+
 ## [0.18.1.2] — 2026-07-30
 
 ### Fixed

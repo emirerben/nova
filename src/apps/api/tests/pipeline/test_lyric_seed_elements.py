@@ -148,6 +148,29 @@ def test_seed_elements_custom_position_from_config() -> None:
     assert elements[0]["y_frac"] == 0.8
 
 
+def test_seed_elements_half_pinned_style_set_uses_the_renderers_y() -> None:
+    """Second consumer of `_burn_dict_position`: a style set that pins x but not y.
+
+    `word_reveal`, `typewriter`, `ai_answer` (lyric_line) and
+    `lyric_word_pop_punchy` (lyric_karaoke / lyric_word_pop) all ship
+    `position="bottom"` + `position_x_frac` with a NULL `position_y_frac`. The
+    adapter used to invent y=0.5 for any half-pinned overlay while the renderer's
+    `_resolve_anchor` takes y from the named position — `_POSITION_Y["bottom"]`
+    is 0.85. Seeds are a PERSIST path (GET .../lyric-seeds → saved text_elements),
+    so the wrong y got baked in on save.
+    """
+    from app.pipeline.text_overlay import _POSITION_Y  # noqa: PLC0415
+
+    cache = _make_lyrics_cache([("Hello", 0.0, 1.0, [("Hello", 0.0, 1.0)])])
+    elements = build_lyric_seed_elements(
+        cache, 0.0, 10.0, {"enabled": True, "style_set_id": "word_reveal"}
+    )
+
+    assert elements, "expected a seed element"
+    assert elements[0]["x_frac"] == 0.06
+    assert elements[0]["y_frac"] == _POSITION_Y["bottom"] != 0.5
+
+
 def test_seed_elements_no_lyrics_cache_returns_empty() -> None:
     assert build_lyric_seed_elements(None, 0.0, 10.0, {"enabled": True}) == []
 
