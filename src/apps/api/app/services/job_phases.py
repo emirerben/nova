@@ -73,7 +73,17 @@ def mark_started(job_id: str | uuid.UUID) -> None:
     """Record that the worker picked up the job. Sets started_at + initial phase.
 
     Idempotent: re-running won't move started_at backwards, but will refresh
-    current_phase to the first-known phase.
+    current_phase to the first-known phase. This models WORKER PICKUP of one
+    orchestrator run — a Celery redelivery of the same run must not restart the
+    user's clock mid-render.
+
+    NOT the whole story for `started_at`. A re-render reuses the SAME Job row, so
+    if this were the only writer the progress UI would keep counting from the
+    first render forever (a 5-minute edit displayed "40m 32s"). Re-render
+    DISPATCH deliberately moves `started_at` forward — see `mark_reattempt`
+    below. Anything here that derives from `started_at` (the `t_offset_ms` in
+    `record_phase` / `record_sub_phase`) is therefore relative to the CURRENT
+    attempt.
     """
     job_uuid = _coerce_uuid(job_id)
     if job_uuid is None:
@@ -90,6 +100,77 @@ def mark_started(job_id: str | uuid.UUID) -> None:
             db.commit()
     except Exception as exc:  # pragma: no cover — best-effort
         log.warning("phase_mark_started_failed", job_id=str(job_id), error=str(exc))
+
+
+def mark_reattempt(job: Job) -> bool:
+    """Anchor the user-facing wall clock to NOW — a re-render dispatch is a new attempt.
+
+    Operates on an ORM object the caller already holds (route dispatchers work on
+    a loaded, often row-locked Job and commit themselves), unlike the job_id-keyed
+    helpers around it. Returns True when the clock moved.
+
+    `job.started_at` is the origin `ProgressTheater` counts elapsed time from, and
+    it also drives the ETA and the stall copy. A re-render reuses the SAME Job row
+    and `mark_started` refuses to move `started_at` once set, so before this a
+    re-render of a 5-minute edit displayed "40m 32s".
+
+    Anchored at DISPATCH, not worker pickup: the user's mental model is the Save
+    press, and queue wait is time they are genuinely waiting.
+
+    SKIPS the reset while an orchestrator run is in flight (`current_phase` is
+    non-None until `mark_finished` clears it). Editing an already-ready variant
+    while its siblings are still on their FIRST render would otherwise move the
+    anchor out from under that run: every subsequent `record_phase` would compute
+    `t_offset_ms` against the new origin (a non-monotonic `phase_log`), and the
+    whole-job clock the user is watching for the siblings would visibly jump back
+    to zero mid-render.
+
+    Deliberately does NOT touch `finished_at`: `plan_items.py` exports it as the
+    plan item's ready date and no re-render task calls `mark_finished`, so nulling
+    it here would erase that date permanently. Readers guard on
+    `started_at > finished_at` instead.
+
+    Concurrent Saves on sibling variants after the first render completes: the LAST
+    dispatch owns the clock. That is the requested behavior ("every Save restarts
+    it"); the per-variant tiles keep their own `render_started_at`.
+    """
+    # getattr, not attribute access: this is a best-effort UI concern and callers
+    # include lightweight Job stand-ins. A missing attribute means "no run in
+    # flight", which is the safe reading — the clock moves.
+    if getattr(job, "current_phase", None) is not None:
+        return False
+    job.started_at = datetime.now(UTC)
+    return True
+
+
+def stamp_variant_attempt(variant: dict) -> None:
+    """Mark ONE variant dict as a freshly-started render attempt, in place.
+
+    Takes the DICT rather than (job, variant_id) on purpose: several dispatchers
+    build a copy (`updated = dict(v)`) and then write `variants[i] = updated`. A
+    helper that re-walked the job's variant list would mutate the original and have
+    its write silently overwritten by that assignment — no error, no failing test.
+    Passing the dict the caller actually persists makes that class of bug
+    unrepresentable.
+
+    `render_started_at` is what the per-variant clocks read (`VariantRenderCard`'s
+    "Rendering · m:ss" and the hero rendering label's stall hint). It used to be
+    written in exactly ONE place repo-wide — the initial render loop in
+    `tasks/generative_build.py` — so every re-render inherited the first render's
+    timestamp and tripped the 5-minute "Taking longer than usual…" hint instantly.
+
+    Does NOT write `render_enqueued_at`; that field's only writer is
+    `_mark_variant_rendering`, which owns the caption-reburn supersession token.
+    Note the enqueue/start pair in `render_summary._variant_queue_ms` cannot
+    measure real queue latency for re-renders either way: no re-render task stamps
+    `render_started_at` at worker pickup, so that metric reads ~0 on every
+    re-render path. See TODOS.md.
+    """
+    variant["render_status"] = "rendering"
+    # Naive-UTC + literal "Z" is the frozen wire format for this JSONB field
+    # (25 sibling call sites, incl. the first-render loop). `datetime.now(UTC)`
+    # would serialize "+00:00" and appending "Z" to that is malformed.
+    variant["render_started_at"] = datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z"
 
 
 def record_phase(
