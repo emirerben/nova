@@ -1526,3 +1526,23 @@ deferred; the fix itself is complete and guarded.
 ### Completed
 - **T-REV-9 (P3)** — touch targets: several new secondary controls (× remove-sound strip, etc.) fell below the 44px floor; NumField focus outline was a weak zinc border shift.
   **Completed:** v0.7.13.0 (2026-07-11)
+
+## Text-element read adapter — parity gaps (from /review of the cluster-style snapshot, 2026-07-30)
+
+The cluster-style snapshot PR closed the `cluster_style` desync between the
+render and `_base_text_elements_for_variant`, and closed the adjacent `canvas`
+gap found in the same review (landscape variants used to project on the portrait
+canvas; pinned by `test_landscape_variant_projects_on_the_landscape_canvas`).
+One parity gap in that adapter remains — it PRE-DATES that PR and is not made
+worse by it.
+
+- **P3 Adapter never threads `font_family` / `language` for the LEGACY profile.**
+  `style_kwargs` carries only `text_size_px` plus the placement fracs. On the
+  legacy cluster path the faces come from the registry pairing keyed on
+  `font_family` (and Turkish takes a different safe pairing at
+  `intro_cluster.py` `needs_safe_pairing = language == "tr"`), so an unpinned
+  projection resolves `_DEFAULT_HERO_FAMILY` + the English pairing. The
+  editorial profile is unaffected (its faces come from the style dict), which
+  is why the snapshot PR fixed sizes/positions but not legacy faces. Fix:
+  resolve the variant's intro font the way `_resolve_intro_overlay_params`
+  does and pass it plus the job language.

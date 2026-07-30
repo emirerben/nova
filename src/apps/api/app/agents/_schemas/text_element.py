@@ -30,6 +30,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+# Dependency-free (dataclasses only), so it is safe at module scope unlike the
+# heavier `app.pipeline.*` builders this module imports lazily inside functions.
+from app.pipeline.canvas import PORTRAIT, canvas_for_orientation
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -896,6 +900,33 @@ def _sequence_block_scene_key(raw: TextElement | dict) -> str | None:
     return scene_key if separator and scene_key else None
 
 
+# The intro hook is ONE logical group, but its projected shape is not stable:
+# a linear intro is a single ``intro:intro`` element while a cluster is N
+# ``intro_cluster:{i}`` blocks, and N itself depends on the style profile
+# (legacy declines short hooks to linear and splits differently from editorial —
+# see `intro_cluster.EDITORIAL_STYLE`). Both sources therefore belong to the
+# same ownership group.
+_INTRO_GROUP_SOURCES = frozenset({"intro", "intro_cluster"})
+
+
+def _canvas_kwarg(canvas) -> dict:
+    """Mirror of `generative_build._canvas_kwargs`: omit the kwarg on PORTRAIT.
+
+    Keeps every portrait projection byte-identical to the pre-canvas call (the
+    builders default to PORTRAIT) while landscape variants now project on the
+    canvas the renderer actually used.
+    """
+    return {"canvas": canvas} if canvas != PORTRAIT else {}
+
+
+def _is_intro_group_element(raw: TextElement | dict) -> bool:
+    """True for any projected element belonging to the intro hook group."""
+    params = raw.source_params if isinstance(raw, TextElement) else raw.get("source_params")
+    if not isinstance(params, dict):
+        return False
+    return params.get("source") in _INTRO_GROUP_SOURCES
+
+
 def text_element_source_identity(raw: TextElement | dict) -> str | None:
     """Stable identity for generated AI text bars.
 
@@ -978,6 +1009,14 @@ def merge_projected_text_elements_for_variant(
     legacy_sequence_scenes = {
         scene_key for elem in saved if (scene_key := _legacy_sequence_scene_key(elem)) is not None
     }
+    # Same ownership rule as `legacy_sequence_scenes`, for the intro hook: once
+    # the user has saved ANY intro element, that saved set IS their intro. The
+    # intro's projected block count is not stable across style profiles (a
+    # variant edited under the old legacy-only projection can re-project with
+    # MORE blocks now that the editorial marker is honored), and an unowned new
+    # index would be appended as a bar the user never created — then burned,
+    # since a user-edited variant renders from its text elements.
+    saved_owns_intro = any(_is_intro_group_element(elem) for elem in saved)
     tombstoned: set[str] = set()
     out: list[dict] = []
     for elem in saved:
@@ -993,6 +1032,8 @@ def merge_projected_text_elements_for_variant(
         ident = text_element_source_identity(elem)
         block_scene_key = _sequence_block_scene_key(elem)
         if block_scene_key is not None and block_scene_key in legacy_sequence_scenes:
+            continue
+        if saved_owns_intro and _is_intro_group_element(elem):
             continue
         if ident and ident not in seen and ident not in tombstoned:
             out.append(elem.model_dump())
@@ -1142,6 +1183,7 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
       - ``caption_cues`` → one bar per cue
       - ``intro_mode == "sequence"`` + ``scenes`` → ``build_sequence_overlays``
       - all other ``intro_mode`` values + ``intro_text`` → ``build_persistent_intro_overlays``
+        (cluster style rebuilt from the variant's ``intro_cluster_style`` snapshot)
 
     Font families and effects not in the TextElement allowlists are silently
     coerced; no exception is raised so the adapter never breaks a read path
@@ -1172,6 +1214,14 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
     intro_effect: str = v.get("intro_effect") or "karaoke-line"
     intro_text_color: str = v.get("intro_text_color") or "#FFFFFF"
     intro_start_s, intro_end_s = _text_window(v)
+    # Canvas parity: every render path resolves the output canvas from the
+    # variant's orientation and threads it into the overlay builders, which
+    # measure text against `canvas.width`/`canvas.height`. Projecting a
+    # LANDSCAPE variant on the default portrait canvas yields wrong sizes and
+    # x/y fractions — and can even flip the cluster engine's accept/decline —
+    # so the editor would show geometry the renderer never burned. Portrait is
+    # the default, so unmarked/portrait variants are unaffected.
+    intro_canvas = canvas_for_orientation(v.get("orientation"))
 
     # ------------------------------------------------------------------
     # CAPTION path (narrated/subtitled caption cues)
@@ -1234,6 +1284,7 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
                 scenes,
                 base_size_px=base_size_px,
                 text_color=intro_text_color,
+                **_canvas_kwarg(canvas_for_orientation(v.get("orientation"))),
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("text_elements_adapter_sequence_failed", error=str(exc))
@@ -1329,7 +1380,26 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
         from app.pipeline.generative_overlays import (  # noqa: PLC0415
             build_persistent_intro_overlays,
         )
+        from app.pipeline.intro_cluster import (  # noqa: PLC0415
+            resolve_cluster_style_from_variant,
+        )
 
+        # The cluster's style profile is NOT derivable from the variant's own
+        # text fields — the render's choice also depends on `allow_sequence`, a
+        # render-time kwarg. It stamps `intro_cluster_style`; we rebuild from
+        # that snapshot (plus the per-role pins) so an EDITORIAL cluster projects
+        # the same block count, faces, sizes and y positions the renderer burned.
+        # A variant with no marker resolves to None: byte-identical legacy.
+        # `cluster_style` never affects the linear path, so it is passed
+        # unconditionally.
+        #
+        # KNOWN GAP (pre-existing, not closed here): this adapter still does not
+        # thread `font_family`/`language`, so a LEGACY-profile cluster projects
+        # the default face pairing regardless of the variant's pinned font (and
+        # Turkish loses its safe pairing). Closing it means replicating the
+        # style-set resolution `_resolve_intro_overlay_params` does, which would
+        # change what unmarked legacy variants project — a separate change from
+        # this snapshot. See TODOS.md.
         burn_dicts_list = build_persistent_intro_overlays(
             text=intro_text,
             effect=intro_effect,
@@ -1337,8 +1407,10 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
             text_color=intro_text_color,
             layout=layout,
             word_roles=intro_word_roles,
+            cluster_style=resolve_cluster_style_from_variant(v),
             start_s=intro_start_s,
             end_s=intro_end_s,
+            **_canvas_kwarg(intro_canvas),
             **style_kwargs,
         )
     except Exception as exc:  # noqa: BLE001

@@ -683,6 +683,88 @@ class TestClusterRoundTrip:
                 "Allowlisted font from cluster engine must be preserved in TextElement"
             )
 
+    def test_cluster_style_snapshot_selects_the_engine_profile(self, monkeypatch):
+        """`intro_cluster_style` decides which style profile the adapter rebuilds.
+
+        The render's choice depends on `allow_sequence` — a render-time kwarg no
+        other persisted field records — so without this snapshot the adapter
+        projected EVERY editorially-styled cluster through the legacy profile
+        (wrong block count, sizes, faces and y positions in the editor).
+        """
+        import app.pipeline.intro_cluster as ic
+        from app.pipeline.intro_cluster import EDITORIAL_STYLE
+
+        styles_seen: list = []
+        real_blocks = ic.compute_cluster_blocks
+
+        def _spy(text, **kw):
+            styles_seen.append(kw.get("style"))
+            return real_blocks(text, **kw)
+
+        monkeypatch.setattr(ic, "compute_cluster_blocks", _spy)
+
+        v = {
+            "intro_text": "this habit changed everything",
+            "intro_layout": "cluster",
+            "intro_effect": "fade-in",
+            "intro_text_color": "#FFFFFF",
+            "intro_text_size_px": 64,
+            "text_mode": "agent_text",
+        }
+        # Absent marker and an explicit "legacy" marker are the same thing.
+        for marker in ({}, {"intro_cluster_style": "legacy"}):
+            styles_seen.clear()
+            text_elements_for_variant({**v, **marker})
+            assert styles_seen == [None], f"{marker or 'absent marker'} must stay legacy"
+
+        styles_seen.clear()
+        editorial = text_elements_for_variant({**v, "intro_cluster_style": "editorial"})
+        assert styles_seen == [EDITORIAL_STYLE]
+
+        styles_seen.clear()
+        legacy = text_elements_for_variant({**v, "intro_cluster_style": "legacy"})
+        assert len(editorial) != len(legacy), (
+            "the two profiles must produce genuinely different projections"
+        )
+
+    def test_cluster_style_snapshot_applies_per_role_pins(self, monkeypatch):
+        """User-pinned per-role fonts/sizes are rebuilt onto the editorial profile."""
+        import app.pipeline.intro_cluster as ic
+        from app.pipeline.intro_cluster import EDITORIAL_STYLE
+
+        styles_seen: list = []
+        real_blocks = ic.compute_cluster_blocks
+
+        def _spy(text, **kw):
+            styles_seen.append(kw.get("style"))
+            return real_blocks(text, **kw)
+
+        monkeypatch.setattr(ic, "compute_cluster_blocks", _spy)
+
+        text_elements_for_variant(
+            {
+                "intro_text": "this habit changed everything",
+                "intro_layout": "cluster",
+                "intro_effect": "fade-in",
+                "intro_text_size_px": 64,
+                "text_mode": "agent_text",
+                "intro_cluster_style": "editorial",
+                "intro_cluster_hero_font": "Instrument Serif",
+                "intro_cluster_hero_size_px": 150,
+                "intro_cluster_body_size_px": 70,
+                "intro_cluster_accent_size_px": 95,
+            }
+        )
+        assert len(styles_seen) == 1
+        style = styles_seen[0]
+        assert style["hero_font"] == "Instrument Serif"
+        assert style["hero_size_px_override"] == 150
+        assert style["connector_size_px_override"] == 70
+        assert style["closer_size_px_override"] == 95
+        # Untouched roles keep the profile default; the constant is never mutated.
+        assert style["body_font"] == EDITORIAL_STYLE["body_font"]
+        assert EDITORIAL_STYLE["hero_font"] == "Great Vibes"
+
     def test_cluster_fallback_to_linear_roundtrip_byte_identical(self, monkeypatch):
         """When the cluster engine declines (returns None), adapter falls back to linear."""
         _patch_cluster_engine(monkeypatch, decline_indices={0, 1, 2, 3, 4})

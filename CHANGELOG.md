@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.2.0] — 2026-07-30
+
+### Fixed
+- **The editor now shows your opening hook the way the video actually has it.** On edits where the hook is broken into stacked words, the editor drew it wrong: the wrong number of blocks, the wrong sizes, the wrong typefaces, and each line in the wrong place. "this habit changed everything" played as three lines in the video — a light serif "this", a big script "habit changed", an italic "everything" — but the editor drew four, sized 58/166/166/90 instead of 64/109/80, in the wrong faces and sitting lower down the frame. Nothing was wrong with your video; the editor was rebuilding the preview from a recipe the renderer had stopped using, and it had no way to know which one had been used, because that choice was never written down. It is now recorded on the edit itself, so the preview and the video agree. Videos made before this change keep their old look exactly.
+- **The fix now survives the end of the render.** The step that finalizes a finished job rebuilds each version from a fixed list of fields and quietly drops anything not on it, so the note about which recipe was used was being thrown away seconds after it was written — meaning the editor kept showing the wrong preview on every freshly made video. That note, and the per-line font and size choices you pin yourself, are now on the list.
+- **Landscape edits no longer preview with portrait spacing.** Text is measured against the shape of the frame, and the editor always measured against a tall one. On a wide video that put every line at the wrong height. It now measures against the frame your video is actually in.
+- **Editing an older stacked-hook video no longer adds a text bar you never wrote.** Because the preview can now split the hook into a different number of lines than it used to, opening an already-edited video could append a leftover fragment as an extra editable bar — which would then be drawn into the video if you saved. Your saved version of the hook now wins outright.
 ## [0.18.1.3] — 2026-07-30
 
 ### Fixed
