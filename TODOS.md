@@ -8,6 +8,158 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Render progress band — deferrals (from render-duration-reset review, 2026-07-29)
+
+The shipped fix resets `job.started_at` at re-render dispatch (`finished_at` is
+deliberately left alone — the API exports it as the plan item's ready date, so the
+receipt guards on `started_at > finished_at` instead), making the elapsed counter
+and the receipt honest again. Four signals in the same
+progress band were consciously left alone. Context: the counter, ETA, stall copy,
+bar, and receipt are FIVE independent signals in one band; fixing one and shipping
+invites the "progress is still broken" report from a different angle.
+
+### Re-render path reports no phases — bar frozen, ETA off by ~15x
+**What:** `mark_finished` sets `current_phase = None` (`app/services/job_phases.py:291`)
+and no re-render task calls `record_phase`. In `ProgressTheater` a null `currentPhase`
+falls to `phaseAnchor = [0, 0.05]`, so the bar is pinned under 5% for the whole
+re-render then snaps to done. Separately, `get_baselines("generative")` returns the
+FULL pipeline baseline, so a 20-second text reburn advertises "~5 min left".
+**Why:** The clock now tells the truth next to a bar that doesn't move and an ETA
+that is wrong by an order of magnitude. Users read the band as a whole.
+**How:** Have the re-render tasks (`regenerate_generative_variant`,
+`reburn_narrated_captions`, `retranscribe_subtitled_captions`,
+`reburn_narrated_bed_level`) drive `record_phase` + `mark_finished`, and add a
+reburn-scoped baseline set alongside the generative one. Note `phase_log` will then
+carry entries from two `started_at` origins — either reset the log at dispatch or
+make the admin reader origin-aware.
+**Effort:** L (CC: ~1.5h)
+**Priority:** P2
+**Depends on:** —
+
+### Three copied elapsed timers, and a `useElapsed` hook already exists
+**What:** `useState + setInterval + (Date.now() - new Date(x).getTime())` is copied
+three times with three different intervals: `ProgressTheater.tsx:106` (2000ms),
+`plan/items/[id]/page.tsx:4143` (5000ms), `VariantRenderCard.tsx:177` (1000ms).
+A `useElapsed` hook already exists at `plan/items/[id]/_editor/CopilotDrawer.tsx:21`
+— this is adoption/extraction to a shared module, not a greenfield extraction.
+**Why:** One root cause produced three visible bugs precisely because the anchor
+read is duplicated. A fourth surface will copy the same shape.
+**How:** Lift `CopilotDrawer`'s hook to `components/progress/`, parameterize the
+tick interval, adopt at all three sites. Behavior-neutral; pin with the existing
+`logic.test.ts` + a render test per site.
+**Effort:** M (CC: ~30m)
+**Priority:** P3
+**Depends on:** —
+
+### A dead re-render shows a confidently climbing clock, and never surfaces the recovery copy
+**What:** `_compute_retrying` (`app/routes/generative_jobs.py:5585`) gates on
+`job.status in _HEARTBEAT_LIVE_STATUSES = {processing, rendering}` plus a
+`worker_heartbeat_at` ticked by the ORCHESTRATOR, and a re-render never moves
+`job.status` off `variants_ready` — that is the whole premise of the
+timer fix. Its task doesn't beat either. So a re-render worker lost to OOM or a
+deploy produces a smoothly
+climbing elapsed counter under "You can leave this page — we'll keep rendering",
+with no `retrying` copy, until `reconcile_stuck_variants` heals it (~60 min).
+**Why:** BEFORE the timer fix the counter was frozen and the poller stopped, so the
+lie was at least static. Now the UI emits a confident, continuously updating wrong
+number. The frontend has a 30-minute `STUCK_RENDER_CEILING_MS` bound so it stops
+polling, but between dispatch and that ceiling the user is told a dead render is
+healthy. This is the timer fix making a known gap MORE visible, not a new bug.
+**How:** Three shapes, in rough order of cleanliness: (a) have the re-render
+dispatchers flip `job.status` to `rendering` so the existing heartbeat + reaper
+machinery covers re-renders as it covers first renders (cleanest, but touches
+`derive_item_status`); (b) include the success-terminal statuses in
+`_compute_retrying` whenever a variant is `rendering` and beat the heartbeat from
+the re-render tasks themselves (still keying staleness off `worker_heartbeat_at`);
+(c) add a variant-scoped staleness check off `render_enqueued_at`.
+**Effort:** M (CC: ~1h)
+**Priority:** P1
+**Depends on:** —
+
+### Three backend tests fail under load, not under logic (CI flakiness)
+**What:** Fixed wall-clock budgets that hold on an idle machine and blow when the
+box is busy. All three passed in isolation and failed only in a full-tree run
+with other suites running concurrently, on unrelated branches:
+- `tests/tasks/test_template_orchestrate.py::test_probe_and_upload_concurrent_actually_overlaps`
+  — two 0.2s sleeps against a 0.35s tolerance (its docstring already flags the risk).
+- `tests/pipeline/test_text_behind_subject_render.py` (2 tests) — a 3600-frame Skia
+  render against the 30s `pytest-timeout`.
+- `tests/scripts/test_analyze_waka_waka_diff.py` — ~25-29s against the same 30s budget.
+**Why:** Every one reads as a real failure. Diagnosing costs a full-tree re-run plus
+an isolation run, and `-q` hides the `Failed: Timeout` message so it looks like an
+assertion. Expect intermittent red CI unrelated to the change under review.
+**How:** For the overlap test, assert ordering/concurrency directly (record start
+timestamps of both callables and assert they interleave) instead of total wall time.
+For the two budget-bound suites, raise or per-test override `pytest-timeout` on the
+known-slow ones rather than leaving them a hair under the global cap.
+**Effort:** M (CC: ~45m)
+**Priority:** P2
+**Depends on:** —
+
+### Progress clocks are anchored to the API VM's clock, not the viewer's
+**What:** `ProgressTheater` computes `Date.now() - new Date(startedAt)` and the
+variant tiles do the same with `render_started_at`. Both timestamps are now written
+at DISPATCH by the API process, so a browser clock trailing the API clock yields a
+negative elapsed; `formatElapsedDisplay` clamps with `Math.max(0, …)`, so the
+counter sits frozen at "0s" for the whole skew window while `remainingMs =
+totalBaseline - elapsedMs` inflates the ETA past its own baseline.
+**Why:** Pre-existing, but the fix made it sharper: the anchor used to be minutes
+in the past (skew invisible), and is now "a moment ago" (skew is the whole value).
+The repo already treats cross-VM skew as load-bearing — `job_phases.beat_heartbeat`
+pins the heartbeat to the DB clock for exactly this reason.
+**How:** Record `Date.now()` when a fresh `started_at` first arrives and count from
+that client-observed origin, or return a server `now` in the status payload and
+offset-correct once per poll.
+**Effort:** M (CC: ~45m)
+**Priority:** P3
+**Depends on:** —
+
+### `admin/generative/[id]` still stops polling at any terminal status
+**What:** `src/apps/web/src/app/admin/generative/[id]/page.tsx:49` uses
+`GENERATIVE_TERMINAL_STATUSES.includes(status.status)` rather than the shared
+`isGenerativeJobSettled`, so an admin watching a job stops seeing updates the
+moment a re-render is dispatched.
+**Why:** Admin-only read surface, and a reload recovers it — deliberately left out
+of the timer fix to keep the diff scoped. Worth aligning so there is exactly one
+definition of "settled".
+**How:** Swap in `isGenerativeJobSettled(status.status, status.variants)`.
+**Effort:** XS (CC: ~5m)
+**Priority:** P3
+**Depends on:** —
+
+### Legacy dispatchers enqueue before the route commits
+**What:** Several `dispatch_*` helpers in `app/routes/generative_jobs.py` call
+`.delay()` / `.apply_async()` from an UNLOCKED read and let the caller's route
+commit afterwards (the module documents this at the media-overlays site as "the
+same accepted race as other dispatch_* functions"). Newer paths
+(`dispatch_set_orientation`, `dispatch_set_lyrics`, `dispatch_apply_captions`)
+already do row-locked read + commit-before-enqueue.
+**Why:** A worker that dequeues inside the window reads pre-dispatch state, and
+the route's later commit can overwrite worker writes from its stale JSONB
+snapshot. Surfaced by the Codex outside voice during the render-timer review. The
+timer fix does not worsen it — `started_at` is a scalar column, not part of the
+`assembly_plan` JSONB clobber — but the race is real and now better understood.
+**How:** Migrate the remaining legacy dispatchers to the row-locked
++ commit-before-enqueue shape the newer ones use. Do it as its own change with
+its own concurrency tests; it is not a timer fix.
+**Effort:** L (CC: ~1.5h)
+**Priority:** P2
+**Depends on:** —
+
+### Admin render-timing breakdown is misleading for re-rendered jobs
+**What:** Accepted cost of the fix. `admin_jobs.py:478-479` computes
+`queue_wait_ms = created_at → started_at` and `processing_ms = started_at → finished_at`.
+Once `started_at` moves at every re-render dispatch, `queue_wait_ms` measures
+"job creation → last Save" — meaningless — and `processing_ms` measures only the
+last attempt.
+**Why:** Admin debug surface only; no user impact. Documented rather than silently
+degraded.
+**How:** Either read the per-variant `render_enqueued_at`/`render_started_at` pair
+(which IS per-attempt) for these two numbers, or label them "last attempt" in the UI.
+**Effort:** S (CC: ~20m)
+**Priority:** P3
+**Depends on:** —
+
 ## Pocket editor PR2 — declared follow-ups (from mobile-editor PR, 2026-07-29)
 
 Design + engineering plan: `~/.claude/plans/when-you-sign-in-abundant-marble.md`

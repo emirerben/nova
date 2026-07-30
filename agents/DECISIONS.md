@@ -457,3 +457,112 @@ definitive sanity-gate rejection persists a `.matte.v2.unstable` sentinel so
 reburns of the same base stop re-paying the recompute (transient failures
 still retry); matte-migration deletes are prefix-guarded to
 `generative-jobs/*.matte.*`.
+
+## [2026-07-30] Render-attempt clock: anchor at Save, not at worker pickup (v0.18.1.1)
+
+A re-render of a 5-minute edit came back reading "40m 32s". Every clock in the
+progress band was pinned to the FIRST render, because a re-render reuses the
+SAME `Job` row and nothing moved the anchors:
+
+- `job.started_at` — written only by `job_phases.mark_started`, which refuses to
+  move it once set (correct for its own job: it models worker pickup of ONE
+  orchestrator run, and a Celery redelivery must not restart a clock mid-render).
+- `variants[i]["render_started_at"]` — written in exactly ONE place repo-wide,
+  the initial render loop in `tasks/generative_build.py`.
+
+Both are read as live wall clocks: the elapsed counter, the ETA, the "taking
+longer than usual" stall copy, and the per-variant tile all count from them. So
+after the first render finished, every subsequent Save produced a counter
+counting from the original render, an ETA floored at "less than a minute", the
+stall hint firing instantly, and a receipt reading "Ready in -36:-12" (because
+`finished_at` was still ahead of `started_at`).
+
+Decisions:
+
+- **Anchor at DISPATCH, not at worker pickup.** The user's mental model is the
+  Save press, and queue wait is time they are genuinely waiting. Two helpers in
+  `app/services/job_phases.py`: `mark_reattempt(job)` (moves `started_at` to
+  now, returns whether it moved) and `stamp_variant_attempt(variant)` (sets
+  `render_status="rendering"` + a fresh `render_started_at`). Wired into all
+  **16** re-render dispatch paths in `routes/generative_jobs.py` +
+  `tasks/autoplace.py`.
+- **`mark_reattempt` takes the ORM object, `stamp_variant_attempt` takes the
+  variant dict** — deliberately unlike the `job_id`-keyed helpers around them.
+  Route dispatchers already hold a loaded (often row-locked) `Job` and commit
+  themselves; and several dispatchers build `updated = dict(v)` then assign
+  `variants[i] = updated`, so a helper that re-walked the job's variant list
+  would mutate the original and have its write silently overwritten by that
+  assignment. Passing the dict the caller actually persists makes that class of
+  bug unrepresentable.
+- **Skip the reset while an orchestrator run is in flight** (`current_phase` is
+  non-None until `mark_finished` clears it). Editing an already-ready variant
+  while its siblings are still on their FIRST render would otherwise move the
+  anchor out from under that run: every later `record_phase` would compute
+  `t_offset_ms` against the new origin (non-monotonic `phase_log`) and the
+  whole-job clock the user is watching would visibly jump back to zero.
+- **Never touch `finished_at`.** `plan_items.py` exports it as the plan item's
+  ready date and no re-render task calls `mark_finished`, so nulling it would
+  erase that date permanently. Readers guard on `started_at > finished_at`
+  instead — `deriveReceiptText` (`components/progress/logic.ts`) returns the
+  generic "Your edits are ready" whenever the pair can't yield an honest
+  duration. Rejected: nulling `finished_at` at dispatch (data loss), and adding
+  a parallel `attempt_started_at` column (a migration plus a second anchor every
+  reader would have to learn, for a value `started_at` already means).
+- **Gen-id minting stays in `_mark_variant_rendering`** and was NOT folded into
+  the stamp helper: `_update_variant_entry` discards any worker write whose
+  token differs from the stored one, so minting a token on a dispatch path whose
+  task doesn't carry it would strand the variant in "rendering" forever.
+- **Structural (AST) guard, not a grep.** The bug existed because 14 hand-rolled
+  `render_status = "rendering"` blocks had no choke point, and NONE of them wrote
+  the timestamp — at the base commit `render_started_at` appears in
+  `routes/generative_jobs.py` only as a Pydantic field default, and not at all in
+  `tasks/autoplace.py`. A source-grep guard matches one exact spelling of one
+  line, so the same write in ANOTHER module slips through — which is exactly how
+  `tasks/autoplace.py` diverged. `tests/routes/test_render_attempt_clock.py`
+  walks the AST of both dispatch modules instead. Known residual: the raw-write
+  guard matches `variant["render_status"] = "rendering"` assignments, so a
+  `.update({...})` call or a whole-dict literal would still evade it; the pairing
+  guard (stamp ⇒ reset) catches those in any function that also stamps.
+
+Frontend half of the same bug: a re-render does NOT move `job.status` off
+`variants_ready`, so a "terminal status wins" poll predicate stopped polling the
+instant the user pressed Save (new video only appeared after a manual reload),
+and `ProgressTheater`'s collapsed band never reopened on the same mount.
+`isGenerativeJobSettled` (`lib/generative-api.ts`) is now the single predicate
+for all three surfaces (item page, public `/generative`, onboarding EditPayoff):
+non-terminal ⇒ not settled; a FAILED terminal ⇒ settled regardless of variant
+state (a variant frozen in "rendering" after a failed job is a backend
+data-integrity gap and must never block the UI); a SUCCESS terminal ⇒ not
+settled while a variant is genuinely rendering, where "genuinely" means inside
+the 30-minute `STUCK_RENDER_CEILING_MS`. The ceiling exists because
+`reconcile_stuck_variants` only heals a stranded variant after ~60 min — without
+it the UI would poll a dead render forever with a live-ticking timer.
+
+Accepted costs (all tracked in TODOS.md, none silently degraded):
+
+- **Admin render-timing breakdown is last-attempt only.** `admin_jobs.py`
+  computes `queue_wait_ms = created_at → started_at` and
+  `processing_ms = started_at → finished_at`. Once `started_at` moves at every
+  dispatch, the first measures "job creation → last Save" and the second covers
+  only the last attempt. `started_at` is the user-facing wall clock first and an
+  admin metric second; per-attempt truth lives on the variants.
+- **A dead re-render now climbs confidently.** `_compute_retrying` gates on
+  `job.status in {processing, rendering}` plus an orchestrator-ticked heartbeat,
+  and a re-render leaves `job.status` terminal. Before this change the lie was
+  at least static (frozen counter, stopped poller); now it updates smoothly
+  until the 30-minute ceiling. The fix makes a known gap more visible rather
+  than creating one.
+- **Bar and ETA still read the first render's phases.** No re-render task calls
+  `record_phase`, so a null `currentPhase` pins the bar under 5% and
+  `get_baselines("generative")` advertises the full-pipeline estimate for a
+  20-second text reburn.
+- **Client-vs-API clock skew got sharper, not worse.** The anchor used to be
+  minutes in the past (skew invisible); it is now "a moment ago", so a browser
+  clock trailing the API clock parks the counter at "0s" for the skew window.
+
+**Revisit if:** the re-render tasks start driving `record_phase` /
+`mark_finished` and heartbeating. At that point `job.status` and the phase log
+cover re-renders the way they cover first renders, the 30-minute frontend
+ceiling becomes a backstop rather than the only bound, and `phase_log` needs an
+origin-aware reader (it will carry entries written against two `started_at`
+origins).

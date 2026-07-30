@@ -159,13 +159,69 @@ export interface GenerativeJobStatus {
   retrying?: boolean;
 }
 
-/** Terminal statuses the poller should stop on. */
+/** The SUCCESS half of the terminal set. */
+export const GENERATIVE_SUCCESS_STATUSES = ["variants_ready", "variants_ready_partial"];
+
+/** The FAILURE half of the terminal set. */
+export const GENERATIVE_FAILED_STATUSES = ["variants_failed", "processing_failed"];
+
+/** Terminal statuses the poller should stop on. Composed so the two halves
+ *  partition it — a new failure status can never be missing from FAILED. */
 export const GENERATIVE_TERMINAL_STATUSES = [
-  "variants_ready",
-  "variants_ready_partial",
-  "variants_failed",
-  "processing_failed",
+  ...GENERATIVE_SUCCESS_STATUSES,
+  ...GENERATIVE_FAILED_STATUSES,
 ];
+
+/**
+ * How long a variant may sit in "rendering" before we stop believing it.
+ *
+ * Bounds the success-terminal escape below. `reconcile_stuck_variants` only heals
+ * a stranded variant after ~60 min, so without an upper bound the UI would poll a
+ * dead render forever with a live-ticking timer.
+ */
+const STUCK_RENDER_CEILING_MS = 30 * 60 * 1000;
+
+/**
+ * Has this job settled for polling purposes?
+ *
+ * The subtlety: a re-render dispatched after a successful first render does NOT
+ * move `job.status` — it stays `variants_ready`. So a naive "terminal status wins"
+ * check stops the poller the instant the user presses Save, and they never see the
+ * restarted clock or the new video.
+ *
+ * Three rules, in order:
+ *  1. Not a terminal status  → not settled (the first render is still running).
+ *  2. A FAILED terminal      → settled, whatever the variants say. A variant frozen
+ *     in "rendering" after a failed job is a backend data-integrity gap and must
+ *     never block the UI; it renders through the existing "failed" branch.
+ *  3. A SUCCESS terminal     → not settled while a variant is genuinely rendering,
+ *     where "genuinely" means its `render_started_at` is inside
+ *     STUCK_RENDER_CEILING_MS. Past that the render is presumed dead and we settle
+ *     rather than spin. A variant with no timestamp at all is treated as live (it
+ *     was just dispatched and the stamp has not been read back yet).
+ *
+ * Single source of truth for all three ProgressTheater pollers — the item page,
+ * the public generative page, and the onboarding EditPayoff panel. They each used
+ * to hand-roll this and drifted.
+ */
+export function isGenerativeJobSettled(
+  status: string | null | undefined,
+  variants: ReadonlyArray<{ render_status?: string | null; render_started_at?: string | null }>
+    | null
+    | undefined,
+  nowMs: number = Date.now(),
+): boolean {
+  if (status == null || !GENERATIVE_TERMINAL_STATUSES.includes(status)) return false;
+  if (GENERATIVE_FAILED_STATUSES.includes(status)) return true;
+  const liveRender = (variants ?? []).some((v) => {
+    if (v.render_status !== "rendering") return false;
+    if (!v.render_started_at) return true;
+    const startedMs = new Date(v.render_started_at).getTime();
+    if (!Number.isFinite(startedMs)) return true;
+    return nowMs - startedMs < STUCK_RENDER_CEILING_MS;
+  });
+  return !liveRender;
+}
 
 export async function uploadGenerativeClip(
   file: File,

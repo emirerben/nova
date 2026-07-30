@@ -886,3 +886,124 @@ def test_dispatch_seam_with_only_montage_variants_dispatches_nothing(monkeypatch
     generative_build._maybe_visual_blocks_after_finalize(JOB_ID)
 
     assert job.assembly_plan["variants"][0].get("visual_blocks_autoplan_attempted") is None
+
+
+# ── render-attempt clock (the "40m 32s" report) ────────────────────────────────
+#
+# `plan_visual_blocks` is a re-render dispatcher like the route-level ones, so it
+# restarts the user-facing clock (`job.started_at`) and stamps a fresh
+# `render_started_at` on the tile. The AST pairing guard in
+# tests/routes/test_render_attempt_clock.py only proves the two helpers are called
+# in the same function — these pin the values, including the enqueue-failure
+# rollback that must NOT leave a fresh timestamp claiming a render started.
+
+_STALE_TILE_CLOCK = "2020-01-01T00:00:00Z"
+
+
+def _arm_planner(monkeypatch, job, *, dispatch):
+    """Shared scaffolding for the two clock tests: real planner branch, one
+    text_card treatment, `dispatch` standing in for the broker call."""
+    from app.agents.visual_treatment_planner import (
+        RawVisualTreatment,
+        VisualTreatmentPlannerOutput,
+    )
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(settings, "visual_block_autoplan_enabled", True)
+    monkeypatch.setattr(settings, "gemini_api_key", "gemini-test")
+    monkeypatch.setattr(autoplace, "_sync_session", lambda: _Session(job, []))
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
+    )
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_args: None)
+    monkeypatch.setattr(
+        "app.services.transcript_source.transcript_source",
+        lambda _v, **_kwargs: (
+            [
+                {"word": "Dört", "start_s": 101.68, "end_s": 102.28},
+                {"word": "Storytelling", "start_s": 102.58, "end_s": 103.42},
+            ],
+            "transcript-hash",
+        ),
+    )
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    monkeypatch.setattr(
+        "app.agents.visual_treatment_planner.VisualTreatmentPlannerAgent.run",
+        lambda _self, _input, **_kwargs: VisualTreatmentPlannerOutput(
+            treatments=[
+                RawVisualTreatment(
+                    kind="text_card",
+                    purpose="section_item",
+                    start_s=101.0,
+                    end_s=104.0,
+                    text="4. Storytelling",
+                    confidence="high",
+                )
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant.apply_async", dispatch
+    )
+    monkeypatch.setattr(autoplace, "_record", lambda _event, **_fields: None)
+
+
+def test_autoplan_render_restarts_the_attempt_clock(monkeypatch) -> None:
+    """The autoplan visual-blocks render used to inherit the FIRST render's clock:
+    the tile read "Rendering · 40:32" and the whole-job timer never reset."""
+    from datetime import UTC, datetime, timedelta
+
+    job = _Job()
+    job.started_at = datetime.now(UTC) - timedelta(minutes=40)
+    job.current_phase = None
+    variant = job.assembly_plan["variants"][0]
+    variant["render_status"] = "ready"
+    variant["render_started_at"] = _STALE_TILE_CLOCK
+    _arm_planner(monkeypatch, job, dispatch=lambda **_kwargs: None)
+
+    autoplace.plan_visual_blocks.run(JOB_ID, "subtitled")
+
+    assert variant["render_status"] == "rendering"
+    assert variant["render_started_at"] != _STALE_TILE_CLOCK
+    assert (datetime.now(UTC) - job.started_at).total_seconds() < 5
+
+
+def test_render_dispatch_failure_rolls_the_tile_clock_back(monkeypatch) -> None:
+    """A dispatch that never reached the broker restores the previous
+    `render_started_at` alongside `render_status` — a rolled-back variant reading
+    "ready" with a just-now timestamp would show a phantom fresh render."""
+    job = _Job()
+    variant = job.assembly_plan["variants"][0]
+    variant["render_status"] = "ready"
+    variant["render_started_at"] = _STALE_TILE_CLOCK
+    _arm_planner(
+        monkeypatch,
+        job,
+        dispatch=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="broker unavailable"):
+        autoplace.plan_visual_blocks.run(JOB_ID, "subtitled")
+
+    assert variant["render_status"] == "ready"
+    assert variant["render_started_at"] == _STALE_TILE_CLOCK
+
+
+def test_render_dispatch_failure_drops_a_first_ever_tile_clock(monkeypatch) -> None:
+    """Absent-before must roll back to absent, not to the stamp this attempt
+    wrote — the restore branch pops the key instead of writing None."""
+    job = _Job()
+    variant = job.assembly_plan["variants"][0]
+    variant["render_status"] = "ready"
+    assert "render_started_at" not in variant
+    _arm_planner(
+        monkeypatch,
+        job,
+        dispatch=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="broker unavailable"):
+        autoplace.plan_visual_blocks.run(JOB_ID, "subtitled")
+
+    assert variant["render_status"] == "ready"
+    assert "render_started_at" not in variant

@@ -45,6 +45,7 @@ from app.database import get_db
 from app.models import Job, MusicTrack, User
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 from app.schemas.montage_preset import is_collage_montage_preset
+from app.services.job_phases import mark_reattempt, stamp_variant_attempt
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
     is_heif_overlay,
@@ -1245,7 +1246,7 @@ async def dispatch_swap_song(
     render_gen_id = uuid.uuid4().hex
     for v in variants:
         if v.get("variant_id") == variant_id:
-            v["render_status"] = "rendering"
+            stamp_variant_attempt(v)
             v["render_generation_id"] = render_gen_id
             v["music_track_id"] = new_track_id
             v["base_video_stale"] = True
@@ -1262,6 +1263,7 @@ async def dispatch_swap_song(
             ]
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    mark_reattempt(job)
     # Make the generation visible before enqueue. A slower legacy swap can
     # then be rejected if a newer atomic editor commit supersedes it.
     await db.commit()
@@ -1304,9 +1306,10 @@ def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
-            v["render_status"] = "rendering"
+            stamp_variant_attempt(v)
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    mark_reattempt(job)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -1783,17 +1786,23 @@ def _mark_variant_rendering(job: Job, variant_id: str) -> str:
     every caption re-render joins the editor-commit supersession model — pass the
     returned token to the task as `render_gen_id` so a superseded run discards
     its terminal write (and its old-blob deletes, OV-4).
+
+    Gen-id minting stays HERE and is never folded into `stamp_variant_attempt`:
+    `_update_variant_entry` discards any worker write whose expected token differs
+    from the stored one, so minting a token on a dispatch path whose task does not
+    carry it would strand the variant in "rendering" forever.
     """
     render_gen_id = uuid.uuid4().hex
     render_enqueued_at = datetime.utcnow().isoformat() + "Z"
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
-            v["render_status"] = "rendering"
+            stamp_variant_attempt(v)
             v["render_generation_id"] = render_gen_id
             v["render_enqueued_at"] = render_enqueued_at
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    mark_reattempt(job)
     return render_gen_id
 
 
@@ -1896,9 +1905,10 @@ def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> No
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
-            v["render_status"] = "rendering"
+            stamp_variant_attempt(v)
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    mark_reattempt(job)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -1926,9 +1936,10 @@ def dispatch_set_intro_size(job: Job, variant_id: str, *, text_size_px: int) -> 
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
-            v["render_status"] = "rendering"
+            stamp_variant_attempt(v)
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    mark_reattempt(job)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -1951,11 +1962,12 @@ def dispatch_set_intro_timing(job: Job, variant_id: str, *, start_s: float, end_
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
-            v["render_status"] = "rendering"
+            stamp_variant_attempt(v)
             v["intro_start_s"] = start_s
             v["intro_end_s"] = end_s
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    mark_reattempt(job)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -2195,13 +2207,14 @@ def dispatch_set_media_overlays(
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
-            v["render_status"] = "rendering"
+            stamp_variant_attempt(v)
             v["render_generation_id"] = render_gen_id
             if caption_reburn_route:
                 v["media_overlays"] = validated or None
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")
+    mark_reattempt(job)
     # NOTE (montage branch only): the enqueue sends to Redis immediately
     # (synchronously). The DB commit in the caller's route (`await db.commit()`)
     # happens after this function returns. The window where the task sees an
@@ -2279,13 +2292,14 @@ def dispatch_set_sound_effects(
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
-            v["render_status"] = "rendering"
+            stamp_variant_attempt(v)
             v["render_generation_id"] = render_gen_id
             if caption_reburn_route:
                 v["sound_effects"] = validated or None
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")
+    mark_reattempt(job)
 
     if caption_reburn_route:
         # R1-1: deferred enqueue — the caller commits the gate write first.
@@ -2556,12 +2570,16 @@ def dispatch_set_text_elements(
                 v["geometry_materialized_at_version"] = "1"
                 v["text_elements_materialized_from"] = "sequence"
             if render:
-                v["render_status"] = "rendering"
+                stamp_variant_attempt(v)
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")
 
     if render:
+        # Only a rendering commit is a new attempt — a persist-only save
+        # (render=False) must leave the clock alone.
+        mark_reattempt(job)
+
         from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
         # Route to the overlay-jobs queue (solo worker — avoids macOS prefork CLIP fork crash).
@@ -2829,11 +2847,12 @@ async def dispatch_set_orientation(
         if v.get("variant_id") == variant_id:
             v["orientation"] = validated
             v["render_generation_id"] = render_gen_id
-            v["render_status"] = "rendering"
+            stamp_variant_attempt(v)
             v["base_video_stale"] = True
             break
     locked_job.assembly_plan = {**(locked_job.assembly_plan or {}), "variants": variants}
     flag_modified(locked_job, "assembly_plan")
+    mark_reattempt(locked_job)
     await db.commit()
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
@@ -2892,11 +2911,12 @@ async def dispatch_set_lyrics(
             if line_overrides is not _UNSET:
                 v["lyric_line_overrides"] = validated["line_overrides"]
             v["render_generation_id"] = render_gen_id
-            v["render_status"] = "rendering"
+            stamp_variant_attempt(v)
             v["base_video_stale"] = True
             break
     locked_job.assembly_plan = {**(locked_job.assembly_plan or {}), "variants": variants}
     flag_modified(locked_job, "assembly_plan")
+    mark_reattempt(locked_job)
     await db.commit()
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
@@ -3143,9 +3163,10 @@ def dispatch_edit_variant(
     _variants = list((job.assembly_plan or {}).get("variants") or [])
     for _v in _variants:
         if _v.get("variant_id") == variant_id:
-            _v["render_status"] = "rendering"
+            stamp_variant_attempt(_v)
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": _variants}
+    mark_reattempt(job)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -3181,6 +3202,18 @@ def dispatch_set_mix(job: Job, variant_id: str, *, mix: float) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="This edit has no voiceover to mix.",
         )
+
+    # A mix change is a Save like any other, so it restarts the attempt clock and
+    # closes the 409 re-entrancy gate. This dispatcher used to write no
+    # render_status at all, which left BOTH clocks reading the first render's
+    # timestamps and let two concurrent mix edits race.
+    _variants = list((job.assembly_plan or {}).get("variants") or [])
+    for _v in _variants:
+        if _v.get("variant_id") == variant_id:
+            stamp_variant_attempt(_v)
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": _variants}
+    mark_reattempt(job)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -3910,8 +3943,11 @@ async def persist_user_timeline(
                     updated["music_window_video_duration_s"] = active_duration_s
             if render_gen_id is not None:
                 updated["render_generation_id"] = render_gen_id
-                updated["render_status"] = "rendering"
+                # Stamp the COPY, not `v`: `variants[i] = updated` below would
+                # overwrite any write made to the original dict.
+                stamp_variant_attempt(updated)
                 updated["base_video_stale"] = True
+                mark_reattempt(job)
             variants[i] = updated
             break
     plan["variants"] = variants
@@ -5142,7 +5178,11 @@ def prepare_editor_commit(
                     updated["overlay_suggest_status"] = "zero"
         if new_gen is not None:
             updated["render_generation_id"] = new_gen
-            updated["render_status"] = "rendering"
+            # Stamp the COPY, not `v`: `variants[i] = updated` below would
+            # overwrite any write made to the original dict. This is the primary
+            # Save path for both the item page and the pocket editor.
+            stamp_variant_attempt(updated)
+            mark_reattempt(job)
         if base_affecting_commit:
             # A newer text-only commit is allowed to supersede this render.
             # Keep the dirty bit sticky until a token-winning full render lands,

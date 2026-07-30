@@ -167,7 +167,15 @@ export function ProgressTheater({
   const [showReceipt, setShowReceipt] = useState(false);
   const [bandCollapsed, setBandCollapsed] = useState(false);
   useEffect(() => {
-    if (!isTerminal || !isSuccess) return;
+    if (!isTerminal || !isSuccess) {
+      // A re-render brings a collapsed band back to life on the SAME mount (an
+      // in-place edit on the item page never remounts this component). Without
+      // this reset the band stayed `opacity-0 h-0` and the restarted clock was
+      // rendered but invisible.
+      setShowReceipt(false);
+      setBandCollapsed(false);
+      return;
+    }
     const t1 = setTimeout(() => setShowReceipt(true), CELEBRATION_HOLD_MS);
     const t2 = setTimeout(
       () => setBandCollapsed(true),

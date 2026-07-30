@@ -86,6 +86,9 @@ above; v2 failures fail open to a standard subtitled render with receipts.
   guardrails + render liveness" below).
 - `src/apps/api/app/routes/admin_generative.py` — `GET /admin/generative` dashboard
   list.
+- `src/apps/api/app/services/job_phases.py` — phase/heartbeat writers plus the
+  render-attempt clock helpers `mark_reattempt` / `stamp_variant_attempt` (see
+  "Render-attempt clock" below).
 
 ## Worker memory guardrails + render liveness (v0.12.2.0)
 
@@ -128,6 +131,83 @@ CLAUDE.md — its size budget was full).
   reburn tasks do NOT heartbeat (accepted gap, TODOS.md). Guards:
   `tests/routes/test_generative_retrying.py`,
   `src/apps/web/src/__tests__/progress/retrying.test.tsx`.
+
+## Render-attempt clock (v0.18.1.1)
+
+A re-render reuses the SAME `Job` row, so nothing about the first render's
+timestamps expires on its own. Full narrative, rejected alternatives, and the
+accepted costs: `agents/DECISIONS.md` "[2026-07-30] Render-attempt clock".
+Deliberately not in CLAUDE.md — its size budget is full.
+
+**Invariant: every re-render dispatch restarts the user's clock.** A dispatcher
+that marks a variant `rendering` must call BOTH helpers from
+`app/services/job_phases.py`:
+
+- `stamp_variant_attempt(variant)` — sets `render_status="rendering"` plus a
+  fresh `render_started_at` (naive-UTC + literal `"Z"`, the frozen wire format
+  for that JSONB field). Takes the DICT the caller persists, because the
+  copy-loop dispatchers (`updated = dict(v)` … `variants[i] = updated`) would
+  otherwise overwrite a write made to the original. Does NOT write
+  `render_enqueued_at` — that field's only writer is `_mark_variant_rendering`,
+  which owns the caption-reburn supersession token.
+- `mark_reattempt(job)` — moves `job.started_at` to now (returns whether it
+  moved). Takes the ORM object the route already holds and row-locks. Anchored
+  at DISPATCH, not worker pickup: the Save press is the user's mental model and
+  queue wait is real waiting. SKIPS the move while an orchestrator run is in
+  flight (`current_phase` non-None) so editing a ready variant can't yank the
+  origin out from under siblings still on their first render. Never touches
+  `finished_at` — `plan_items.py` exports it as the item's ready date and no
+  re-render task calls `mark_finished`.
+
+Wired into all **16** dispatch paths across `routes/generative_jobs.py` and
+`tasks/autoplace.py` (the autoplan visual-blocks render included; its rollback
+path restores the previous `render_started_at` with the status). A persist-only
+save (`render=False`) must NOT call either helper. `mark_started` is unchanged
+and still refuses to move `started_at` — it models worker pickup of one
+orchestrator run, so a Celery redelivery can't restart a clock mid-render.
+
+**Frontend contract** — a re-render does NOT move `job.status` off
+`variants_ready`, so "terminal status wins" is the wrong poll predicate:
+
+- `isGenerativeJobSettled(status, variants)` (`src/apps/web/src/lib/generative-api.ts`)
+  is the single definition of settled for the item page, public `/generative`,
+  and the onboarding EditPayoff panel. `GENERATIVE_TERMINAL_STATUSES` is now
+  composed from `GENERATIVE_SUCCESS_STATUSES` + `GENERATIVE_FAILED_STATUSES` so
+  the two halves partition it and a new failure status can't go missing.
+  Non-terminal ⇒ not settled; a FAILED terminal ⇒ settled whatever the variants
+  say (a variant frozen in `rendering` after a failed job is a backend
+  data-integrity gap and must never block the UI); a SUCCESS terminal ⇒ not
+  settled while a variant is rendering inside the 30-minute
+  `STUCK_RENDER_CEILING_MS`. `admin/generative/[id]` still uses the raw status
+  check (TODOS.md).
+- `deriveReceiptText(startedAt, finishedAt)` (`components/progress/logic.ts`) is
+  the one receipt formatter for all three surfaces; a non-positive span falls
+  back to `RECEIPT_FALLBACK` instead of rendering "Ready in -36:-12".
+- `ProgressTheater` resets `bandCollapsed`/`showReceipt` when the job leaves the
+  success-terminal state — an in-place edit never remounts it, and a collapsed
+  band rendered the restarted clock invisibly.
+- `usePolledJobStatus` re-arms its max-poll ceiling alongside the interval, and
+  releases the ceiling's own ref when it fires. Both halves are load-bearing: a
+  re-armed poll with no fresh ceiling, or a stale ceiling ref blocking every
+  later re-arm, each leave a permanently non-terminal payload polling forever.
+  The ceiling is per-MOUNT, not per-attempt: a re-arm only fires while the ref is
+  null, so a Save made before the mount's ceiling expires inherits the remaining
+  budget rather than getting a fresh 30 minutes.
+
+**Guards:** `tests/routes/test_render_attempt_clock.py` — per-dispatcher clock
+tests plus two structural (AST) guards:
+`test_every_stamping_function_also_restarts_the_job_clock` (a function that
+stamps must also reset) and
+`test_no_module_marks_a_variant_rendering_outside_the_helper` (no raw
+`render_status = "rendering"` in a dispatch module). AST rather than grep because
+a grep guard matches one spelling of one line and missed `tasks/autoplace.py`
+entirely. The autoplan path's clock + rollback behavior is pinned separately in
+`tests/tasks/test_visual_blocks_autoplan.py`
+(`test_autoplan_render_restarts_the_attempt_clock`,
+`test_render_dispatch_failure_rolls_the_tile_clock_back`,
+`test_render_dispatch_failure_drops_a_first_ever_tile_clock`). Frontend:
+`src/apps/web/src/__tests__/progress/attempt-clock.test.tsx`,
+`src/apps/web/src/__tests__/hooks/usePolledJobStatus.test.tsx`.
 
 ## Post-generation timeline editing (clip editor)
 

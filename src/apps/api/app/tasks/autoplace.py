@@ -35,6 +35,7 @@ import structlog
 
 from app.database import sync_session as _sync_session
 from app.models import Job, PlanItemAsset, SoundEffect
+from app.services.job_phases import mark_reattempt, stamp_variant_attempt
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -550,6 +551,8 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                 _record("visual_blocks_plan_stale", variant_id=variant_id)
                 return
             previous_render_status = target.get("render_status")
+            previous_render_started_at = target.get("render_started_at")
+            previous_render_started_present = "render_started_at" in target
             previous_render_generation_id = target.get("render_generation_id")
             previous_render_generation_present = "render_generation_id" in target
             previous_text_elements = list(target.get("text_elements") or [])
@@ -565,7 +568,11 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                 target["text_elements"] = elements
                 target["text_elements_user_edited"] = True
             target["render_generation_id"] = render_gen_id
-            target["render_status"] = "rendering"
+            # Same attempt-clock contract as the route dispatchers: this is a
+            # re-render, so the user-facing timer restarts here too. Without it the
+            # autoplan visual-blocks render inherited the FIRST render's clock.
+            stamp_variant_attempt(target)
+            mark_reattempt(job)
             from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
             job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
@@ -610,6 +617,13 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                         else:
                             target.pop("render_generation_id", None)
                         target["render_status"] = previous_render_status or "ready"
+                        # Roll the tile clock back with the status — a dispatch that
+                        # never reached the worker must not leave a fresh timestamp
+                        # claiming a render started.
+                        if previous_render_started_present:
+                            target["render_started_at"] = previous_render_started_at
+                        else:
+                            target.pop("render_started_at", None)
                         from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
                         job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
