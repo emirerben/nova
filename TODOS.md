@@ -36,20 +36,6 @@ make the admin reader origin-aware.
 **Priority:** P2
 **Depends on:** —
 
-### Dead re-render never surfaces the recovery copy
-**What:** `_compute_retrying` (`app/routes/generative_jobs.py:5545`) gates on
-`job.status in _HEARTBEAT_LIVE_STATUSES` plus a `worker_heartbeat_at` ticked by the
-ORCHESTRATOR. A re-render leaves `job.status` terminal and its task is unlikely to
-beat, so a re-render killed by OOM/SIGKILL never flips `retrying`.
-**Why:** The clock now counts honestly from the Save — which means a dead re-render
-counts up forever with reassuring "you can leave this page" copy under it. The
-timer fix makes this MORE visible, not less.
-**How:** Either beat the heartbeat from the re-render tasks and widen the status
-gate, or add a variant-scoped staleness check off `render_enqueued_at`.
-**Effort:** M (CC: ~1h)
-**Priority:** P2
-**Depends on:** —
-
 ### Three copied elapsed timers, and a `useElapsed` hook already exists
 **What:** `useState + setInterval + (Date.now() - new Date(x).getTime())` is copied
 three times with three different intervals: `ProgressTheater.tsx:106` (2000ms),
@@ -65,11 +51,13 @@ tick interval, adopt at all three sites. Behavior-neutral; pin with the existing
 **Priority:** P3
 **Depends on:** —
 
-### A dead re-render shows a confidently climbing clock (escalated by the timer fix)
-**What:** `_compute_retrying` (`app/routes/generative_jobs.py`) gates on
-`job.status in _HEARTBEAT_LIVE_STATUSES = {processing, rendering}`, and a re-render
-never moves `job.status` off `variants_ready` — that is the whole premise of the
-timer fix. So a re-render worker lost to OOM or a deploy produces a smoothly
+### A dead re-render shows a confidently climbing clock, and never surfaces the recovery copy
+**What:** `_compute_retrying` (`app/routes/generative_jobs.py:5545`) gates on
+`job.status in _HEARTBEAT_LIVE_STATUSES = {processing, rendering}` plus a
+`worker_heartbeat_at` ticked by the ORCHESTRATOR, and a re-render never moves
+`job.status` off `variants_ready` — that is the whole premise of the
+timer fix. Its task doesn't beat either. So a re-render worker lost to OOM or a
+deploy produces a smoothly
 climbing elapsed counter under "You can leave this page — we'll keep rendering",
 with no `retrying` copy, until `reconcile_stuck_variants` heals it (~60 min).
 **Why:** BEFORE the timer fix the counter was frozen and the poller stopped, so the
@@ -77,11 +65,13 @@ lie was at least static. Now the UI emits a confident, continuously updating wro
 number. The frontend has a 30-minute `STUCK_RENDER_CEILING_MS` bound so it stops
 polling, but between dispatch and that ceiling the user is told a dead render is
 healthy. This is the timer fix making a known gap MORE visible, not a new bug.
-**How:** Either include the success-terminal statuses in `_compute_retrying`
-whenever a variant is `rendering` (still keying staleness off
-`worker_heartbeat_at`), or have the re-render dispatchers flip `job.status` to
-`rendering` so the existing heartbeat + reaper machinery covers re-renders as it
-covers first renders. The second is cleaner but touches `derive_item_status`.
+**How:** Three shapes, in rough order of cleanliness: (a) have the re-render
+dispatchers flip `job.status` to `rendering` so the existing heartbeat + reaper
+machinery covers re-renders as it covers first renders (cleanest, but touches
+`derive_item_status`); (b) include the success-terminal statuses in
+`_compute_retrying` whenever a variant is `rendering` and beat the heartbeat from
+the re-render tasks themselves (still keying staleness off `worker_heartbeat_at`);
+(c) add a variant-scoped staleness check off `render_enqueued_at`.
 **Effort:** M (CC: ~1h)
 **Priority:** P1
 **Depends on:** —

@@ -18,7 +18,10 @@ docker-compose up        # starts web + api + worker + redis + db
 src/apps/web/   — Next.js frontend
 src/apps/api/   — Python FastAPI + Celery
 agents/         — agent context (read before working on video processing)
+docs/           — pipeline internals (docs/pipelines/) + operational runbooks (docs/runbooks/)
+CLAUDE.md       — working agreements, invariants, key paths, env vars
 DESIGN.md       — design-system tokens, loading rules, anti-slop rules, a11y baseline
+TODOS.md        — deferred work backlog, grouped by the PR that deferred it
 ```
 
 ## Features
