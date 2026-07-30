@@ -167,6 +167,124 @@ EDITORIAL_STYLE: dict = {
     "max_blocks": 3,
 }
 
+# ── Persisted cluster-style marker ────────────────────────────────────────────
+# The static-cluster `cluster_style` decision depends on RENDER-TIME state the
+# variant never stored: `allow_sequence` (a task kwarg — True on first renders
+# and re-assembly, False on explicit layout/text opt-outs) AND the
+# EDITORIAL_SEQUENCE_ENABLED kill switch. Without a snapshot, the read adapter
+# in `agents/_schemas/text_element.py` could only guess, and it guessed legacy
+# for every variant — projecting the wrong block count, sizes, faces and y
+# positions into the plan-item editor for every editorially-styled cluster.
+#
+# So the render stamps its decision on the variant as `intro_cluster_style` and
+# the adapter rebuilds the style from it via `resolve_cluster_style` below. The
+# style's OTHER inputs (the per-role font/size pins) were already persisted as
+# `intro_cluster_{hero,body,accent}_{font,size_px}`; the marker is the only
+# missing bit.
+#
+# ABSENT marker == legacy: every variant rendered before this snapshot existed
+# keeps projecting through `style=None`, byte-identically.
+CLUSTER_STYLE_EDITORIAL = "editorial"
+CLUSTER_STYLE_LEGACY = "legacy"
+# The persisted key itself. Every writer and the single reader import this —
+# a typo'd literal at any write site would silently project legacy forever.
+CLUSTER_STYLE_FIELD = "intro_cluster_style"
+
+# Per-role size override → EDITORIAL_STYLE key. The role names on the VARIANT
+# (hero/body/accent) do not match this module's role names
+# (hero/connector/closer), so the mapping is explicit rather than derived.
+# `_styled_role_px` reads the same keys off the style dict — both sides build
+# from ROLE_SIZE_OVERRIDE_KEYS so a rename cannot desync them (a resolver
+# writing a key nothing reads would silently drop the user's pinned size).
+ROLE_SIZE_OVERRIDE_KEYS = {
+    ROLE_HERO: "hero_size_px_override",
+    ROLE_CONNECTOR: "connector_size_px_override",
+    ROLE_CLOSER: "closer_size_px_override",
+}
+_CLUSTER_SIZE_OVERRIDE_KEYS = {
+    "hero_size_px": ROLE_SIZE_OVERRIDE_KEYS[ROLE_HERO],
+    "body_size_px": ROLE_SIZE_OVERRIDE_KEYS[ROLE_CONNECTOR],
+    "accent_size_px": ROLE_SIZE_OVERRIDE_KEYS[ROLE_CLOSER],
+}
+# Font pins carry the profile's own key names, so no mapping is needed.
+_CLUSTER_FONT_OVERRIDE_NAMES = ("hero_font", "body_font", "accent_font")
+
+
+def resolve_cluster_style(
+    *,
+    editorial: bool,
+    hero_font: str | None = None,
+    body_font: str | None = None,
+    accent_font: str | None = None,
+    hero_size_px: int | None = None,
+    body_size_px: int | None = None,
+    accent_size_px: int | None = None,
+) -> dict | None:
+    """Resolve the `cluster_style` a STATIC cluster/linear intro renders with.
+
+    Single source of truth for that path, shared by the render
+    (`generative_build`) and the read adapter (`agents/_schemas/text_element`)
+    so the editor projects exactly what the renderer burned. The transcript-
+    synced SEQUENCE path is out of scope: `build_sequence_overlays` passes
+    EDITORIAL_STYLE unconditionally and deliberately ignores the per-role pins.
+
+    Returns:
+
+      - ``None`` when `editorial` is False — the kill-switch contract, i.e.
+        `compute_cluster_blocks(style=None)`'s byte-identical legacy cluster.
+      - ``EDITORIAL_STYLE`` itself when no per-role pin is set (identity
+        preserved, not a copy — callers may compare on it).
+      - a patched COPY of EDITORIAL_STYLE when the user pinned any per-role
+        font/size; EDITORIAL_STYLE is never mutated.
+
+    Falsy overrides are ignored (0 px is not a legal size, "" not a legal
+    face), matching the render's original `if override:` guards.
+    """
+    if not editorial:
+        return None
+    overrides = {
+        "hero_font": hero_font,
+        "body_font": body_font,
+        "accent_font": accent_font,
+        "hero_size_px": hero_size_px,
+        "body_size_px": body_size_px,
+        "accent_size_px": accent_size_px,
+    }
+    if not any(overrides.values()):
+        return EDITORIAL_STYLE
+    style = dict(EDITORIAL_STYLE)
+    for name in _CLUSTER_FONT_OVERRIDE_NAMES:
+        if overrides[name]:
+            style[name] = overrides[name]
+    for name, style_key in _CLUSTER_SIZE_OVERRIDE_KEYS.items():
+        if overrides[name]:
+            style[style_key] = overrides[name]
+    return style
+
+
+def cluster_style_marker(style: dict | None) -> str:
+    """The persistable marker for a resolved `cluster_style` (see above)."""
+    return CLUSTER_STYLE_LEGACY if style is None else CLUSTER_STYLE_EDITORIAL
+
+
+def resolve_cluster_style_from_variant(v: dict) -> dict | None:
+    """Rebuild a variant's rendered `cluster_style` from its persisted snapshot.
+
+    The inverse of the render-side stamp. A variant with no marker (every
+    pre-snapshot render, and every deliberately-legacy path such as the
+    talking-head intro) resolves to None — legacy, byte-identical.
+    """
+    return resolve_cluster_style(
+        editorial=v.get(CLUSTER_STYLE_FIELD) == CLUSTER_STYLE_EDITORIAL,
+        hero_font=v.get("intro_cluster_hero_font"),
+        body_font=v.get("intro_cluster_body_font"),
+        accent_font=v.get("intro_cluster_accent_font"),
+        hero_size_px=v.get("intro_cluster_hero_size_px"),
+        body_size_px=v.get("intro_cluster_body_size_px"),
+        accent_size_px=v.get("intro_cluster_accent_size_px"),
+    )
+
+
 # Minimal stopword sets for the heuristic role fallback (en + tr — the two
 # render languages the pipeline supports). Deliberately small: a missed stopword
 # becomes a hero word, which is a taste miss, not a failure.
@@ -597,11 +715,7 @@ def scene_center_y(scene_index: int, style: dict | None = None) -> float:
 def _styled_role_px(role: str, base_size_px: int, scale: float, style: dict) -> int:
     # Per-role direct overrides take precedence over ratio-derived sizes. The
     # override is the user's "starting" px — scale still applies for frame fit.
-    override_key = {
-        ROLE_HERO: "hero_size_px_override",
-        ROLE_CONNECTOR: "connector_size_px_override",
-        ROLE_CLOSER: "closer_size_px_override",
-    }[role]
+    override_key = ROLE_SIZE_OVERRIDE_KEYS[role]
     override = style.get(override_key)
     if override is not None:
         px = int(round(int(override) * scale))
