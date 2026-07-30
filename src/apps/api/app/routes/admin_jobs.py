@@ -468,6 +468,13 @@ def _render_timing_breakdown(job: Job, runs: list[AgentRun]) -> RenderTimingBrea
             repeated_work.append(f"phase:{name} recorded {count} times")
 
     return RenderTimingBreakdownPayload(
+        # LAST ATTEMPT ONLY on re-rendered jobs. `job.started_at` is moved forward
+        # by every re-render dispatch (`_reset_job_attempt_clock`), so on a job the
+        # user has edited, `queue_wait_ms` measures job-creation → last Save rather
+        # than real queue latency, and `processing_ms` covers only the last attempt.
+        # Accepted trade: `started_at` is the user-facing wall clock first and an
+        # admin metric second. Per-attempt truth lives on the variants
+        # (`render_enqueued_at` / `render_started_at`) — see the stages list above.
         queue_wait_ms=_elapsed_ms(job.created_at, job.started_at),
         processing_ms=_elapsed_ms(job.started_at, job.finished_at),
         total_ms=_elapsed_ms(job.created_at, job.finished_at),

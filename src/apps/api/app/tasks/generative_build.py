@@ -990,6 +990,9 @@ def _run_generative_job(job_id: str) -> None:
             safe to call concurrently across variants."""
             variant_id = spec["variant_id"]
             # Per-variant render_started_at timestamp (D6 tile clock).
+            # First render only. Re-renders stamp this at DISPATCH instead
+            # (`_stamp_variant_attempt` in routes/generative_jobs.py) so the tile
+            # clock restarts on the Save press rather than inheriting this value.
             _update_variant_entry(
                 job_id,
                 variant_id,
