@@ -1474,6 +1474,28 @@ deferred; the fix itself is complete and guarded.
   `test_override_text_keeps_the_persisted_position` pins the other half.
   **Effort:** S (CC: ~5 min)
 
+- **T-PLACE-5 (P2)** — the talking_head reburn path is newly reachable and untested.
+  #752 caches a text-free base for talking_head, which makes `_reburn_text_on_base`
+  reachable for that archetype for the first time; this change then reads and writes
+  `intro_placement` in it. No test drives a talking_head variant through the reburn
+  with a persisted placement (#752's tests live in `test_generative_dispatch.py` and
+  never call it; every `_reburn_text_on_base` test builds a montage `existing`). Two
+  specific gaps: (a) #752's `test_talking_head_caches_the_pre_burn_composite_as_base`
+  monkeypatches `_resolve_intro_overlay_params` to return a params dict with no
+  placement keys, so the only outcome the talking_head write site reaches under test
+  is `None` — the centered case the code comment calls unlikely; (b)
+  `_render_talking_head_variant` calls `_intro_placement_from_params(params)` without
+  `has_candidates` while `_render_generative_variant` passes it. Correct today
+  (talking_head builds no candidates) but unpinned. **Effort:** M (CC: ~20 min)
+
+- **T-PLACE-6 (P3)** — `_render_talking_head_variant` writes `intro_placement` outside
+  the `if overlays:` guard that gates `intro_text_size_px`, so geometry is persisted
+  for an intro that was never burned. Distinct from T-PLACE-2, which is the montage
+  `except` path. Also: `_reburn_text_on_base` builds with `cluster_style=EDITORIAL_STYLE`
+  while `_render_talking_head_variant` deliberately passes none (PR #508), so the first
+  text edit on a talking_head restyles the intro to the editorial cascade — #752's to
+  own, but the same reburn-vs-first-render divergence class. **Effort:** S (CC: ~10 min)
+
 - **T-PLACE-4 (P2)** — `_finalize_job`'s allowlist also drops `intro_behind_subject`,
   `subject_matte_path`, and `text_placement_candidates` (verified by AST walk over
   `_finalize_job`, lines 13372-13562). `intro_placement` was added to the allowlist in
