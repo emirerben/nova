@@ -171,11 +171,15 @@ orchestrator run, so a Celery redelivery can't restart a clock mid-render.
 
 - `isGenerativeJobSettled(status, variants)` (`src/apps/web/src/lib/generative-api.ts`)
   is the single definition of settled for the item page, public `/generative`,
-  and the onboarding EditPayoff panel. Non-terminal ⇒ not settled; a FAILED
-  terminal (`GENERATIVE_FAILED_STATUSES`) ⇒ settled whatever the variants say; a
-  SUCCESS terminal ⇒ not settled while a variant is rendering inside the
-  30-minute `STUCK_RENDER_CEILING_MS`. `admin/generative/[id]` still uses the raw
-  status check (TODOS.md).
+  and the onboarding EditPayoff panel. `GENERATIVE_TERMINAL_STATUSES` is now
+  composed from `GENERATIVE_SUCCESS_STATUSES` + `GENERATIVE_FAILED_STATUSES` so
+  the two halves partition it and a new failure status can't go missing.
+  Non-terminal ⇒ not settled; a FAILED terminal ⇒ settled whatever the variants
+  say (a variant frozen in `rendering` after a failed job is a backend
+  data-integrity gap and must never block the UI); a SUCCESS terminal ⇒ not
+  settled while a variant is rendering inside the 30-minute
+  `STUCK_RENDER_CEILING_MS`. `admin/generative/[id]` still uses the raw status
+  check (TODOS.md).
 - `deriveReceiptText(startedAt, finishedAt)` (`components/progress/logic.ts`) is
   the one receipt formatter for all three surfaces; a non-positive span falls
   back to `RECEIPT_FALLBACK` instead of rendering "Ready in -36:-12".
@@ -186,6 +190,9 @@ orchestrator run, so a Celery redelivery can't restart a clock mid-render.
   releases the ceiling's own ref when it fires. Both halves are load-bearing: a
   re-armed poll with no fresh ceiling, or a stale ceiling ref blocking every
   later re-arm, each leave a permanently non-terminal payload polling forever.
+  The ceiling is per-MOUNT, not per-attempt: a re-arm only fires while the ref is
+  null, so a Save made before the mount's ceiling expires inherits the remaining
+  budget rather than getting a fresh 30 minutes.
 
 **Guards:** `tests/routes/test_render_attempt_clock.py` — per-dispatcher clock
 tests plus two structural (AST) guards:
@@ -193,8 +200,12 @@ tests plus two structural (AST) guards:
 stamps must also reset) and
 `test_no_module_marks_a_variant_rendering_outside_the_helper` (no raw
 `render_status = "rendering"` in a dispatch module). AST rather than grep because
-the pre-fix guard matched one spelling of one line and missed
-`tasks/autoplace.py` entirely. Frontend:
+a grep guard matches one spelling of one line and missed `tasks/autoplace.py`
+entirely. The autoplan path's clock + rollback behavior is pinned separately in
+`tests/tasks/test_visual_blocks_autoplan.py`
+(`test_autoplan_render_restarts_the_attempt_clock`,
+`test_render_dispatch_failure_rolls_the_tile_clock_back`,
+`test_render_dispatch_failure_drops_a_first_ever_tile_clock`). Frontend:
 `src/apps/web/src/__tests__/progress/attempt-clock.test.tsx`,
 `src/apps/web/src/__tests__/hooks/usePolledJobStatus.test.tsx`.
 

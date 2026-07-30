@@ -513,12 +513,16 @@ Decisions:
   token differs from the stored one, so minting a token on a dispatch path whose
   task doesn't carry it would strand the variant in "rendering" forever.
 - **Structural (AST) guard, not a grep.** The bug existed because 14 hand-rolled
-  `render_status = "rendering"` blocks had no choke point, and the timestamp was
-  forgotten in 10 of them. An earlier source-grep guard matched one exact
-  spelling of one line, so a `.update({...})` call, a multi-line dict literal,
-  or the same write in another module all slipped through — and
-  `tasks/autoplace.py` did exactly that. `tests/routes/test_render_attempt_clock.py`
-  walks the AST of both dispatch modules instead.
+  `render_status = "rendering"` blocks had no choke point, and NONE of them wrote
+  the timestamp — at the base commit `render_started_at` appears in
+  `routes/generative_jobs.py` only as a Pydantic field default, and not at all in
+  `tasks/autoplace.py`. A source-grep guard matches one exact spelling of one
+  line, so the same write in ANOTHER module slips through — which is exactly how
+  `tasks/autoplace.py` diverged. `tests/routes/test_render_attempt_clock.py`
+  walks the AST of both dispatch modules instead. Known residual: the raw-write
+  guard matches `variant["render_status"] = "rendering"` assignments, so a
+  `.update({...})` call or a whole-dict literal would still evade it; the pairing
+  guard (stamp ⇒ reset) catches those in any function that also stamps.
 
 Frontend half of the same bug: a re-render does NOT move `job.status` off
 `variants_ready`, so a "terminal status wins" poll predicate stopped polling the

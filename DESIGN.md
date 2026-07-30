@@ -194,6 +194,8 @@ Quiet, not alarming.
 Celebrate then recede.
 - One amber pulse on arrival (fires once per variant, never re-fires).
 - Progress band collapses (650ms) to a receipt line: `✓ Ready in 2:41`.
+- No duration, no claim: when the start/finish pair can't yield an honest span (a re-render moves `started_at` past the first render's `finished_at`), the receipt reads `Your edits are ready` instead of a number. One formatter — `deriveReceiptText` in `components/progress/logic.ts`.
+- Collapse is not one-way: a new render on the same mount re-expands the band, so a restarted clock is never hidden behind a stale receipt.
 - Completed state is calm — not a confetti state.
 
 ---

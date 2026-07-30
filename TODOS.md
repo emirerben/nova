@@ -19,7 +19,7 @@ bar, and receipt are FIVE independent signals in one band; fixing one and shippi
 invites the "progress is still broken" report from a different angle.
 
 ### Re-render path reports no phases — bar frozen, ETA off by ~15x
-**What:** `mark_finished` sets `current_phase = None` (`app/services/job_phases.py:210`)
+**What:** `mark_finished` sets `current_phase = None` (`app/services/job_phases.py:291`)
 and no re-render task calls `record_phase`. In `ProgressTheater` a null `currentPhase`
 falls to `phaseAnchor = [0, 0.05]`, so the bar is pinned under 5% for the whole
 re-render then snaps to done. Separately, `get_baselines("generative")` returns the
@@ -39,7 +39,7 @@ make the admin reader origin-aware.
 ### Three copied elapsed timers, and a `useElapsed` hook already exists
 **What:** `useState + setInterval + (Date.now() - new Date(x).getTime())` is copied
 three times with three different intervals: `ProgressTheater.tsx:106` (2000ms),
-`plan/items/[id]/page.tsx:4152` (5000ms), `VariantRenderCard.tsx:176` (1000ms).
+`plan/items/[id]/page.tsx:4143` (5000ms), `VariantRenderCard.tsx:177` (1000ms).
 A `useElapsed` hook already exists at `plan/items/[id]/_editor/CopilotDrawer.tsx:21`
 — this is adoption/extraction to a shared module, not a greenfield extraction.
 **Why:** One root cause produced three visible bugs precisely because the anchor
@@ -52,7 +52,7 @@ tick interval, adopt at all three sites. Behavior-neutral; pin with the existing
 **Depends on:** —
 
 ### A dead re-render shows a confidently climbing clock, and never surfaces the recovery copy
-**What:** `_compute_retrying` (`app/routes/generative_jobs.py:5545`) gates on
+**What:** `_compute_retrying` (`app/routes/generative_jobs.py:5585`) gates on
 `job.status in _HEARTBEAT_LIVE_STATUSES = {processing, rendering}` plus a
 `worker_heartbeat_at` ticked by the ORCHESTRATOR, and a re-render never moves
 `job.status` off `variants_ready` — that is the whole premise of the
@@ -147,7 +147,7 @@ its own concurrency tests; it is not a timer fix.
 **Depends on:** —
 
 ### Admin render-timing breakdown is misleading for re-rendered jobs
-**What:** Accepted cost of the fix. `admin_jobs.py:471-472` computes
+**What:** Accepted cost of the fix. `admin_jobs.py:478-479` computes
 `queue_wait_ms = created_at → started_at` and `processing_ms = started_at → finished_at`.
 Once `started_at` moves at every re-render dispatch, `queue_wait_ms` measures
 "job creation → last Save" — meaningless — and `processing_ms` measures only the

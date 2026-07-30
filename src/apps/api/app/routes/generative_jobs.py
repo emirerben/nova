@@ -1787,7 +1787,7 @@ def _mark_variant_rendering(job: Job, variant_id: str) -> str:
     returned token to the task as `render_gen_id` so a superseded run discards
     its terminal write (and its old-blob deletes, OV-4).
 
-    Gen-id minting stays HERE and is never folded into `_stamp_variant_attempt`:
+    Gen-id minting stays HERE and is never folded into `stamp_variant_attempt`:
     `_update_variant_entry` discards any worker write whose expected token differs
     from the stored one, so minting a token on a dispatch path whose task does not
     carry it would strand the variant in "rendering" forever.
