@@ -35,11 +35,13 @@ export function usePolledJobStatus<T>(
   const maxPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const intervalMsRef = useRef(intervalMs);
+  const maxPollMsRef = useRef(maxPollMs);
 
   // Keep refs fresh without triggering re-subscriptions.
   isTerminalRef.current = isTerminal;
   fetcherRef.current = fetcher;
   intervalMsRef.current = intervalMs;
+  maxPollMsRef.current = maxPollMs;
 
   const doFetch = useCallback(async () => {
     try {
@@ -58,6 +60,19 @@ export function usePolledJobStatus<T>(
       // stay blind to its completion until a tab refocus.
       if (!isTerminalRef.current(result) && timerRef.current == null) {
         timerRef.current = setInterval(() => void doFetchRef.current(), intervalMsRef.current);
+        // Re-arm the safety ceiling too. It is armed once at mount, so a re-arm
+        // after the ceiling already fired would otherwise start an UNCAPPED
+        // loop — a permanently non-terminal payload (a variant stranded in
+        // "rendering") would then poll every 2s forever.
+        if (maxPollMsRef.current > 0 && maxPollTimerRef.current == null) {
+          maxPollTimerRef.current = setTimeout(() => {
+            if (timerRef.current != null) {
+              clearInterval(timerRef.current);
+              timerRef.current = null;
+            }
+            maxPollTimerRef.current = null;
+          }, maxPollMsRef.current);
+        }
       }
     } catch (e) {
       if (!mountedRef.current) return;
@@ -88,6 +103,11 @@ export function usePolledJobStatus<T>(
           clearInterval(timerRef.current);
           timerRef.current = null;
         }
+        // Release the ref when this ceiling is spent. The re-arm branch in
+        // `doFetch` only arms a replacement while this is null, so a stale id
+        // left here would block EVERY later re-arm from getting a cap — the
+        // exact uncapped loop that branch exists to prevent.
+        maxPollTimerRef.current = null;
       }, maxPollMs);
     }
 

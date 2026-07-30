@@ -5,7 +5,8 @@ import {
   createGenerativeJob,
   getGenerativeJobStatus,
   getGenerativeStyleSets,
-  GENERATIVE_TERMINAL_STATUSES,
+  GENERATIVE_SUCCESS_STATUSES,
+  isGenerativeJobSettled,
   retextVariant,
   uploadGenerativeClip,
   type GenerativeJobStatus,
@@ -24,7 +25,7 @@ import {
   ProgressTheater,
   PayoffField,
 } from "@/components/progress";
-import { formatElapsed } from "@/components/progress/logic";
+import { deriveReceiptText } from "@/components/progress/logic";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { Eyebrow } from "@/components/ui/Eyebrow";
@@ -32,25 +33,8 @@ import { InkButton } from "@/components/ui/InkButton";
 
 // ===== Helpers =====
 
-function isTerminalStatus(data: GenerativeJobStatus): boolean {
-  return GENERATIVE_TERMINAL_STATUSES.includes(data.status);
-}
-
 function isSuccessStatus(status: string): boolean {
-  return status === "variants_ready" || status === "variants_ready_partial";
-}
-
-/**
- * D12 receipt text: "Ready in m:ss"
- * Falls back to created_at / updated_at when PR2 fields aren't present.
- */
-function deriveReceiptText(status: GenerativeJobStatus): string {
-  const startRaw = status.started_at ?? status.created_at;
-  const endRaw = status.finished_at ?? status.updated_at;
-  if (!startRaw || !endRaw) return "Your edits are ready";
-  const elapsedMs = new Date(endRaw).getTime() - new Date(startRaw).getTime();
-  if (elapsedMs <= 0) return "Your edits are ready";
-  return `Ready in ${formatElapsed(elapsedMs)}`;
+  return GENERATIVE_SUCCESS_STATUSES.includes(status);
 }
 
 // ===== Page =====
@@ -102,13 +86,7 @@ export default function GenerativePage() {
   }, [jobId]);
 
   const isTerminalAndDone = useCallback(
-    (data: GenerativeJobStatus) => {
-      // Job-level terminal status is authoritative.  A stuck "rendering" variant
-      // after a terminal job (processing_failed etc.) is a backend data-integrity
-      // gap — never block the UI on it.  The failed variant renders via the
-      // existing "failed" UI branch.
-      return isTerminalStatus(data);
-    },
+    (data: GenerativeJobStatus) => isGenerativeJobSettled(data.status, data.variants),
     [],
   );
 
@@ -176,7 +154,7 @@ export default function GenerativePage() {
   // ===== Theater props =====
   const theaterIsTerminal = status != null && isTerminalAndDone(status);
   const theaterIsSuccess = status != null && isSuccessStatus(status.status);
-  const receiptText = status ? deriveReceiptText(status) : "Your edits are ready";
+  const receiptText = status ? deriveReceiptText(status.started_at ?? status.created_at, status.finished_at ?? status.updated_at) : "Your edits are ready";
 
   const currentPhase: string | null = (() => {
     if (!status) return null;

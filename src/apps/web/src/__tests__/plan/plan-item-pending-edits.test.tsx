@@ -91,6 +91,9 @@ jest.mock("@/lib/plan-api", () => ({
 }));
 
 jest.mock("@/lib/generative-api", () => ({
+  // Pull the status constants + isGenerativeJobSettled from the REAL module so
+  // this mock can't drift from it (they are pure, no network).
+  ...jest.requireActual("@/lib/generative-api"),
   getGenerativeStyleSets: jest.fn().mockResolvedValue([]),
   // Never-resolving: keeps the timeline entry hidden without act() noise.
   getTimeline: jest.fn(() => new Promise(() => {})),
@@ -98,12 +101,6 @@ jest.mock("@/lib/generative-api", () => ({
     status = 0;
     code: string | null = null;
   },
-  GENERATIVE_TERMINAL_STATUSES: [
-    "variants_ready",
-    "variants_ready_partial",
-    "variants_failed",
-    "processing_failed",
-  ],
 }));
 
 jest.mock("@/lib/music-api", () => ({

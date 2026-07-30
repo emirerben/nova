@@ -7,7 +7,8 @@ import {
   editVariant,
   getGenerativeJobStatus,
   getGenerativeStyleSets,
-  GENERATIVE_TERMINAL_STATUSES,
+  GENERATIVE_SUCCESS_STATUSES,
+  isGenerativeJobSettled,
   retextVariant,
   setVariantIntroSize,
   swapVariantSong,
@@ -21,7 +22,7 @@ import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases
 import { TEXT_MODE_LABEL } from "@/app/generative/VariantCard";
 import { InlineClipsEditor } from "@/app/plan/_components/InlineClipsEditor";
 import { downloadVideo } from "@/lib/download-video";
-import { formatElapsed } from "@/components/progress/logic";
+import { deriveReceiptText } from "@/components/progress/logic";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import PlanVariantEditor from "@/app/plan/_components/PlanVariantEditor";
 import type { PlanItemVariant } from "@/lib/plan-api";
@@ -32,22 +33,10 @@ import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
 import type { EditableVariant } from "@/lib/variant-editor/types";
 
-function isTerminalStatus(data: GenerativeJobStatus): boolean {
-  return GENERATIVE_TERMINAL_STATUSES.includes(data.status);
-}
-
 function isSuccessStatus(status: string): boolean {
-  return status === "variants_ready" || status === "variants_ready_partial";
+  return GENERATIVE_SUCCESS_STATUSES.includes(status);
 }
 
-function deriveReceiptText(status: GenerativeJobStatus): string {
-  const startRaw = status.started_at ?? status.created_at;
-  const endRaw = status.finished_at ?? status.updated_at;
-  if (!startRaw || !endRaw) return "Your edits are ready";
-  const elapsedMs = new Date(endRaw).getTime() - new Date(startRaw).getTime();
-  if (elapsedMs <= 0) return "Your edits are ready";
-  return `Ready in ${formatElapsed(elapsedMs)}`;
-}
 
 /**
  * Two-column panel for ONE focused variant.
@@ -292,7 +281,7 @@ export function EditPayoff({
   }, [jobId]);
 
   const isTerminalAndDone = useCallback(
-    (data: GenerativeJobStatus) => isTerminalStatus(data),
+    (data: GenerativeJobStatus) => isGenerativeJobSettled(data.status, data.variants),
     [],
   );
 
@@ -308,7 +297,7 @@ export function EditPayoff({
 
   const theaterIsTerminal = status != null && isTerminalAndDone(status);
   const theaterIsSuccess = status != null && isSuccessStatus(status.status);
-  const receiptText = status ? deriveReceiptText(status) : "Your edits are ready";
+  const receiptText = status ? deriveReceiptText(status.started_at ?? status.created_at, status.finished_at ?? status.updated_at) : "Your edits are ready";
 
   const currentPhase: string | null = (() => {
     if (!status) return null;

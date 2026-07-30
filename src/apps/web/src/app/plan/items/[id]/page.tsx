@@ -65,7 +65,7 @@ import AskKriaPanel from "./components/AskKriaPanel";
 import {
   getGenerativeStyleSets,
   type GenerativeStyleSet,
-  GENERATIVE_TERMINAL_STATUSES,
+  isGenerativeJobSettled,
   uploadVoiceover,
 } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
@@ -76,6 +76,7 @@ import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
 import { BeamLoader, ProgressTheater, ShimmerSweep } from "@/components/progress";
+import { deriveReceiptText } from "@/components/progress/logic";
 import { StableVideo } from "@/components/StableVideo";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
@@ -438,16 +439,6 @@ function detectLandscapeClip(files: File[]): Promise<boolean> {
   return Promise.all(checks).then((results) => results.some(Boolean));
 }
 
-function deriveReceiptText(job: PlanItemJobStatus): string {
-  if (job.started_at && job.finished_at) {
-    const ms = new Date(job.finished_at).getTime() - new Date(job.started_at).getTime();
-    const secs = Math.floor(ms / 1000);
-    const mins = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `Ready in ${mins}:${String(s).padStart(2, "0")}`;
-  }
-  return "Your edits are ready";
-}
 
 export default function PlanItemPage() {
   const params = useParams<{ id: string }>();
@@ -605,8 +596,6 @@ export default function PlanItemPage() {
 
   const isTerminalFn = useCallback(
     ({ item, job }: { item: PlanItem; job: PlanItemJobStatus | null }) => {
-      const anyRendering =
-        job?.variants?.some((v) => v.render_status === "rendering") ?? false;
       // Plan 007 (CRITICAL-2): the zero-click autoplace chain (match → burn)
       // runs server-side AFTER variants_ready. Keep polling while any variant
       // is mid-match, so the auto-applied result (and the hydration effect)
@@ -614,16 +603,18 @@ export default function PlanItemPage() {
       const anyAutoMatching =
         job?.variants?.some((v) => v.overlay_suggest_status === "matching") ?? false;
       const pending = pendingEdits.current;
-      // If the job-level status is already terminal (processing_failed,
-      // variants_failed, etc.) treat it as done regardless of any frozen
-      // per-variant render_status.  A stuck "rendering" variant after a
-      // terminal job is a backend data-integrity gap — it should not keep the
-      // frontend polling forever.  The failed variant renders via the existing
-      // "failed" UI branch.
-      const jobTerminal =
-        job?.status != null && GENERATIVE_TERMINAL_STATUSES.includes(job.status);
+      // `isGenerativeJobSettled` owns the three-way rule (not-terminal /
+      // failed-terminal wins / success-terminal yields to a genuinely live
+      // variant, bounded so a dead render can't spin forever). Shared with the
+      // public generative page and the onboarding EditPayoff panel — this used to
+      // be hand-rolled per surface and drifted.
+      //
+      // The old all-terminal check made a live re-render look terminal; it only
+      // kept polling because `pendingEdits` happened to be non-empty, which it is
+      // NOT after a reload mid-render or when the render came from the pocket editor.
+      const jobSettled = isGenerativeJobSettled(job?.status, job?.variants);
       const baseTerminal =
-        (jobTerminal || !anyRendering) &&
+        jobSettled &&
         !anyAutoMatching &&
         pending.size === 0 &&
         item.status !== "generating" &&
@@ -2010,7 +2001,7 @@ export default function PlanItemPage() {
                   jobCreatedAt={data.job.created_at ?? new Date().toISOString()}
                   isTerminal={theaterIsTerminal}
                   isSuccess={theaterIsSuccess}
-                  receiptText={deriveReceiptText(data.job)}
+                  receiptText={deriveReceiptText(data.job.started_at, data.job.finished_at)}
                   variants={variants}
                   retrying={data.job.retrying ?? false}
                   size="full"

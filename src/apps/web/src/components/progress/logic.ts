@@ -167,3 +167,31 @@ export function formatElapsed(elapsedMs: number): string {
   const s = totalS % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
+
+// ===== D12 receipt text =====
+
+/** Copy shown when we can't state an honest duration. */
+export const RECEIPT_FALLBACK = "Your edits are ready";
+
+/**
+ * D12 receipt: "Ready in m:ss", or the generic fallback when the pair can't
+ * produce an honest duration.
+ *
+ * A re-render moves `started_at` forward to the Save press but leaves
+ * `finished_at` at the FIRST render's completion (no re-render task calls
+ * `mark_finished`, and `finished_at` is deliberately not nulled — the API exports
+ * it as the plan item's ready date). So `finished - started` goes NEGATIVE after
+ * any edit, which used to render "Ready in -36:-12" on the item page.
+ *
+ * Shared by all three receipt surfaces; they previously had three copies with
+ * three different guards, and only one was ever hardened.
+ */
+export function deriveReceiptText(
+  startedAt: string | null | undefined,
+  finishedAt: string | null | undefined,
+): string {
+  if (!startedAt || !finishedAt) return RECEIPT_FALLBACK;
+  const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+  if (!Number.isFinite(ms) || ms <= 0) return RECEIPT_FALLBACK;
+  return `Ready in ${formatElapsed(ms)}`;
+}
