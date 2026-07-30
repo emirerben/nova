@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.1.1] — 2026-07-30
+
+### Fixed
+- **The render timer now restarts every time you press Save.** After your first render finished, editing and saving again kept the clock running from where that first render began — a five-minute edit came back reading "40m 32s", the time-left estimate collapsed to "less than a minute…" and stayed there, and the "taking a bit longer than expected" warning fired instantly on every save. The whole progress band was reading the wrong start time. Pressing Save now anchors the clock to that moment, on phones and on desktop, and it does so for every kind of edit: text, style, captions, a new song, overlays, sound effects, the clip timeline, orientation, background-sound balance, and the automatic visual-block pass. Waiting in the queue counts toward the time you see, because you are genuinely waiting.
+- **The progress band no longer stays hidden after you save a second time.** When a render finished, the band collapsed to make room for the video. Editing on the same page brought the timer back but left the band collapsed, so the restarted clock was there but invisible. It reopens now.
+- **A save no longer stops the page from watching for the finished video.** On the public generative page and the onboarding panel, saving an edit made the page stop checking for updates immediately, so the new video only appeared after a manual reload. All three progress surfaces now keep watching until the render actually lands, and give up on their own if one stalls past thirty minutes instead of polling forever.
+- **The "Ready in" stamp no longer shows a negative time.** After a re-render it could read "Ready in -36:-12"; it now falls back to "Your edits are ready" whenever it cannot state an honest duration.
+- **Editing one version while the others are still on their first render no longer resets their clock.** The timer for the renders already in flight is left alone.
+
 ## [0.18.1.0] — 2026-07-29
 
 ### Changed
