@@ -8689,13 +8689,18 @@ def _render_talking_head_variant(
         # Per-user parity-safe knob overrides (Creator Agent M1). Persisted for
         # re-renders (same as _render_generative_variant).
         "user_style_knobs": user_style_knobs or None,
-        # No text-free base cached for talking_head in v1 (the assembler's spine
-        # extraction is the expensive step, not text burn; fast-reburn not yet applied).
+        # Text-free base: uploaded best-effort right after assembly, before the
+        # intro burn (filled in below). Without it the API emits no
+        # `base_video_url`, and the editor falls back to playing the TEXT-BURNED
+        # output while still drawing its own DOM text layer — the intro then
+        # renders twice, once in the pixels and once in the DOM.
         "base_video_path": None,
-        # Text-behind-subject: resolved (overwritten below) but never rendered —
-        # talking_head has no fast-reburn path in v1, so no matte is ever computed
-        # here; a behind_subject overlay burns as plain text (matte=None is a
-        # safe, logged fallback per the Skia renderer's contract).
+        # Text-behind-subject: resolved (overwritten below) but never rendered on
+        # THIS pass — the first render always burns the intro straight onto the
+        # composite, so no matte is computed here and a behind_subject overlay
+        # burns as plain text (matte=None is a safe, logged fallback per the Skia
+        # renderer's contract). A later text edit reaches `_reburn_text_on_base`
+        # via the cached base above, which resolves its own matte.
         "intro_behind_subject": False,
         "subject_matte_path": None,
         # Media-overlay cards (slice 1) — see montage finalize dict for docs.
@@ -8758,6 +8763,32 @@ def _render_talking_head_variant(
             silence_cut_out=silence_cut_out,
         )
         base["silence_cut"] = silence_cut_out.get("summary")
+
+        # Cache the text-free composite BEFORE the intro burn. The editor plays
+        # this base and draws its text elements as a DOM layer on top; with no
+        # base it falls back to the burned output and the intro double-displays
+        # (once in the pixels, once in the DOM). Best-effort, matching the
+        # narrated path below: a failed base upload only costs fast-reburn +
+        # WYSIWYG editing, so it must never fail an otherwise-good render.
+        if os.path.exists(base_path) and os.path.getsize(base_path) > 0:
+            base_gcs = f"generative-jobs/{job_id}/base_{rank}_{variant_id}.mp4"
+            try:
+                upload_public_read(base_path, base_gcs)
+                base["base_video_path"] = base_gcs
+                log.info(
+                    "generative_base_uploaded",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    base_gcs=base_gcs,
+                )
+            except Exception as exc:  # noqa: BLE001 — editing is optional, the render is not
+                log.warning(
+                    "generative_base_upload_failed",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    base_gcs=base_gcs,
+                    error=str(exc)[:MAX_ERROR_DETAIL_LEN],
+                )
 
         final_path = base_path
         if agent_text is not None:

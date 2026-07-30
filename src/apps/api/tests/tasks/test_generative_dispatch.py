@@ -512,6 +512,111 @@ def test_talking_head_success_no_text(monkeypatch, tmp_path):
     assert res["music_track_id"] is None
     assert res["text_mode"] == "none"
     assert res["output_url"].startswith("https://signed/generative-jobs/j/")
+    # A text-free composite IS the base — the editor needs one to play (below).
+    assert res["base_video_path"] == "generative-jobs/j/base_1_talking_head.mp4"
+
+
+def test_talking_head_caches_the_pre_burn_composite_as_base(monkeypatch, tmp_path):
+    """The cached base must be the TEXT-FREE composite, never the burned output.
+
+    Without a base the API emits no `base_video_url`, so EditorCanvas falls back to
+    playing `output_url` — which already has the intro in its pixels — while still
+    drawing its own DOM text layer. The intro then shows TWICE, one copy draggable
+    and one not.
+    """
+    uploads: dict[str, bytes] = {}
+
+    def _assemble(*, output_path, **kw):
+        with open(output_path, "wb") as f:
+            f.write(b"COMPOSITE")
+
+    def _capture(local, gcs):
+        with open(local, "rb") as f:
+            uploads[gcs] = f.read()
+        return f"https://signed/{gcs}"
+
+    def _burn(src, overlays, out, tmpdir, **kw):
+        with open(out, "wb") as f:
+            f.write(b"BURNED")
+
+    import app.pipeline.generative_overlays as go
+    import app.pipeline.probe as probe
+    import app.pipeline.talking_head_assembler as tha
+    import app.pipeline.text_overlay_skia as tos
+    import app.storage as storage
+
+    monkeypatch.setattr(tha, "assemble_talking_head", _assemble, raising=False)
+    monkeypatch.setattr(storage, "upload_public_read", _capture, raising=False)
+    monkeypatch.setattr(tos, "burn_text_overlays_skia", _burn, raising=False)
+    monkeypatch.setattr(
+        probe, "probe_video", lambda p: types.SimpleNamespace(duration_s=8.0), raising=False
+    )
+    monkeypatch.setattr(
+        go, "build_persistent_intro_overlays", lambda **kw: [{"text": "hook"}], raising=False
+    )
+    monkeypatch.setattr(
+        gb,
+        "_resolve_intro_overlay_params",
+        lambda *a, **k: ({"text": "hook", "effect": "static"}, 69, "computed"),
+        raising=False,
+    )
+
+    res = gb._render_talking_head_variant(
+        job_id="j",
+        rank=1,
+        spine_clip_id="c1",
+        clip_metas=[_Meta("c1")],
+        clip_id_to_local={"c1": "/a.mp4"},
+        probe_map={},
+        available_footage_s=10.0,
+        agent_text=types.SimpleNamespace(text="hook", highlight_word=None, word_roles=None),
+        agent_form={},
+        variant_dir=str(tmp_path),
+    )
+
+    assert res["ok"] is True
+    assert res["base_video_path"] == "generative-jobs/j/base_1_talking_head.mp4"
+    # Distinct objects: base = pre-burn pixels, output = post-burn pixels.
+    assert res["video_path"] != res["base_video_path"]
+    assert uploads[res["base_video_path"]] == b"COMPOSITE"
+    assert uploads[res["video_path"]] == b"BURNED"
+
+
+def test_talking_head_base_upload_failure_still_ships_the_render(monkeypatch, tmp_path):
+    # Best-effort contract (mirrors the narrated caption-free base): losing the base
+    # costs fast-reburn + WYSIWYG editing, never the render itself.
+    def _assemble(*, output_path, **kw):
+        with open(output_path, "wb") as f:
+            f.write(b"\x00" * 16)
+
+    def _upload(local, gcs):
+        if "/base_" in gcs:
+            raise RuntimeError("gcs down")
+        return f"https://signed/{gcs}"
+
+    import app.pipeline.talking_head_assembler as tha
+    import app.storage as storage
+
+    monkeypatch.setattr(tha, "assemble_talking_head", _assemble, raising=False)
+    monkeypatch.setattr(storage, "upload_public_read", _upload, raising=False)
+
+    res = gb._render_talking_head_variant(
+        job_id="j",
+        rank=1,
+        spine_clip_id="c1",
+        clip_metas=[_Meta("c1")],
+        clip_id_to_local={"c1": "/a.mp4"},
+        probe_map={},
+        available_footage_s=10.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(tmp_path),
+    )
+
+    assert res["ok"] is True
+    assert res["render_status"] == "ready"
+    assert res["base_video_path"] is None
+    assert res["output_url"].startswith("https://signed/generative-jobs/j/")
 
 
 # ── Voiceover archetype ────────────────────────────────────────────────────────
