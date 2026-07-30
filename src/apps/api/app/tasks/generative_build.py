@@ -2068,6 +2068,7 @@ def _resolve_regen_text(
     persisted_layout: str | None = None,
     persisted_word_roles: list[str] | None = None,
     persisted_behind_subject: bool | None = None,
+    persisted_position: str | None = None,
 ) -> tuple:
     """Return (agent_text, agent_form, text_mode) without running the LLM when possible.
 
@@ -2089,6 +2090,15 @@ def _resolve_regen_text(
     so `_resolve_intro_overlay_params`'s agent-form fallback tier sees it. The
     LLM fall-through branch (4) is NOT folded — a fresh `OverlayFormatMatcherAgent`
     run makes its own behind_subject decision, which must not be clobbered.
+
+    `persisted_position` (from `variant["intro_placement"]["position"]`) follows the
+    same rule. The agent's original position advisory is not otherwise recoverable
+    on a no-LLM branch, so without this fold an intro the matcher placed at "bottom"
+    silently re-centered on the first text edit. Folding it at the ADVISORY tier —
+    not as an override — keeps knobs and a curated set winning, exactly as they did
+    on the first render. Callers pass None for legacy variants AND for the centered
+    default (see `_persisted_intro_position`): `agent_form` then gets no `position`
+    key and resolution is byte-identical.
     """
     import types as _types  # noqa: PLC0415
 
@@ -2111,6 +2121,8 @@ def _resolve_regen_text(
                 "layout": persisted_layout or "linear",
                 "behind_subject": bool(persisted_behind_subject),
             }
+            if persisted_position:
+                agent_form["position"] = persisted_position
             # A text-removed variant ("none" — truthy!) must flip back to
             # "agent_text" when the user supplies new text, or _reburn_text_on_base
             # skips the burn and the edit silently no-ops. Lyrics keep their mode.
@@ -2144,6 +2156,8 @@ def _resolve_regen_text(
             "layout": persisted_layout or "linear",
             "behind_subject": bool(persisted_behind_subject),
         }
+        if persisted_position:
+            agent_form["position"] = persisted_position
         return agent_text, agent_form, "agent_text"
 
     # Fall through: run intro_writer (first render or legacy variant without persisted text).
@@ -4242,6 +4256,10 @@ def _reburn_text_on_base(
         was_sequence = existing.get("intro_mode") == "sequence"
         sequence_patch: dict = {}
         reburn_behind_subject = False
+        # Carried forward unless this reburn resolves its own placement below —
+        # a non-agent_text mode (e.g. an override on a song_text variant) never
+        # reaches the resolver, so the persisted snapshot must survive.
+        reburn_placement = existing.get("intro_placement")
         reburn_matte_path = existing.get("subject_matte_path")
 
         if agent_text is not None and text_mode == "agent_text":
@@ -4276,6 +4294,9 @@ def _reburn_text_on_base(
             # Sticky (pre-gate) decision — must be popped before `params` is ever
             # spread into build_persistent_intro_overlays (not a builder kwarg).
             reburn_behind_subject = params.pop("_bs_pregate", False)
+            reburn_placement = _intro_placement_from_params(
+                params, has_candidates=bool(existing.get("text_placement_candidates"))
+            )
 
             overlays: list[dict] | None = None
             persisted_scenes = existing.get("scenes") or None
@@ -4422,6 +4443,9 @@ def _reburn_text_on_base(
             "intro_layout": (reburn_layout if agent_text else None),
             "intro_word_roles": (reburn_word_roles if agent_text else None),
             "intro_mode": (reburn_mode if agent_text else None),
+            # Always emitted (merge semantics: an absent key keeps the persisted
+            # value) so a placement that just changed can't go stale on the variant.
+            "intro_placement": (reburn_placement if agent_text else None),
             "intro_text_size_px": intro_px if agent_text else existing_size_px,
             "intro_size_source": intro_source if agent_text else existing_size_source,
             # Sticky (pre-gate) decision + cached matte key. remove_text/none mode
@@ -5381,6 +5405,7 @@ def _run_regenerate_variant(
             run_text_agents_fn=lambda: (None, None),  # unreachable: persisted text exists
             persisted_layout=persisted_layout,
             persisted_word_roles=persisted_word_roles,
+            persisted_position=_persisted_intro_position(existing),
         )
         _used_fast_path = False
         fast_created_storage: list[str] = []
@@ -5651,6 +5676,7 @@ def _run_regenerate_variant(
                 persisted_layout=persisted_layout,
                 persisted_word_roles=persisted_word_roles,
                 persisted_behind_subject=existing.get("intro_behind_subject"),
+                persisted_position=_persisted_intro_position(existing),
             )
         else:
             # PERF/TODO: this re-runs the full clip ingest (re-download + re-Gemini
@@ -5726,6 +5752,7 @@ def _run_regenerate_variant(
                 persisted_layout=persisted_layout,
                 persisted_word_roles=persisted_word_roles,
                 persisted_behind_subject=existing.get("intro_behind_subject"),
+                persisted_position=_persisted_intro_position(existing),
             )
 
             # Rhythm-mode quote authoring on a full re-render (same grounding
@@ -7637,6 +7664,10 @@ def _render_generative_variant(
         # that rebuilds a cluster deterministically on re-render (no LLM).
         "intro_layout": None,
         "intro_word_roles": None,
+        # RESOLVED placement snapshot (see `_intro_placement_from_params`). None for
+        # the plain centered intro — the editor's read adapter treats absent/None as
+        # "legacy variant" and keeps its pre-snapshot behavior.
+        "intro_placement": None,
         # Authoritative intro mode (D19): "sequence" | "cluster" | "linear" | None.
         # Replaces the len(overlays)>2 layout inference for readers; the inference
         # survives below ONLY to derive the value for non-sequence renders.
@@ -7908,6 +7939,12 @@ def _render_generative_variant(
             # editorial auto-upgrade lands, else the effective static layout).
             base["intro_mode"] = base["intro_layout"]
             base["intro_word_roles"] = _at_params.get("word_roles")
+            # RESOLVED placement — the editor projects the intro element from this
+            # (absent → it would re-guess "center" and draw a "bottom" hook mid-frame,
+            # or read the masonry candidate fracs the resolver actually declined).
+            base["intro_placement"] = _intro_placement_from_params(
+                _at_params, has_candidates=bool(text_placement_candidates)
+            )
 
         # Propagate the shot-count floor into the recipe so consolidate_slots
         # (template_matcher.py:231-242) doesn't collapse below it. The builders
@@ -8643,6 +8680,8 @@ def _render_talking_head_variant(
         # that rebuilds a cluster deterministically on re-render (no LLM).
         "intro_layout": None,
         "intro_word_roles": None,
+        # RESOLVED placement snapshot — see `_intro_placement_from_params`.
+        "intro_placement": None,
         # Authoritative intro mode (D19). talking_head never renders the
         # transcript-synced sequence in v1, so this is always the static layout.
         "intro_mode": None,
@@ -8769,6 +8808,9 @@ def _render_talking_head_variant(
             base["intro_layout"] = "cluster" if len(overlays) > 2 else "linear"
             base["intro_mode"] = base["intro_layout"]
             base["intro_word_roles"] = params.get("word_roles")
+            # RESOLVED placement — the talking_head intro is the likeliest to sit
+            # off-center (curated sets / the format matcher both return "bottom").
+            base["intro_placement"] = _intro_placement_from_params(params)
 
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError(f"variant {variant_id} produced empty output")
@@ -13108,6 +13150,92 @@ def _resolve_intro_overlay_params(
     return params, intro_px, intro_source
 
 
+# Placement fields resolved by `_resolve_intro_overlay_params` and snapshotted onto
+# the variant under `intro_placement` (see `_intro_placement_from_params`). MUST stay
+# in sync with `text_element._INTRO_PLACEMENT_ADAPTER_KEYS` (the reader) — pinned by
+# test_adapter_reads_every_persisted_placement_key.
+_INTRO_PLACEMENT_KEYS = (
+    "position",
+    "position_x_frac",
+    "position_y_frac",
+    "max_width_frac",
+    "text_anchor",
+    "rotation_deg",
+)
+
+# The plain centered intro — the overwhelming majority of variants. Placement that
+# equals this is persisted as None so those variants keep the exact dict they store
+# today and the read adapter keeps its legacy (pre-`intro_placement`) path.
+# Derived from the key tuple so a new placement field can only be added in one place
+# (a key-set drift would make the equality below unsatisfiable and every centered
+# variant would start persisting a dict).
+_DEFAULT_INTRO_PLACEMENT: dict = {
+    **dict.fromkeys(_INTRO_PLACEMENT_KEYS),
+    "position": "center",
+    "text_anchor": "center",
+}
+
+
+def _persisted_intro_position(existing: dict) -> str | None:
+    """Named NON-CENTER position from a variant's `intro_placement` snapshot.
+
+    None for legacy variants (no snapshot) AND for "center", so the re-render
+    resolution stays byte-identical for both.
+
+    Returning "center" here would NOT be a harmless no-op: the caller folds this
+    into `agent_form["position"]`, which becomes the `advisory` that
+    `resolve_overlay_style` uses to fill any key the curated set leaves null. A set
+    with a null `intro.position` would then resolve `style["position"] == "center"`,
+    which flips `has_explicit_position` True in `_resolve_intro_overlay_params` and
+    SKIPS the placement-candidate branch — silently dropping a masonry intro's
+    whitespace-pocket fracs on re-render.
+    """
+    placement = existing.get("intro_placement")
+    if not isinstance(placement, dict):
+        return None
+    position = placement.get("position")
+    if not isinstance(position, str) or position == _DEFAULT_INTRO_PLACEMENT["position"]:
+        return None
+    return position or None
+
+
+def _intro_placement_from_params(params: dict, *, has_candidates: bool = False) -> dict | None:
+    """Snapshot the RESOLVED intro placement for persistence on the variant.
+
+    `_resolve_intro_overlay_params` folds knobs > curated set > agent advisory into
+    one placement, but nothing ever wrote it back — so the editor's read adapter
+    (`_base_text_elements_for_variant`) had to re-guess it and always landed on
+    `build_intro_overlay`'s `_DEFAULT_POSITION`. A curated set or an
+    `overlay_format_matcher` run that picked "bottom" burned at the bottom while
+    the editor drew the element at mid-frame.
+
+    Persisting it also lets a no-LLM re-render restore a non-default position:
+    `_resolve_regen_text` reconstructs `agent_form` WITHOUT the agent's original
+    position advisory, so without this snapshot the first text edit silently
+    re-centered a "bottom" intro.
+
+    Returns None for the plain centered placement — see `_DEFAULT_INTRO_PLACEMENT`.
+
+    EXCEPT when `has_candidates`: a variant carrying `text_placement_candidates`
+    has something for the adapter's legacy fallback to disagree with, so even a
+    plain centered resolution must be recorded. Every shipped style set pins
+    `intro.position="center"`, which makes `has_explicit_position` True and the
+    resolver SKIP the candidate branch — so a masonry variant burns dead-center
+    while the adapter, seeing no snapshot, reads the candidate's whitespace-pocket
+    fracs and draws the hook somewhere else entirely. Finalization hides this on
+    the first render (it strips `text_placement_candidates`), but a re-render
+    re-adds them and nothing strips them again.
+    """
+    placement = {key: params.get(key) for key in _INTRO_PLACEMENT_KEYS}
+    if not placement["position"]:
+        placement["position"] = "center"
+    if not placement["text_anchor"]:
+        placement["text_anchor"] = "center"
+    if placement == _DEFAULT_INTRO_PLACEMENT and not has_candidates:
+        return None
+    return placement
+
+
 def _build_unplaced_shots(
     unplaced_ids: list[str],
     *,
@@ -13394,6 +13522,11 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "intro_layout": r.get("intro_layout"),
                     "intro_word_roles": r.get("intro_word_roles"),
                     "intro_mode": r.get("intro_mode"),
+                    # RESOLVED intro placement — MUST survive finalization or the
+                    # editor re-guesses "center" and draws an off-center hook at
+                    # mid-frame on the FIRST render (the exact bug the snapshot
+                    # exists to fix). Guard: test_finalize_job_preserves_intro_placement.
+                    "intro_placement": r.get("intro_placement"),
                     "transcript": r.get("transcript"),
                     "scenes": r.get("scenes"),
                     "sequence_base_size_px": r.get("sequence_base_size_px"),
