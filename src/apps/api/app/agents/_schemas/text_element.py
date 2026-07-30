@@ -625,6 +625,17 @@ def coerce_text_elements(raw: list | None) -> list[TextElement] | None:
 # ---------------------------------------------------------------------------
 
 
+def _renderer_position_y(burn_dict: dict) -> float:
+    """The y-fraction the renderer uses for this burn dict's named position.
+
+    Mirrors `_resolve_anchor`'s fallback in text_overlay_skia.py; imported lazily
+    so this schema module stays free of the render stack.
+    """
+    from app.pipeline.text_overlay import _POSITION_Y  # noqa: PLC0415
+
+    return float(_POSITION_Y.get(burn_dict.get("position", "center"), 0.5))
+
+
 def _burn_dict_position(
     burn_dict: dict,
 ) -> tuple[str, float | None, float | None]:
@@ -636,8 +647,14 @@ def _burn_dict_position(
     x_raw = burn_dict.get("position_x_frac")
     y_raw = burn_dict.get("position_y_frac")
     if x_raw is not None or y_raw is not None:
+        # A HALF-pinned overlay must fall back the way the renderer does, not to
+        # bare 0.5. Curated sets pin x only (`word_reveal`/`typewriter`/`ai_answer`
+        # set position_x_frac=0.06 with a null y) and `_resolve_anchor` then takes
+        # y from the named position — _POSITION_Y["center"] is 0.45, not 0.5. With
+        # 0.5 hardcoded here the editor drew such intros 0.05*H below the burn, and
+        # saving baked that offset in as an explicit frac.
         x = float(x_raw) if x_raw is not None else 0.5
-        y = float(y_raw) if y_raw is not None else 0.5
+        y = float(y_raw) if y_raw is not None else _renderer_position_y(burn_dict)
         return "custom", x, y
 
     burn_pos = burn_dict.get("position", "center")
@@ -825,6 +842,35 @@ def _text_window(v: dict, *, default_end: float = _ADAPTER_HOLD_TO_END_S) -> tup
 
 def _identity_for_source(source: str, key: str) -> str:
     return f"{source}:{key}"
+
+
+# Placement fields this adapter reads back off ``variant["intro_placement"]``.
+# MUST stay in sync with `generative_build._INTRO_PLACEMENT_KEYS` (the writer) —
+# a key the writer snapshots but this list omits is silently dropped from the
+# editor's projection. Pinned by test_adapter_reads_every_persisted_placement_key.
+_INTRO_PLACEMENT_ADAPTER_KEYS: tuple[str, ...] = (
+    "position",
+    "position_x_frac",
+    "position_y_frac",
+    "max_width_frac",
+    "text_anchor",
+    "rotation_deg",
+)
+
+# Keys whose absence must fall back to the renderer default rather than None.
+_INTRO_PLACEMENT_FALLBACKS: dict[str, str] = {"position": "center", "text_anchor": "center"}
+
+
+def _first_placement_candidate(v: dict) -> dict | None:
+    """First entry of ``text_placement_candidates`` — the pre-``intro_placement``
+    fallback for reconstructing where a variant's intro was burned.
+
+    Narrowed here rather than at the call site: the list comes off JSONB and can
+    hold any JSON type.
+    """
+    candidates = v.get("text_placement_candidates") or []
+    first = candidates[0] if candidates else None
+    return first if isinstance(first, dict) else None
 
 
 def _legacy_sequence_scene_key(raw: TextElement | dict) -> str | None:
@@ -1302,9 +1348,23 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
     style_kwargs: dict = {}
     if intro_text_size_px is not None:
         style_kwargs["text_size_px"] = int(intro_text_size_px)
-    placement_candidates = v.get("text_placement_candidates") or []
-    first_candidate = placement_candidates[0] if placement_candidates else None
-    if isinstance(first_candidate, dict):
+    placement = v.get("intro_placement")
+    if isinstance(placement, dict) and placement:
+        # The render's RESOLVED placement (knobs > curated set > agent advisory),
+        # snapshotted by `_intro_placement_from_params`. Authoritative: it already
+        # records whether the placement-candidate branch won, so it supersedes
+        # `text_placement_candidates`. Absent (legacy variant, or the plain centered
+        # default) → fall through to the candidate branch below, unchanged.
+        for key in _INTRO_PLACEMENT_ADAPTER_KEYS:
+            value = placement.get(key)
+            fallback = _INTRO_PLACEMENT_FALLBACKS.get(key)
+            # Truthiness fallback applies ONLY to the two string keys. The numeric
+            # fracs must pass through untouched: 0.0 is meaningful, and coercing it
+            # away re-centres the block. A left-edge `position_x_frac=0.0` is
+            # reachable from the knob route (ge=0.0), and `_rotation_for_empty_pocket`
+            # returns `rotation_deg=0.0` for every non-portrait masonry pocket.
+            style_kwargs[key] = (value or fallback) if fallback is not None else value
+    elif (first_candidate := _first_placement_candidate(v)) is not None:
         style_kwargs.update(
             {
                 "position": "center",

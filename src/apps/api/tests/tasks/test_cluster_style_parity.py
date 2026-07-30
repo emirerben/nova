@@ -637,3 +637,50 @@ def test_landscape_variant_projects_on_the_landscape_canvas():
     # Unset orientation keeps the portrait default (back-compat unchanged).
     unset = text_elements_for_variant(common)
     assert [e.y_frac for e in unset] == [e.y_frac for e in portrait]
+
+
+# ── Merge seam: both intro snapshots on one variant ──────────────────────────────
+
+
+def test_cluster_style_and_intro_placement_snapshots_compose():
+    """A variant can carry BOTH `intro_placement` (#753) and `intro_cluster_style`.
+
+    They land in the same adapter branch from opposite directions: placement fills
+    `style_kwargs` (position / fracs / anchor), the marker selects the cluster
+    style profile. For a CLUSTER the engine owns per-block geometry and overrides
+    the incoming position — on the render side too (`_build_cluster_intro_overlays`
+    sets `position="center"` plus explicit fracs per block), so parity holds and a
+    placement snapshot must NOT shift an editorial cluster's blocks.
+
+    Neither PR's own suite exercises the combined state; this pins the seam.
+    """
+    base = {
+        "intro_text": "this habit changed everything",
+        "intro_layout": "cluster",
+        "intro_mode": "cluster",
+        "intro_effect": "fade-in",
+        "intro_text_size_px": 64,
+        "text_mode": "agent_text",
+        "intro_cluster_style": "editorial",
+    }
+    placement = {
+        "position": "bottom",
+        "position_x_frac": None,
+        "position_y_frac": None,
+        "max_width_frac": None,
+        "text_anchor": "center",
+        "rotation_deg": None,
+    }
+
+    cluster_only = text_elements_for_variant(base)
+    both = text_elements_for_variant({**base, "intro_placement": placement})
+    assert cluster_only, "fixture must project a cluster"
+
+    def _geometry(elements):
+        return [(e.text, e.size_px, e.font_family, e.x_frac, e.y_frac) for e in elements]
+
+    assert _geometry(both) == _geometry(cluster_only), (
+        "a placement snapshot must not move an editorial cluster's blocks"
+    )
+    # And the marker still selects the editorial profile with placement present.
+    assert [e.text for e in both] == ["this", "habit changed", "everything"]

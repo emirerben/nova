@@ -566,3 +566,66 @@ cover re-renders the way they cover first renders, the 30-minute frontend
 ceiling becomes a backstop rather than the only bound, and `phase_log` needs an
 origin-aware reader (it will carry entries written against two `started_at`
 origins).
+
+## [2026-07-30] Intro placement: persist what the render resolved; readers mirror the renderer (v0.18.1.3)
+
+Two bugs with one shape — something downstream of the burn re-derived a value
+the render had already resolved, and guessed wrong. Mechanics live in
+`docs/pipelines/generative.md` ("Intro placement snapshot"); the reusable rules
+are here.
+
+**1. The resolved placement was never written down.**
+`_resolve_intro_overlay_params` folds knobs > curated set > agent advisory into
+one placement, but nothing persisted the result. The editor's read adapter
+(`_base_text_elements_for_variant`) had to reconstruct it and always landed on
+`generative_overlays._DEFAULT_POSITION` — so a curated set or an
+`overlay_format_matcher` run that chose `bottom` burned at the bottom while the
+editor drew the hook mid-frame, and saving baked the wrong spot in.
+`_intro_placement_from_params` now snapshots position / fracs / max_width /
+anchor / rotation onto `variants[i]["intro_placement"]`.
+
+- **`None` for the plain centered placement.** Most variants are centered;
+  persisting a dict for all of them would change the stored shape of every
+  variant to buy nothing, since the adapter's legacy path is already right
+  there. The one exception is a variant carrying `text_placement_candidates` —
+  the legacy fallback reads those candidate fracs, so even a centered
+  resolution has something to disagree with and must be recorded.
+- **Fold the persisted position back at the ADVISORY tier, and only when it is
+  not "center".** A no-LLM re-render rebuilds `agent_form` without the agent's
+  original advisory, so without the fold the first text edit silently
+  re-centered a `bottom` intro. Folding it as an advisory (not an override)
+  keeps knobs and curated sets winning exactly as they did on the first render.
+  Folding "center" is deliberately suppressed rather than treated as a harmless
+  no-op: it would resolve `style["position"] == "center"`, flip
+  `has_explicit_position` True, and make the resolver skip the
+  placement-candidate branch — silently dropping a masonry intro's
+  whitespace-pocket fracs on re-render.
+
+**2. `_finalize_job`'s allowlist is a trap worth stating once.** Finalization
+rebuilds each variant from an explicit key list, so a new per-variant key is
+DELETED on the first render unless it is added there. This is the third time
+the repo has paid for rediscovering it (plans/007 autoplace, plans/010 silence
+cut, now `intro_placement`) and it fails in the worst way: the feature works
+end-to-end in the render, then the value vanishes at the finish line. Any PR
+adding a variant key adds it to the allowlist AND pins it with a
+`test_finalize_job_preserves_*` guard — here,
+`test_finalize_job_preserves_intro_placement`.
+
+**3. A burn-dict reader must mirror the renderer's fallback table, not invent
+0.5.** The renderer-parity invariant (2026-05 #296/#297) says every burn-dict
+field must be honored by both renderers. This is its mirror image: anything
+that reads a burn dict back — the editor adapters, not just the renderers — has
+to fall back the way `_resolve_anchor` does. `_burn_dict_position` hardcoded
+`y = 0.5` for a HALF-pinned overlay (x set, y null), but `_POSITION_Y["center"]`
+is 0.45 and `_POSITION_Y["bottom"]` is 0.85. `_burn_dict_position` is shared, so
+the silent second victim was lyric seeds: `word_reveal`, `typewriter`,
+`ai_answer`, and `lyric_word_pop_punchy` all pin x with a null y, and
+`GET .../lyric-seeds` is a PERSIST path, so the invented y got saved. Guard:
+`test_seed_elements_half_pinned_style_set_uses_the_renderers_y`.
+
+**4. Do not truthiness-coerce a placement frac.** `0.0` is meaningful and
+reachable — `position_x_frac` is `ge=0.0` on the knob route and
+`_rotation_for_empty_pocket` returns `rotation_deg=0.0` for every non-portrait
+masonry pocket. Coercing a falsy frac to a default re-centers the block. The
+`value or fallback` pattern in the adapter applies to the two STRING keys
+(`position`, `text_anchor`) only.
