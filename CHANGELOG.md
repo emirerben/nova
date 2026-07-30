@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.1.2] — 2026-07-30
+
+### Fixed
+- **Your opening line no longer shows up twice in the editor.** On single-speaker edits, opening the editor showed the same hook text twice: once in the middle of the frame where you could select and drag it, and once smaller and lower down where clicking did nothing. The lower copy was baked into the video's pixels. Every other edit style keeps a spare copy of the footage from before the text is drawn on, and the editor plays that; this one never kept one, so the editor had to play the finished video and then draw your editable text on top of it — two copies of the same words, one real and one a picture. Nova now keeps that clean copy, so you see one line and it is the one you can move. Text edits on these videos also stop re-cutting the whole thing: they redraw the text onto the saved copy instead, which is far quicker.
+
 ## [0.18.1.1] — 2026-07-30
 
 ### Fixed
