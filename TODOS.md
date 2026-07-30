@@ -1438,6 +1438,50 @@ Grouped by area; none block ship.
 - **T-REV-7 (P3)** — DRY: `isUnavailableError` duplicated verbatim in SuggestionRail + AssetPool (both key on a backend 404 detail string — rewording it silently breaks feature-off detection); the pool-cap COUNT query triplicated across 3 pool routes; the fullscreen-constraint call site (variant lookup + ValueError→422) duplicated in generative_jobs.py + plan_items.py; FE fullscreen warning thresholds (720, 2.5) hand-duplicate backend constants with no sync note. Consolidate + add cross-file sync comments.
 - **T-REV-8 (P3)** — stale PR0-era docstrings contradict shipped code (register_pool_asset "dispatch lands in PR1a" but it dispatches now; delete_pool_asset "PR0 has no suggestions yet"). `_persist_variant_fields` docstring promises a return all 4 callers ignore. Refresh.
 
+### Intro-placement snapshot — deferrals (from the `intro_placement` review, 2026-07-30)
+
+The shipped change persists the resolved intro placement on the variant so the editor
+draws the hook where the burn put it. Four findings from the review were consciously
+deferred; the fix itself is complete and guarded.
+
+- **T-PLACE-1 (P1)** — no test executes the four lines that actually persist the
+  snapshot. `tests/tasks/test_intro_placement_parity.py` calls
+  `_resolve_intro_overlay_params` + `_intro_placement_from_params` directly, so
+  deleting `base["intro_placement"] = ...` in `_render_generative_variant` /
+  `_render_talking_head_variant`, the `reburn_placement` assignments in
+  `_reburn_text_on_base`, or the three `persisted_position=_persisted_intro_position(existing)`
+  kwargs in `_run_regenerate_variant` leaves the whole suite green. Only
+  `test_finalize_job_preserves_intro_placement` drives real production code. Needs the
+  render mocking that `tests/tasks/test_generative_build.py` already stands up. Use a
+  RECORDING spy, not a raising one — these call sites sit inside fail-open orchestration
+  (see the `raising-spy-swallowed-by-fail-open` learning). **Effort:** M (CC: ~25 min)
+
+- **T-PLACE-2 (P2)** — a failed re-render persists geometry for pixels that were never
+  produced. `_render_generative_variant` sets `base["intro_placement"]` in the early
+  param block (before assembly); the `except` path returns `{**base, "ok": False}` and
+  `_run_regenerate_variant`'s failure branch keeps every non-None key. Switch style set
+  → FFmpeg/Gemini fails → the new placement lands while `video_path` still points at the
+  previous render, so the editor draws over stale pixels. Pre-existing class
+  (`style_set_id`, `intro_text_size_px` already behave this way), but geometry is the
+  visible member. Fix: commit geometry with the pixels, not with the attempt.
+  **Effort:** S (CC: ~10 min)
+
+- **T-PLACE-3 (P3)** — remove-then-retype loses the position while plain retype keeps it.
+  `_reburn_text_on_base` returns `"intro_placement": (reburn_placement if agent_text else None)`,
+  so a `remove_text` reburn erases the snapshot; re-adding text then resolves back to
+  center. Same user intent expressed in two clicks, opposite result. Self-consistent
+  (editor and pixels both center), so a contract inconsistency rather than a desync —
+  `test_override_text_keeps_the_persisted_position` pins the other half.
+  **Effort:** S (CC: ~5 min)
+
+- **T-PLACE-4 (P2)** — `_finalize_job`'s allowlist also drops `intro_behind_subject`,
+  `subject_matte_path`, and `text_placement_candidates` (verified by AST walk over
+  `_finalize_job`, lines 13372-13562). `intro_placement` was added to the allowlist in
+  this change; the other three are the same bug class and were left alone. Each needs its
+  own reachability check before adding — `text_placement_candidates` in particular is what
+  the editor's legacy projection falls back to, so preserving it would make the declined-
+  candidate divergence permanent rather than fixing it. **Effort:** M (CC: ~20 min)
+
 ### Frontend / design (informational)
 - **T-REV-10 (P3)** — pre-existing (flagged because the lane is now the suggestion showcase): manual pip chips cycle a rainbow TRACK_COLORS palette starting violet #8B5CF6 (AI-slop signal per DESIGN.md); consider a calmer palette.
 - **T-REV-11 (P3)** — lost-update asymmetry: the autoplace TASK takes row locks for assembly_plan writes, but the 4 new suggestion ROUTES do read-modify-write without with_for_update (a concurrent manual edit + task write can lose one). Low frequency; add row locks to the route writers if it surfaces.

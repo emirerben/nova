@@ -29,6 +29,22 @@ Net-new render behavior:
   text editor gates on `intro_layout == "cluster"` (server reburn instead of local
   preview). Kill switch: `GENERATIVE_CLUSTER_INTRO_ENABLED`.
 
+### Intro placement snapshot (`intro_placement`)
+
+`_resolve_intro_overlay_params` folds knobs > curated set > agent advisory into one
+placement; `_intro_placement_from_params` snapshots the resolved
+position/fracs/max_width/anchor/rotation onto the variant so the editor's read
+adapter (`_base_text_elements_for_variant`) projects the element where the burn
+actually put it — it used to re-guess and always land on "center", drawing a
+`bottom` hook at mid-frame. `None` for the plain centered placement (the majority),
+which keeps those variants on the legacy projection path byte-identically. A no-LLM
+re-render folds the persisted **non-center** position back in at the ADVISORY tier
+(`_persisted_intro_position` → `_resolve_regen_text`), so a text edit can't silently
+re-center it; folding "center" is deliberately suppressed because it would flip
+`has_explicit_position` and drop masonry placement candidates. The key must stay in
+`_finalize_job`'s allowlist and in sync with `_INTRO_PLACEMENT_ADAPTER_KEYS` —
+both pinned by `tests/tasks/test_intro_placement_parity.py`.
+
 ## Three variants
 
 - `song_lyrics` — matched song + its lyrics
