@@ -136,15 +136,22 @@ def test_user_style_knob_position_reaches_the_editor():
     assert _geometry(_projected(_variant(placement, intro_px))) == _geometry(burned)
 
 
-def test_placement_candidate_fracs_reach_the_editor():
-    """Masonry whitespace placement: explicit fracs, not a named position."""
+@pytest.mark.parametrize("rotation_deg", [90.0, 0.0])
+def test_placement_candidate_fracs_reach_the_editor(rotation_deg):
+    """Masonry whitespace placement: explicit fracs, not a named position.
+
+    `rotation_deg=0.0` is the COMMON case — `_rotation_for_empty_pocket` only
+    returns 90.0 for a genuinely portrait-shaped pocket. A truthiness check on
+    the way back out drops it (and any `position_x_frac=0.0`), silently
+    re-centring the block.
+    """
     candidates = [
         {
             "source": "masonry_whitespace",
             "x_frac": 0.1468,
             "y_frac": 0.4979,
             "max_width_frac": 0.64,
-            "rotation_deg": 90.0,
+            "rotation_deg": rotation_deg,
         }
     ]
     burned, placement, intro_px = _render(
@@ -161,6 +168,23 @@ def test_placement_candidate_fracs_reach_the_editor():
 
     legacy = _variant(None, intro_px, text_placement_candidates=candidates)
     assert _geometry(_projected(variant)) == _geometry(_projected(legacy))
+
+
+def test_zero_valued_fracs_survive_the_projection():
+    """0.0 is a position, not an absence. `position_x_frac=0.0` pins the left
+    edge and is reachable from the knob route (`ge=0.0`); dropping it re-centres
+    the block at 0.5 and moves the hook half a frame."""
+    placement = {
+        "position": "center",
+        "position_x_frac": 0.0,
+        "position_y_frac": 0.0,
+        "max_width_frac": None,
+        "text_anchor": "center",
+        "rotation_deg": 0.0,
+    }
+    element = text_elements_for_variant(_variant(placement, _SIZE_PX))[0]
+    assert (element.x_frac, element.y_frac) == (0.0, 0.0)
+    assert element.rotation_deg == 0.0
 
 
 @pytest.mark.parametrize("style_set_id", ["travel_editorial", "lifestyle_clean"])

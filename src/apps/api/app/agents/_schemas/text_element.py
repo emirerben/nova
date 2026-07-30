@@ -1306,7 +1306,13 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
         # default) → fall through to the candidate branch below, unchanged.
         for key in _INTRO_PLACEMENT_ADAPTER_KEYS:
             value = placement.get(key)
-            style_kwargs[key] = value or _INTRO_PLACEMENT_FALLBACKS.get(key)
+            fallback = _INTRO_PLACEMENT_FALLBACKS.get(key)
+            # Truthiness fallback applies ONLY to the two string keys. The numeric
+            # fracs must pass through untouched: 0.0 is meaningful, and coercing it
+            # away re-centres the block. A left-edge `position_x_frac=0.0` is
+            # reachable from the knob route (ge=0.0), and `_rotation_for_empty_pocket`
+            # returns `rotation_deg=0.0` for every non-portrait masonry pocket.
+            style_kwargs[key] = (value or fallback) if fallback is not None else value
     elif (first_candidate := _first_placement_candidate(v)) is not None:
         style_kwargs.update(
             {
