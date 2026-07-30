@@ -3932,7 +3932,10 @@ def _reburn_text_on_base(
         build_persistent_intro_overlays,
         build_sequence_overlays,
     )
-    from app.pipeline.intro_cluster import EDITORIAL_STYLE  # noqa: PLC0415
+    from app.pipeline.intro_cluster import (  # noqa: PLC0415
+        cluster_style_marker,
+        resolve_cluster_style,
+    )
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
@@ -4241,6 +4244,10 @@ def _reburn_text_on_base(
         editorial_enabled = bool(getattr(settings, "editorial_sequence_enabled", True))
         was_sequence = existing.get("intro_mode") == "sequence"
         sequence_patch: dict = {}
+        # Set only when this reburn rebuilds the STATIC intro (see below). Empty
+        # on the sequence-rebuild and remove_text paths so the persisted marker
+        # survives untouched — same merge semantics as `sequence_patch`.
+        cluster_style_patch: dict = {}
         reburn_behind_subject = False
         reburn_matte_path = existing.get("subject_matte_path")
 
@@ -4316,40 +4323,24 @@ def _reburn_text_on_base(
                     # skip it AND dodge copy-through detection — textless ship).
                     overlays = None
             if overlays is None:
-                _has_cluster_overrides = any(
-                    [
-                        cluster_hero_font_override,
-                        cluster_body_font_override,
-                        cluster_accent_font_override,
-                        cluster_hero_size_px_override,
-                        cluster_body_size_px_override,
-                        cluster_accent_size_px_override,
-                    ]
+                # Sequence-eligible fallback keeps PR #508's editorial restyle;
+                # explicit opt-outs (layout/text edits) use the legacy static
+                # cluster path so Slice 3a's registry pairing owns the faces.
+                _reburn_cs = resolve_cluster_style(
+                    editorial=editorial_enabled and sequence_allowed,
+                    hero_font=cluster_hero_font_override,
+                    body_font=cluster_body_font_override,
+                    accent_font=cluster_accent_font_override,
+                    hero_size_px=cluster_hero_size_px_override,
+                    body_size_px=cluster_body_size_px_override,
+                    accent_size_px=cluster_accent_size_px_override,
                 )
-                if editorial_enabled and sequence_allowed and _has_cluster_overrides:
-                    _reburn_cs: dict | None = dict(EDITORIAL_STYLE)
-                    if cluster_hero_font_override:
-                        _reburn_cs["hero_font"] = cluster_hero_font_override
-                    if cluster_body_font_override:
-                        _reburn_cs["body_font"] = cluster_body_font_override
-                    if cluster_accent_font_override:
-                        _reburn_cs["accent_font"] = cluster_accent_font_override
-                    if cluster_hero_size_px_override:
-                        _reburn_cs["hero_size_px_override"] = cluster_hero_size_px_override
-                    if cluster_body_size_px_override:
-                        _reburn_cs["connector_size_px_override"] = cluster_body_size_px_override
-                    if cluster_accent_size_px_override:
-                        _reburn_cs["closer_size_px_override"] = cluster_accent_size_px_override
-                elif editorial_enabled and sequence_allowed:
-                    _reburn_cs = EDITORIAL_STYLE  # type: ignore[assignment]
-                else:
-                    _reburn_cs = None
+                # Snapshot for the read adapter (merge-patch: only stamped when
+                # this reburn actually rebuilt the static intro).
+                cluster_style_patch = {"intro_cluster_style": cluster_style_marker(_reburn_cs)}
                 overlays = build_persistent_intro_overlays(
                     reveal_window_s=reveal_window_s,
                     beats=[],  # even-split reveal; talking-head precedent
-                    # Sequence-eligible fallback keeps PR #508's editorial restyle.
-                    # Explicit opt-outs (layout/text edits) use the legacy static
-                    # cluster path so Slice 3a's registry pairing owns the faces.
                     cluster_style=_reburn_cs,
                     start_s=intro_start_s_override,
                     end_s=intro_end_s_override,
@@ -4456,6 +4447,7 @@ def _reburn_text_on_base(
             # transcript/scenes only appear here when they must change (merge
             # semantics: absent keys keep the persisted values).
             **sequence_patch,
+            **cluster_style_patch,
         }
 
 
@@ -7695,6 +7687,13 @@ def _render_generative_variant(
         "intro_cluster_hero_size_px": cluster_hero_size_px_override,
         "intro_cluster_body_size_px": cluster_body_size_px_override,
         "intro_cluster_accent_size_px": cluster_accent_size_px_override,
+        # Which style profile the static intro was actually BURNED with —
+        # "editorial" | "legacy". Overwritten by `_apply_static_layout` once
+        # the intro is built; stays None for renders that build no static
+        # intro (sequence, lyrics, footage-only). The read adapter needs this
+        # because the decision also depends on `allow_sequence`, a render-time
+        # kwarg no other persisted field records. None/absent == legacy.
+        "intro_cluster_style": None,
         "lyrics_enabled": effective_lyrics_enabled,
         "lyrics_available": lyrics_available,
         "lyric_line_overrides": lyric_line_overrides or None,
@@ -8223,7 +8222,10 @@ def _render_generative_variant(
             from app.pipeline.generative_overlays import (  # noqa: PLC0415
                 build_persistent_intro_overlays,
             )
-            from app.pipeline.intro_cluster import EDITORIAL_STYLE  # noqa: PLC0415
+            from app.pipeline.intro_cluster import (  # noqa: PLC0415
+                cluster_style_marker,
+                resolve_cluster_style,
+            )
             from app.pipeline.probe import probe_video  # noqa: PLC0415
             from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
@@ -8374,39 +8376,22 @@ def _render_generative_variant(
                         **_canvas_kwargs(canvas),
                     )
 
+            # Static intro (cluster or linear) style. Sequence-eligible fallback
+            # keeps PR #508's editorial restyle; explicit opt-outs (layout/text
+            # edits) use the legacy static cluster path so Slice 3a's registry
+            # pairing owns the faces. Resolved ONCE here — `_apply_static_layout`
+            # stamps the matching marker so the read adapter can rebuild it.
+            _sio_cs = resolve_cluster_style(
+                editorial=editorial_enabled and allow_sequence,
+                hero_font=cluster_hero_font_override,
+                body_font=cluster_body_font_override,
+                accent_font=cluster_accent_font_override,
+                hero_size_px=cluster_hero_size_px_override,
+                body_size_px=cluster_body_size_px_override,
+                accent_size_px=cluster_accent_size_px_override,
+            )
+
             def _static_intro_overlays() -> list[dict]:
-                # Static intro (cluster or linear). Sequence-eligible fallback
-                # keeps PR #508's editorial restyle; explicit opt-outs
-                # (layout/text edits) use the legacy static cluster path so
-                # Slice 3a's registry pairing owns the faces.
-                _has_sio_overrides = any(
-                    [
-                        cluster_hero_font_override,
-                        cluster_body_font_override,
-                        cluster_accent_font_override,
-                        cluster_hero_size_px_override,
-                        cluster_body_size_px_override,
-                        cluster_accent_size_px_override,
-                    ]
-                )
-                if editorial_enabled and allow_sequence and _has_sio_overrides:
-                    _sio_cs: dict | None = dict(EDITORIAL_STYLE)
-                    if cluster_hero_font_override:
-                        _sio_cs["hero_font"] = cluster_hero_font_override
-                    if cluster_body_font_override:
-                        _sio_cs["body_font"] = cluster_body_font_override
-                    if cluster_accent_font_override:
-                        _sio_cs["accent_font"] = cluster_accent_font_override
-                    if cluster_hero_size_px_override:
-                        _sio_cs["hero_size_px_override"] = cluster_hero_size_px_override
-                    if cluster_body_size_px_override:
-                        _sio_cs["connector_size_px_override"] = cluster_body_size_px_override
-                    if cluster_accent_size_px_override:
-                        _sio_cs["closer_size_px_override"] = cluster_accent_size_px_override
-                elif editorial_enabled and allow_sequence:
-                    _sio_cs = EDITORIAL_STYLE  # type: ignore[assignment]
-                else:
-                    _sio_cs = None
                 return build_persistent_intro_overlays(
                     reveal_window_s=reveal_window_s,
                     beats=beats,
@@ -8423,6 +8408,11 @@ def _render_generative_variant(
                 effective = "cluster" if len(static_overlays) > 2 else "linear"
                 base["intro_layout"] = effective
                 base["intro_mode"] = effective
+                # Snapshot of the style these overlays were built with, so the
+                # read adapter projects the same blocks/faces/sizes/positions.
+                # Stamped for linear too — harmless (the linear path ignores
+                # cluster_style) and it keeps a later cluster edit honest.
+                base["intro_cluster_style"] = cluster_style_marker(_sio_cs)
                 base["transcript"] = None
                 base["scenes"] = None
                 base["sequence_base_size_px"] = None
@@ -13425,6 +13415,19 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "intro_layout": r.get("intro_layout"),
                     "intro_word_roles": r.get("intro_word_roles"),
                     "intro_mode": r.get("intro_mode"),
+                    # Which style profile the static intro was BURNED with, plus
+                    # the per-role pins that patched it. MUST survive or the read
+                    # adapter rebuilds the LEGACY cluster for an editorially-
+                    # rendered variant — wrong block count, sizes, faces and y
+                    # positions in the editor, on every FIRST render. Pinned by
+                    # test_finalize_job_preserves_cluster_style.
+                    "intro_cluster_style": r.get("intro_cluster_style"),
+                    "intro_cluster_hero_font": r.get("intro_cluster_hero_font"),
+                    "intro_cluster_body_font": r.get("intro_cluster_body_font"),
+                    "intro_cluster_accent_font": r.get("intro_cluster_accent_font"),
+                    "intro_cluster_hero_size_px": r.get("intro_cluster_hero_size_px"),
+                    "intro_cluster_body_size_px": r.get("intro_cluster_body_size_px"),
+                    "intro_cluster_accent_size_px": r.get("intro_cluster_accent_size_px"),
                     "transcript": r.get("transcript"),
                     "scenes": r.get("scenes"),
                     "sequence_base_size_px": r.get("sequence_base_size_px"),
