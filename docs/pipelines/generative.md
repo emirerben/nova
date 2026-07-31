@@ -108,6 +108,8 @@ above; v2 failures fail open to a standard subtitled render with receipts.
 
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery
   task
+- `src/apps/api/app/pipeline/look_presets.py` — canonical validation and shared
+  FFmpeg graph for fixed source-media looks; `none` is an exact bypass.
 - `src/apps/api/app/pipeline/generative_overlays.py` — intro overlay builder
 - `src/apps/web/src/app/generative/` + `admin/generative/` — public result UI + admin
   dashboard
@@ -263,6 +265,17 @@ AI's assembly decisions, not pixels.
   override, persisted by the route pre-enqueue under the `_update_variant_entry` row-lock
   pattern). Slots key on `clip_index` into `all_candidates["clip_paths"]` — matcher
   clip_ids are Gemini-ref-derived and unstable. Windows are post-resolution values.
+- **Source-media look:** each slot carries `look_preset: "none" |
+  "stadium_diffusion"`. Stadium Diffusion is one fixed whole-slot treatment with no
+  strength controls. Missing legacy values resolve to `none`; an older client that omits
+  the field preserves the persisted value, explicit `none` clears it, and unknown or null
+  values are rejected. Reorder and source swap keep the slot value, split copies it to
+  both halves, and new slots default to `none`.
+- **Render ordering:** the shared `look_presets.py` graph runs after HDR normalization,
+  output crop, and the recipe color hint, but before grids, visual blocks, authored text,
+  captions, media overlays, and sound effects. Both multi-pass `reframe_and_export` and
+  single-pass assembly call the same graph, so stills and videos get the treatment while
+  graphics stay sharp.
 - **Override render:** `regenerate_generative_variant(..., timeline_override=...)` builds
   exact-window `AssemblyStep`s and skips `match()`, `consolidate_slots`, and the entire
   Gemini leg (download + probe only). `exact_window` slots in `_plan_slots` reuse the
