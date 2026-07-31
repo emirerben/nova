@@ -58,6 +58,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { StableVideo } from "@/components/StableVideo";
 import type { MediaOverlay } from "@/lib/plan-api";
 import type { SuggestionLaneEntry } from "./UnifiedTimelineTypes";
 import { mediaClassFor } from "./cardMedia";
@@ -381,7 +382,7 @@ export default function HeroOverlayEditor({
             >
               {url ? (
                 entry.overlay.kind === "video" ? (
-                  <video
+                  <StableVideo
                     src={url}
                     muted
                     playsInline
@@ -482,7 +483,7 @@ export default function HeroOverlayEditor({
             </span>
             {url ? (
               entry.overlay.kind === "video" ? (
-                <video
+                <StableVideo
                   src={url}
                   muted
                   playsInline

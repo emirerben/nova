@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isCoarsePointerDevice, shouldAutoOpenPlanItemEditor } from "./auto-open-editor";
 import {
   attachClips,
   changePlanItemStyle,
@@ -783,15 +784,23 @@ export default function PlanItemPage() {
   }, [variants, focusedVariantId]);
 
   useEffect(() => {
-    if (!TIKTOK_EDITOR_ENABLED) return;
-    if (!item || item.status !== "ready") return;
-    if (editorReturnSignal !== null) return;
     const readyVariants = variants.filter(
       (v) => v.render_status === "ready" && Boolean(v.output_url),
     );
-    if (readyVariants.length !== 1) return;
-    const variant = readyVariants[0];
-    if (!canOpenPlanItemEditor(variant)) return;
+    const variant = readyVariants[0] ?? null;
+    if (
+      !shouldAutoOpenPlanItemEditor({
+        editorEnabled: TIKTOK_EDITOR_ENABLED,
+        itemReady: item?.status === "ready",
+        hasEditorReturnSignal: editorReturnSignal !== null,
+        readyVariantCount: readyVariants.length,
+        canOpenVariant: canOpenPlanItemEditor(variant),
+        isCoarsePointer: isCoarsePointerDevice(),
+      })
+    ) {
+      return;
+    }
+    if (!item || !variant) return;
     const jobId = item.current_job_id ?? "no-job";
     const markerKey = `plan-item:auto-open-editor:${item.id}:${jobId}:${variant.variant_id}`;
     if (autoOpenedEditorRef.current === markerKey) return;
@@ -3137,11 +3146,13 @@ function FocusedVariantControls({
     variant.text_mode === "lyrics" || variant.variant_id === "song_lyrics"
       ? "Full-screen cutaways aren't available on lyric edits."
       : null;
+  const latestOutputUrlRef = useRef<string | null>(variant.output_url ?? null);
+  latestOutputUrlRef.current = variant.output_url ?? null;
 
   // Probe the actual variant duration so the overlay timeline shows the right length.
   const [variantDurationS, setVariantDurationS] = useState(30);
   useEffect(() => {
-    const url = variant.output_url;
+    const url = latestOutputUrlRef.current;
     if (!url) return;
     const v = document.createElement("video");
     v.preload = "metadata";
@@ -3150,7 +3161,12 @@ function FocusedVariantControls({
       v.src = "";
     };
     v.src = url;
-  }, [variant.output_url]);
+    return () => {
+      v.onloadedmetadata = null;
+      v.removeAttribute("src");
+      v.load();
+    };
+  }, [variant.variant_id, variant.render_finished_at]);
 
   // Auto-save card metadata (render=false) 2.5 s after the user stops editing.
   // No FFmpeg is triggered here — rendering only happens on explicit download.
@@ -4054,6 +4070,8 @@ function Hero({
           src={heroSrc}
           identity={heroIdentity}
           controls
+          playsInline
+          preload="metadata"
           className="h-full w-full object-contain"
         />
       ) : failed ? (
