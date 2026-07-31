@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.0.0] — 2026-07-31
+
+### Added
+- **Clips can now use the Stadium Diffusion look.** The editor’s Clip inspector has one fixed treatment based on the approved broadcast-hybrid reference: soft highlight bloom, cool shadows, warm highlights, fine grain, a restrained vignette, and the pronounced optical edge pull that gives the image its distorted glass character. It applies to the complete selected clip while keeping captions, text, logos, cards, and other graphics sharp. The choice follows the clip through trimming, splitting, reordering, swapping, undo/redo, mobile editing, and Save; older videos stay on Original.
+
 ## [0.18.2.0] — 2026-07-30
 
 ### Fixed
