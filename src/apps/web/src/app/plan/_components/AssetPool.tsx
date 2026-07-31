@@ -31,6 +31,7 @@ import {
   uploadToGcs,
   type PoolAsset,
 } from "@/lib/plan-api";
+import { StableVideo } from "@/components/StableVideo";
 
 // Mirrors ALLOWED_OVERLAY_MIME_TYPES in OverlayLane.tsx (not exported there)
 // and _OVERLAY_ALLOWED_CONTENT_TYPES on the backend.
@@ -512,7 +513,13 @@ function AssetTile({
         {busy || !asset.display_url ? (
           <div className="absolute inset-0 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
         ) : asset.kind === "video" ? (
-          <video src={asset.display_url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+          <StableVideo
+            src={asset.display_url}
+            muted
+            playsInline
+            preload="metadata"
+            className="h-full w-full object-cover"
+          />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element -- signed GCS thumbnail, not an optimizable static asset
           <img src={asset.display_url} alt={asset.subject ?? label} className="h-full w-full object-cover" />

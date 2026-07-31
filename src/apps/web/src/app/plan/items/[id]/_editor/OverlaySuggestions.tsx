@@ -19,6 +19,7 @@
  */
 
 import { useRef } from "react";
+import { StableVideo } from "@/components/StableVideo";
 import {
   type OverlaySuggestion,
   type PoolAsset,
@@ -304,7 +305,7 @@ function PoolThumb({ asset, onRemove }: { asset: PoolAsset; onRemove: () => void
           title="Analyzing…"
         />
       ) : asset.kind === "video" ? (
-        <video
+        <StableVideo
           src={asset.display_url}
           muted
           playsInline
@@ -360,7 +361,7 @@ function SuggestionRow({
       <div className="h-8 w-11 shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-zinc-900">
         {thumbUrl ? (
           row.overlay.kind === "video" ? (
-            <video
+            <StableVideo
               src={thumbUrl}
               muted
               playsInline

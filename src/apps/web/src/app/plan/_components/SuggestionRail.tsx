@@ -54,6 +54,7 @@ import {
   type OverlaySuggestionsResponse,
   type PoolAsset,
 } from "@/lib/plan-api";
+import { StableVideo } from "@/components/StableVideo";
 import { mediaClassFor } from "./cardMedia";
 import { demotePatch } from "./OverlayCardPopover";
 import { overlayCardStyle } from "./overlayCardStyle";
@@ -558,7 +559,7 @@ export default function SuggestionRail({
               stack as dashed-lime ✦ cards (pragmatic in-card preview). */}
           {previewUrl && (
             <div className="relative mx-auto my-3 aspect-[9/16] w-32 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100">
-              <video
+              <StableVideo
                 ref={miniVideoRef}
                 src={previewUrl}
                 muted
@@ -585,7 +586,7 @@ export default function SuggestionRail({
                       </span>
                       {asset?.display_url ? (
                         asset.kind === "video" ? (
-                          <video
+                          <StableVideo
                             src={asset.display_url}
                             muted
                             playsInline
@@ -804,7 +805,7 @@ function SuggestionRow({
       >
         {asset?.display_url ? (
           asset.kind === "video" ? (
-            <video
+            <StableVideo
               src={asset.display_url}
               muted
               playsInline
