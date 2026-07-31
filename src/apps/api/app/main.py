@@ -3,6 +3,7 @@ import re
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -64,6 +65,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Job-status polls ship 100KB+ of JSON every 2s per client and nothing between
+# uvicorn and the Vercel proxy compresses (the proxy re-encodes toward the
+# browser). minimum_size spares tiny health/status bodies.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 def _cors_headers_for(request: Request) -> dict[str, str]:
