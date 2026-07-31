@@ -105,6 +105,21 @@ describe("undoSnapshot / redoSnapshot", () => {
     expect(redone!.history.future).toHaveLength(0);
   });
 
+  it("undo and redo preserve a clip look change", () => {
+    const original = doc([], {
+      slots: [{ key: "s0", lookPreset: "none" } as never],
+    });
+    const treated = doc([], {
+      slots: [{ key: "s0", lookPreset: "stadium_diffusion" } as never],
+    });
+    const recorded = recordSnapshot(initEditorHistoryState(), original);
+    const undone = undoSnapshot(recorded, treated)!;
+    const redone = redoSnapshot(undone.history, undone.doc)!;
+
+    expect(undone.doc.slots?.[0].lookPreset).toBe("none");
+    expect(redone.doc.slots?.[0].lookPreset).toBe("stadium_diffusion");
+  });
+
   it("undo of a delete resurrects the removed element in the restored doc", () => {
     // Model a delete: pre-change had [a,b]; after delete current is [a].
     let h = initEditorHistoryState();
@@ -137,7 +152,15 @@ describe("serializeDraft / deserializeDraft", () => {
       background: { type: "gradient", from: "#111111", to: "#26382F", angle_deg: 90 },
     };
     const d = doc([bar("a"), bar("b")], {
-      slots: [{ key: "s0", inS: 0, durationS: 3, removed: false } as never],
+      slots: [
+        {
+          key: "s0",
+          inS: 0,
+          durationS: 3,
+          removed: false,
+          lookPreset: "stadium_diffusion",
+        } as never,
+      ],
       overlays: [overlay({ x_frac: 0.8, y_frac: 0.2, scale: 0.55 })],
       visualBlocks: [visualBlock],
       videoMuted: true,

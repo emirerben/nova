@@ -73,7 +73,7 @@ import {
   editorCommitStartedRender,
 } from "@/lib/editor-return";
 import { FONT_FACES } from "@/lib/font-faces";
-import { type GenerativeStyleSet } from "@/lib/generative-api";
+import { type GenerativeStyleSet, type LookPreset } from "@/lib/generative-api";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import {
@@ -178,7 +178,7 @@ import PresetGrid, { presetMatchesFields } from "./PresetGrid";
 import { useVirtualPreview } from "./useVirtualPreview";
 import { useEditorLayoutMode } from "./useEditorLayoutMode";
 import type { EditorLayoutMode } from "./useEditorLayoutMode";
-import { slotsDifferFromBaseline } from "./virtual-timeline";
+import { slotsDifferFromBaseline, virtualDeckLookPresetsAtTime } from "./virtual-timeline";
 import {
   deleteKeyAllowed,
   escapeAction,
@@ -1345,7 +1345,6 @@ export default function EditorShell({
   );
   const timelineDuration =
     slotLayout.totalDurationS > 0 ? slotLayout.totalDurationS : duration;
-
   const selectedClip = useMemo(() => {
     if (selection?.kind !== "clip") return null;
     const idx = slots.findIndex((s) => s.key === selection.id);
@@ -1598,6 +1597,24 @@ export default function EditorShell({
     virtualPreviewRequested &&
     !virtualPreview.timeline.hasMissingSource &&
     virtualPreview.timeline.entries.length > 0;
+  const virtualDeckLookPresets = useMemo(
+    () =>
+      virtualPreviewActive
+        ? virtualDeckLookPresetsAtTime(
+            virtualPreview.timeline,
+            slots,
+            currentTime,
+            virtualPreview.activeDeck,
+          )
+        : { a: "none" as const, b: "none" as const },
+    [
+      currentTime,
+      slots,
+      virtualPreview.activeDeck,
+      virtualPreview.timeline,
+      virtualPreviewActive,
+    ],
+  );
   const renderedMusicPreviewActive =
     (musicWindowDirty || backgroundMusicDirty) && !virtualPreviewActive && !!virtualMusicAudioUrl;
 
@@ -2597,6 +2614,21 @@ export default function EditorShell({
       previewClipTiming(current.key, next);
     },
     [clipEditingLocked, history, previewClipTiming, readOnly, selectedClip],
+  );
+
+  const patchSelectedClipLook = useCallback(
+    (preset: LookPreset) => {
+      if (!selectedClip || readOnly || clipEditingLocked) return;
+      if ((selectedClip.slot.lookPreset ?? "none") === preset) return;
+      history.record();
+      setLocalSlots((current) =>
+        (current ?? slots).map((slot) =>
+          slot.key === selectedClip.slot.key ? { ...slot, lookPreset: preset } : slot,
+        ),
+      );
+      setTimelineDirty(true);
+    },
+    [clipEditingLocked, history, readOnly, selectedClip, slots],
   );
 
   const previewSelectedClipTiming = useCallback(
@@ -5148,6 +5180,8 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            lookPreset="none"
+            virtualDeckLookPresets={virtualDeckLookPresets}
             playing={playing}
             masonryDurationS={previewDuration}
             zoomPct={100}
@@ -5426,6 +5460,8 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            lookPreset="none"
+            virtualDeckLookPresets={virtualDeckLookPresets}
             playing={playing}
             masonryDurationS={previewDuration}
             zoomPct={zoomPct}
@@ -5475,6 +5511,7 @@ export default function EditorShell({
           boxPositionXFrac={selectedTextBoxScreenXFrac}
           onPatchTextTiming={patchSelectedTextTiming}
           onPatchClipTiming={patchSelectedClipTiming}
+          onPatchClipLook={patchSelectedClipLook}
           onPreviewClipTiming={previewSelectedClipTiming}
           onRecordClipTiming={recordTimelineDrag}
           onPatchSfx={patchSfx}
@@ -5828,6 +5865,7 @@ export default function EditorShell({
             boxPositionXFrac={selectedTextBoxScreenXFrac}
             onPatchTextTiming={patchSelectedTextTiming}
             onPatchClipTiming={patchSelectedClipTiming}
+            onPatchClipLook={patchSelectedClipLook}
             onPreviewClipTiming={previewSelectedClipTiming}
             onRecordClipTiming={recordTimelineDrag}
             onPatchSfx={patchSfx}

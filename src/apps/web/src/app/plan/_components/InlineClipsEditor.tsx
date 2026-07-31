@@ -855,6 +855,7 @@ export function InlineClipsEditor({
         duration_beats: s.durationBeats,
         duration_s: s.durationS,
         removed: s.removed,
+        look_preset: s.lookPreset ?? "none",
       }));
       await editTimeline(ownerId, variantId, payload, base);
       onRenderEnqueued();

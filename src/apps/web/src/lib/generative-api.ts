@@ -471,6 +471,7 @@ export type TimelineErrorCode =
   | "sources_expired";
 
 export type EditorTransition = "cut" | "crossfade" | "dip_to_black" | "flash";
+export type LookPreset = "none" | "stadium_diffusion";
 
 export interface TimelineSlot {
   slot_id: string;
@@ -488,6 +489,7 @@ export interface TimelineSlot {
   removed?: boolean;
   transition_after?: EditorTransition;
   transition_duration_s?: number | null;
+  look_preset?: LookPreset;
 }
 
 export interface TimelineClip {
@@ -519,6 +521,7 @@ export interface TimelineEditSlotPayload {
   removed: boolean;
   transition_after?: EditorTransition;
   transition_duration_s?: number | null;
+  look_preset?: LookPreset;
 }
 
 /** Timeline error with the machine code preserved (404 → code null). */

@@ -116,6 +116,84 @@ def _slot_edits() -> list[gj.TimelineSlotEdit]:
     ]
 
 
+def test_timeline_slot_look_preset_distinguishes_omission_and_rejects_unknown() -> None:
+    slot = gj.TimelineSlotEdit(
+        slot_id="s1",
+        clip_index=0,
+        in_s=0.0,
+        duration_beats=2,
+    )
+    assert slot.look_preset is None
+
+    explicit_original = gj.TimelineSlotEdit(
+        slot_id="s1",
+        clip_index=0,
+        in_s=0.0,
+        duration_beats=2,
+        look_preset="none",
+    )
+    assert explicit_original.look_preset == "none"
+
+    with pytest.raises(ValidationError):
+        gj.TimelineSlotEdit(
+            slot_id="s1",
+            clip_index=0,
+            in_s=0.0,
+            duration_beats=2,
+            look_preset="stadium_diffusion_plus",
+        )
+
+    with pytest.raises(ValidationError):
+        gj.TimelineSlotEdit(
+            slot_id="s1",
+            clip_index=0,
+            in_s=0.0,
+            duration_beats=2,
+            look_preset=None,
+        )
+
+
+def test_timeline_slot_look_preset_round_trips_through_jsonb_resolution(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    slots = _slot_edits()
+    slots[0].look_preset = "stadium_diffusion"
+
+    resolved = gj.resolve_timeline_slots_for_edit(
+        job,
+        job.assembly_plan["variants"][0],
+        slots,
+    )
+
+    assert resolved[0]["look_preset"] == "stadium_diffusion"
+    assert resolved[1]["look_preset"] == "none"
+
+
+def test_older_client_omission_preserves_existing_stadium_look(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    variant["user_timeline"] = {
+        "beat_grid": list(variant["ai_timeline"]["beat_grid"]),
+        "slots": [dict(slot) for slot in variant["ai_timeline"]["slots"]],
+    }
+    variant["user_timeline"]["slots"][0]["look_preset"] = "stadium_diffusion"
+
+    resolved = gj.resolve_timeline_slots_for_edit(job, variant, _slot_edits())
+
+    assert resolved[0]["look_preset"] == "stadium_diffusion"
+    assert resolved[1]["look_preset"] == "none"
+
+
+def test_legacy_timeline_response_defaults_missing_look_to_none(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+
+    response = gj.dispatch_get_timeline(job, "song_text")
+
+    assert [slot["look_preset"] for slot in response["slots"]] == ["none", "none"]
+
+
 def _commit_req(**kw) -> gj.EditorCommitRequest:
     kw.setdefault("base_generation", "2026-07-01T00:00:00Z")
     return gj.EditorCommitRequest(**kw)

@@ -10,7 +10,12 @@
  * offset. Nudges step 0.5s with a positive 0.1s floor; total ≤ 60s.
  */
 
-import type { EditorTransition, TimelineResponse, TimelineSlot } from "@/lib/generative-api";
+import type {
+  EditorTransition,
+  LookPreset,
+  TimelineResponse,
+  TimelineSlot,
+} from "@/lib/generative-api";
 
 // ── No-grid (original_text) constraints ──────────────────────────────────────
 export const SECONDS_STEP = 0.5;
@@ -32,6 +37,8 @@ export interface DraftSlot {
   /** Visual treatment after this slot. Omitted is the legacy hard cut. */
   transitionAfter?: EditorTransition;
   transitionDurationS?: number | null;
+  /** Fixed source-media look for this complete slot. */
+  lookPreset?: LookPreset;
 }
 
 let addCounter = 0;
@@ -54,6 +61,7 @@ export function draftFromTimeline(timeline: TimelineResponse): DraftSlot[] {
       momentDescription: s.moment_description,
       transitionAfter: s.transition_after ?? "cut",
       transitionDurationS: s.transition_duration_s ?? null,
+      lookPreset: s.look_preset ?? "none",
     }));
 }
 
@@ -249,7 +257,8 @@ export function fieldsDiffer(a: DraftSlot, b: DraftSlot): boolean {
     a.durationBeats !== b.durationBeats ||
     (a.durationBeats == null &&
       Math.abs((a.durationS ?? 0) - (b.durationS ?? 0)) > 1e-6) ||
-    a.removed !== b.removed
+    a.removed !== b.removed ||
+    (a.lookPreset ?? "none") !== (b.lookPreset ?? "none")
   );
 }
 

@@ -364,6 +364,7 @@ export function timelineReducer(state: EditorState, action: EditorAction): Edito
         durationS,
         removed: false,
         momentDescription: null,
+        lookPreset: "none",
       };
       return withHistory(state, reclampInPoints(state, [...state.slots, added]));
     }

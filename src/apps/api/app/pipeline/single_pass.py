@@ -124,6 +124,7 @@ class SinglePassInput:
     has_audio: bool = False
     curtain_animate_s: float = 0.0
     pre_burn_pngs: list[dict] = dataclasses.field(default_factory=list)
+    look_preset: str = "none"
     # color_hold-only
     hold_color: str = "black"
     hold_s: float = 0.0
@@ -223,6 +224,8 @@ def _per_clip_filter_chain(
         color_trc=inp.color_trc or "bt709",
         output_fit=inp.output_fit,
         has_grid=inp.has_grid,
+        look_preset=inp.look_preset,
+        look_label_prefix=f"look_{input_idx}",
         canvas=canvas,
         **(inp.grid_params or {}),
     )

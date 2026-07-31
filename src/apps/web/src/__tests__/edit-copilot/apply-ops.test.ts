@@ -872,7 +872,13 @@ describe("Director editor operations", () => {
   function directorCtx() {
     const slots = [
       slot({ key: "a", slotId: "a", durationS: 3 }),
-      slot({ key: "b", slotId: "b", clipIndex: 1, durationS: 3 }),
+      slot({
+        key: "b",
+        slotId: "b",
+        clipIndex: 1,
+        durationS: 3,
+        lookPreset: "stadium_diffusion",
+      }),
       slot({ key: "c", slotId: "c", clipIndex: 2, durationS: 3 }),
     ];
     const bars = [bar()];
@@ -1047,6 +1053,7 @@ describe("Director editor operations", () => {
       clipIndex: 3,
       durationS: 4,
       momentDescription: "Restyled by Nova",
+      lookPreset: "stadium_diffusion",
     });
     expect(result.nextSlots?.some((item) => item.clipIndex === 1)).toBe(false);
   });

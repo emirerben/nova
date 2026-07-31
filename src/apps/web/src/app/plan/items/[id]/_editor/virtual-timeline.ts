@@ -1,4 +1,4 @@
-import type { EditorTransition, TimelineClip } from "@/lib/generative-api";
+import type { EditorTransition, LookPreset, TimelineClip } from "@/lib/generative-api";
 import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
 
 const EPSILON = 1e-6;
@@ -34,6 +34,27 @@ export interface VirtualTransitionPreview {
   kind: Exclude<EditorTransition, "cut">;
   durationS: number;
   progress: number;
+}
+
+export function virtualDeckLookPresetsAtTime(
+  timeline: VirtualTimeline,
+  slots: DraftSlot[],
+  timeS: number,
+  activeDeck: "a" | "b",
+): Record<"a" | "b", LookPreset> {
+  const result: Record<"a" | "b", LookPreset> = { a: "none", b: "none" };
+  const mapping = mapVirtualTime(timeline, timeS);
+  if (!mapping) return result;
+
+  result[activeDeck] = slots[mapping.entry.slotIndex]?.lookPreset ?? "none";
+  if (transitionPreviewAtTime(timeline, timeS)) {
+    const incoming = timeline.entries[mapping.entryIndex + 1];
+    if (incoming) {
+      result[activeDeck === "a" ? "b" : "a"] =
+        slots[incoming.slotIndex]?.lookPreset ?? "none";
+    }
+  }
+  return result;
 }
 
 export function mapVirtualTimeToMusicTime(
@@ -177,6 +198,7 @@ export function slotsDifferFromBaseline(
       Math.abs((a.durationS ?? 0) - (b.durationS ?? 0)) > EPSILON ||
       a.durationBeats !== b.durationBeats ||
       a.removed !== b.removed ||
+      (a.lookPreset ?? "none") !== (b.lookPreset ?? "none") ||
       (a.transitionAfter ?? "cut") !== (b.transitionAfter ?? "cut") ||
       Math.abs((a.transitionDurationS ?? 0) - (b.transitionDurationS ?? 0)) > EPSILON
     ) {
