@@ -57,6 +57,17 @@ describe("splitSlotAt (seconds mode)", () => {
     expect(b2.inS).toBeCloseTo(1, 6); // 0 + 1
   });
 
+  it("inherits the source look on both split halves", () => {
+    const slots = [slot({ lookPreset: "stadium_diffusion" })];
+    const { slots: next, didSplit } = splitSlotAt(slots, [], "s1", 1.5, "s1b");
+
+    expect(didSplit).toBe(true);
+    expect(next.map((part) => part.lookPreset)).toEqual([
+      "stadium_diffusion",
+      "stadium_diffusion",
+    ]);
+  });
+
   it("refuses a cut that leaves a half below the minimum", () => {
     const slots = [slot()]; // window [0,4]
     const tooEarly = splitSlotAt(slots, [], "s1", 0.04, "x");

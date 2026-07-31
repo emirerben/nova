@@ -37,7 +37,7 @@ import uuid
 from dataclasses import asdict, is_dataclass, replace
 from datetime import datetime
 from itertools import cycle
-from typing import Any
+from typing import Any, NamedTuple
 
 import structlog
 from sqlalchemy.exc import OperationalError
@@ -47,6 +47,7 @@ from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
 from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
+from app.pipeline.look_presets import LookPreset, normalize_look_preset
 from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
     MASONRY_MONTAGE_PRESET,
@@ -88,6 +89,19 @@ _HDR_PRETONEMAP_CACHE_VERSION = 1
 # window, then the full text holds.
 MAX_INTRO_S = 3.0
 HERO_SLOT_INDEX = 0
+
+
+class _ResolvedTimelineSlot(NamedTuple):
+    clip_index: int
+    in_s: float
+    duration_s: float
+    moment_energy: Any
+    moment_description: Any
+    transition_after: str
+    transition_duration_s: float | None
+    look_preset: LookPreset
+
+
 # Variant 3 (original audio) arrangement: one slot per clip, capped so a 20-clip
 # upload doesn't produce 20 micro-cuts with no song to justify them.
 _MAX_NO_MUSIC_SLOTS = 6
@@ -4703,7 +4717,7 @@ def _prepare_timeline_assembly(
         _probe_clips,
     )
 
-    resolved: list[tuple[int, float, float, Any, Any, str, float | None]] = []
+    resolved: list[_ResolvedTimelineSlot] = []
     for slot in timeline_slots:
         try:
             clip_index = int(slot["clip_index"])
@@ -4722,7 +4736,7 @@ def _prepare_timeline_assembly(
             )
             return None
         resolved.append(
-            (
+            _ResolvedTimelineSlot(
                 clip_index,
                 in_s,
                 duration_s,
@@ -4739,12 +4753,13 @@ def _prepare_timeline_assembly(
                     and slot.get("transition_duration_s") is not None
                     else None
                 ),
+                normalize_look_preset(slot.get("look_preset")),
             )
         )
     if not resolved:
         return None
 
-    used_indices = sorted({r[0] for r in resolved})
+    used_indices = sorted({slot.clip_index for slot in resolved})
     local_paths = _download_clips_parallel([clip_paths_gcs[i] for i in used_indices], tmpdir)
     probe_map = _probe_clips(local_paths)
     # Heavy-source guard (2026-07-21 OOM): timeline re-renders decode the
@@ -4760,16 +4775,11 @@ def _prepare_timeline_assembly(
     # bounds checks on clips the AI never probed (its comment promises "the
     # worker's probe will clamp"; this is that clamp). Slots that collapse
     # below 0.1s after clamping are dropped with a warning.
-    clamped: list[tuple[int, float, float, Any, Any, str, float | None]] = []
-    for (
-        clip_index,
-        in_s,
-        duration_s,
-        moment_energy,
-        moment_description,
-        transition_after,
-        transition_duration_s,
-    ) in resolved:
+    clamped: list[_ResolvedTimelineSlot] = []
+    for slot in resolved:
+        clip_index = slot.clip_index
+        in_s = slot.in_s
+        duration_s = slot.duration_s
         probe = probe_map.get(clip_id_to_local[f"clip_{clip_index}"])
         probe_duration = float(getattr(probe, "duration_s", 0.0) or 0.0)
         if probe_duration > 0:
@@ -4786,14 +4796,15 @@ def _prepare_timeline_assembly(
             )
             continue
         clamped.append(
-            (
+            _ResolvedTimelineSlot(
                 clip_index,
                 in_s,
                 duration_s,
-                moment_energy,
-                moment_description,
-                transition_after,
-                transition_duration_s,
+                slot.moment_energy,
+                slot.moment_description,
+                slot.transition_after,
+                slot.transition_duration_s,
+                slot.look_preset,
             )
         )
     if not clamped:
@@ -4806,15 +4817,19 @@ def _prepare_timeline_assembly(
         "flash": "flash",
     }
     for index in range(1, len(clamped)):
-        transition_name = transition_names.get(clamped[index - 1][5], "hard-cut")
+        transition_name = transition_names.get(clamped[index - 1].transition_after, "hard-cut")
         if transition_name == "hard-cut":
             boundary_transitions.append(("hard-cut", None))
             continue
-        max_duration_s = min(0.3, clamped[index - 1][2] * 0.3, clamped[index][2] * 0.3)
+        max_duration_s = min(
+            0.3,
+            clamped[index - 1].duration_s * 0.3,
+            clamped[index].duration_s * 0.3,
+        )
         if max_duration_s < 0.1:
             boundary_transitions.append(("hard-cut", None))
             continue
-        requested_duration_s = clamped[index - 1][6] or 0.3
+        requested_duration_s = clamped[index - 1].transition_duration_s or 0.3
         boundary_transitions.append(
             (transition_name, round(min(requested_duration_s, max_duration_s), 3))
         )
@@ -4835,6 +4850,7 @@ def _prepare_timeline_assembly(
                 # row while materializing AssemblySteps.
                 "transition_in": boundary_transitions[i][0],
                 "transition_duration_s": boundary_transitions[i][1],
+                "look_preset": look_preset,
             },
             clip_id=f"clip_{clip_index}",
             moment={
@@ -4852,6 +4868,7 @@ def _prepare_timeline_assembly(
             moment_description,
             _transition_after,
             _transition_duration_s,
+            look_preset,
         ) in enumerate(clamped)
     ]
     return {

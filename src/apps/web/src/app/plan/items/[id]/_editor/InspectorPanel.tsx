@@ -18,7 +18,7 @@
  * `onEditText` → the canvas updates instantly. Persistence only on Save.
  */
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { INTRO_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
 import {
   LETTER_SPACING_MAX_EM,
@@ -52,6 +52,7 @@ import {
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
 import type { DraftSlot } from "@/app/generative/timeline-math";
+import type { LookPreset } from "@/lib/generative-api";
 import type { EditorSelection } from "./useEditorSelection";
 import type { InspectorTab } from "./InspectorRail";
 import { normalizeEditableHex } from "./editor-color";
@@ -152,6 +153,7 @@ export default function InspectorPanel({
   boxPositionXFrac,
   onPatchTextTiming,
   onPatchClipTiming,
+  onPatchClipLook,
   onPreviewClipTiming,
   onRecordClipTiming,
   onPatchSfx,
@@ -213,6 +215,7 @@ export default function InspectorPanel({
   boxPositionXFrac?: number;
   onPatchTextTiming: (patch: { start_s?: number; end_s?: number }) => void;
   onPatchClipTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
+  onPatchClipLook?: (preset: LookPreset) => void;
   onPreviewClipTiming: (patch: { inS: number; durationS: number }) => void;
   onRecordClipTiming: () => void;
   onPatchSfx: (id: string, patch: Partial<SoundEffectPlacement>) => void;
@@ -332,6 +335,7 @@ export default function InspectorPanel({
         <ClipInspector
           timing={clipTiming}
           onPatchTiming={onPatchClipTiming}
+          onPatchLook={onPatchClipLook}
           onPreviewTiming={onPreviewClipTiming}
           onRecordTimingEdit={onRecordClipTiming}
           onClose={onClose}
@@ -1890,17 +1894,20 @@ function TextInspector({
 function ClipInspector({
   timing,
   onPatchTiming,
+  onPatchLook,
   onPreviewTiming,
   onRecordTimingEdit,
   onClose,
 }: {
   timing: InspectorClipTiming;
   onPatchTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
+  onPatchLook?: (preset: LookPreset) => void;
   onPreviewTiming: (patch: { inS: number; durationS: number }) => void;
   onRecordTimingEdit: () => void;
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const lookGroupName = useId();
   const dragRef = useRef<{
     handle: BarDragHandle;
     startClientX: number;
@@ -1989,6 +1996,45 @@ function ClipInspector({
         {durationS.toFixed(1)}s of {sourceDurationS.toFixed(1)}s used · changes
         render on Save
       </p>
+
+      <fieldset className="mt-5">
+        <legend className="text-[12px] font-semibold text-[#3f3f46]">Look</legend>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {(
+            [
+              ["none", "Original"],
+              ["stadium_diffusion", "Stadium Diffusion"],
+            ] as const
+          ).map(([preset, label]) => {
+            const selected = (timing.slot.lookPreset ?? "none") === preset;
+            return (
+              <label
+                key={preset}
+                className={[
+                  "flex min-h-11 cursor-pointer items-center rounded-lg border px-3 py-2 text-left text-[12px] font-semibold",
+                  "focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-500",
+                  selected
+                    ? "border-[#0c0c0e] bg-[#0c0c0e] text-white"
+                    : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400",
+                ].join(" ")}
+              >
+                <input
+                  className="sr-only"
+                  type="radio"
+                  name={lookGroupName}
+                  value={preset}
+                  checked={selected}
+                  onChange={() => onPatchLook?.(preset)}
+                />
+                {label}
+              </label>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-[11px] leading-relaxed text-[#71717a]">
+          Diffusion, optical edge pull, cool shadows, warm highlights, and film grain.
+        </p>
+      </fieldset>
 
       <div className="mt-4">
         <div className="overflow-hidden rounded-lg border border-zinc-200 bg-black">

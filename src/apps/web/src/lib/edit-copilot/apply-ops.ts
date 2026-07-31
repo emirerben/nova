@@ -1315,6 +1315,7 @@ export function applyCopilotOps(
         momentDescription: "Restyled by Nova",
         transitionAfter: source.transitionAfter ?? "cut",
         transitionDurationS: source.transitionDurationS ?? null,
+        lookPreset: source.lookPreset ?? "none",
       };
       workingSlots = slots.map((slot, index) => (index === sourceIndex ? replacement : slot));
       nextSlots = workingSlots;

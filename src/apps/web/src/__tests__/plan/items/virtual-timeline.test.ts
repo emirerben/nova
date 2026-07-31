@@ -6,6 +6,7 @@ import {
   mapVirtualTime,
   slotsDifferFromBaseline,
   transitionPreviewAtTime,
+  virtualDeckLookPresetsAtTime,
 } from "@/app/plan/items/[id]/_editor/virtual-timeline";
 
 function slot(over: Partial<DraftSlot> = {}): DraftSlot {
@@ -160,6 +161,11 @@ describe("virtual timeline", () => {
     expect(slotsDifferFromBaseline(baseline, [slot({ key: "a", removed: true })])).toBe(true);
     expect(
       slotsDifferFromBaseline(baseline, [
+        slot({ key: "a", lookPreset: "stadium_diffusion" }),
+      ]),
+    ).toBe(true);
+    expect(
+      slotsDifferFromBaseline(baseline, [
         slot({ key: "a", transitionAfter: "crossfade", transitionDurationS: 0.3 }),
       ]),
     ).toBe(true);
@@ -225,4 +231,35 @@ describe("virtual timeline", () => {
       progress: expect.closeTo(0.5, 5),
     });
   });
+
+  it.each([
+    ["stadium_diffusion", "none"] as ["stadium_diffusion", "none"],
+    ["none", "stadium_diffusion"] as ["none", "stadium_diffusion"],
+  ])(
+    "keeps %s → %s crossfade looks scoped to their virtual decks",
+    (outgoingLook, incomingLook) => {
+      const slots = [
+        slot({
+          key: "a",
+          clipIndex: 0,
+          durationS: 2,
+          transitionAfter: "crossfade",
+          transitionDurationS: 0.2,
+          lookPreset: outgoingLook,
+        }),
+        slot({
+          key: "b",
+          clipIndex: 1,
+          durationS: 2,
+          lookPreset: incomingLook,
+        }),
+      ];
+      const timeline = buildVirtualTimeline(slots, clips);
+
+      expect(virtualDeckLookPresetsAtTime(timeline, slots, 1.9, "a")).toEqual({
+        a: outgoingLook,
+        b: incomingLook,
+      });
+    },
+  );
 });

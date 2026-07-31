@@ -244,6 +244,7 @@ def reframe_and_export(
     keep_segments: list[tuple[float, float]] | None = None,
     keep_segments_punch_in: float | None = None,
     semantic_crop_pulses: list[dict] | None = None,
+    look_preset: str = "none",
     canvas: Canvas | None = None,
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
@@ -304,6 +305,7 @@ def reframe_and_export(
         grid_highlight_color=grid_highlight_color,
         grid_highlight_windows=grid_highlight_windows,
         semantic_crop_pulses=semantic_crop_pulses,
+        look_preset=look_preset,
         canvas=canvas,
     )
 
@@ -450,6 +452,7 @@ def reframe_and_export(
             grid_highlight_windows=grid_highlight_windows,
             color_trc=color_trc,
             has_audio=has_audio,
+            look_preset=look_preset,
             canvas=canvas,
             # keep_segments is provably None here — the mutual-exclusion
             # check above raises before any subprocess run.
@@ -860,12 +863,15 @@ def _build_video_filter(
     grid_highlight_color: str = "#E63946",
     grid_highlight_windows: list[tuple[float, float]] | None = None,
     semantic_crop_pulses: list[dict] | None = None,
+    look_preset: str = "none",
+    look_label_prefix: str = "look",
     canvas: Canvas | None = None,
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
     Filter order: HDR tonemap (if needed) -> setpts (speed) -> scale/crop
-                  -> color grading -> darkening -> narrowing
+                  -> recipe color grading -> source look preset
+                  -> darkening -> narrowing
                   -> grid (base) -> grid-highlight -> caption ASS.
     setpts MUST be first to normalize PTS before timed filters (darkening, narrowing).
     Text overlays are handled separately via overlay filter (not in this chain).
@@ -992,6 +998,21 @@ def _build_video_filter(
     # 2. Color grading (applied before darkening so darkened areas have the grade)
     for f in _color_hint_filters(color_hint):
         filters.append(f)
+
+    # 2b. Fixed source-media look. The shared builder is used by both
+    # multi-pass and single-pass assembly. It runs after HDR/crop/recipe color,
+    # but before every graphic layer, so text, captions, grids, logos, and cards
+    # remain sharp and readable.
+    from app.pipeline.look_presets import look_preset_filter  # noqa: PLC0415
+
+    look_filter = look_preset_filter(
+        look_preset,
+        width=ow,
+        height=oh,
+        label_prefix=look_label_prefix,
+    )
+    if look_filter is not None:
+        filters.append(look_filter)
 
     # 3. Darkening (colorlevels with enable timing)
     for start, end in darkening_windows or []:

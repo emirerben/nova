@@ -32,6 +32,7 @@ describe("buildEditorCommitRequest", () => {
           durationS: 1.2,
           durationBeats: null,
           removed: false,
+          lookPreset: "stadium_diffusion",
         },
         {
           slotId: null,
@@ -93,6 +94,7 @@ describe("buildEditorCommitRequest", () => {
           removed: false,
           transition_after: "cut",
           transition_duration_s: null,
+          look_preset: "stadium_diffusion",
         },
         {
           slot_id: null,
@@ -103,6 +105,7 @@ describe("buildEditorCommitRequest", () => {
           removed: true,
           transition_after: "cut",
           transition_duration_s: null,
+          look_preset: "none",
         },
       ],
       mix: { music_level: 0.0 },
@@ -526,6 +529,7 @@ describe("buildEditorCommitRequest", () => {
         duration_s: 2,
         duration_beats: null,
         removed: false,
+        look_preset: "none",
         transition_after: "cut",
         transition_duration_s: null,
       },

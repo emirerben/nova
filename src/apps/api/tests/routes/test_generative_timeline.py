@@ -920,6 +920,7 @@ async def test_edit_persists_before_enqueue(monkeypatch):
         "order",
         "moment_energy",
         "moment_description",
+        "look_preset",
         "removed",
         "transition_after",
         "transition_duration_s",

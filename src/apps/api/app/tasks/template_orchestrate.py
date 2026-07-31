@@ -2417,6 +2417,7 @@ class SlotPlan:
     grid_highlight_intersection: str | None = None
     grid_highlight_color: str = "#E63946"
     grid_highlight_windows: list[tuple[float, float]] | None = None
+    look_preset: str = "none"
     canvas: Canvas | None = None
 
 
@@ -2842,6 +2843,9 @@ def _plan_slots(
         )
 
         grid_params = _extract_grid_params(step.slot)
+        from app.pipeline.look_presets import normalize_look_preset  # noqa: PLC0415
+
+        slot_look_preset = normalize_look_preset(step.slot.get("look_preset"))
 
         plans.append(
             SlotPlan(
@@ -2859,6 +2863,7 @@ def _plan_slots(
                 color_trc=color_trc,
                 has_audio=has_audio,
                 output_fit=slot_output_fit,
+                look_preset=slot_look_preset,
                 canvas=canvas,
                 **grid_params,
             )
@@ -2889,6 +2894,7 @@ def _render_planned_slot(plan: SlotPlan) -> str:
         grid_highlight_intersection=plan.grid_highlight_intersection,
         grid_highlight_color=plan.grid_highlight_color,
         grid_highlight_windows=plan.grid_highlight_windows,
+        look_preset=plan.look_preset,
         color_trc=plan.color_trc,
         has_audio=plan.has_audio,
         canvas=plan.canvas,
@@ -3107,6 +3113,7 @@ def _build_single_pass_spec(
                 color_hint=plan.color_hint,
                 has_audio=plan.has_audio,
                 has_grid=plan.has_grid,
+                look_preset=plan.look_preset,
                 grid_params={
                     "grid_color": plan.grid_color,
                     "grid_opacity": plan.grid_opacity,

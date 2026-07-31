@@ -319,6 +319,23 @@ describe("timelineReducer", () => {
     expect(added.clipIndex).toBe(3);
     expect(added.durationBeats).toBe(2); // median of [1,2,2]
     expect(added.inS).toBe(0);
+    expect(added.lookPreset).toBe("none");
+  });
+
+  it("REORDER and SWAP preserve the slot look", () => {
+    const timeline = gridTimeline();
+    timeline.slots[0].look_preset = "stadium_diffusion";
+
+    const state = run(
+      init(timeline),
+      { type: "REORDER", from: 0, to: 2 },
+      { type: "SWAP", key: "s1", clipIndex: 3 },
+    );
+
+    expect(state.slots.find((candidate) => candidate.key === "s1")).toMatchObject({
+      clipIndex: 3,
+      lookPreset: "stadium_diffusion",
+    });
   });
 
   it("ADD clamps to the remaining grid beats and rejects when exhausted", () => {

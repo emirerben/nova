@@ -43,6 +43,7 @@ from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack, User
+from app.pipeline.look_presets import LookPreset, normalize_look_preset
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 from app.schemas.montage_preset import is_collage_montage_preset
 from app.services.job_phases import mark_reattempt, stamp_variant_attempt
@@ -571,6 +572,16 @@ class TimelineSlotEdit(BaseModel):
     removed: bool = False
     transition_after: Literal["cut", "crossfade", "dip_to_black", "flash"] = "cut"
     transition_duration_s: float | None = Field(default=None, ge=0.1, le=1.0)
+    # None means an older client omitted the field; resolution preserves the
+    # current slot value in that case. Explicit "none" remains the clear action.
+    look_preset: LookPreset | None = None
+
+    @field_validator("look_preset", mode="before")
+    @classmethod
+    def reject_null_look_preset(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("look_preset cannot be null")
+        return value
 
 
 class TimelineEditRequest(BaseModel):
@@ -601,6 +612,7 @@ class TimelineSlotOut(BaseModel):
     moment_energy: float | None = None
     moment_description: str | None = None
     removed: bool = False
+    look_preset: LookPreset = "none"
 
     model_config = {"extra": "allow"}
 
@@ -3790,7 +3802,10 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
         "beat_grid": beat_grid,
         "total_duration_s": round(total, 3),
         "has_user_edits": has_user_edits,
-        "slots": [dict(s) for s in effective],
+        "slots": [
+            {**dict(s), "look_preset": normalize_look_preset(s.get("look_preset"))}
+            for s in effective
+        ],
         "clips": clips,
     }
 
@@ -4291,6 +4306,11 @@ def resolve_timeline_slots_for_edit(
                 raise _out_of_bounds(e, visible_order, src_dur, duration_s)
             visible_order += 1
         meta = meta_by_idx.get(e.clip_index) or {}
+        if e.look_preset is None:
+            baseline = baseline_by_id.get(e.slot_id) or {}
+            look_preset = normalize_look_preset(baseline.get("look_preset"))
+        else:
+            look_preset = e.look_preset
         resolved.append(
             {
                 "slot_id": e.slot_id or str(uuid.uuid4()),
@@ -4306,6 +4326,7 @@ def resolve_timeline_slots_for_edit(
                 "moment_energy": meta.get("moment_energy"),
                 "moment_description": meta.get("moment_description"),
                 "removed": bool(e.removed),
+                "look_preset": look_preset,
                 "transition_after": (
                     e.transition_after if settings.edit_transitions_enabled else "cut"
                 ),

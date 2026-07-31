@@ -9,6 +9,7 @@ const noop = jest.fn();
 describe("InspectorPanel clip timing", () => {
   it("uses 0.1s as the smallest positive duration input", () => {
     const onPatchClipTiming = jest.fn();
+    const onPatchClipLook = jest.fn();
     render(
       <InspectorPanel
         selection={{ kind: "clip", id: "slot-1" }}
@@ -39,6 +40,7 @@ describe("InspectorPanel clip timing", () => {
         onPatch={noop}
         onPatchTextTiming={noop}
         onPatchClipTiming={onPatchClipTiming}
+        onPatchClipLook={onPatchClipLook}
         onPreviewClipTiming={noop}
         onRecordClipTiming={noop}
         onPatchSfx={noop}
@@ -57,5 +59,9 @@ describe("InspectorPanel clip timing", () => {
     expect(duration).toHaveAttribute("step", "0.1");
     fireEvent.change(duration, { target: { value: "0.1" } });
     expect(onPatchClipTiming).toHaveBeenCalledWith({ durationS: 0.1 });
+
+    expect(screen.getByRole("radio", { name: "Original" })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: "Stadium Diffusion" }));
+    expect(onPatchClipLook).toHaveBeenCalledWith("stadium_diffusion");
   });
 });

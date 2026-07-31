@@ -125,6 +125,11 @@ describe("fieldsDiffer", () => {
     expect(fieldsDiffer(slot(), slot({ removed: true }))).toBe(true);
   });
 
+  it("treats a look preset change as a slot edit", () => {
+    expect(fieldsDiffer(slot(), slot({ lookPreset: "stadium_diffusion" }))).toBe(true);
+    expect(fieldsDiffer(slot(), slot({ lookPreset: "none" }))).toBe(false);
+  });
+
   it("changing both inS and durationS on a seconds slot is a single edit", () => {
     // fieldsDiffer is a per-slot boolean — two field changes still = one diff = one edit count.
     const a = slot({ durationBeats: null, inS: 0, durationS: 2.0 });

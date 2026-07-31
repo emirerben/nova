@@ -793,6 +793,25 @@ def test_prepare_timeline_assembly_preserves_per_boundary_transition_duration(
     assert destination["transition_duration_s"] == 0.12
 
 
+def test_prepare_timeline_assembly_carries_source_look_to_slot_plan(monkeypatch, tmp_path):
+    _patch_timeline_io(monkeypatch, duration_s=6.0)
+    out = gb._prepare_timeline_assembly(
+        [
+            _tl_slot(0, duration_s=2.0, look_preset="stadium_diffusion"),
+            _tl_slot(1, duration_s=2.0),
+        ],
+        CLIP_PATHS,
+        str(tmp_path),
+        job_id="j",
+    )
+
+    assert out is not None
+    assert [step.slot["look_preset"] for step in out["steps"]] == [
+        "stadium_diffusion",
+        "none",
+    ]
+
+
 def test_prepare_timeline_assembly_drops_collapsed_slots(monkeypatch, tmp_path):
     """Slots that clamp below 0.1s are dropped (warning); all-dropped → None
     (caller falls back to a fresh match). Survivors are renumbered."""

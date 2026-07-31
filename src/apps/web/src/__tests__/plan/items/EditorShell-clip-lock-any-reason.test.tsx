@@ -19,7 +19,7 @@
  */
 
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { EditorCapabilities, PlanItem, PlanItemVariant } from "@/lib/plan-api";
 
 class ResizeObserverMock {
@@ -54,6 +54,13 @@ jest.mock("@/lib/plan-api", () => ({
   getPlanItemJobStatus: jest.fn(),
 }));
 
+const mockCommitEditorSession = jest.fn();
+let mockTimelineLookPreset: "none" | "stadium_diffusion" = "none";
+jest.mock("@/lib/editor-commit", () => ({
+  ...jest.requireActual("@/lib/editor-commit"),
+  commitEditorSession: (...args: unknown[]) => mockCommitEditorSession(...args),
+}));
+
 // Two real, non-gridded clip slots so the clip lane actually renders bars —
 // this is what most EditorShell tests stub away (empty timeline), which
 // hides the exact affordance this fix touches.
@@ -73,6 +80,7 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
           durationS: 3,
           removed: false,
           momentDescription: null,
+          lookPreset: mockTimelineLookPreset,
         },
         {
           key: "slot-2",
@@ -169,6 +177,7 @@ function makeVariant(
     intro_text_size_px: null,
     text_elements: [],
     resolved_archetype: archetype,
+    render_generation_id: "gen-current",
     editor_capabilities: capabilities,
   } as unknown as PlanItemVariant;
 }
@@ -178,6 +187,11 @@ async function renderShell(variant: PlanItemVariant) {
   mockGetPlanItemJobStatus.mockResolvedValue({
     variants: [variant],
   } as unknown as Awaited<ReturnType<typeof getPlanItemJobStatus>>);
+  mockCommitEditorSession.mockResolvedValue({
+    ok: true,
+    generation: "gen-next",
+    sections: { timeline: true },
+  });
   await act(async () => {
     render(<EditorShell itemId="item-1" variantParam="var-1" />);
   });
@@ -185,6 +199,7 @@ async function renderShell(variant: PlanItemVariant) {
 
 afterEach(() => {
   jest.clearAllMocks();
+  mockTimelineLookPreset = "none";
   window.sessionStorage.clear();
 });
 
@@ -224,5 +239,48 @@ describe("EditorShell — clip lane locks for ANY server timeline ineligibility"
 
     fireEvent.click(clipBar);
     expect(screen.getByRole("button", { name: "Delete selected" })).toBeEnabled();
+  });
+
+  it("records, undoes, redoes, and saves a clip look change", async () => {
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Clip 1,/ }));
+    const original = await screen.findByRole("radio", { name: "Original" });
+    const stadium = screen.getByRole("radio", { name: "Stadium Diffusion" });
+    expect(original).toBeChecked();
+
+    fireEvent.click(stadium);
+    expect(stadium).toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(original).toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+    expect(stadium).toBeChecked();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalledTimes(1));
+    expect(mockCommitEditorSession.mock.calls[0][2]).toMatchObject({
+      timeline_slots: [
+        expect.objectContaining({
+          slot_id: "slot-1",
+          look_preset: "stadium_diffusion",
+        }),
+        expect.objectContaining({
+          slot_id: "slot-2",
+          look_preset: "none",
+        }),
+      ],
+    });
+  });
+
+  it("does not double-apply a persisted look over the rendered preview", async () => {
+    mockTimelineLookPreset = "stadium_diffusion";
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    expect(document.querySelector('[data-look-preview="none"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-look-preview="stadium_diffusion"]')).toBeNull();
   });
 });
