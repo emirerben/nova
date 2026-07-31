@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Status updates now travel compressed.** While a video renders (and on every page refresh after), the app asks the server for the job's full status — a payload that had grown past 120KB and was sent uncompressed on every 2-second check. On a phone that traffic alone could crowd out the video download. The server now gzips any response over 1KB, cutting that check to roughly a tenth of its size.
+## [0.18.2.1] — 2026-07-31
+
+### Fixed
+- **Opening a finished video on your phone no longer throws you into the full editor.** When an edit had exactly one finished version, opening its page immediately redirected into the full-screen editor — the heaviest surface in the app — just to look at the result. On a phone that meant a long, janky load and a video that often never appeared. Phones now land on the video page itself, with the editor one tap away; on desktop the jump-straight-to-editor flow is unchanged.
+- **The video on the item page now loads on iPhones.** The main player was missing the two attributes iOS Safari needs to fetch and play a video inline; on cellular it rendered as a black box until tapped, and sometimes not even then. It now preloads its first frame and plays inline like every other player in the app.
+- **Live-refreshing pages no longer restart video downloads every two seconds.** Several video thumbnails and the caption-editor player were bound directly to freshly signed storage links, which change on every status poll — so the browser threw away its download progress and started over, again and again. They now hold onto the same video while only the signature churns. A hidden duration-probe that re-downloaded video metadata on every poll got the same treatment, plus proper cleanup.
+- **Fully rendered videos no longer keep polling the server for half an hour.** Two "finished" job states were missing from the list the page checks, so a done video could sit there refreshing every two seconds until a 30-minute safety timer gave up.
 
 ## [0.18.2.0] — 2026-07-30
 

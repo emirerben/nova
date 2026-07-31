@@ -14,6 +14,7 @@ import {
   type VoiceoverCaptionStyle,
 } from "../../../lib/plan-api";
 import { INTRO_FONTS } from "../../../lib/overlay-constants";
+import { StableVideo } from "@/components/StableVideo";
 import CaptionStyleToggle from "./CaptionStyleToggle";
 
 const CAPTION_LANGUAGE_LABELS: Record<string, string> = { en: "English", tr: "Türkçe" };
@@ -467,7 +468,7 @@ export default function CaptionEditor({
           className="relative overflow-hidden rounded-2xl bg-black"
           style={{ aspectRatio: "9 / 16", containerType: "size" } as React.CSSProperties}
         >
-          <video
+          <StableVideo
             ref={videoRef}
             src={baseVideoUrl}
             playsInline
