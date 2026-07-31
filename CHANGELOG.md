@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.2.2] — 2026-07-31
+
+### Fixed
+- **Status updates now travel compressed.** While a video renders (and on every page refresh after), the app asks the server for the job's full status — a payload that had grown past 120KB and was sent uncompressed on every 2-second check. On a phone that traffic alone could crowd out the video download. The server now gzips any response over 1KB, cutting that check to roughly a tenth of its size.
 ## [0.18.2.1] — 2026-07-31
 
 ### Fixed
