@@ -50,12 +50,12 @@ const CUES: CaptionCue[] = [
   { text: "second line", start_s: 5, end_s: 10 },
 ];
 
-function renderEditor() {
+function renderEditor(baseVideoUrl = "https://example.com/base.mp4") {
   return render(
     <CaptionEditor
       itemId="item-1"
       variantId="var-1"
-      baseVideoUrl="https://example.com/base.mp4"
+      baseVideoUrl={baseVideoUrl}
       initialCues={CUES}
     />,
   );
@@ -69,6 +69,25 @@ function editSecondCue() {
 }
 
 describe("CaptionEditor", () => {
+  it("keeps the video src stable when only the signed URL query changes", () => {
+    const { container, rerender } = renderEditor(
+      "https://storage.googleapis.com/b/x.mp4?X-Goog-Signature=aaa",
+    );
+    const video = container.querySelector("video")!;
+    expect(video.getAttribute("src")).toContain("X-Goog-Signature=aaa");
+
+    rerender(
+      <CaptionEditor
+        itemId="item-1"
+        variantId="var-1"
+        baseVideoUrl="https://storage.googleapis.com/b/x.mp4?X-Goog-Signature=bbb"
+        initialCues={CUES}
+      />,
+    );
+
+    expect(video.getAttribute("src")).toContain("X-Goog-Signature=aaa");
+  });
+
   it("keeps edit mode open when focus moves to the other caption editor (no collapse)", () => {
     renderEditor();
     const input = editSecondCue();

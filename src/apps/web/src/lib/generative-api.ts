@@ -160,7 +160,12 @@ export interface GenerativeJobStatus {
 }
 
 /** The SUCCESS half of the terminal set. */
-export const GENERATIVE_SUCCESS_STATUSES = ["variants_ready", "variants_ready_partial"];
+export const GENERATIVE_SUCCESS_STATUSES = [
+  "variants_ready",
+  "variants_ready_partial",
+  "clips_ready",
+  "done",
+];
 
 /** The FAILURE half of the terminal set. */
 export const GENERATIVE_FAILED_STATUSES = ["variants_failed", "processing_failed"];

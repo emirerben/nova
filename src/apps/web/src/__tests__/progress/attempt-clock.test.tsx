@@ -178,6 +178,8 @@ describe("isGenerativeJobSettled", () => {
     expect(isGenerativeJobSettled("variants_ready", ready)).toBe(true);
     expect(isGenerativeJobSettled("variants_ready", [])).toBe(true);
     expect(isGenerativeJobSettled("variants_ready", null)).toBe(true);
+    expect(isGenerativeJobSettled("clips_ready", ready)).toBe(true);
+    expect(isGenerativeJobSettled("done", ready)).toBe(true);
   });
 
   it("test_non_terminal_status_is_never_settled", () => {
