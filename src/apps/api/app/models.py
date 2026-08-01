@@ -57,6 +57,7 @@ class User(Base):
 
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
     oauth_tokens: Mapped[list["OAuthToken"]] = relationship(back_populates="user")
+    tiktok_publications: Mapped[list["TikTokPublication"]] = relationship(back_populates="user")
     # 1:1 — the user's onboarding persona (NULL until onboarding starts).
     persona: Mapped["Persona | None"] = relationship(back_populates="user", uselist=False)
 
@@ -69,9 +70,15 @@ class OAuthToken(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     platform: Mapped[str] = mapped_column(Text, nullable=False)  # instagram|youtube|tiktok
-    access_token: Mapped[bytes] = mapped_column(BYTEA, nullable=False)  # AES-256 Fernet
+    access_token: Mapped[bytes | None] = mapped_column(BYTEA, nullable=True)  # Fernet
     refresh_token: Mapped[bytes | None] = mapped_column(BYTEA)
     expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    refresh_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    platform_account_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scopes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    account_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    sync_lease_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -87,6 +94,13 @@ class OAuthToken(Base):
             "idx_oauth_tokens_expires_at",
             "expires_at",
             postgresql_where="status = 'active'",
+        ),
+        Index(
+            "uq_oauth_tokens_platform_account",
+            "platform",
+            "platform_account_id",
+            unique=True,
+            postgresql_where="platform_account_id IS NOT NULL AND status = 'active'",
         ),
     )
 
@@ -445,6 +459,7 @@ class Job(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="jobs")
+    tiktok_publications: Mapped[list["TikTokPublication"]] = relationship(back_populates="job")
     clips: Mapped[list["JobClip"]] = relationship(back_populates="job")
     # The plan item this job was minted for (NULL for non-plan jobs). One-directional;
     # PlanItem.current_job is the matching forward link (not a back_populates inverse —
@@ -459,6 +474,98 @@ class Job(Base):
         Index("idx_jobs_failure_reason", "failure_reason"),
         Index("idx_jobs_created_at", "created_at"),
         Index("idx_jobs_content_plan_item_id", "content_plan_item_id"),
+    )
+
+
+class TikTokPublication(Base):
+    """One user-consented TikTok Direct Post attempt.
+
+    Processing completion and public visibility are deliberately separate:
+    TikTok can finish ingest while moderation is pending, and visibility may
+    later be revoked.
+    """
+
+    __tablename__ = "tiktok_publications"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=False
+    )
+    variant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
+
+    source_object_path: Mapped[str] = mapped_column(Text, nullable=False)
+    source_generation: Mapped[str] = mapped_column(Text, nullable=False)
+    source_etag: Mapped[str | None] = mapped_column(Text, nullable=True)
+    snapshot_object_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    edit_signature: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    edit_signature_version: Mapped[str] = mapped_column(Text, nullable=False, server_default="1")
+
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    privacy_level: Mapped[str] = mapped_column(Text, nullable=False)
+    allow_comment: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    allow_duet: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    allow_stitch: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    brand_content_toggle: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    brand_organic_toggle: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    is_aigc: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    music_usage_confirmed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    consent_version: Mapped[str] = mapped_column(Text, nullable=False)
+    consented_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    creator_info_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    processing_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    visibility_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="unknown")
+    tiktok_publish_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tiktok_post_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_token_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    public_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    retryable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    next_poll_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latest_metrics: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    metrics_synced_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    evaluation_metrics: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    evaluation_captured_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="tiktok_publications")
+    job: Mapped["Job"] = relationship(back_populates="tiktok_publications")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_tiktok_pub_user_idempotency"),
+        UniqueConstraint("tiktok_publish_id", name="uq_tiktok_pub_publish_id"),
+        Index("idx_tiktok_pub_user_created", "user_id", "created_at"),
+        Index("idx_tiktok_pub_user_job", "user_id", "job_id"),
+        Index("idx_tiktok_pub_due_poll", "processing_status", "next_poll_at"),
+        Index("idx_tiktok_pub_post_id", "tiktok_post_id"),
+        CheckConstraint(
+            "processing_status IN ('queued','snapshotting','submitting','processing',"
+            "'complete','submission_unknown','failed')",
+            name="ck_tiktok_pub_processing_status",
+        ),
+        CheckConstraint(
+            "visibility_status IN ('unknown','private','public','removed')",
+            name="ck_tiktok_pub_visibility_status",
+        ),
     )
 
 

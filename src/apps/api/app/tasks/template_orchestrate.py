@@ -1364,6 +1364,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
                 job.assembly_plan = {
                     **plan_data,
                     "output_url": video_url,
+                    "output_path": gcs_output_path,
                     "base_output_url": base_video_url,
                     "platform_copy": platform_copy.model_dump(),
                     "copy_status": copy_status,
@@ -1564,6 +1565,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
                 job.assembly_plan = {
                     **plan,
                     "output_url": video_url,
+                    "output_path": gcs_output_path,
                     "base_output_url": base_video_url,
                     "platform_copy": platform_copy.model_dump(),
                     "copy_status": copy_status,
@@ -7035,6 +7037,7 @@ def _run_single_video_job(
             "intro_duration_s": intro_duration_s,
             "body_window": {"start_s": body_start, "end_s": body_end},
             "output_url": video_url,
+            "output_path": gcs_output_path,
             "base_output_url": base_video_url,
             "platform_copy": platform_copy.model_dump(),
             "copy_status": copy_status,

@@ -766,9 +766,9 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 **Depends on:** Nothing
 
 ### Platform Posting (Phase 2)
-**What:** POST /post endpoint, OAuth token refresh, Instagram/YouTube/TikTok upload integrations.
+**What:** Instagram and YouTube upload integrations. TikTok OAuth, Direct Post, token refresh, lifecycle tracking, and official metrics shipped in v0.20.0.0; audited public posting remains gated on TikTok approval.
 **Why:** Core monetization path — users want one-click posting, not just clip downloads.
-**How:** Separate PR; OAuth infra already in models. See agents/DECISIONS.md.
+**How:** Reuse the TikTok integration's owned-render, idempotency, status, and retention patterns where the platforms permit. See `docs/runbooks/tiktok-direct-publishing.md`.
 **Effort:** L (human: ~2 weeks / CC: ~2 hours)
 **Priority:** P1 — next sprint after template validation
 

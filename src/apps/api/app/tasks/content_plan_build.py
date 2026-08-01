@@ -55,7 +55,7 @@ def _analysis_summary(tiktok_profile: dict | None) -> str:
     """
     if not tiktok_profile:
         return ""
-    analysis = tiktok_profile.get("analysis") or {}
+    analysis = tiktok_profile.get("official_analysis") or tiktok_profile.get("analysis") or {}
     return str(analysis.get("summary_for_prompts") or "")
 
 

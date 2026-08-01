@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ContentPlan } from "@/lib/plan-api";
 import { addJobToPlan, type LibraryJob } from "@/lib/me-api";
 import { downloadVideo } from "@/lib/download-video";
 import FeedbackButtons from "./FeedbackButtons";
+import { TikTokPublishDialog } from "@/components/TikTokPublishDialog";
+import { getTikTokPublication, shouldPollTikTokPublication, type TikTokPublication } from "@/lib/tiktok-api";
 
 /**
  * One 9:16 video in the library. Light editorial canvas (D20/D21).
@@ -13,11 +15,26 @@ export default function LibraryTile({
   job,
   plan,
   onPinned,
+  canPublishToTikTok,
 }: {
   job: LibraryJob;
   plan: ContentPlan | null;
   onPinned: (planItemId: string) => void;
+  canPublishToTikTok: boolean;
 }) {
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [latestPublication, setLatestPublication] = useState<TikTokPublication | null>(
+    job.tiktok_publication,
+  );
+
+  useEffect(() => {
+    if (!latestPublication) return;
+    if (!shouldPollTikTokPublication(latestPublication)) return;
+    const timer = window.setInterval(() => {
+      void getTikTokPublication(latestPublication.id).then(setLatestPublication).catch(() => undefined);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [latestPublication]);
   return (
     <div className="motion-safe:animate-fade-up">
       <div className="relative aspect-[9/16] overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
@@ -52,19 +69,67 @@ export default function LibraryTile({
             <AddToPlan job={job} plan={plan} onPinned={onPinned} />
           )}
           {job.output_url && (
-            <button
-              type="button"
-              onClick={() => downloadVideo(job.output_url!, `kria-${job.id.slice(0, 8)}.mp4`)}
-              className="mt-2 min-h-11 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-medium text-[#3f3f46] transition-colors hover:border-zinc-400"
-            >
-              Download
-            </button>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => downloadVideo(job.output_url!, `kria-${job.id.slice(0, 8)}.mp4`)}
+                className="min-h-11 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-medium text-[#3f3f46] transition-colors hover:border-zinc-400"
+              >
+                Download
+              </button>
+              {canPublishToTikTok && job.tiktok_publishable && (
+                <button
+                  type="button"
+                  onClick={() => setPublishOpen(true)}
+                  className="min-h-11 rounded-full bg-[#0c0c0e] px-3 py-1.5 text-xs font-semibold text-white"
+                >
+                  Publish to TikTok
+                </button>
+              )}
+            </div>
           )}
+          {latestPublication && <TikTokStatus publication={latestPublication} />}
           <FeedbackButtons jobId={job.id} initialSignal={job.feedback_signal} />
         </div>
       )}
+      <TikTokPublishDialog
+        open={publishOpen}
+        jobId={job.id}
+        variantId={job.output_variant_id}
+        onClose={() => setPublishOpen(false)}
+        onPublished={setLatestPublication}
+      />
     </div>
   );
+}
+
+function TikTokStatus({ publication }: { publication: TikTokPublication }) {
+  const metrics = publication.latest_metrics;
+  const label = publication.visibility_status === "public"
+    ? "Live on TikTok"
+    : publication.visibility_status === "removed"
+      ? "No longer public"
+      : publication.visibility_status === "private"
+        ? "Published privately on TikTok"
+      : publication.processing_status === "submission_unknown"
+        ? "Check TikTok before retrying"
+        : publication.processing_status === "failed"
+          ? publication.retryable ? "TikTok is retrying" : "TikTok publish failed"
+          : publication.processing_status === "complete"
+            ? "TikTok moderation pending"
+            : "Publishing to TikTok…";
+  return (
+    <div className="mt-3 rounded-lg bg-zinc-50 p-2 text-xs text-[#3f3f46]">
+      <p className="font-medium">{label}</p>
+      {publication.visibility_status !== "public" && <p className="mt-0.5 text-[#71717a]">Metrics begin when the post is public.</p>}
+      {metrics && <p className="mt-1 text-[#71717a]">{formatMetric(metrics.view_count)} views · {formatMetric(metrics.like_count)} likes · {formatMetric(metrics.comment_count)} comments · {formatMetric(metrics.share_count)} shares</p>}
+      <p className="mt-1 text-[#a1a1aa]">Updated {new Date(publication.updated_at).toLocaleString()}</p>
+    </div>
+  );
+}
+
+function formatMetric(value: number | null | undefined) {
+  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value ?? 0);
 }
 
 function AddToPlan({

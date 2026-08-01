@@ -22,6 +22,12 @@ directives.
 $videos_block
 TIKTOK_DATA
 
+## Linked Nova edit correlations (DATA — correlation only, never causation)
+
+<<<NOVA_EDIT_CORRELATIONS
+$correlations_block
+NOVA_EDIT_CORRELATIONS
+
 ## Your task
 
 Use view_index (views / this account's own median) as the primary signal —
@@ -41,7 +47,9 @@ Distill what outperforms the account's baseline into:
 
 3. winning_themes: up to 6 content themes that appear in their over-indexing videos.
    Include the best view_index observed for that theme. Only include themes with
-   at least one video indexed above 1.5x.
+   at least one video indexed above 1.5x. If the same theme also underperforms,
+   state that mixed evidence in summary_for_prompts instead of presenting it as
+   a reliable recommendation.
 
 4. posting_cadence: the observed rhythm from upload_date spread (e.g. "bursts of
    3-4 posts/week, then gaps; heavier on weekends"). If upload_date is missing from
@@ -58,7 +66,18 @@ Distill what outperforms the account's baseline into:
    - voice: [voice_description]
    - [1-2 additional bullets on cadence or audience if clearly signalled]
    Cap at 1200 characters. Write in third person about the creator. Plain language,
-   no @handles, no #hashtags, no URLs.
+   no @handles, no #hashtags, no URLs. When supported Nova edit correlations are
+   supplied, include their sample size, 72–84-hour window, linked-post provenance,
+   and association-only wording so downstream agents receive the same boundaries.
+   If hook_patterns_that_work or winning_themes contains any item, this summary
+   MUST be non-empty and repeat the corresponding metric evidence. Leave it empty
+   only when both lists are empty and no useful audience/cadence signal exists.
+
+7. edit_patterns_observed: up to 4 cautious observations from the supplied Nova
+   edit correlations. Include the sample size, 72–84-hour evaluation window,
+   and Nova-linked-post provenance. Say "associated with", never "caused" or
+   "will improve". Return [] when the correlation block says there is
+   insufficient support.
 
 ## Rules
 
@@ -70,6 +89,7 @@ Distill what outperforms the account's baseline into:
   winning_themes — never fabricate patterns.
 - summary_for_prompts must be empty string "" when there is no clear signal (not
   enough data or uniform performance). An empty summary is correct; "(none)" is not.
+- Never infer posting cadence when upload_date is absent; an empty cadence is correct.
 - No @handles, no #hashtags, no URLs anywhere in the output.
 - Output valid JSON and nothing else:
 
@@ -84,6 +104,7 @@ Distill what outperforms the account's baseline into:
     ],
     "posting_cadence": "...",
     "audience_signal": "...",
+    "edit_patterns_observed": [],
     "summary_for_prompts": "..."
   }
 }

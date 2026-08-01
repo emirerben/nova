@@ -110,6 +110,15 @@ class TikTokAnalyzerAgent(Agent[TikTokAnalyzerInput, TikTokAnalyzerOutput]):
             )
 
         videos_block = "\n".join(lines) if lines else "(no video data)"
+        correlations_block = (
+            "\n".join(
+                f"- feature={c.feature}; observed={_sanitize_text(c.observed_value)}; "
+                f"comparison={_sanitize_text(c.comparison_value)}; ratio={c.view_ratio:.2f}; "
+                f"sample={c.sample_size}; confidence=low; correlation_only"
+                for c in input.edit_correlations
+            )
+            or "(no sufficiently supported Nova edit correlations)"
+        )
 
         return load_prompt(
             "analyze_tiktok_profile",
@@ -117,6 +126,7 @@ class TikTokAnalyzerAgent(Agent[TikTokAnalyzerInput, TikTokAnalyzerOutput]):
             follower_count=_safe_float(input.follower_count),
             median_views=_safe_float(input.median_views),
             videos_block=videos_block,
+            correlations_block=correlations_block,
         )
 
     def parse(
@@ -169,6 +179,11 @@ class TikTokAnalyzerAgent(Agent[TikTokAnalyzerInput, TikTokAnalyzerOutput]):
             ],
             posting_cadence=_sanitize_output(analysis.posting_cadence),
             audience_signal=_sanitize_output(analysis.audience_signal),
+            edit_patterns_observed=[
+                _sanitize_output(value)
+                for value in analysis.edit_patterns_observed
+                if _sanitize_output(value)
+            ][:4],
             # Clamp again after sanitization (stripping can slightly shrink the length).
             summary_for_prompts=_sanitize_output(analysis.summary_for_prompts)[:_MAX_SUMMARY_CHARS],
         )
@@ -183,7 +198,8 @@ class TikTokAnalyzerAgent(Agent[TikTokAnalyzerInput, TikTokAnalyzerOutput]):
             '\n\nIMPORTANT: Return ONLY a JSON object {"analysis": {...}} with the '
             "exact keys described. summary_for_prompts must be ≤1200 characters "
             "and plain text (no @handles, no #hashtags, no URLs). "
-            "hook_patterns_that_work and winning_themes must be arrays (can be empty)."
+            "hook_patterns_that_work, winning_themes, and edit_patterns_observed "
+            "must be arrays (can be empty)."
         )
 
     def refusal_clarification(self) -> str:

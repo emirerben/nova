@@ -1,0 +1,23 @@
+{
+  "agent": "nova.plan.tiktok_analyzer",
+  "prompt_version": "2026-08-01-performance-v2",
+  "input": {
+    "handle": "linkedcreator",
+    "follower_count": 4200,
+    "median_views": 5000,
+    "videos": [
+      {"video_id": "n1", "caption": "Travel diary one", "view_count": 9000, "engagement_rate": 0.08, "view_index": 1.8},
+      {"video_id": "n2", "caption": "Travel diary two", "view_count": 8500, "engagement_rate": 0.07, "view_index": 1.7},
+      {"video_id": "n3", "caption": "Travel diary three", "view_count": 8000, "engagement_rate": 0.07, "view_index": 1.6},
+      {"video_id": "n4", "caption": "Travel diary four", "view_count": 3500, "engagement_rate": 0.05, "view_index": 0.7},
+      {"video_id": "n5", "caption": "Travel diary five", "view_count": 3000, "engagement_rate": 0.04, "view_index": 0.6},
+      {"video_id": "n6", "caption": "Travel diary six", "view_count": 2500, "engagement_rate": 0.04, "view_index": 0.5}
+    ],
+    "edit_correlations": [
+      {"feature": "text_mode", "observed_value": "captioned", "comparison_value": "minimal", "view_ratio": 1.7, "sample_size": 6, "window_hours": "72-84", "provenance": "linked_nova_public_posts", "confidence": "low", "language": "correlation_only"}
+    ]
+  },
+  "raw_text": "{\"analysis\":{\"voice_description\":\"Concise travel-diary voice.\",\"hook_patterns_that_work\":[],\"winning_themes\":[{\"theme\":\"Travel diaries\",\"view_index\":1.8}],\"posting_cadence\":\"\",\"audience_signal\":\"\",\"edit_patterns_observed\":[\"Across a sample of 6 linked Nova public posts evaluated at 72–84 hours, captioned text mode was associated with 1.7x views versus minimal text; confidence is low.\"],\"summary_for_prompts\":\"- voice: concise travel diary\\n- Low-confidence Nova correlation: across 6 linked public posts at 72–84 hours, captioned text was associated with 1.7x views; treat as directional, not causal.\"}}",
+  "output": {"analysis": {"edit_patterns_observed": ["Across a sample of 6 linked Nova public posts evaluated at 72–84 hours, captioned text mode was associated with 1.7x views versus minimal text; confidence is low."]}},
+  "meta": {"source": "synthetic_2026-08-01", "case": "six mature linked posts support one bounded low-confidence correlation"}
+}

@@ -28,6 +28,7 @@ from app.models import (
     ContentPlan,
     Job,
     PlanItem,
+    TikTokPublication,
     VideoFeedback,
 )
 
@@ -67,7 +68,7 @@ def _derived_status(job: Job) -> str:
     return "generating"
 
 
-def _preview_url(job: Job) -> str | None:
+def _preview(job: Job) -> tuple[str | None, str | None]:
     """One playable URL for the library tile, across every job mode.
 
     Generative/content_plan jobs keep per-variant outputs in
@@ -79,10 +80,25 @@ def _preview_url(job: Job) -> str | None:
     if isinstance(variants, list):
         for v in variants:
             if v.get("render_status") == "ready" and v.get("output_url"):
-                return v["output_url"]
-        return None
+                return v["output_url"], str(v.get("variant_id") or "") or None
+        return None, None
     url = plan.get("output_url")
-    return url if isinstance(url, str) else None
+    return (url if isinstance(url, str) else None), None
+
+
+class LibraryTikTokPublication(BaseModel):
+    id: str
+    job_id: str
+    variant_id: str | None
+    processing_status: str
+    visibility_status: str
+    retryable: bool
+    failure_code: str | None
+    failure_detail: str | None
+    latest_metrics: dict | None
+    metrics_synced_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 def _job_mode(job: Job) -> str:
@@ -96,6 +112,9 @@ class LibraryJob(BaseModel):
     status: str  # derived: ready | generating | failed
     raw_status: str
     output_url: str | None
+    output_variant_id: str | None = None
+    tiktok_publishable: bool = False
+    tiktok_publication: LibraryTikTokPublication | None = None
     created_at: datetime
     content_plan_item_id: str | None
     # The thumb the user left on this video (up | down | more_like_this), or None.
@@ -109,13 +128,41 @@ def _to_library_job(
     *,
     content_plan_item_id: str | None = None,
     feedback_signal: str | None = None,
+    tiktok_publication: TikTokPublication | None = None,
 ) -> LibraryJob:
+    output_url, output_variant_id = _preview(job)
+    plan = job.assembly_plan or {}
+    has_owned_output = bool(
+        output_variant_id
+        or plan.get("output_path")
+        or _job_mode(job) in {"template", "music", "auto_music"}
+    )
     return LibraryJob(
         id=str(job.id),
         mode=_job_mode(job),
         status=_derived_status(job),
         raw_status=job.status,
-        output_url=_preview_url(job),
+        output_url=output_url,
+        output_variant_id=output_variant_id,
+        tiktok_publishable=bool(output_url and has_owned_output),
+        tiktok_publication=(
+            LibraryTikTokPublication(
+                id=str(tiktok_publication.id),
+                job_id=str(tiktok_publication.job_id),
+                variant_id=tiktok_publication.variant_id,
+                processing_status=tiktok_publication.processing_status,
+                visibility_status=tiktok_publication.visibility_status,
+                retryable=tiktok_publication.retryable,
+                failure_code=tiktok_publication.failure_code,
+                failure_detail=tiktok_publication.failure_detail,
+                latest_metrics=tiktok_publication.latest_metrics,
+                metrics_synced_at=tiktok_publication.metrics_synced_at,
+                created_at=tiktok_publication.created_at,
+                updated_at=tiktok_publication.updated_at,
+            )
+            if tiktok_publication
+            else None
+        ),
         created_at=job.created_at,
         content_plan_item_id=(
             content_plan_item_id
@@ -163,6 +210,7 @@ async def list_my_jobs(
     # enforced on write, so at most one thumb row per job; newest wins if a race left
     # two. Scoped to user.id (the rows are already the caller's, but defense-in-depth).
     thumbs: dict[uuid.UUID, str] = {}
+    latest_tiktok: dict[uuid.UUID, TikTokPublication] = {}
     if rows:
         fb_rows = (
             await db.execute(
@@ -178,8 +226,32 @@ async def list_my_jobs(
         for job_id, signal in fb_rows:
             thumbs.setdefault(job_id, signal)  # newest first → keep the latest
 
+        publication_rows = (
+            (
+                await db.execute(
+                    select(TikTokPublication)
+                    .where(
+                        TikTokPublication.user_id == user.id,
+                        TikTokPublication.job_id.in_([j.id for j in rows]),
+                    )
+                    .order_by(TikTokPublication.created_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for publication in publication_rows:
+            latest_tiktok.setdefault(publication.job_id, publication)
+
     return LibraryResponse(
-        jobs=[_to_library_job(j, feedback_signal=thumbs.get(j.id)) for j in rows],
+        jobs=[
+            _to_library_job(
+                j,
+                feedback_signal=thumbs.get(j.id),
+                tiktok_publication=latest_tiktok.get(j.id),
+            )
+            for j in rows
+        ],
         next_cursor=next_cursor,
     )
 

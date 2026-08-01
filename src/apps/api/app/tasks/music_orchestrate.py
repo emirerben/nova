@@ -857,7 +857,11 @@ def _run_music_job(job_id: str) -> None:
         if job:
             job.status = "music_ready"
             existing_plan = job.assembly_plan or {}
-            job.assembly_plan = {**existing_plan, "output_url": output_url}
+            job.assembly_plan = {
+                **existing_plan,
+                "output_url": output_url,
+                "output_path": output_gcs,
+            }
             db.commit()
 
     log.info("music_job_done", job_id=job_id)
@@ -1697,7 +1701,11 @@ def _run_templated_music_job(job_id: str) -> None:
         if j:
             j.status = "music_ready"
             existing = j.assembly_plan or {}
-            j.assembly_plan = {**existing, "output_url": output_url}
+            j.assembly_plan = {
+                **existing,
+                "output_url": output_url,
+                "output_path": output_gcs,
+            }
             db.commit()
     log.info("templated_music_job_done", job_id=job_id)
 

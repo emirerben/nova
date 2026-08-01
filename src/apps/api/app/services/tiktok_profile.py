@@ -52,6 +52,9 @@ class TikTokVideoRecord(TypedDict):
     view_count: int | None
     like_count: int | None
     comment_count: int | None
+    # Official Display API field. Scraped legacy rows leave this None and may
+    # carry repost_count instead.
+    share_count: int | None
     repost_count: int | None
     # (likes + comments + reposts) / views — None when views are missing or when
     # only flat-extract counts are available (no enrich).
@@ -209,6 +212,7 @@ def _to_video_record(entry: dict) -> TikTokVideoRecord:
         view_count=views,
         like_count=likes,
         comment_count=comments,
+        share_count=None,
         repost_count=reposts,
         engagement_rate=_engagement_rate_calc(views, likes, comments, reposts),
         view_index=None,  # filled in after median is computed

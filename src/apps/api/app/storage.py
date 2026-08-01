@@ -2,6 +2,8 @@
 
 import datetime
 import json
+from collections.abc import Iterator
+from dataclasses import dataclass
 
 from google.cloud import storage as gcs
 from google.oauth2 import service_account
@@ -9,6 +11,15 @@ from google.oauth2 import service_account
 from app.config import settings
 
 _client: gcs.Client | None = None
+
+
+@dataclass(frozen=True)
+class ObjectMetadata:
+    path: str
+    generation: str
+    etag: str | None
+    size: int
+    content_type: str
 
 
 def get_gcp_credentials(
@@ -356,6 +367,65 @@ def copy_object(src_object_path: str, dst_object_path: str) -> None:
     bucket = _get_client().bucket(settings.storage_bucket)
     src_blob = bucket.blob(src_object_path)
     bucket.copy_blob(src_blob, bucket, dst_object_path)
+
+
+def object_metadata(object_path: str) -> ObjectMetadata:
+    """Return immutable identity and HTTP metadata for an owned GCS object."""
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.get_blob(object_path)
+    if blob is None or blob.generation is None:
+        raise FileNotFoundError(object_path)
+    return ObjectMetadata(
+        path=object_path,
+        generation=str(blob.generation),
+        etag=blob.etag,
+        size=int(blob.size or 0),
+        content_type=blob.content_type or "video/mp4",
+    )
+
+
+def copy_object_generation(
+    src_object_path: str,
+    dst_object_path: str,
+    *,
+    source_generation: str,
+) -> ObjectMetadata:
+    """Copy exactly one source generation, failing if the render changed."""
+    bucket = _get_client().bucket(settings.storage_bucket)
+    src_blob = bucket.blob(src_object_path, generation=int(source_generation))
+    bucket.copy_blob(
+        src_blob,
+        bucket,
+        dst_object_path,
+        if_source_generation_match=int(source_generation),
+    )
+    return object_metadata(dst_object_path)
+
+
+def iter_object_range(
+    object_path: str,
+    *,
+    start: int = 0,
+    end: int | None = None,
+    chunk_size: int = 1024 * 1024,
+) -> Iterator[bytes]:
+    """Stream a GCS byte range in bounded chunks (``end`` is inclusive)."""
+    if start < 0 or chunk_size <= 0:
+        raise ValueError("invalid object range")
+    blob = _get_client().bucket(settings.storage_bucket).blob(object_path)
+    cursor = start
+    while end is None or cursor <= end:
+        chunk_end = cursor + chunk_size - 1
+        if end is not None:
+            chunk_end = min(chunk_end, end)
+        requested = chunk_end - cursor + 1
+        chunk = blob.download_as_bytes(start=cursor, end=chunk_end)
+        if not chunk:
+            break
+        yield chunk
+        cursor += len(chunk)
+        if len(chunk) < requested:
+            break
 
 
 def object_exists(object_path: str) -> bool:

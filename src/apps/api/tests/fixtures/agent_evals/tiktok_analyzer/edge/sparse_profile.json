@@ -1,0 +1,17 @@
+{
+  "agent": "nova.plan.tiktok_analyzer",
+  "prompt_version": "2026-08-01-performance-v2",
+  "input": {
+    "handle": "sparsecreator",
+    "follower_count": 120,
+    "median_views": 300,
+    "videos": [
+      {"video_id": "s1", "caption": "Morning routine", "view_count": 340, "engagement_rate": 0.05, "view_index": 1.13},
+      {"video_id": "s2", "caption": "Evening routine", "view_count": 260, "engagement_rate": 0.04, "view_index": 0.87}
+    ],
+    "edit_correlations": []
+  },
+  "raw_text": "{\"analysis\":{\"voice_description\":\"Calm routine-focused voice; the two-video sample is too small for performance conclusions.\",\"hook_patterns_that_work\":[],\"winning_themes\":[],\"posting_cadence\":\"\",\"audience_signal\":\"\",\"edit_patterns_observed\":[],\"summary_for_prompts\":\"- Evidence is sparse: only two videos, so avoid performance recommendations.\\n- voice: calm and routine-focused\"}}",
+  "output": {"analysis": {"edit_patterns_observed": []}},
+  "meta": {"source": "synthetic_2026-08-01", "case": "sparse account must not invent edit learning"}
+}

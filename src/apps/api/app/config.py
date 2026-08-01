@@ -592,7 +592,28 @@ class Settings(BaseSettings):
 
     tiktok_client_key: str = ""
     tiktok_client_secret: str = ""
-    tiktok_redirect_uri: str = "http://localhost:8000/auth/tiktok/callback"
+    tiktok_redirect_uri: str = "http://localhost:8000/tiktok/oauth/callback"
+    tiktok_web_app_url: str = "http://localhost:3000/library"
+    tiktok_media_base_url: str = "http://localhost:8000/tiktok/media"
+    tiktok_publishing_enabled: bool = False
+    tiktok_content_posting_audited: bool = False
+    tiktok_performance_sync_enabled: bool = False
+    tiktok_publishing_beta_user_ids: list[str] = []
+
+    @field_validator("tiktok_publishing_beta_user_ids", mode="before")
+    @classmethod
+    def parse_tiktok_beta_user_ids(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return value
+        return [part.strip() for part in raw.split(",") if part.strip()]
 
     # Deep TikTok profile analysis (enriched fetch + LLM distillation).
     # When true, scrape_tiktok_profile chains analyze_tiktok_profile after the

@@ -26,6 +26,22 @@ export interface LibraryJob {
   status: LibraryJobStatus;
   raw_status: string;
   output_url: string | null;
+  output_variant_id: string | null;
+  tiktok_publishable: boolean;
+  tiktok_publication: {
+    id: string;
+    job_id: string;
+    variant_id: string | null;
+    processing_status: string;
+    visibility_status: string;
+    retryable: boolean;
+    failure_code: string | null;
+    failure_detail: string | null;
+    latest_metrics: Record<string, number | null> | null;
+    metrics_synced_at: string | null;
+    created_at: string;
+    updated_at: string;
+  } | null;
   created_at: string;
   /** Set once the video has been pinned to a plan day. */
   content_plan_item_id: string | null;
