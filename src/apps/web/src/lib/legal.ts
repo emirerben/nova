@@ -6,15 +6,24 @@
 // yet) — see the "Before publish" checklist in the legal-pages PR. Fill in
 // every bracketed token below before these pages go live at usekria.com.
 
-export const LEGAL_ENTITY = "[YOUR FULL LEGAL NAME]"; // sole proprietor — no company formed yet
-export const LEGAL_ADDRESS = "[YOUR REGISTERED / MAILING ADDRESS]";
+// No company formed yet — Kria is operated by the founder as a sole
+// proprietorship, so the individual's own legal name is what's used here (a
+// DBA filing to make "Kria" the official trade name is a cheap later option,
+// not required to publish). Confirm this is the right name before publish.
+export const LEGAL_ENTITY = "Emir Erben";
+// City/state only, not a full street address — a deliberate early-stage
+// choice (see docs/legal/README.md) to keep a home address off a public
+// page. Revisit before scaling to EU users, who may expect a fuller DPA-style
+// contact address.
+export const LEGAL_ADDRESS = "Istanbul, Turkey";
 export const GOVERNING_LAW = "[STATE / COUNTRY WHOSE LAW GOVERNS]";
 
-// hello@usekria.com is already a live Resend sender (app/tasks/email.py). These
-// two are NOT yet provisioned as receiving inboxes — create them before publish,
-// a policy naming an unmonitored address is worse than naming none.
-export const PRIVACY_EMAIL = "privacy@usekria.com";
-export const LEGAL_EMAIL = "legal@usekria.com";
+// Single Gmail inbox for all legal contact — no custom-domain email needed
+// while pre-entity. Kept as two named exports (rather than one shared
+// constant) so the two documents can point at different addresses later
+// without a second migration.
+export const PRIVACY_EMAIL = "usekria@gmail.com";
+export const LEGAL_EMAIL = "usekria@gmail.com";
 
 export const EFFECTIVE_DATE = "August 1, 2026";
 

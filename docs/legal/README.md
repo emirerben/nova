@@ -157,17 +157,27 @@ discards them with no error at queue time — this is a known repo trap
 
 ## Pre-publish checklist
 
-- [ ] Fill every `[YOUR …]` and `[⚠️ …]` token in
-      `src/apps/web/src/lib/legal.ts` (legal entity name, address,
-      governing law).
-- [ ] **Create `privacy@usekria.com` and `legal@usekria.com` as monitored
-      inboxes.** `hello@usekria.com` is already a live Resend sender; these
-      two are not yet provisioned to receive mail. A policy naming an
-      unmonitored address is worse than naming none.
+- [x] ~~Create `privacy@usekria.com` and `legal@usekria.com` as monitored
+      inboxes.~~ Resolved: both point at `usekria@gmail.com` — no
+      custom-domain email needed pre-entity. `hello@usekria.com` remains the
+      outbound-only Resend sender and is unaffected.
+- [x] `LEGAL_ADDRESS` set to `"Istanbul, Turkey"` — city/state only, not a
+      full street address (deliberate: keeps a home address off a public
+      page pre-entity; revisit before scaling to EU users).
+- [ ] Fill the remaining `[YOUR …]` token: `GOVERNING_LAW`, in
+      `src/apps/web/src/lib/legal.ts`. `LEGAL_ENTITY` is set to the founder's
+      personal name ("Emir Erben") — correct for a sole proprietorship with
+      no company formed; confirm this is the right name, or file a DBA later
+      to make "Kria" official.
+- [ ] **Now that the operator is Istanbul-based, revisit KVKK.** The original
+      jurisdiction scope for these pages was GDPR + UK GDPR + CCPA/CPRA — a
+      KVKK (Turkish data protection law) section was considered and
+      deliberately left out at draft time. With the founder now confirmed to
+      be Turkey-based, that's worth a second look, especially since the
+      product already has Turkish-language caption support. Not blocking
+      this PR; flagged for the next privacy-policy revision.
 - [ ] Answer the music-licensing question so Terms §8 can move from
       placeholder to specific language about what's actually cleared.
-- [ ] Decide on GOVERNING_LAW / entity formation (see "Legal-entity
-      posture" above).
 - [ ] Attorney review of both documents — required by both skills' own
       disclaimers, and not pro forma given the liability-cap-at-$100 +
       third-party-faces-sent-to-Google fact pattern here.
