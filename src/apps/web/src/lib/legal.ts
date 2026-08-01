@@ -16,7 +16,10 @@ export const LEGAL_ENTITY = "Emir Erben";
 // page. Revisit before scaling to EU users, who may expect a fuller DPA-style
 // contact address.
 export const LEGAL_ADDRESS = "Istanbul, Turkey";
-export const GOVERNING_LAW = "[STATE / COUNTRY WHOSE LAW GOVERNS]";
+// Chosen ahead of the operator's own domicile (Turkey) — coherent if a UK Ltd
+// incorporation follows later (see docs/legal/README.md); otherwise this is a
+// neutral, internationally well-understood choice with no other local tie.
+export const GOVERNING_LAW = "England and Wales";
 
 // Single Gmail inbox for all legal contact — no custom-domain email needed
 // while pre-entity. Kept as two named exports (rather than one shared

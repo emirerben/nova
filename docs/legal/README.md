@@ -57,9 +57,14 @@ stakes on this:
    only as good as its indemnification backstop (§14) — which is only as
    good as the entity behind it.
 
-**Recommendation, not blocking this PR:** incorporate (Delaware LLC/C-Corp
-is the standard move, ~1 week) before introducing any paid tier or scaling
-user acquisition materially past today's volume.
+**Recommendation, not blocking this PR:** incorporate before introducing any
+paid tier or scaling user acquisition materially past today's volume. Given
+GOVERNING_LAW is now set to England and Wales (chosen ahead of the founder's
+own Turkey domicile — see below), a UK Ltd is the coherent choice: it's cheap
+and fast to form for a non-UK-resident founder, and keeps entity + governing
+law + registered address all pointing at the same jurisdiction rather than
+three different ones. A Delaware LLC/C-Corp remains the standard alternative
+if US investment or a US-facing cap table is the priority instead.
 
 ## What was verified against the codebase (not assumed)
 
@@ -164,8 +169,10 @@ discards them with no error at queue time — this is a known repo trap
 - [x] `LEGAL_ADDRESS` set to `"Istanbul, Turkey"` — city/state only, not a
       full street address (deliberate: keeps a home address off a public
       page pre-entity; revisit before scaling to EU users).
-- [ ] Fill the remaining `[YOUR …]` token: `GOVERNING_LAW`, in
-      `src/apps/web/src/lib/legal.ts`. `LEGAL_ENTITY` is set to the founder's
+- [x] `GOVERNING_LAW` set to `"England and Wales"` — chosen ahead of the
+      founder's own Turkey domicile; see "Legal-entity posture" above for why
+      that makes a UK Ltd (not Delaware) the coherent next incorporation
+      step if/when one is formed. `LEGAL_ENTITY` is set to the founder's
       personal name ("Emir Erben") — correct for a sole proprietorship with
       no company formed; confirm this is the right name, or file a DBA later
       to make "Kria" official.
