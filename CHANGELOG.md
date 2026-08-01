@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.0.1] — 2026-08-01
+
+### Fixed
+- **Skies in iPhone HDR footage no longer bleach to white.** Every clip shot in HDR (the default on recent iPhones) goes through a mandatory conversion to standard color before rendering. That conversion had a built-in setting meant to tame blown-out highlights, but it also caught bright blue sky — pushing it toward white/gray on every HDR clip, in both the editor preview and the final video. No AI or user-facing "look" was ever involved; this was a rendering-pipeline default. Skies now render with their natural color.
+
 ## [0.19.0.0] — 2026-07-31
 
 ### Added

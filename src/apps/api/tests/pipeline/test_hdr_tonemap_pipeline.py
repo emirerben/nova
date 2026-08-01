@@ -1,5 +1,38 @@
 """Regression tests for the shared HDR-to-SDR tonemap filter chain."""
 
+import re
+
+
+def test_hdr_tonemap_pins_explicit_desat_not_ffmpeg_default() -> None:
+    """The `tonemap` stage must always carry an explicit `desat=`.
+
+    FFmpeg's `tonemap` filter defaults desat=2, a highlight-desaturation knee
+    that bleaches bright+saturated pixels (e.g. a sunlit sky) toward white.
+    Without an explicit value, a future edit to _ZSCALE_SDR_PIPELINE could
+    silently drop back to that default and reintroduce the bleached-sky
+    regression (job 2cfb57f1, clip IMG_5169.MOV: sky blue chroma dropped from
+    139.5 to 130.9 while luma held steady at ~204).
+    """
+    from app.config import settings
+    from app.pipeline.reframe import _ZSCALE_SDR_PIPELINE
+
+    match = re.search(r"tonemap=tonemap=mobius:desat=([0-9.]+)", _ZSCALE_SDR_PIPELINE)
+    assert match is not None, (
+        f"tonemap stage must pin desat= explicitly; got {_ZSCALE_SDR_PIPELINE!r}"
+    )
+    assert float(match.group(1)) == settings.hdr_tonemap_desat
+
+
+def test_hdr_tonemap_desat_defaults_to_zero_disabling_highlight_bleach() -> None:
+    """Default must disable the desaturation knee, not restore FFmpeg's `2`.
+
+    `2.0` is the documented rollback value (byte-identical to pre-fix
+    behavior) for `fly secrets set HDR_TONEMAP_DESAT=2`, not the default.
+    """
+    from app.config import Settings
+
+    assert Settings.model_fields["hdr_tonemap_desat"].default == 0.0
+
 
 def test_hdr_tonemap_forces_even_dimensions_before_subsampled_zscale() -> None:
     """Round both resized axes even before later zscale stages.

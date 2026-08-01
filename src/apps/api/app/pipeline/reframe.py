@@ -722,7 +722,16 @@ _HDR10_TRANSFER = "smpte2084"
 # tonemap=mobius: smooth shoulder rolloff for values approaching 1.0,
 #   preserves midtone contrast better than reinhard, less aggressive than
 #   hable. Specular highlights compressed gracefully instead of clipped.
+# desat={settings.hdr_tonemap_desat}: FFmpeg's `tonemap` filter defaults
+#   desat=2, a highlight-desaturation knee that pushes bright+saturated pixels
+#   toward white/gray. A sunlit sky is bright AND saturated, so the default
+#   bleached every sky in every HLG clip toward white — reported as "a filter
+#   got applied to all my videos" (job 2cfb57f1, clip IMG_5169.MOV, sky blue
+#   chroma U 139.5→130.9 while luma held at ~204, the signature of luma-gated
+#   desaturation rather than a grade). Settings-backed so it can be dialed back
+#   to 2.0 without a deploy if a future clip shows colored highlight fringing.
 #
+
 # Resize BEFORE format=gbrpf32le, in linear-light 10-bit YUV space. The
 # `format=gbrpf32le` step is a 6.4× memory expansion (10-bit YUV → 32-bit float
 # planar) — for a 4K iPhone HDR source that's ~95MB/frame of bandwidth. PR #152
@@ -753,7 +762,7 @@ _ZSCALE_SDR_PIPELINE = (
     ":force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos"
     ",format=gbrpf32le"
     ",zscale=p=bt709"
-    ",tonemap=tonemap=mobius"
+    f",tonemap=tonemap=mobius:desat={settings.hdr_tonemap_desat}"
     # dither=error_diffusion: the only place a 10-bit HDR gradient collapses to
     # 8-bit. Without error diffusion this stair-steps into visible contour
     # bands on smooth skies (zscale defaults to dither=none). Error diffusion

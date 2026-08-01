@@ -334,6 +334,26 @@ class Settings(BaseSettings):
     # no in-flight job is mid-rendered with a switched-on flag.
     text_renderer_skia_enabled: bool = True
 
+    # HDR→SDR tonemap highlight-desaturation knee (`_ZSCALE_SDR_PIPELINE` in
+    # reframe.py). FFmpeg's `tonemap` filter defaults `desat=2`, a soft-knee
+    # that pushes bright+saturated pixels toward white to tame super-highlights.
+    # A sunlit blue sky is bright AND saturated, so every HLG/HDR10 clip with a
+    # sky in frame got its sky bleached toward white/gray — measured on a real
+    # job (2cfb57f1, clip IMG_5169.MOV): sky blue chroma (U) dropped from 139.5
+    # (source) to 130.9 (tonemapped) while luma stayed ~204, the signature of
+    # luma-gated desaturation, not a grade or a gamut clamp. `desat=0` disables
+    # the knee. `2.0` restores the pre-fix FFmpeg-default behavior byte-
+    # identically — the rollback value if a future clip shows colored fringing
+    # on specular highlights (the risk `desat` exists to prevent). Apply:
+    # `fly secrets set HDR_TONEMAP_DESAT=2 --app nova-video` + restart api +
+    # worker — `_ZSCALE_SDR_PIPELINE` bakes this into a module-level filter
+    # string at worker-process import time, not per render call, so a
+    # restart is required for a changed value to take effect. Bounded to
+    # FFmpeg's documented `tonemap` desat range so a malformed env value
+    # (e.g. a typo'd negative number or "nan") fails loudly at Settings load
+    # instead of silently corrupting every HDR render's filtergraph.
+    hdr_tonemap_desat: float = Field(default=0.0, ge=0.0, le=20.0)
+
     # Heavy-source downscale guard (2026-07-21 OOM incident, job e8173a25):
     # a 170MB high-bitrate clip OOM-killed the worker mid-reframe. SDR sources
     # whose SHORT edge exceeds `source_downscale_short_edge_max` are re-encoded
