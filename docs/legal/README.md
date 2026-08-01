@@ -47,10 +47,27 @@ corporate veil, the liability cap and indemnification clauses are the only
 thing standing between a claim and personal assets. Two areas raise the
 stakes on this:
 
-1. **The music library.** It's copyrighted and curated; §8 of the Terms is
-   deliberately conservative and flagged `[⚠️ NEEDS YOUR INPUT]` pending a
-   real answer about what license(s) are held for which tracks and
-   platforms.
+1. **The music library — confirmed, not pending.** Kria holds no license,
+   synchronization right, or other clearance for any track in its music
+   library (confirmed by the founder 2026-08-01). Terms §8 is written
+   accordingly: no license is granted to users, and use is at the user's own
+   risk. **This is a materially bigger issue than the ToS wording alone can
+   fix, and worth restating plainly:** the ToS governs the relationship
+   between Kria and its users — it cannot waive a claim from the actual
+   rightsholder (a label, a publisher), who was never a party to it. If
+   Kria's own servers store copies of these tracks and burn them into
+   rendered videos server-side (which is how the pipeline works — see
+   `app/pipeline/music_recipe.py`, `app/tasks/music_orchestrate.py`), that is
+   Kria itself reproducing and distributing copyrighted audio, not only the
+   end user doing so, and the ToS disclaimer does not touch that exposure.
+   Given rendered videos get posted publicly to TikTok/Reels/Shorts, this is
+   live, not theoretical, at whatever scale the feature currently runs.
+   Recommended paths, in order of durability: (a) swap the library for an
+   actually-licensed source built for UGC (Epidemic Sound, Artlist,
+   Soundstripe all offer API-friendly sync licensing for exactly this use
+   case), or (b) gate the music-matching feature off until licensing is
+   resolved. A ToS rewrite was the requested deliverable and is done; closing
+   the underlying gap is a product decision, not a documentation one.
 2. **Third parties in user footage.** Users upload real video of real
    people who never signed anything. §5 of the Terms puts the consent
    burden on the uploader and disclaims pre-screening, but that clause is
@@ -183,8 +200,12 @@ discards them with no error at queue time — this is a known repo trap
       be Turkey-based, that's worth a second look, especially since the
       product already has Turkish-language caption support. Not blocking
       this PR; flagged for the next privacy-policy revision.
-- [ ] Answer the music-licensing question so Terms §8 can move from
-      placeholder to specific language about what's actually cleared.
+- [x] Music-licensing question answered: **zero license held.** Terms §8
+      rewritten accordingly (no license granted, use-at-own-risk framing).
+      The open item now isn't wording — it's the underlying product decision
+      flagged in "Legal-entity posture" above (swap to a licensed UGC music
+      source, or gate the feature off). Not something a documentation PR can
+      resolve.
 - [ ] Attorney review of both documents — required by both skills' own
       disclaimers, and not pro forma given the liability-cap-at-$100 +
       third-party-faces-sent-to-Google fact pattern here.

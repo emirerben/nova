@@ -99,6 +99,10 @@ export default function TermsPage() {
             <li>You&apos;re responsible for having the right to film and post everyone in your footage.</li>
             <li>Kria is free right now. That could change — we&apos;ll give you {CHANGE_NOTICE_DAYS} days&apos; notice first.</li>
             <li>
+              <strong>Kria does not hold or warrant any license for the music in its library</strong> — using a track,
+              and posting a video that includes it, is entirely at your own risk. See §8.
+            </li>
+            <li>
               <strong>Kria is currently operated by an individual, not a company</strong> — see §12 and §13 for what that
               means for liability.
             </li>
@@ -272,25 +276,27 @@ export default function TermsPage() {
         <Section
           n="8"
           title="Music & Licensed Assets"
-          summary="Kria's music library is a curated, licensed set of tracks. You're responsible for how and where you post — platform music rules vary and change."
+          summary="Kria does not hold or warrant any license for the music in its library. Choosing to use a track — and posting a video that includes it — is entirely your decision and at your own risk."
         >
-          <p>
-            When you use a track from Kria&apos;s music library, we grant you a license to use that track solely as
-            embedded in the video Kria renders for you, for posting on the social platforms Kria targets (TikTok,
-            Instagram Reels, YouTube Shorts). You may not extract the audio for standalone use, or use a track in a
-            way that exceeds the scope of Kria&apos;s underlying license for it.
+          <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[14px] text-amber-900">
+            <strong>Kria does not hold, and does not warrant that it holds, any copyright license, synchronization
+            license, or other clearance for any track in its music library.</strong> Tracks are offered as a
+            convenience for matching and pacing your footage — not as licensed, cleared audio. We grant you no
+            license to any track, and we make no representation that using a track is lawful in your jurisdiction or
+            permitted on any platform.
           </p>
           <p>
-            [⚠️ NEEDS YOUR INPUT — the exact scope of clearance depends on what license(s) you hold for the music
-            library. Placeholder language below assumes standard sync/social licenses scoped to in-app rendering and
-            posting; confirm and revise before publish.]
+            By choosing to use a track from the library, you are independently deciding — at your own risk — whether
+            you have the right to do so. This may depend on the platform&apos;s own music-licensing arrangements (for
+            example, some platforms license certain catalogs directly for in-app posting, which may or may not cover
+            audio added through a third-party tool like Kria), the specific track and rightsholder, and your
+            jurisdiction. Kria does not verify or warrant any of this on your behalf.
           </p>
           <p>
-            <strong>We make no warranty that any given track is cleared for every platform, region, or use case</strong>,
-            and platform content-ID systems (TikTok&apos;s, Instagram&apos;s, YouTube&apos;s) may still flag or mute
-            audio in a rendered video regardless of our license. You are responsible for responding to any copyright
-            claim, strike, or takedown a platform issues against a video you post, and we are not liable for lost
-            reach, demonetization, or account action resulting from one.
+            You are solely responsible for any copyright claim, content-ID match, takedown, platform strike, or legal
+            claim arising from a track&apos;s use in a video you post, and you agree to indemnify Kria for any such
+            claim under §14. Kria is not liable for lost reach, demonetization, account action, or any other
+            consequence of using a track from the library.
           </p>
         </Section>
 
