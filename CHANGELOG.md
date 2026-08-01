@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.0.1] — 2026-08-01
+
+### Fixed
+- **TikTok can verify Kria's web and media URL prefixes.** The public site now serves TikTok's ownership proof file, and the API exposes the matching plain-text proof under the Direct Post media prefix so both production properties can be approved.
+
 ## [0.20.0.0] — 2026-08-01
 
 ### Added
