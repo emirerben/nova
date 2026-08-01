@@ -491,6 +491,18 @@ export default async function HomePage() {
       {/* ── FOOTER ── */}
       <footer className="border-t border-zinc-200 bg-white px-6 py-8 text-center text-[13px] text-[#a1a1aa] md:px-12">
         <span>© Kria</span>
+        <span className="mx-2" aria-hidden="true">
+          ·
+        </span>
+        <Link href="/terms" className="hover:text-[#0c0c0e] hover:underline">
+          Terms
+        </Link>
+        <span className="mx-2" aria-hidden="true">
+          ·
+        </span>
+        <Link href="/privacy" className="hover:text-[#0c0c0e] hover:underline">
+          Privacy
+        </Link>
       </footer>
     </main>
   );

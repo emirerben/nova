@@ -35,13 +35,16 @@ export default function Header() {
 
   if (isAdmin) return null;
 
-  // Light surfaces: landing + all plan pages (incl. /plan/items) + library + generative.
+  // Light surfaces: landing + all plan pages (incl. /plan/items) + library + generative
+  // + the static legal pages (cream canvas, would clash with the dark sticky header).
   // Dark: template render job flow (/template-jobs) and /admin (early-return above).
   const isLight =
     pathname === "/" ||
     pathname.startsWith("/plan") ||
     pathname.startsWith("/library") ||
-    pathname.startsWith("/generative");
+    pathname.startsWith("/generative") ||
+    pathname === "/terms" ||
+    pathname === "/privacy";
 
   return (
     <header
@@ -126,24 +129,48 @@ function AuthControl({ isLight = false }: { isLight?: boolean }) {
 
   if (!session?.user) {
     return (
-      <button
-        onClick={() => {
-          setSigningIn(true);
-          // signIn redirects away on success; if it returns (popup blocked,
-          // back button) the component is still mounted so re-enable the button.
-          void signIn("google", { callbackUrl: "/plan" }).finally(() =>
-            setSigningIn(false),
-          );
-        }}
-        disabled={signingIn}
-        className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-          isLight
-            ? "border-zinc-300 text-[#0c0c0e] hover:border-zinc-500"
-            : "border-zinc-700 text-zinc-200 hover:border-zinc-400 hover:text-white"
-        }`}
-      >
-        {signingIn ? "Signing in…" : "Sign in"}
-      </button>
+      // relative + absolute caption: the header row is a fixed h-14, and a
+      // flex-col taller than that would spill the caption past the header's
+      // bottom border into page content. Absolute positioning keeps the
+      // caption out of the row's own height calculation entirely.
+      <div className="relative">
+        <button
+          onClick={() => {
+            setSigningIn(true);
+            // signIn redirects away on success; if it returns (popup blocked,
+            // back button) the component is still mounted so re-enable the button.
+            void signIn("google", { callbackUrl: "/plan" }).finally(() =>
+              setSigningIn(false),
+            );
+          }}
+          disabled={signingIn}
+          className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+            isLight
+              ? "border-zinc-300 text-[#0c0c0e] hover:border-zinc-500"
+              : "border-zinc-700 text-zinc-200 hover:border-zinc-400 hover:text-white"
+          }`}
+        >
+          {signingIn ? "Signing in…" : "Sign in"}
+        </button>
+        {/* Clickwrap notice: continuing past sign-in is the affirmative act of
+            acceptance the terms-of-service skill calls for (browsewrap alone
+            is weakly enforceable). Absolutely positioned below the button so
+            it doesn't block the click or grow the header. */}
+        <p
+          className={`absolute right-0 top-full mt-1 whitespace-nowrap text-[10px] leading-snug ${
+            isLight ? "text-[#a1a1aa]" : "text-zinc-500"
+          }`}
+        >
+          Agree to{" "}
+          <Link href="/terms" className="underline underline-offset-2 hover:text-lime-700">
+            Terms
+          </Link>{" "}
+          &amp;{" "}
+          <Link href="/privacy" className="underline underline-offset-2 hover:text-lime-700">
+            Privacy
+          </Link>
+        </p>
+      </div>
     );
   }
 

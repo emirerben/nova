@@ -1,7 +1,10 @@
 """Per-user "my" surface — the video library + one-off → plan attach (Phase 1 spine).
 
-GET  /me/jobs                       — the signed-in user's videos (the library)
-POST /me/jobs/{job_id}/add-to-plan  — pin a standalone video onto a plan day
+GET    /me/jobs                       — the signed-in user's videos (the library)
+POST   /me/jobs/{job_id}/add-to-plan  — pin a standalone video onto a plan day
+GET    /me/export                     — data-portability bundle (privacy policy §9)
+POST   /me/account/delete-request     — step 1/2 of account erasure: emails a code
+POST   /me/account/delete-confirm     — step 2/2: verify the code, permanently erase
 
 STRICT auth only: every endpoint uses `CurrentUser` (never `CurrentUserOrSynthetic`),
 so the user scope comes from the validated `X-User-Id` header — never a client param.
@@ -13,24 +16,33 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from cryptography.fernet import Fernet, InvalidToken
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser
+from app.config import settings
 from app.database import get_db
 from app.models import (
     VIDEO_FEEDBACK_THUMB_SIGNALS,
     ContentPlan,
     Job,
+    OAuthToken,
+    Persona,
     PlanItem,
     TikTokPublication,
+    User,
     VideoFeedback,
 )
+from app.services import tiktok_client
+from app.services.token_crypto import decrypt_token
+from app.storage import signed_get_url
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -432,3 +444,364 @@ async def delete_feedback(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found")
     await db.delete(row)
     await db.commit()
+
+
+# ── Data export (privacy policy §9 — "Export" right) ──────────────────────────
+
+# How long a re-signed source-media URL in the export bundle stays valid. Longer
+# than the default 5-minute probe TTL (storage.signed_get_url) since this is a
+# "download your data" link a user may not open immediately.
+_EXPORT_SIGNED_URL_MINUTES = 60
+# Signing is a per-job network round-trip; cap it so an account with thousands of
+# jobs can't turn this into a multi-minute request. Every job's METADATA is still
+# included in full — only the signed source-media link is capped, and the
+# response says so explicitly (no silent truncation).
+_EXPORT_MAX_SIGNED_MEDIA = 100
+
+
+class ExportResponse(BaseModel):
+    exported_at: datetime
+    user: dict[str, Any]
+    persona: dict[str, Any] | None
+    content_plans: list[dict[str, Any]]
+    jobs: list[dict[str, Any]]
+    feedback: list[dict[str, Any]]
+    tiktok_publications: list[dict[str, Any]]
+    note: str
+
+
+@router.get("/export", response_model=ExportResponse)
+async def export_my_data(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ExportResponse:
+    """Everything Kria holds about the caller, as one JSON bundle.
+
+    Synchronous rather than the async "email a download link" pattern used
+    elsewhere (e.g. music test-job renders) — this is metadata plus a bounded
+    set of re-signed links, not a multi-gigabyte media archive, so a direct
+    authenticated response is simpler and just as correct. Scope note: this
+    exports job METADATA and a signed link to each job's original uploaded
+    source (capped at _EXPORT_MAX_SIGNED_MEDIA, see above); it does not
+    re-derive every render pipeline's rendered-output URL contract across all
+    five job modes — those are already reachable via the existing library UI
+    while the account is active.
+    """
+    persona_row = (
+        await db.execute(select(Persona).where(Persona.user_id == user.id))
+    ).scalar_one_or_none()
+
+    plans = (
+        (await db.execute(select(ContentPlan).where(ContentPlan.user_id == user.id)))
+        .scalars()
+        .all()
+    )
+    plan_ids = [p.id for p in plans]
+    items_by_plan: dict[uuid.UUID, list[PlanItem]] = {pid: [] for pid in plan_ids}
+    if plan_ids:
+        items = (
+            (await db.execute(select(PlanItem).where(PlanItem.content_plan_id.in_(plan_ids))))
+            .scalars()
+            .all()
+        )
+        for item in items:
+            items_by_plan.setdefault(item.content_plan_id, []).append(item)
+
+    jobs = (
+        (
+            await db.execute(
+                select(Job).where(Job.user_id == user.id).order_by(Job.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    feedback_rows = (
+        (
+            await db.execute(
+                select(VideoFeedback)
+                .where(VideoFeedback.user_id == user.id)
+                .order_by(VideoFeedback.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    tiktok_rows = (
+        (
+            await db.execute(
+                select(TikTokPublication)
+                .where(TikTokPublication.user_id == user.id)
+                .order_by(TikTokPublication.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    jobs_out: list[dict[str, Any]] = []
+    signed_count = 0
+    for job in jobs:
+        source_url: str | None = None
+        if job.raw_storage_path and signed_count < _EXPORT_MAX_SIGNED_MEDIA:
+            try:
+                source_url = signed_get_url(
+                    job.raw_storage_path, expiration_minutes=_EXPORT_SIGNED_URL_MINUTES
+                )
+                signed_count += 1
+            except Exception:  # noqa: BLE001 — a signing hiccup shouldn't fail the export
+                source_url = None
+        jobs_out.append(
+            {
+                "id": str(job.id),
+                "mode": job.mode or job.job_type,
+                "status": job.status,
+                "created_at": job.created_at.isoformat(),
+                "transcript": job.transcript,
+                "selected_platforms": job.selected_platforms,
+                "assembly_plan": job.assembly_plan,
+                "source_media_url": source_url,
+            }
+        )
+    media_truncated = len(jobs) > _EXPORT_MAX_SIGNED_MEDIA
+
+    log.info("export_my_data", user_id=str(user.id), job_count=len(jobs), plan_count=len(plans))
+    return ExportResponse(
+        exported_at=datetime.now(),
+        user={
+            "id": str(user.id),
+            "email": user.email,
+            "name": user.name,
+            "auth_provider": user.auth_provider,
+            "onboarding_status": user.onboarding_status,
+            "created_at": user.created_at.isoformat(),
+        },
+        persona=(
+            {
+                "questionnaire": persona_row.questionnaire,
+                "persona": persona_row.persona,
+                "tiktok_profile": persona_row.tiktok_profile,
+                "style": persona_row.style,
+                "idea_seeds": persona_row.idea_seeds,
+                "persona_status": persona_row.persona_status,
+                "created_at": persona_row.created_at.isoformat(),
+            }
+            if persona_row
+            else None
+        ),
+        content_plans=[
+            {
+                "id": str(plan.id),
+                "plan_status": plan.plan_status,
+                "horizon_days": plan.horizon_days,
+                "start_date": plan.start_date.isoformat() if plan.start_date else None,
+                "events": plan.events,
+                "preference_summary": plan.preference_summary,
+                "items": [
+                    {
+                        "id": str(item.id),
+                        "day_index": item.day_index,
+                        "idea": item.idea,
+                        "theme": item.theme,
+                        "filming_suggestion": item.filming_suggestion,
+                        "rationale": item.rationale,
+                        "edit_format": item.edit_format,
+                        "scheduled_date": (
+                            item.scheduled_date.isoformat() if item.scheduled_date else None
+                        ),
+                        "notes": item.notes,
+                        "scenes": item.scenes,
+                        "clip_gcs_paths": item.clip_gcs_paths,
+                        "voiceover_script": item.voiceover_script,
+                    }
+                    for item in items_by_plan.get(plan.id, [])
+                ],
+            }
+            for plan in plans
+        ],
+        jobs=jobs_out,
+        feedback=[
+            {
+                "signal": f.signal,
+                "note": f.note,
+                "job_id": str(f.job_id) if f.job_id else None,
+                "content_plan_id": str(f.content_plan_id) if f.content_plan_id else None,
+                "created_at": f.created_at.isoformat(),
+            }
+            for f in feedback_rows
+        ],
+        tiktok_publications=[
+            {
+                "id": str(t.id),
+                "job_id": str(t.job_id),
+                "tiktok_post_id": t.tiktok_post_id,
+                "processing_status": t.processing_status,
+                "visibility_status": t.visibility_status,
+                "latest_metrics": t.latest_metrics,
+                "created_at": t.created_at.isoformat(),
+            }
+            for t in tiktok_rows
+        ],
+        note=(
+            f"{signed_count} of {len(jobs)} jobs include a re-signed source-media link"
+            f" (capped at {_EXPORT_MAX_SIGNED_MEDIA})."
+            if media_truncated
+            else "All jobs include a re-signed source-media link where available."
+        ),
+    )
+
+
+# ── Account deletion (privacy policy §9 — "Delete" right) ─────────────────────
+
+# Confirmation codes are stateless Fernet tokens of the caller's own user id —
+# nothing is persisted server-side between request and confirm. Fernet embeds
+# its own timestamp, so `.decrypt(token, ttl=...)` enforces expiry without a
+# separate expires_at column. Reuses TOKEN_ENCRYPTION_KEY (already required
+# infra for OAuthToken encryption, see services/token_crypto.py) rather than
+# adding a second secret to provision.
+_ACCOUNT_DELETE_TTL_SECONDS = 3600
+
+
+def _account_delete_fernet() -> Fernet:
+    if not settings.token_encryption_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account deletion is not configured",
+        )
+    try:
+        return Fernet(settings.token_encryption_key.encode())
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account deletion is not configured",
+        ) from exc
+
+
+class DeleteRequestResponse(BaseModel):
+    requested: bool
+
+
+@router.post(
+    "/account/delete-request",
+    response_model=DeleteRequestResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def request_account_deletion(user: CurrentUser) -> DeleteRequestResponse:
+    """Step 1 of 2: email the caller a one-time confirmation code.
+
+    No DB write here — the code is minted fresh from the caller's own id, so a
+    user can request it as many times as they like without any cleanup concern.
+    """
+    from app.tasks.account_lifecycle import send_account_deletion_email  # noqa: PLC0415
+
+    token = _account_delete_fernet().encrypt(str(user.id).encode()).decode()
+    send_account_deletion_email.delay(user.email, token)
+    log.info("account_deletion_requested", user_id=str(user.id))
+    return DeleteRequestResponse(requested=True)
+
+
+class DeleteConfirmBody(BaseModel):
+    token: str
+
+
+@router.post("/account/delete-confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def confirm_account_deletion(
+    body: DeleteConfirmBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Step 2 of 2: verify the emailed code, then permanently erase the account.
+
+    Requires the caller to still be signed in as the SAME user the code was
+    issued to — the decrypted token must equal str(user.id), so a leaked code
+    alone can't be used to delete a different account. 404 (not 403) on a
+    mismatch, matching this file's IDOR convention elsewhere.
+
+    Full erasure — unlike POST /personas/reset, which explicitly KEEPS jobs.
+    DB rows are deleted synchronously in FK-safe order; none of Job, OAuthToken,
+    or TikTokPublication cascade from users.id at the DB level (see
+    docs/legal/README.md), so each needs an explicit step before the final
+    `DELETE FROM users` can succeed — the same hazard reset_persona documents
+    for plan_items, extended here:
+
+      1. Null Job.content_plan_item_id (no ondelete — blocks the content_plan
+         cascade below otherwise).
+      2. Best-effort revoke + delete TikTok OAuth tokens and delete
+         TikTokPublication rows (TikTokPublication.job_id has no ondelete —
+         must go before jobs).
+      3. Delete remaining OAuthToken rows (no ondelete from users.id).
+      4. Delete Job rows (no ondelete from users.id either; cascades AgentRun
+         and VideoFeedback automatically via their own ondelete=CASCADE).
+      5. Delete the User row — Persona, ContentPlan (→ PlanItem →
+         PlanItemAsset), and any remaining VideoFeedback all cascade from here
+         via direct ondelete=CASCADE FKs to users.id.
+
+    GCS bytes are swept afterward by tasks.purge_user_storage — see that
+    task's docstring for why it's async and why the ids are captured here
+    first (the DB row is gone by the time that task runs).
+    """
+    try:
+        plaintext = (
+            _account_delete_fernet()
+            .decrypt(body.token.encode(), ttl=_ACCOUNT_DELETE_TTL_SECONDS)
+            .decode()
+        )
+    except InvalidToken as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired confirmation code — request a new one",
+        ) from exc
+    if plaintext != str(user.id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Confirmation code does not match the signed-in account",
+        )
+
+    jobs = (await db.execute(select(Job).where(Job.user_id == user.id))).scalars().all()
+    job_ids = [str(j.id) for j in jobs]
+    raw_paths = [j.raw_storage_path for j in jobs if j.raw_storage_path]
+
+    # 1. Sever job → plan_item back-refs before the content_plan cascade fires.
+    await db.execute(
+        update(Job)
+        .where(Job.user_id == user.id, Job.content_plan_item_id.is_not(None))
+        .values(content_plan_item_id=None)
+    )
+    # 2. Revoke + clear TikTok connection, delete publication rows.
+    tiktok_tokens = (
+        (
+            await db.execute(
+                select(OAuthToken).where(
+                    OAuthToken.user_id == user.id, OAuthToken.platform == "tiktok"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for token_row in tiktok_tokens:
+        if token_row.access_token:
+            try:
+                await run_in_threadpool(
+                    tiktok_client.revoke_access, decrypt_token(token_row.access_token)
+                )
+            except Exception:  # noqa: BLE001 — local erasure must still proceed
+                pass
+    await db.execute(delete(TikTokPublication).where(TikTokPublication.user_id == user.id))
+    # 3. Remaining OAuth tokens (instagram/youtube — no revoke API wired yet).
+    await db.execute(delete(OAuthToken).where(OAuthToken.user_id == user.id))
+    # 4. Jobs — cascades AgentRun + VideoFeedback automatically.
+    await db.execute(delete(Job).where(Job.user_id == user.id))
+    # 5. The user row — cascades Persona/ContentPlan/PlanItem/PlanItemAsset/
+    #    any remaining VideoFeedback.
+    await db.execute(delete(User).where(User.id == user.id))
+    await db.commit()
+
+    from app.tasks.account_lifecycle import purge_user_storage  # noqa: PLC0415
+
+    purge_user_storage.delay(str(user.id), job_ids, raw_paths)
+
+    log.info("account_deleted", user_id=str(user.id), job_count=len(job_ids))
+    return Response(status_code=204)
