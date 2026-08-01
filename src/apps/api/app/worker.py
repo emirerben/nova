@@ -32,6 +32,7 @@ celery_app = Celery(
         "app.tasks.autoplace",
         "app.tasks.omni_generate",
         "app.tasks.tiktok",
+        "app.tasks.account_lifecycle",
     ],
 )
 

@@ -319,6 +319,34 @@ def delete_object_best_effort(object_path: str) -> bool:
         return False
 
 
+def delete_prefix_best_effort(prefix: str) -> int:
+    """Delete every object under a GCS prefix, swallowing per-object failures.
+
+    Used for account erasure (`tasks.account_lifecycle.purge_user_storage`) to clear
+    `users/{user_id}/` and `generative-jobs/{job_id}/` — both are lifecycle-exempt
+    (see infra/gcs-lifecycle.json) so nothing else ever removes them. Returns the
+    count of objects actually deleted, for observability; never raises, so a bucket
+    listing hiccup costs storage, never blocks the caller's account-deletion flow.
+
+    Guardrail: refuses empty or single-character prefixes so a bug upstream can't
+    accidentally wipe the whole bucket.
+    """
+    if len(prefix.strip("/")) < 3:
+        raise ValueError(f"Refusing to delete an unsafe prefix: {prefix!r}")
+    bucket = _get_client().bucket(settings.storage_bucket)
+    deleted = 0
+    try:
+        for blob in bucket.list_blobs(prefix=prefix):
+            try:
+                blob.delete()
+                deleted += 1
+            except Exception:  # noqa: BLE001 — best-effort per-object cleanup
+                continue
+    except Exception:  # noqa: BLE001 — best-effort cleanup only
+        pass
+    return deleted
+
+
 def signed_get_url(object_path: str, expiration_minutes: int = 5) -> str:
     """Generate a short-lived signed GET URL for the API to stream-probe a GCS
     object without downloading it. ffmpeg/ffprobe accept https:// URLs and

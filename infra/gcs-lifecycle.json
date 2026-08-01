@@ -28,6 +28,13 @@
           "age": 1,
           "matchesPrefix": ["voiceover-uploads/"]
         }
+      },
+      {
+        "action": { "type": "Delete" },
+        "condition": {
+          "age": 1,
+          "matchesPrefix": ["transcript-cache/"]
+        }
       }
     ]
   }

@@ -207,6 +207,12 @@ def transcribe_whisper_cached(
     fail-open: any hashing / GCS error falls straight through to a live
     transcription, and a cache write failure never affects the returned result.
     Gated by ``smart_caption_transcript_cache_enabled`` (default on).
+
+    Retention: `transcript-cache/` objects are deleted after 24h by
+    infra/gcs-lifecycle.json — this entry holds a transcript of someone's actual
+    speech, keyed by a content hash with no link back to the user, so it can't be
+    swept by account deletion (see docs/legal/README.md). A 24h TTL bounds that
+    exposure to "cache miss and re-transcribe," not "the row lives forever."
     """
 
     if not getattr(settings, "smart_caption_transcript_cache_enabled", True):
