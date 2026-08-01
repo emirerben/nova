@@ -48,6 +48,8 @@ _SCOPES = [
 ]
 _ANALYTICS_SCOPES = {"user.info.basic", "video.list"}
 _CONSENT_VERSION = "2026-08-01"
+_MEDIA_VERIFICATION_FILENAME = "tiktok9a2bMaksajhuoYRL3P7tSex7MrV8z5lg.txt"
+_MEDIA_VERIFICATION_CONTENT = "tiktok-developers-site-verification=9a2bMaksajhuoYRL3P7tSex7MrV8z5lg"
 
 
 class _RedactTikTokMediaAccessFilter(logging.Filter):
@@ -546,6 +548,12 @@ async def request_sync(user: CurrentUser, db: AsyncSession = Depends(get_db)) ->
 
     sync_tiktok_account.delay(str(user.id))
     return {"status": "queued"}
+
+
+@router.get(f"/media/{_MEDIA_VERIFICATION_FILENAME}", include_in_schema=False)
+async def media_verification() -> Response:
+    """Serve TikTok's URL-prefix ownership proof at the exact verified path."""
+    return Response(content=_MEDIA_VERIFICATION_CONTENT, media_type="text/plain")
 
 
 @router.api_route("/media/{publication_id}/{media_token}.mp4", methods=["GET", "HEAD"])

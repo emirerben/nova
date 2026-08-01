@@ -29,6 +29,7 @@ from app.routes.tiktok import (
     _validate_post_settings,
     _verify_webhook,
     create_publication,
+    media_verification,
     oauth_start,
     request_sync,
 )
@@ -176,6 +177,17 @@ def test_media_range_rejects_multiple_ranges() -> None:
     with pytest.raises(HTTPException) as exc:
         _parse_range("bytes=0-1,4-5", 100)
     assert exc.value.status_code == 416
+
+
+@pytest.mark.asyncio
+async def test_media_prefix_verification_is_public_plain_text() -> None:
+    response = await media_verification()
+
+    assert response.status_code == 200
+    assert response.media_type == "text/plain"
+    assert response.body == (
+        b"tiktok-developers-site-verification=9a2bMaksajhuoYRL3P7tSex7MrV8z5lg"
+    )
 
 
 @pytest.mark.parametrize(
