@@ -125,6 +125,8 @@ import {
   type PickerEditFormat,
 } from "@/lib/edit-format";
 import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
+import { TikTokPublishDialog } from "@/components/TikTokPublishDialog";
+import { getTikTokConnection } from "@/lib/tiktok-api";
 
 // How long a dispatched render may take to register its Job before we admit
 // failure. Plan-item renders are queued behind a single worker, and the Job row
@@ -2409,17 +2411,31 @@ function FocusedResults({
   }, [variant?.render_finished_at]);
   // Declared here (before the render_finished_at effect) so the effect can read it.
   // The full definition lives further down alongside handleDownload.
-  const pendingDownloadRef = useRef(false);
+  const pendingExportRef = useRef<"download" | "publish" | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [canPublishToTikTok, setCanPublishToTikTok] = useState(false);
 
-  // When a download-triggered burn completes (render_finished_at advances), clear the CSS
+  useEffect(() => {
+    let cancelled = false;
+    void getTikTokConnection()
+      .then((connection) => {
+        if (!cancelled) setCanPublishToTikTok(connection.can_publish);
+      })
+      .catch(() => {
+        if (!cancelled) setCanPublishToTikTok(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // When an export-triggered burn completes (render_finished_at advances), clear the CSS
   // preview layer — the burned output_url now has the cards composited in. Only fires when
-  // pendingDownloadRef is true so stale/concurrent renders (e.g. completing text edits, or
+  // an export is pending so stale/concurrent renders (e.g. completing text edits, or
   // lingering renders from a previous session) don't wipe newly uploaded card previews.
   const prevFinishedAtRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     const cur = variant?.render_finished_at ?? null;
     if (prevFinishedAtRef.current !== undefined && cur !== prevFinishedAtRef.current) {
-      if (pendingDownloadRef.current) {
+      if (pendingExportRef.current) {
         setLocalPreviewUrls((prev) => {
           Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
           return {};
@@ -2521,24 +2537,26 @@ function FocusedResults({
   const downloadName = `kria-${slugify(item.theme ?? "") || itemId.slice(0, 8)}.mp4`;
 
   useEffect(() => {
-    if (!pendingDownloadRef.current) return;
+    if (!pendingExportRef.current) return;
     if (editSession.isSaving) return;
     if (variant?.render_status === "ready" && variant.output_url) {
-      pendingDownloadRef.current = false;
-      downloadVideo(variant.output_url, downloadName);
+      const action = pendingExportRef.current;
+      pendingExportRef.current = null;
+      if (action === "download") downloadVideo(variant.output_url, downloadName);
+      else setPublishOpen(true);
     } else if (variant?.render_status === "failed") {
-      // A download-triggered bake failed on the backend (FFmpeg error after a
+      // An export-triggered bake failed on the backend (FFmpeg error after a
       // successful dispatch). Surface it — otherwise the button silently
       // re-enables, no file downloads, and the stale output_url keeps playing
       // as if it succeeded. The Apply/Retry button that used to surface this is
       // gone; the implicit retry is to click Download again (needsSfxBake stays
       // true after a failed bake).
-      pendingDownloadRef.current = false;
-      onError("Couldn't prepare your video for download. Please click Download to try again.");
+      pendingExportRef.current = null;
+      onError("Couldn't prepare your video. Please try again.");
     }
   }, [editSession.isSaving, variant?.render_status, variant?.output_url, downloadName, onError]);
 
-  const baking = (instantEligible && editSession.isSaving) || pendingDownloadRef.current;
+  const baking = (instantEligible && editSession.isSaving) || pendingExportRef.current !== null;
 
   // Inline SFX dirtiness (D5): does the download need a fresh SFX bake, and is
   // the latest set persisted? Computed from the variant + placements — no
@@ -2550,7 +2568,7 @@ function FocusedResults({
   // intersection so removing a card (tile Remove or lane) unblocks instantly.
   const failedOverlayCount = overlayCards.filter((c) => failedCardIds.has(c.id)).length;
 
-  const handleDownload = useCallback(async () => {
+  const prepareExactExport = useCallback(async (action: "download" | "publish") => {
     if (!variant) return;
 
     // Flush the latest SFX placements before any bake. SFX edits save on a
@@ -2572,13 +2590,13 @@ function FocusedResults({
       // blank visual — block the overlay-bake path until it's refreshed or
       // removed (inline copy under the button explains why).
       if (failedOverlayCount > 0) return;
-      pendingDownloadRef.current = true;
+      pendingExportRef.current = action;
       try {
         await flushSfx();
         await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards, { render: true });
         markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
       } catch (err) {
-        pendingDownloadRef.current = false;
+        pendingExportRef.current = null;
         onError(
           err instanceof Error
             ? err.message
@@ -2591,13 +2609,13 @@ function FocusedResults({
     // SFX-only: bake when placements differ from what's baked into output_url.
     // Inline compare (not a sticky flag) → "nothing changed" downloads instantly.
     if (needsSfxBake) {
-      pendingDownloadRef.current = true;
+      pendingExportRef.current = action;
       try {
         await flushSfx();
         await renderVariantSfx(itemId, variant.variant_id);
         markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
       } catch (err) {
-        pendingDownloadRef.current = false;
+        pendingExportRef.current = null;
         onError(
           err instanceof Error
             ? err.message
@@ -2609,12 +2627,23 @@ function FocusedResults({
 
     if (!variant.output_url && !editSession.isDirty) return;
     if (instantEligible && editSession.isDirty) {
-      pendingDownloadRef.current = true;
+      pendingExportRef.current = action;
       void editSession.commit();
       return;
     }
-    if (variant.output_url) downloadVideo(variant.output_url, downloadName);
+    if (variant.output_url) {
+      if (action === "download") downloadVideo(variant.output_url, downloadName);
+      else setPublishOpen(true);
+    }
   }, [variant, editSession, instantEligible, sfxPlacements, needsSfxBake, sfxIsPersistDirty, overlayCards, failedOverlayCount, itemId, downloadName, markVariantRendering, onError]);
+
+  const handleDownload = useCallback(() => {
+    void prepareExactExport("download");
+  }, [prepareExactExport]);
+
+  const handlePublish = useCallback(() => {
+    void prepareExactExport("publish");
+  }, [prepareExactExport]);
 
   // Item pages now present one primary output. Keep the deeper inline editor
   // machinery dormant here; the full-screen editor owns post-render editing.
@@ -2996,6 +3025,16 @@ function FocusedResults({
                 >
                   {baking ? "Preparing your video…" : "Download"}
                 </button>
+                {canPublishToTikTok && item.current_job_id && (
+                  <button
+                    type="button"
+                    onClick={handlePublish}
+                    disabled={baking}
+                    className="inline-flex min-h-11 w-full items-center justify-center rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 sm:flex-1"
+                  >
+                    {baking ? "Preparing your video…" : "Publish to TikTok"}
+                  </button>
+                )}
               </div>
               {/* Plan 009 T4: failed card media blocks the overlay-bake path —
                   say so inline instead of silently no-oping the click. */}
@@ -3012,6 +3051,15 @@ function FocusedResults({
                 </p>
               )}
             </>
+          )}
+
+          {item.current_job_id && variant && (
+            <TikTokPublishDialog
+              open={publishOpen}
+              jobId={item.current_job_id}
+              variantId={variant.variant_id}
+              onClose={() => setPublishOpen(false)}
+            />
           )}
 
           {/* Feedback */}

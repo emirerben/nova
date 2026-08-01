@@ -13,6 +13,8 @@ import LibraryTile from "./_components/LibraryTile";
 import { LightShell } from "@/components/ui/LightShell";
 import { Eyebrow } from "@/components/ui/Eyebrow";
 import { InkButton } from "@/components/ui/InkButton";
+import TikTokConnectionCard from "./_components/TikTokConnectionCard";
+import type { TikTokConnection } from "@/lib/tiktok-api";
 
 /**
  * "My videos" — every video the signed-in user has made, newest first.
@@ -26,6 +28,7 @@ export default function LibraryPage() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadingMore, setLoadingMore] = useState(false);
+  const [tiktokConnection, setTikTokConnection] = useState<TikTokConnection | null>(null);
 
   const load = useCallback(async () => {
     setLoadState("loading");
@@ -91,6 +94,8 @@ export default function LibraryPage() {
         <p className="mt-1 text-sm text-[#71717a]">Everything you&apos;ve made, newest first.</p>
       </header>
 
+      <TikTokConnectionCard onConnection={setTikTokConnection} />
+
       {loadState === "loading" && <SkeletonGrid />}
 
       {loadState === "error" && (
@@ -126,7 +131,12 @@ export default function LibraryPage() {
           <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {jobs.map((job) => (
               <li key={job.id}>
-                <LibraryTile job={job} plan={plan} onPinned={(itemId) => onPinned(job.id, itemId)} />
+                <LibraryTile
+                  job={job}
+                  plan={plan}
+                  canPublishToTikTok={Boolean(tiktokConnection?.can_publish)}
+                  onPinned={(itemId) => onPinned(job.id, itemId)}
+                />
               </li>
             ))}
           </ul>

@@ -396,7 +396,7 @@ describe("download-triggered SFX bake failure (C1 regression)", () => {
     });
 
     // C1: the failure is surfaced to the user, not swallowed.
-    expect(screen.getByText(/Couldn't prepare your video for download/i)).toBeInTheDocument();
+    expect(screen.getByText(/Couldn't prepare your video\. Please try again/i)).toBeInTheDocument();
     // And the stale video was NOT silently downloaded.
     expect(mockDownloadVideo).not.toHaveBeenCalled();
   });
