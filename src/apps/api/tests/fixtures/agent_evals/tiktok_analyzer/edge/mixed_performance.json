@@ -1,0 +1,20 @@
+{
+  "agent": "nova.plan.tiktok_analyzer",
+  "prompt_version": "2026-08-01-performance-v2",
+  "input": {
+    "handle": "mixedcreator",
+    "follower_count": 900,
+    "median_views": 1000,
+    "videos": [
+      {"video_id": "m1", "caption": "Studio diary", "view_count": 1800, "engagement_rate": 0.04, "view_index": 1.8},
+      {"video_id": "m2", "caption": "Studio diary", "view_count": 600, "engagement_rate": 0.11, "view_index": 0.6},
+      {"video_id": "m3", "caption": "Quick sketch", "view_count": 1400, "engagement_rate": 0.03, "view_index": 1.4},
+      {"video_id": "m4", "caption": "Quick sketch", "view_count": 700, "engagement_rate": 0.09, "view_index": 0.7},
+      {"video_id": "m5", "caption": "Materials", "view_count": 1000, "engagement_rate": 0.06, "view_index": 1.0}
+    ],
+    "edit_correlations": []
+  },
+  "raw_text": "{\"analysis\":{\"voice_description\":\"Practical studio-documentary voice.\",\"hook_patterns_that_work\":[],\"winning_themes\":[],\"posting_cadence\":\"\",\"audience_signal\":\"Views and engagement conflict across repeated themes, so no stable winner is supported.\",\"edit_patterns_observed\":[],\"summary_for_prompts\":\"- Mixed performance: do not treat a theme or edit as a reliable winner.\\n- voice: practical studio documentary\"}}",
+  "output": {"analysis": {"edit_patterns_observed": []}},
+  "meta": {"source": "synthetic_2026-08-01", "case": "conflicting performance must suppress recommendations"}
+}

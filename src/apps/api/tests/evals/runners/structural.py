@@ -1583,6 +1583,20 @@ def check_tiktok_analyzer(output: Any) -> list[str]:
     for t in themes:
         if not str(getattr(t, "theme", "")).strip():
             failures.append("winning_themes contains empty theme")
+    if (hooks or themes) and not summary.strip():
+        failures.append("summary_for_prompts is empty despite a reported hook/theme signal")
+
+    edit_patterns = list(analysis.edit_patterns_observed or [])
+    if len(edit_patterns) > 4:
+        failures.append(f"edit_patterns_observed has {len(edit_patterns)} items (max 4)")
+    for pattern in edit_patterns:
+        value = str(pattern)
+        if re.search(r"\b(caused|guarantees?|will improve|proves?)\b", value, re.IGNORECASE):
+            failures.append("edit_patterns_observed contains a causal claim")
+        if not re.search(r"sample|\bn\s*=|posts?", value, re.IGNORECASE):
+            failures.append("edit_patterns_observed omits sample-size provenance")
+        if "72" not in value or "84" not in value:
+            failures.append("edit_patterns_observed omits the 72–84-hour window")
 
     return failures
 

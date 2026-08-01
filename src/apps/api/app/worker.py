@@ -31,6 +31,7 @@ celery_app = Celery(
         "app.tasks.transcript_analyze",
         "app.tasks.autoplace",
         "app.tasks.omni_generate",
+        "app.tasks.tiktok",
     ],
 )
 
@@ -96,6 +97,18 @@ celery_app.conf.update(
         "dev-loop-heartbeat-digest-daily": {
             "task": "tasks.send_daily_digest",
             "schedule": crontab(hour=13, minute=0),
+        },
+        "poll-tiktok-publications-every-minute": {
+            "task": "app.tasks.tiktok.poll_tiktok_publications",
+            "schedule": 60.0,
+        },
+        "schedule-tiktok-syncs-every-15-min": {
+            "task": "app.tasks.tiktok.schedule_tiktok_account_syncs",
+            "schedule": 900.0,
+        },
+        "cleanup-tiktok-snapshots-daily": {
+            "task": "app.tasks.tiktok.cleanup_tiktok_publications",
+            "schedule": crontab(hour=4, minute=30),
         },
     },
 )

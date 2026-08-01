@@ -1,0 +1,20 @@
+{
+  "agent": "nova.plan.tiktok_analyzer",
+  "prompt_version": "2026-08-01-performance-v2",
+  "input": {
+    "handle": "currentpubliconly",
+    "follower_count": 500,
+    "median_views": 500,
+    "videos": [
+      {"video_id": "p1", "caption": "Current public post one", "view_count": 600, "engagement_rate": 0.05, "view_index": 1.2},
+      {"video_id": "p2", "caption": "Current public post two", "view_count": 550, "engagement_rate": 0.04, "view_index": 1.1},
+      {"video_id": "p3", "caption": "Current public post three", "view_count": 500, "engagement_rate": 0.05, "view_index": 1.0},
+      {"video_id": "p4", "caption": "Current public post four", "view_count": 450, "engagement_rate": 0.04, "view_index": 0.9},
+      {"video_id": "p5", "caption": "Current public post five", "view_count": 400, "engagement_rate": 0.03, "view_index": 0.8}
+    ],
+    "edit_correlations": []
+  },
+  "raw_text": "{\"analysis\":{\"voice_description\":\"Direct public-update voice.\",\"hook_patterns_that_work\":[],\"winning_themes\":[],\"posting_cadence\":\"\",\"audience_signal\":\"\",\"edit_patterns_observed\":[],\"summary_for_prompts\":\"- Current public posts are tightly clustered around the account median.\\n- No supported Nova edit correlation is present.\"}}",
+  "output": {"analysis": {"edit_patterns_observed": []}},
+  "meta": {"source": "synthetic_2026-08-01", "case": "removed linked post is excluded upstream and cannot influence edit learning"}
+}

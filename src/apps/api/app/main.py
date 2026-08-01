@@ -33,6 +33,7 @@ from app.routes import (
     sound_effects,
     template_jobs,
     templates,
+    tiktok,
     uploads,
     waitlist,
 )
@@ -137,6 +138,7 @@ app.include_router(me.router, prefix="/me", tags=["me"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
 app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(templates.router, prefix="/templates", tags=["templates"])
+app.include_router(tiktok.router, prefix="/tiktok", tags=["tiktok"])
 app.include_router(waitlist.router, tags=["waitlist"])
 app.include_router(landing.router, prefix="/landing-clips", tags=["landing"])
 

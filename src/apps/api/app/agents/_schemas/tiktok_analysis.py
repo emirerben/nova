@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 # Bump when prompts/analyze_tiktok_profile.txt changes.
 # 2026-06-06 — initial: enriched-fetch analysis for persona/plan/hook injection.
-TIKTOK_ANALYZER_PROMPT_VERSION = "2026-07-11-kria"
+TIKTOK_ANALYZER_PROMPT_VERSION = "2026-08-01-performance-v2"
 
 # Bounded so the summary can't bloat three downstream prompts.
 _MAX_SUMMARY_CHARS = 1200
@@ -38,6 +38,20 @@ class WinningTheme(BaseModel):
     view_index: float | None = Field(default=None, ge=0)
 
 
+class EditCorrelation(BaseModel):
+    """Low-confidence, age-aligned correlation across linked Nova posts."""
+
+    feature: str
+    observed_value: str
+    comparison_value: str
+    view_ratio: float = Field(ge=0)
+    sample_size: int = Field(ge=0)
+    window_hours: str = "72-84"
+    provenance: str = "linked_nova_public_posts"
+    confidence: str = "low"
+    language: str = "correlation_only"
+
+
 class TikTokAnalysis(BaseModel):
     """Distilled creator intelligence from their own TikTok performance data."""
 
@@ -49,6 +63,7 @@ class TikTokAnalysis(BaseModel):
     posting_cadence: str = ""
     # Who engages and why, derived from engagement_rate distribution.
     audience_signal: str = ""
+    edit_patterns_observed: list[str] = Field(default_factory=list, max_length=4)
     # Pre-rendered, bounded block that threads into all three generation prompts.
     # Empty when no useful signal was found. NEVER "(none)".
     summary_for_prompts: str = Field(default="", max_length=_MAX_SUMMARY_CHARS)
@@ -63,6 +78,7 @@ class TikTokAnalyzerInput(BaseModel):
     # Per-video records (TikTokVideoRecord dicts). Treated as UNTRUSTED DATA;
     # captions/hashtags are sanitized in render_prompt before reaching the model.
     videos: list[dict] = Field(default_factory=list)
+    edit_correlations: list[EditCorrelation] = Field(default_factory=list, max_length=4)
 
 
 class TikTokAnalyzerOutput(BaseModel):

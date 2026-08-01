@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.tiktok_analyzer",
-  "prompt_version": "2026-06-06",
+  "prompt_version": "2026-08-01-performance-v2",
   "input": {
     "handle": "liftandlentils",
     "follower_count": 12400,

@@ -31,7 +31,7 @@ def _analysis_summary(tiktok_profile: dict | None) -> str:
     """
     if not tiktok_profile:
         return ""
-    analysis = tiktok_profile.get("analysis") or {}
+    analysis = tiktok_profile.get("official_analysis") or tiktok_profile.get("analysis") or {}
     return str(analysis.get("summary_for_prompts") or "")
 
 
@@ -48,6 +48,7 @@ def _observed_style_input(tiktok_profile: dict | None):  # noqa: ANN201
     if not aggregate or not observations.get("videos_seen"):
         return None
     from app.agents.style_derivation import ObservedStyleSummary  # noqa: PLC0415
+
     try:
         return ObservedStyleSummary(
             videos_seen=int(observations.get("videos_seen") or 0),
@@ -189,6 +190,11 @@ def derive_user_style(self, persona_id: str, force: bool = False) -> None:  # no
                 "persona_id": str(persona_id),
                 "derived_at": datetime.now(UTC).isoformat(),
                 "style_version": derived_style.style_version,
+                "source": (
+                    "tiktok_official"
+                    if (row.tiktok_profile or {}).get("official_analysis")
+                    else "persona"
+                ),
             },
         }
         session.commit()

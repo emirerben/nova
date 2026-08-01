@@ -35,7 +35,7 @@ def _analysis_summary(tiktok_profile: dict | None) -> str:
     """
     if not tiktok_profile:
         return ""
-    analysis = tiktok_profile.get("analysis") or {}
+    analysis = tiktok_profile.get("official_analysis") or tiktok_profile.get("analysis") or {}
     return str(analysis.get("summary_for_prompts") or "")
 
 
@@ -74,6 +74,7 @@ def scrape_tiktok_profile(self, persona_id: str, handle: str) -> None:  # noqa: 
         analyze_tiktok_profile.delay(str(persona_id), handle)
     if settings.tiktok_style_vision_enabled:
         from app.tasks.style_vision_build import analyze_tiktok_style  # noqa: PLC0415
+
         analyze_tiktok_style.delay(str(persona_id), handle)
 
 
