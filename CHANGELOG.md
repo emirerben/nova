@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.0.0] — 2026-08-01
+
+### Added
+- **Beta creators can connect TikTok and publish the exact finished video they approved.** The finalized plan-item page and Library now share a TikTok publishing flow with a video preview, fresh creator capabilities, an explicit privacy choice, editable caption, and required music, commercial-content, and AI-generated-content declarations. Unsupported interactions stay disabled, and unaudited access remains limited to private posts.
+- **TikTok publication status and public performance now appear in the Library.** Nova tracks upload processing separately from moderation and visibility, reconciles signed webhooks with fallback polling, and displays views, likes, comments, and shares after a post becomes public. Durable recovery prevents queue interruptions or ambiguous TikTok timeouts from creating silent duplicate posts.
+- **Authorized TikTok performance can cautiously personalize future edits.** Nova syncs recent public videos, freezes comparable 72–84-hour evaluation snapshots, links mature Nova posts to low-cardinality edit signatures, and exposes only low-confidence, sample-sized associations when support is strong enough. User-edited styles always take precedence.
+
+### Changed
+- **Downloads and TikTok publishing now resolve the same owned final render.** Stable variant and output paths, generation fingerprints, immutable publish snapshots, expiring media tokens, and generation rechecks ensure TikTok receives the approved bytes rather than a stale or arbitrary signed URL.
+- **TikTok credentials and connected-account data now follow a fail-closed lifecycle.** Tokens are encrypted, OAuth state is one-use, rotated refresh credentials update atomically, deauthorization immediately stops new work, and publication snapshots and derived account data are minimized on the documented retention schedule.
+
 ## [0.19.0.1] — 2026-08-01
 
 ### Fixed
