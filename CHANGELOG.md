@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.1.1] — 2026-08-02
+
+### Fixed
+- **High visibility is now an effect creators choose in the text inspector, not the default shadow.** The Shadow control offers Standard, High visibility, and Off; existing and generated text—including older rows with shadow explicitly enabled—keeps Kria's original single soft shadow. The selected treatment matches between editor previews and burned Skia output, including handwriting, karaoke, animated text, stroke combinations, and reveal clipping.
+
 ## [0.22.1.0] — 2026-08-02
 
 ### Changed
