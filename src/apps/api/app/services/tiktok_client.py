@@ -229,12 +229,21 @@ def _decode(response: httpx.Response) -> dict[str, Any]:
     except ValueError as exc:
         raise TikTokAPIError("invalid_response", "TikTok returned an invalid response") from exc
     error = payload.get("error") or {}
-    code = str(error.get("code") or "")
+    if isinstance(error, dict):
+        code = str(error.get("code") or "")
+        message = str(error.get("message") or payload.get("error_description") or "")
+    else:
+        # OAuth token endpoints use the RFC 6749 shape
+        # {"error": "invalid_grant", "error_description": "..."}, while
+        # TikTok's JSON APIs return a nested error object. Handle both without
+        # turning a normal OAuth denial into an unhandled 500.
+        code = str(error)
+        message = str(payload.get("error_description") or payload.get("message") or "")
     if response.is_error or (code and code != "ok"):
         retryable = response.status_code == 429 or response.status_code >= 500 or code == "internal"
         raise TikTokAPIError(
             code or f"http_{response.status_code}",
-            str(error.get("message") or "TikTok request failed"),
+            message or "TikTok request failed",
             status_code=429 if response.status_code == 429 else 502,
             retryable=retryable,
         )

@@ -33,17 +33,13 @@ def resolve_publishable_output(job: Job, variant_id: str | None = None) -> Publi
     plan = dict(job.assembly_plan or {})
     selected_variant: dict[str, Any] | None = None
     path: str | None = None
-    preview: str | None = None
 
     variants = plan.get("variants")
     if isinstance(variants, list):
         ready = [
             v
             for v in variants
-            if isinstance(v, dict)
-            and v.get("render_status") == "ready"
-            and v.get("video_path")
-            and v.get("output_url")
+            if isinstance(v, dict) and v.get("render_status") == "ready" and v.get("video_path")
         ]
         if variant_id:
             selected_variant = next((v for v in ready if v.get("variant_id") == variant_id), None)
@@ -52,7 +48,6 @@ def resolve_publishable_output(job: Job, variant_id: str | None = None) -> Publi
         if selected_variant is None:
             raise PublishableOutputError("The selected video is not ready to publish")
         path = str(selected_variant["video_path"])
-        preview = str(selected_variant["output_url"])
         variant_id = str(selected_variant.get("variant_id") or "") or None
     else:
         explicit = plan.get("output_path")
@@ -62,10 +57,8 @@ def resolve_publishable_output(job: Job, variant_id: str | None = None) -> Publi
             path = f"jobs/{job.id}/template_output.mp4"
         elif (job.mode or job.job_type) in {"music", "auto_music"}:
             path = f"music-jobs/{job.id}/output.mp4"
-        preview_value = plan.get("output_url")
-        preview = preview_value if isinstance(preview_value, str) else None
 
-    if not path or not preview:
+    if not path:
         raise PublishableOutputError("This older video must be re-rendered before publishing")
     if not _owned_output_path(job, path):
         raise PublishableOutputError("The video does not have a trusted Nova storage identity")
@@ -81,6 +74,7 @@ def resolve_publishable_output(job: Job, variant_id: str | None = None) -> Publi
     revision = hashlib.sha256(
         json.dumps(revision_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+    preview = storage.signed_get_url(path, expiration_minutes=60)
     return PublishableOutput(
         object_path=path,
         generation=meta.generation,
