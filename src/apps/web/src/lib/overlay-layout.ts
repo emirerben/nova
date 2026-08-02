@@ -26,6 +26,7 @@ import {
   type OverlayCanvas,
 } from "@/lib/overlay-constants";
 import type { TextElement } from "@/lib/plan-api";
+import { textShadowStyle, type TextShadowStyle } from "@/lib/text-shadow";
 
 // Must match text_overlay_skia.py: _MAX_LINE_W_FRAC / _LINE_SPACING / _MIN_FONT_SIZE
 export const MAX_LINE_W_FRAC = 0.9;
@@ -509,8 +510,8 @@ export interface TextElementLayout {
   rotationDeg: number;
   /** Stroke width in 1080x1920 canvas pixels. */
   strokeWidth: number;
-  /** Soft-shadow toggle. Undefined/null defaults to legacy enabled. */
-  shadowEnabled: boolean;
+  /** Resolved shadow treatment. Null/absent preserves the standard legacy shadow. */
+  shadowStyle: TextShadowStyle;
   /** Optional renderer-authored editorial glow. */
   glowColor: string | null;
   glowStrength: number;
@@ -555,7 +556,7 @@ export function resolveTextElementsLayout(
       maxWidthPx: canvas.w * resolveMaxWidthFrac(el.max_width_frac),
       rotationDeg: Number.isFinite(el.rotation_deg ?? NaN) ? Number(el.rotation_deg) : 0,
       strokeWidth: el.stroke_width ?? 0,
-      shadowEnabled: el.shadow_enabled !== false,
+      shadowStyle: textShadowStyle(el.shadow_enabled, el.shadow_style),
       glowColor: el.glow_color ?? null,
       glowStrength: Math.max(0, Math.min(1, el.glow_strength ?? 0)),
       start_s: el.start_s,

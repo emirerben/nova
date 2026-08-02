@@ -94,6 +94,7 @@ _TEXT_ELEMENT_LOG_SAFE_FIELDS = frozenset(
         "line_spacing",
         "max_width_frac",
         "shadow_enabled",
+        "shadow_style",
         "position",
         "reveal_s",
         "role",

@@ -156,6 +156,32 @@ describe("editor bar transition metadata", () => {
 });
 
 describe("editor bar horizontal geometry", () => {
+  it("preserves the selected shadow treatment through save and reload", () => {
+    const element: TextElement = {
+      id: "high-visibility-text",
+      text: "Readable",
+      start_s: 0,
+      end_s: 2,
+      role: "generative_intro",
+      shadow_enabled: true,
+      shadow_style: "high_visibility",
+    };
+    const saved = barsToTextElements(
+      seedBarsFromVariant(variant([element])),
+      new Map([[element.id, element]]),
+    );
+    const reloaded = seedBarsFromVariant(variant(saved));
+
+    expect(saved[0]).toMatchObject({
+      shadow_enabled: true,
+      shadow_style: "high_visibility",
+    });
+    expect(reloaded[0]).toMatchObject({
+      shadow_enabled: true,
+      shadow_style: "high_visibility",
+    });
+  });
+
   it("preserves alignment, x position, and box width through save and reload", () => {
     const element: TextElement = {
       id: "positioned-text",

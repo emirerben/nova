@@ -38,6 +38,8 @@ export interface TextElementBar {
   stroke_width?: number;
   /** Explicit soft-shadow toggle. undefined preserves legacy/generated defaults. */
   shadow_enabled?: boolean | null;
+  /** Explicit editor-selected shadow treatment. */
+  shadow_style?: "standard" | "high_visibility" | null;
   /** Optional renderer-authored editorial glow. */
   glow_color?: string | null;
   glow_strength?: number | null;

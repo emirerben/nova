@@ -162,6 +162,7 @@ def build_intro_overlay(
     font_family: str | None = None,
     stroke_width: int | None = None,
     shadow_enabled: bool | None = None,
+    shadow_style: str | None = None,
     text_size_px: int | None = None,
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
@@ -179,11 +180,11 @@ def build_intro_overlay(
     `effect`, `position`, `size_class`, `text_anchor` are defensively coerced to the
     renderer-known vocab; unknown values fall back to a safe default.
 
-    The trailing kwargs (`font_family`, `stroke_width`, `shadow_enabled`, `text_size_px`,
-    `position_x_frac`, `position_y_frac`) carry curated style-set fields resolved by
-    the caller (`_inject_agent_intro` → `resolve_overlay_style`). They are honored by
-    BOTH renderers (the #296 parity invariant), so an intro now picks up the set's
-    typography. When `text_size_px` is given it wins over the `size_class` bucket.
+    The trailing kwargs carry curated style-set and persisted editor fields resolved by
+    the caller (`_inject_agent_intro` → `resolve_overlay_style`). Typography and the
+    legacy shadow toggle are honored by both renderers (the #296 parity invariant).
+    `shadow_style` is the deliberate Skia-only opt-in treatment; classic rendering keeps
+    its existing shadow. When `text_size_px` is given it wins over the `size_class` bucket.
 
     `behind_subject` (text-behind-subject occlusion) is only ever set on the
     returned dict when True — flag-off / not-requested output must stay
@@ -228,6 +229,8 @@ def build_intro_overlay(
         overlay["stroke_width"] = int(stroke_width)
     if shadow_enabled is not None:
         overlay["shadow_enabled"] = bool(shadow_enabled)
+    if shadow_style in {"standard", "high_visibility"}:
+        overlay["shadow_style"] = shadow_style
     if text_size_px is not None:
         overlay["text_size_px"] = int(text_size_px)
         overlay.pop("text_size", None)  # px is authoritative — drop the bucket
@@ -1004,6 +1007,7 @@ def build_overlays_from_text_elements(
                 font_family=elem.font_family,
                 stroke_width=stroke_w,
                 shadow_enabled=elem.shadow_enabled,
+                shadow_style=elem.shadow_style,
                 text_size_px=text_size_px,
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
@@ -1045,6 +1049,7 @@ def build_overlays_from_text_elements(
                 font_family=elem.font_family,
                 stroke_width=stroke_w,
                 shadow_enabled=elem.shadow_enabled,
+                shadow_style=elem.shadow_style,
                 text_size_px=text_size_px,
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
@@ -1079,6 +1084,7 @@ def build_overlays_from_text_elements(
             font_family=elem.font_family,
             stroke_width=stroke_w,
             shadow_enabled=elem.shadow_enabled,
+            shadow_style=elem.shadow_style,
             text_size_px=text_size_px,
             position_x_frac=pos_x_frac,
             position_y_frac=pos_y_frac,

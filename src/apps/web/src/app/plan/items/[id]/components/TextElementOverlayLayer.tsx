@@ -11,7 +11,7 @@ import {
 import { resolveClusterCssFont } from "@/lib/overlay-constants";
 import { FONT_FACES } from "@/lib/font-faces";
 import { HandwritingText } from "@/components/HandwritingText";
-import { TEXT_SHADOW_BLEED_PX, textShadowCss } from "@/lib/text-shadow";
+import { textShadowBleedPx, textShadowCss } from "@/lib/text-shadow";
 
 export function textElementAnchorTransform(alignment: TextElementLayout["alignment"]): string {
   if (alignment === "left") return "translate(0, -50%)";
@@ -66,7 +66,7 @@ export function textElementContentStyle({
           `0 0 ${canvasPx(20)} rgba(${Number.parseInt(glowRgb[1], 16)}, ${Number.parseInt(glowRgb[2], 16)}, ${Number.parseInt(glowRgb[3], 16)}, ${(220 / 255) * layout.glowStrength})`,
         ]
       : [];
-  const separationShadow = textShadowCss(canvasPx, layout.shadowEnabled);
+  const separationShadow = textShadowCss(canvasPx, layout.shadowStyle);
   return {
     fontSize,
     fontFamily: family,
@@ -140,7 +140,7 @@ export function TextElementOverlayContent({
           lineSpacing={layout.lineSpacing}
           outlineWidthEm={layout.strokeWidth / Math.max(1, layout.sizePx)}
           fontSizePx={layout.sizePx}
-          shadowEnabled={layout.shadowEnabled}
+          shadowStyle={layout.shadowStyle}
           glowColor={layout.glowColor}
           glowStrength={layout.glowStrength}
         />
@@ -153,24 +153,25 @@ export function TextElementOverlayContent({
       : (() => {
           const strokeBleed = layout.strokeWidth + 2;
           const glowBleed = layout.glowStrength > 0 ? 62 : 0;
+          const shadowBleed = textShadowBleedPx(layout.shadowStyle);
           const leftBleedPx = Math.max(
             strokeBleed,
-            layout.shadowEnabled ? TEXT_SHADOW_BLEED_PX.left : 0,
+            shadowBleed.left,
             glowBleed,
           );
           const topBleedPx = Math.max(
             strokeBleed,
-            layout.shadowEnabled ? TEXT_SHADOW_BLEED_PX.top : 0,
+            shadowBleed.top,
             glowBleed,
           );
           const rightBleedPx = Math.max(
             strokeBleed,
-            layout.shadowEnabled ? TEXT_SHADOW_BLEED_PX.right : 0,
+            shadowBleed.right,
             glowBleed,
           );
           const bottomBleedPx = Math.max(
             strokeBleed,
-            layout.shadowEnabled ? TEXT_SHADOW_BLEED_PX.bottom : 0,
+            shadowBleed.bottom,
             glowBleed,
           );
           const leftBleed = `calc(${-leftBleedPx} * ${canvasPixelCssSize})`;

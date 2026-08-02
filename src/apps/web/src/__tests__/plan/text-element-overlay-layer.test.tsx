@@ -53,12 +53,11 @@ describe("TextElementOverlayLayer", () => {
       wordBreak: "break-word",
     });
     expect(text.style.textShadow).toContain(
-      "calc(2 * 0.052083333333333336cqh)",
+      "calc(6 * 0.052083333333333336cqh)",
     );
-    expect(text.style.textShadow).toContain(
-      "calc(8 * 0.052083333333333336cqh)",
-    );
+    expect(text.style.textShadow).not.toContain("calc(2 * 0.052083333333333336cqh)");
     expect(resolveTextElementsLayout([element])[0].strokeWidth).toBe(3);
+    expect(resolveTextElementsLayout([element])[0].shadowStyle).toBe("standard");
   });
 
   it("uses the same alignment-aware wrapper helper the editor imports", () => {
@@ -199,7 +198,13 @@ describe("TextElementOverlayLayer", () => {
 
   it("starts the ink-reveal clip at zero padded width", () => {
     const [layout] = resolveTextElementsLayout([
-      { ...element, text: "INK", shadow_enabled: true, effect: "ink-reveal" },
+      {
+        ...element,
+        text: "INK",
+        shadow_enabled: true,
+        shadow_style: "high_visibility",
+        effect: "ink-reveal",
+      },
     ]);
     const { container } = render(
       <TextElementOverlayContent layout={layout} fontSize="20px" revealProgress={0} />,
@@ -219,6 +224,7 @@ describe("TextElementOverlayLayer", () => {
         glow_color: "#ff484c",
         glow_strength: 0.5,
         shadow_enabled: true,
+        shadow_style: "high_visibility",
       },
     ]);
     const { container, rerender } = render(
@@ -276,9 +282,31 @@ describe("TextElementOverlayLayer", () => {
     );
 
     expect(screen.getByText("READY NOW").style.textShadow).toBe("");
-    expect(resolveTextElementsLayout([{ ...element, shadow_enabled: false }])[0].shadowEnabled).toBe(
-      false,
+    expect(resolveTextElementsLayout([{ ...element, shadow_enabled: false }])[0].shadowStyle).toBe(
+      "none",
     );
+  });
+
+  it("uses the high-visibility dual shadow only when explicitly selected", () => {
+    const selected = {
+      ...element,
+      shadow_enabled: true,
+      shadow_style: "high_visibility" as const,
+    };
+    render(<TextElementOverlayLayer elements={[selected]} />);
+
+    const shadow = screen.getByText("READY NOW").style.textShadow;
+    expect(shadow).toContain("calc(2 * 0.052083333333333336cqh)");
+    expect(shadow).toContain("calc(8 * 0.052083333333333336cqh)");
+    expect(resolveTextElementsLayout([selected])[0].shadowStyle).toBe("high_visibility");
+  });
+
+  it("keeps legacy explicit shadow-on rows on the standard profile", () => {
+    render(<TextElementOverlayLayer elements={[{ ...element, shadow_enabled: true }]} />);
+
+    const shadow = screen.getByText("READY NOW").style.textShadow;
+    expect(shadow).toContain("calc(6 * 0.052083333333333336cqh)");
+    expect(shadow).not.toContain("calc(2 * 0.052083333333333336cqh)");
   });
 
   it("removes both handwriting shadow path layers when disabled", () => {
@@ -294,7 +322,12 @@ describe("TextElementOverlayLayer", () => {
 
   it("keeps handwriting ink geometry anchored when shadow overflow is toggled", () => {
     const [withShadow] = resolveTextElementsLayout([
-      { ...element, effect: "handwriting", shadow_enabled: true },
+      {
+        ...element,
+        effect: "handwriting",
+        shadow_enabled: true,
+        shadow_style: "high_visibility",
+      },
     ]);
     const [withoutShadow] = resolveTextElementsLayout([
       { ...element, effect: "handwriting", shadow_enabled: false },
