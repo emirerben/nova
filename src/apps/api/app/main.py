@@ -1,7 +1,7 @@
 import re
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -146,3 +146,31 @@ app.include_router(landing.router, prefix="/landing-clips", tags=["landing"])
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/health/beat")
+async def health_beat(response: Response) -> dict:
+    """Reports whether Celery Beat is alive, via a heartbeat any
+    Beat-scheduled task writes on success (app/services/beat_heartbeat.py).
+
+    Meant to be pinged by a service OUTSIDE this app entirely (UptimeRobot,
+    cron-job.org, a scheduled GitHub Actions workflow) — this is the only
+    kind of check immune to Beat's own death, since any check that is
+    itself Beat-scheduled shares Beat's exact blind spot. Matters
+    specifically because RENDER_AUTOSTOP_ENABLED makes Beat's health a
+    prerequisite for the render worker ever restarting on a missed
+    wake-hook call (see agents/DECISIONS.md).
+
+    Returns 503 (not 200) when unhealthy — most external uptime monitors
+    alert on a non-2xx status alone without needing to parse the body, so
+    the status code IS the actionable signal, not just the JSON payload.
+    """
+    from app.services.beat_heartbeat import beat_heartbeat_status  # noqa: PLC0415
+
+    healthy, age_seconds = beat_heartbeat_status()
+    if not healthy:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {
+        "status": "ok" if healthy else "stale",
+        "age_seconds": age_seconds,
+    }

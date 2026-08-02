@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.0.0] — 2026-08-02
+
+### Added
+- **The render worker now stops itself when idle and starts back up on demand.** Behind a flag, off by default. Maintenance and periodic tasks move to a small always-on machine so the render worker can actually sit idle; a background signal wakes it the instant new work is dispatched, and a periodic check acts as a backstop if that signal is ever missed, bounding any delay to a couple of minutes. A new health check detects the one new failure mode this creates — the periodic backstop itself going silent — using a signal that can't share that failure's blind spot.
+
 ## [0.21.0.1] — 2026-08-02
 
 ### Fixed

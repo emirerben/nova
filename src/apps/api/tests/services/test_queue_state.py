@@ -13,10 +13,12 @@ import uuid
 from unittest.mock import MagicMock
 
 from app.services.queue_state import (
+    RENDER_WORKER_QUEUES,
     get_job_runtime_state,
     get_live_job_index,
     get_queue_position,
     get_queue_snapshot,
+    render_worker_idle,
 )
 
 
@@ -249,3 +251,89 @@ def test_queue_position_returns_none_on_redis_failure() -> None:
     celery_app = _fake_celery(redis=redis)
 
     assert get_queue_position(celery_app, str(uuid.uuid4())) is None
+
+
+# ── render_worker_idle ───────────────────────────────────────────────────────
+
+
+def _zero_llen_redis() -> MagicMock:
+    """A redis mock whose llen() returns 0 for every queue name."""
+    redis = MagicMock()
+    redis.llen.side_effect = lambda name: 0
+    return redis
+
+
+def test_render_worker_idle_true_when_nothing_active_and_queues_empty() -> None:
+    """Steady-state idle: no worker bound to a render queue, zero depth."""
+    celery_app = _fake_celery(active={}, reserved={}, active_queues={}, redis=_zero_llen_redis())
+    assert render_worker_idle(celery_app) is True
+
+
+def test_render_worker_idle_false_when_render_worker_has_active_task() -> None:
+    """A worker bound to a render-worker queue with an in-flight task → not idle."""
+    celery_app = _fake_celery(
+        active={"celery@worker-1": [{"args": ["job-x"]}]},
+        reserved={},
+        active_queues={"celery@worker-1": [{"name": "celery"}]},
+        redis=_zero_llen_redis(),
+    )
+    assert render_worker_idle(celery_app) is False
+
+
+def test_render_worker_idle_false_when_render_worker_has_reserved_task() -> None:
+    celery_app = _fake_celery(
+        active={},
+        reserved={"celery@worker-1": [{"args": ["job-x"]}]},
+        active_queues={"celery@worker-1": [{"name": "plan-jobs"}]},
+        redis=_zero_llen_redis(),
+    )
+    assert render_worker_idle(celery_app) is False
+
+
+def test_render_worker_idle_ignores_active_tasks_on_non_render_workers() -> None:
+    """The light/beat processes are also live Celery consumers — their
+    in-flight maintenance tasks must NOT count as "render worker busy"."""
+    celery_app = _fake_celery(
+        active={"celery@light-1": [{"args": ["maintenance-task"]}]},
+        reserved={},
+        active_queues={"celery@light-1": [{"name": "maintenance"}]},
+        redis=_zero_llen_redis(),
+    )
+    assert render_worker_idle(celery_app) is True
+
+
+def test_render_worker_idle_false_when_render_queue_has_depth() -> None:
+    """The critical case: render worker machine is STOPPED (invisible to
+    inspect(), so active_queues={} and active/reserved={}), but a job is
+    sitting in the queue waiting to be picked up. Queue depth is the ONLY
+    signal available in this state — must not report idle."""
+    redis = MagicMock()
+    redis.llen.side_effect = lambda name: 3 if name == "overlay-jobs" else 0
+
+    celery_app = _fake_celery(active={}, reserved={}, active_queues={}, redis=redis)
+    assert render_worker_idle(celery_app) is False
+
+
+def test_render_worker_idle_none_on_inspect_failure() -> None:
+    """Broker hiccup → None, never True. Callers must treat None as 'not
+    idle' — a stop decision made on missing information could stop a
+    machine mid-render."""
+    celery_app = _fake_celery(redis=_zero_llen_redis())
+    celery_app.control.inspect.side_effect = ConnectionError("redis down")
+    assert render_worker_idle(celery_app) is None
+
+
+def test_render_worker_idle_none_on_redis_llen_failure() -> None:
+    """inspect() succeeds but the Redis LLEN pass fails → unknown, not idle."""
+    redis = MagicMock()
+    redis.llen.side_effect = RuntimeError("redis down")
+    celery_app = _fake_celery(active={}, reserved={}, active_queues={}, redis=redis)
+    assert render_worker_idle(celery_app) is None
+
+
+def test_render_worker_queues_constant_matches_fly_toml_worker_queues() -> None:
+    """Pin the constant's contents — this must stay in sync with fly.toml's
+    `celery ... -Q celery,plan-jobs,overlay-jobs` by hand (no way to share
+    a literal between TOML and Python). A drift here silently breaks BOTH
+    the wake-hook signal filter and this idle-check."""
+    assert RENDER_WORKER_QUEUES == frozenset({"celery", "plan-jobs", "overlay-jobs"})

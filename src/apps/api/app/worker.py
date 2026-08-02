@@ -1,6 +1,8 @@
+import threading
+
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import task_prerun, worker_ready
+from celery.signals import before_task_publish, task_prerun, task_success, worker_ready
 
 from app.config import settings
 
@@ -34,6 +36,36 @@ celery_app = Celery(
         "app.tasks.tiktok",
         "app.tasks.account_lifecycle",
     ],
+)
+
+# Every Beat-triggered task, routed to the `light` process's `maintenance`
+# queue (fly.toml) instead of the `worker` process's celery/plan-jobs/
+# overlay-jobs queues. This is the render-worker autostop split: the render
+# worker can only sit idle (and be safely stopped) if NOTHING recurring is
+# scheduled onto it — before this, the 5-min sweep_stale_jobs entry alone
+# guaranteed the worker was never idle for more than a few minutes.
+# `cleanup_cancelled_job` isn't Beat-scheduled (it's dispatched on-demand
+# from an admin cancel action) but is included here for the same reason:
+# it's a lightweight cleanup task, not a render task, and has no business
+# waking a stopped render machine.
+#
+# There is no wildcard/pattern route here on purpose — every entry is an
+# explicit, named task. A future Beat entry that isn't added here defaults
+# to the `celery` queue (the render worker's default queue), which is the
+# WRONG failure direction for a maintenance task (it would land on a
+# machine that might be stopped) but is at least loud in effect: Beat
+# entries are rare and reviewed, unlike per-request dispatch call sites.
+MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
+    "tasks.sweep_stale_jobs",
+    "tasks.cleanup_agent_runs",
+    "tasks.send_daily_digest",
+    "tasks.cleanup_cancelled_job",
+    "app.tasks.tiktok.poll_tiktok_publications",
+    "app.tasks.tiktok.schedule_tiktok_account_syncs",
+    "app.tasks.tiktok.cleanup_tiktok_publications",
+    # The render-worker lifecycle task itself MUST run on `light`, never on
+    # the `worker` machine it's managing — obviously.
+    "tasks.manage_render_worker_lifecycle",
 )
 
 celery_app.conf.update(
@@ -75,6 +107,12 @@ celery_app.conf.update(
         if settings.worker_max_memory_per_child_kb > 0
         else {}
     ),
+    # task_routes: send every maintenance task to the `light` process's
+    # queue instead of the render worker's default queue. Everything NOT
+    # listed here keeps Celery's normal resolution (the task's own `queue=`
+    # kwarg if one was passed at dispatch time, else the default `celery`
+    # queue) — this dict is additive, not a full routing table.
+    task_routes={name: {"queue": "maintenance"} for name in MAINTENANCE_TASK_NAMES},
     # Beat schedule — picked up only when a `celery beat` process is
     # running (see fly.toml [processes].beat). The worker process ignores
     # this dict, so it's safe to define unconditionally.
@@ -111,8 +149,52 @@ celery_app.conf.update(
             "task": "app.tasks.tiktok.cleanup_tiktok_publications",
             "schedule": crontab(hour=4, minute=30),
         },
+        # Render-worker autostop lifecycle (stop-when-idle + start-backstop).
+        # 2 min: short enough that a missed/failed wake-hook call (worker.py's
+        # before_task_publish signal) only costs a bounded, small delay before
+        # this backstop notices queued work and starts the machine anyway.
+        # A complete no-op when RENDER_AUTOSTOP_ENABLED is off — see
+        # app/tasks/maintenance.py:manage_render_worker_lifecycle.
+        "manage-render-worker-lifecycle-every-2-min": {
+            "task": "tasks.manage_render_worker_lifecycle",
+            "schedule": 120.0,
+        },
     },
 )
+
+# Every task name that appears in beat_schedule above, derived directly from
+# the dict rather than hand-duplicated into a second list — a future Beat
+# entry is automatically covered here with zero extra maintenance. Used by
+# the heartbeat signal below to filter "a Beat-scheduled task just
+# succeeded" from "some unrelated task (a render, an LLM call) succeeded" —
+# only the former is evidence Beat itself is alive and dispatching.
+BEAT_SCHEDULED_TASK_NAMES: frozenset[str] = frozenset(
+    entry["task"] for entry in celery_app.conf.beat_schedule.values()
+)
+
+
+@task_success.connect
+def _record_beat_heartbeat(sender=None, **kwargs):  # pragma: no cover (signal wiring)
+    """Record 'a Beat-scheduled task just succeeded' for GET /health/beat.
+
+    See app/services/beat_heartbeat.py for the full rationale: this is the
+    ONLY mechanism that can detect Celery Beat being fully dead, since
+    anything itself Beat-scheduled shares Beat's exact blind spot. Filtered
+    to BEAT_SCHEDULED_TASK_NAMES so a render job succeeding doesn't mask an
+    actually-dead Beat process. Fires wherever the task actually executed
+    (the `light` process, after the task_routes split above) — proving not
+    just that Beat ticked, but that the whole dispatch-to-completion path
+    is alive.
+    """
+    task_name = getattr(sender, "name", None)
+    if task_name not in BEAT_SCHEDULED_TASK_NAMES:
+        return
+    try:
+        from app.services.beat_heartbeat import record_beat_task_success  # noqa: PLC0415
+
+        record_beat_task_success()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[task_success] beat heartbeat record failed (non-fatal): {exc!r}")
 
 
 @worker_ready.connect
@@ -134,7 +216,6 @@ def _reap_orphans_on_startup(sender, **kwargs):  # pragma: no cover (signal wiri
 
     Runs in a background thread to avoid blocking worker startup.
     """
-    import threading  # noqa: PLC0415
 
     from app.tasks.build_task_reaper import reap_stale_build_tasks  # noqa: PLC0415
     from app.tasks.reaper import reap_orphans, reconcile_stuck_variants  # noqa: PLC0415
@@ -206,7 +287,6 @@ def _prewarm_clip_font_matcher(sender, **kwargs):  # pragma: no cover (signal wi
     Runs in a background thread so a slow first-time weights download
     can't block worker readiness.
     """
-    import threading  # noqa: PLC0415
 
     def _run():
         try:
@@ -220,3 +300,139 @@ def _prewarm_clip_font_matcher(sender, **kwargs):  # pragma: no cover (signal wi
             print(f"[worker_ready] CLIP matcher prewarm failed (non-fatal): {exc!r}")
 
     threading.Thread(target=_run, daemon=True, name="clip-prewarm").start()
+
+
+# ── render-worker autostop: wake hook ────────────────────────────────────────
+#
+# Fly cost-cut plan (agents/DECISIONS.md, ~/.claude/plans/this-month-...):
+# the `worker` Fly machine spends most of its life stopped when
+# RENDER_AUTOSTOP_ENABLED is on. Something has to wake it the instant a
+# render-worker task is dispatched, or every job pays the full
+# tasks.manage_render_worker_lifecycle poll interval in latency.
+#
+# Filters on `routing_key`, not a hand-maintained task-name allowlist. An
+# earlier draft of this plan tried curating a list of "render task names" —
+# it kept missing tasks (found 5 more just by grepping generative_build.py
+# that an initial pass hadn't listed, including tasks that don't render video
+# at all but still run on THIS worker, like clip/track analysis). routing_key
+# is the actual mechanism Celery uses to decide which physical worker process
+# picks up a message — filtering on it structurally closes the whole bypass
+# class, including any future task nobody remembers to list here. Verified
+# empirically (see the plan doc) that in this app's config (no custom
+# exchange topology declared) routing_key always equals the target queue
+# name, for both `queue=` kwarg dispatches and the Celery-default queue.
+
+_RENDER_WAKE_DEBOUNCE_KEY = "render_worker:wake_debounce"
+
+_wake_redis_lock = threading.Lock()
+_wake_redis_client = None
+
+
+def _get_wake_redis():  # pragma: no cover (thin wrapper, exercised via the signal test)
+    """Module-singleton Redis client for the wake-debounce key.
+
+    Pooled, not per-call — this signal can fire many times per second
+    during a burst of dispatches. Mirrors the pattern in
+    app/pipeline/clip_cache.py. Returns None on connection failure; callers
+    treat that as "can't debounce, fall through and call Fly directly" —
+    fail OPEN here (an extra harmless Fly API call), unlike the reaper's
+    fail-closed "don't act on unknown" (an extra wake call can't strand a
+    job the way a wrongful reap can destroy one).
+    """
+    global _wake_redis_client
+    if _wake_redis_client is not None:
+        return _wake_redis_client
+    with _wake_redis_lock:
+        if _wake_redis_client is not None:
+            return _wake_redis_client
+        try:
+            import redis as redis_lib  # noqa: PLC0415
+
+            client = redis_lib.from_url(
+                settings.redis_url, socket_connect_timeout=2, socket_timeout=2
+            )
+            client.ping()
+            _wake_redis_client = client
+        except Exception as exc:  # noqa: BLE001
+            print(f"[render-worker-wake] redis unavailable (non-fatal): {exc!r}")
+            return None
+    return _wake_redis_client
+
+
+def _maybe_start_render_worker() -> None:
+    """Debounced call to Fly's start-machine API for the render worker.
+
+    Debounce TTL (RENDER_WAKE_DEBOUNCE_S, default 60s) is intentionally much
+    shorter than RENDER_IDLE_GRACE_MIN (default 10min, the lifecycle task's
+    idle-before-stop threshold) — within the debounce window, the lifecycle
+    task cannot possibly have decided to stop the machine again (it requires
+    10 continuous idle minutes first), so a "we already woke it recently"
+    skip can never coincide with a legitimate stop-then-restart. This is
+    why no live Fly state check is needed here: the debounce alone is
+    correct, and the periodic lifecycle backstop is what actually
+    guarantees a missed/skipped wake gets recovered — this function is a
+    pure latency optimization, never the correctness mechanism.
+    """
+    from app.services.fly_machines import start_render_worker  # noqa: PLC0415
+
+    redis_client = _get_wake_redis()
+    acquired = True
+    if redis_client is not None:
+        try:
+            acquired = bool(
+                redis_client.set(
+                    _RENDER_WAKE_DEBOUNCE_KEY,
+                    "1",
+                    nx=True,
+                    ex=settings.RENDER_WAKE_DEBOUNCE_S,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Debounce check itself failed — fail open (call Fly anyway)
+            # rather than silently never waking the machine.
+            print(f"[render-worker-wake] debounce set failed, calling Fly anyway: {exc!r}")
+            acquired = True
+
+    if not acquired:
+        return
+
+    start_render_worker()
+
+
+@before_task_publish.connect
+def _wake_render_worker_on_dispatch(
+    sender=None, routing_key=None, **kwargs
+):  # pragma: no cover (signal wiring; behavior tested via _maybe_start_render_worker)
+    """Wake the render worker the instant a render-queue task is dispatched.
+
+    Fires for EVERY task publish across the whole app (`.delay()`,
+    `.apply_async()`, and the enqueue_orchestrator helper alike — it's a
+    Celery-level signal, not tied to any one dispatch helper), filtered to
+    only the queues the `worker` Fly process actually consumes
+    (RENDER_WORKER_QUEUES). No-ops entirely when RENDER_AUTOSTOP_ENABLED is
+    off — checked FIRST so the flag being off costs nothing beyond one
+    settings read, matching the kill-switch convention (byte-identical to
+    pre-autostop behavior).
+
+    Runs the actual Fly API call in a background thread with its own
+    tight timeout (see app/services/fly_machines.py) — most dispatch sites
+    run inside FastAPI async request handlers on the `api` process, and a
+    synchronous HTTP call to Fly's API inline here would hang the user's
+    request if Fly's API is ever slow. Errors are swallowed: the periodic
+    lifecycle backstop recovers a missed wake within its poll interval
+    regardless.
+    """
+    if not settings.RENDER_AUTOSTOP_ENABLED:
+        return
+    from app.services.queue_state import RENDER_WORKER_QUEUES  # noqa: PLC0415
+
+    if routing_key not in RENDER_WORKER_QUEUES:
+        return
+
+    def _run():
+        try:
+            _maybe_start_render_worker()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[render-worker-wake] failed (non-fatal): {exc!r}")
+
+    threading.Thread(target=_run, daemon=True, name="render-worker-wake").start()

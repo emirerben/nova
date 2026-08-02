@@ -2357,7 +2357,13 @@ def _fallback_moments(clip_dur: float) -> list[dict]:
 # replaced the old _render_slot function.
 # ──────────────────────────────────────────────────────────────────────────────
 
-_PARALLEL_RENDER_WORKERS = 2  # Match worker vCPU count (fly.toml: cpus=2).
+_PARALLEL_RENDER_WORKERS = 2  # fly.toml worker cpus=4 as of 2026-08 (was 2 when
+# this constant was set) — left at 2, not bumped to 4, so this per-slot pool
+# doesn't fully oversubscribe the box on its own; template_orchestrate.py's
+# own per-slot FFmpeg processes aren't the only consumer of those cores (see
+# GENERATIVE_PARALLEL_VARIANTS_ENABLED in config.py for the OTHER concurrent
+# consumer of worker CPU). Re-derive this deliberately if cpus changes again
+# rather than assuming it should just track the VM size 1:1.
 # Each libx264 ultrafast process saturates one core; running more than the
 # vCPU count adds context-switch overhead with no throughput gain. With
 # Celery --concurrency=2 the cluster already runs up to 4 ffmpegs at once,

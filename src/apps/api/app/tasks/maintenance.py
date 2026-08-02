@@ -19,12 +19,13 @@ Beat or crash the worker.
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import text
 
-from app.tasks.reaper import reap_orphans, reconcile_stuck_variants
+from app.tasks.reaper import _live_job_ids, reap_orphans, reconcile_stuck_variants
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -45,15 +46,29 @@ def sweep_stale_jobs(self) -> int:
 
     Returns the number of rows updated. Logs are written by `reap_orphans`
     itself when count > 0.
+
+    Computes the live-job-id set ONCE and shares it with both
+    `reap_orphans` and `reconcile_stuck_variants` — each of those calls
+    issues 3 separate broker broadcasts internally (active/reserved/ping),
+    so calling them independently cost 6 broadcasts per sweep (~30s
+    observed in prod at a 5s timeout each). One shared inspect() call
+    cuts that to 3.
     """
     try:
-        count = reap_orphans(celery_app)
+        live = _live_job_ids(celery_app)
+        if live is None:
+            # inspect() failed — both functions would no-op anyway; skip
+            # the DB work and log once instead of twice.
+            log.warning("sweep_stale_jobs_inspect_unavailable")
+            return 0
+
+        count = reap_orphans(celery_app, live=live)
         # Also reconcile variants frozen on already-terminal jobs (dead
         # single-variant re-renders) — reap_orphans only covers jobs whose
         # JOB-level status is still non-terminal. Independent try so one
         # failing doesn't skip the other.
         try:
-            reconcile_stuck_variants(celery_app)
+            reconcile_stuck_variants(celery_app, live=live)
         except Exception as exc:  # noqa: BLE001
             log.warning("reconcile_stuck_variants_failed", error=str(exc))
         return count
@@ -212,3 +227,162 @@ def cleanup_agent_runs(self, retention_days: int | None = None) -> dict:
         "cutoff": cutoff.isoformat(),
         "batches": batches,
     }
+
+
+# ---------------------------------------------------------------------------
+# Render-worker autostop: stop-when-idle + start-backstop (Fly cost-cut plan)
+#
+# Runs on the `light` process (see task_routes in app/worker.py — this task
+# is itself listed in MAINTENANCE_TASK_NAMES, since it obviously must not run
+# ON the machine it's managing). Gated entirely by RENDER_AUTOSTOP_ENABLED —
+# a complete no-op when off, matching the kill-switch convention used
+# throughout this codebase.
+#
+# Two responsibilities in one task, not two separate ones, because they
+# share the same render_worker_idle() read and the same idle-duration
+# tracking state — splitting them would mean computing idle state twice per
+# tick for no benefit.
+#   1. STOP: the machine has been continuously idle for
+#      RENDER_IDLE_GRACE_MIN minutes → ask Fly to stop it.
+#   2. START (backstop): there's real render-queue work AND the machine
+#      isn't already started → ask Fly to start it. This is what bounds a
+#      missed/failed before_task_publish wake-hook call (worker.py) to at
+#      most one lifecycle poll interval, instead of an indefinite hang.
+# ---------------------------------------------------------------------------
+
+_RENDER_WORKER_IDLE_SINCE_KEY = "render_worker:idle_since"
+
+_lifecycle_redis_lock = threading.Lock()
+_lifecycle_redis_client = None
+
+
+def _get_lifecycle_redis():
+    """Module-singleton Redis client for idle-duration tracking.
+
+    Matches the per-module pooled-client pattern already used throughout
+    this codebase (clip_cache.py, worker.py's wake-hook debounce, etc.) —
+    there is no shared "app redis client" utility to reuse instead. Returns
+    None on connection failure; callers degrade to "can't track duration,
+    treat every idle tick as the start of a fresh grace period" rather than
+    raising — see `_decide_lifecycle_action`.
+    """
+    global _lifecycle_redis_client
+    if _lifecycle_redis_client is not None:
+        return _lifecycle_redis_client
+    with _lifecycle_redis_lock:
+        if _lifecycle_redis_client is not None:
+            return _lifecycle_redis_client
+        try:
+            import redis as redis_lib  # noqa: PLC0415
+
+            from app.config import settings  # noqa: PLC0415
+
+            client = redis_lib.from_url(
+                settings.redis_url, socket_connect_timeout=2, socket_timeout=2
+            )
+            client.ping()
+            _lifecycle_redis_client = client
+        except Exception as exc:  # noqa: BLE001
+            log.warning("render_worker_lifecycle_redis_unavailable", error=str(exc))
+            return None
+    return _lifecycle_redis_client
+
+
+def _decide_lifecycle_action(
+    idle: bool | None,
+    idle_since: float | None,
+    now: float,
+    grace_min: int,
+) -> tuple[str, float | None]:
+    """Pure decision logic — no Celery/Redis/Fly I/O, fully unit-testable.
+
+    Returns (action, new_idle_since_to_persist):
+      "unknown"  — render_worker_idle() couldn't determine state (broker
+                   hiccup). Do nothing at all — never act on missing
+                   information, same principle as the reaper.
+      "not_idle" — there's active/queued render work. Caller should ensure
+                   the machine is started (the backstop). idle_since is
+                   cleared (None) so a future idle period starts a fresh
+                   grace timer, not a stale one.
+      "grace"    — idle, but hasn't been continuously idle for grace_min
+                   minutes yet. Caller does nothing but persist idle_since
+                   so the NEXT tick knows when this idle period started.
+      "stop"     — idle for >= grace_min minutes. Caller should stop the
+                   machine. idle_since is cleared so we don't ask Fly to
+                   stop an already-stopped machine on every subsequent tick
+                   (harmless since Fly's stop is idempotent, but noisy).
+    """
+    if idle is None:
+        return "unknown", idle_since
+    if not idle:
+        return "not_idle", None
+    since = idle_since if idle_since is not None else now
+    if (now - since) >= grace_min * 60:
+        return "stop", None
+    return "grace", since
+
+
+@celery_app.task(
+    name="tasks.manage_render_worker_lifecycle",
+    bind=True,
+    autoretry_for=(),
+    max_retries=0,
+    soft_time_limit=30,
+    time_limit=45,
+)
+def manage_render_worker_lifecycle(self) -> str:
+    """Stop the render worker when idle past the grace period; start it
+    back up (backstop) if there's work waiting and it isn't already
+    running. Returns the action taken, for observability in the task result
+    backend / admin job-debug view.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.services.fly_machines import (  # noqa: PLC0415
+        get_render_worker_state,
+        start_render_worker,
+        stop_render_worker,
+    )
+    from app.services.queue_state import render_worker_idle  # noqa: PLC0415
+
+    if not settings.RENDER_AUTOSTOP_ENABLED:
+        return "disabled"
+
+    idle = render_worker_idle(celery_app)
+    now = datetime.now(UTC).timestamp()
+
+    redis_client = _get_lifecycle_redis()
+    idle_since: float | None = None
+    if redis_client is not None:
+        try:
+            raw = redis_client.get(_RENDER_WORKER_IDLE_SINCE_KEY)
+            idle_since = float(raw) if raw else None
+        except Exception as exc:  # noqa: BLE001
+            log.warning("render_worker_lifecycle_redis_read_failed", error=str(exc))
+
+    action, new_idle_since = _decide_lifecycle_action(
+        idle, idle_since, now, settings.RENDER_IDLE_GRACE_MIN
+    )
+
+    if redis_client is not None:
+        try:
+            if new_idle_since is None:
+                redis_client.delete(_RENDER_WORKER_IDLE_SINCE_KEY)
+            else:
+                redis_client.set(_RENDER_WORKER_IDLE_SINCE_KEY, str(new_idle_since))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("render_worker_lifecycle_redis_write_failed", error=str(exc))
+
+    if action == "stop":
+        ok = stop_render_worker()
+        log.info("render_worker_lifecycle_stop", ok=ok)
+    elif action == "not_idle":
+        # Backstop: confirm the machine is actually started every tick,
+        # regardless of whether the wake hook already handled it — this is
+        # the mechanism that bounds a missed/failed wake to one poll
+        # interval instead of an indefinite hang.
+        state = get_render_worker_state()
+        if state != "started":
+            ok = start_render_worker()
+            log.info("render_worker_lifecycle_backstop_start", ok=ok, prior_state=state)
+
+    return action

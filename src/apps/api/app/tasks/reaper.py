@@ -102,6 +102,7 @@ def reap_orphans(
     celery_app: Celery,
     *,
     threshold_min: int = THRESHOLD_MIN,
+    live: set[str] | None = None,
 ) -> int:
     """Mark stale, unowned non-terminal jobs as processing_failed.
 
@@ -109,12 +110,21 @@ def reap_orphans(
       - inspect() fails (treated as "unknown — skip this cycle")
       - no orphans match the criteria
 
+    `live`: pass a pre-computed live-job-id set (from `_live_job_ids`) to
+    skip this function's own inspect() call — used by `sweep_stale_jobs`
+    (app/tasks/maintenance.py) so one Beat firing issues a SINGLE inspect()
+    round-trip shared with `reconcile_stuck_variants`, instead of each
+    function independently re-querying the broker. Omit (default None) to
+    compute it internally, unchanged from before — the on-boot reaper in
+    app/worker.py and ad-hoc/test callers rely on this default.
+
     Safe to call concurrently from multiple workers — the SQL UPDATE with
     a WHERE clause on `status` is atomic in postgres, and the same row
     won't be double-reaped because the second UPDATE filters on
     `status IN _NON_TERMINAL_STATUSES`.
     """
-    live = _live_job_ids(celery_app)
+    if live is None:
+        live = _live_job_ids(celery_app)
     if live is None:
         # Don't reap on inspection failure — false positives (killing a
         # legitimately-running job) are worse than waiting for the next
@@ -215,6 +225,7 @@ def reconcile_stuck_variants(
     celery_app: Celery,
     *,
     threshold_min: int = THRESHOLD_MIN,
+    live: set[str] | None = None,
 ) -> int:
     """Flip variants frozen at "rendering"/"pending" on TERMINAL-status jobs.
 
@@ -226,10 +237,14 @@ def reconcile_stuck_variants(
     polls the frozen tile forever — exactly the "stuck in rendering even though
     it's ready" symptom. This sweep closes that gap.
 
+    `live`: see `reap_orphans` — same pre-computed-set / shared-inspect()
+    optimization, same default-None (compute internally) behavior.
+
     Returns the number of jobs whose variants were reconciled. No-op (0) when
     inspect() fails — same "don't act on unknown" safety as `reap_orphans`.
     """
-    live = _live_job_ids(celery_app)
+    if live is None:
+        live = _live_job_ids(celery_app)
     if live is None:
         return 0
 

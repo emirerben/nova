@@ -552,6 +552,77 @@ class Settings(BaseSettings):
         "dedicated vCPU count so each concurrent FFmpeg encode gets a real core.",
     )
 
+    RENDER_AUTOSTOP_ENABLED: bool = Field(
+        default=False,
+        description="Stop the `worker` Fly machine when render_worker_idle() "
+        "(app/services/queue_state.py) reports idle for RENDER_IDLE_GRACE_MIN, "
+        "and start it back up on a wake signal (before_task_publish signal in "
+        "worker.py) or the periodic backstop in tasks.manage_render_worker_lifecycle "
+        "(app/tasks/maintenance.py). Default off: byte-identical to today "
+        "(worker stays always-on, fly.toml auto_stop_machines=false). Requires "
+        "FLY_API_TOKEN + FLY_APP_NAME to be set — the lifecycle task and the "
+        "wake hook both no-op (log + skip) if either is missing, never raise. "
+        "Kill switch: `fly secrets set RENDER_AUTOSTOP_ENABLED=false` + restart "
+        "(restores always-on immediately; does not require `fly machine start` "
+        "since a stopped machine's next real job wakes it via the backstop "
+        "within RENDER_LIFECYCLE_POLL_INTERVAL_S regardless of this flag, but "
+        "flipping the flag off stops any FURTHER autostop decisions).",
+    )
+
+    RENDER_IDLE_GRACE_MIN: int = Field(
+        default=10,
+        description="Minutes render_worker_idle() must report idle=True, "
+        "continuously, before tasks.manage_render_worker_lifecycle stops the "
+        "worker machine. Absorbs brief gaps between back-to-back jobs (e.g. a "
+        "user submitting a render, then immediately swapping the song) without "
+        "flapping the machine stopped/started. Only consulted when "
+        "RENDER_AUTOSTOP_ENABLED is true.",
+    )
+
+    RENDER_WAKE_DEBOUNCE_S: int = Field(
+        default=60,
+        description="TTL (seconds) of the Redis debounce key the before_task_publish "
+        "wake-hook signal (worker.py) sets after asking Fly to start the render "
+        "machine. Prevents one Fly Machines API start call per dispatch during a "
+        "burst of edits — at most one call per idle-to-active transition. Purely "
+        "an optimization: if the debounce key is stale or Redis is briefly "
+        "unavailable, worst case is one redundant (harmless) start call, not a "
+        "missed wake — Fly's start-a-started-machine call is a no-op.",
+    )
+
+    FLY_API_TOKEN: str = Field(
+        default="",
+        description="Fly.io API token used by app/services/fly_machines.py to "
+        "start/stop the render worker machine when RENDER_AUTOSTOP_ENABLED is on. "
+        "SCOPE NARROWLY: an app-scoped deploy token for nova-video only, never a "
+        "full personal/org token — this credential is reachable from the `api` "
+        "process (the wake hook fires from FastAPI request handlers), so if that "
+        "internet-facing process is ever compromised through some unrelated "
+        "vulnerability, the blast radius should be 'control of this one app's "
+        "machines,' not 'full Fly org access.' Empty by default; the lifecycle "
+        "task and wake hook both log a warning and no-op (never raise) if unset.",
+    )
+
+    FLY_APP_NAME: str = Field(
+        default="nova-video",
+        description="Fly app name app/services/fly_machines.py targets when "
+        "resolving the render worker machine by metadata.fly_process_group.",
+    )
+
+    BEAT_HEARTBEAT_STALE_AFTER_MIN: int = Field(
+        default=10,
+        description="Minutes since the last successful Beat-scheduled task "
+        "before GET /health/beat reports unhealthy. Meant to be pinged by a "
+        "service OUTSIDE this app (UptimeRobot, cron-job.org, a scheduled "
+        "GitHub Actions workflow) — this is the only mechanism that can "
+        "detect Celery Beat being fully dead, since any check that is "
+        "itself Beat-scheduled shares Beat's exact blind spot. Matters "
+        "specifically because RENDER_AUTOSTOP_ENABLED makes Beat's health a "
+        "prerequisite for the render worker ever restarting on a missed "
+        "wake-hook call. 5x the fastest Beat interval (2 min, the render- "
+        "worker lifecycle poll) so one or two missed ticks don't false-alarm.",
+    )
+
     lyrics_optional_enabled: bool = Field(
         default=False,
         description="Lyrics stop being baked into song_lyrics renders: the variant "
