@@ -48,8 +48,8 @@ _SCOPES = [
 ]
 _ANALYTICS_SCOPES = {"user.info.basic", "video.list"}
 _CONSENT_VERSION = "2026-08-01"
-_MEDIA_VERIFICATION_FILENAME = "tiktok9a2bMaksajhuoYRL3P7tSex7MrV8z5lg.txt"
-_MEDIA_VERIFICATION_CONTENT = "tiktok-developers-site-verification=9a2bMaksajhuoYRL3P7tSex7MrV8z5lg"
+_MEDIA_VERIFICATION_FILENAME = "tiktokLboOfDSmZdolPijZNXvio8Pgvo1OzQhA.txt"
+_MEDIA_VERIFICATION_CONTENT = "tiktok-developers-site-verification=LboOfDSmZdolPijZNXvio8Pgvo1OzQhA"
 
 
 class _RedactTikTokMediaAccessFilter(logging.Filter):

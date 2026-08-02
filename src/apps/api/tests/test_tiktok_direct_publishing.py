@@ -186,7 +186,7 @@ async def test_media_prefix_verification_is_public_plain_text() -> None:
     assert response.status_code == 200
     assert response.media_type == "text/plain"
     assert response.body == (
-        b"tiktok-developers-site-verification=9a2bMaksajhuoYRL3P7tSex7MrV8z5lg"
+        b"tiktok-developers-site-verification=LboOfDSmZdolPijZNXvio8Pgvo1OzQhA"
     )
 
 
