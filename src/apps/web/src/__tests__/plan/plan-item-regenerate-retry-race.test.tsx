@@ -18,7 +18,7 @@
  * regress it.
  */
 
-import { hasRenderRegistered } from "@/app/plan/items/[id]/page";
+import { hasRenderRegistered } from "@/app/plan/items/[id]/render-registration";
 
 describe("hasRenderRegistered", () => {
   it("first-ever generate: not registered before any job id appears", () => {

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isCoarsePointerDevice, shouldAutoOpenPlanItemEditor } from "./auto-open-editor";
+import { hasRenderRegistered } from "./render-registration";
 import {
   attachClips,
   changePlanItemStyle,
@@ -133,32 +134,6 @@ import { getTikTokConnection } from "@/lib/tiktok-api";
 // is minted when that worker picks the task up; a real render can sit queued for
 // several minutes before current_job_id appears.
 const RENDER_REGISTER_TIMEOUT_MS = 15 * 60_000;
-
-/**
- * Has a render actually registered as a RESULT of the most recent Generate
- * click? A truthy `current_job_id` alone is NOT enough: on a retry after a
- * failed (or any terminal) render, `current_job_id` already points at the
- * OLD job before the click even happens, so "a job id is present" can't tell
- * "nothing has happened yet" apart from "the old job is still sitting
- * there". Only a job id that DIFFERS from whichever one was current at click
- * time (snapshotted into `jobIdBeforeClick`), or an explicit "generating"
- * status, means the new render has actually landed.
- *
- * Bug this fixes: retrying a failed item silently appeared to do nothing —
- * both the "keep polling until the render registers" window (isTerminalFn)
- * and the Generate-button release effect read `current_job_id` truthiness
- * as "registered", so on a retry they both fired on the very first tick
- * using the stale, already-terminal job, before the new job had a chance to
- * be created. First-ever generate (current_job_id starts `null`) was never
- * affected — this only breaks for a SECOND-or-later attempt on the item.
- */
-export function hasRenderRegistered(
-  item: Pick<PlanItem, "current_job_id" | "status">,
-  jobIdBeforeClick: string | null,
-): boolean {
-  if (item.status === "generating") return true;
-  return item.current_job_id != null && item.current_job_id !== jobIdBeforeClick;
-}
 
 // Kill-switch: overlays tab only appears when NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED=true.
 // Normalise: accept "true", "True", "TRUE", "1" and trim whitespace so a
