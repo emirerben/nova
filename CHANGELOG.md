@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.1.4] — 2026-08-02
+
+### Fixed
+- **A render that fails after creating one variant had no way to retry at all.** #768 fixed the case where a job fails before any variant exists; a job that fails after creating (and failing) its first variant takes a different path in the page and had no working retry control whatsoever — not a bug in the fix, a second, distinct dead end in the same incident. The progress status band now shows "This one didn't render" (instead of a stuck "Working on it…") with a working "Try again" button for this case, and the generic failure copy under the video no longer tells people to "change the song or style" when the edit style has no song or style to change.
+
 ## [0.22.1.3] — 2026-08-02
 
 ### Fixed
