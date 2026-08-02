@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.21.0.1] — 2026-08-02
+
+### Fixed
+- **Fly.io worker no longer pays for an unused capability.** The render worker was upgraded to a dedicated-CPU VM in June to safely enable concurrent variant rendering, but that setting was never turned on — leaving most of the upgrade idle for seven weeks. Reverted to the prior shared-CPU sizing; no change to render behavior, output, or the concurrent-rendering setting itself, which stays off until it's actually enabled.
+
 ## [0.20.0.1] — 2026-08-01
 
 ### Fixed

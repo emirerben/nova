@@ -125,27 +125,23 @@ primary_region = "iad"
 
 [[vm]]
   processes = ["worker"]
-  # 2026-06-13: shared → performance (dedicated vCPUs). Two reasons:
-  #  1. Single-render speed: shared cores are oversubscribed/throttled, so
-  #     every FFmpeg encode + the Skia per-frame PNG render runs slower than the
-  #     vCPU count suggests. Dedicated cores make each render materially faster.
-  #  2. Safe parallel variants (GENERATIVE_PARALLEL_VARIANTS_ENABLED): rendering
-  #     a job's variants concurrently is ONLY a win when each concurrent encode
-  #     gets a real core. On the old shared-cpu VM, concurrency=2 once ballooned
-  #     a 14s encode to >600s (job d018d1c3, post-#103) — pure CPU starvation.
-  #     performance-4x gives 4 dedicated cores so a bounded 2-way parallel render
-  #     doesn't starve. Concurrency stays 1 (one Celery task at a time); the
-  #     parallelism is INSIDE one task across its variants.
-  cpu_kind = "performance"
+  # 2026-08-02: performance → shared (reverted). The 2026-06-13 bump to
+  # performance-4x/8192MB was justified by GENERATIVE_PARALLEL_VARIANTS_ENABLED
+  # ("safe parallel variants... performance-4x gives 4 dedicated cores so a
+  # bounded 2-way parallel render doesn't starve") — but that flag was never
+  # flipped on (still `default=False` in config.py, absent from `fly secrets
+  # list`), so this app has been paying $155/mo for a performance VM to run
+  # --concurrency=1 with 3 of 4 dedicated vCPUs permanently idle. Reverting to
+  # the pre-6/13 shared-cpu-4x/6144MB sizing bought back ~$122/mo (81% of a
+  # ~$150/mo cost-cut) with zero behavior change, since the capability this VM
+  # class existed for was never in use. Re-upsizing to performance-4x (and
+  # actually flipping the flag) is Phase 3 of the scale-to-zero follow-up —
+  # once the worker mostly sits stopped, the cost delta between VM classes
+  # drops under $1/mo, so there's no tension between "downsize now" and
+  # "performance-4x later," just sequencing. See agents/DECISIONS.md.
+  cpu_kind = "shared"
   cpus = 4
-  # 4096MB instead of 2048: the font-identification pipeline (PR2) holds an
-  # open-clip ViT-B/32 image-tower singleton resident (~150MB weights + ~250MB
-  # torch CPU runtime + activations). Combined with concurrent FFmpeg
-  # subprocesses at 1080×1920 (peak working set 800MB-1.4GB) the 2048MB
-  # ceiling leaves 0-800MB of headroom. OOM mid-render orphans jobs at
-  # status=processing rather than failing cleanly.
-  #
-  # 2026-05-17: bumped 4096 → 6144 after admin-test job
+  # 6144MB — the pre-6/13 sizing, bumped from 4096 → 6144 after admin-test job
   # 022a00e4-7926-4d82-b248-16431dec543b OOM-killed at FFmpeg anon-rss 1897MB
   # / total-vm 3596MB on a MINIMAL single-pass spec (inputs=1 transitions=0
   # abs_pngs=0 abs_ass=2). Kernel log: "Out of memory: Killed process 892
@@ -154,13 +150,9 @@ primary_region = "iad"
   # holds float-pipeline frames for two simultaneous libx264 encoders, and
   # the reframe chain's format=gbrpf32le step is a 6.4× memory expansion
   # (reframe.py:438). 6144 gave ~2.2GB FFmpeg headroom above the observed
-  # working set.
-  #
-  # 2026-06-13: 6144 → 8192 (performance-4x ceiling). Headroom for a bounded
-  # 2-way parallel-variant render (2 × ~2GB FFmpeg peak + the ~400MB CLIP
-  # singleton). W2's per-overlay + per-variant scratch cleanup keeps the Skia
-  # PNG sequences from piling up, so this is comfortable, not tight.
-  memory_mb = 8192
+  # working set. That headroom reasoning is unaffected by this revert — the
+  # 8192MB ceiling existed only for the never-enabled 2-way parallel render.
+  memory_mb = 6144
   kill_timeout = "30m"
   # SIGTERM (not Fly's SIGINT default) is Celery's clean warm-shutdown signal:
   # the worker stops consuming new tasks and lets the in-flight task finish
