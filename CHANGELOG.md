@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.1.2] — 2026-08-02
+
+### Fixed
+- **Restored dedicated CPU cores on the render worker.** An earlier change today downsized the worker to shared CPUs to cut cost, but that missed a second reason the dedicated-CPU tier existed: CPU-bound overlay rendering runs meaningfully slower on shared, oversubscribed cores. Within the hour, the first render dispatched after the downsize failed when a text-overlay burn exceeded its time limit. Reverted immediately — a lost render is worse than the savings, and the cost gap closes on its own once the render worker's autostop feature (shipped dark, not yet enabled) is turned on.
+
 ## [0.22.1.1] — 2026-08-02
 
 ### Fixed

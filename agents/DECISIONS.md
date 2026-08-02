@@ -776,3 +776,52 @@ pre-autostop behavior when off. Restoring `performance-4x` and flipping
 `GENERATIVE_PARALLEL_VARIANTS_ENABLED` (the VM-revert entry's Phase 3) is a
 deliberate later step, gated on this autostop design being verified in prod
 first — not bundled into this same change.
+
+## [2026-08-02] Worker VM re-reverted to performance-4x — the downsize missed the other justification, and prod proved it within an hour
+
+The shared-cpu-4x downsize above was live for less than an hour before it
+caused a real render failure: job `6bdb58dc-5933-4e82-b55c-ba2de00da19c` (the
+first render dispatched after the downsize deployed) failed when its Skia
+PNG-sequence text-overlay burn (`text_overlay_skia.py:2025`,
+`subprocess.run(..., timeout=600)`) exceeded its 600s ceiling and was killed.
+Two of its stages timed out this way (916s and 616s elapsed before failing).
+
+**The downsize's reasoning was incomplete, not wrong about the flag.** The
+2026-06-13 performance-4x upgrade had two stated justifications:
+`GENERATIVE_PARALLEL_VARIANTS_ENABLED` safety (genuinely unused, correctly
+identified) and single-render speed — *"shared cores are
+oversubscribed/throttled, so every FFmpeg encode + the Skia per-frame PNG
+render runs slower than the vCPU count suggests. Dedicated cores make each
+render materially faster."* The cost-cut plan treated "the flag was never
+used" as license to downsize, without separately verifying the second
+justification didn't matter on its own. It did — this incident is a direct,
+fast confirmation of the original upgrade's own documented rationale, on
+exactly the workload type (Skia PNG-sequence overlay burns) it named.
+
+**Confidence level, stated plainly:** high but not proven by a controlled
+comparison. The mechanism (oversubscribed shared vCPUs run CPU-bound Skia/
+ffmpeg work slower), the timing (first render after the downgrade), and the
+pre-existing first-party claim about this exact workload all point the same
+direction. What's missing: a byte-identical rerun of the same input on both
+VM classes — Fly's shared-vCPU throttling happens at the hypervisor level
+and isn't visible from inside the guest (`/sys/fs/cgroup/cpu.stat` and
+similar aren't present in a Fly Firecracker guest), so this couldn't be
+confirmed directly from the machine itself.
+
+**Why revert immediately instead of gathering more evidence first:** a
+failed render is a real user-visible cost (a lost video, and the current
+recovery path requires the user to notice and retry). Continuing to run
+degraded while collecting more failures to be sure would trade a small,
+already-large-enough amount of evidence for actual harm. Reverting costs
+$122/mo for a matter of days, until `RENDER_AUTOSTOP_ENABLED` is verified —
+at which point the worker's active hours drop enough that this VM-class
+choice barely matters on cost either way (see the scale-to-zero entry
+above), so this reversal has no long-run cost, only a short deliberate delay
+on banking part of the savings.
+
+**Lesson for future cost-cut work on this codebase:** when a resource
+upgrade has multiple stated justifications, downsizing requires checking
+that NONE of them still apply — not just the one that's easiest to prove
+unused. "Unused capability" and "unused VM class" are different claims;
+this incident is what happens when the first gets treated as proof of the
+second.
