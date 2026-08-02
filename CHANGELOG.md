@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.1.0] — 2026-08-02
+
+### Changed
+- **Text stays readable over bright, detailed footage without looking outlined or muddy.** Modern titles, lyrics, karaoke, animated words, and handwriting now combine a crisp edge-separation shadow with a softer downward shadow, and the editor mirrors the same treatment—including when a stroke is enabled. Turning shadows off removes both layers. Existing videos keep their current look until rerendered.
+
 ## [0.22.0.0] — 2026-08-02
 
 ### Added
