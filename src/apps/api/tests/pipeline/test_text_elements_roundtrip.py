@@ -1241,6 +1241,24 @@ def test_shadow_enabled_false_survives_validation_and_compile():
     assert overlays[0]["shadow_enabled"] is False
 
 
+def test_high_visibility_shadow_style_survives_validation_and_compile():
+    element = TextElement.model_validate(
+        {
+            "text": "Crisp shadow",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "role": "generative_intro",
+            "shadow_enabled": True,
+            "shadow_style": "high_visibility",
+        }
+    )
+
+    overlays = build_overlays_from_text_elements([element], video_duration_s=4.0)
+    assert overlays
+    assert overlays[0]["shadow_enabled"] is True
+    assert overlays[0]["shadow_style"] == "high_visibility"
+
+
 def _lyric_snapshot_variant() -> dict:
     return {
         "variant_id": "song_lyrics",

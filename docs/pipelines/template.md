@@ -28,12 +28,14 @@ font-cycle and ASS animated overlays.
 → `text_overlay_skia.py` (skia-python, HarfBuzz shaping, per-frame PNG sequences);
 classic non-music + non-agentic → Pillow + libass.
 
-**Modern text separation:** the Skia path paints a fixed two-layer black shadow behind
-every shadow-enabled glyph/path: ambient `(alpha=115, sigma=14, y=8)` then contact
-`(alpha=200, sigma=3, y=2)`. Animated opacity scales both alphas;
-`shadow_enabled=false` disables both. Browser editor previews mirror the profile with
-CSS blur radii 28/6px. Classic Pillow/libass overlays and ASS captions keep their
-existing shadow policy.
+**Modern text separation:** absent/null/true `shadow_enabled` values retain the
+standard legacy shadow `(alpha=160, sigma=12, y=6)`, while explicit `false` disables
+it. The editor's opt-in `shadow_style="high_visibility"` selects the dual effect—ambient
+`(alpha=115, sigma=14, y=8)` then contact `(alpha=200, sigma=3, y=2)`—when shadows are
+enabled. This separate JSONB field preserves old explicit-true rows without a database
+migration. Animated opacity scales the selected profile's alphas. Browser previews
+mirror both profiles with CSS blur radii 24px and 28/6px respectively. Classic
+Pillow/libass overlays and ASS captions keep their existing shadow policy.
 
 **Skia file-descriptor pressure:** Skia outputs per-overlay PNG sequences fed to
 FFmpeg's `image2` demuxer + `setpts` shift — O(overlay_count) FDs regardless of frame

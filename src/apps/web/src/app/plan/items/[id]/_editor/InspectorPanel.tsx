@@ -90,6 +90,7 @@ const EDITABLE_ROW_FIELDS = new Set([
   "theme_transition",
   "color",
   "shadow_enabled",
+  "shadow_style",
   "stroke_width",
   "text_case",
   "letter_spacing",
@@ -1807,15 +1808,32 @@ function TextInspector({
         </div>
       )}
 
-      {!isLyric && !isCaption && (
+      {!isCaption && (
         <label className="flex h-11 items-center justify-between border-b border-zinc-100">
           <span className="text-[13px] text-[#3f3f46]">Shadow</span>
-          <input
-            type="checkbox"
-            checked={bar.shadow_enabled !== false}
-            onChange={(e) => onPatch({ shadow_enabled: e.target.checked })}
-            className="h-4 w-4 accent-[#0c0c0e]"
-          />
+          <select
+            aria-label="Shadow effect"
+            value={
+              bar.shadow_enabled === false
+                ? "off"
+                : bar.shadow_style === "high_visibility"
+                  ? "high_visibility"
+                  : "standard"
+            }
+            onChange={(e) => {
+              const value = e.target.value;
+              onPatch({
+                shadow_enabled: value !== "off",
+                shadow_style:
+                  value === "high_visibility" ? "high_visibility" : "standard",
+              });
+            }}
+            className="h-8 rounded-lg border border-zinc-200 bg-white px-2 text-[12px] text-[#3f3f46] focus:border-lime-500/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          >
+            <option value="standard">Standard</option>
+            <option value="high_visibility">High visibility</option>
+            <option value="off">Off</option>
+          </select>
         </label>
       )}
 

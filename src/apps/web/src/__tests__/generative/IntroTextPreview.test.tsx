@@ -61,10 +61,9 @@ describe("IntroTextPreview", () => {
     expect(node).not.toBeNull();
     expect(node.style.color).toBe("rgb(255, 210, 74)"); // #FFD24A settled hold
     expect(node.style.fontFamily).toContain("Playfair Display");
-    expect(node.style.textShadow).toContain("0.5px 1.5px");
-    expect(node.style.textShadow).toContain("2px 7px");
-    expect(node.style.textShadow).toContain(String(200 / 255));
-    expect(node.style.textShadow).toContain(String(115 / 255));
+    expect(node.style.textShadow).toContain("1.5px 6px");
+    expect(node.style.textShadow).toContain(String(160 / 255));
+    expect(node.style.textShadow).not.toContain(String(200 / 255));
   });
 
   it("settles user-edited karaoke on the user's text color, not the highlight", () => {
@@ -125,7 +124,7 @@ describe("IntroTextPreview", () => {
     expect(box.textContent).toBe("");
   });
 
-  it("uses the same dual shadow on settled editorial cluster blocks", () => {
+  it("uses the standard shadow on settled editorial cluster blocks", () => {
     render(
       <IntroTextPreview
         layout="cluster"
@@ -134,7 +133,7 @@ describe("IntroTextPreview", () => {
     );
     const block = screen.getByText("visible");
 
-    expect(block.style.textShadow).toContain("0.5px 1.5px");
-    expect(block.style.textShadow).toContain("2px 7px");
+    expect(block.style.textShadow).toContain("1.5px 6px");
+    expect(block.style.textShadow).toContain(String(160 / 255));
   });
 });

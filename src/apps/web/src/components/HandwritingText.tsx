@@ -6,7 +6,11 @@ import {
   handwritingStrokeLocalProgress,
   layoutHandwritingText,
 } from "@/lib/handwriting-strokes";
-import { TEXT_SHADOW_BLEED_PX, TEXT_SHADOW_LAYERS } from "@/lib/text-shadow";
+import {
+  textShadowBleedPx,
+  textShadowLayers,
+  type TextShadowStyle,
+} from "@/lib/text-shadow";
 
 export function HandwritingText({
   text,
@@ -18,7 +22,7 @@ export function HandwritingText({
   lineSpacing = 1.15,
   outlineWidthEm = 0,
   fontSizePx,
-  shadowEnabled = true,
+  shadowStyle = "standard",
   glowColor,
   glowStrength = 0,
   style,
@@ -34,7 +38,7 @@ export function HandwritingText({
   outlineWidthEm?: number;
   /** Font size on the 1080x1920 renderer canvas; converts px layers to SVG em. */
   fontSizePx: number;
-  shadowEnabled?: boolean;
+  shadowStyle?: TextShadowStyle;
   glowColor?: string | null;
   glowStrength?: number;
   style?: CSSProperties;
@@ -52,26 +56,28 @@ export function HandwritingText({
   );
   const progress = Math.max(0, Math.min(1, revealProgress));
   const safeFontSizePx = Math.max(1, fontSizePx);
+  const shadowLayers = textShadowLayers(shadowStyle);
+  const shadowBleedPx = textShadowBleedPx(shadowStyle);
   const outlineBleedEm = 0.12 + outlineWidthEm;
   const glowBleedEm = glowStrength > 0 ? 62 / safeFontSizePx : 0;
   const leftBleedEm = Math.max(
     outlineBleedEm,
-    shadowEnabled ? TEXT_SHADOW_BLEED_PX.left / safeFontSizePx : 0,
+    shadowBleedPx.left / safeFontSizePx,
     glowBleedEm,
   );
   const topBleedEm = Math.max(
     outlineBleedEm,
-    shadowEnabled ? TEXT_SHADOW_BLEED_PX.top / safeFontSizePx : 0,
+    shadowBleedPx.top / safeFontSizePx,
     glowBleedEm,
   );
   const rightBleedEm = Math.max(
     outlineBleedEm,
-    shadowEnabled ? TEXT_SHADOW_BLEED_PX.right / safeFontSizePx : 0,
+    shadowBleedPx.right / safeFontSizePx,
     glowBleedEm,
   );
   const bottomBleedEm = Math.max(
     outlineBleedEm,
-    shadowEnabled ? TEXT_SHADOW_BLEED_PX.bottom / safeFontSizePx : 0,
+    shadowBleedPx.bottom / safeFontSizePx,
     glowBleedEm,
   );
   const width = Math.max(0.01, layout.widthEm);
@@ -131,8 +137,7 @@ export function HandwritingText({
             <feGaussianBlur stdDeviation={layer.sigmaPx / safeFontSizePx} />
           </filter>
         ))}
-        {shadowEnabled &&
-          TEXT_SHADOW_LAYERS.map((layer, index) => (
+        {shadowLayers.map((layer, index) => (
             <filter
               key={`shadow-filter-${index}`}
               id={`${filterPrefix}-shadow-${index}`}
@@ -169,8 +174,7 @@ export function HandwritingText({
           ))}
         </g>
       ))}
-      {shadowEnabled &&
-        TEXT_SHADOW_LAYERS.map((layer, index) => (
+      {shadowLayers.map((layer, index) => (
           <g
             key={`shadow-${index}`}
             data-handwriting-shadow={index}

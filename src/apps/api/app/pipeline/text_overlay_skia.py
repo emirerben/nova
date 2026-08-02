@@ -48,7 +48,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import numpy as np
 import regex
@@ -107,45 +107,64 @@ class _TextShadowLayer:
     dy: float
 
 
-# Reference-calibrated two-scale separation: a broad ambient shadow keeps text
-# readable over texture while a tight contact halo protects the glyph edge.
-# Paint back-to-front so the crisp contact layer sits above the ambient layer.
-_TEXT_SHADOW_LAYERS = (
+_TextShadowStyle = Literal["none", "standard", "high_visibility"]
+
+# The pre-existing Skia default. Keeping it for absent/null values prevents a
+# renderer-wide visual change when the high-visibility effect is not selected.
+_STANDARD_TEXT_SHADOW_LAYERS = (_TextShadowLayer(alpha=160, sigma=12.0, dx=0.0, dy=6.0),)
+
+# Opt-in two-scale separation: a broad ambient shadow keeps text readable over
+# texture while a tight contact halo protects the glyph edge. Paint back-to-front.
+_HIGH_VISIBILITY_TEXT_SHADOW_LAYERS = (
     _TextShadowLayer(alpha=115, sigma=14.0, dx=0.0, dy=8.0),
     _TextShadowLayer(alpha=200, sigma=3.0, dx=0.0, dy=2.0),
 )
 
 
-def _shadow_enabled(overlay: dict) -> bool:
-    """Shadow defaults on; only an explicit false disables every layer."""
+def _text_shadow_style(overlay: dict) -> _TextShadowStyle:
+    """Resolve the legacy toggle plus the editor's explicit shadow treatment."""
 
-    return overlay.get("shadow_enabled") is not False
+    if overlay.get("shadow_enabled") is False:
+        return "none"
+    if overlay.get("shadow_style") == "high_visibility":
+        return "high_visibility"
+    return "standard"
 
 
-def _text_shadow_bleed_px(enabled: bool) -> tuple[int, int, int, int]:
+def _text_shadow_layers(style: _TextShadowStyle) -> tuple[_TextShadowLayer, ...]:
+    if style == "none":
+        return ()
+    if style == "high_visibility":
+        return _HIGH_VISIBILITY_TEXT_SHADOW_LAYERS
+    return _STANDARD_TEXT_SHADOW_LAYERS
+
+
+def _text_shadow_bleed_px(style: _TextShadowStyle) -> tuple[int, int, int, int]:
     """Return conservative left/top/right/bottom blur extents in canvas px."""
 
-    if not enabled:
+    layers = _text_shadow_layers(style)
+    if not layers:
         return (0, 0, 0, 0)
-    left = max(math.ceil(3 * layer.sigma + max(0.0, -layer.dx)) for layer in _TEXT_SHADOW_LAYERS)
-    top = max(math.ceil(3 * layer.sigma + max(0.0, -layer.dy)) for layer in _TEXT_SHADOW_LAYERS)
-    right = max(math.ceil(3 * layer.sigma + max(0.0, layer.dx)) for layer in _TEXT_SHADOW_LAYERS)
-    bottom = max(math.ceil(3 * layer.sigma + max(0.0, layer.dy)) for layer in _TEXT_SHADOW_LAYERS)
+    left = max(math.ceil(3 * layer.sigma + max(0.0, -layer.dx)) for layer in layers)
+    top = max(math.ceil(3 * layer.sigma + max(0.0, -layer.dy)) for layer in layers)
+    right = max(math.ceil(3 * layer.sigma + max(0.0, layer.dx)) for layer in layers)
+    bottom = max(math.ceil(3 * layer.sigma + max(0.0, layer.dy)) for layer in layers)
     return (left, top, right, bottom)
 
 
 def _text_shadow_paints(
-    enabled: bool,
+    style: _TextShadowStyle,
     layer_alpha: float,
     *,
     stroke_width: float | None = None,
 ) -> list[tuple[_TextShadowLayer, skia.Paint]]:
     """Build ambient/contact paints, scaling opacity for animated layers."""
 
-    if not enabled or layer_alpha <= 0.0:
+    layers = _text_shadow_layers(style)
+    if not layers or layer_alpha <= 0.0:
         return []
     paints: list[tuple[_TextShadowLayer, skia.Paint]] = []
-    for layer in _TEXT_SHADOW_LAYERS:
+    for layer in layers:
         kwargs: dict[str, Any] = {
             "AntiAlias": True,
             "Color": skia.ColorSetARGB(_clamp_byte(layer.alpha * layer_alpha), 0, 0, 0),
@@ -1481,7 +1500,7 @@ def _draw_handwriting_strokes(
 
     ink_width = max(1.0, layout.stroke_width_em * size)
     outline_px = float(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
-    shadow_enabled = _shadow_enabled(overlay)
+    shadow_style = _text_shadow_style(overlay)
     fill_color = _skia_color_from_hex(
         overlay.get("text_color", "#FFFFFF"),
         _clamp_byte(255 * alpha),
@@ -1523,7 +1542,7 @@ def _draw_handwriting_strokes(
         else None
     )
     shadow_paints = _text_shadow_paints(
-        shadow_enabled,
+        shadow_style,
         alpha,
         stroke_width=ink_width,
     )
@@ -1672,7 +1691,7 @@ def _draw_centered_text(
     base_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"), int(255 * alpha))
     fill_color = color_override if color_override is not None else base_color
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
-    shadow_enabled = _shadow_enabled(overlay)
+    shadow_style = _text_shadow_style(overlay)
 
     # Handwriting reveals the fully styled painted block, not just the fill.
     # Resolve the actual line/emoji bounds before applying the canvas transform
@@ -1691,7 +1710,7 @@ def _draw_centered_text(
         content_left = min(content_left, line_left)
         content_right = max(content_right, line_right)
     glow_strength = _finite_float(overlay.get("glow_strength"), 0.0)
-    shadow_left, shadow_top, shadow_right, shadow_bottom = _text_shadow_bleed_px(shadow_enabled)
+    shadow_left, shadow_top, shadow_right, shadow_bottom = _text_shadow_bleed_px(shadow_style)
     glow_bleed = 62.0 if glow_strength > 0 else 0.0
     stroke_bleed = float(stroke_px + 2)
     left_bleed = max(stroke_bleed, float(shadow_left), glow_bleed)
@@ -1766,7 +1785,7 @@ def _draw_centered_text(
                 font,
                 fill_color,
                 stroke_px,
-                shadow_enabled,
+                shadow_style,
                 **draw_kwargs,
             )
         if show_cursor and i == cursor_line:
@@ -1781,7 +1800,7 @@ def _draw_centered_text(
                 font,
                 fill_color,
                 stroke_px,
-                shadow_enabled,
+                shadow_style,
                 **draw_kwargs,
             )
 
@@ -1805,7 +1824,7 @@ def _draw_line_with_layers(
     font: skia.Font,
     fill_color: int,
     stroke_px: int,
-    shadow_enabled: bool,
+    shadow_style: _TextShadowStyle,
     *,
     shader: Any = None,
     letter_spacing_px: float = 0.0,
@@ -1838,8 +1857,7 @@ def _draw_line_with_layers(
             )
             _draw_string_spaced(canvas, line, x, baseline_y, font, glow_paint, letter_spacing_px)
 
-    # High-visibility separation: broad ambient layer, then tight contact halo.
-    for shadow_layer, shadow_paint in _text_shadow_paints(shadow_enabled, layer_alpha):
+    for shadow_layer, shadow_paint in _text_shadow_paints(shadow_style, layer_alpha):
         _draw_string_spaced(
             canvas,
             line,
@@ -1913,7 +1931,7 @@ def _draw_staggered_slice(
     block_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
     first_baseline = block_top + block["ascent_offset"]
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
-    shadow_enabled = _shadow_enabled(overlay)
+    shadow_style = _text_shadow_style(overlay)
     base_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"), 255)
     block_w = max(block["widths"]) if block["widths"] else float(render_canvas.width)
     block_x = _anchored_left_x(anchor, cx, block_w)
@@ -1983,7 +2001,7 @@ def _draw_staggered_slice(
                     font,
                     base_color,
                     stroke_px,
-                    shadow_enabled,
+                    shadow_style,
                     **draw_kwargs,
                 )
                 canvas.restore()
@@ -2200,7 +2218,7 @@ def _draw_pop_in_with_suffix(
 
     fill_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
-    shadow_enabled = _shadow_enabled(overlay)
+    shadow_style = _text_shadow_style(overlay)
     glow_kwargs = _resolve_glow_kwargs(overlay)
     static_lines: list[str] = []
     for i, line in enumerate(full_lines):
@@ -2226,7 +2244,7 @@ def _draw_pop_in_with_suffix(
             full_font,
             fill_color,
             stroke_px,
-            shadow_enabled=shadow_enabled,
+            shadow_style=shadow_style,
             **glow_kwargs,
         )
 
@@ -2251,7 +2269,7 @@ def _draw_pop_in_with_suffix(
         full_font,
         fill_color,
         stroke_px,
-        shadow_enabled=shadow_enabled,
+        shadow_style=shadow_style,
         **glow_kwargs,
     )
     canvas.restore()
@@ -2330,7 +2348,7 @@ def _draw_karaoke_line(
     primary_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     highlight_color = _skia_color_from_hex(overlay.get("highlight_color") or "#FFD24A")
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
-    shadow_enabled = _shadow_enabled(overlay)
+    shadow_style = _text_shadow_style(overlay)
     glow_kwargs = _resolve_glow_kwargs(overlay)
 
     for line_idx, line in enumerate(line_word_indices):
@@ -2340,7 +2358,7 @@ def _draw_karaoke_line(
         for i in line:
             already_sung = starts[i] <= t_local
             color = highlight_color if already_sung else primary_color
-            draw_kwargs: dict[str, Any] = {"shadow_enabled": shadow_enabled}
+            draw_kwargs: dict[str, Any] = {"shadow_style": shadow_style}
             if spacing_px != 0.0:
                 draw_kwargs["letter_spacing_px"] = spacing_px
             draw_kwargs.update(glow_kwargs)

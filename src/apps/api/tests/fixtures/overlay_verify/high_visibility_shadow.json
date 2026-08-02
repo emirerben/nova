@@ -14,6 +14,7 @@
       "font_family": "Inter",
       "text_size_px": 48,
       "shadow_enabled": true,
+      "shadow_style": "high_visibility",
       "subject_substitute": false
     },
     {
@@ -30,6 +31,7 @@
       "font_family": "Inter",
       "text_size_px": 48,
       "shadow_enabled": true,
+      "shadow_style": "high_visibility",
       "subject_substitute": false
     },
     {
@@ -46,6 +48,7 @@
       "font_family": "Playfair Display Regular",
       "text_size_px": 60,
       "shadow_enabled": true,
+      "shadow_style": "high_visibility",
       "subject_substitute": false
     },
     {
@@ -62,6 +65,7 @@
       "font_family": "Playfair Display Regular",
       "text_size_px": 60,
       "shadow_enabled": true,
+      "shadow_style": "high_visibility",
       "subject_substitute": false
     },
     {
@@ -78,6 +82,7 @@
       "font_family": "Inter",
       "text_size_px": 88,
       "shadow_enabled": true,
+      "shadow_style": "high_visibility",
       "subject_substitute": false
     },
     {
@@ -94,6 +99,7 @@
       "font_family": "Inter",
       "text_size_px": 88,
       "shadow_enabled": true,
+      "shadow_style": "high_visibility",
       "subject_substitute": false
     },
     {
@@ -110,6 +116,7 @@
       "font_family": "Playfair Display",
       "text_size_px": 128,
       "shadow_enabled": true,
+      "shadow_style": "high_visibility",
       "subject_substitute": false
     },
     {
@@ -126,6 +133,7 @@
       "font_family": "Playfair Display",
       "text_size_px": 128,
       "shadow_enabled": true,
+      "shadow_style": "high_visibility",
       "subject_substitute": false
     }
   ]

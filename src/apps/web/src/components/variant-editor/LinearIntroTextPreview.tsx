@@ -42,7 +42,7 @@ import {
   type IntroOverlayParams,
 } from "@/lib/overlay-layout";
 import { ensureFontLoaded, fontLineHeight, makeCanvasMeasureAt } from "@/lib/canvas-measure";
-import { TEXT_SHADOW_BLEED_PX, textShadowCss } from "@/lib/text-shadow";
+import { textShadowBleedPx, textShadowCss } from "@/lib/text-shadow";
 
 export function LinearIntroTextPreview({
   params,
@@ -228,12 +228,13 @@ export function LinearIntroTextPreview({
   const strokePx = (params.strokeWidth ?? 0) * 2 * scale;
   const canvasPx = (pixels: number) => `${pixels * scale}px`;
   const separationShadow = textShadowCss(canvasPx);
+  const shadowBleedPx = textShadowBleedPx("standard");
   const strokeBleedPx = strokePx + 2 * scale;
   const inkRevealBleed = {
-    left: Math.ceil(Math.max(strokeBleedPx, TEXT_SHADOW_BLEED_PX.left * scale)),
-    top: Math.ceil(Math.max(strokeBleedPx, TEXT_SHADOW_BLEED_PX.top * scale)),
-    right: Math.ceil(Math.max(strokeBleedPx, TEXT_SHADOW_BLEED_PX.right * scale)),
-    bottom: Math.ceil(Math.max(strokeBleedPx, TEXT_SHADOW_BLEED_PX.bottom * scale)),
+    left: Math.ceil(Math.max(strokeBleedPx, shadowBleedPx.left * scale)),
+    top: Math.ceil(Math.max(strokeBleedPx, shadowBleedPx.top * scale)),
+    right: Math.ceil(Math.max(strokeBleedPx, shadowBleedPx.right * scale)),
+    bottom: Math.ceil(Math.max(strokeBleedPx, shadowBleedPx.bottom * scale)),
   };
 
   if (scale === 0 && containerWidth === 0) {
@@ -380,7 +381,7 @@ export function LinearIntroTextPreview({
                 alignment={anchor}
                 outlineWidthEm={(2 * (params.strokeWidth ?? 0)) / Math.max(1, sizePx)}
                 fontSizePx={sizePx}
-                shadowEnabled
+                shadowStyle="standard"
               />
             </div>
           )}
@@ -394,7 +395,7 @@ export function LinearIntroTextPreview({
                 alignment={anchor}
                 outlineWidthEm={(2 * (params.strokeWidth ?? 0)) / Math.max(1, sizePx)}
                 fontSizePx={sizePx}
-                shadowEnabled
+                shadowStyle="standard"
               />
             </div>
           )}

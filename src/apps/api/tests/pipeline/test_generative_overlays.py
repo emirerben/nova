@@ -147,12 +147,14 @@ def test_style_set_passthrough_fields_on_overlay():
         end_s=2.0,
         font_family="Space Mono",
         stroke_width=0,
+        shadow_style="high_visibility",
         text_size_px=56,
         position_x_frac=0.06,
     )
     assert ov["effect"] == "typewriter"  # widened allowlist keeps the set's effect
     assert ov["font_family"] == "Space Mono"
     assert ov["stroke_width"] == 0
+    assert ov["shadow_style"] == "high_visibility"
     assert ov["text_size_px"] == 56
     assert ov["position_x_frac"] == 0.06
     # text_size_px is authoritative — the size_class bucket is dropped so it can't

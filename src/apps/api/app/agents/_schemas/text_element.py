@@ -310,6 +310,13 @@ class TextElement(BaseModel):
         default=None,
         description="Explicit soft-shadow toggle. None preserves legacy renderer defaults.",
     )
+    shadow_style: Literal["standard", "high_visibility"] | None = Field(
+        default=None,
+        description=(
+            "Optional editor-selected shadow treatment. Leave None/standard unless the user "
+            "explicitly requests High visibility."
+        ),
+    )
     glow_color: str | None = Field(
         default=None,
         description="Optional editorial glow color '#RRGGBB'.",
@@ -736,6 +743,10 @@ def _burn_dict_to_text_element(
     shadow_enabled: bool | None = (
         bool(shadow_enabled_raw) if shadow_enabled_raw is not None else None
     )
+    shadow_style_raw = burn_dict.get("shadow_style")
+    shadow_style: Literal["standard", "high_visibility"] | None = (
+        shadow_style_raw if shadow_style_raw in {"standard", "high_visibility"} else None
+    )
     glow_color_raw = burn_dict.get("glow_color")
     glow_color: str | None = (
         glow_color_raw if (glow_color_raw and _HEX_COLOR_RE.match(str(glow_color_raw))) else None
@@ -805,6 +816,7 @@ def _burn_dict_to_text_element(
             highlight_color=highlight_color,
             stroke_width=stroke_width,
             shadow_enabled=shadow_enabled,
+            shadow_style=shadow_style,
             glow_color=glow_color,
             glow_strength=glow_strength,
             letter_spacing=letter_spacing,

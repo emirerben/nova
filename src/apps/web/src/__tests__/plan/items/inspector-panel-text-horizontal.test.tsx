@@ -55,6 +55,30 @@ function renderTextInspector(bar: TextElementBar) {
 }
 
 describe("InspectorPanel text horizontal controls", () => {
+  it("offers standard, high-visibility, and off shadow effects", () => {
+    const onPatch = renderTextInspector(makeBar());
+    const select = screen.getByRole("combobox", { name: "Shadow effect" });
+
+    expect(select).toHaveValue("standard");
+    fireEvent.change(select, { target: { value: "high_visibility" } });
+    expect(onPatch).toHaveBeenLastCalledWith({
+      shadow_enabled: true,
+      shadow_style: "high_visibility",
+    });
+
+    fireEvent.change(select, { target: { value: "off" } });
+    expect(onPatch).toHaveBeenLastCalledWith({
+      shadow_enabled: false,
+      shadow_style: "standard",
+    });
+
+    fireEvent.change(select, { target: { value: "standard" } });
+    expect(onPatch).toHaveBeenLastCalledWith({
+      shadow_enabled: true,
+      shadow_style: "standard",
+    });
+  });
+
   it("changes line alignment while preserving the box bounds and y placement", () => {
     const onPatch = renderTextInspector(makeBar());
 
@@ -98,5 +122,6 @@ describe("InspectorPanel text horizontal controls", () => {
 
     expect(screen.queryByRole("group", { name: "Text alignment" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Box position" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Shadow effect" })).toBeInTheDocument();
   });
 });
