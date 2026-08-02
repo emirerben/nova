@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-08-02",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -322,6 +322,32 @@
       "highlight_color": "#FFE08A",
       "niche": "professional lifestyle & city aesthetics",
       "source": "tiktok market research 2026-06"
+    },
+    {
+      "id": "lifestyle-taste-static-01",
+      "content_profile": "fashion, lifestyle, or aesthetic opinion clip — minimal b-roll of items or outfits, confident editorial POV, no voiceover, the text IS the hook",
+      "effect": "static",
+      "text": "things I find kinda chic",
+      "highlight_word": "chic",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFE08A",
+      "niche": "minimal lifestyle & fashion",
+      "source": "tiktok market research 2026-08"
+    },
+    {
+      "id": "discovery-confession-static-01",
+      "content_profile": "candid, self-aware moment of giving up on the 'right' approach and switching to a simpler one — relatable, slightly embarrassing, no judgment; short clip of the pivot moment",
+      "effect": "static",
+      "text": "gave up and just did it the easy way",
+      "highlight_word": "gave",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "niche": "any",
+      "source": "tiktok market research 2026-08"
     }
   ]
 }

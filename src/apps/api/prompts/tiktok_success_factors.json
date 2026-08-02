@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-08-02",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -136,6 +136,24 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
       "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+    },
+    {
+      "id": "opinion-reveal-ultrashort-corpus-10",
+      "factor": "A 6-15s taste-declaration clip ('things I find kinda [adjective]') with one punchy text line can spike 7x the account median at 14-19% engagement — the polarizing opinion drives saves from people who agree and comments from those who don't",
+      "why": "An opinionated POV forces a reaction (agree/disagree) where a neutral aesthetic clip does not; that reaction translates into shares and comments which expand reach",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched minimal-lifestyle set, a 15s taste-declaration clip ('things I find kinda chic') indexed ~7.1x the account median at 14.9% engagement — the top performer in the 20-video sample",
+      "source": "tiktok market research 2026-08 (minimal-lifestyle account)"
+    },
+    {
+      "id": "failure-to-discovery-corpus-11",
+      "factor": "Confessing you 'gave up' on the expected approach and switched to a simpler one drives extreme FYP reach — even at low engagement, the video gets distributed very wide because the admission validates what the viewer is already feeling",
+      "why": "A public surrender to the obvious solution removes the shame of the viewer's own shortcut-taking; it's instantly shareable because it names a universal, slightly embarrassing truth",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched travel/skincare set, a 5s clip captioned 'Gave up and used google' (#japanskincare) indexed ~29.6x the account median — the largest outlier in the 20-video sample — at only 0.96% engagement, signalling FYP distribution to cold audiences rather than follower depth",
+      "source": "tiktok market research 2026-08 (travel/skincare account)"
     }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-08-02",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -212,6 +212,46 @@
       "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
       "source": "tiktok:@izzsiomoi (2026-06)",
       "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "taste-opinion-reveal-01",
+      "niche": "minimal lifestyle & fashion",
+      "pillar": "taste declarations",
+      "idea": "a 6-15s clip listing a few things you find [adjective] — chic, tacky, underrated, a bit much — delivered as a confident aesthetic opinion with on-screen text only",
+      "hook_pattern": "things I find kinda [adjective]",
+      "filming_context": "b-roll of the items/places/outfits you're opining on, quick cuts, no narration — the text line IS the hook; one opinion per clip or a quick list",
+      "source": "tiktok:@allexmarielle (2026-08)",
+      "performance": {"engagement_rate": 0.149, "view_index": 7.1, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "outfit-problem-never-solved-01",
+      "niche": "minimal lifestyle & fashion",
+      "pillar": "relatable wardrobe comedy",
+      "idea": "a candid vlog about having plenty of clothes but never being able to decide what to wear — lean into the self-aware comedy of a problem that never actually gets solved",
+      "hook_pattern": "why do I still have nothing to wear",
+      "filming_context": "closet b-roll + candid talking-head or outfit-rejection montage; 60-120s works if the comedy lands; the punchline is that the problem persists",
+      "source": "tiktok:@nermozdemir (2026-08)",
+      "performance": {"engagement_rate": 0.041, "view_index": 11.2, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "failure-to-discovery-01",
+      "niche": "any",
+      "pillar": "relatable shortcut confession",
+      "idea": "a 5-10s clip where you admit you gave up on the expected or 'proper' approach and just used something simpler — [gave up and used google / gave up and asked a stranger / gave up and bought it] — the confession IS the whole video",
+      "hook_pattern": "gave up and [did the obvious thing]",
+      "filming_context": "one short candid clip of the moment or aftermath; shorter is better (5-7s ideal) — the self-aware caption carries the humor, not the footage",
+      "source": "tiktok:@izzsiomoi (2026-08)",
+      "performance": {"engagement_rate": 0.010, "view_index": 29.6, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "bucket-list-experience-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "once-in-a-lifetime moments",
+      "idea": "a long-form (90-180s) vlog of one singular experience you'll never forget — a trip, a concert, a place — framed as 'once in a lifetime' so the viewer feels the weight of the moment alongside you",
+      "hook_pattern": "once in a lifetime",
+      "filming_context": "cinematic b-roll of the experience, paced to let moments breathe; the length earns the emotional payoff — don't rush to the end",
+      "source": "tiktok:@nermozdemir (2026-08)",
+      "performance": {"engagement_rate": 0.047, "view_index": 9.6, "sampled_at": "2026-08"}
     }
   ]
 }
