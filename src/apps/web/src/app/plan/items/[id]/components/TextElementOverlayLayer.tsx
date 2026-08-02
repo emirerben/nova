@@ -11,6 +11,7 @@ import {
 import { resolveClusterCssFont } from "@/lib/overlay-constants";
 import { FONT_FACES } from "@/lib/font-faces";
 import { HandwritingText } from "@/components/HandwritingText";
+import { TEXT_SHADOW_BLEED_PX, textShadowCss } from "@/lib/text-shadow";
 
 export function textElementAnchorTransform(alignment: TextElementLayout["alignment"]): string {
   if (alignment === "left") return "translate(0, -50%)";
@@ -65,10 +66,7 @@ export function textElementContentStyle({
           `0 0 ${canvasPx(20)} rgba(${Number.parseInt(glowRgb[1], 16)}, ${Number.parseInt(glowRgb[2], 16)}, ${Number.parseInt(glowRgb[3], 16)}, ${(220 / 255) * layout.glowStrength})`,
         ]
       : [];
-  const softShadow =
-    !strokeWidth && layout.shadowEnabled
-      ? `0 ${canvasPx(6)} ${canvasPx(12)} rgba(0, 0, 0, ${160 / 255})`
-      : null;
+  const separationShadow = textShadowCss(canvasPx, layout.shadowEnabled);
   return {
     fontSize,
     fontFamily: family,
@@ -81,9 +79,8 @@ export function textElementContentStyle({
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     WebkitTextStroke: strokeWidth ? `${strokeWidth} #000000` : undefined,
-    // Mirrors `_draw_line_with_layers`: two Skia halo passes followed by the
-    // default 6px-down, 12px-blur black shadow, all at renderer-canvas scale.
-    textShadow: [...glowShadows, softShadow]
+    // CSS paints the first shadow on top: contact, ambient, then optional glow.
+    textShadow: [separationShadow, ...glowShadows]
       .filter(Boolean)
       .join(", ") || undefined,
     padding: "0.08em 0.18em",
@@ -142,6 +139,7 @@ export function TextElementOverlayContent({
           letterSpacingEm={layout.letterSpacingEm}
           lineSpacing={layout.lineSpacing}
           outlineWidthEm={layout.strokeWidth / Math.max(1, layout.sizePx)}
+          fontSizePx={layout.sizePx}
           shadowEnabled={layout.shadowEnabled}
           glowColor={layout.glowColor}
           glowStrength={layout.glowStrength}
@@ -153,20 +151,33 @@ export function TextElementOverlayContent({
     revealProgress === undefined
       ? undefined
       : (() => {
-          const horizontalBleed = Math.max(
-            layout.strokeWidth + 2,
-            layout.shadowEnabled ? 42 : 0,
-            layout.glowStrength > 0 ? 62 : 0,
+          const strokeBleed = layout.strokeWidth + 2;
+          const glowBleed = layout.glowStrength > 0 ? 62 : 0;
+          const leftBleedPx = Math.max(
+            strokeBleed,
+            layout.shadowEnabled ? TEXT_SHADOW_BLEED_PX.left : 0,
+            glowBleed,
           );
-          const verticalBleed = Math.max(
-            layout.strokeWidth + 2,
-            layout.shadowEnabled ? 48 : 0,
-            layout.glowStrength > 0 ? 62 : 0,
+          const topBleedPx = Math.max(
+            strokeBleed,
+            layout.shadowEnabled ? TEXT_SHADOW_BLEED_PX.top : 0,
+            glowBleed,
           );
-          const leftBleed = `calc(${-horizontalBleed} * ${canvasPixelCssSize})`;
-          const verticalClipBleed = `calc(${-verticalBleed} * ${canvasPixelCssSize})`;
+          const rightBleedPx = Math.max(
+            strokeBleed,
+            layout.shadowEnabled ? TEXT_SHADOW_BLEED_PX.right : 0,
+            glowBleed,
+          );
+          const bottomBleedPx = Math.max(
+            strokeBleed,
+            layout.shadowEnabled ? TEXT_SHADOW_BLEED_PX.bottom : 0,
+            glowBleed,
+          );
+          const leftBleed = `calc(${-leftBleedPx} * ${canvasPixelCssSize})`;
+          const topBleed = `calc(${-topBleedPx} * ${canvasPixelCssSize})`;
+          const bottomBleed = `calc(${-bottomBleedPx} * ${canvasPixelCssSize})`;
           const rightInset = `calc(${(1 - revealProgress) * 100}% + ${
-            (1 - 2 * revealProgress) * horizontalBleed
+            (1 - revealProgress) * leftBleedPx - revealProgress * rightBleedPx
           } * ${canvasPixelCssSize})`;
           return {
             display: "inline-block",
@@ -175,7 +186,7 @@ export function TextElementOverlayContent({
             clipPath:
               revealProgress >= 1
                 ? undefined
-                : `inset(${verticalClipBleed} ${rightInset} ${verticalClipBleed} ${leftBleed})`,
+                : `inset(${topBleed} ${rightInset} ${bottomBleed} ${leftBleed})`,
             willChange: revealProgress >= 1 ? undefined : "clip-path",
           };
         })();

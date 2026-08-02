@@ -1752,9 +1752,18 @@ def test_karaoke_line_wraps_without_shrinking_font():
     seen_sizes: list[int] = []
     original_draw = tos._draw_line_with_layers
 
-    def capture_draw(canvas, line, x, baseline_y, font, fill_color, stroke_px, shadow_alpha):
+    def capture_draw(canvas, line, x, baseline_y, font, fill_color, stroke_px, shadow_enabled):
         seen_sizes.append(int(font.getSize()))
-        return original_draw(canvas, line, x, baseline_y, font, fill_color, stroke_px, shadow_alpha)
+        return original_draw(
+            canvas,
+            line,
+            x,
+            baseline_y,
+            font,
+            fill_color,
+            stroke_px,
+            shadow_enabled,
+        )
 
     with mock.patch.object(tos, "_draw_line_with_layers", side_effect=capture_draw):
         bbox, width = _frame_bbox(overlay, t_local=1.0, duration_s=3.0)
@@ -2044,12 +2053,12 @@ def test_skia_text_glow_strength_zero_matches_absent_bytes():
     assert zero.tobytes() == absent.tobytes()
 
 
-def test_draw_line_glow_alpha_scales_with_strength():
+def test_draw_line_glow_and_dual_shadow_layers_are_ordered_back_to_front():
     font = skia.Font(tos._typeface_for_overlay({"font_family": "Inter"}), 80)
-    seen_colors: list[int] = []
+    seen: list[tuple[float, float, int]] = []
 
     def capture_draw(canvas, line, x, baseline_y, font, paint, letter_spacing_px):
-        seen_colors.append(paint.getColor())
+        seen.append((x, baseline_y, paint.getColor()))
         return None
 
     with mock.patch.object(tos, "_draw_string_spaced", side_effect=capture_draw):
@@ -2061,18 +2070,221 @@ def test_draw_line_glow_alpha_scales_with_strength():
             font,
             skia.ColorSetARGB(255, 255, 210, 74),
             stroke_px=0,
-            shadow_alpha=160,
+            shadow_enabled=True,
             glow_rgb=(255, 210, 74),
             glow_strength=0.5,
         )
 
-    assert len(seen_colors) == 4
-    assert (seen_colors[0] >> 24) & 0xFF == 60
-    assert (seen_colors[1] >> 24) & 0xFF == 110
-    assert seen_colors[0] & 0xFFFFFF == 0xFFD24A
-    assert seen_colors[1] & 0xFFFFFF == 0xFFD24A
-    assert seen_colors[2] == skia.ColorSetARGB(160, 0, 0, 0)
-    assert seen_colors[3] == skia.ColorSetARGB(255, 255, 210, 74)
+    assert len(seen) == 5
+    assert (seen[0][2] >> 24) & 0xFF == 60
+    assert (seen[1][2] >> 24) & 0xFF == 110
+    assert seen[0][2] & 0xFFFFFF == 0xFFD24A
+    assert seen[1][2] & 0xFFFFFF == 0xFFD24A
+    assert seen[2] == (100.0, 208.0, skia.ColorSetARGB(115, 0, 0, 0))
+    assert seen[3] == (100.0, 202.0, skia.ColorSetARGB(200, 0, 0, 0))
+    assert seen[4] == (100.0, 200.0, skia.ColorSetARGB(255, 255, 210, 74))
+
+
+def test_dual_shadow_profile_scales_alpha_and_derives_directional_bleed():
+    assert [
+        (layer.alpha, layer.sigma, layer.dx, layer.dy) for layer in tos._TEXT_SHADOW_LAYERS
+    ] == [(115, 14.0, 0.0, 8.0), (200, 3.0, 0.0, 2.0)]
+    assert tos._text_shadow_bleed_px(True) == (42, 42, 42, 50)
+    assert tos._text_shadow_bleed_px(False) == (0, 0, 0, 0)
+
+    paints = tos._text_shadow_paints(True, 0.5)
+    assert [(paint.getColor() >> 24) & 0xFF for _, paint in paints] == [57, 100]
+    assert tos._text_shadow_paints(False, 1.0) == []
+    assert tos._shadow_enabled({}) is True
+    assert tos._shadow_enabled({"shadow_enabled": None}) is True
+    assert tos._shadow_enabled({"shadow_enabled": False}) is False
+
+
+def test_dual_shadow_renders_strong_contact_and_weaker_ambient_bands():
+    import numpy as np
+
+    base = {
+        "text": "VISIBLE",
+        "effect": "none",
+        "font_family": "Inter",
+        "text_size_px": 128,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+    }
+    without = _skia_rgba_image({**base, "shadow_enabled": False})
+    with_shadow = _skia_rgba_image({**base, "shadow_enabled": True})
+    fill_bbox = without.getbbox()
+    assert fill_bbox is not None
+    left, _top, right, bottom = fill_bbox
+
+    without_alpha = np.asarray(without.getchannel("A"), dtype=np.int16)
+    with_alpha = np.asarray(with_shadow.getchannel("A"), dtype=np.int16)
+    added_alpha = np.maximum(with_alpha - without_alpha, 0)
+    contact_band = added_alpha[bottom : bottom + 8, left:right]
+    ambient_band = added_alpha[bottom + 16 : bottom + 28, left:right]
+
+    assert contact_band.mean() > ambient_band.mean() > 0
+    assert contact_band.max() > ambient_band.max() > 0
+
+
+def test_dual_shadow_stays_behind_stroke_and_fill():
+    font = skia.Font(tos._typeface_for_overlay({"font_family": "Inter"}), 80)
+    seen_colors: list[int] = []
+
+    def capture_draw(_canvas, _line, _x, _baseline_y, _font, paint, _letter_spacing_px):
+        seen_colors.append(paint.getColor())
+
+    with mock.patch.object(tos, "_draw_string_spaced", side_effect=capture_draw):
+        tos._draw_line_with_layers(
+            mock.MagicMock(),
+            "VISIBLE",
+            100.0,
+            200.0,
+            font,
+            skia.ColorSetARGB(255, 255, 255, 255),
+            stroke_px=2,
+            shadow_enabled=True,
+        )
+
+    assert [(color >> 24) & 0xFF for color in seen_colors] == [115, 200, 230, 255]
+
+
+def test_handwriting_dual_shadow_scales_alpha_and_stays_behind_outline_and_ink():
+    canvas = mock.MagicMock()
+    tos._draw_handwriting_strokes(
+        canvas,
+        "WRITE",
+        {
+            "effect": "handwriting",
+            "text_size_px": 96,
+            "text_color": "#FFFFFF",
+            "outline_px": 2,
+            "shadow_enabled": True,
+        },
+        reveal_progress=1.0,
+        alpha=0.5,
+    )
+
+    color_runs: list[int] = []
+    for call in canvas.drawPath.call_args_list:
+        color = call.args[1].getColor()
+        if not color_runs or color_runs[-1] != color:
+            color_runs.append(color)
+
+    assert color_runs == [
+        skia.ColorSetARGB(57, 0, 0, 0),
+        skia.ColorSetARGB(100, 0, 0, 0),
+        skia.ColorSetARGB(115, 0, 0, 0),
+        skia.ColorSetARGB(127, 255, 255, 255),
+    ]
+    assert [call.args for call in canvas.translate.call_args_list] == [(0.0, 8.0), (0.0, 2.0)]
+
+
+def test_handwriting_and_staggered_slice_honor_explicit_shadow_off():
+    handwriting = {
+        "effect": "handwriting",
+        "text_size_px": 96,
+        "text_color": "#FFFFFF",
+        "shadow_enabled": False,
+    }
+    with mock.patch.object(
+        tos,
+        "_text_shadow_paints",
+        wraps=tos._text_shadow_paints,
+    ) as handwriting_shadow_paints:
+        tos._draw_handwriting_strokes(
+            mock.MagicMock(),
+            "WRITE",
+            handwriting,
+            reveal_progress=0.5,
+        )
+    handwriting_shadow_paints.assert_called_once()
+    assert handwriting_shadow_paints.call_args.args[0] is False
+
+    staggered_shadow_values: list[bool] = []
+
+    def capture_staggered(
+        _canvas,
+        _line,
+        _x,
+        _baseline_y,
+        _font,
+        _fill_color,
+        _stroke_px,
+        shadow_enabled,
+        **_kwargs,
+    ):
+        staggered_shadow_values.append(shadow_enabled)
+
+    surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
+    with mock.patch.object(tos, "_draw_line_with_layers", side_effect=capture_staggered):
+        tos._draw_staggered_slice(
+            surface.getCanvas(),
+            {
+                "text": "GOAL OF THE\nTOURNAMENT",
+                "effect": "staggered-slice",
+                "font_family": "Inter",
+                "text_size_px": 96,
+                "shadow_enabled": False,
+            },
+            1.6,
+            4.0,
+        )
+    assert staggered_shadow_values
+    assert staggered_shadow_values == [False] * len(staggered_shadow_values)
+
+
+@pytest.mark.parametrize("effect", ["karaoke-line", "pop-in-suffix"])
+def test_special_text_paths_honor_explicit_shadow_off(effect):
+    overlay = {
+        "text": "MAKE IT VISIBLE",
+        "font_family": "Inter",
+        "text_size_px": 88,
+        "text_color": "#FFFFFF",
+        "shadow_enabled": False,
+    }
+    surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
+    shadow_values: list[bool] = []
+
+    def capture(
+        _canvas,
+        _line,
+        _x,
+        _baseline_y,
+        _font,
+        _fill_color,
+        _stroke_px,
+        shadow_enabled,
+        **_kwargs,
+    ):
+        shadow_values.append(shadow_enabled)
+
+    with mock.patch.object(tos, "_draw_line_with_layers", side_effect=capture):
+        if effect == "karaoke-line":
+            tos._draw_karaoke_line(
+                surface.getCanvas(),
+                {
+                    **overlay,
+                    "effect": "karaoke-line",
+                    "word_timings": [
+                        {"text": "MAKE", "start_s": 0.0, "end_s": 0.4},
+                        {"text": "IT", "start_s": 0.4, "end_s": 0.8},
+                        {"text": "VISIBLE", "start_s": 0.8, "end_s": 1.2},
+                    ],
+                },
+                0.5,
+                1.5,
+            )
+        else:
+            tos._draw_pop_in_with_suffix(
+                surface.getCanvas(),
+                {**overlay, "effect": "pop-in", "pop_animated_suffix": "VISIBLE"},
+                0.5,
+                1.5,
+            )
+
+    assert shadow_values and shadow_values == [False] * len(shadow_values)
 
 
 def test_pillow_renderer_ignores_skia_only_glow_fields():

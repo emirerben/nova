@@ -16,7 +16,7 @@
  *   semantics via left/top % + transform
  * - color: settled hold color (karaoke → highlight); solid fill only — the
  *   generative intro burn does not receive text_gradient
- * - layers: text-shadow ≈ Skia shadow (alpha 160, blur σ12, +6px), optional
+ * - layers: dual text-shadow ≈ Skia contact + ambient separation, optional
  *   -webkit-text-stroke ≈ the crisp black stroke (stroke_px × 2, alpha 230)
  *
  * Editable mode keeps the node contentEditable (real caret/IME); React never
@@ -42,6 +42,7 @@ import {
   type IntroOverlayParams,
 } from "@/lib/overlay-layout";
 import { ensureFontLoaded, fontLineHeight, makeCanvasMeasureAt } from "@/lib/canvas-measure";
+import { TEXT_SHADOW_BLEED_PX, textShadowCss } from "@/lib/text-shadow";
 
 export function LinearIntroTextPreview({
   params,
@@ -225,7 +226,15 @@ export function LinearIntroTextPreview({
   const { xFrac, yFrac } = resolveAnchorFrac(params);
   const color = settledColor(params);
   const strokePx = (params.strokeWidth ?? 0) * 2 * scale;
-  const inkRevealPaintBleedPx = Math.ceil(Math.max(strokePx + 2 * scale, 30 * scale));
+  const canvasPx = (pixels: number) => `${pixels * scale}px`;
+  const separationShadow = textShadowCss(canvasPx);
+  const strokeBleedPx = strokePx + 2 * scale;
+  const inkRevealBleed = {
+    left: Math.ceil(Math.max(strokeBleedPx, TEXT_SHADOW_BLEED_PX.left * scale)),
+    top: Math.ceil(Math.max(strokeBleedPx, TEXT_SHADOW_BLEED_PX.top * scale)),
+    right: Math.ceil(Math.max(strokeBleedPx, TEXT_SHADOW_BLEED_PX.right * scale)),
+    bottom: Math.ceil(Math.max(strokeBleedPx, TEXT_SHADOW_BLEED_PX.bottom * scale)),
+  };
 
   if (scale === 0 && containerWidth === 0) {
     // First paint before the ResizeObserver fires — render the measuring shell only.
@@ -266,7 +275,7 @@ export function LinearIntroTextPreview({
     fontSize: `${sizePx * scale}px`,
     lineHeight: `${lineStepPx * scale}px`,
     color,
-    textShadow: `0 ${6 * scale}px ${24 * scale}px rgba(0,0,0,0.63)`,
+    textShadow: separationShadow,
     ...(strokePx > 0
       ? {
           WebkitTextStroke: `${strokePx}px rgba(0,0,0,0.9)`,
@@ -283,11 +292,12 @@ export function LinearIntroTextPreview({
           clipPath:
             playState.revealProgress >= 1
               ? undefined
-              : `inset(-${inkRevealPaintBleedPx}px calc(${
+              : `inset(-${inkRevealBleed.top}px calc(${
                   (1 - playState.revealProgress) * 100
                 }% + ${
-                  (1 - 2 * playState.revealProgress) * inkRevealPaintBleedPx
-                }px) -${inkRevealPaintBleedPx}px -${inkRevealPaintBleedPx}px)`,
+                  (1 - playState.revealProgress) * inkRevealBleed.left -
+                  playState.revealProgress * inkRevealBleed.right
+                }px) -${inkRevealBleed.bottom}px -${inkRevealBleed.left}px)`,
           willChange: playState.revealProgress >= 1 ? undefined : "clip-path",
         }
       : {}),
@@ -331,8 +341,7 @@ export function LinearIntroTextPreview({
               // Empty-state hit target: an empty inline box would be ~0×0 px and
               // untappable (the placeholder ::before rule lives in globals.css).
               ...(editable ? { minWidth: "6ch", minHeight: "1em" } : {}),
-              // ≈ Skia shadow: black α160, blur σ12 (CSS radius ~2σ), +6px down.
-              textShadow: `0 ${6 * scale}px ${24 * scale}px rgba(0,0,0,0.63)`,
+              textShadow: separationShadow,
               ...(strokePx > 0
                 ? {
                     WebkitTextStroke: `${strokePx}px rgba(0,0,0,0.9)`,
@@ -370,6 +379,7 @@ export function LinearIntroTextPreview({
                 maxWidthEm={(CANVAS_W * MAX_LINE_W_FRAC) / Math.max(1, sizePx)}
                 alignment={anchor}
                 outlineWidthEm={(2 * (params.strokeWidth ?? 0)) / Math.max(1, sizePx)}
+                fontSizePx={sizePx}
                 shadowEnabled
               />
             </div>
@@ -383,6 +393,7 @@ export function LinearIntroTextPreview({
                 maxWidthEm={(CANVAS_W * MAX_LINE_W_FRAC) / Math.max(1, sizePx)}
                 alignment={anchor}
                 outlineWidthEm={(2 * (params.strokeWidth ?? 0)) / Math.max(1, sizePx)}
+                fontSizePx={sizePx}
                 shadowEnabled
               />
             </div>

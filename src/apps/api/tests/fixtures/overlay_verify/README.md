@@ -9,3 +9,6 @@ at the declared anchor**. They double as the regression set for
 Seeded from the #296 class (prod jobs `ff0d2e1c` / `89cde014` — `text_anchor="left"`
 rendered "It's not just luck" as "s not just luck"). When you add a new
 anchor/position/effect field to the burn dict, add a fixture exercising it.
+
+`high_visibility_shadow.json` pins the modern dual-shadow profile in both white
+and yellow at every reference calibration size (48/60/88/128px).

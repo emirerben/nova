@@ -81,7 +81,7 @@ BLOCK_REVEAL_S = 0.7
 _MIN_REVEAL_S = 0.3
 
 # Frame-edge safety. 0.06 of canvas width (~65px) clears overlay_verify's edge
-# margin plus the renderer's 6px shadow offset with room to spare.
+# margin plus the dual-shadow profile's 50px maximum bleed.
 _EDGE_MARGIN_FRAC = 0.06
 _Y_MIN, _Y_MAX = 0.15, 0.85
 
@@ -143,10 +143,6 @@ EDITORIAL_STYLE: dict = {
     # hero here while the other roles keep shrinking atomically; if the scene
     # still cannot fit, the engine declines (same None contract as legacy).
     "script_min_px": 64,
-    # Thin script/serif strokes need a stronger drop shadow than the
-    # renderer's bold-face default (alpha 160, blur 12, dy 6) to stay legible
-    # on bright footage. Consumed by the overlay emitter, not by geometry.
-    "shadow": {"alpha": 210, "blur": 18.0, "dy": 4.0},
     # Cascade geometry — reading-order diagonal, top-left → bottom-right.
     "cascade_x_start": 0.40,  # first block's center x
     "cascade_x_step": 0.07,  # per-block rightward stagger

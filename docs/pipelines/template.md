@@ -28,6 +28,13 @@ font-cycle and ASS animated overlays.
 → `text_overlay_skia.py` (skia-python, HarfBuzz shaping, per-frame PNG sequences);
 classic non-music + non-agentic → Pillow + libass.
 
+**Modern text separation:** the Skia path paints a fixed two-layer black shadow behind
+every shadow-enabled glyph/path: ambient `(alpha=115, sigma=14, y=8)` then contact
+`(alpha=200, sigma=3, y=2)`. Animated opacity scales both alphas;
+`shadow_enabled=false` disables both. Browser editor previews mirror the profile with
+CSS blur radii 28/6px. Classic Pillow/libass overlays and ASS captions keep their
+existing shadow policy.
+
 **Skia file-descriptor pressure:** Skia outputs per-overlay PNG sequences fed to
 FFmpeg's `image2` demuxer + `setpts` shift — O(overlay_count) FDs regardless of frame
 count. Pillow path has `MAX_FONT_CYCLE_FRAMES=60` cap (was 100) to avoid blowing past
