@@ -629,3 +629,30 @@ reachable — `position_x_frac` is `ge=0.0` on the knob route and
 masonry pocket. Coercing a falsy frac to a default re-centers the block. The
 `value or fallback` pattern in the adapter applies to the two STRING keys
 (`position`, `text_anchor`) only.
+
+## [2026-08-02] Worker VM reverted to shared-cpu-4x — the performance upgrade paid for an unused flag
+
+The 2026-06-13 bump of the `worker` process from `shared-cpu-4x/6144MB` to
+`performance-4x/8192MB` (~$33/mo → ~$155/mo) was justified by two things: faster
+single renders, and making `GENERATIVE_PARALLEL_VARIANTS_ENABLED` safe (concurrent
+FFmpeg encodes need real cores, not oversubscribed shared vCPUs — see the
+`d018d1c3` incident referenced in `fly.toml`). Seven weeks later, that flag was
+still `default=False` in `config.py` and absent from `fly secrets list` — it was
+never turned on. With `--concurrency=1` hard-pinned regardless, 3 of the 4
+dedicated vCPUs were paid-for idle capacity the entire time.
+
+A Fly-cost audit (Aug 2026) found the bill was ~$172/mo with this one machine at
+90% of it, running at a 0.63% duty cycle (4.58 render-hours billed as 730 in July).
+Reverted `fly.toml` to the pre-6/13 sizing — zero behavior change, since the
+capability the bigger VM existed for was never in use — recovering ~$122/mo (81%
+of a ~$150/mo total cost-cut plan) with a one-line change and no new failure modes.
+
+**Sequencing note, not a reversal of the original upgrade's logic:** the plan to
+scale the worker to zero (stop it when idle, start it on demand) is a separate,
+larger follow-up. Once that ships, the worker's *active* hours drop to roughly the
+same ~5/month regardless of VM class, so the cost difference between
+shared-cpu-4x and performance-4x collapses to well under $1/mo — at that point
+performance-4x should come back, and `GENERATIVE_PARALLEL_VARIANTS_ENABLED` should
+actually be flipped on, since there's no longer a real cost tradeoff against doing
+so. This entry documents the interim state: performance capability off, flag off,
+cost down. Revisit trigger: when the scale-to-zero follow-up lands.
