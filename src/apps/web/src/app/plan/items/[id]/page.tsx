@@ -134,6 +134,32 @@ import { getTikTokConnection } from "@/lib/tiktok-api";
 // several minutes before current_job_id appears.
 const RENDER_REGISTER_TIMEOUT_MS = 15 * 60_000;
 
+/**
+ * Has a render actually registered as a RESULT of the most recent Generate
+ * click? A truthy `current_job_id` alone is NOT enough: on a retry after a
+ * failed (or any terminal) render, `current_job_id` already points at the
+ * OLD job before the click even happens, so "a job id is present" can't tell
+ * "nothing has happened yet" apart from "the old job is still sitting
+ * there". Only a job id that DIFFERS from whichever one was current at click
+ * time (snapshotted into `jobIdBeforeClick`), or an explicit "generating"
+ * status, means the new render has actually landed.
+ *
+ * Bug this fixes: retrying a failed item silently appeared to do nothing —
+ * both the "keep polling until the render registers" window (isTerminalFn)
+ * and the Generate-button release effect read `current_job_id` truthiness
+ * as "registered", so on a retry they both fired on the very first tick
+ * using the stale, already-terminal job, before the new job had a chance to
+ * be created. First-ever generate (current_job_id starts `null`) was never
+ * affected — this only breaks for a SECOND-or-later attempt on the item.
+ */
+export function hasRenderRegistered(
+  item: Pick<PlanItem, "current_job_id" | "status">,
+  jobIdBeforeClick: string | null,
+): boolean {
+  if (item.status === "generating") return true;
+  return item.current_job_id != null && item.current_job_id !== jobIdBeforeClick;
+}
+
 // Kill-switch: overlays tab only appears when NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED=true.
 // Normalise: accept "true", "True", "TRUE", "1" and trim whitespace so a
 // near-miss Vercel value ("True", trailing space) doesn't silently hide the tab.
@@ -572,6 +598,9 @@ export default function PlanItemPage() {
   // a busy worker can take >12s to pick the task up (second dogfood round: the
   // count-based window expired, showed the error, THEN the render started).
   const awaitingJobSince = useRef<number | null>(null);
+  // Snapshot of current_job_id at the moment Generate was clicked — see
+  // hasRenderRegistered() above for why this is needed on a retry.
+  const jobIdBeforeGenerateRef = useRef<string | null>(null);
   const forceFreshFetchRef = useRef(false);
   const consumedEditorReturnRef = useRef<string | null>(null);
   const autoOpenedEditorRef = useRef<string | null>(null);
@@ -624,7 +653,10 @@ export default function PlanItemPage() {
         !(item.current_job_id && item.status !== "ready" && item.status !== "failed");
 
       // Keep polling while a just-dispatched render hasn't minted its Job yet.
-      if (item.current_job_id || item.status === "generating") {
+      // Uses hasRenderRegistered(), not a bare current_job_id check — on a
+      // retry, current_job_id already points at the OLD (terminal) job
+      // before this click, so raw truthiness would end the wait instantly.
+      if (hasRenderRegistered(item, jobIdBeforeGenerateRef.current)) {
         awaitingJobSince.current = null;
       } else if (
         awaitingJobSince.current !== null &&
@@ -1093,7 +1125,12 @@ export default function PlanItemPage() {
     setGenerating(true);
     setError(null);
     // Arm the wait window BEFORE the POST so the release-effect can't fire
-    // early while the request is still in flight.
+    // early while the request is still in flight. Snapshot the job id that
+    // was current BEFORE this click too — on a retry, current_job_id
+    // already points at the old (terminal) job, so hasRenderRegistered()
+    // needs this baseline to tell "the old job is still there" apart from
+    // "a new job has registered".
+    jobIdBeforeGenerateRef.current = item?.current_job_id ?? null;
     awaitingJobSince.current = Date.now();
     try {
       if (item && needsFormatPersist(item.edit_format)) {
@@ -1111,7 +1148,7 @@ export default function PlanItemPage() {
   // Release the Generate lock once the render registers (or the wait window
   // expires without a job — surface that instead of silently doing nothing).
   useEffect(() => {
-    const registered = !!(item?.current_job_id || item?.status === "generating");
+    const registered = item != null && hasRenderRegistered(item, jobIdBeforeGenerateRef.current);
     if (registered) {
       // A registered render moots any earlier didn't-register complaint —
       // clear it even if it was shown in a previous attempt (dogfood: the
@@ -1131,7 +1168,7 @@ export default function PlanItemPage() {
       setGenerating(false);
       setError(RENDER_REGISTER_ERROR);
     }
-  }, [generating, item?.current_job_id, item?.status, data]);
+  }, [generating, item, data]);
 
   if (needsAuth) {
     return (
