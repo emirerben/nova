@@ -208,6 +208,18 @@ class TestReapOrphans:
         # value. But we can confirm the SQL was compiled and ran.
         session.execute.assert_called_once()
 
+    def test_pre_computed_live_param_skips_internal_inspect(self):
+        """`live=` param (sweep_stale_jobs consolidation) must bypass inspect()."""
+        from app.tasks.reaper import reap_orphans
+
+        app = _make_celery_with_inspect(raises=AssertionError("inspect() should not fire"))
+        patch_ctx, session = _patch_sync_session(rowcount=0)
+        with patch_ctx:
+            assert reap_orphans(app, live=set()) == 0
+        # Reaching this line without an exception proves inspect() was never
+        # invoked when a pre-computed (empty) live set is supplied.
+        session.execute.assert_called_once()
+
     def test_writes_processing_failed_with_unknown_failure_reason(self):
         """The reaped row gets the right marker fields."""
         from app.tasks.reaper import reap_orphans
@@ -486,6 +498,20 @@ class TestReconcileStuckVariants:
             assert reconcile_stuck_variants(app) == 0
             mock_session.assert_not_called()
 
+    def test_pre_computed_live_param_skips_internal_inspect(self):
+        """`live=` param (sweep_stale_jobs consolidation) must bypass inspect()."""
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        # inspect() raises if called at all — proves the function never
+        # touches the broker when a pre-computed `live` set is provided.
+        app = _make_celery_with_inspect(raises=AssertionError("inspect() should not fire"))
+        patch_ctx, session = _patch_sync_session_for_reconcile([])
+        with patch_ctx:
+            assert reconcile_stuck_variants(app, live=set()) == 0
+        # Reaching this line without an exception proves inspect() was never
+        # invoked; the SELECT still ran (empty candidate set → 0 reconciled).
+        assert session.execute.call_count == 1
+
     def test_flips_stuck_variant_and_commits(self):
         import uuid as _uuid
 
@@ -535,3 +561,91 @@ class TestReconcileStuckVariants:
         with patch_ctx:
             assert reconcile_stuck_variants(app) == 0
         assert session.execute.call_count == 1  # SELECT only
+
+
+# ---------------------------------------------------------------------------
+# Render-worker autostop interaction (Fly cost-cut plan, PR2)
+#
+# The render worker now spends most of its life stopped. A stopped worker
+# is INVISIBLE to inspect() — it isn't connected to the broker at all — which
+# looks identical to a broker hiccup from the reaper's point of view: both
+# produce an empty/failed live-job read. The two scenarios below must be
+# tested SEPARATELY (not assumed to be covered by each other), because they
+# take different code paths: a broker hiccup makes `_live_job_ids` return
+# None (reap_orphans no-ops entirely, already covered by
+# TestReapOrphans.test_no_op_when_inspect_fails above); a genuinely-stopped-
+# but-otherwise-healthy worker makes inspect() SUCCEED with an empty result
+# (live=set()), so reap_orphans proceeds to build and run the UPDATE — and
+# the only thing standing between that UPDATE and a false-positive reap of a
+# legitimately queued job is `_NON_TERMINAL_STATUSES` excluding "queued".
+# That exclusion predates this plan (for a different reason — see the
+# constant's docstring), but this plan is what makes the "worker stopped for
+# minutes at a time" condition a routine, not an anomaly, so the invariant
+# needs its own explicit, permanent test.
+# ---------------------------------------------------------------------------
+
+
+class TestQueuedJobSafeUnderStoppedRenderWorker:
+    def test_broker_hiccup_reap_orphans_is_a_full_no_op(self):
+        """Scenario 1: inspect() itself fails (broker unreachable).
+
+        `_live_job_ids` returns None → reap_orphans returns 0 without ever
+        building a SQL statement. Restated here (not just relying on
+        TestReapOrphans.test_no_op_when_inspect_fails) so this whole class
+        reads as the complete pair of scenarios for the autostop feature.
+        """
+        from app.tasks.reaper import reap_orphans
+
+        app = _make_celery_with_inspect(raises=ConnectionError("redis down"))
+        with patch("app.tasks.reaper.sync_session") as mock_session:
+            assert reap_orphans(app) == 0
+            mock_session.assert_not_called()
+
+    def test_worker_genuinely_stopped_queued_status_excluded_from_sql(self):
+        """Scenario 2: inspect() SUCCEEDS but reports nothing live — because
+        the render worker machine is stopped (autostop), not because the
+        broker is down. This is the worse case: reap_orphans does NOT
+        short-circuit here (live=set() is a normal, valid result), so it
+        proceeds to build and run the UPDATE. A queued job must still never
+        match it.
+
+        Asserts at the compiled-SQL level, not just against the
+        `_NON_TERMINAL_STATUSES` constant — this is what actually runs
+        against Postgres, and a future refactor that builds the WHERE
+        clause from a different source than the constant would still be
+        caught here.
+        """
+        from app.tasks.reaper import reap_orphans
+
+        app = _make_celery_with_inspect(active={}, reserved={})
+        patch_ctx, session = _patch_sync_session(rowcount=0)
+        with patch_ctx:
+            reap_orphans(app)
+
+        stmt = session.execute.call_args[0][0]
+        bound = stmt.compile().params.values()
+        status_lists = [v for v in bound if isinstance(v, list | tuple)]
+        assert status_lists, "expected a status IN(...) bound parameter list"
+        assert not any("queued" in status_list for status_list in status_lists), (
+            "A job at status=queued must never appear in the reap UPDATE's "
+            "status filter, even when the render worker is genuinely stopped "
+            "(inspect() succeeds with an empty live set) rather than "
+            "unreachable — this is the scenario render-worker autostop makes "
+            "routine, not exceptional."
+        )
+
+    def test_worker_genuinely_stopped_does_not_short_circuit_like_a_hiccup(self):
+        """Confirms the two scenarios are NOT the same code path: an empty-
+        but-successful inspect() result must still reach the DB (unlike a
+        real inspect() failure, which must not). If a future change made
+        "worker stopped" also short-circuit like a hiccup, this test would
+        catch it — and that would be a regression in the OPPOSITE direction
+        (an orphan from an actually-crashed worker would never get reaped).
+        """
+        from app.tasks.reaper import reap_orphans
+
+        app = _make_celery_with_inspect(active={}, reserved={})
+        patch_ctx, session = _patch_sync_session(rowcount=0)
+        with patch_ctx:
+            reap_orphans(app)
+        session.execute.assert_called_once()

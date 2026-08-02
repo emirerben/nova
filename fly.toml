@@ -38,6 +38,17 @@ primary_region = "iad"
   # concurrency=1 slot serializes them, so they can never run simultaneously and
   # OOM the 6GB worker (plan T3). One worker, two queues, still one task at a time.
   worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs"
+  # 2026-08-02 (render-worker autostop): moves ALL Beat-triggered tasks
+  # (sweep_stale_jobs, cleanup_agent_runs, send_daily_digest,
+  # cleanup_cancelled_job, and every app.tasks.tiktok.* periodic — see
+  # `task_routes` in app/worker.py) off the `worker` process onto this
+  # small, always-on machine. Without this split, the `worker` machine can
+  # never sit idle for more than a few minutes (the 5-min sweeper alone
+  # guarantees it), which defeats the whole point of scaling it to zero
+  # when RENDER_AUTOSTOP_ENABLED is on. concurrency=2: these are quick,
+  # light, non-FFmpeg tasks — no encode-contention concern like the worker
+  # process has.
+  light = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q maintenance"
   # Celery Beat — single instance, drives the every-5-min stale-job
   # sweeper (app/tasks/maintenance.py) that catches orphans created when
   # autoretry budgets are exhausted AND _mark_failed itself failed.
@@ -93,6 +104,22 @@ primary_region = "iad"
   auto_start_machines = true
 
 # ---------------------------------------------------------------------------
+# Light — always running, no HTTP exposure. Carries the Beat-triggered
+# maintenance tasks so the worker machine above can sit stopped when
+# RENDER_AUTOSTOP_ENABLED is on. This machine must NEVER be allowed to sit
+# idle-stopped itself — it's what wakes the worker back up, both via the
+# app-level wake hook (which fires from wherever a task is dispatched, not
+# necessarily this machine) and the periodic lifecycle backstop task that
+# runs HERE. See agents/DECISIONS.md for the render-worker autostop design
+# and its Beat-liveness failure mode.
+# ---------------------------------------------------------------------------
+
+[[services]]
+  processes = ["light"]
+  auto_stop_machines = false
+  auto_start_machines = true
+
+# ---------------------------------------------------------------------------
 # VM sizing per process group
 # ---------------------------------------------------------------------------
 
@@ -122,6 +149,21 @@ primary_region = "iad"
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 256
+
+# Light — small always-on VM for the Beat-triggered maintenance tasks
+# (see task_routes in app/worker.py). 512MB, not the 256MB beat/api-minimum
+# tier: cleanup_agent_runs runs batched DELETEs against a table that can
+# grow into the hundreds of thousands of rows, and concurrency=2 means two
+# of these light tasks can run at once. Deliberately does NOT host any
+# task that downloads media or loads torch (match_pool_clips,
+# style_vision_build.*, drive_import.*, agentic_template_build_task,
+# analyze_music_track_task all stay on the render worker) — those would
+# OOM this VM.
+[[vm]]
+  processes = ["light"]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
 
 [[vm]]
   processes = ["worker"]

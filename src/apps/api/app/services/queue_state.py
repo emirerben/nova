@@ -1,6 +1,6 @@
 """Live introspection of Celery workers + Redis queue depth.
 
-Three responsibilities, none of which touch the Job table directly:
+Four responsibilities, none of which touch the Job table directly:
 
   1. `get_live_job_index(celery_app)` — what jobs are active or reserved
      across all live Celery workers, keyed by job_id. Reused by both the
@@ -16,16 +16,30 @@ Three responsibilities, none of which touch the Job table directly:
      Redis LLEN, list of active workers, oldest queued job per queue.
      Powers the admin queue summary panel.
 
-Why all three live here: the reaper already proved Celery introspection
-works in this codebase. Keeping the "what counts as live?" definition in
-ONE module prevents future drift where the reaper and the admin UI
-disagree about which jobs are alive.
+  4. `render_worker_idle(celery_app)` — aggregate "is the render worker
+     doing nothing at all" check, used by the render-worker autostop
+     lifecycle task (app/tasks/maintenance.py) to decide whether it's
+     safe to stop the Fly machine. This is a DIFFERENT question from #1:
+     the reaper asks "is THIS specific job_id live anywhere" (per-job);
+     this asks "is there ANY render-queue work queued or in-flight,
+     anywhere" (aggregate). They intentionally do NOT share a function —
+     forcing the reaper to call an aggregate idle-check would answer the
+     wrong question. What they DO share is `RENDER_WORKER_QUEUES` (below)
+     and the same inspect()/Redis conventions, so "what counts as a
+     render-worker queue" is defined exactly once.
+
+Why all four live here: the reaper already proved Celery introspection
+works in this codebase. Keeping the "what counts as live?" / "what counts
+as idle?" definitions in ONE module prevents future drift where the
+reaper, the admin UI, and the autostop lifecycle disagree.
 
 Failure modes:
   - inspect() returns None (broker hiccup, no workers) → state='unknown'.
     The admin UI must render "unknown" differently from "not_found".
     Claiming "not_found" when we couldn't ask the broker would let an
-    operator cancel a healthy job.
+    operator cancel a healthy job. Same principle for render_worker_idle:
+    unknown must never be treated as idle — a stop decision made on
+    missing information could stop a machine mid-render.
   - Redis LLEN raises → empty snapshot, no rows. The list page handles
     a missing summary by showing only what it knows.
 """
@@ -49,6 +63,19 @@ _INSPECT_TIMEOUT_S = 5
 # / queue position. Deeper-than-this queues are pathological and the
 # admin UI just shows "100+".
 _QUEUE_SCAN_CAP = 100
+
+# The queues the `worker` Fly process consumes (fly.toml:
+# `celery ... -Q celery,plan-jobs,overlay-jobs`). "celery" is Celery's
+# built-in default queue name — anything dispatched without an explicit
+# `queue=` kwarg lands here. Shared by:
+#   - render_worker_idle() below (queue-depth + active/reserved check)
+#   - the before_task_publish wake-hook signal in app/worker.py (filters
+#     on `routing_key in RENDER_WORKER_QUEUES` — verified empirically that
+#     Celery's routing_key equals the target queue name in this app's
+#     config, since no custom exchange topology is declared)
+# Keep this in sync with fly.toml's worker `-Q` flag by hand; there is no
+# way to share a literal between TOML and Python.
+RENDER_WORKER_QUEUES: frozenset[str] = frozenset({"celery", "plan-jobs", "overlay-jobs"})
 
 RuntimeStateLiteral = Literal["active", "reserved", "not_found", "unknown"]
 
@@ -255,6 +282,62 @@ def get_queue_position(
         if _extract_job_id_from_broker_message(msg) == job_id_str:
             return i
     return None
+
+
+def render_worker_idle(celery_app: Celery) -> bool | None:
+    """True if the render worker has nothing queued or in-flight, else False.
+
+    Returns None when the check is inconclusive (broker/inspect failure) —
+    callers MUST treat None as "not idle" (never stop a machine on missing
+    information). This mirrors the reaper's "don't act on unknown" rule,
+    but answers a different question than the reaper does: this is an
+    AGGREGATE check ("is there any render-queue work anywhere"), not a
+    per-job one. See the module docstring for why these are deliberately
+    separate functions rather than one shared with the reaper.
+
+    Two conditions must both hold:
+      1. No active/reserved task on any worker bound to a render-worker
+         queue (RENDER_WORKER_QUEUES). Checked via inspect() rather than
+         guessing the render worker's hostname, so this stays correct
+         regardless of how Fly names the machine's Celery node.
+      2. Zero Redis queue depth across all render-worker queues. This is
+         the ONLY signal available while the render machine is stopped —
+         a stopped machine can't appear in inspect() output at all (it
+         isn't connected to the broker), so condition #1 is vacuously
+         true then; queue depth is what actually detects pending work.
+    """
+    try:
+        inspector = celery_app.control.inspect(timeout=_INSPECT_TIMEOUT_S)
+        active = inspector.active() or {}
+        reserved = inspector.reserved() or {}
+        active_queues = inspector.active_queues() or {}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("render_worker_idle_inspect_failed", error=str(exc))
+        return None
+
+    render_hostnames = {
+        hostname
+        for hostname, queues in active_queues.items()
+        if any(
+            (q.get("name") if isinstance(q, dict) else None) in RENDER_WORKER_QUEUES for q in queues
+        )
+    }
+    for hostname in render_hostnames:
+        if active.get(hostname) or reserved.get(hostname):
+            return False
+
+    try:
+        with celery_app.connection_or_acquire() as conn:
+            redis_client = conn.default_channel.client  # type: ignore[attr-defined]
+            for queue_name in RENDER_WORKER_QUEUES:
+                depth = int(redis_client.llen(queue_name) or 0)
+                if depth > 0:
+                    return False
+    except Exception as exc:  # noqa: BLE001
+        log.warning("render_worker_idle_llen_failed", error=str(exc))
+        return None
+
+    return True
 
 
 # ── internal helpers ─────────────────────────────────────────────────────────

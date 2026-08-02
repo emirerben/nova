@@ -1546,3 +1546,48 @@ worse by it.
   is why the snapshot PR fixed sizes/positions but not legacy faces. Fix:
   resolve the variant's intro font the way `_resolve_intro_overlay_params`
   does and pass it plus the job language.
+
+## Fly cost-cut plan follow-ups (from /plan-eng-review, 2026-08-02)
+
+Two items scoped out of the render-worker autostop PR — real, but neither is
+required for the cost win and both need their own careful pass rather than
+riding along. See `~/.claude/plans/this-month-our-fly-io-twinkling-peach.md`
+and `agents/DECISIONS.md` for the full cost audit.
+
+### Generative clip-ingest bypasses the existing Redis clip-analysis cache
+**What:** Template jobs cache Gemini clip analysis for 30 days
+(content-fingerprinted) via `_analyze_clips_with_cache`
+(`template_orchestrate.py`), but generative's `_ingest_clips`
+(`generative_build.py`) calls the raw uncached path — already flagged inline
+at `generative_build.py:2964`. Every re-render, swap-song, and retext
+re-uploads and re-analyzes identical clip bytes from scratch.
+**Why:** Wins Gemini spend, Fly egress, and ~45s of latency per re-render —
+compounds with usage growth, unlike the fixed-cost idle-machine problem the
+autostop PR solves. Not urgent this month, genuinely worth it as volume grows.
+**How:** Route generative's clip ingest through the same cache wrapper
+template jobs already use (`get_cached_meta`/`set_cached_meta` in
+`pipeline/clip_cache.py`), with its own verification pass — this touches the
+render path directly, unlike the mostly-infra autostop work.
+**Effort:** M (CC: ~1h, needs a render-parity check after)
+**Priority:** P3
+**Depends on:** —
+
+### Bake CLIP ViT-B/32 weights into the Docker image
+**What:** Confirmed via a fresh `origin/main` grep (not assumption) that
+`get_matcher()`/`identify_fonts()` have exactly two callers: the backgrounded
+`worker_ready` prewarm itself (`worker.py`) and `agentic_template_build_task`
+— admin-only, not on any customer render path. So this is real but
+low-severity: today a fresh rootfs re-downloads ~350MB from HuggingFace on
+every worker boot, affecting only admin template-building shortly after a
+cold start (more frequent now that the render worker scales to zero and
+reboots more often).
+**Why:** Removes a network dependency at boot; frees ~450-600MB resident
+memory if the eager prewarm is also dropped once weights are baked in.
+Admin-only impact, no user-facing urgency.
+**How:** Set `HF_HOME` in the Dockerfile, pre-download the ViT-B/32
+checkpoint during the image build instead of at runtime. Consider dropping
+the `worker_ready` prewarm signal entirely at the same time, since baked-in
+weights make lazy first-call load already fast.
+**Effort:** S (CC: ~20min)
+**Priority:** P3
+**Depends on:** —

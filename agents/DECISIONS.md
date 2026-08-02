@@ -656,3 +656,123 @@ performance-4x should come back, and `GENERATIVE_PARALLEL_VARIANTS_ENABLED` shou
 actually be flipped on, since there's no longer a real cost tradeoff against doing
 so. This entry documents the interim state: performance capability off, flag off,
 cost down. Revisit trigger: when the scale-to-zero follow-up lands.
+
+## [2026-08-02] Render-worker autostop — app-controlled Fly Machines start/stop
+
+Follow-up to the VM revert above. Same cost audit, same plan doc
+(`~/.claude/plans/this-month-our-fly-io-twinkling-peach.md`), the harder ~$28/mo
+of the ~$150/mo total: the `worker` machine now stops itself when idle and
+starts back up on demand, instead of running 24/7 regardless of the ~0.63%
+duty cycle the audit measured.
+
+**Fly has no built-in for this — verified, not assumed.** The obvious
+built-in, `fly-autoscaler`, was evaluated first and rejected: its own sample
+config has no scale-down key, and a Fly staff reply on the community forum to
+this exact question ("how do I auto stop/start a Celery worker") states
+plainly that fly.toml has no config for it. The stop half has to be
+hand-rolled; there is no shortcut.
+
+**Design, in the order the pieces depend on each other:**
+
+1. **Split the lanes first (Phase 1).** A `light` process (fly.toml,
+   shared-cpu-1x/512MB) now runs everything Celery Beat schedules —
+   `task_routes` in `worker.py` (`MAINTENANCE_TASK_NAMES`) sends every
+   Beat-triggered task there instead of the render worker's queues. Before
+   this, the 5-min `sweep_stale_jobs` entry alone guaranteed the worker was
+   never idle for more than a few minutes — autostop is structurally
+   impossible without this split. Deliberately narrow: analysis tasks that
+   download media or load torch (`match_pool_clips`, `agentic_template_build_task`,
+   etc.) stay on the render worker; they'd OOM a 512MB box.
+
+2. **One idle-check, shared by two different questions.** `render_worker_idle()`
+   (`queue_state.py`) answers "is there ANY render-queue work anywhere" —
+   an aggregate check. The existing reaper's `_live_job_ids` answers "is
+   THIS specific job_id live" — a per-job check. These do NOT share a
+   function despite both meaning "check if Celery is doing something" —
+   forcing the reaper to call an aggregate idle-check would answer the
+   wrong question for its purpose. What they DO share: `RENDER_WORKER_QUEUES`,
+   one constant, so "what counts as a render-worker queue" can't drift
+   between the two call sites (plus a third: the wake-hook's routing_key
+   filter, below).
+
+3. **The wake hook filters by queue, not task name — on purpose.** The
+   obvious design (hook the wake call into `job_dispatch.enqueue_orchestrator`,
+   the existing first-render dispatch chokepoint) was checked against the
+   actual call sites and rejected: 17 of ~24 render-task dispatches
+   (`regenerate_generative_variant`, `reburn_narrated_captions`, etc. — swap-song,
+   retext, bed-level, caption-language actions in `generative_jobs.py`) call
+   `.delay()`/`.apply_async()` directly and bypass that helper by design
+   (they act on an *existing* job, not a first render). A hand-curated
+   task-name list for the wake hook kept missing tasks too — even the
+   *analysis* tasks that run on this same worker (clip/track analysis)
+   aren't render tasks by name but still need the wake. The fix: one
+   `before_task_publish` signal in `worker.py`, filtered on `routing_key`
+   (empirically verified to equal the target queue name in this app's
+   config — no custom exchange topology declared). This mirrors Celery's
+   actual dispatch mechanism exactly, closing the whole bypass class
+   structurally rather than patching each site.
+
+4. **The wake hook must never block the request path.** Most dispatch sites
+   run inside FastAPI async handlers on the public `api` process. The
+   Fly API call fires from a background thread with a tight timeout,
+   debounced via a short-TTL (60s) Redis key — deliberately much shorter
+   than the 10-min idle grace period, so a "we already woke it" skip can
+   never coincide with a legitimate stop-then-restart within its own
+   window. This is why no live Fly-state check is needed on the hot path:
+   the debounce alone is correct, and the periodic lifecycle backstop
+   (below) is what actually guarantees a missed/failed wake gets recovered.
+   Fails OPEN (calls Fly anyway) on any Redis error — an extra harmless API
+   call beats a silently-skipped wake.
+
+5. **The stop/backstop lifecycle task (`tasks.manage_render_worker_lifecycle`,
+   every 2 min on `light`) is the actual correctness guarantee**, not the
+   wake hook. It stops the machine after `RENDER_IDLE_GRACE_MIN` (10 min)
+   of continuous idleness, and — this is the part that bounds every other
+   failure mode in this design — starts it back up if there's real work
+   and it isn't already running, regardless of whether the wake hook fired,
+   fired but failed, or was never reached at all. Idle-duration is tracked
+   across ticks via a Redis timestamp (`_decide_lifecycle_action`, a pure
+   function with no I/O, tested exhaustively) since Beat itself carries no
+   state between firings.
+
+6. **A new failure mode this design creates: Beat's death now blocks all
+   renders.** Before autostop, if Beat died, the render worker kept running
+   and kept consuming jobs — Beat's death only affected maintenance/cleanup.
+   After autostop, the worker spends most of its life stopped, and the
+   *only* thing that restarts it on a missed wake is Beat's own lifecycle
+   task. If Beat dies while the worker happens to be stopped, there is no
+   path back — every new render sits `queued` forever, silently (the API
+   still returns 200 on job creation). The first fix tried — fold a
+   heartbeat into the existing daily-digest task — doesn't actually work:
+   that task is *itself* Beat-scheduled, so it shares Beat's exact blind
+   spot and can't detect Beat's own total absence. Confirmed no
+   external-to-Beat monitoring exists anywhere in this codebase (no
+   scheduled GitHub Actions workflow; the existing "dead-man's-switch" in
+   `send_daily_digest.py` has the identical blind spot). The actual fix:
+   `GET /health/beat` (`main.py`) reads a Redis timestamp any Beat-scheduled
+   task writes on success via a `task_success` signal
+   (`BEAT_SCHEDULED_TASK_NAMES`, derived from `beat_schedule` itself so a
+   future entry is covered automatically) — meant to be pinged by a service
+   OUTSIDE this app entirely (UptimeRobot, cron-job.org, a scheduled GH
+   Actions workflow), since that's the only kind of check immune to Beat's
+   own death.
+
+7. **The Fly API token now lives on the public `api` process, not just
+   `worker`/`beat`** — the wake hook fires from FastAPI request handlers.
+   Scope `FLY_API_TOKEN` narrowly (app-scoped to nova-video, never a full
+   personal/org token): if the internet-facing process is ever compromised
+   through some unrelated vulnerability, the blast radius should be
+   "control of this one app's machines," not "full Fly org access."
+
+**Deliberately deferred, not forgotten:** generative clip-ingest cache reuse
+and baking CLIP weights into the image (both TODOS.md, 2026-08-02 entry) —
+real, but neither required for the cost win, both needing their own pass.
+Merging `beat` into `light` to save an additional ~$2/mo was considered and
+explicitly rejected — it would concentrate the exact Beat-liveness SPOF from
+point 6 onto a single machine for a saving too small to justify it.
+
+Kill switch: `RENDER_AUTOSTOP_ENABLED`, default `false` — byte-identical to
+pre-autostop behavior when off. Restoring `performance-4x` and flipping
+`GENERATIVE_PARALLEL_VARIANTS_ENABLED` (the VM-revert entry's Phase 3) is a
+deliberate later step, gated on this autostop design being verified in prod
+first — not bundled into this same change.
