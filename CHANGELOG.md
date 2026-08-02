@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.1.3] — 2026-08-02
+
+### Fixed
+- **Retrying a failed video render now actually works.** After a render failed, clicking "Generate videos" again looked like it did nothing — the page had already stopped checking for updates and the button silently reset, because it mistook the still-visible failed render for the new one. The retry was in fact being processed the whole time; the page just never found out. Fixed so the page correctly waits for a genuinely new render before giving up.
+
 ## [0.22.1.2] — 2026-08-02
 
 ### Fixed

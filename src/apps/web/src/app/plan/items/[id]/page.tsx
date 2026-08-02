@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isCoarsePointerDevice, shouldAutoOpenPlanItemEditor } from "./auto-open-editor";
+import { hasRenderRegistered } from "./render-registration";
 import {
   attachClips,
   changePlanItemStyle,
@@ -572,6 +573,9 @@ export default function PlanItemPage() {
   // a busy worker can take >12s to pick the task up (second dogfood round: the
   // count-based window expired, showed the error, THEN the render started).
   const awaitingJobSince = useRef<number | null>(null);
+  // Snapshot of current_job_id at the moment Generate was clicked — see
+  // hasRenderRegistered() above for why this is needed on a retry.
+  const jobIdBeforeGenerateRef = useRef<string | null>(null);
   const forceFreshFetchRef = useRef(false);
   const consumedEditorReturnRef = useRef<string | null>(null);
   const autoOpenedEditorRef = useRef<string | null>(null);
@@ -624,7 +628,10 @@ export default function PlanItemPage() {
         !(item.current_job_id && item.status !== "ready" && item.status !== "failed");
 
       // Keep polling while a just-dispatched render hasn't minted its Job yet.
-      if (item.current_job_id || item.status === "generating") {
+      // Uses hasRenderRegistered(), not a bare current_job_id check — on a
+      // retry, current_job_id already points at the OLD (terminal) job
+      // before this click, so raw truthiness would end the wait instantly.
+      if (hasRenderRegistered(item, jobIdBeforeGenerateRef.current)) {
         awaitingJobSince.current = null;
       } else if (
         awaitingJobSince.current !== null &&
@@ -1093,7 +1100,12 @@ export default function PlanItemPage() {
     setGenerating(true);
     setError(null);
     // Arm the wait window BEFORE the POST so the release-effect can't fire
-    // early while the request is still in flight.
+    // early while the request is still in flight. Snapshot the job id that
+    // was current BEFORE this click too — on a retry, current_job_id
+    // already points at the old (terminal) job, so hasRenderRegistered()
+    // needs this baseline to tell "the old job is still there" apart from
+    // "a new job has registered".
+    jobIdBeforeGenerateRef.current = item?.current_job_id ?? null;
     awaitingJobSince.current = Date.now();
     try {
       if (item && needsFormatPersist(item.edit_format)) {
@@ -1111,7 +1123,7 @@ export default function PlanItemPage() {
   // Release the Generate lock once the render registers (or the wait window
   // expires without a job — surface that instead of silently doing nothing).
   useEffect(() => {
-    const registered = !!(item?.current_job_id || item?.status === "generating");
+    const registered = item != null && hasRenderRegistered(item, jobIdBeforeGenerateRef.current);
     if (registered) {
       // A registered render moots any earlier didn't-register complaint —
       // clear it even if it was shown in a previous attempt (dogfood: the
@@ -1131,7 +1143,7 @@ export default function PlanItemPage() {
       setGenerating(false);
       setError(RENDER_REGISTER_ERROR);
     }
-  }, [generating, item?.current_job_id, item?.status, data]);
+  }, [generating, item, data]);
 
   if (needsAuth) {
     return (
