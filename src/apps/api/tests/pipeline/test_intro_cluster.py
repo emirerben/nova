@@ -478,8 +478,8 @@ def _compute_styled(text: str, **kw):
 
 def test_editorial_style_documents_its_contract_keys():
     # EDITORIAL_STYLE is the single source of truth (decision D13) — the
-    # sequence emitter and renderer tuning read these keys; renaming one is an
-    # API break for them.
+    # sequence emitter and geometry ports read these keys; renaming one is an
+    # API break for them. Paint layers belong to the renderer-wide profile.
     assert {
         "hero_font",
         "body_font",
@@ -489,7 +489,6 @@ def test_editorial_style_documents_its_contract_keys():
         "connector_ratio",
         "closer_ratio",
         "script_min_px",
-        "shadow",
         "cascade_x_start",
         "cascade_x_step",
         "cascade_x_jitter",
@@ -503,7 +502,6 @@ def test_editorial_style_documents_its_contract_keys():
     assert EDITORIAL_STYLE["body_font"] == "Playfair Display Regular"
     assert EDITORIAL_STYLE["accent_font"] == "Playfair Display Italic"
     assert EDITORIAL_STYLE["accent_color"] == "#FFFFFF"
-    assert {"alpha", "blur", "dy"} <= set(EDITORIAL_STYLE["shadow"])
 
 
 def test_scene_center_shift_stays_within_no_clip_margin():

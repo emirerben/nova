@@ -44,6 +44,7 @@ import {
 } from "@/lib/variant-editor/overlay-cluster-layout";
 import { ensureClusterFontLoaded, makeCanvasClusterMeasure } from "@/lib/canvas-measure";
 import { LinearIntroTextPreview } from "@/components/variant-editor/LinearIntroTextPreview";
+import { textShadowCss } from "@/lib/text-shadow";
 
 export function ClusterTextPreview({
   params,
@@ -156,6 +157,7 @@ export function ClusterTextPreview({
 
   const scale = containerWidth > 0 ? containerWidth / CANVAS_W : 0;
   const strokePx = (params.strokeWidth ?? 0) * 2 * scale;
+  const separationShadow = textShadowCss((pixels) => `${pixels * scale}px`);
 
   // DECLINE FALLBACK: the cluster engine returns null when the hook is empty,
   // outside the 3-6 word range, or can't fit — and the server renders the
@@ -196,7 +198,7 @@ export function ClusterTextPreview({
               fontSize: `${b.textSizePx * scale}px`,
               lineHeight: 1,
               color,
-              textShadow: `0 ${4 * scale}px ${36 * scale}px rgba(0,0,0,0.82)`,
+              textShadow: separationShadow,
               ...(strokePx > 0
                 ? { WebkitTextStroke: `${strokePx}px rgba(0,0,0,0.9)`, paintOrder: "stroke fill" }
                 : {}),

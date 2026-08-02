@@ -52,6 +52,12 @@ describe("TextElementOverlayLayer", () => {
       whiteSpace: "pre-wrap",
       wordBreak: "break-word",
     });
+    expect(text.style.textShadow).toContain(
+      "calc(2 * 0.052083333333333336cqh)",
+    );
+    expect(text.style.textShadow).toContain(
+      "calc(8 * 0.052083333333333336cqh)",
+    );
     expect(resolveTextElementsLayout([element])[0].strokeWidth).toBe(3);
   });
 
@@ -225,11 +231,22 @@ describe("TextElementOverlayLayer", () => {
           "[data-handwriting-strokes] g:last-of-type path",
         ),
       );
-    const svg = container.querySelector<SVGSVGElement>("[data-handwriting-strokes]");
+    const shadowGroups = container.querySelectorAll<SVGGElement>("[data-handwriting-shadow]");
+    const glowGroups = container.querySelectorAll<SVGGElement>("[data-handwriting-glow]");
     expect(paths().length).toBeGreaterThan(5);
     expect(paths().every((path) => path.getAttribute("stroke-dashoffset") === "1")).toBe(true);
-    expect(svg?.style.filter).toContain("#ff484c");
-    expect(svg?.style.filter).toContain("rgba(0, 0, 0, 0.63)");
+    expect(glowGroups).toHaveLength(2);
+    expect(shadowGroups).toHaveLength(2);
+    expect(shadowGroups[0]).toHaveAttribute("opacity", String(115 / 255));
+    expect(shadowGroups[0]).toHaveAttribute("transform", `translate(0 ${8 / 96})`);
+    expect(shadowGroups[1]).toHaveAttribute("opacity", String(200 / 255));
+    expect(shadowGroups[1]).toHaveAttribute("transform", `translate(0 ${2 / 96})`);
+    expect(
+      container.querySelector('filter[id$="-shadow-0"] feGaussianBlur'),
+    ).toHaveAttribute("stdDeviation", String(14 / 96));
+    expect(
+      container.querySelector('filter[id$="-shadow-1"] feGaussianBlur'),
+    ).toHaveAttribute("stdDeviation", String(3 / 96));
 
     rerender(
       <TextElementOverlayContent layout={layout} fontSize="20px" revealProgress={0.5} />,
@@ -246,25 +263,62 @@ describe("TextElementOverlayLayer", () => {
     expect(paths().every((path) => path.getAttribute("stroke-dashoffset") === "0")).toBe(true);
   });
 
-  it("honors explicit shadow off when no stroke is present", () => {
+  it("honors explicit shadow off", () => {
     render(
       <TextElementOverlayLayer
         elements={[
           {
             ...element,
-            stroke_width: 0,
             shadow_enabled: false,
           },
         ]}
       />,
     );
 
-    expect(screen.getByText("READY NOW")).not.toHaveStyle({
-      textShadow: "0 2px 8px rgba(0,0,0,0.55)",
-    });
+    expect(screen.getByText("READY NOW").style.textShadow).toBe("");
     expect(resolveTextElementsLayout([{ ...element, shadow_enabled: false }])[0].shadowEnabled).toBe(
       false,
     );
+  });
+
+  it("removes both handwriting shadow path layers when disabled", () => {
+    const [layout] = resolveTextElementsLayout([
+      { ...element, effect: "handwriting", shadow_enabled: false },
+    ]);
+    const { container } = render(
+      <TextElementOverlayContent layout={layout} fontSize="20px" revealProgress={1} />,
+    );
+
+    expect(container.querySelectorAll("[data-handwriting-shadow]")).toHaveLength(0);
+  });
+
+  it("keeps handwriting ink geometry anchored when shadow overflow is toggled", () => {
+    const [withShadow] = resolveTextElementsLayout([
+      { ...element, effect: "handwriting", shadow_enabled: true },
+    ]);
+    const [withoutShadow] = resolveTextElementsLayout([
+      { ...element, effect: "handwriting", shadow_enabled: false },
+    ]);
+    const { container, rerender } = render(
+      <TextElementOverlayContent layout={withShadow} fontSize="20px" revealProgress={1} />,
+    );
+    const before = container.querySelector<SVGSVGElement>("[data-handwriting-strokes]");
+    const beforeGeometry = {
+      viewBox: before?.getAttribute("viewBox"),
+      width: before?.style.width,
+      height: before?.style.height,
+    };
+    expect(beforeGeometry.viewBox?.startsWith("0 0 ")).toBe(true);
+
+    rerender(
+      <TextElementOverlayContent layout={withoutShadow} fontSize="20px" revealProgress={1} />,
+    );
+    const after = container.querySelector<SVGSVGElement>("[data-handwriting-strokes]");
+    expect({
+      viewBox: after?.getAttribute("viewBox"),
+      width: after?.style.width,
+      height: after?.style.height,
+    }).toEqual(beforeGeometry);
   });
 
   it("matches renderer-authored italic font style and editorial glow", () => {
