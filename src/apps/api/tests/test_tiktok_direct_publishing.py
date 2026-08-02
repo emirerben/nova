@@ -84,12 +84,42 @@ def test_publishable_output_binds_owned_path_and_generation() -> None:
         size=123,
         content_type="video/mp4",
     )
-    with patch("app.services.tiktok_publishable.storage.object_metadata", return_value=metadata):
+    with (
+        patch("app.services.tiktok_publishable.storage.object_metadata", return_value=metadata),
+        patch(
+            "app.services.tiktok_publishable.storage.signed_get_url",
+            return_value="https://fresh.example/video.mp4",
+        ) as sign,
+    ):
         result = resolve_publishable_output(_job(), "song_text")
     assert result.generation == "42"
     assert result.variant_id == "song_text"
     assert len(result.source_revision) == 64
     assert result.duration_s == 18.0
+    assert result.preview_url == "https://fresh.example/video.mp4"
+    sign.assert_called_once_with(metadata.path, expiration_minutes=60)
+
+
+def test_publishable_output_does_not_depend_on_expired_persisted_url() -> None:
+    job = _job()
+    job.assembly_plan["variants"][0].pop("output_url")
+    metadata = storage.ObjectMetadata(
+        path=job.assembly_plan["variants"][0]["video_path"],
+        generation="43",
+        etag="etag-2",
+        size=456,
+        content_type="video/mp4",
+    )
+    with (
+        patch("app.services.tiktok_publishable.storage.object_metadata", return_value=metadata),
+        patch(
+            "app.services.tiktok_publishable.storage.signed_get_url",
+            return_value="https://fresh.example/video.mp4",
+        ),
+    ):
+        result = resolve_publishable_output(job, "song_text")
+
+    assert result.preview_url == "https://fresh.example/video.mp4"
 
 
 def test_stale_publish_recovery_is_duplicate_safe_at_retry_boundary() -> None:
