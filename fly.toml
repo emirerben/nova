@@ -167,34 +167,46 @@ primary_region = "iad"
 
 [[vm]]
   processes = ["worker"]
-  # 2026-08-02: performance → shared (reverted). The 2026-06-13 bump to
-  # performance-4x/8192MB was justified by GENERATIVE_PARALLEL_VARIANTS_ENABLED
-  # ("safe parallel variants... performance-4x gives 4 dedicated cores so a
-  # bounded 2-way parallel render doesn't starve") — but that flag was never
-  # flipped on (still `default=False` in config.py, absent from `fly secrets
-  # list`), so this app has been paying $155/mo for a performance VM to run
-  # --concurrency=1 with 3 of 4 dedicated vCPUs permanently idle. Reverting to
-  # the pre-6/13 shared-cpu-4x/6144MB sizing bought back ~$122/mo (81% of a
-  # ~$150/mo cost-cut) with zero behavior change, since the capability this VM
-  # class existed for was never in use. Re-upsizing to performance-4x (and
-  # actually flipping the flag) is Phase 3 of the scale-to-zero follow-up —
-  # once the worker mostly sits stopped, the cost delta between VM classes
-  # drops under $1/mo, so there's no tension between "downsize now" and
-  # "performance-4x later," just sequencing. See agents/DECISIONS.md.
-  cpu_kind = "shared"
+  # 2026-08-02, second change same day: shared → performance (re-reverted).
+  # Earlier today this was downsized from performance-4x/8192MB to
+  # shared-cpu-4x/6144MB as a cost cut, on the reasoning that the ONLY
+  # justification for the 2026-06-13 performance upgrade was
+  # GENERATIVE_PARALLEL_VARIANTS_ENABLED (never flipped on). That reasoning
+  # missed the upgrade's OTHER stated justification — "shared cores are
+  # oversubscribed/throttled, so every FFmpeg encode + the Skia per-frame PNG
+  # render runs slower than the vCPU count suggests" — which was providing
+  # real value the whole time, independent of parallelism.
+  #
+  # Confirmed in prod within ~50 min of the downsize deploying: job
+  # 6bdb58dc-5933-4e82-b55c-ba2de00da19c (a `subtitled`-archetype render)
+  # failed when its Skia PNG-sequence overlay burn
+  # (text_overlay_skia.py:2025, subprocess timeout=600s) exceeded 600s and
+  # was killed. This was the FIRST render dispatched after the downsize
+  # deployed. Root-cause confidence is high (mechanism, timing, and the
+  # documented pre-existing claim about this exact workload all line up)
+  # but not proven with a controlled before/after rerun of the identical
+  # input — Fly's shared-vCPU throttling happens at the hypervisor level,
+  # invisible from inside the guest.
+  #
+  # Reverting immediately rather than waiting for more data: a failed
+  # render is a real user-visible cost (a lost video), and the $122/mo the
+  # downsize was saving is not worth trading for unreliable renders while
+  # more evidence accumulates. This VM class stays performance-4x until
+  # RENDER_AUTOSTOP_ENABLED is verified live in prod — at that point the
+  # worker's active hours drop enough that performance-4x costs nearly the
+  # same as shared-cpu-4x (Phase 3 of the scale-to-zero plan), so there is
+  # no future need to revisit this specific tradeoff. See agents/DECISIONS.md.
+  cpu_kind = "performance"
   cpus = 4
-  # 6144MB — the pre-6/13 sizing, bumped from 4096 → 6144 after admin-test job
-  # 022a00e4-7926-4d82-b248-16431dec543b OOM-killed at FFmpeg anon-rss 1897MB
-  # / total-vm 3596MB on a MINIMAL single-pass spec (inputs=1 transitions=0
-  # abs_pngs=0 abs_ass=2). Kernel log: "Out of memory: Killed process 892
-  # (ffmpeg)". The small input count rules out the many-decoders failure
-  # mode — single-pass.py's dual-output [base]+[vout] split at line 555
-  # holds float-pipeline frames for two simultaneous libx264 encoders, and
-  # the reframe chain's format=gbrpf32le step is a 6.4× memory expansion
-  # (reframe.py:438). 6144 gave ~2.2GB FFmpeg headroom above the observed
-  # working set. That headroom reasoning is unaffected by this revert — the
-  # 8192MB ceiling existed only for the never-enabled 2-way parallel render.
-  memory_mb = 6144
+  # 8192MB — the 2026-06-13 sizing this reverts back to. 4096 → 6144 history
+  # (admin-test job 022a00e4-7926-4d82-b248-16431dec543b OOM at FFmpeg
+  # anon-rss 1897MB/total-vm 3596MB on a minimal single-pass spec) still
+  # applies; 6144 → 8192 added headroom for the 2-way parallel-variant
+  # render (still unused) plus the CLIP font-matcher singleton. Keeping
+  # 8192 rather than dropping back to 6144 avoids re-litigating that
+  # headroom math while this VM class question is already being revisited
+  # under incident pressure.
+  memory_mb = 8192
   kill_timeout = "30m"
   # SIGTERM (not Fly's SIGINT default) is Celery's clean warm-shutdown signal:
   # the worker stops consuming new tasks and lets the in-flight task finish
