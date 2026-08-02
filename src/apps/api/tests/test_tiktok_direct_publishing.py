@@ -443,6 +443,17 @@ def test_tiktok_client_rejects_invalid_success_and_maps_retryable_errors() -> No
     assert exc.value.status_code == 429
     assert exc.value.retryable is True
 
+    oauth_denial = MagicMock(is_error=True, status_code=400)
+    oauth_denial.json.return_value = {
+        "error": "invalid_grant",
+        "error_description": "Authorization code was already used",
+    }
+    with pytest.raises(tiktok_client.TikTokAPIError) as exc:
+        tiktok_client._decode(oauth_denial)
+    assert exc.value.code == "invalid_grant"
+    assert str(exc.value) == "Authorization code was already used"
+    assert exc.value.retryable is False
+
     with patch(
         "app.services.tiktok_client.httpx.request",
         side_effect=httpx.ConnectTimeout("connect timeout"),

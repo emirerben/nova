@@ -301,7 +301,15 @@ async def oauth_callback(
     except IntegrityError:
         await db.rollback()
         return _callback_redirect(tiktok="error", reason="account_already_connected")
-    except (ValueError, KeyError, TokenCryptoError, tiktok_client.TikTokAPIError):
+    except tiktok_client.TikTokAPIError as exc:
+        await db.rollback()
+        log.warning(
+            "tiktok_oauth_failed",
+            error_code=exc.code,
+            status_code=exc.status_code,
+        )
+        return _callback_redirect(tiktok="error", reason="connection_failed")
+    except (ValueError, KeyError, TokenCryptoError):
         await db.rollback()
         return _callback_redirect(tiktok="error", reason="connection_failed")
     return _callback_redirect(tiktok="connected")
