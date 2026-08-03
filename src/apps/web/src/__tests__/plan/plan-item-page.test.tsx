@@ -64,6 +64,9 @@ jest.mock("@/lib/plan-api", () => ({
   changePlanItemStyle: jest.fn(),
   setPlanItemIntroSize: jest.fn(),
   uploadToGcs: jest.fn(),
+  // The pool uploader now streams through the XHR-based helper — mocked so the
+  // requireActual spread can't smuggle a real XMLHttpRequest into jsdom.
+  uploadToGcsWithProgress: jest.fn().mockResolvedValue(undefined),
   NotAuthenticatedError: class NotAuthenticatedError extends Error {
     constructor() {
       super("Not authenticated");
