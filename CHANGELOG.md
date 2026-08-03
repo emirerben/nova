@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.4.0] — 2026-08-03
+
+### Fixed
+- **Uploading clips from a phone now shows exactly what's happening — and stays controllable.** Each clip you pick gets its own card the moment the photo picker closes, with a live progress bar driven by the actual bytes sent, a cancel button, and a one-tap Retry when a transfer fails (retrying a clip whose upload finished but whose save failed no longer re-uploads the whole file). Clips always land in the order you picked them, even when a later pick finishes uploading first — so narrated edits keep your footage on the right narration beat.
+- **Deleting an uploaded clip on mobile works reliably.** The confusing built-in browser file control (with its stuck filename and thumbnail) is replaced by a proper "Add clips" button on the plan item page, the generative page, and the plan activation card; delete and cancel targets meet the 44px touch floor; and re-selecting the same file after removing it works instead of silently doing nothing.
+- **Interrupted uploads fail honestly instead of hanging or dying cryptically.** A transfer that stops moving bytes for 60 seconds is cut off with a clear retry message rather than freezing at a stuck percentage; large files no longer get silently re-sent through a proxy that couldn't accept them; and a warning appears if you try to close the tab mid-upload. Clips filmed with drones or saved through the Files app no longer risk a signature-mismatch upload failure.
+- Videos stored in iCloud get a hint that they may take a moment to prepare in the photo picker before appearing — that phase belongs to iOS, and everything after it now lives visibly in the app.
+
 ## [0.22.3.0] — 2026-08-03
 
 ### Added
