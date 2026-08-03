@@ -14,10 +14,13 @@ gcloud storage buckets describe gs://$STORAGE_BUCKET --format='default(cors_conf
 
 Apply this configuration before enabling a web build that sends the precondition
 header. Vercel preview domains are intentionally excluded. Generative uploads
-there still fall back to the relay, but plan-path uploads (v0.22.4.0) only relay
-on local-dev hosts or for files ≤4MB — the Vercel proxy caps request bodies at
-~4.5MB, so larger clips on preview origins fail with a retry message instead of
-dying cryptically mid-relay (tracked in TODOS.md "Upload follow-ups").
+there still fall back to the relay, but plan-path uploads (v0.22.4.0) gate the
+relay on every origin: local-dev hosts (`localhost`, `*.local`, `*.ts.net`,
+RFC-1918 LAN addresses — see `isLocalDevHost` in `src/apps/web/src/lib/plan-api.ts`)
+relay unconditionally; everywhere else — previews and production alike — only
+files ≤4MB relay, because the Vercel proxy caps request bodies at ~4.5MB. Larger
+clips whose direct PUT fails surface a retry message instead of dying cryptically
+mid-relay (tracked in TODOS.md "Upload follow-ups").
 
 ## GCS bucket lifecycle (`gcs-lifecycle.json`)
 
