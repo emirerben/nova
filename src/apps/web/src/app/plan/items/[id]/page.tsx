@@ -1106,10 +1106,14 @@ export default function PlanItemPage() {
     if (gcsPath === null) return;
     const attachedPath = gcsPath;
     try {
-      await enqueueAttach((current) => [
-        ...current,
-        { gcs_path: attachedPath, shot_id: null, user_note: "" },
-      ]);
+      // Cancelled-set re-checked INSIDE the queued mutate: a cancel tapped
+      // while this attach waits behind another queued op must not land the
+      // clip (the pre-await check above can't see it).
+      await enqueueAttach((current) =>
+        cancelledUploadIds.current.has(local.localId)
+          ? current
+          : [...current, { gcs_path: attachedPath, shot_id: null, user_note: "" }],
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save the uploaded clip");
     }

@@ -363,6 +363,47 @@ describe("PoolUploadCard — pending cards, cancel, retry", () => {
     expect(assignments.map((a) => a.gcs_path)).toEqual(["users/u1/plan/test-item-id/b.mp4"]);
   });
 
+  it("cancel while the attach is queued behind another op never lands the clip (FINDING-001)", async () => {
+    setData(makeItem());
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    // Hold the FIRST attach (file a's) so file b's attach queues behind it.
+    let releaseAttach: (v: unknown) => void = () => {};
+    mockAttachClips.mockImplementationOnce(
+      () => new Promise((resolve) => (releaseAttach = resolve)),
+    );
+
+    await act(async () => {
+      pickFiles([
+        new File(["a"], "a.mp4", { type: "video/mp4" }),
+        new File(["b"], "b.mp4", { type: "video/mp4" }),
+      ]);
+    });
+    await flush();
+
+    await act(async () => {
+      capturedUploads[0].resolve();
+    });
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      capturedUploads[1].resolve();
+    });
+    // b's PUT finished and its attach is now QUEUED behind a's held attach —
+    // cancel must still exclude it (the mutate re-checks at execution time).
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel upload of b.mp4" }));
+    });
+    await act(async () => {
+      releaseAttach({});
+    });
+
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(2));
+    const finalAssignments = mockAttachClips.mock.calls[1][2].map((a) => a.gcs_path);
+    expect(finalAssignments).toEqual(["users/u1/plan/test-item-id/a.mp4"]);
+  });
+
   it("cancel during URL minting never starts the transfer", async () => {
     setData(makeItem());
     await act(async () => {
