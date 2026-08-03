@@ -28,6 +28,7 @@ import {
   requestPoolAssetUploadUrls,
   sha256HexOfFile,
   updatePoolAssetContext,
+  uploadContentTypeForFile,
   uploadToGcs,
   type PoolAsset,
 } from "@/lib/plan-api";
@@ -227,7 +228,9 @@ export default function AssetPool({
           const [signed] = await requestPoolAssetUploadUrls(itemId, [
             {
               filename: file.name,
-              content_type: file.type,
+              // MUST match what uploadToGcs later PUTs — an empty file.type
+              // signing differently is a GCS 403 SignatureDoesNotMatch.
+              content_type: uploadContentTypeForFile(file),
               file_size_bytes: file.size,
             },
           ]);
@@ -237,7 +240,7 @@ export default function AssetPool({
           const contentHash = await sha256HexOfFile(file);
           const registered = await registerPoolAsset(itemId, {
             gcs_path: signed.gcs_path,
-            content_type: file.type,
+            content_type: uploadContentTypeForFile(file),
             content_hash: contentHash,
             source_filename: file.name,
           });

@@ -7,6 +7,7 @@ import {
   type ContentPlan,
   getActivation,
   requestSeedUploadUrls,
+  uploadContentTypeForFile,
   uploadToGcs,
 } from "@/lib/plan-api";
 import { ProgressTheater } from "@/components/progress";
@@ -87,7 +88,10 @@ export default function SeedUploadCard({
           plan.id,
           list.map((f) => ({
             filename: f.name,
-            content_type: f.type || "video/mp4",
+            // MUST match what uploadToGcs later PUTs — a divergence (e.g. an
+            // empty-MIME .mov signing as mp4 but PUTting quicktime) is a GCS
+            // 403 SignatureDoesNotMatch.
+            content_type: uploadContentTypeForFile(f),
             file_size_bytes: f.size,
           })),
         );
@@ -199,6 +203,7 @@ export default function SeedUploadCard({
         disabled={uploading}
         aria-label="Upload recent video clips to activate your plan"
         className="sr-only"
+        tabIndex={-1}
         onChange={(e) => {
           void handleFiles(e.target.files);
           // Reset so re-selecting the same file fires change again and Safari
@@ -210,7 +215,7 @@ export default function SeedUploadCard({
         type="button"
         disabled={uploading}
         onClick={() => fileInputRef.current?.click()}
-        className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-40 sm:min-h-0"
+        className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:opacity-40 sm:min-h-0"
       >
         Upload clips
       </button>

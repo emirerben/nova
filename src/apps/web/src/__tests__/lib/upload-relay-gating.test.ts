@@ -12,13 +12,14 @@
  */
 
 import {
+  UPLOAD_INTERRUPTED_MESSAGE,
   uploadContentTypeForFile,
   uploadToGcs,
   uploadToGcsWithProgress,
 } from "@/lib/plan-api";
 
 const SIGNED = "https://storage.googleapis.com/test-bucket/users/u1/clip.mp4?sig=abc";
-const INTERRUPTED = "Upload interrupted. Check your connection and retry.";
+const INTERRUPTED = UPLOAD_INTERRUPTED_MESSAGE;
 
 function fileOfSize(bytes: number, name = "clip.mp4", type = "video/mp4"): File {
   const f = new File(["x"], name, { type });
@@ -63,6 +64,23 @@ describe("uploadToGcs (fetch) relay gating on a production origin", () => {
 
     await expect(uploadToGcs(SIGNED, fileOfSize(200 * 1024 * 1024))).rejects.toThrow(INTERRUPTED);
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("boundary: exactly 4MiB relays; 4MiB+1 throws (the Vercel body-cap margin)", async () => {
+    const relayed: string[] = [];
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === SIGNED) throw new TypeError("Failed to fetch");
+      relayed.push(String(url));
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    }) as jest.Mock;
+
+    await uploadToGcs(SIGNED, fileOfSize(4 * 1024 * 1024));
+    expect(relayed).toEqual(["/api/plan/uploads/relay"]);
+
+    await expect(uploadToGcs(SIGNED, fileOfSize(4 * 1024 * 1024 + 1))).rejects.toThrow(
+      INTERRUPTED,
+    );
+    expect(relayed).toHaveLength(1);
   });
 
   it("small file (≤4MB) + network TypeError → relay still fires", async () => {

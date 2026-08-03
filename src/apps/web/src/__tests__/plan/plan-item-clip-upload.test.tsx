@@ -1,21 +1,27 @@
 /**
  * Tests for the PoolUploadCard upload pipeline on plan/items/[id]/page.tsx
- * (mobile Safari upload/delete fix).
+ * (mobile Safari upload/delete fix + review-army hardening).
  *
  * Covers:
  *   - sr-only input + styled trigger replace the raw native file input.
  *   - input.value reset after selection (Safari same-file re-pick fix).
- *   - Per-file pending cards with real progress; cancel aborts + excludes from
- *     attach; failure → error card → Retry mints a FRESH signed URL.
- *   - Per-file JIT URL minting (one single-file requestUploadUrls per clip).
- *   - ≤3 concurrent uploads (module semaphore).
- *   - Re-entrant batches: trigger stays enabled mid-upload.
- *   - Delete-race regressions: (A) delete while an upload's attach settles must
- *     not resurrect/wipe; (B) a stale poll during an attach must not clobber
- *     the assignments ref (gated sync).
- *   - 44px mobile tap targets on delete/cancel (class assertions with a
- *     positive control — see collapse-wrapper-tests-need-class-assertions).
- *   - maxClips=1: trigger hidden while a pending upload exists, no cap copy.
+ *   - Per-file pending cards with real progress; relay phase renders as
+ *     indeterminate (no invented percent — DESIGN.md D6).
+ *   - Cancel aborts + excludes from attach (while uploading, while minting,
+ *     and while semaphore-queued); "Saving…" phase has no cancel affordance.
+ *   - Attaches commit in PICKER order, not network completion order, and
+ *     coalesce into drains (one POST per queue turn).
+ *   - Failure → error card → Retry (fresh signed URL for upload failures;
+ *     attach-ONLY retry when the bytes already landed).
+ *   - The attach queue survives a failed op.
+ *   - Saving cards persist until the server returns the clip (no maxClips
+ *     re-enable gap), then hand off to the attached card.
+ *   - Delete-race regressions: (A) delete while an upload's attach settles
+ *     composes; (B) a stale poll during an attach can't clobber the ref.
+ *   - Generate stays gated while a pool upload is in flight; error cards
+ *     do NOT gate it.
+ *   - 44px mobile tap targets (delete/cancel/retry) with a positive control.
+ *   - maxClips=1: pending upload counts toward the cap, no lying cap copy.
  */
 
 // @ts-nocheck
@@ -160,7 +166,7 @@ const mockUploadWithProgress = uploadToGcsWithProgress as jest.MockedFunction<
 type CapturedUpload = {
   url: string;
   file: File;
-  onProgress: (fraction: number) => void;
+  onProgress: (fraction: number, indeterminate?: boolean) => void;
   signal?: AbortSignal;
   resolve: () => void;
   reject: (err: unknown) => void;
@@ -195,6 +201,13 @@ function installUploadCapture() {
       }),
   );
 }
+
+const c1 = {
+  gcs_path: "users/u1/plan/test-item-id/c1.mp4",
+  shot_id: null,
+  user_note: "",
+  machine_matched: false,
+};
 
 function makeItem(overrides = {}) {
   return {
@@ -243,6 +256,17 @@ async function flush() {
   });
 }
 
+/** Server path for a filename minted by the default requestUploadUrls mock. */
+const serverPath = (name: string) => `users/u1/plan/test-item-id/${name}`;
+
+/** Simulate the poll delivering `assignments` (prunes Saving cards, syncs UI). */
+async function deliverPoll(view: { rerender: (el: React.ReactElement) => void }, assignments) {
+  await act(async () => {
+    setData(makeItem({ clip_assignments: assignments }));
+    view.rerender(<PlanItemPage />);
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   capturedUploads.length = 0;
@@ -252,15 +276,19 @@ beforeEach(() => {
   mockRequestUploadUrls.mockImplementation(async (_id, files) =>
     files.map((f) => ({
       upload_url: `https://gcs.example/${f.filename}`,
-      gcs_path: `users/u1/plan/test-item-id/${f.filename}`,
+      gcs_path: serverPath(f.filename),
     })),
   );
 });
 
 afterEach(async () => {
-  // The upload semaphore is module-scoped — settle every outstanding upload so
-  // slots can't leak into the next test.
-  capturedUploads.filter((c) => !c.settled).forEach((c) => c.resolve());
+  // The upload semaphore is module-scoped — drain until QUIESCENT so a slot
+  // freed by one settle can't start a queued upload that then leaks a slot
+  // into the next test (order-dependence hazard).
+  for (let i = 0; i < 10 && capturedUploads.some((c) => !c.settled); i++) {
+    capturedUploads.filter((c) => !c.settled).forEach((c) => c.resolve());
+    await flush();
+  }
   await flush();
 });
 
@@ -275,11 +303,14 @@ describe("PoolUploadCard — input markup (mobile Safari fix)", () => {
 
     const input = screen.getByLabelText("Upload video clips for this idea");
     expect(input).toHaveClass("sr-only");
+    // Ghost-tab-stop guard: the visible trigger is the sole keyboard stop.
+    expect(input).toHaveAttribute("tabindex", "-1");
     // Old raw-input styling must be gone (this is what rendered Safari's
     // native button + filename + thumbnail).
     expect(input.className).not.toContain("file:mr-3");
 
     const trigger = screen.getByRole("button", { name: "Add clips" });
+    expect(trigger).toBeEnabled();
     expect(trigger).toHaveClass("min-h-11");
     expect(trigger).toHaveClass("sm:min-h-0");
   });
@@ -309,7 +340,7 @@ describe("PoolUploadCard — input markup (mobile Safari fix)", () => {
   });
 });
 
-describe("PoolUploadCard — pending cards, cancel, retry", () => {
+describe("PoolUploadCard — pending cards, progress, saving", () => {
   it("shows a per-file card with real progress while uploading", async () => {
     setData(makeItem());
     await act(async () => {
@@ -335,6 +366,132 @@ describe("PoolUploadCard — pending cards, cancel, retry", () => {
     expect(screen.getByText(/Uploading… 50%/)).toBeInTheDocument();
   });
 
+  it("renders the relay phase as indeterminate — no invented percent (D6)", async () => {
+    setData(makeItem());
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      pickFiles([new File(["a"], "a.mp4", { type: "video/mp4" })]);
+    });
+    await flush();
+
+    await act(async () => {
+      capturedUploads[0].onProgress(0.5, true);
+    });
+    expect(screen.queryByText(/%/)).toBeNull();
+    expect(screen.getByText("Uploading…")).toBeInTheDocument();
+  });
+
+  it("a completed upload flips to Saving (no cancel) and survives until the server returns it", async () => {
+    setData(makeItem());
+    let view;
+    await act(async () => {
+      view = render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      pickFiles([new File(["a"], "a.mp4", { type: "video/mp4" })]);
+    });
+    await flush();
+    await act(async () => {
+      capturedUploads[0].resolve();
+    });
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(1));
+
+    // Card persists as Saving… with NO cancel affordance (the attach is
+    // committing) — clearing it now would briefly re-enable a maxClips picker.
+    expect(screen.getByText("Saving…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Cancel upload of a\.mp4/ })).toBeNull();
+    expect(screen.getByTestId("pending-clip-card")).toBeInTheDocument();
+
+    await deliverPoll(view, [
+      { gcs_path: serverPath("a.mp4"), shot_id: null, user_note: "", machine_matched: false },
+    ]);
+    expect(screen.queryByTestId("pending-clip-card")).toBeNull();
+  });
+});
+
+describe("PoolUploadCard — attach ordering + coalescing", () => {
+  it("commits clips in PICKER order even when network completion order differs", async () => {
+    setData(makeItem());
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      pickFiles([
+        new File(["a"], "a.mp4", { type: "video/mp4" }),
+        new File(["b"], "b.mp4", { type: "video/mp4" }),
+      ]);
+    });
+    await flush();
+
+    // b (picked second) finishes FIRST.
+    await act(async () => {
+      capturedUploads[1].resolve();
+    });
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(1));
+    expect(mockAttachClips.mock.calls[0][1]).toEqual([serverPath("b.mp4")]);
+
+    await act(async () => {
+      capturedUploads[0].resolve();
+    });
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(2));
+    // a is inserted BEFORE b — narrated-ready maps narration by insertion
+    // order, so completion-order attaches would scramble the story.
+    expect(mockAttachClips.mock.calls[1][1]).toEqual([
+      serverPath("a.mp4"),
+      serverPath("b.mp4"),
+    ]);
+  });
+
+  it("coalesces uploads that finish during an in-flight attach into ONE drain", async () => {
+    setData(makeItem());
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    let releaseAttach: (v: unknown) => void = () => {};
+    mockAttachClips.mockImplementationOnce(
+      () => new Promise((resolve) => (releaseAttach = resolve)),
+    );
+
+    await act(async () => {
+      pickFiles([
+        new File(["a"], "a.mp4", { type: "video/mp4" }),
+        new File(["b"], "b.mp4", { type: "video/mp4" }),
+        new File(["c"], "c.mp4", { type: "video/mp4" }),
+      ]);
+    });
+    await flush();
+
+    // a's drain POSTs and is held; b and c finish while it's in flight.
+    await act(async () => {
+      capturedUploads[0].resolve();
+    });
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      capturedUploads[1].resolve();
+      capturedUploads[2].resolve();
+    });
+    await flush();
+    await act(async () => {
+      releaseAttach({});
+    });
+
+    // b + c ride ONE coalesced drain (not one POST each).
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(2));
+    expect(mockAttachClips.mock.calls[1][1]).toEqual([
+      serverPath("a.mp4"),
+      serverPath("b.mp4"),
+      serverPath("c.mp4"),
+    ]);
+  });
+});
+
+describe("PoolUploadCard — cancel", () => {
   it("cancel aborts the transfer and excludes the file from attach", async () => {
     setData(makeItem());
     await act(async () => {
@@ -360,48 +517,7 @@ describe("PoolUploadCard — pending cards, cancel, retry", () => {
     });
     await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(1));
     const assignments = mockAttachClips.mock.calls[0][2];
-    expect(assignments.map((a) => a.gcs_path)).toEqual(["users/u1/plan/test-item-id/b.mp4"]);
-  });
-
-  it("cancel while the attach is queued behind another op never lands the clip (FINDING-001)", async () => {
-    setData(makeItem());
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    // Hold the FIRST attach (file a's) so file b's attach queues behind it.
-    let releaseAttach: (v: unknown) => void = () => {};
-    mockAttachClips.mockImplementationOnce(
-      () => new Promise((resolve) => (releaseAttach = resolve)),
-    );
-
-    await act(async () => {
-      pickFiles([
-        new File(["a"], "a.mp4", { type: "video/mp4" }),
-        new File(["b"], "b.mp4", { type: "video/mp4" }),
-      ]);
-    });
-    await flush();
-
-    await act(async () => {
-      capturedUploads[0].resolve();
-    });
-    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(1));
-    await act(async () => {
-      capturedUploads[1].resolve();
-    });
-    // b's PUT finished and its attach is now QUEUED behind a's held attach —
-    // cancel must still exclude it (the mutate re-checks at execution time).
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Cancel upload of b.mp4" }));
-    });
-    await act(async () => {
-      releaseAttach({});
-    });
-
-    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(2));
-    const finalAssignments = mockAttachClips.mock.calls[1][2].map((a) => a.gcs_path);
-    expect(finalAssignments).toEqual(["users/u1/plan/test-item-id/a.mp4"]);
+    expect(assignments.map((a) => a.gcs_path)).toEqual([serverPath("b.mp4")]);
   });
 
   it("cancel during URL minting never starts the transfer", async () => {
@@ -424,9 +540,7 @@ describe("PoolUploadCard — pending cards, cancel, retry", () => {
       fireEvent.click(screen.getByRole("button", { name: "Cancel upload of a.mp4" }));
     });
     await act(async () => {
-      releaseMint([
-        { upload_url: "https://gcs.example/a.mp4", gcs_path: "users/u1/plan/test-item-id/a.mp4" },
-      ]);
+      releaseMint([{ upload_url: "https://gcs.example/a.mp4", gcs_path: serverPath("a.mp4") }]);
     });
     await flush();
 
@@ -434,10 +548,41 @@ describe("PoolUploadCard — pending cards, cancel, retry", () => {
     expect(mockAttachClips).not.toHaveBeenCalled();
   });
 
-  it("failure flips the card to an error with Retry, and Retry mints a FRESH signed URL", async () => {
+  it("cancel while semaphore-queued never mints a URL for the cancelled file", async () => {
     setData(makeItem());
     await act(async () => {
       render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      pickFiles([1, 2, 3, 4].map((n) => new File(["x"], `c${n}.mp4`, { type: "video/mp4" })));
+    });
+    await flush();
+
+    // 3 slots busy; c4 is queued behind the semaphore.
+    expect(capturedUploads).toHaveLength(3);
+    expect(mockRequestUploadUrls).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel upload of c4.mp4" }));
+    });
+    await act(async () => {
+      capturedUploads[0].resolve();
+    });
+    await flush();
+
+    // The freed slot sees the cancel before minting: no 4th mint, no 4th XHR.
+    expect(mockRequestUploadUrls).toHaveBeenCalledTimes(3);
+    expect(capturedUploads).toHaveLength(3);
+  });
+});
+
+describe("PoolUploadCard — failure + retry", () => {
+  it("upload failure flips the card to an error with Retry, and Retry mints a FRESH signed URL", async () => {
+    setData(makeItem());
+    let view;
+    await act(async () => {
+      view = render(<PlanItemPage />);
     });
 
     await act(async () => {
@@ -461,14 +606,18 @@ describe("PoolUploadCard — pending cards, cancel, retry", () => {
       capturedUploads[1].resolve();
     });
     await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(1));
-    expect(mockAttachClips.mock.calls[0][1]).toEqual(["users/u1/plan/test-item-id/a.mp4"]);
-    await waitFor(() => expect(screen.queryByTestId("pending-clip-card")).toBeNull());
+    expect(mockAttachClips.mock.calls[0][1]).toEqual([serverPath("a.mp4")]);
+    await deliverPoll(view, [
+      { gcs_path: serverPath("a.mp4"), shot_id: null, user_note: "", machine_matched: false },
+    ]);
+    expect(screen.queryByTestId("pending-clip-card")).toBeNull();
   });
 
-  it("surfaces an attach failure in the page banner (upload succeeded, save didn't)", async () => {
+  it("attach failure keeps the card; Retry re-runs ONLY the attach (no re-upload)", async () => {
     setData(makeItem());
+    let view;
     await act(async () => {
-      render(<PlanItemPage />);
+      view = render(<PlanItemPage />);
     });
     mockAttachClips.mockRejectedValueOnce(new Error("boom from attach"));
 
@@ -479,9 +628,53 @@ describe("PoolUploadCard — pending cards, cancel, retry", () => {
     await act(async () => {
       capturedUploads[0].resolve();
     });
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(1));
 
-    await waitFor(() => expect(screen.getByText(/boom from attach/)).toBeInTheDocument());
+    // The bytes are in GCS — the card stays, as an attach error.
+    expect(screen.getByText("Couldn't save the clip")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    });
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(2));
+    // Attach-only: no new signed URL, no re-upload of the file.
+    expect(mockRequestUploadUrls).toHaveBeenCalledTimes(1);
+    expect(mockUploadWithProgress).toHaveBeenCalledTimes(1);
+    expect(mockAttachClips.mock.calls[1][1]).toEqual([serverPath("a.mp4")]);
+
+    await deliverPoll(view, [
+      { gcs_path: serverPath("a.mp4"), shot_id: null, user_note: "", machine_matched: false },
+    ]);
     expect(screen.queryByTestId("pending-clip-card")).toBeNull();
+  });
+
+  it("the attach queue survives a failed op: the next upload still attaches", async () => {
+    setData(makeItem());
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    mockAttachClips.mockRejectedValueOnce(new Error("boom"));
+
+    await act(async () => {
+      pickFiles([new File(["a"], "a.mp4", { type: "video/mp4" })]);
+    });
+    await flush();
+    await act(async () => {
+      capturedUploads[0].resolve();
+    });
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      pickFiles([new File(["b"], "b.mp4", { type: "video/mp4" })]);
+    });
+    await flush();
+    await act(async () => {
+      capturedUploads[1].resolve();
+    });
+    await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(2));
+    expect(mockAttachClips.mock.calls[1][2].map((a) => a.gcs_path)).toEqual([
+      serverPath("b.mp4"),
+    ]);
   });
 });
 
@@ -516,9 +709,7 @@ describe("PoolUploadCard — concurrency + minting", () => {
     });
 
     await act(async () => {
-      pickFiles(
-        [1, 2, 3, 4, 5].map((n) => new File(["x"], `c${n}.mp4`, { type: "video/mp4" })),
-      );
+      pickFiles([1, 2, 3, 4, 5].map((n) => new File(["x"], `c${n}.mp4`, { type: "video/mp4" })));
     });
     await flush();
 
@@ -553,20 +744,13 @@ describe("PoolUploadCard — concurrency + minting", () => {
 });
 
 describe("PoolUploadCard — delete-race regressions", () => {
-  const c1 = {
-    gcs_path: "users/u1/plan/test-item-id/c1.mp4",
-    shot_id: null,
-    user_note: "",
-    machine_matched: false,
-  };
-
   it("regression A: deleting while another upload's attach settles composes, never wipes or resurrects", async () => {
     setData(makeItem({ clip_assignments: [c1] }));
     await act(async () => {
       render(<PlanItemPage />);
     });
 
-    // Hold the FIRST attach (f2's) so the delete queues behind it.
+    // Hold the FIRST attach (f2's drain) so the delete queues behind it.
     let releaseAttach: (v: unknown) => void = () => {};
     mockAttachClips.mockImplementationOnce(
       () => new Promise((resolve) => (releaseAttach = resolve)),
@@ -593,13 +777,13 @@ describe("PoolUploadCard — delete-race regressions", () => {
     // Old closure-based code computed `remaining` from stale item data: the
     // delete would wipe f2 (payload []) — and an upload settling after a
     // delete would resurrect c1.
-    expect(finalAssignments).toEqual(["users/u1/plan/test-item-id/f2.mp4"]);
+    expect(finalAssignments).toEqual([serverPath("f2.mp4")]);
   });
 
   it("regression B: a stale poll landing during an attach cannot clobber the ref (gated sync)", async () => {
     const staleItem = makeItem({ clip_assignments: [c1] });
     setData(staleItem);
-    let view: ReturnType<typeof render>;
+    let view;
     await act(async () => {
       view = render(<PlanItemPage />);
     });
@@ -617,7 +801,7 @@ describe("PoolUploadCard — delete-race regressions", () => {
     // flight — a NEW array identity, so the sync effect re-runs.
     await act(async () => {
       setData({ ...staleItem, clip_assignments: [{ ...c1 }] });
-      view!.rerender(<PlanItemPage />);
+      view.rerender(<PlanItemPage />);
     });
     await act(async () => {
       releaseAttach({});
@@ -635,24 +819,42 @@ describe("PoolUploadCard — delete-race regressions", () => {
     });
     await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(2));
     const finalAssignments = mockAttachClips.mock.calls[1][2].map((a) => a.gcs_path);
-    expect(finalAssignments).toEqual(["users/u1/plan/test-item-id/f3.mp4"]);
+    expect(finalAssignments).toEqual([serverPath("f3.mp4")]);
+  });
+});
+
+describe("PoolUploadCard — Generate gate composition", () => {
+  it("Generate stays gated while a pool upload is in flight; error cards do NOT gate", async () => {
+    // clipCount derives from clip_gcs_paths (page.tsx) — both fields must
+    // carry the attached clip for the gate to open at baseline.
+    setData(makeItem({ clip_assignments: [c1], clip_gcs_paths: [c1.gcs_path] }));
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const generate = () => screen.getByRole("button", { name: /generate/i });
+    expect(generate()).toBeEnabled();
+
+    await act(async () => {
+      pickFiles([new File(["a"], "a.mp4", { type: "video/mp4" })]);
+    });
+    await flush();
+    // In flight → gated. Deleting `|| hasActivePoolUploads` from the gate
+    // wiring would let Generate fire mid-upload; this pins the call site.
+    expect(generate()).toBeDisabled();
+
+    await act(async () => {
+      capturedUploads[0].reject(new Error("nope"));
+    });
+    await flush();
+    // Failed → error card must NOT keep gating ("Finishing upload…" would lie).
+    expect(generate()).toBeEnabled();
   });
 });
 
 describe("PoolUploadCard — touch targets + maxClips", () => {
-  it("delete and cancel controls meet the 44px mobile floor (with positive control)", async () => {
-    setData(
-      makeItem({
-        clip_assignments: [
-          {
-            gcs_path: "users/u1/plan/test-item-id/c1.mp4",
-            shot_id: null,
-            user_note: "",
-            machine_matched: false,
-          },
-        ],
-      }),
-    );
+  it("delete, cancel, and retry controls meet the 44px mobile floor (with positive control)", async () => {
+    setData(makeItem({ clip_assignments: [c1] }));
     await act(async () => {
       render(<PlanItemPage />);
     });
@@ -670,6 +872,13 @@ describe("PoolUploadCard — touch targets + maxClips", () => {
     const cancel = screen.getByRole("button", { name: "Cancel upload of a.mp4" });
     expect(cancel).toHaveClass("h-11");
     expect(cancel).toHaveClass("w-11");
+
+    await act(async () => {
+      capturedUploads[0].reject(new Error("nope"));
+    });
+    const retry = screen.getByRole("button", { name: "Retry" });
+    expect(retry).toHaveClass("h-11");
+    expect(retry).toHaveClass("sm:h-auto");
 
     // Positive control: the class assertions CAN fail — a sibling element does
     // not carry the 44px classes.

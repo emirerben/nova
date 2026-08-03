@@ -246,6 +246,7 @@ export default function GenerativePage() {
               disabled={uploading}
               aria-label="Upload clips"
               className="sr-only"
+              tabIndex={-1}
               onChange={(e) => {
                 handleFiles(e.target.files);
                 // Reset so re-selecting the same file fires change again and
@@ -257,7 +258,7 @@ export default function GenerativePage() {
               type="button"
               disabled={uploading}
               onClick={() => clipInputRef.current?.click()}
-              className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-40 sm:min-h-0"
+              className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:opacity-40 sm:min-h-0"
             >
               Add clips
             </button>
