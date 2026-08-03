@@ -122,7 +122,7 @@ above; v2 failures fail open to a standard subtitled render with receipts.
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery
   task
 - `src/apps/api/app/pipeline/look_presets.py` — canonical validation and shared
-  FFmpeg graph for fixed source-media looks; `none` is an exact bypass.
+  FFmpeg graph for source-media looks; `none` is an exact bypass.
 - `src/apps/api/app/pipeline/generative_overlays.py` — intro overlay builder
 - `src/apps/web/src/app/generative/` + `admin/generative/` — public result UI + admin
   dashboard
