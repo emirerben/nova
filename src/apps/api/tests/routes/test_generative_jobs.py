@@ -7,18 +7,35 @@ before any download.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC
 
 import pytest
+from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
 from app.routes.generative_jobs import (
     ChangeStyleRequest,
     CreateGenerativeJobRequest,
+    GenerativeUploadUrlRequest,
     RetextRequest,
     SwapSongRequest,
+    create_generative_upload_url,
     list_generative_style_sets,
+    validate_direct_uploads,
 )
+
+
+def _request() -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/generative-jobs/upload-url",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+        }
+    )
 
 
 def test_valid_request():
@@ -59,6 +76,222 @@ def test_rejects_arbitrary_bucket_prefix():
 def test_rejects_path_traversal():
     with pytest.raises(ValidationError):
         CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/../../etc/passwd"])
+
+
+@pytest.mark.asyncio
+async def test_direct_upload_url_uses_lifecycle_prefix_and_mobile_type_semantics(monkeypatch):
+    import types
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+    signed: list[tuple[str, str, int]] = []
+
+    def fake_sign(path: str, content_type: str, file_size_bytes: int) -> str:
+        signed.append((path, content_type, file_size_bytes))
+        return "https://storage.example/signed-put"
+
+    monkeypatch.setattr("app.routes.generative_jobs.storage.signed_put_url", fake_sign)
+    response = await create_generative_upload_url(
+        _request(),
+        GenerativeUploadUrlRequest(
+            filename="IMG_0123.MOV",
+            content_type="application/octet-stream",
+            file_size_bytes=12_345,
+        ),
+        user,
+    )
+
+    assert response.kind == "video"
+    assert response.content_type == "application/octet-stream"
+    assert response.gcs_path.startswith(f"dev-user/{user.id}/generative/")
+    assert response.gcs_path.endswith("/clip.mov")
+    assert signed == [(response.gcs_path, "application/octet-stream", 12_345)]
+    assert response.upload_headers == {"x-goog-if-generation-match": "0"}
+
+
+@pytest.mark.asyncio
+async def test_direct_voiceover_upload_uses_swept_prefix(monkeypatch):
+    import types
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.signed_put_url",
+        lambda path, content_type, file_size_bytes: "https://storage.example/signed-put",
+    )
+    response = await create_generative_upload_url(
+        _request(),
+        GenerativeUploadUrlRequest(
+            filename="voice.mp4",
+            content_type="audio/mp4",
+            file_size_bytes=4_096,
+        ),
+        user,
+    )
+
+    assert response.kind == "audio"
+    assert response.gcs_path.startswith(f"voiceover-uploads/direct/{user.id}/")
+    assert response.gcs_path.endswith("/voice.mp4")
+
+
+@pytest.mark.asyncio
+async def test_validate_direct_uploads_checks_owner_and_real_gcs_metadata(monkeypatch):
+    import types
+
+    from app.storage import ObjectMetadata
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+    path = f"dev-user/{user.id}/generative/abc123def456/clip.mov"
+    req = CreateGenerativeJobRequest(clip_gcs_paths=[path])
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path,
+            generation="1",
+            etag="etag",
+            size=25_000,
+            content_type="video/quicktime",
+        ),
+    )
+
+    await validate_direct_uploads(req, user)
+
+
+@pytest.mark.asyncio
+async def test_validate_direct_uploads_rejects_cross_user_path():
+    import types
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+    other = uuid.uuid4()
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=[f"dev-user/{other}/generative/abc123def456/clip.mp4"]
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await validate_direct_uploads(req, user)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_validate_direct_uploads_rejects_real_oversize_object(monkeypatch):
+    import types
+
+    from app.storage import ObjectMetadata
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+    path = f"dev-user/{user.id}/generative/abc123def456/clip.mp4"
+    req = CreateGenerativeJobRequest(clip_gcs_paths=[path])
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path,
+            generation="1",
+            etag=None,
+            size=201 * 1024 * 1024,
+            content_type="video/mp4",
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await validate_direct_uploads(req, user)
+    assert exc.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_validate_direct_uploads_rejects_stored_media_kind_drift(monkeypatch):
+    import types
+
+    from app.storage import ObjectMetadata
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+    path = f"dev-user/{user.id}/generative/abc123def456/clip.mp4"
+    req = CreateGenerativeJobRequest(clip_gcs_paths=[path])
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path,
+            generation="1",
+            etag=None,
+            size=5_000,
+            content_type="audio/mp4",
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await validate_direct_uploads(req, user)
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("metadata_error", "expected_status"),
+    [(FileNotFoundError("missing"), 422), (RuntimeError("storage unavailable"), 503)],
+)
+async def test_validate_direct_uploads_surfaces_metadata_failures(
+    monkeypatch, metadata_error, expected_status
+):
+    import types
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+    path = f"dev-user/{user.id}/generative/abc123def456/clip.mp4"
+    req = CreateGenerativeJobRequest(clip_gcs_paths=[path])
+
+    def fail_metadata(object_path):
+        raise metadata_error
+
+    monkeypatch.setattr("app.routes.generative_jobs.storage.object_metadata", fail_metadata)
+    with pytest.raises(HTTPException) as exc:
+        await validate_direct_uploads(req, user)
+    assert exc.value.status_code == expected_status
+
+
+@pytest.mark.asyncio
+async def test_validate_direct_uploads_rejects_empty_object(monkeypatch):
+    import types
+
+    from app.storage import ObjectMetadata
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+    path = f"dev-user/{user.id}/generative/abc123def456/clip.mp4"
+    req = CreateGenerativeJobRequest(clip_gcs_paths=[path])
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path,
+            generation="1",
+            etag=None,
+            size=0,
+            content_type="video/mp4",
+        ),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await validate_direct_uploads(req, user)
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_validate_direct_uploads_rejects_non_audio_voiceover(monkeypatch):
+    import types
+
+    from app.storage import ObjectMetadata
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+    voice_path = f"voiceover-uploads/direct/{user.id}/abc123def456/voice.mp4"
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=["slot-uploads/clip.mp4"],
+        voiceover_gcs_path=voice_path,
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path,
+            generation="1",
+            etag=None,
+            size=10,
+            content_type="video/mp4",
+        ),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await validate_direct_uploads(req, user)
+    assert exc.value.status_code == 422
 
 
 def test_language_defaults_to_en():
@@ -299,6 +532,11 @@ def test_variants_for_response_resigns_ready_variant(monkeypatch):
         return f"https://fresh.example/{path}?sig=new"
 
     monkeypatch.setattr(gj, "signed_get_url", fake_sign)
+    monkeypatch.setattr(
+        gj.storage,
+        "signed_download_url",
+        lambda path, filename, expiration_minutes: f"https://download.example/{filename}",
+    )
 
     out = gj._variants_for_response(_resign_job())
 
@@ -307,6 +545,7 @@ def test_variants_for_response_resigns_ready_variant(monkeypatch):
     assert ready["output_url"] == (
         "https://fresh.example/generative-jobs/j/variant_1_song_lyrics.mp4?sig=new"
     )
+    assert ready["download_url"] == "https://download.example/kria-song_lyrics.mp4"
     assert calls == [("generative-jobs/j/variant_1_song_lyrics.mp4", gj.PLAYBACK_URL_TTL_MIN)]
 
     # Failed variant (no video_path) keeps its null URL and is not re-signed.
@@ -318,6 +557,11 @@ def test_variants_for_response_does_not_mutate_stored_dicts(monkeypatch):
     import app.routes.generative_jobs as gj
 
     monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: "https://fresh.example/x")
+    monkeypatch.setattr(
+        gj.storage,
+        "signed_download_url",
+        lambda path, filename, expiration_minutes: "https://download.example/x",
+    )
     job = _resign_job()
     gj._variants_for_response(job)
 
@@ -325,6 +569,7 @@ def test_variants_for_response_does_not_mutate_stored_dicts(monkeypatch):
     # we never want a short-lived re-signed URL written back to the DB.
     stored = job.assembly_plan["variants"][0]
     assert stored["output_url"] == "https://stale.example/expired?X-Goog-Expires=86400"
+    assert "download_url" not in stored
 
 
 def test_variants_for_response_normalizes_legacy_smart_sfx_without_mutating():
@@ -389,6 +634,25 @@ def test_variants_for_response_signing_failure_falls_back(monkeypatch):
     # A signing failure must not 500 the poll — fall back to the stored URL.
     ready = next(v for v in out if v["variant_id"] == "song_lyrics")
     assert ready["output_url"] == "https://stale.example/expired?X-Goog-Expires=86400"
+
+
+def test_variants_for_response_download_sign_failure_keeps_fresh_playback(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(
+        gj,
+        "signed_get_url",
+        lambda path, ttl: f"https://fresh.example/{path}?sig=new",
+    )
+    monkeypatch.setattr(
+        gj.storage,
+        "signed_download_url",
+        lambda path, filename, expiration_minutes: (_ for _ in ()).throw(RuntimeError("down")),
+    )
+
+    ready = gj._variants_for_response(_resign_job())[0]
+    assert ready["output_url"].startswith("https://fresh.example/")
+    assert "download_url" not in ready
 
 
 # ── Lazy HEIC overlay-preview backfill persists under a row lock ────────────────

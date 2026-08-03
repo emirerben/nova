@@ -1305,6 +1305,7 @@ export interface TextPlacementCandidate {
 export interface PlanItemVariant {
   variant_id: string;
   output_url: string | null;
+  download_url?: string | null;
   duration_s?: number | null;
   // Literal union (not bare string) to match EditableVariant — every plan
   // consumer compares against these literals, so this is non-breaking.

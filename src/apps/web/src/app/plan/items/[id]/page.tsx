@@ -2554,7 +2554,12 @@ function FocusedResults({
     if (variant?.render_status === "ready" && variant.output_url) {
       const action = pendingExportRef.current;
       pendingExportRef.current = null;
-      if (action === "download") downloadVideo(variant.output_url, downloadName);
+      if (action === "download")
+        downloadVideo(
+          variant.download_url ?? variant.output_url,
+          downloadName,
+          !variant.download_url,
+        );
       else setPublishOpen(true);
     } else if (variant?.render_status === "failed") {
       // An export-triggered bake failed on the backend (FFmpeg error after a
@@ -2566,7 +2571,14 @@ function FocusedResults({
       pendingExportRef.current = null;
       onError("Couldn't prepare your video. Please try again.");
     }
-  }, [editSession.isSaving, variant?.render_status, variant?.output_url, downloadName, onError]);
+  }, [
+    editSession.isSaving,
+    variant?.render_status,
+    variant?.output_url,
+    variant?.download_url,
+    downloadName,
+    onError,
+  ]);
 
   const baking = (instantEligible && editSession.isSaving) || pendingExportRef.current !== null;
 
@@ -2644,7 +2656,12 @@ function FocusedResults({
       return;
     }
     if (variant.output_url) {
-      if (action === "download") downloadVideo(variant.output_url, downloadName);
+      if (action === "download")
+        downloadVideo(
+          variant.download_url ?? variant.output_url,
+          downloadName,
+          !variant.download_url,
+        );
       else setPublishOpen(true);
     }
   }, [variant, editSession, instantEligible, sfxPlacements, needsSfxBake, sfxIsPersistDirty, overlayCards, failedOverlayCount, itemId, downloadName, markVariantRendering, onError]);

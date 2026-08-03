@@ -139,6 +139,105 @@ async function submitJob() {
 
 // ===== Tests =====
 
+describe("GenerativePage — mobile batch upload progress", () => {
+  it("shows completed files before a slower sibling settles and preserves partial success", async () => {
+    mockUsePolledJobStatus.mockReturnValue({
+      data: null,
+      error: null,
+      refetch: mockRefetch,
+    });
+    const { uploadGenerativeClip } = require("@/lib/generative-api");
+    uploadGenerativeClip.mockReset();
+    let rejectSlow: (reason?: unknown) => void = () => {};
+    uploadGenerativeClip.mockImplementation((file: File) => {
+      if (file.name === "ready.mp4") {
+        return Promise.resolve({ gcs_path: "dev-user/u/ready.mp4", kind: "video" });
+      }
+      return new Promise((_, reject) => {
+        rejectSlow = reject;
+      });
+    });
+
+    const result = render(<GenerativePage />);
+    const input = result.container.querySelector("input[type=file]") as HTMLInputElement;
+    const files = [
+      new File(["a"], "ready.mp4", { type: "video/mp4" }),
+      new File(["b"], "slow.mp4", { type: "video/mp4" }),
+    ];
+    await act(async () => {
+      Object.defineProperty(input, "files", { value: files, configurable: true });
+      fireEvent.change(input);
+    });
+
+    expect(await screen.findByText(/ready\.mp4/)).toBeInTheDocument();
+    expect(screen.getByText(/Uploading…/)).toBeInTheDocument();
+
+    await act(async () => rejectSlow(new Error("network failed")));
+    expect(
+      await screen.findByText(/1 uploaded · 1 didn’t upload · network failed/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/ready\.mp4/)).toBeInTheDocument();
+    expect(screen.getByText(/Didn't upload: slow\.mp4/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry failed clips/i })).toBeInTheDocument();
+  });
+
+  it("preserves picker order when a later upload finishes first", async () => {
+    mockUsePolledJobStatus.mockReturnValue({ data: null, error: null, refetch: mockRefetch });
+    const { uploadGenerativeClip } = require("@/lib/generative-api");
+    uploadGenerativeClip.mockReset();
+    const resolvers = new Map<string, (value: unknown) => void>();
+    uploadGenerativeClip.mockImplementation(
+      (file: File) =>
+        new Promise((resolve) => {
+          resolvers.set(file.name, resolve);
+        }),
+    );
+    const result = render(<GenerativePage />);
+    const input = result.container.querySelector("input[type=file]") as HTMLInputElement;
+    const files = [
+      new File(["a"], "first.mp4", { type: "video/mp4" }),
+      new File(["b"], "second.mp4", { type: "video/mp4" }),
+    ];
+    await act(async () => {
+      Object.defineProperty(input, "files", { value: files, configurable: true });
+      fireEvent.change(input);
+    });
+
+    await act(async () =>
+      resolvers.get("second.mp4")?.({ gcs_path: "dev-user/u/second", kind: "video" }),
+    );
+    expect(screen.getByText(/second\.mp4/)).toBeInTheDocument();
+    await act(async () =>
+      resolvers.get("first.mp4")?.({ gcs_path: "dev-user/u/first", kind: "video" }),
+    );
+
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "• first.mp4",
+      "• second.mp4",
+    ]);
+  });
+
+  it("rejects a selection above the backend's 20-clip limit before uploading", async () => {
+    mockUsePolledJobStatus.mockReturnValue({ data: null, error: null, refetch: mockRefetch });
+    const { uploadGenerativeClip } = require("@/lib/generative-api");
+    uploadGenerativeClip.mockReset();
+    const result = render(<GenerativePage />);
+    const input = result.container.querySelector("input[type=file]") as HTMLInputElement;
+    const files = Array.from(
+      { length: 21 },
+      (_, index) => new File(["x"], `clip-${index}.mp4`, { type: "video/mp4" }),
+    );
+
+    await act(async () => {
+      Object.defineProperty(input, "files", { value: files, configurable: true });
+      fireEvent.change(input);
+    });
+
+    expect(uploadGenerativeClip).not.toHaveBeenCalled();
+    expect(screen.getByText(/up to 20 clips/i)).toBeInTheDocument();
+  });
+});
+
 describe("GenerativePage — D9 queued state", () => {
   it("test_d9_queued_state_no_started_at: theater renders without crashing, no numeric ETA", async () => {
     // Status has null phase + null started_at (deploy-skew / D9 scenario).

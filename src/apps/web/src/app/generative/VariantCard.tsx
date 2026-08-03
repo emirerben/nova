@@ -304,7 +304,11 @@ export function VariantCard({
         {!rendering && !failed && variant.output_url && (
           <button
             onClick={() =>
-              downloadVideo(variant.output_url!, `kria-${variant.variant_id}.mp4`)
+              downloadVideo(
+                variant.download_url ?? variant.output_url!,
+                `kria-${variant.variant_id}.mp4`,
+                !variant.download_url,
+              )
             }
             className={btnClass}
           >

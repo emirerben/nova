@@ -35,9 +35,11 @@ def test_json_credentials_used_when_set(mock_from_info, mock_gcs_client):
     fake_creds = MagicMock()
     mock_from_info.return_value = fake_creds
 
-    with patch.object(storage.settings, "google_application_credentials", ""), \
-         patch.object(storage.settings, "google_service_account_json", json.dumps(_FAKE_SA_INFO)), \
-         patch.object(storage.settings, "gcloud_project", "nova-test"):
+    with (
+        patch.object(storage.settings, "google_application_credentials", ""),
+        patch.object(storage.settings, "google_service_account_json", json.dumps(_FAKE_SA_INFO)),
+        patch.object(storage.settings, "gcloud_project", "nova-test"),
+    ):
         storage._get_client()
 
     # The new get_gcp_credentials() helper (PR #224) forwards `scopes` to
@@ -53,9 +55,11 @@ def test_file_credentials_take_priority_over_json(mock_from_file, mock_gcs_clien
     fake_creds = MagicMock()
     mock_from_file.return_value = fake_creds
 
-    with patch.object(storage.settings, "google_application_credentials", "/path/to/sa.json"), \
-         patch.object(storage.settings, "google_service_account_json", json.dumps(_FAKE_SA_INFO)), \
-         patch.object(storage.settings, "gcloud_project", "nova-test"):
+    with (
+        patch.object(storage.settings, "google_application_credentials", "/path/to/sa.json"),
+        patch.object(storage.settings, "google_service_account_json", json.dumps(_FAKE_SA_INFO)),
+        patch.object(storage.settings, "gcloud_project", "nova-test"),
+    ):
         storage._get_client()
 
     mock_from_file.assert_called_once_with("/path/to/sa.json")
@@ -64,9 +68,11 @@ def test_file_credentials_take_priority_over_json(mock_from_file, mock_gcs_clien
 
 def test_malformed_json_raises_runtime_error():
     """Tier 2 with bad JSON raises RuntimeError with an actionable message."""
-    with patch.object(storage.settings, "google_application_credentials", ""), \
-         patch.object(storage.settings, "google_service_account_json", "not-valid-json{"), \
-         patch.object(storage.settings, "gcloud_project", ""):
+    with (
+        patch.object(storage.settings, "google_application_credentials", ""),
+        patch.object(storage.settings, "google_service_account_json", "not-valid-json{"),
+        patch.object(storage.settings, "gcloud_project", ""),
+    ):
         with pytest.raises(RuntimeError, match="invalid JSON"):
             storage._get_client()
 
@@ -74,9 +80,11 @@ def test_malformed_json_raises_runtime_error():
 @patch("app.storage.gcs.Client")
 def test_adc_fallback_when_neither_set(mock_gcs_client):
     """Tier 3: ADC fallback when no explicit credentials are configured."""
-    with patch.object(storage.settings, "google_application_credentials", ""), \
-         patch.object(storage.settings, "google_service_account_json", ""), \
-         patch.object(storage.settings, "gcloud_project", ""):
+    with (
+        patch.object(storage.settings, "google_application_credentials", ""),
+        patch.object(storage.settings, "google_service_account_json", ""),
+        patch.object(storage.settings, "gcloud_project", ""),
+    ):
         storage._get_client()
 
     mock_gcs_client.assert_called_once_with(project=None, credentials=None)
@@ -84,9 +92,11 @@ def test_adc_fallback_when_neither_set(mock_gcs_client):
 
 def test_invalid_sa_structure_raises_runtime_error():
     """Tier 2: valid JSON but not a valid service account key structure."""
-    with patch.object(storage.settings, "google_application_credentials", ""), \
-         patch.object(storage.settings, "google_service_account_json", '{"foo": "bar"}'), \
-         patch.object(storage.settings, "gcloud_project", ""):
+    with (
+        patch.object(storage.settings, "google_application_credentials", ""),
+        patch.object(storage.settings, "google_service_account_json", '{"foo": "bar"}'),
+        patch.object(storage.settings, "gcloud_project", ""),
+    ):
         with pytest.raises(RuntimeError, match="missing required fields"):
             storage._get_client()
 
@@ -94,9 +104,58 @@ def test_invalid_sa_structure_raises_runtime_error():
 @patch("app.storage.gcs.Client")
 def test_whitespace_only_json_falls_through_to_adc(mock_gcs_client):
     """Whitespace-only GOOGLE_SERVICE_ACCOUNT_JSON is treated as unset (ADC fallback)."""
-    with patch.object(storage.settings, "google_application_credentials", ""), \
-         patch.object(storage.settings, "google_service_account_json", "  \n  "), \
-         patch.object(storage.settings, "gcloud_project", ""):
+    with (
+        patch.object(storage.settings, "google_application_credentials", ""),
+        patch.object(storage.settings, "google_service_account_json", "  \n  "),
+        patch.object(storage.settings, "gcloud_project", ""),
+    ):
         storage._get_client()
 
     mock_gcs_client.assert_called_once_with(project=None, credentials=None)
+
+
+def test_signed_download_url_sets_sanitized_attachment_disposition():
+    fake_blob = MagicMock()
+    fake_blob.generate_signed_url.return_value = "https://storage.example/download"
+    fake_bucket = MagicMock()
+    fake_bucket.blob.return_value = fake_blob
+    fake_client = MagicMock()
+    fake_client.bucket.return_value = fake_bucket
+
+    with patch.object(storage, "_get_client", return_value=fake_client):
+        url = storage.signed_download_url(
+            "generative-jobs/job/output.mp4",
+            'kria-../../bad\r\nname".mp4',
+            expiration_minutes=360,
+        )
+
+    assert url == "https://storage.example/download"
+    kwargs = fake_blob.generate_signed_url.call_args.kwargs
+    assert kwargs["method"] == "GET"
+    assert kwargs["response_disposition"] == 'attachment; filename="kria-badname.mp4"'
+
+
+def test_signed_put_url_pins_exact_content_type():
+    fake_blob = MagicMock()
+    fake_blob.generate_signed_url.return_value = "https://storage.example/upload"
+    fake_bucket = MagicMock()
+    fake_bucket.blob.return_value = fake_blob
+    fake_client = MagicMock()
+    fake_client.bucket.return_value = fake_bucket
+
+    with patch.object(storage, "_get_client", return_value=fake_client):
+        url = storage.signed_put_url(
+            "dev-user/u/generative/batch/clip.mov",
+            "video/quicktime",
+            12_345,
+        )
+
+    assert url == "https://storage.example/upload"
+    fake_bucket.blob.assert_called_once_with("dev-user/u/generative/batch/clip.mov")
+    kwargs = fake_blob.generate_signed_url.call_args.kwargs
+    assert kwargs["method"] == "PUT"
+    assert kwargs["content_type"] == "video/quicktime"
+    assert kwargs["headers"] == {
+        "content-length": "12345",
+        "x-goog-if-generation-match": "0",
+    }
