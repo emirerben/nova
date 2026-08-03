@@ -20,16 +20,19 @@ in `Job.assembly_plan["variants"]`, which the status endpoint surfaces directly.
 
 from __future__ import annotations
 
+import asyncio
 import math
 import os
 import re
 import uuid
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +45,7 @@ from app.agents._schemas.text_element import (
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
+from app.limiter import limiter
 from app.models import Job, MusicTrack, User
 from app.pipeline.look_presets import (
     LookAdjustments,
@@ -50,7 +54,16 @@ from app.pipeline.look_presets import (
     normalize_look_preset,
 )
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
+from app.routes.music_jobs import classify_slot_kind
+from app.routes.waitlist import get_real_ip
 from app.schemas.montage_preset import is_collage_montage_preset
+from app.services.generative_upload_paths import (
+    DIRECT_CLIP_PREFIX,
+    DIRECT_VOICEOVER_PREFIX,
+    direct_clip_owner,
+    direct_clip_path,
+    direct_voiceover_path,
+)
 from app.services.job_phases import mark_reattempt, stamp_variant_attempt
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
@@ -64,6 +77,7 @@ log = structlog.get_logger()
 router = APIRouter()
 
 _MAX_CLIPS = 20
+_DIRECT_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
 
 # TextElement feature flag (kill switch).  Apply:
 #   fly secrets set TEXT_ELEMENTS_ENABLED=false --app nova-video + worker restart.
@@ -183,8 +197,16 @@ class CreateGenerativeJobRequest(BaseModel):
             raise ValueError("At least 1 clip is required")
         if len(v) > _MAX_CLIPS:
             raise ValueError(f"Maximum {_MAX_CLIPS} clips allowed")
-        # Reject arbitrary bucket keys — only upload-endpoint prefixes are allowed.
-        return _validate_clip_path_prefixes(v)
+        # The current direct-upload path is lifecycle-managed under dev-user/.
+        # Older clients still produce music-uploads/ and slot-uploads/ paths, so
+        # keep those through the shared validator during the rollout window.
+        legacy_paths = [path for path in v if not path.startswith(DIRECT_CLIP_PREFIX)]
+        if legacy_paths:
+            _validate_clip_path_prefixes(legacy_paths)
+        for path in v:
+            if path.startswith(DIRECT_CLIP_PREFIX) and direct_clip_owner(path) is None:
+                raise ValueError("Invalid direct-upload clip path")
+        return v
 
     @field_validator("voiceover_gcs_path")
     @classmethod
@@ -195,6 +217,90 @@ class CreateGenerativeJobRequest(BaseModel):
 class GenerativeJobResponse(BaseModel):
     job_id: str
     status: str
+
+
+class GenerativeUploadUrlRequest(BaseModel):
+    filename: str
+    content_type: str = "application/octet-stream"
+    file_size_bytes: int = Field(gt=0, le=_DIRECT_UPLOAD_MAX_BYTES)
+
+
+class GenerativeUploadUrlResponse(BaseModel):
+    upload_url: str
+    gcs_path: str
+    kind: Literal["video", "image", "audio"]
+    content_type: str
+    upload_headers: dict[str, str]
+
+
+async def validate_direct_uploads(
+    req: CreateGenerativeJobRequest,
+    current_user: User,
+) -> None:
+    """Verify ownership and real GCS metadata for browser-direct uploads.
+
+    The signing request's byte count is only an early UX guard. The object in GCS
+    is authoritative, so this check runs immediately before a render job is
+    queued. Legacy proxy-upload paths are intentionally skipped during rollout.
+    """
+    user_id = str(current_user.id)
+    direct: list[tuple[str, Literal["clip", "voiceover"]]] = []
+    expected_clip_prefix = f"{DIRECT_CLIP_PREFIX}{user_id}/generative/"
+    for path in req.clip_gcs_paths:
+        if not path.startswith(DIRECT_CLIP_PREFIX):
+            continue
+        if not path.startswith(expected_clip_prefix):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch"
+            )
+        direct.append((path, "clip"))
+
+    voiceover_path = req.voiceover_gcs_path
+    if voiceover_path and voiceover_path.startswith(DIRECT_VOICEOVER_PREFIX):
+        expected_voice_prefix = f"{DIRECT_VOICEOVER_PREFIX}{user_id}/"
+        if not voiceover_path.startswith(expected_voice_prefix):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch"
+            )
+        direct.append((voiceover_path, "voiceover"))
+
+    async def validate_one(path: str, role: Literal["clip", "voiceover"]) -> None:
+        try:
+            metadata = await run_in_threadpool(storage.object_metadata, path)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Uploaded file is missing — upload it again",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 — storage outage is retryable
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Upload verification unavailable — try again",
+            ) from exc
+
+        if metadata.size <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Uploaded file is empty",
+            )
+        if metadata.size > _DIRECT_UPLOAD_MAX_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="File too large. Maximum 200 MB.",
+            )
+        kind = classify_slot_kind(Path(path).name, metadata.content_type)
+        if role == "voiceover" and kind != "audio":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Voiceover upload must be audio",
+            )
+        if role == "clip" and kind not in {"video", "image"}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Clip upload must be video or image",
+            )
+
+    await asyncio.gather(*(validate_one(path, role) for path, role in direct))
 
 
 class UnplacedShot(BaseModel):
@@ -1056,6 +1162,24 @@ def _variants_for_response(job: Job) -> list[dict]:
                     exc_info=True,
                 )
                 # fall through with the stored (possibly stale) output_url
+            try:
+                variant_id = str(v.get("variant_id") or "video")
+                v = {
+                    **v,
+                    "download_url": storage.signed_download_url(
+                        video_path,
+                        f"kria-{variant_id}.mp4",
+                        expiration_minutes=PLAYBACK_URL_TTL_MIN,
+                    ),
+                }
+            except Exception:  # noqa: BLE001 — playback remains usable without attachment URL
+                log.warning(
+                    "variant_download_sign_failed",
+                    job_id=str(job.id),
+                    variant_id=v.get("variant_id"),
+                    video_path=video_path,
+                    exc_info=True,
+                )
         base_video_path = v.get("base_video_path")
         if base_video_path:
             try:
@@ -5483,6 +5607,51 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
+@router.post(
+    "/upload-url",
+    response_model=GenerativeUploadUrlResponse,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("25/minute", key_func=get_real_ip)
+async def create_generative_upload_url(
+    request: Request,
+    req: GenerativeUploadUrlRequest,
+    current_user: CurrentUserOrSynthetic,
+) -> GenerativeUploadUrlResponse:
+    """Mint one just-in-time signed PUT URL for a generative clip/voiceover."""
+    kind = classify_slot_kind(req.filename, req.content_type)
+    content_type = req.content_type.split(";", 1)[0].strip().lower()
+    if not content_type:
+        content_type = "application/octet-stream"
+    ext = Path(req.filename).suffix.lower()
+    upload_id = uuid.uuid4().hex
+    user_id = str(current_user.id)
+    if kind == "audio":
+        object_path = direct_voiceover_path(user_id, upload_id, ext or ".webm")
+    else:
+        default_ext = ".mp4" if kind == "video" else ".jpg"
+        object_path = direct_clip_path(user_id, upload_id, ext or default_ext)
+    try:
+        upload_url = storage.signed_put_url(
+            object_path,
+            content_type,
+            req.file_size_bytes,
+        )
+    except Exception as exc:  # noqa: BLE001 — signer/storage outage is retryable
+        log.error("generative_upload_sign_failed", kind=kind, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Upload service unavailable — try again",
+        ) from exc
+    return GenerativeUploadUrlResponse(
+        upload_url=upload_url,
+        gcs_path=object_path,
+        kind=kind,
+        content_type=content_type,
+        upload_headers={"x-goog-if-generation-match": "0"},
+    )
+
+
 @router.post("", response_model=GenerativeJobResponse, status_code=status.HTTP_201_CREATED)
 async def create_generative_job(
     req: CreateGenerativeJobRequest,
@@ -5490,6 +5659,7 @@ async def create_generative_job(
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Create a generative edit job (auto song + AI text, three variants)."""
+    await validate_direct_uploads(req, current_user)
     # Single source of truth for Job shape + clip validation, shared with the
     # content-plan per-item task. Prefixes were already validated by the request
     # schema; build_generative_job re-validates (cheap defense-in-depth).

@@ -28,7 +28,7 @@ describe("hasRenderRegistered", () => {
 
   it("first-ever generate: registered once a job id appears", () => {
     expect(
-      hasRenderRegistered({ current_job_id: "job-1", status: "idea" }, null),
+      hasRenderRegistered({ current_job_id: "job-1", status: "ready" }, null),
     ).toBe(true);
   });
 
@@ -53,7 +53,7 @@ describe("hasRenderRegistered", () => {
   it("retry after failure: registered once a DIFFERENT (new) job id appears", () => {
     expect(
       hasRenderRegistered(
-        { current_job_id: "job-new", status: "idea" },
+        { current_job_id: "job-new", status: "ready" },
         "job-old-failed",
       ),
     ).toBe(true);

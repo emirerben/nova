@@ -38,6 +38,8 @@ export interface GenerativeVariant {
   music_preview_start_s?: number | null;
   style_set_id: string | null;
   output_url: string | null;
+  /** Attachment-signed URL for native, streaming download (never used by video playback). */
+  download_url?: string | null;
   video_path: string | null;
   render_status: "ready" | "rendering" | "failed" | null;
   ok: boolean;
@@ -228,50 +230,148 @@ export function isGenerativeJobSettled(
   return !liveRender;
 }
 
-export async function uploadGenerativeClip(
-  file: File,
-): Promise<{ gcs_path: string; kind: "video" | "image" }> {
+type GenerativeUploadResult = { gcs_path: string; kind: "video" | "image" | "audio" };
+type GenerativeUploadInit = GenerativeUploadResult & {
+  upload_url: string;
+  content_type: string;
+  upload_headers: Record<string, string>;
+};
+
+function uploadError(detail: unknown, fallback: string): Error {
+  if (typeof detail === "string" && detail) return new Error(detail);
+  if (Array.isArray(detail)) {
+    const message = detail
+      .map((entry) => (typeof entry?.msg === "string" ? entry.msg : null))
+      .filter(Boolean)
+      .join("; ");
+    if (message) return new Error(message);
+  }
+  return new Error(fallback);
+}
+
+const MAX_DIRECT_UPLOADS = 2;
+let activeDirectUploads = 0;
+const directUploadWaiters: Array<() => void> = [];
+
+async function acquireDirectUploadSlot(): Promise<void> {
+  if (activeDirectUploads >= MAX_DIRECT_UPLOADS) {
+    await new Promise<void>((resolve) => directUploadWaiters.push(resolve));
+  }
+  activeDirectUploads += 1;
+}
+
+function releaseDirectUploadSlot(): void {
+  activeDirectUploads -= 1;
+  directUploadWaiters.shift()?.();
+}
+
+async function legacyUpload(file: File, errorLabel: string): Promise<GenerativeUploadResult> {
   const fd = new FormData();
   fd.append("file", file);
   const res = await fetch(`${API_BASE}/music-jobs/upload-slot`, { method: "POST", body: fd });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Upload failed");
+    throw new Error(detail.detail ?? errorLabel);
   }
   return res.json();
 }
 
-/** Upload a voiceover (a recorded Blob or a chosen audio File). Reuses the music
- * slot-upload endpoint; for an audio file the backend returns `kind: "audio"`. */
+async function relaySignedUpload(
+  uploadUrl: string,
+  file: File,
+  contentType: string,
+  uploadHeaders: Record<string, string>,
+): Promise<void> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  form.append("signed_url", uploadUrl);
+  form.append("content_type", contentType);
+  form.append("file_size_bytes", String(file.size));
+  const ifGenerationMatch = uploadHeaders["x-goog-if-generation-match"];
+  if (ifGenerationMatch) form.append("if_generation_match", ifGenerationMatch);
+  const res = await fetch(`${API_BASE}/uploads/relay`, { method: "POST", body: form });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Upload failed");
+  }
+}
+
+async function uploadGenerativeFile(file: File): Promise<GenerativeUploadResult> {
+  await acquireDirectUploadSlot();
+  try {
+    const initRes = await fetch(`${API_BASE}/generative-jobs/upload-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: file.name,
+        content_type: file.type || "application/octet-stream",
+        file_size_bytes: file.size,
+      }),
+    });
+    // Vercel may update before Fly during a split deploy. Only an absent route
+    // uses the legacy byte proxy; validation/server failures stay visible.
+    if (initRes.status === 404 || initRes.status === 405) {
+      return legacyUpload(file, "Upload failed");
+    }
+    if (!initRes.ok) {
+      const detail = await initRes.json().catch(() => ({ detail: initRes.statusText }));
+      throw uploadError(detail.detail, "Upload failed");
+    }
+    const init = (await initRes.json()) as GenerativeUploadInit;
+    const uploadHeaders = init.upload_headers ?? {};
+    try {
+      const putRes = await fetch(init.upload_url, {
+        method: "PUT",
+        headers: { "Content-Type": init.content_type, ...uploadHeaders },
+        body: file,
+      });
+      if (!putRes.ok) throw new Error(`Upload failed (${putRes.status})`);
+    } catch (error) {
+      // Production CORS permits the canonical site. Preview and unusual local
+      // origins can be blocked before a response exists; relay the SAME signed
+      // request through Fly only for that network-level browser failure.
+      if (error instanceof TypeError) {
+        await relaySignedUpload(init.upload_url, file, init.content_type, uploadHeaders);
+      } else {
+        throw error;
+      }
+    }
+    return { gcs_path: init.gcs_path, kind: init.kind };
+  } finally {
+    releaseDirectUploadSlot();
+  }
+}
+
+export async function uploadGenerativeClip(
+  file: File,
+): Promise<{ gcs_path: string; kind: "video" | "image" }> {
+  const result = await uploadGenerativeFile(file);
+  if (result.kind === "audio") throw new Error("Clip upload must be a video or image");
+  return { gcs_path: result.gcs_path, kind: result.kind };
+}
+
+/** Upload a voiceover (a recorded Blob or a chosen audio File) directly to GCS. */
 export async function uploadVoiceover(
   file: File | Blob,
   filename = "voiceover.webm",
 ): Promise<{ gcs_path: string; kind: string }> {
-  const fd = new FormData();
   // A MediaRecorder Blob has no filename; give it one so the backend can sniff
   // the extension. A real File already carries its name, so prefer that.
+  let uploadFile: File;
   if (file instanceof File) {
     const name = file.name.toLowerCase();
     if (name.endsWith(".mp4") && !(file.type || "").toLowerCase().startsWith("audio/")) {
-      fd.append(
-        "file",
-        new File([file], file.name.replace(/\.mp4$/i, ".m4a"), {
-          type: "audio/mp4",
-          lastModified: file.lastModified,
-        }),
-      );
+      uploadFile = new File([file], file.name.replace(/\.mp4$/i, ".m4a"), {
+        type: "audio/mp4",
+        lastModified: file.lastModified,
+      });
     } else {
-      fd.append("file", file);
+      uploadFile = file;
     }
   } else {
-    fd.append("file", file, filename);
+    uploadFile = new File([file], filename, { type: file.type || "audio/webm" });
   }
-  const res = await fetch(`${API_BASE}/music-jobs/upload-slot`, { method: "POST", body: fd });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Voiceover upload failed");
-  }
-  const body = await res.json();
+  const body = await uploadGenerativeFile(uploadFile);
   if (body.kind !== "audio") {
     throw new Error("Voiceover upload must be an audio file");
   }

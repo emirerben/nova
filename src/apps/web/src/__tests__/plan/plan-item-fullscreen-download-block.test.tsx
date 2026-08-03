@@ -299,7 +299,11 @@ describe("Plan item page — Download blocked while a card's media failed", () =
       fireEvent.click(screen.getByRole("button", { name: "Download" }));
     });
     expect(mockSetVariantMediaOverlays).not.toHaveBeenCalled();
-    expect(mockDownloadVideo).toHaveBeenCalledWith(OUTPUT_URL, expect.any(String));
+    expect(mockDownloadVideo).toHaveBeenCalledWith(
+      OUTPUT_URL,
+      expect.any(String),
+      true,
+    );
   });
 
   it("Download still bakes normally when no card is failed (regression)", async () => {

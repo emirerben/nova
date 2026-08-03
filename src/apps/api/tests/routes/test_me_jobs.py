@@ -89,7 +89,7 @@ def teardown_function() -> None:
 # ── GET /me/jobs ──────────────────────────────────────────────────────────────
 
 
-def test_list_returns_users_jobs_with_derived_status_and_preview() -> None:
+def test_list_returns_users_jobs_with_derived_status_and_preview(monkeypatch) -> None:
     user = _user()
     ready_variant_job = _job(
         user_id=user.id,
@@ -97,7 +97,12 @@ def test_list_returns_users_jobs_with_derived_status_and_preview() -> None:
         assembly_plan={
             "variants": [
                 {"variant_id": "song_lyrics", "render_status": "failed", "output_url": None},
-                {"variant_id": "song_text", "render_status": "ready", "output_url": "gs://x/a.mp4"},
+                {
+                    "variant_id": "song_text",
+                    "render_status": "ready",
+                    "output_url": "gs://x/a.mp4",
+                    "video_path": "generative-jobs/j/song-text.mp4",
+                },
             ]
         },
     )
@@ -106,7 +111,14 @@ def test_list_returns_users_jobs_with_derived_status_and_preview() -> None:
         status="template_ready",
         mode=None,
         job_type="template",
-        assembly_plan={"output_url": "gs://x/tpl.mp4"},
+        assembly_plan={
+            "output_url": "gs://x/tpl.mp4",
+            "output_path": "template-jobs/j/output.mp4",
+        },
+    )
+    monkeypatch.setattr(
+        "app.routes.me.signed_download_url",
+        lambda path, filename, expiration_minutes: f"https://download.example/{filename}",
     )
     db = _db([_scalars([ready_variant_job, single_output_job]), _rows([]), _scalars([])])
     _override(user, db)
@@ -116,7 +128,9 @@ def test_list_returns_users_jobs_with_derived_status_and_preview() -> None:
     body = resp.json()
     assert [j["status"] for j in body["jobs"]] == ["ready", "ready"]
     assert body["jobs"][0]["output_url"] == "gs://x/a.mp4"  # first READY variant
+    assert body["jobs"][0]["download_url"].endswith(".mp4")
     assert body["jobs"][1]["output_url"] == "gs://x/tpl.mp4"  # template single output
+    assert body["jobs"][1]["download_url"].endswith(".mp4")
     assert body["jobs"][1]["mode"] == "template"  # falls back to job_type
     assert body["next_cursor"] is None
 
@@ -136,6 +150,36 @@ def test_list_generating_job_has_no_preview_url() -> None:
     j = resp.json()["jobs"][0]
     assert j["status"] == "generating"
     assert j["output_url"] is None
+
+
+def test_list_keeps_playback_when_download_signing_fails(monkeypatch) -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "ready",
+                    "output_url": "https://play.example/video.mp4",
+                    "video_path": "generative-jobs/j/song-text.mp4",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        "app.routes.me.signed_download_url",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("signer down")),
+    )
+    db = _db([_scalars([job]), _rows([]), _scalars([])])
+    _override(user, db)
+
+    resp = client.get("/me/jobs")
+    assert resp.status_code == 200
+    item = resp.json()["jobs"][0]
+    assert item["output_url"] == "https://play.example/video.mp4"
+    assert item["download_url"] is None
 
 
 def test_list_forged_user_id_query_param_is_ignored() -> None:

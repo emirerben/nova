@@ -227,6 +227,21 @@ def test_users_prefix_is_allowlisted() -> None:
     assert job.raw_storage_path.startswith("users/")
 
 
+def test_owned_direct_generative_prefix_is_allowlisted() -> None:
+    user_id = uuid.uuid4()
+    path = f"dev-user/{user_id}/generative/abc123def456/clip.mov"
+    job = build_generative_job(user_id=user_id, clip_paths=[path])
+    assert job.raw_storage_path == path
+
+
+def test_foreign_direct_generative_prefix_is_rejected() -> None:
+    with pytest.raises(ValueError, match="owner mismatch"):
+        build_generative_job(
+            user_id=uuid.uuid4(),
+            clip_paths=[f"dev-user/{uuid.uuid4()}/generative/abc123def456/clip.mov"],
+        )
+
+
 def test_rejects_unallowlisted_prefix() -> None:
     with pytest.raises(ValueError):
         build_generative_job(user_id=uuid.uuid4(), clip_paths=["secret-bucket/key.mp4"])
