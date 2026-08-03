@@ -539,3 +539,36 @@ describe("GenerativePage — D10 error_class", () => {
     expect(screen.getByText(/something went wrong with this edit/i)).toBeInTheDocument();
   });
 });
+
+describe("GenerativePage — mobile-safe file input (sr-only + trigger + reset)", () => {
+  it("hides the native input behind a styled trigger and resets value after selection", async () => {
+    mockUsePolledJobStatus.mockReturnValue({
+      data: null,
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    const result = render(<GenerativePage />);
+    const input = result.container.querySelector("input[type=file]") as HTMLInputElement;
+
+    // Raw native rendering (Safari's localized button + filename + thumbnail)
+    // is what the sr-only class removes.
+    expect(input.className).toContain("sr-only");
+    expect(input.className).not.toContain("file:mr-4");
+    expect(screen.getByRole("button", { name: "Add clips" })).toBeInTheDocument();
+
+    const valueSets: string[] = [];
+    Object.defineProperty(input, "value", {
+      configurable: true,
+      get: () => "",
+      set: (v: string) => {
+        valueSets.push(v);
+      },
+    });
+    await act(async () => {
+      Object.defineProperty(input, "files", { value: [], configurable: true });
+      fireEvent.change(input);
+    });
+    expect(valueSets).toContain("");
+  });
+});

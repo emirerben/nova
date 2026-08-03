@@ -35,6 +35,7 @@ export default function SeedUploadCard({
   onRefresh: () => void | Promise<unknown>;
 }) {
   const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [seededCount, setSeededCount] = useState(plan.seed_clip_count);
   const [activating, setActivating] = useState(plan.activation_status === "activating");
   const [done, setDone] = useState<"activated" | "activated_empty" | "failed" | null>(
@@ -190,17 +191,29 @@ export default function SeedUploadCard({
           Something went wrong matching your clips. Try uploading again.
         </div>
       )}
-      <label className="block">
-        <span className="sr-only">Upload recent video clips to activate your plan</span>
-        <input
-          type="file"
-          accept={ACCEPT}
-          multiple
-          disabled={uploading}
-          onChange={(e) => void handleFiles(e.target.files)}
-          className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
-        />
-      </label>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={ACCEPT}
+        multiple
+        disabled={uploading}
+        aria-label="Upload recent video clips to activate your plan"
+        className="sr-only"
+        onChange={(e) => {
+          void handleFiles(e.target.files);
+          // Reset so re-selecting the same file fires change again and Safari
+          // drops its native filename + thumbnail rendering.
+          e.target.value = "";
+        }}
+      />
+      <button
+        type="button"
+        disabled={uploading}
+        onClick={() => fileInputRef.current?.click()}
+        className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-40 sm:min-h-0"
+      >
+        Upload clips
+      </button>
       {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
       <button
         onClick={() => void handleActivate()}

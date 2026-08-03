@@ -47,6 +47,7 @@ export default function GenerativePage() {
   const [uploads, setUploads] = useState<UploadedClip[]>([]);
   const [failedUploads, setFailedUploads] = useState<PendingClip[]>([]);
   const nextUploadOrder = useRef(0);
+  const clipInputRef = useRef<HTMLInputElement>(null);
   const [voiceoverPath, setVoiceoverPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -238,13 +239,28 @@ export default function GenerativePage() {
           <div>
             <label className="block text-sm text-[#71717a] mb-2">Clips</label>
             <input
+              ref={clipInputRef}
               type="file"
               accept="video/*,image/*"
               multiple
               disabled={uploading}
-              onChange={(e) => handleFiles(e.target.files)}
-              className="block w-full text-sm text-[#71717a] file:mr-4 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
+              aria-label="Upload clips"
+              className="sr-only"
+              onChange={(e) => {
+                handleFiles(e.target.files);
+                // Reset so re-selecting the same file fires change again and
+                // Safari drops its native filename + thumbnail rendering.
+                e.target.value = "";
+              }}
             />
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => clipInputRef.current?.click()}
+              className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-40 sm:min-h-0"
+            >
+              Add clips
+            </button>
             <p role="status" aria-live="polite" className="mt-2 text-sm text-[#71717a]">
               {uploading
                 ? `${uploads.length} clip${uploads.length === 1 ? "" : "s"} ready · Uploading…`
