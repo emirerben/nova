@@ -36,6 +36,21 @@ it("falls back to the relay when the direct PUT fails at the network level", asy
   expect((form.get("file") as File).name).toBe("clip.mp4");
 });
 
+it("localhost escape hatch: even a large file relays (local proxy is uncapped)", async () => {
+  const calls: string[] = [];
+  global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+    calls.push(String(url));
+    if (String(url) === SIGNED) throw new TypeError("Failed to fetch");
+    return { ok: true, status: 200, json: async () => ({ ok: true }) } as Response;
+  }) as jest.Mock;
+
+  const file = new File(["bytes"], "big.mov", { type: "video/quicktime" });
+  Object.defineProperty(file, "size", { value: 200 * 1024 * 1024 });
+  await uploadToGcs(SIGNED, file);
+
+  expect(calls).toEqual([SIGNED, "/api/plan/uploads/relay"]);
+});
+
 it("does NOT relay on an HTTP error from GCS (signed-URL problem, not CORS)", async () => {
   global.fetch = jest.fn(async (url: RequestInfo | URL) => {
     if (String(url) === SIGNED) {

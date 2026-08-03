@@ -8,6 +8,44 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Upload follow-ups — mobile uploader rework deferrals (v0.22.4.0 review, 2026-08-03)
+
+The shipped rework (per-clip progress cards, cancel/retry, picker-order coalesced
+attaches, relay gating) consciously deferred the items below. Context: the review
+army (5 specialists + Claude adversarial + Codex) confirmed none block shipping.
+
+- **Orphaned GCS objects under `users/…` (privacy/retention + cost).** Priority: P1.
+  Cancelled, failed, stalled, and retried uploads each strand a full-size video
+  forever — the prefix has NO lifecycle delete rule, and cancel/retry make orphan
+  creation a first-class flow. Security lens: user-CANCELLED personal footage is
+  retained indefinitely. Fix shape: server-side delete of the minted key on cancel
+  (the API knows it from signing), or a short-TTL pending-upload prefix that moves
+  objects to `users/…` only on successful attach. Start: `presigned_put_url_for_plan_item`
+  in `src/apps/api/app/storage.py` + `infra/gcs-lifecycle.json`.
+- **Signed PUT does not bind the declared size.** Priority: P2. `upload-urls`
+  validates `file_size_bytes` ≤ 4GB but the V4 signature carries no
+  `x-goog-content-length-range`, so the actual browser PUT is unbounded (storage-cost
+  abuse; pre-existing, surfaced by the new per-file mint). Fix in `storage.py`
+  (`presigned_put_url_for_plan_item`) + have `relaySignedUpload` send `file_size_bytes`.
+- **Voiceover upload keeps the old invisible UX.** Priority: P2. narrated_ready's
+  audio file still uploads with only a static "Uploading…" line — a multi-minute
+  voiceover reproduces the original tester complaint on that sub-path. Port the
+  pending-card pattern to `uploadVoiceover`.
+- **/generative progress-cancel parity + shared `<FileUploadTrigger>`.** Priority: P3.
+  The sr-only-input + trigger + value-reset pattern now exists 3× (PoolUploadCard,
+  SeedUploadCard, generative page) and the upload semaphore 2× (page.tsx,
+  generative-api). Extract shared primitives when porting the card pattern to
+  /generative; also fold ShotSlotUploader's private content-type helper copy into
+  the exported `uploadContentTypeForFile`.
+- **Attach-queue residual races (accepted, documented).** Priority: P3. A stale GET
+  older than the 5s post-write grace window can still clobber `clipAssignmentsRef`
+  (needs an epoch/sequence guard in `usePolledJobStatus`); unmount + fast remount
+  creates two independent queue instances over the same item; uploads surviving
+  navigation hold module semaphore slots invisibly. All converge via polling today.
+- **Vercel preview origins can't upload big files.** Priority: P3. Previews aren't in
+  `infra/gcs-cors.json` and the capped proxy relay is (correctly) gated to ≤4MB —
+  either add preview origins to bucket CORS or document the limitation.
+
 ## Render progress band — deferrals (from render-duration-reset review, 2026-07-29)
 
 The shipped fix resets `job.started_at` at re-render dispatch (`finished_at` is

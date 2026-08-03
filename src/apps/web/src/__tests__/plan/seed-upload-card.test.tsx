@@ -23,7 +23,7 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 // Mock plan-api
@@ -105,5 +105,35 @@ describe("SeedUploadCard — static fallback when no activation_started_at", () 
 
     // Before poll fires, activation_started_at is null → static fallback shown.
     expect(screen.getByText(/finding your best clip/i)).toBeInTheDocument();
+  });
+});
+
+describe("SeedUploadCard — mobile-safe file input (sr-only + trigger + reset)", () => {
+  it("hides the native input behind a styled trigger and resets value after selection", async () => {
+    const plan = makePlan({ activation_status: "pending" });
+    await act(async () => {
+      render(<SeedUploadCard plan={plan} onError={jest.fn()} onRefresh={jest.fn()} />);
+    });
+
+    const input = screen.getByLabelText(
+      "Upload recent video clips to activate your plan",
+    ) as HTMLInputElement;
+    expect(input.className).toContain("sr-only");
+    expect(input.className).not.toContain("file:mr-3");
+    expect(screen.getByRole("button", { name: "Upload clips" })).toBeInTheDocument();
+
+    const valueSets: string[] = [];
+    Object.defineProperty(input, "value", {
+      configurable: true,
+      get: () => "",
+      set: (v: string) => {
+        valueSets.push(v);
+      },
+    });
+    await act(async () => {
+      Object.defineProperty(input, "files", { value: [], configurable: true });
+      fireEvent.change(input);
+    });
+    expect(valueSets).toContain("");
   });
 });

@@ -33,7 +33,9 @@ import {
   retextPlanItem,
   setPlanItemIntroSize,
   swapPlanItemSong,
+  uploadContentTypeForFile,
   uploadToGcs,
+  uploadToGcsWithProgress,
   requestOverlayUploadUrls,
   setVariantMediaOverlays,
   listPoolAssets,
@@ -279,16 +281,62 @@ const MASONRY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},image/jpeg,image/png,image
 const AUDIO_UPLOAD_EXTENSIONS = new Set([".mp3", ".m4a", ".wav", ".webm", ".ogg", ".aac"]);
 const AUDIO_ONLY_PROBE_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
 
-function uploadContentType(file: File): string {
-  if (file.type) return file.type;
-  const name = file.name.toLowerCase();
-  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
-  if (name.endsWith(".png")) return "image/png";
-  if (name.endsWith(".webp")) return "image/webp";
-  if (name.endsWith(".heic")) return "image/heic";
-  if (name.endsWith(".heif")) return "image/heif";
-  if (name.endsWith(".mov")) return "video/quicktime";
-  return "video/mp4";
+// Content-type resolution lives in plan-api's uploadContentTypeForFile — the
+// SAME function signs the URL and sets the PUT header, so the two can never
+// drift into a GCS 403 SignatureDoesNotMatch.
+
+// One optimistic card per in-flight pool upload. Cancelled entries are removed
+// from state (never kept); error entries stay until dismissed or retried.
+type PendingClipUpload = {
+  localId: string;
+  file: File;
+  filename: string;
+  /** Picker ordinal (global, monotonic) — attaches commit in THIS order, not
+   * network completion order: narrated-ready maps narration to clips by
+   * insertion order, so completion-order attaches would scramble the story. */
+  order: number;
+  /** Set once the signed URL is minted; the card survives as "Saving…" until
+   * the server's clip list contains this path (no maxClips re-enable gap). */
+  gcsPath: string | null;
+  /** 0–1, driven by real XHR byte events (state updates quantized to whole %). */
+  progress: number;
+  /** True while the relay fallback runs — no byte events, so no percent (D6). */
+  indeterminate: boolean;
+  status: "uploading" | "saving" | "error";
+  error: string | null;
+  abortController: AbortController;
+};
+
+// Payload shape attachClips expects; clipAssignmentsRef holds this so queued
+// attach ops can rebuild the full list without the render-scope `item` closure.
+type AttachAssignment = {
+  gcs_path: string;
+  shot_id: ClipAssignment["shot_id"];
+  user_note: string;
+};
+
+let poolUploadSeq = 0;
+
+// At most 3 concurrent clip PUTs — mobile bandwidth/memory gate, same pattern
+// as MAX_DIRECT_UPLOADS in generative-api.ts (2 there; 3 here since plan
+// uploads are fewer, larger files). Module-scoped and dumb on purpose:
+// re-entrant batches (user adds more clips mid-upload) share the same slots.
+const MAX_POOL_UPLOADS = 3;
+let poolUploadActive = 0;
+const poolUploadWaiters: Array<() => void> = [];
+
+async function acquirePoolUploadSlot(): Promise<() => void> {
+  while (poolUploadActive >= MAX_POOL_UPLOADS) {
+    await new Promise<void>((resolve) => poolUploadWaiters.push(resolve));
+  }
+  poolUploadActive += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    poolUploadActive -= 1;
+    poolUploadWaiters.shift()?.();
+  };
 }
 
 function fileExtension(file: File): string {
@@ -416,7 +464,7 @@ function CompactPlanSummary({ item }: { item: PlanItem }) {
 // this page) — only the PoolUploadCard-based flows (narrated_ready, talking-to-
 // camera, existing_footage) funnel through handleFiles today.
 function detectLandscapeClip(files: File[]): Promise<boolean> {
-  const checks = files.filter((file) => uploadContentType(file).startsWith("video/")).map(
+  const checks = files.filter((file) => uploadContentTypeForFile(file).startsWith("video/")).map(
     (file) =>
       new Promise<boolean>((resolve) => {
         const video = document.createElement("video");
@@ -464,6 +512,35 @@ export default function PlanItemPage() {
   const [smartCaptionsSaving, setSmartCaptionsSaving] = useState(false);
   const [smartCaptionsError, setSmartCaptionsError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Pool uploads in flight: one optimistic card each. Page-level because only
+  // ONE PoolUploadCard renders at a time (the call sites are mutually
+  // exclusive branches of a single conditional).
+  const [pendingClipUploads, setPendingClipUploads] = useState<PendingClipUpload[]>([]);
+  // Cancel clicked after the PUT already completed → exclude from attach.
+  const cancelledUploadIds = useRef<Set<string>>(new Set());
+  // Serialised attach queue: upload-attaches and deletes run through here one
+  // at a time so concurrent writers compose instead of clobbering (same idea
+  // as ShotSlotUploader's attachQueue).
+  const attachQueue = useRef<Promise<void>>(Promise.resolve());
+  const attachOpsInFlight = useRef(0);
+  // Last time an attach op settled — the ref-sync effect ignores poll data for
+  // a short grace window after a write, so a slow GET dispatched BEFORE the
+  // POST can't clobber the ref with pre-write assignments after ops hit 0.
+  const lastAttachSettledAt = useRef(0);
+  // Freshest known assignments; queued attach ops read this at EXECUTION time,
+  // never the render-scope `item` closure.
+  const clipAssignmentsRef = useRef<AttachAssignment[]>([]);
+  // Completed uploads waiting for the next attach drain. Buffering + a single
+  // drain per queue turn coalesces N finished files into ONE attachClips POST
+  // (one conformance analysis, one refetch) while never holding an earlier
+  // success hostage to a slower sibling.
+  const pendingAttachAdds = useRef<
+    Array<{ order: number; localId: string; assignment: AttachAssignment }>
+  >([]);
+  const attachDrainScheduled = useRef(false);
+  // gcs_path → picker ordinal for clips attached by THIS session; lets a drain
+  // insert a slower early pick BEFORE an already-attached later pick.
+  const uploadOrdinalRef = useRef<Map<string, number>>(new Map());
   // Landscape auto-detect: the Fit/Fill picker only appears once a wide clip is
   // detected on upload — hidden by default (the common case is portrait clips).
   // Sticky within the session (never resets to false) so it doesn't flicker if a
@@ -724,12 +801,53 @@ export default function PlanItemPage() {
     });
   }, [focusShotListAfterAccept, item?.filming_guide?.length]);
 
+  // Closing the tab mid-transfer silently kills uploads — warn while any pool
+  // upload is in flight (browsers show their own generic copy).
+  const hasActivePoolUploads = pendingClipUploads.some((p) => p.status !== "error");
+  useEffect(() => {
+    if (!hasActivePoolUploads) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasActivePoolUploads]);
+
   // Sync voiceover path from item whenever it changes (after refetch / on load).
   useEffect(() => {
     if (item?.voiceover_gcs_path !== undefined) {
       setVoiceoverGcsPath(item.voiceover_gcs_path ?? null);
     }
   }, [item?.voiceover_gcs_path]);
+
+  // Keep the attach ref in sync with polled data — but NEVER while an attach
+  // op is in flight: a stale poll response landing between our POST and its
+  // refetch would clobber the ref with pre-delete data and resurrect deleted
+  // clips on the next attach (see enqueueAttach).
+  useEffect(() => {
+    const ATTACH_SYNC_GRACE_MS = 5000;
+    if (
+      attachOpsInFlight.current === 0 &&
+      Date.now() - lastAttachSettledAt.current > ATTACH_SYNC_GRACE_MS
+    ) {
+      clipAssignmentsRef.current = (item?.clip_assignments ?? []).map((a) => ({
+        gcs_path: a.gcs_path,
+        shot_id: a.shot_id,
+        user_note: a.user_note ?? "",
+      }));
+    }
+    // Prune "Saving…" cards whose clip the server now returns — the optimistic
+    // card hands off to the real attached card with no gap (a premature clear
+    // would briefly re-enable the maxClips=1 picker).
+    const serverPaths = new Set((item?.clip_assignments ?? []).map((a) => a.gcs_path));
+    setPendingClipUploads((prev) => {
+      const next = prev.filter(
+        (p) => p.status !== "saving" || p.gcsPath === null || !serverPaths.has(p.gcsPath),
+      );
+      return next.length === prev.length ? prev : next;
+    });
+  }, [item?.clip_assignments]);
 
   const variants = useMemo(
     () => {
@@ -944,14 +1062,252 @@ export default function PlanItemPage() {
     !isNarratedReady;
   const showVisualPools = !isCollagePreset;
 
-  // Legacy pool upload handler (uninstructed items only).
+  /*
+   * Serialised attach pipeline. Every writer of clip_assignments goes through
+   * this queue so concurrent operations compose instead of clobbering:
+   *
+   *   upload A done ─┐
+   *   delete clip B ─┼─▶ [attachQueue] ─▶ POST full list ─▶ update ref ─▶ refetch
+   *   upload C done ─┘        (payload computed from clipAssignmentsRef
+   *                            at EXECUTION time, not enqueue time)
+   *
+   * Passes full assignments (not bare paths) so existing clips keep their
+   * user_note across an append — the bare-paths legacy form resets them.
+   */
+  function enqueueAttach(
+    mutate: (current: AttachAssignment[]) => AttachAssignment[],
+  ): Promise<void> {
+    const run = attachQueue.current.then(async () => {
+      attachOpsInFlight.current += 1;
+      try {
+        const next = mutate(clipAssignmentsRef.current);
+        // A mutate that returns `current` by reference is a no-op (e.g. the
+        // upload was cancelled while its attach sat queued) — skip the POST
+        // and the refetch entirely.
+        if (next === clipAssignmentsRef.current) return;
+        await attachClips(
+          itemId,
+          next.map((a) => a.gcs_path),
+          next,
+        );
+        clipAssignmentsRef.current = next;
+        conformancePolls.current = 0;
+        refetch();
+      } finally {
+        attachOpsInFlight.current -= 1;
+        lastAttachSettledAt.current = Date.now();
+      }
+    });
+    // The queue itself must survive a failed op.
+    attachQueue.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  // Drain every buffered completed upload in ONE queued attach op. Inserts by
+  // picker ordinal (never network completion order), skips cancelled entries,
+  // and no-ops (identity return → no POST, no refetch) when nothing survives.
+  function scheduleAttachDrain(): Promise<void> {
+    if (attachDrainScheduled.current) {
+      // A queued drain that hasn't snapshotted yet will pick up our buffered
+      // add; awaiting the queue tail covers it.
+      return attachQueue.current;
+    }
+    attachDrainScheduled.current = true;
+    return enqueueAttach((current) => {
+      // Snapshot synchronously at execution: adds arriving after this see
+      // scheduled=false and queue the next drain.
+      attachDrainScheduled.current = false;
+      const adds = pendingAttachAdds.current
+        .filter((a) => !cancelledUploadIds.current.has(a.localId))
+        .sort((x, y) => x.order - y.order);
+      pendingAttachAdds.current = [];
+      if (adds.length === 0) return current;
+      let next = current;
+      for (const add of adds) {
+        const insertAt = next.findIndex((existing) => {
+          const ordinal = uploadOrdinalRef.current.get(existing.gcs_path);
+          return ordinal !== undefined && ordinal > add.order;
+        });
+        next =
+          insertAt === -1
+            ? [...next, add.assignment]
+            : [...next.slice(0, insertAt), add.assignment, ...next.slice(insertAt)];
+      }
+      return next;
+    });
+  }
+
+  // Upload one pending clip end-to-end: JIT-mint its signed URL (the 15-min
+  // TTL starts when the upload starts, not when the batch was picked), PUT
+  // with progress, then attach through the serialised queue.
+  async function runPoolUpload(local: PendingClipUpload) {
+    let gcsPath: string | null = null;
+    const release = await acquirePoolUploadSlot();
+    try {
+      if (cancelledUploadIds.current.has(local.localId)) return;
+      const [url] = await requestUploadUrls(itemId, [
+        {
+          filename: local.file.name,
+          content_type: uploadContentTypeForFile(local.file),
+          file_size_bytes: local.file.size,
+        },
+      ]);
+      if (cancelledUploadIds.current.has(local.localId)) return;
+      await uploadToGcsWithProgress(
+        url.upload_url,
+        local.file,
+        (frac, indeterminate) => {
+          // Quantize to whole percents: returning `prev` unchanged lets React
+          // skip the re-render (this page is very large — event-rate renders
+          // are visible jank on low-end phones).
+          setPendingClipUploads((prev) => {
+            const idx = prev.findIndex((p) => p.localId === local.localId);
+            if (idx === -1) return prev;
+            const pct = Math.round(frac * 100);
+            const ind = indeterminate === true;
+            if (pct === Math.round(prev[idx].progress * 100) && ind === prev[idx].indeterminate) {
+              return prev;
+            }
+            const next = [...prev];
+            next[idx] = { ...next[idx], progress: frac, indeterminate: ind };
+            return next;
+          });
+        },
+        local.abortController.signal,
+      );
+      if (cancelledUploadIds.current.has(local.localId)) return;
+      gcsPath = url.gcs_path;
+    } catch (err) {
+      if ((err as DOMException)?.name === "AbortError") return;
+      setPendingClipUploads((prev) =>
+        prev.map((p) =>
+          p.localId === local.localId
+            ? {
+                ...p,
+                status: "error" as const,
+                error: err instanceof Error ? err.message : "Upload failed",
+              }
+            : p,
+        ),
+      );
+      return;
+    } finally {
+      release();
+    }
+    if (gcsPath === null) return;
+    const attachedPath = gcsPath;
+    uploadOrdinalRef.current.set(attachedPath, local.order);
+    pendingAttachAdds.current.push({
+      order: local.order,
+      localId: local.localId,
+      assignment: { gcs_path: attachedPath, shot_id: null, user_note: "" },
+    });
+    // Card survives as "Saving…" until the server's clip list contains the
+    // path (pruned by the sync effect) — no premature maxClips re-enable.
+    setPendingClipUploads((prev) =>
+      prev.map((p) =>
+        p.localId === local.localId
+          ? { ...p, status: "saving" as const, gcsPath: attachedPath, progress: 1 }
+          : p,
+      ),
+    );
+    try {
+      await scheduleAttachDrain();
+    } catch {
+      // The bytes are already in GCS — keep the card as an error whose Retry
+      // re-runs ONLY the attach (never a full re-upload of a large file).
+      setPendingClipUploads((prev) =>
+        prev.map((p) =>
+          p.localId === local.localId
+            ? { ...p, status: "error" as const, error: "Couldn't save the clip" }
+            : p,
+        ),
+      );
+      return;
+    }
+    // Cancel landed while the attach POST was in flight: the drain couldn't
+    // see it, so compensate with a queued removal (keeps "cancel means it
+    // won't be attached" true through the whole window).
+    if (cancelledUploadIds.current.has(local.localId)) {
+      try {
+        await enqueueAttach((current) =>
+          current.some((x) => x.gcs_path === attachedPath)
+            ? current.filter((x) => x.gcs_path !== attachedPath)
+            : current,
+        );
+      } catch {
+        // Removal is best-effort; the clip is deletable from its card.
+      }
+      setPendingClipUploads((prev) => prev.filter((p) => p.localId !== local.localId));
+    }
+  }
+
+  function cancelClipUpload(localId: string) {
+    cancelledUploadIds.current.add(localId);
+    pendingClipUploads.find((p) => p.localId === localId)?.abortController.abort();
+    setPendingClipUploads((prev) => prev.filter((p) => p.localId !== localId));
+  }
+
+  async function retryClipUpload(localId: string) {
+    const entry = pendingClipUploads.find((p) => p.localId === localId);
+    if (!entry || entry.status !== "error") return;
+    cancelledUploadIds.current.delete(localId);
+    if (entry.gcsPath) {
+      // Upload succeeded, only the attach failed — retry JUST the attach.
+      const path = entry.gcsPath;
+      setPendingClipUploads((prev) =>
+        prev.map((p) =>
+          p.localId === localId
+            ? { ...p, status: "saving" as const, error: null, progress: 1 }
+            : p,
+        ),
+      );
+      pendingAttachAdds.current.push({
+        order: entry.order,
+        localId,
+        assignment: { gcs_path: path, shot_id: null, user_note: "" },
+      });
+      try {
+        await scheduleAttachDrain();
+      } catch {
+        setPendingClipUploads((prev) =>
+          prev.map((p) =>
+            p.localId === localId
+              ? { ...p, status: "error" as const, error: "Couldn't save the clip" }
+              : p,
+          ),
+        );
+      }
+      return;
+    }
+    const refreshed: PendingClipUpload = {
+      ...entry,
+      gcsPath: null,
+      progress: 0,
+      indeterminate: false,
+      status: "uploading",
+      error: null,
+      abortController: new AbortController(),
+    };
+    setPendingClipUploads((prev) => prev.map((p) => (p.localId === localId ? refreshed : p)));
+    await runPoolUpload(refreshed);
+  }
+
+  // Legacy pool upload handler (uninstructed items only). Re-entrant: a second
+  // selection while a batch is in flight just adds more cards through the same
+  // 3-slot gate. `uploading` now covers only the pre-card window (narrated
+  // voiceover routing); per-file state lives on the cards.
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0 || isInstructed) return;
     setUploading(true);
     setError(null);
     conformancePolls.current = 0;
+    let list: File[];
     try {
-      let list = Array.from(files);
+      list = Array.from(files);
       if (isNarratedReady) {
         const { voiceoverFiles, clipFiles } = await splitNarratedReadyUploads(list);
         if (voiceoverFiles.length > 1) {
@@ -968,40 +1324,32 @@ export default function PlanItemPage() {
         list = clipFiles;
         if (list.length === 0) return;
       }
-      void detectLandscapeClip(list).then((found) => {
-        if (found) setHasLandscapeClip(true);
-      });
-      const urls = await requestUploadUrls(
-        itemId,
-        list.map((f) => ({
-          filename: f.name,
-          content_type: uploadContentType(f),
-          file_size_bytes: f.size,
-        })),
-      );
-      await Promise.all(urls.map((u, i) => uploadToGcs(u.upload_url, list[i])));
-      const newPaths = urls.map((u) => u.gcs_path);
-      // Pass full assignments (not bare paths) so existing clips keep their
-      // user_note across an append — the bare-paths legacy form resets them.
-      const assignments = [
-        ...(item?.clip_assignments ?? []).map((a) => ({
-          gcs_path: a.gcs_path,
-          shot_id: a.shot_id,
-          user_note: a.user_note ?? "",
-        })),
-        ...newPaths.map((p) => ({ gcs_path: p, shot_id: null, user_note: "" })),
-      ];
-      await attachClips(
-        itemId,
-        assignments.map((a) => a.gcs_path),
-        assignments,
-      );
-      refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
+      return;
     } finally {
       setUploading(false);
     }
+    void detectLandscapeClip(list).then((found) => {
+      if (found) setHasLandscapeClip(true);
+    });
+    const locals: PendingClipUpload[] = list.map((f) => {
+      const seq = ++poolUploadSeq;
+      return {
+        localId: `clip-${seq}-${f.name}`,
+        file: f,
+        filename: f.name,
+        order: seq,
+        gcsPath: null,
+        progress: 0,
+        indeterminate: false,
+        status: "uploading" as const,
+        error: null,
+        abortController: new AbortController(),
+      };
+    });
+    setPendingClipUploads((prev) => [...prev, ...locals]);
+    await Promise.allSettled(locals.map((local) => runPoolUpload(local)));
   }
 
   // ── Uninstructed clip actions (no-shot-list items: feedback #3 + pool Keep) ──
@@ -1021,16 +1369,10 @@ export default function PlanItemPage() {
   }
 
   async function removeUninstructedClip(a: ClipAssignment) {
-    const remaining = (item?.clip_assignments ?? [])
-      .filter((x) => x.gcs_path !== a.gcs_path)
-      .map((x) => ({ gcs_path: x.gcs_path, shot_id: x.shot_id, user_note: x.user_note ?? "" }));
     try {
-      await attachClips(
-        itemId,
-        remaining.map((x) => x.gcs_path),
-        remaining,
-      );
-      refetch();
+      // Queued: composes with in-flight upload attaches (delete during an
+      // upload's settle must not resurrect, and vice versa).
+      await enqueueAttach((current) => current.filter((x) => x.gcs_path !== a.gcs_path));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't remove that clip");
     }
@@ -1041,18 +1383,18 @@ export default function PlanItemPage() {
   // prefix — so promotion is a plain re-attach with the pool path appended.
   // The asset stays in the pool (overlay suggestions still see it).
   async function promotePoolAsset(asset: PoolAsset) {
-    // Pure merge (unit-tested): preserves every existing shot_id/user_note and
-    // returns null on dedupe or a missing gcs_path (old-API version skew).
-    const assignments = buildPromotedAssignments(item?.clip_assignments ?? [], asset.gcs_path);
-    if (!assignments) return;
-    conformancePolls.current = 0;
     try {
-      await attachClips(
-        itemId,
-        assignments.map((a) => a.gcs_path),
-        assignments,
-      );
-      refetch();
+      // Through the serialised queue like every other clip_assignments writer —
+      // a direct attachClips from the render-scope `item` would race queued
+      // deletes (resurrection) and leave the ref without the promoted asset
+      // (a later upload's drain would silently detach it).
+      await enqueueAttach((current) => {
+        // Pure merge (unit-tested): preserves every existing shot_id/user_note;
+        // null on dedupe or missing gcs_path (old-API version skew) → identity
+        // return, so no POST fires.
+        const assignments = buildPromotedAssignments(current, asset.gcs_path);
+        return assignments ?? current;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't add that visual to the edit");
     }
@@ -1226,7 +1568,11 @@ export default function PlanItemPage() {
   const gate = generateGate({
     generating,
     isGenerating,
-    uploaderBusy,
+    // Pool uploads keep the trigger enabled (per-file cards), so Generate must
+    // gate on them explicitly — the old page-global `uploading` no longer
+    // spans the whole transfer. Error cards deliberately do NOT gate:
+    // "Finishing upload…" would be a lie for an upload that already failed.
+    uploaderBusy: uploaderBusy || uploading || hasActivePoolUploads,
     clipCount,
     isNarrated,
     hasVoiceover: !!voiceoverGcsPath,
@@ -1828,8 +2174,11 @@ export default function PlanItemPage() {
                 </p>
                 <PoolUploadCard
                   clips={item.clip_assignments ?? []}
+                  pending={pendingClipUploads}
                   uploading={uploading}
                   onFiles={handleFiles}
+                  onCancelUpload={cancelClipUpload}
+                  onRetryUpload={retryClipUpload}
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
@@ -1847,8 +2196,11 @@ export default function PlanItemPage() {
                 </p>
                 <PoolUploadCard
                   clips={item.clip_assignments ?? []}
+                  pending={pendingClipUploads}
                   uploading={uploading}
                   onFiles={handleFiles}
+                  onCancelUpload={cancelClipUpload}
+                  onRetryUpload={retryClipUpload}
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
@@ -1870,8 +2222,11 @@ export default function PlanItemPage() {
                 </p>
                 <PoolUploadCard
                   clips={item.clip_assignments ?? []}
+                  pending={pendingClipUploads}
                   uploading={uploading}
                   onFiles={handleFiles}
+                  onCancelUpload={cancelClipUpload}
+                  onRetryUpload={retryClipUpload}
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
@@ -1885,8 +2240,11 @@ export default function PlanItemPage() {
                 </p>
                 <PoolUploadCard
                   clips={item.clip_assignments ?? []}
+                  pending={pendingClipUploads}
                   uploading={uploading}
                   onFiles={handleFiles}
+                  onCancelUpload={cancelClipUpload}
+                  onRetryUpload={retryClipUpload}
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
@@ -1912,8 +2270,11 @@ export default function PlanItemPage() {
                 ) : null}
                 <PoolUploadCard
                   clips={item.clip_assignments ?? []}
+                  pending={pendingClipUploads}
                   uploading={uploading}
                   onFiles={handleFiles}
+                  onCancelUpload={cancelClipUpload}
+                  onRetryUpload={retryClipUpload}
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
@@ -1930,7 +2291,7 @@ export default function PlanItemPage() {
                 itemId={itemId}
                 attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
                 onUseInEdit={promotePoolAsset}
-                attachBusy={uploading || uploaderBusy}
+                attachBusy={uploading || uploaderBusy || hasActivePoolUploads}
                 onAssetContextUpdated={(updated) => {
                   overlaySuggestions.setRows([]);
                   overlaySuggestions.setKeptIds(new Set());
@@ -4522,10 +4883,19 @@ function KriaHelper({
 // Visually matches the shot-slot card: rounded-2xl, border-zinc-200, bg-white.
 // Logic is identical to the old section — only the markup has been trimmed.
 
+// 44px touch target at the base tier (DESIGN.md §8), compact at sm:. Negative
+// margins keep the card from inflating. Shared by the attached-card Remove ×
+// and the pending-card Cancel ×.
+const POOL_CARD_DISMISS_CLASS =
+  "-my-2 -mr-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm leading-5 text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e] sm:my-0 sm:mr-0 sm:h-5 sm:w-5";
+
 function PoolUploadCard({
   clips,
+  pending,
   uploading,
   onFiles,
+  onCancelUpload,
+  onRetryUpload,
   onKeep,
   onRemove,
   onNoteChange,
@@ -4533,8 +4903,11 @@ function PoolUploadCard({
   accept = VIDEO_UPLOAD_ACCEPT,
 }: {
   clips: ClipAssignment[];
+  pending: PendingClipUpload[];
   uploading: boolean;
   onFiles: (files: FileList | null) => void;
+  onCancelUpload: (localId: string) => void;
+  onRetryUpload: (localId: string) => void;
   onKeep: (a: ClipAssignment) => void;
   onRemove: (a: ClipAssignment) => void;
   onNoteChange: (a: ClipAssignment, note: string) => Promise<void>;
@@ -4542,10 +4915,12 @@ function PoolUploadCard({
   maxClips?: number;
   accept?: string;
 }) {
-  const atCap = maxClips != null && clips.length >= maxClips;
+  const inputRef = useRef<HTMLInputElement>(null);
+  // In-flight cards count toward the cap so maxClips=1 can't double-pick.
+  const atCap = maxClips != null && clips.length + pending.length >= maxClips;
   return (
     <div className="mb-8 rounded-xl border border-zinc-200 bg-white p-4">
-      {clips.length > 0 && (
+      {(clips.length > 0 || pending.length > 0) && (
         <ul
           className="mb-4 flex gap-3 overflow-x-auto pb-2"
           aria-label="Uploaded clips"
@@ -4580,7 +4955,7 @@ function PoolUploadCard({
                       <button
                         type="button"
                         onClick={() => onRemove(a)}
-                        className="shrink-0 rounded-full px-1.5 text-sm leading-5 text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e]"
+                        className={POOL_CARD_DISMISS_CLASS}
                         aria-label={`Remove ${name}`}
                       >
                         ×
@@ -4623,28 +4998,142 @@ function PoolUploadCard({
               </li>
             );
           })}
+          {pending.map((p) => (
+            <li
+              key={p.localId}
+              data-testid="pending-clip-card"
+              className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#fafaf8] p-2"
+            >
+              <div className="flex min-w-0 items-start justify-between gap-2">
+                <span
+                  className="min-w-0 truncate text-xs font-medium text-[#0c0c0e]"
+                  title={p.filename}
+                >
+                  {p.filename}
+                </span>
+                {/* No cancel while "Saving…" — the attach is committing; the
+                    clip is deletable from its card the moment it lands. */}
+                {p.status !== "saving" && (
+                  <button
+                    type="button"
+                    onClick={() => onCancelUpload(p.localId)}
+                    aria-label={
+                      p.status === "uploading"
+                        ? `Cancel upload of ${p.filename}`
+                        : `Dismiss ${p.filename}`
+                    }
+                    className={POOL_CARD_DISMISS_CLASS}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              {p.status === "saving" ? (
+                <>
+                  <div
+                    className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={100}
+                    aria-label={`Upload progress for ${p.filename}`}
+                  >
+                    <div className="h-full w-full rounded-full bg-lime-600" />
+                  </div>
+                  <p className="mt-1 text-[11px] text-lime-700">Saving…</p>
+                </>
+              ) : p.status === "uploading" ? (
+                <>
+                  {/* Fill is real XHR byte progress (quantized to whole %) —
+                      never an invented number; the relay phase has no byte
+                      events, so it renders as shimmer (DESIGN.md D6). scaleX
+                      keeps the animation compositor-only. */}
+                  <div
+                    className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={p.indeterminate ? undefined : Math.round(p.progress * 100)}
+                    aria-label={`Upload progress for ${p.filename}`}
+                  >
+                    {p.indeterminate ? (
+                      <div className="h-full w-full rounded-full bg-lime-200 motion-safe:animate-pulse" />
+                    ) : (
+                      <div
+                        className="h-full w-full origin-left rounded-full bg-lime-600 transition-transform"
+                        style={{ transform: `scaleX(${Math.round(p.progress * 100) / 100})` }}
+                      />
+                    )}
+                  </div>
+                  <p className="mt-1 text-[11px] text-lime-700">
+                    {p.indeterminate ? "Uploading…" : `Uploading… ${Math.round(p.progress * 100)}%`}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-1 text-[11px] text-[#3f3f46]">
+                    {p.error ?? "Upload failed"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onRetryUpload(p.localId)}
+                    className="-mb-2 -ml-2 inline-flex h-11 items-center px-2 text-[11px] font-medium text-lime-700 underline-offset-2 hover:underline sm:mb-0 sm:ml-0 sm:h-auto sm:px-0"
+                  >
+                    Retry
+                  </button>
+                </>
+              )}
+            </li>
+          ))}
         </ul>
       )}
       {atCap ? (
-        <p className="text-sm text-[#71717a]">
-          {maxClips === 1
-            ? "One clip added. Remove it above to swap in a different one."
-            : "You've reached the clip limit. Remove one above to add another."}
-        </p>
+        pending.length === 0 && (
+          <p className="text-sm text-[#71717a]">
+            {maxClips === 1
+              ? "One clip added. Remove it above to swap in a different one."
+              : "You've reached the clip limit. Remove one above to add another."}
+          </p>
+        )
       ) : (
-        <label className="block">
-          <span className="sr-only">Upload video clips for this idea</span>
+        <>
           <input
+            ref={inputRef}
             type="file"
             accept={accept}
             multiple={maxClips !== 1}
+            aria-label="Upload video clips for this idea"
+            className="sr-only"
+            tabIndex={-1}
             disabled={uploading}
-            onChange={(e) => onFiles(e.target.files)}
-            className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
+            onChange={(e) => {
+              onFiles(e.target.files);
+              // Reset so re-selecting the same file fires change again, and
+              // Safari stops rendering the chosen filename + thumbnail after
+              // an app-level delete.
+              e.target.value = "";
+            }}
           />
-        </label>
+          {/* Disabled ONLY during narrated pre-processing (voiceover split +
+              save) — a concurrent handleFiles there would double-save the
+              voiceover. Clip TRANSFERS clear `uploading` first, so adding
+              more clips mid-batch stays possible. */}
+          <button
+            type="button"
+            disabled={uploading}
+            onClick={() => inputRef.current?.click()}
+            className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:opacity-40 sm:min-h-0"
+          >
+            {maxClips === 1 ? "Add your clip" : "Add clips"}
+          </button>
+          <p className="mt-2 text-xs text-[#71717a]">
+            Videos stored in iCloud may take a moment to prepare before they appear here.
+          </p>
+        </>
       )}
-      {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
+      {uploading && pending.length === 0 && (
+        <p className="mt-3 text-sm text-lime-700">Uploading…</p>
+      )}
     </div>
   );
 }

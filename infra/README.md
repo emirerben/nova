@@ -4,7 +4,8 @@
 
 Allows production and local web origins to upload directly to signed GCS URLs.
 The `x-goog-if-generation-match` header makes each upload key create-only; keep
-it in the allowlist or browsers will fall back to the slower API relay.
+it in the allowlist or browsers will fall back to the slower API relay (where
+the uploader permits it — see the preview-domain note below).
 
 ```bash
 gcloud storage buckets update gs://$STORAGE_BUCKET --cors-file=infra/gcs-cors.json
@@ -12,7 +13,14 @@ gcloud storage buckets describe gs://$STORAGE_BUCKET --format='default(cors_conf
 ```
 
 Apply this configuration before enabling a web build that sends the precondition
-header. Vercel preview domains are intentionally excluded and use the relay.
+header. Vercel preview domains are intentionally excluded. Generative uploads
+there still fall back to the relay, but plan-path uploads (v0.22.4.0) gate the
+relay on every origin: local-dev hosts (`localhost`, `*.local`, `*.ts.net`,
+RFC-1918 LAN addresses — see `isLocalDevHost` in `src/apps/web/src/lib/plan-api.ts`)
+relay unconditionally; everywhere else — previews and production alike — only
+files ≤4MB relay, because the Vercel proxy caps request bodies at ~4.5MB. Larger
+clips whose direct PUT fails surface a retry message instead of dying cryptically
+mid-relay (tracked in TODOS.md "Upload follow-ups").
 
 ## GCS bucket lifecycle (`gcs-lifecycle.json`)
 

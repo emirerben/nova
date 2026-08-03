@@ -681,7 +681,11 @@ interface UploadUrl {
   gcs_path: string;
 }
 
-function uploadContentTypeForFile(file: File): string {
+// Single source of truth for the declared upload content type. The signing
+// request (requestUploadUrls) and the PUT header MUST both go through this
+// function — a divergence becomes a GCS 403 SignatureDoesNotMatch that Safari
+// surfaces as a bare fetch TypeError.
+export function uploadContentTypeForFile(file: File): string {
   if (file.type) return file.type;
   const name = file.name.toLowerCase();
   if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
@@ -715,24 +719,57 @@ export async function uploadToGcs(uploadUrl: string, file: File): Promise<void> 
     });
     if (!res.ok) throw new Error(`Upload failed (${res.status})`);
   } catch (err) {
-    // "Failed to fetch" (TypeError) = the bucket's CORS config doesn't list this
-    // origin (any localhost) — the request never left the browser. Relay the
-    // SAME signed URL through the API, where CORS doesn't apply.
+    // A fetch TypeError is ambiguous: bucket CORS blocking this origin (any
+    // localhost) OR a network drop mid-PUT (iOS tab suspension, blip). Only
+    // relay where the relay can actually succeed — the Next proxy buffers the
+    // whole body in memory and Vercel caps request bodies at ~4.5MB, so
+    // relaying a real video is a guaranteed cryptic 413/504 after paying the
+    // upload cost twice.
     if (err instanceof TypeError) {
-      await relaySignedUpload(uploadUrl, file);
-      return;
+      if (canRelayFallback(file)) {
+        await relaySignedUpload(uploadUrl, file);
+        return;
+      }
+      throw new Error(UPLOAD_INTERRUPTED_MESSAGE);
     }
     throw err;
   }
 }
 
+// The Next proxy relay buffers the full body in memory and Vercel caps request
+// bodies at ~4.5MB — the relay is only viable for small files, or on local dev
+// where the proxy is local and uncapped.
+const RELAY_FALLBACK_MAX_BYTES = 4 * 1024 * 1024;
+
+// Single source for the interrupted-upload copy — thrown by both uploaders and
+// asserted by tests; editing one copy but not the other would silently diverge.
+export const UPLOAD_INTERRUPTED_MESSAGE = "Upload interrupted. Check your connection and retry.";
+
+// Local-dev origins (incl. testing from a phone against a dev box over LAN /
+// tailscale): the relay proxies to the SAME origin's `next dev`, which buffers
+// locally with no Vercel body cap — any size may relay. Vercel previews are
+// deliberately NOT matched (their proxy IS capped).
+function isLocalDevHost(host: string): boolean {
+  if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") return true;
+  if (host.endsWith(".local") || host.endsWith(".ts.net")) return true;
+  if (/^10\./.test(host) || /^192\.168\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+  return false;
+}
+
+function canRelayFallback(file: File): boolean {
+  const host = typeof window !== "undefined" ? window.location.hostname : "";
+  if (isLocalDevHost(host)) return true;
+  return file.size <= RELAY_FALLBACK_MAX_BYTES;
+}
+
 /** Server-side PUT of `file` to `signedUrl` via the API relay (bucket-CORS bypass). */
-async function relaySignedUpload(signedUrl: string, file: File): Promise<void> {
+async function relaySignedUpload(signedUrl: string, file: File, signal?: AbortSignal): Promise<void> {
   const form = new FormData();
   form.append("file", file, file.name);
   form.append("signed_url", signedUrl);
   form.append("content_type", uploadContentTypeForFile(file));
-  const res = await fetch(`${PLAN_BASE}/uploads/relay`, { method: "POST", body: form });
+  const res = await fetch(`${PLAN_BASE}/uploads/relay`, { method: "POST", body: form, signal });
   if (res.status === 401) throw new NotAuthenticatedError();
   if (!res.ok) {
     let detail = `Upload failed (${res.status})`;
@@ -749,43 +786,94 @@ async function relaySignedUpload(signedUrl: string, file: File): Promise<void> {
 /**
  * PUT a file to GCS with progress reporting and abort support (XHR-based).
  *
- * onProgress is called with a value 0–1 as bytes are sent.
- * Pass an AbortSignal to cancel mid-upload (slot returns to idle; the orphaned
- * GCS object is cleaned up by the 24h lifecycle rule).
+ * onProgress is called with a value 0–1 as bytes are sent. The second arg is
+ * true only while the relay fallback is in flight — fetch-multipart has no
+ * byte events, so that phase is indeterminate (render shimmer, not a number).
+ * Pass an AbortSignal to cancel mid-upload (slot returns to idle). NOTE: a
+ * cancelled/partial object persists under users/… — that prefix has NO
+ * lifecycle delete rule; cleanup is tracked in TODOS.md ("Upload follow-ups").
  */
+// No byte movement for this long aborts the transfer as interrupted — a dead
+// mobile connection with no RST would otherwise freeze the card at N% forever
+// and pin an upload slot. Deliberately activity-based, not a total timeout:
+// large videos on slow links are fine as long as bytes keep flowing.
+const UPLOAD_STALL_TIMEOUT_MS = 60_000;
+const UPLOAD_STALL_CHECK_MS = 10_000;
+
 export function uploadToGcsWithProgress(
   uploadUrl: string,
   file: File,
-  onProgress: (fraction: number) => void,
+  onProgress: (fraction: number, indeterminate?: boolean) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) {
+    // A listener registered after the abort event never fires — reject now or
+    // the full file uploads anyway.
+    return Promise.reject(new DOMException("Upload cancelled", "AbortError"));
+  }
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    let lastActivityAt = Date.now();
+    let stalled = false;
+    const stallTimer = setInterval(() => {
+      if (Date.now() - lastActivityAt > UPLOAD_STALL_TIMEOUT_MS) {
+        stalled = true;
+        xhr.abort();
+      }
+    }, UPLOAD_STALL_CHECK_MS);
+    const settle = <T extends unknown[]>(fn: (...args: T) => void) => {
+      return (...args: T) => {
+        clearInterval(stallTimer);
+        fn(...args);
+      };
+    };
 
     xhr.upload.addEventListener("progress", (e) => {
+      lastActivityAt = Date.now();
       if (e.lengthComputable) onProgress(e.loaded / e.total);
     });
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else reject(new Error(`Upload failed (${xhr.status})`));
-    });
-    // Network-level failure = bucket CORS blocked this origin (any localhost).
-    // Fall back to the API relay; progress becomes indeterminate (0.5) since
-    // fetch-multipart has no upload progress events, then jumps to done.
-    xhr.addEventListener("error", () => {
-      if (signal?.aborted) {
-        reject(new DOMException("Upload cancelled", "AbortError"));
-        return;
-      }
-      onProgress(0.5);
-      relaySignedUpload(uploadUrl, file)
-        .then(() => {
-          onProgress(1);
-          resolve();
-        })
-        .catch(reject);
-    });
-    xhr.addEventListener("abort", () => reject(new DOMException("Upload cancelled", "AbortError")));
+    xhr.addEventListener(
+      "load",
+      settle(() => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`Upload failed (${xhr.status})`));
+      }),
+    );
+    // Network-level failure is ambiguous: bucket CORS blocked this origin
+    // (any localhost) OR the connection dropped mid-PUT. Relay only where the
+    // relay can succeed (see canRelayFallback); progress becomes indeterminate
+    // (0.5) since fetch-multipart has no upload progress events.
+    xhr.addEventListener(
+      "error",
+      settle(() => {
+        if (signal?.aborted) {
+          reject(new DOMException("Upload cancelled", "AbortError"));
+          return;
+        }
+        if (!canRelayFallback(file)) {
+          reject(new Error(UPLOAD_INTERRUPTED_MESSAGE));
+          return;
+        }
+        // Indeterminate: never surface a made-up percent (DESIGN.md D6).
+        onProgress(0.5, true);
+        relaySignedUpload(uploadUrl, file, signal)
+          .then(() => {
+            onProgress(1);
+            resolve();
+          })
+          .catch(reject);
+      }),
+    );
+    xhr.addEventListener(
+      "abort",
+      settle(() => {
+        reject(
+          stalled
+            ? new Error(UPLOAD_INTERRUPTED_MESSAGE)
+            : new DOMException("Upload cancelled", "AbortError"),
+        );
+      }),
+    );
 
     if (signal) {
       signal.addEventListener("abort", () => xhr.abort(), { once: true });
