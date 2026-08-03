@@ -47,7 +47,11 @@ from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
 from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
-from app.pipeline.look_presets import LookPreset, normalize_look_preset
+from app.pipeline.look_presets import (
+    LookPreset,
+    normalize_look_adjustments,
+    normalize_look_preset,
+)
 from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
     MASONRY_MONTAGE_PRESET,
@@ -100,6 +104,7 @@ class _ResolvedTimelineSlot(NamedTuple):
     transition_after: str
     transition_duration_s: float | None
     look_preset: LookPreset
+    look_adjustments: dict | None
 
 
 # Variant 3 (original audio) arrangement: one slot per clip, capped so a 20-clip
@@ -4735,6 +4740,11 @@ def _prepare_timeline_assembly(
                 duration_s=duration_s,
             )
             return None
+        look_preset = normalize_look_preset(slot.get("look_preset"))
+        look_adjustments_model = normalize_look_adjustments(
+            look_preset,
+            slot.get("look_adjustments"),
+        )
         resolved.append(
             _ResolvedTimelineSlot(
                 clip_index,
@@ -4753,7 +4763,12 @@ def _prepare_timeline_assembly(
                     and slot.get("transition_duration_s") is not None
                     else None
                 ),
-                normalize_look_preset(slot.get("look_preset")),
+                look_preset,
+                (
+                    look_adjustments_model.model_dump()
+                    if look_adjustments_model is not None
+                    else None
+                ),
             )
         )
     if not resolved:
@@ -4805,6 +4820,7 @@ def _prepare_timeline_assembly(
                 slot.transition_after,
                 slot.transition_duration_s,
                 slot.look_preset,
+                slot.look_adjustments,
             )
         )
     if not clamped:
@@ -4851,6 +4867,7 @@ def _prepare_timeline_assembly(
                 "transition_in": boundary_transitions[i][0],
                 "transition_duration_s": boundary_transitions[i][1],
                 "look_preset": look_preset,
+                "look_adjustments": look_adjustments,
             },
             clip_id=f"clip_{clip_index}",
             moment={
@@ -4869,6 +4886,7 @@ def _prepare_timeline_assembly(
             _transition_after,
             _transition_duration_s,
             look_preset,
+            look_adjustments,
         ) in enumerate(clamped)
     ]
     return {

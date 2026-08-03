@@ -877,7 +877,14 @@ describe("Director editor operations", () => {
         slotId: "b",
         clipIndex: 1,
         durationS: 3,
-        lookPreset: "stadium_diffusion",
+        lookPreset: "olive_film",
+        lookAdjustments: {
+          intensity: 0.7,
+          warmth: 0.2,
+          contrast: -0.1,
+          grain: 0.3,
+          vignette: 0.4,
+        },
       }),
       slot({ key: "c", slotId: "c", clipIndex: 2, durationS: 3 }),
     ];
@@ -1053,7 +1060,14 @@ describe("Director editor operations", () => {
       clipIndex: 3,
       durationS: 4,
       momentDescription: "Restyled by Nova",
-      lookPreset: "stadium_diffusion",
+      lookPreset: "olive_film",
+      lookAdjustments: {
+        intensity: 0.7,
+        warmth: 0.2,
+        contrast: -0.1,
+        grain: 0.3,
+        vignette: 0.4,
+      },
     });
     expect(result.nextSlots?.some((item) => item.clipIndex === 1)).toBe(false);
   });

@@ -266,11 +266,17 @@ AI's assembly decisions, not pixels.
   pattern). Slots key on `clip_index` into `all_candidates["clip_paths"]` — matcher
   clip_ids are Gemini-ref-derived and unstable. Windows are post-resolution values.
 - **Source-media look:** each slot carries `look_preset: "none" |
-  "stadium_diffusion"`. Stadium Diffusion is one fixed whole-slot treatment with no
-  strength controls. Missing legacy values resolve to `none`; an older client that omits
-  the field preserves the persisted value, explicit `none` clears it, and unknown or null
-  values are rejected. Reorder and source swap keep the slot value, split copies it to
-  both halves, and new slots default to `none`.
+  "olive_film" | "smoky_split_tone" | "stadium_diffusion"`. Original (`none`) remains
+  the exact default bypass, and Stadium Diffusion remains a fixed whole-slot treatment.
+  Olive Film and Smoky Split-Tone persist a `look_adjustments` object with bounded
+  `intensity`, `warmth`, `contrast`, `grain`, and `vignette` controls. Their authored
+  defaults are respectively grain/vignette `0.18/0.22` and `0.36/0.55`, with full
+  intensity and neutral warmth/contrast. Reset restores those authored defaults.
+  Missing legacy values resolve to `none`; an older client that omits both fields
+  preserves the persisted look and controls, explicit `none` clears them, malformed
+  persisted controls fail safe to authored defaults, and invalid route values are
+  rejected. Reorder and source swap keep both fields, split copies them to both halves,
+  and new slots default to `none`.
 - **Render ordering:** the shared `look_presets.py` graph runs after HDR normalization,
   output crop, and the recipe color hint, but before grids, visual blocks, authored text,
   captions, media overlays, and sound effects. Both multi-pass `reframe_and_export` and

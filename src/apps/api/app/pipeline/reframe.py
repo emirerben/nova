@@ -245,6 +245,7 @@ def reframe_and_export(
     keep_segments_punch_in: float | None = None,
     semantic_crop_pulses: list[dict] | None = None,
     look_preset: str = "none",
+    look_adjustments: object = None,
     canvas: Canvas | None = None,
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
@@ -306,6 +307,7 @@ def reframe_and_export(
         grid_highlight_windows=grid_highlight_windows,
         semantic_crop_pulses=semantic_crop_pulses,
         look_preset=look_preset,
+        look_adjustments=look_adjustments,
         canvas=canvas,
     )
 
@@ -453,6 +455,7 @@ def reframe_and_export(
             color_trc=color_trc,
             has_audio=has_audio,
             look_preset=look_preset,
+            look_adjustments=look_adjustments,
             canvas=canvas,
             # keep_segments is provably None here — the mutual-exclusion
             # check above raises before any subprocess run.
@@ -873,6 +876,7 @@ def _build_video_filter(
     grid_highlight_windows: list[tuple[float, float]] | None = None,
     semantic_crop_pulses: list[dict] | None = None,
     look_preset: str = "none",
+    look_adjustments: object = None,
     look_label_prefix: str = "look",
     canvas: Canvas | None = None,
 ) -> list[str]:
@@ -1019,6 +1023,7 @@ def _build_video_filter(
         width=ow,
         height=oh,
         label_prefix=look_label_prefix,
+        adjustments=look_adjustments,
     )
     if look_filter is not None:
         filters.append(look_filter)

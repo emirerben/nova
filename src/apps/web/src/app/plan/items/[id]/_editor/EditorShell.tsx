@@ -73,7 +73,16 @@ import {
   editorCommitStartedRender,
 } from "@/lib/editor-return";
 import { FONT_FACES } from "@/lib/font-faces";
-import { type GenerativeStyleSet, type LookPreset } from "@/lib/generative-api";
+import {
+  type GenerativeStyleSet,
+  type LookAdjustments,
+  type LookPreset,
+} from "@/lib/generative-api";
+import {
+  defaultLookAdjustments,
+  lookAdjustmentsEqual,
+  resolveLookAdjustments,
+} from "@/lib/look-presets";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import {
@@ -178,7 +187,11 @@ import PresetGrid, { presetMatchesFields } from "./PresetGrid";
 import { useVirtualPreview } from "./useVirtualPreview";
 import { useEditorLayoutMode } from "./useEditorLayoutMode";
 import type { EditorLayoutMode } from "./useEditorLayoutMode";
-import { slotsDifferFromBaseline, virtualDeckLookPresetsAtTime } from "./virtual-timeline";
+import {
+  slotsDifferFromBaseline,
+  virtualDeckLookAdjustmentsAtTime,
+  virtualDeckLookPresetsAtTime,
+} from "./virtual-timeline";
 import {
   deleteKeyAllowed,
   escapeAction,
@@ -1615,6 +1628,24 @@ export default function EditorShell({
       virtualPreviewActive,
     ],
   );
+  const virtualDeckLookAdjustments = useMemo(
+    () =>
+      virtualPreviewActive
+        ? virtualDeckLookAdjustmentsAtTime(
+            virtualPreview.timeline,
+            slots,
+            currentTime,
+            virtualPreview.activeDeck,
+          )
+        : { a: null, b: null },
+    [
+      currentTime,
+      slots,
+      virtualPreview.activeDeck,
+      virtualPreview.timeline,
+      virtualPreviewActive,
+    ],
+  );
   const renderedMusicPreviewActive =
     (musicWindowDirty || backgroundMusicDirty) && !virtualPreviewActive && !!virtualMusicAudioUrl;
 
@@ -2623,13 +2654,44 @@ export default function EditorShell({
       history.record();
       setLocalSlots((current) =>
         (current ?? slots).map((slot) =>
-          slot.key === selectedClip.slot.key ? { ...slot, lookPreset: preset } : slot,
+          slot.key === selectedClip.slot.key
+            ? {
+                ...slot,
+                lookPreset: preset,
+                lookAdjustments: defaultLookAdjustments(preset),
+              }
+            : slot,
         ),
       );
       setTimelineDirty(true);
     },
     [clipEditingLocked, history, readOnly, selectedClip, slots],
   );
+
+  const patchSelectedClipLookAdjustments = useCallback(
+    (patch: Partial<LookAdjustments>) => {
+      if (!selectedClip || readOnly || clipEditingLocked) return;
+      const preset = selectedClip.slot.lookPreset ?? "none";
+      const current = resolveLookAdjustments(preset, selectedClip.slot.lookAdjustments);
+      if (!current) return;
+      const next = { ...current, ...patch };
+      if (lookAdjustmentsEqual(current, next)) return;
+      setLocalSlots((local) =>
+        (local ?? slots).map((slot) =>
+          slot.key === selectedClip.slot.key
+            ? { ...slot, lookAdjustments: next }
+            : slot,
+        ),
+      );
+      setTimelineDirty(true);
+    },
+    [clipEditingLocked, readOnly, selectedClip, slots],
+  );
+
+  const recordSelectedClipLookAdjustment = useCallback(() => {
+    if (!selectedClip || readOnly || clipEditingLocked) return;
+    history.record();
+  }, [clipEditingLocked, history, readOnly, selectedClip]);
 
   const previewSelectedClipTiming = useCallback(
     (patch: { inS: number; durationS: number }) => {
@@ -5182,6 +5244,7 @@ export default function EditorShell({
             currentTime={currentTime}
             lookPreset="none"
             virtualDeckLookPresets={virtualDeckLookPresets}
+            virtualDeckLookAdjustments={virtualDeckLookAdjustments}
             playing={playing}
             masonryDurationS={previewDuration}
             zoomPct={100}
@@ -5462,6 +5525,7 @@ export default function EditorShell({
             currentTime={currentTime}
             lookPreset="none"
             virtualDeckLookPresets={virtualDeckLookPresets}
+            virtualDeckLookAdjustments={virtualDeckLookAdjustments}
             playing={playing}
             masonryDurationS={previewDuration}
             zoomPct={zoomPct}
@@ -5512,6 +5576,8 @@ export default function EditorShell({
           onPatchTextTiming={patchSelectedTextTiming}
           onPatchClipTiming={patchSelectedClipTiming}
           onPatchClipLook={patchSelectedClipLook}
+          onPatchClipLookAdjustments={patchSelectedClipLookAdjustments}
+          onRecordClipLookAdjustments={recordSelectedClipLookAdjustment}
           onPreviewClipTiming={previewSelectedClipTiming}
           onRecordClipTiming={recordTimelineDrag}
           onPatchSfx={patchSfx}
@@ -5866,6 +5932,8 @@ export default function EditorShell({
             onPatchTextTiming={patchSelectedTextTiming}
             onPatchClipTiming={patchSelectedClipTiming}
             onPatchClipLook={patchSelectedClipLook}
+            onPatchClipLookAdjustments={patchSelectedClipLookAdjustments}
+            onRecordClipLookAdjustments={recordSelectedClipLookAdjustment}
             onPreviewClipTiming={previewSelectedClipTiming}
             onRecordClipTiming={recordTimelineDrag}
             onPatchSfx={patchSfx}

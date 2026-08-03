@@ -4,6 +4,7 @@ import { render } from "@testing-library/react";
 
 import EditorCanvas from "@/app/plan/items/[id]/_editor/EditorCanvas";
 import type { VirtualPreviewController } from "@/app/plan/items/[id]/_editor/useVirtualPreview";
+import type { LookAdjustments, LookPreset } from "@/lib/generative-api";
 import type { PlanItemVariant } from "@/lib/plan-api";
 
 class ResizeObserverMock {
@@ -24,6 +25,8 @@ const variant = {
 function editorCanvas(
   canvas: { w: number; h: number },
   virtualPreview: VirtualPreviewController | null = null,
+  lookPreset: LookPreset = "none",
+  lookAdjustments: LookAdjustments | null = null,
 ) {
   return (
     <EditorCanvas
@@ -32,6 +35,8 @@ function editorCanvas(
       bars={[]}
       selectedTextId={null}
       currentTime={0}
+      lookPreset={lookPreset}
+      lookAdjustments={lookAdjustments}
       masonryDurationS={8}
       zoomPct={100}
       tool="select"
@@ -109,5 +114,29 @@ describe("EditorCanvas orientation video fit", () => {
       expect(deck).toHaveClass("object-cover");
       expect(deck).not.toHaveClass("object-contain");
     });
+  });
+
+  it("composes customizable video, tint, and grain preview layers", () => {
+    const controls: LookAdjustments = {
+      intensity: 0.8,
+      warmth: 0.1,
+      contrast: -0.1,
+      grain: 0.3,
+      vignette: 0.4,
+    };
+    const view = render(editorCanvas({ w: 1080, h: 1920 }, null, "olive_film", controls));
+    const video = view.container.querySelector("video");
+
+    expect(video?.style.filter).toContain("sepia(");
+    expect(
+      view.container.querySelector('[data-look-preview-layer="tint"]'),
+    ).toHaveAttribute("data-look-preview-preset", "olive_film");
+    expect(
+      view.container.querySelector('[data-look-preview-layer="grain"]'),
+    ).toHaveAttribute("data-look-preview-preset", "olive_film");
+
+    view.rerender(editorCanvas({ w: 1080, h: 1920 }));
+    expect(view.container.querySelector("video")?.style.filter).toBe("");
+    expect(view.container.querySelector("[data-look-preview-layer]")).toBeNull();
   });
 });

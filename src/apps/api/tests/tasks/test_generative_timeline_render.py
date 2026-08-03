@@ -795,9 +795,21 @@ def test_prepare_timeline_assembly_preserves_per_boundary_transition_duration(
 
 def test_prepare_timeline_assembly_carries_source_look_to_slot_plan(monkeypatch, tmp_path):
     _patch_timeline_io(monkeypatch, duration_s=6.0)
+    controls = {
+        "intensity": 0.72,
+        "warmth": 0.2,
+        "contrast": -0.1,
+        "grain": 0.4,
+        "vignette": 0.3,
+    }
     out = gb._prepare_timeline_assembly(
         [
-            _tl_slot(0, duration_s=2.0, look_preset="stadium_diffusion"),
+            _tl_slot(
+                0,
+                duration_s=2.0,
+                look_preset="olive_film",
+                look_adjustments=controls,
+            ),
             _tl_slot(1, duration_s=2.0),
         ],
         CLIP_PATHS,
@@ -807,9 +819,11 @@ def test_prepare_timeline_assembly_carries_source_look_to_slot_plan(monkeypatch,
 
     assert out is not None
     assert [step.slot["look_preset"] for step in out["steps"]] == [
-        "stadium_diffusion",
+        "olive_film",
         "none",
     ]
+    assert out["steps"][0].slot["look_adjustments"] == controls
+    assert out["steps"][1].slot["look_adjustments"] is None
 
 
 def test_prepare_timeline_assembly_drops_collapsed_slots(monkeypatch, tmp_path):

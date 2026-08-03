@@ -65,3 +65,45 @@ def test_source_look_reaches_single_pass_spec(tmp_path):
 
     mock_single.assert_called_once()
     assert mock_single.call_args.args[0].inputs[0].look_preset == "stadium_diffusion"
+
+
+def test_custom_reference_look_controls_reach_both_render_paths(tmp_path):
+    controls = {
+        "intensity": 0.7,
+        "warmth": -0.25,
+        "contrast": 0.15,
+        "grain": 0.45,
+        "vignette": 0.6,
+    }
+    step, probe, clip_file = _look_step_and_probe(tmp_path)
+    step.slot["look_preset"] = "smoky_split_tone"
+    step.slot["look_adjustments"] = controls
+
+    with (
+        patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+        patch("app.tasks.template_orchestrate.shutil.copy2"),
+    ):
+        _assemble_clips(
+            steps=[step],
+            clip_id_to_local={step.clip_id: str(clip_file)},
+            clip_probe_map={str(clip_file): probe},
+            output_path=str(tmp_path / "multi.mp4"),
+            tmpdir=str(tmp_path),
+        )
+
+    assert mock_reframe.call_args.kwargs["look_preset"] == "smoky_split_tone"
+    assert mock_reframe.call_args.kwargs["look_adjustments"] == controls
+
+    with patch("app.tasks.template_orchestrate.run_single_pass") as mock_single:
+        _assemble_clips(
+            steps=[step],
+            clip_id_to_local={step.clip_id: str(clip_file)},
+            clip_probe_map={str(clip_file): probe},
+            output_path=str(tmp_path / "single.mp4"),
+            tmpdir=str(tmp_path),
+            force_single_pass=True,
+        )
+
+    rendered = mock_single.call_args.args[0].inputs[0]
+    assert rendered.look_preset == "smoky_split_tone"
+    assert rendered.look_adjustments == controls

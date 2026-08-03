@@ -1316,6 +1316,9 @@ export function applyCopilotOps(
         transitionAfter: source.transitionAfter ?? "cut",
         transitionDurationS: source.transitionDurationS ?? null,
         lookPreset: source.lookPreset ?? "none",
+        lookAdjustments: source.lookAdjustments
+          ? { ...source.lookAdjustments }
+          : null,
       };
       workingSlots = slots.map((slot, index) => (index === sourceIndex ? replacement : slot));
       nextSlots = workingSlots;
