@@ -12,10 +12,12 @@
 
 import type {
   EditorTransition,
+  LookAdjustments,
   LookPreset,
   TimelineResponse,
   TimelineSlot,
 } from "@/lib/generative-api";
+import { lookAdjustmentsEqual } from "@/lib/look-presets";
 
 // ── No-grid (original_text) constraints ──────────────────────────────────────
 export const SECONDS_STEP = 0.5;
@@ -39,6 +41,8 @@ export interface DraftSlot {
   transitionDurationS?: number | null;
   /** Fixed source-media look for this complete slot. */
   lookPreset?: LookPreset;
+  /** Per-clip controls for Olive Film and Smoky Split-Tone. */
+  lookAdjustments?: LookAdjustments | null;
 }
 
 let addCounter = 0;
@@ -62,6 +66,7 @@ export function draftFromTimeline(timeline: TimelineResponse): DraftSlot[] {
       transitionAfter: s.transition_after ?? "cut",
       transitionDurationS: s.transition_duration_s ?? null,
       lookPreset: s.look_preset ?? "none",
+      lookAdjustments: s.look_adjustments ?? null,
     }));
 }
 
@@ -258,7 +263,8 @@ export function fieldsDiffer(a: DraftSlot, b: DraftSlot): boolean {
     (a.durationBeats == null &&
       Math.abs((a.durationS ?? 0) - (b.durationS ?? 0)) > 1e-6) ||
     a.removed !== b.removed ||
-    (a.lookPreset ?? "none") !== (b.lookPreset ?? "none")
+    ((a.lookPreset ?? "none") !== (b.lookPreset ?? "none") ||
+      !lookAdjustmentsEqual(a.lookAdjustments, b.lookAdjustments))
   );
 }
 

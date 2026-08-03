@@ -921,6 +921,7 @@ async def test_edit_persists_before_enqueue(monkeypatch):
         "moment_energy",
         "moment_description",
         "look_preset",
+        "look_adjustments",
         "removed",
         "transition_after",
         "transition_duration_s",

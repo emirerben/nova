@@ -6,6 +6,7 @@ import {
   mapVirtualTime,
   slotsDifferFromBaseline,
   transitionPreviewAtTime,
+  virtualDeckLookAdjustmentsAtTime,
   virtualDeckLookPresetsAtTime,
 } from "@/app/plan/items/[id]/_editor/virtual-timeline";
 
@@ -262,4 +263,45 @@ describe("virtual timeline", () => {
       });
     },
   );
+
+  it("keeps outgoing and incoming look controls scoped to their decks", () => {
+    const olive = {
+      intensity: 0.8,
+      warmth: 0.1,
+      contrast: -0.1,
+      grain: 0.2,
+      vignette: 0.3,
+    };
+    const smoky = {
+      intensity: 1,
+      warmth: -0.2,
+      contrast: 0.2,
+      grain: 0.5,
+      vignette: 0.6,
+    };
+    const slots = [
+      slot({
+        key: "a",
+        clipIndex: 0,
+        durationS: 2,
+        transitionAfter: "crossfade",
+        transitionDurationS: 0.2,
+        lookPreset: "olive_film",
+        lookAdjustments: olive,
+      }),
+      slot({
+        key: "b",
+        clipIndex: 1,
+        durationS: 2,
+        lookPreset: "smoky_split_tone",
+        lookAdjustments: smoky,
+      }),
+    ];
+    const timeline = buildVirtualTimeline(slots, clips);
+
+    expect(virtualDeckLookAdjustmentsAtTime(timeline, slots, 1.9, "a")).toEqual({
+      a: olive,
+      b: smoky,
+    });
+  });
 });

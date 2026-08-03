@@ -276,6 +276,26 @@ describe("EditorShell — clip lane locks for ANY server timeline ineligibility"
     });
   });
 
+  it("records one undo step for an entire look-slider drag", async () => {
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Clip 1,/ }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Olive Film" }));
+    const warmth = screen.getByRole("slider", { name: "Look warmth" });
+
+    fireEvent.pointerDown(warmth);
+    fireEvent.change(warmth, { target: { value: "20" } });
+    fireEvent.change(warmth, { target: { value: "30" } });
+    expect(screen.getByRole("slider", { name: "Look warmth" })).toHaveValue("30");
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("radio", { name: "Olive Film" })).toBeChecked();
+    expect(screen.getByRole("slider", { name: "Look warmth" })).toHaveValue("0");
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("radio", { name: "Original" })).toBeChecked();
+  });
+
   it("does not double-apply a persisted look over the rendered preview", async () => {
     mockTimelineLookPreset = "stadium_diffusion";
     await renderShell(makeVariant(EDITABLE_CAPABILITIES));

@@ -1,5 +1,11 @@
-import type { EditorTransition, LookPreset, TimelineClip } from "@/lib/generative-api";
+import type {
+  EditorTransition,
+  LookAdjustments,
+  LookPreset,
+  TimelineClip,
+} from "@/lib/generative-api";
 import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
+import { lookAdjustmentsEqual } from "@/lib/look-presets";
 
 const EPSILON = 1e-6;
 
@@ -52,6 +58,26 @@ export function virtualDeckLookPresetsAtTime(
     if (incoming) {
       result[activeDeck === "a" ? "b" : "a"] =
         slots[incoming.slotIndex]?.lookPreset ?? "none";
+    }
+  }
+  return result;
+}
+
+export function virtualDeckLookAdjustmentsAtTime(
+  timeline: VirtualTimeline,
+  slots: DraftSlot[],
+  currentTimeS: number,
+  activeDeck: "a" | "b",
+): Record<"a" | "b", LookAdjustments | null> {
+  const result: Record<"a" | "b", LookAdjustments | null> = { a: null, b: null };
+  const mapping = mapVirtualTime(timeline, currentTimeS);
+  if (!mapping) return result;
+  result[activeDeck] = slots[mapping.entry.slotIndex]?.lookAdjustments ?? null;
+  if (transitionPreviewAtTime(timeline, currentTimeS)) {
+    const incoming = nextVirtualEntry(timeline, mapping.entryIndex);
+    if (incoming) {
+      const incomingDeck = activeDeck === "a" ? "b" : "a";
+      result[incomingDeck] = slots[incoming.slotIndex]?.lookAdjustments ?? null;
     }
   }
   return result;
@@ -199,6 +225,7 @@ export function slotsDifferFromBaseline(
       a.durationBeats !== b.durationBeats ||
       a.removed !== b.removed ||
       (a.lookPreset ?? "none") !== (b.lookPreset ?? "none") ||
+      !lookAdjustmentsEqual(a.lookAdjustments, b.lookAdjustments) ||
       (a.transitionAfter ?? "cut") !== (b.transitionAfter ?? "cut") ||
       Math.abs((a.transitionDurationS ?? 0) - (b.transitionDurationS ?? 0)) > EPSILON
     ) {

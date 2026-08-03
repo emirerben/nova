@@ -52,7 +52,12 @@ import {
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
 import type { DraftSlot } from "@/app/generative/timeline-math";
-import type { LookPreset } from "@/lib/generative-api";
+import type { LookAdjustments, LookPreset } from "@/lib/generative-api";
+import {
+  defaultLookAdjustments,
+  isCustomizableLook,
+  resolveLookAdjustments,
+} from "@/lib/look-presets";
 import type { EditorSelection } from "./useEditorSelection";
 import type { InspectorTab } from "./InspectorRail";
 import { normalizeEditableHex } from "./editor-color";
@@ -155,6 +160,8 @@ export default function InspectorPanel({
   onPatchTextTiming,
   onPatchClipTiming,
   onPatchClipLook,
+  onPatchClipLookAdjustments,
+  onRecordClipLookAdjustments,
   onPreviewClipTiming,
   onRecordClipTiming,
   onPatchSfx,
@@ -217,6 +224,8 @@ export default function InspectorPanel({
   onPatchTextTiming: (patch: { start_s?: number; end_s?: number }) => void;
   onPatchClipTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
   onPatchClipLook?: (preset: LookPreset) => void;
+  onPatchClipLookAdjustments?: (patch: Partial<LookAdjustments>) => void;
+  onRecordClipLookAdjustments?: () => void;
   onPreviewClipTiming: (patch: { inS: number; durationS: number }) => void;
   onRecordClipTiming: () => void;
   onPatchSfx: (id: string, patch: Partial<SoundEffectPlacement>) => void;
@@ -337,6 +346,8 @@ export default function InspectorPanel({
           timing={clipTiming}
           onPatchTiming={onPatchClipTiming}
           onPatchLook={onPatchClipLook}
+          onPatchLookAdjustments={onPatchClipLookAdjustments}
+          onRecordLookAdjustments={onRecordClipLookAdjustments}
           onPreviewTiming={onPreviewClipTiming}
           onRecordTimingEdit={onRecordClipTiming}
           onClose={onClose}
@@ -1913,6 +1924,8 @@ function ClipInspector({
   timing,
   onPatchTiming,
   onPatchLook,
+  onPatchLookAdjustments,
+  onRecordLookAdjustments,
   onPreviewTiming,
   onRecordTimingEdit,
   onClose,
@@ -1920,6 +1933,8 @@ function ClipInspector({
   timing: InspectorClipTiming;
   onPatchTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
   onPatchLook?: (preset: LookPreset) => void;
+  onPatchLookAdjustments?: (patch: Partial<LookAdjustments>) => void;
+  onRecordLookAdjustments?: () => void;
   onPreviewTiming: (patch: { inS: number; durationS: number }) => void;
   onRecordTimingEdit: () => void;
   onClose: () => void;
@@ -1942,6 +1957,11 @@ function ClipInspector({
   const rangeLeftPct = sourceDurationS > 0 ? (inS / sourceDurationS) * 100 : 0;
   const rangeWidthPct =
     sourceDurationS > 0 ? (durationS / sourceDurationS) * 100 : 100;
+  const selectedLook = timing.slot.lookPreset ?? "none";
+  const lookControls = resolveLookAdjustments(
+    selectedLook,
+    timing.slot.lookAdjustments,
+  );
 
   useEffect(() => {
     const video = videoRef.current;
@@ -2021,10 +2041,12 @@ function ClipInspector({
           {(
             [
               ["none", "Original"],
+              ["olive_film", "Olive Film"],
+              ["smoky_split_tone", "Smoky Split-Tone"],
               ["stadium_diffusion", "Stadium Diffusion"],
             ] as const
           ).map(([preset, label]) => {
-            const selected = (timing.slot.lookPreset ?? "none") === preset;
+            const selected = selectedLook === preset;
             return (
               <label
                 key={preset}
@@ -2050,8 +2072,83 @@ function ClipInspector({
           })}
         </div>
         <p className="mt-2 text-[11px] leading-relaxed text-[#71717a]">
-          Diffusion, optical edge pull, cool shadows, warm highlights, and film grain.
+          {selectedLook === "olive_film"
+            ? "Warm olive highlights, green-cool shadows, soft highlights, and restrained colour."
+            : selectedLook === "smoky_split_tone"
+              ? "A stronger warm/teal split with softened texture, grain, and a deeper vignette."
+              : selectedLook === "stadium_diffusion"
+                ? "Diffusion, optical edge pull, cool shadows, warm highlights, and film grain."
+                : "No source-media colour treatment."}
         </p>
+
+        {isCustomizableLook(selectedLook) && lookControls && (
+          <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/70 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#71717a]">
+                Customize
+              </span>
+              <button
+                type="button"
+                className="text-[11px] font-semibold text-[#52525b] underline decoration-zinc-300 underline-offset-2 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                onClick={() => {
+                  const defaults = defaultLookAdjustments(selectedLook);
+                  if (defaults) {
+                    onRecordLookAdjustments?.();
+                    onPatchLookAdjustments?.(defaults);
+                  }
+                }}
+              >
+                Reset
+              </button>
+            </div>
+            <div className="mt-3 space-y-3">
+              {(
+                [
+                  ["intensity", "Strength", 0, 100, Math.round(lookControls.intensity * 100), "%"],
+                  ["warmth", "Warmth", -100, 100, Math.round(lookControls.warmth * 100), ""],
+                  ["contrast", "Contrast", -100, 100, Math.round(lookControls.contrast * 100), ""],
+                  ["grain", "Grain", 0, 100, Math.round(lookControls.grain * 100), "%"],
+                  ["vignette", "Vignette", 0, 100, Math.round(lookControls.vignette * 100), "%"],
+                ] as const
+              ).map(([key, label, min, max, value, suffix]) => (
+                <label key={key} className="block">
+                  <span className="mb-1 flex items-center justify-between text-[11px] text-[#52525b]">
+                    <span className="font-medium">{label}</span>
+                    <span className="tabular-nums text-[#71717a]">
+                      {value > 0 && (key === "warmth" || key === "contrast") ? "+" : ""}
+                      {value}
+                      {suffix}
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    aria-label={`Look ${label.toLowerCase()}`}
+                    min={min}
+                    max={max}
+                    step={1}
+                    value={value}
+                    onPointerDown={() => onRecordLookAdjustments?.()}
+                    onKeyDown={(event) => {
+                      if (
+                        ["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "End", "Home", "PageDown", "PageUp"].includes(
+                          event.key,
+                        )
+                      ) {
+                        onRecordLookAdjustments?.();
+                      }
+                    }}
+                    onChange={(event) =>
+                      onPatchLookAdjustments?.({
+                        [key]: Number(event.target.value) / 100,
+                      })
+                    }
+                    className="block h-11 w-full cursor-pointer accent-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
       </fieldset>
 
       <div className="mt-4">

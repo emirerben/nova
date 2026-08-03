@@ -2426,6 +2426,7 @@ class SlotPlan:
     grid_highlight_color: str = "#E63946"
     grid_highlight_windows: list[tuple[float, float]] | None = None
     look_preset: str = "none"
+    look_adjustments: dict | None = None
     canvas: Canvas | None = None
 
 
@@ -2851,9 +2852,21 @@ def _plan_slots(
         )
 
         grid_params = _extract_grid_params(step.slot)
-        from app.pipeline.look_presets import normalize_look_preset  # noqa: PLC0415
+        from app.pipeline.look_presets import (  # noqa: PLC0415
+            normalize_look_adjustments,
+            normalize_look_preset,
+        )
 
         slot_look_preset = normalize_look_preset(step.slot.get("look_preset"))
+        slot_look_adjustments_model = normalize_look_adjustments(
+            slot_look_preset,
+            step.slot.get("look_adjustments"),
+        )
+        slot_look_adjustments = (
+            slot_look_adjustments_model.model_dump()
+            if slot_look_adjustments_model is not None
+            else None
+        )
 
         plans.append(
             SlotPlan(
@@ -2872,6 +2885,7 @@ def _plan_slots(
                 has_audio=has_audio,
                 output_fit=slot_output_fit,
                 look_preset=slot_look_preset,
+                look_adjustments=slot_look_adjustments,
                 canvas=canvas,
                 **grid_params,
             )
@@ -2903,6 +2917,7 @@ def _render_planned_slot(plan: SlotPlan) -> str:
         grid_highlight_color=plan.grid_highlight_color,
         grid_highlight_windows=plan.grid_highlight_windows,
         look_preset=plan.look_preset,
+        look_adjustments=plan.look_adjustments,
         color_trc=plan.color_trc,
         has_audio=plan.has_audio,
         canvas=plan.canvas,
@@ -3122,6 +3137,7 @@ def _build_single_pass_spec(
                 has_audio=plan.has_audio,
                 has_grid=plan.has_grid,
                 look_preset=plan.look_preset,
+                look_adjustments=plan.look_adjustments,
                 grid_params={
                     "grid_color": plan.grid_color,
                     "grid_opacity": plan.grid_opacity,

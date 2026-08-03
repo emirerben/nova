@@ -32,7 +32,14 @@ describe("buildEditorCommitRequest", () => {
           durationS: 1.2,
           durationBeats: null,
           removed: false,
-          lookPreset: "stadium_diffusion",
+          lookPreset: "olive_film",
+          lookAdjustments: {
+            intensity: 0.75,
+            warmth: 0.2,
+            contrast: -0.1,
+            grain: 0.3,
+            vignette: 0.4,
+          },
         },
         {
           slotId: null,
@@ -94,7 +101,14 @@ describe("buildEditorCommitRequest", () => {
           removed: false,
           transition_after: "cut",
           transition_duration_s: null,
-          look_preset: "stadium_diffusion",
+          look_preset: "olive_film",
+          look_adjustments: {
+            intensity: 0.75,
+            warmth: 0.2,
+            contrast: -0.1,
+            grain: 0.3,
+            vignette: 0.4,
+          },
         },
         {
           slot_id: null,

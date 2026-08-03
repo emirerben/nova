@@ -27,7 +27,8 @@ import type {
   TextElement,
   VisualBlock,
 } from "@/lib/plan-api";
-import type { LookPreset } from "@/lib/generative-api";
+import type { LookAdjustments, LookPreset } from "@/lib/generative-api";
+import { lookPreviewStyles } from "@/lib/look-presets";
 import { cameraScaleAt } from "@/lib/camera-effects";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import {
@@ -208,7 +209,9 @@ export default function EditorCanvas({
   flashOverlayIds,
   currentTime,
   lookPreset = "none",
+  lookAdjustments = null,
   virtualDeckLookPresets = { a: "none", b: "none" },
+  virtualDeckLookAdjustments = { a: null, b: null },
   playing = false,
   masonryDurationS,
   zoomPct,
@@ -255,7 +258,9 @@ export default function EditorCanvas({
   currentTime: number;
   /** Close CSS approximation; the saved FFmpeg render is authoritative. */
   lookPreset?: LookPreset;
+  lookAdjustments?: LookAdjustments | null;
   virtualDeckLookPresets?: Record<"a" | "b", LookPreset>;
+  virtualDeckLookAdjustments?: Record<"a" | "b", LookAdjustments | null>;
   playing?: boolean;
   /** Current preview/render duration used by the masonry board pan. */
   masonryDurationS: number;
@@ -862,51 +867,68 @@ export default function EditorCanvas({
   // its historical contain behavior.
   const videoFitClass = canvas.w > canvas.h ? "object-cover" : "object-contain";
   const cameraScale = cameraScaleAt(cameraEffects, currentTime);
-  const stadiumLookActive = lookPreset === "stadium_diffusion";
+  const activeLookStyles = lookPreviewStyles(lookPreset, lookAdjustments);
   const baseCameraTransform = {
     transform: `scale(${cameraScale})`,
     transformOrigin: "50% 50%",
     zIndex: EDITOR_STAGE_Z.video,
   };
-  const stadiumFilter = "contrast(0.94) saturate(0.95) brightness(0.985)";
   const cameraTransform = {
     ...baseCameraTransform,
-    filter: stadiumLookActive ? stadiumFilter : undefined,
+    ...activeLookStyles.video,
   };
-  const virtualVideoStyle = (deck: "a" | "b"): React.CSSProperties => ({
-    ...baseCameraTransform,
-    filter: virtualDeckLookPresets[deck] === "stadium_diffusion" ? stadiumFilter : undefined,
-  });
-  const stadiumPreviewLayers = (active: boolean) =>
-    active ? (
+  const virtualVideoStyle = (deck: "a" | "b"): React.CSSProperties => {
+    const styles = lookPreviewStyles(
+      virtualDeckLookPresets[deck],
+      virtualDeckLookAdjustments[deck],
+    );
+    return { ...baseCameraTransform, ...styles.video };
+  };
+  const lookPreviewLayers = (
+    preset: LookPreset,
+    adjustments?: LookAdjustments | null,
+  ) => {
+    const styles = lookPreviewStyles(preset, adjustments);
+    if (preset === "none") return null;
+    return (
       <>
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -inset-[2.5%]"
-          style={{
-            zIndex: EDITOR_STAGE_Z.video + 1,
-            transform: "scale(1.035)",
-            backdropFilter: "blur(2.5px) saturate(0.96)",
-            WebkitBackdropFilter: "blur(2.5px) saturate(0.96)",
-            maskImage:
-              "radial-gradient(ellipse at center, transparent 0 40%, rgba(0,0,0,.3) 58%, #000 92%)",
-            WebkitMaskImage:
-              "radial-gradient(ellipse at center, transparent 0 40%, rgba(0,0,0,.3) 58%, #000 92%)",
-          }}
-        />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
-          style={{
-            zIndex: EDITOR_STAGE_Z.video + 1,
-            background:
-              "radial-gradient(ellipse at 50% 42%, rgba(255,224,190,.055) 0 30%, transparent 52%, rgba(7,24,29,.20) 100%)",
-            boxShadow: "inset 0 0 42px rgba(3,12,15,.22)",
-            mixBlendMode: "normal",
-          }}
-        />
+        {preset === "stadium_diffusion" && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -inset-[2.5%]"
+            style={{
+              zIndex: EDITOR_STAGE_Z.video + 1,
+              transform: "scale(1.035)",
+              backdropFilter: "blur(2.5px) saturate(0.96)",
+              WebkitBackdropFilter: "blur(2.5px) saturate(0.96)",
+              maskImage:
+                "radial-gradient(ellipse at center, transparent 0 40%, rgba(0,0,0,.3) 58%, #000 92%)",
+              WebkitMaskImage:
+                "radial-gradient(ellipse at center, transparent 0 40%, rgba(0,0,0,.3) 58%, #000 92%)",
+            }}
+          />
+        )}
+        {styles.tint && (
+          <div
+            aria-hidden="true"
+            data-look-preview-layer="tint"
+            data-look-preview-preset={preset}
+            className="pointer-events-none absolute inset-0"
+            style={{ zIndex: EDITOR_STAGE_Z.video + 1, ...styles.tint }}
+          />
+        )}
+        {styles.grain && (
+          <div
+            aria-hidden="true"
+            data-look-preview-layer="grain"
+            data-look-preview-preset={preset}
+            className="pointer-events-none absolute inset-0"
+            style={{ zIndex: EDITOR_STAGE_Z.video + 1, ...styles.grain }}
+          />
+        )}
       </>
-    ) : null;
+    );
+  };
   const cssPixelsPerCanvasPixel = stageSize.h > 0 ? stageSize.h / canvas.h : 0;
   const dissolvePreviewProgress = reducedMotion
     ? 0
@@ -1032,8 +1054,9 @@ export default function EditorCanvas({
                     className={`pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`}
                     style={virtualVideoStyle("a")}
                   />
-                  {stadiumPreviewLayers(
-                    virtualDeckLookPresets.a === "stadium_diffusion",
+                  {lookPreviewLayers(
+                    virtualDeckLookPresets.a,
+                    virtualDeckLookAdjustments.a,
                   )}
                 </div>
                 <div
@@ -1048,8 +1071,9 @@ export default function EditorCanvas({
                     className={`pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`}
                     style={virtualVideoStyle("b")}
                   />
-                  {stadiumPreviewLayers(
-                    virtualDeckLookPresets.b === "stadium_diffusion",
+                  {lookPreviewLayers(
+                    virtualDeckLookPresets.b,
+                    virtualDeckLookAdjustments.b,
                   )}
                 </div>
                 {transitionOverlayOpacity > 0 && (
@@ -1115,7 +1139,9 @@ export default function EditorCanvas({
               </div>
             )}
 
-            {!virtualPreview && hasPreview && stadiumPreviewLayers(stadiumLookActive)}
+            {!virtualPreview &&
+              hasPreview &&
+              lookPreviewLayers(lookPreset, lookAdjustments)}
 
             <VisualBlocksLayer
               blocks={visualBlocks}

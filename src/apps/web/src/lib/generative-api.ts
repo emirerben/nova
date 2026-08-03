@@ -576,7 +576,19 @@ export type TimelineErrorCode =
   | "sources_expired";
 
 export type EditorTransition = "cut" | "crossfade" | "dip_to_black" | "flash";
-export type LookPreset = "none" | "stadium_diffusion";
+export type LookPreset =
+  | "none"
+  | "stadium_diffusion"
+  | "olive_film"
+  | "smoky_split_tone";
+
+export interface LookAdjustments {
+  intensity: number;
+  warmth: number;
+  contrast: number;
+  grain: number;
+  vignette: number;
+}
 
 export interface TimelineSlot {
   slot_id: string;
@@ -595,6 +607,7 @@ export interface TimelineSlot {
   transition_after?: EditorTransition;
   transition_duration_s?: number | null;
   look_preset?: LookPreset;
+  look_adjustments?: LookAdjustments | null;
 }
 
 export interface TimelineClip {
@@ -627,6 +640,7 @@ export interface TimelineEditSlotPayload {
   transition_after?: EditorTransition;
   transition_duration_s?: number | null;
   look_preset?: LookPreset;
+  look_adjustments?: LookAdjustments | null;
 }
 
 /** Timeline error with the machine code preserved (404 → code null). */

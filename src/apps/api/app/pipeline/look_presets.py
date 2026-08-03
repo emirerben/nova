@@ -10,10 +10,47 @@ from __future__ import annotations
 
 from typing import Literal, cast
 
-LookPreset = Literal["none", "stadium_diffusion"]
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-LOOK_PRESETS = frozenset({"none", "stadium_diffusion"})
+LookPreset = Literal["none", "stadium_diffusion", "olive_film", "smoky_split_tone"]
+
+LOOK_PRESETS = frozenset({"none", "stadium_diffusion", "olive_film", "smoky_split_tone"})
 DEFAULT_LOOK_PRESET: LookPreset = "none"
+
+
+class LookAdjustments(BaseModel):
+    """User-tunable controls for the two cinematic source looks.
+
+    Strength scales the authored grade. Warmth and contrast are signed trims
+    around that grade; grain and vignette are absolute amounts so either can
+    be removed without weakening the color treatment.
+    """
+
+    intensity: float = Field(ge=0.0, le=1.0)
+    warmth: float = Field(ge=-1.0, le=1.0)
+    contrast: float = Field(ge=-1.0, le=1.0)
+    grain: float = Field(ge=0.0, le=1.0)
+    vignette: float = Field(ge=0.0, le=1.0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+_LOOK_DEFAULTS: dict[LookPreset, LookAdjustments] = {
+    "olive_film": LookAdjustments(
+        intensity=1.0,
+        warmth=0.0,
+        contrast=0.0,
+        grain=0.18,
+        vignette=0.22,
+    ),
+    "smoky_split_tone": LookAdjustments(
+        intensity=1.0,
+        warmth=0.0,
+        contrast=0.0,
+        grain=0.36,
+        vignette=0.55,
+    ),
+}
 
 
 def normalize_look_preset(value: object) -> LookPreset:
@@ -25,9 +62,164 @@ def normalize_look_preset(value: object) -> LookPreset:
     raise ValueError(f"Unknown look preset: {value!r}")
 
 
+def default_look_adjustments(value: object) -> LookAdjustments | None:
+    """Return a fresh authored default for a customizable preset."""
+    preset = normalize_look_preset(value)
+    default = _LOOK_DEFAULTS.get(preset)
+    return default.model_copy() if default is not None else None
+
+
+def normalize_look_adjustments(
+    preset_value: object,
+    value: object,
+) -> LookAdjustments | None:
+    """Validate persisted controls, failing safe to the preset defaults.
+
+    Route payloads are rejected by Pydantic before persistence. This tolerant
+    boundary is for legacy or manually edited JSONB reaching a worker.
+    """
+    default = default_look_adjustments(preset_value)
+    if default is None:
+        return None
+    if value is None:
+        return default
+    if isinstance(value, LookAdjustments):
+        return value.model_copy()
+    try:
+        return LookAdjustments.model_validate(value)
+    except (TypeError, ValidationError):
+        return default
+
+
 def _even(value: float, *, minimum: int = 2) -> int:
     rounded = max(minimum, int(round(value)))
     return rounded if rounded % 2 == 0 else rounded + 1
+
+
+def _validate_filter_args(width: int, height: int, label_prefix: str) -> None:
+    if width <= 0 or height <= 0:
+        raise ValueError("Look preset dimensions must be positive")
+    if not label_prefix.replace("_", "").isalnum():
+        raise ValueError("Look preset label prefix must be alphanumeric")
+
+
+def _film_grade_filter(
+    preset: Literal["olive_film", "smoky_split_tone"],
+    *,
+    width: int,
+    height: int,
+    adjustments: object = None,
+    label_prefix: str = "film",
+) -> str:
+    """Build the reference-derived, footage-only cinematic grade.
+
+    Olive Film mirrors the Instagram reference's yellow/olive highlights,
+    green-cool shadows, restrained saturation, and soft highlight rolloff.
+    Smoky Split-Tone mirrors the YouTube reference's stronger warm/teal split,
+    deeper contrast, diffusion, grain, and vignette. It intentionally does not
+    synthesize smoke: the heavy haze in that reference belongs to the footage.
+    """
+    _validate_filter_args(width, height, label_prefix)
+    controls = normalize_look_adjustments(preset, adjustments)
+    assert controls is not None
+
+    strength = controls.intensity
+    warmth = controls.warmth
+    contrast_trim = controls.contrast
+
+    if preset == "olive_film":
+        black = 0.018 * strength
+        shadow = 0.18 - 0.012 * strength
+        mid = 0.50 - 0.006 * strength
+        high = 0.82 + 0.018 * strength
+        white = 1.0 - 0.018 * strength
+        shadow_rgb = (-0.024 * strength, 0.034 * strength, 0.010 * strength)
+        high_rgb = (0.055 * strength, 0.026 * strength, -0.038 * strength)
+        base_contrast = 1.0 - 0.045 * strength
+        saturation = 1.0 - 0.11 * strength
+        gamma = 1.0 + 0.018 * strength
+        softness = -0.18 * strength
+        seed = 6413
+    else:
+        black = 0.010 * strength
+        shadow = 0.18 - 0.020 * strength
+        mid = 0.50 - 0.012 * strength
+        high = 0.82 + 0.026 * strength
+        white = 1.0 - 0.012 * strength
+        shadow_rgb = (-0.038 * strength, 0.028 * strength, 0.052 * strength)
+        high_rgb = (0.072 * strength, 0.020 * strength, -0.052 * strength)
+        base_contrast = 1.0 + 0.055 * strength
+        saturation = 1.0 - 0.08 * strength
+        gamma = 1.0 - 0.012 * strength
+        softness = -0.27 * strength
+        seed = 8721
+
+    # Warmth is a user trim around the authored split tone. Apply it across
+    # shadows, midtones, and highlights so the slider remains perceptible on
+    # both bright and dark footage without destroying the preset character.
+    warm_shadow = 0.025 * warmth
+    warm_mid = 0.030 * warmth
+    warm_high = 0.035 * warmth
+    contrast = max(0.72, min(1.28, base_contrast + contrast_trim * 0.20))
+
+    filters = [
+        "format=gbrp",
+        (
+            "curves=all='"
+            f"0/{black:.4f} 0.18/{shadow:.4f} 0.50/{mid:.4f} "
+            f"0.82/{high:.4f} 1/{white:.4f}'"
+        ),
+        (
+            "colorbalance="
+            f"rs={shadow_rgb[0] + warm_shadow:.4f}:"
+            f"gs={shadow_rgb[1]:.4f}:"
+            f"bs={shadow_rgb[2] - warm_shadow:.4f}:"
+            f"rm={warm_mid:.4f}:gm=0.0000:bm={-warm_mid:.4f}:"
+            f"rh={high_rgb[0] + warm_high:.4f}:"
+            f"gh={high_rgb[1]:.4f}:"
+            f"bh={high_rgb[2] - warm_high:.4f}"
+        ),
+        f"eq=contrast={contrast:.4f}:saturation={saturation:.4f}:gamma={gamma:.4f}",
+        f"unsharp=5:5:{softness:.4f}:5:5:0.0000",
+    ]
+    if controls.vignette > 0.001:
+        filters.append(f"vignette=angle={0.28 * controls.vignette:.4f}:eval=init")
+    grain_strength = int(round(controls.grain * 12))
+    if grain_strength > 0:
+        filters.append(f"noise=alls={grain_strength}:allf=t+u:all_seed={seed}")
+    return ",".join(filters)
+
+
+def olive_film_filter(
+    *,
+    width: int,
+    height: int,
+    adjustments: object = None,
+    label_prefix: str = "olive",
+) -> str:
+    return _film_grade_filter(
+        "olive_film",
+        width=width,
+        height=height,
+        adjustments=adjustments,
+        label_prefix=label_prefix,
+    )
+
+
+def smoky_split_tone_filter(
+    *,
+    width: int,
+    height: int,
+    adjustments: object = None,
+    label_prefix: str = "smoky",
+) -> str:
+    return _film_grade_filter(
+        "smoky_split_tone",
+        width=width,
+        height=height,
+        adjustments=adjustments,
+        label_prefix=label_prefix,
+    )
 
 
 def stadium_diffusion_filter(
@@ -48,10 +240,7 @@ def stadium_diffusion_filter(
     Labels are caller-prefixed because single-pass assembly places one copy of
     this graph per clip inside the same ``filter_complex``.
     """
-    if width <= 0 or height <= 0:
-        raise ValueError("Look preset dimensions must be positive")
-    if not label_prefix.replace("_", "").isalnum():
-        raise ValueError("Look preset label prefix must be alphanumeric")
+    _validate_filter_args(width, height, label_prefix)
 
     down_w = _even(width / 2)
     down_h = _even(height / 2)
@@ -177,11 +366,26 @@ def look_preset_filter(
     width: int,
     height: int,
     label_prefix: str = "look",
+    adjustments: object = None,
 ) -> str | None:
     """Resolve and build a preset filter; neutral is an exact bypass."""
     preset = normalize_look_preset(value)
     if preset == "none":
         return None
+    if preset == "olive_film":
+        return olive_film_filter(
+            width=width,
+            height=height,
+            adjustments=adjustments,
+            label_prefix=label_prefix,
+        )
+    if preset == "smoky_split_tone":
+        return smoky_split_tone_filter(
+            width=width,
+            height=height,
+            adjustments=adjustments,
+            label_prefix=label_prefix,
+        )
     return stadium_diffusion_filter(
         width=width,
         height=height,

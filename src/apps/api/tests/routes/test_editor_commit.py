@@ -169,6 +169,116 @@ def test_timeline_slot_look_preset_round_trips_through_jsonb_resolution(monkeypa
     assert resolved[1]["look_preset"] == "none"
 
 
+def test_timeline_reference_look_controls_round_trip_and_validate(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    slots = _slot_edits()
+    slots[0] = gj.TimelineSlotEdit(
+        slot_id="s1",
+        clip_index=0,
+        in_s=0.0,
+        duration_beats=2,
+        look_preset="olive_film",
+        look_adjustments={
+            "intensity": 0.72,
+            "warmth": 0.2,
+            "contrast": -0.1,
+            "grain": 0.4,
+            "vignette": 0.3,
+        },
+    )
+
+    resolved = gj.resolve_timeline_slots_for_edit(
+        job,
+        job.assembly_plan["variants"][0],
+        slots,
+    )
+
+    assert resolved[0]["look_preset"] == "olive_film"
+    assert resolved[0]["look_adjustments"] == {
+        "intensity": 0.72,
+        "warmth": 0.2,
+        "contrast": -0.1,
+        "grain": 0.4,
+        "vignette": 0.3,
+    }
+    assert resolved[1]["look_adjustments"] is None
+
+    with pytest.raises(ValidationError):
+        gj.TimelineSlotEdit(
+            slot_id="s1",
+            clip_index=0,
+            in_s=0.0,
+            duration_beats=2,
+            look_preset="smoky_split_tone",
+            look_adjustments={"intensity": 1.5},
+        )
+
+    with pytest.raises(ValidationError):
+        gj.TimelineSlotEdit(
+            slot_id="s1",
+            clip_index=0,
+            in_s=0.0,
+            duration_beats=2,
+            look_preset="smoky_split_tone",
+            look_adjustments={"warmth": 0.5},
+        )
+
+
+def test_missing_reference_look_controls_resolve_to_authored_defaults(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    slots = _slot_edits()
+    slots[0] = gj.TimelineSlotEdit(
+        slot_id="s1",
+        clip_index=0,
+        in_s=0.0,
+        duration_beats=2,
+        look_preset="smoky_split_tone",
+    )
+
+    resolved = gj.resolve_timeline_slots_for_edit(
+        job,
+        job.assembly_plan["variants"][0],
+        slots,
+    )
+
+    assert resolved[0]["look_adjustments"] == {
+        "intensity": 1.0,
+        "warmth": 0.0,
+        "contrast": 0.0,
+        "grain": 0.36,
+        "vignette": 0.55,
+    }
+
+
+def test_same_reference_look_omission_preserves_existing_controls(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    controls = {
+        "intensity": 0.61,
+        "warmth": -0.2,
+        "contrast": 0.15,
+        "grain": 0.08,
+        "vignette": 0.27,
+    }
+    variant["user_timeline"] = {
+        "beat_grid": list(variant["ai_timeline"]["beat_grid"]),
+        "slots": [dict(slot) for slot in variant["ai_timeline"]["slots"]],
+    }
+    variant["user_timeline"]["slots"][0].update(
+        look_preset="olive_film",
+        look_adjustments=controls,
+    )
+    edits = _slot_edits()
+    edits[0].look_preset = "olive_film"
+
+    resolved = gj.resolve_timeline_slots_for_edit(job, variant, edits)
+
+    assert resolved[0]["look_adjustments"] == controls
+
+
 def test_older_client_omission_preserves_existing_stadium_look(monkeypatch) -> None:
     _arm(monkeypatch)
     job = _job()
@@ -185,13 +295,23 @@ def test_older_client_omission_preserves_existing_stadium_look(monkeypatch) -> N
     assert resolved[1]["look_preset"] == "none"
 
 
-def test_legacy_timeline_response_defaults_missing_look_to_none(monkeypatch) -> None:
+def test_legacy_timeline_response_defaults_and_repairs_look_controls(monkeypatch) -> None:
     _arm(monkeypatch)
     job = _job()
+    slots = job.assembly_plan["variants"][0]["ai_timeline"]["slots"]
+    slots[0].update(look_preset="olive_film", look_adjustments={"grain": 9})
 
     response = gj.dispatch_get_timeline(job, "song_text")
 
-    assert [slot["look_preset"] for slot in response["slots"]] == ["none", "none"]
+    assert [slot["look_preset"] for slot in response["slots"]] == ["olive_film", "none"]
+    assert response["slots"][0]["look_adjustments"] == {
+        "intensity": 1.0,
+        "warmth": 0.0,
+        "contrast": 0.0,
+        "grain": 0.18,
+        "vignette": 0.22,
+    }
+    assert response["slots"][1]["look_adjustments"] is None
 
 
 def _commit_req(**kw) -> gj.EditorCommitRequest:

@@ -7,6 +7,7 @@
 import {
   beatMarks,
   beatsForWindowSeconds,
+  draftFromTimeline,
   fieldsDiffer,
   type DraftSlot,
 } from "@/app/generative/timeline-math";
@@ -130,11 +131,74 @@ describe("fieldsDiffer", () => {
     expect(fieldsDiffer(slot(), slot({ lookPreset: "none" }))).toBe(false);
   });
 
+  it("treats a control-only look change as a slot edit", () => {
+    const controls = {
+      intensity: 1,
+      warmth: 0,
+      contrast: 0,
+      grain: 0.18,
+      vignette: 0.22,
+    };
+    expect(
+      fieldsDiffer(
+        slot({ lookPreset: "olive_film", lookAdjustments: controls }),
+        slot({
+          lookPreset: "olive_film",
+          lookAdjustments: { ...controls, warmth: 0.2 },
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("changing both inS and durationS on a seconds slot is a single edit", () => {
     // fieldsDiffer is a per-slot boolean — two field changes still = one diff = one edit count.
     const a = slot({ durationBeats: null, inS: 0, durationS: 2.0 });
     const b = slot({ durationBeats: null, inS: 0.5, durationS: 1.5 });
     expect(fieldsDiffer(a, b)).toBe(true); // counts as 1 via countEdits
+  });
+});
+
+describe("draftFromTimeline", () => {
+  it("hydrates persisted look controls into the per-clip draft", () => {
+    const controls = {
+      intensity: 0.7,
+      warmth: -0.1,
+      contrast: 0.2,
+      grain: 0.3,
+      vignette: 0.4,
+    };
+    const drafts = draftFromTimeline({
+      editable: true,
+      reason: null,
+      beat_grid: [],
+      total_duration_s: 1,
+      has_user_edits: true,
+      clips: [],
+      slots: [
+        {
+          slot_id: "s1",
+          clip_index: 0,
+          source_gcs_path: "slot-uploads/u/source.mp4",
+          source_duration_s: 2,
+          in_s: 0,
+          duration_s: 1,
+          duration_beats: null,
+          order: 0,
+          moment_energy: null,
+          moment_description: null,
+          removed: false,
+          transition_after: "cut",
+          transition_duration_s: null,
+          look_preset: "smoky_split_tone",
+          look_adjustments: controls,
+        },
+      ],
+    });
+
+    expect(drafts[0]).toMatchObject({
+      lookPreset: "smoky_split_tone",
+      lookAdjustments: controls,
+    });
   });
 });
 
