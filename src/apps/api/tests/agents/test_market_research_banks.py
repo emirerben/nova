@@ -222,9 +222,11 @@ def test_persona_bank_version_couples_to_prompt_version():
     #                  outputs (interview fork + Buenos Aires grounding fix); banks untouched.
     # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
     #                  (allexmarielle 9to5 professional aesthetic lane).
-    # Bump 2026-07-11-kria: product rename only; banks untouched.
-    assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
+    # Bump 2026-07-26: weekly research refresh — added café-nomad-solo-01 (izzsiomoi
+    #                  café + solo-travel pattern, vi=7.74) and relatable-everyday-voice-01
+    #                  (nermozdemir universal-frustration pattern, vi=18.42).
+    assert archetypes_version() == "2026-07-26"
+    assert PERSONA_PROMPT_VERSION == "2026-07-26"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -244,10 +246,10 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             past-trips-are-edit-material rule (Buenos Aires fix); banks untouched.
     # 2026-06-13: M1 Bring-Your-Own-Ideas — $user_ideas block added above IDEA_BANK;
     #             banks untouched (new block is conditional-empty when no seeds).
-    # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
-    #             parallel-life-aspiration-01 ideas.
-    assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
+    # 2026-07-26: weekly research refresh — added office-outfit-rotation-weekly-01,
+    #             universal-frustration-hook-01, and community-cultural-moment-01.
+    assert content_ideas_version() == "2026-07-26"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-26"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -260,14 +262,13 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Content plan bumped to 2026-06-08 (retrospective-footage rule), then persona +
     # content plan both to 2026-06-11 (direction fork + grounding, this branch).
     # Intro bumped to 2026-06-12 when overlay_examples added broader cluster exemplars.
-    # Bump 2026-06-14: weekly research refresh — added 2 corpus factors
-    # (ultrashort-aesthetic-clip 6-10s sweet spot, event-community-reach vi=64x discovery spike).
-    # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
-    # Persona/content plan bumped to 2026-07-11-kria: product rename only; banks untouched.
-    assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
+    # Bump 2026-07-26: weekly research refresh — added 2 corpus factors
+    # (cultural-trigger-high-er: sports reaction ER=15.2% at vi=2x; long-form-strong-hook:
+    #  129s/179s videos both indexing 16-18x via compelling 2s hook).
+    assert success_factors_version() == "2026-07-26"
+    assert PERSONA_PROMPT_VERSION == "2026-07-26"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-26"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-07-26"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -287,15 +288,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  hooks and updated the matcher layout policy.
     # Bump 2026-06-14: weekly research refresh — added professional-ootd-static-01
     #                  (office fashion / professional aesthetic lane).
-    # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
-    # Matcher bumped to 2026-07-17: added the `behind_subject` occlusion-flag decision
-    #                  (text-behind-subject) to match_overlay_format.txt — a
-    #                  consuming-agent prompt change with no bank-content edit, so
-    #                  only the matcher's own prompt_version moves; library_version()
-    #                  is untouched.
-    assert library_version() == "2026-06-14"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-07-17"
+    # Bump 2026-07-26: weekly research refresh — added relatable-frustration-static-02
+    #                  (universal-frustration naming format, top-position static overlay).
+    assert library_version() == "2026-07-26"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-07-26"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-07-26"
 
 
 @pytest.mark.parametrize(

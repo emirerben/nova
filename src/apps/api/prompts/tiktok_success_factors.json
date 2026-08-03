@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-26",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -136,6 +136,24 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
       "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+    },
+    {
+      "id": "cultural-trigger-high-er-corpus-10",
+      "factor": "Tap into a live national or community event (sports win, cultural milestone) with a brief, authentic reaction clip — it generates disproportionately high engagement even at moderate reach",
+      "why": "Community-pride content works like a shared inside joke: people who already care share it immediately, driving engagement rates well above the creator's baseline even when raw view counts are modest",
+      "applies_to": ["plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched lifestyle-founder set, an 8s national sports reaction clip indexed ~2x the account median but hit 15.2% engagement — the highest ER in the full 20-video sample, more than 3x above the creator's typical posts",
+      "source": "tiktok market research 2026-07 (lifestyle-founder account)"
+    },
+    {
+      "id": "long-form-strong-hook-corpus-11",
+      "factor": "A compelling 2-second hook overrides format length — don't shorten a video just because it's long; earn the watch with the opening and trust the story to hold",
+      "why": "TikTok's algorithm rewards completion rate and re-watches, not short duration alone; a gripping hook drives the early retention that unlocks wider distribution regardless of total video length",
+      "applies_to": ["plan", "hook"],
+      "provenance": "corpus",
+      "evidence": "In our fetched lifestyle-founder set, a 129s video indexed ~18x the account median and a 179s video indexed ~16x — both well above the account's shorter posts; a strong hook carried full-length viewership in both cases",
+      "source": "tiktok market research 2026-07 (lifestyle-founder account)"
     }
   ]
 }

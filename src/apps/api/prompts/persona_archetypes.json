@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-26",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -76,6 +76,28 @@
       "sample_hooks": ["felt cute this week", "before office", "the walk that fixes everything", "chic"],
       "source": "tiktok:@allexmarielle (2026-06)",
       "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "café-nomad-solo-01",
+      "niche": "solo travel & cafés",
+      "summary": "You travel solo and cafés are your base camps — every new city is a hunt for the best corner to sit and stay a while. The content is the atmosphere, the discovery, not the destination name.",
+      "tone": "curious, warm, self-sufficient",
+      "content_pillars": ["hidden café finds", "solo travel moments", "morning coffee rituals abroad", "quiet discovery"],
+      "audience": "people who travel solo or work remotely and see cafés as a form of belonging in a foreign place",
+      "sample_hooks": ["only stumbled on this while walking", "my kind of morning abroad", "cafés keep me sane on the road"],
+      "source": "tiktok:@izzsiomoi (2026-07)",
+      "performance": {"engagement_rate": 0.071, "view_index": 7.74, "sampled_at": "2026-07"}
+    },
+    {
+      "id": "relatable-everyday-voice-01",
+      "niche": "lifestyle & everyday humor",
+      "summary": "You name the universal frustrations and small moments of daily life with a direct, warm voice — not punchlines, just honest commentary that makes the viewer feel seen.",
+      "tone": "direct, warm, disarmingly honest",
+      "content_pillars": ["universal frustrations", "daily life observations", "lifestyle moments", "casual beauty and style commentary"],
+      "audience": "people who feel understood when someone else names exactly what they were already thinking but didn't say",
+      "sample_hooks": ["the problem that never gets solved", "we've all been here", "once you notice this you can't unsee it"],
+      "source": "tiktok:@nermozdemir (2026-07)",
+      "performance": {"engagement_rate": 0.0409, "view_index": 18.42, "sampled_at": "2026-07"}
     }
   ]
 }
