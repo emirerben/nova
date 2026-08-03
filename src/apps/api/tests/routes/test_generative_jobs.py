@@ -133,6 +133,66 @@ async def test_direct_voiceover_upload_uses_swept_prefix(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_direct_image_upload_uses_image_extension_default(monkeypatch):
+    import types
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.signed_put_url",
+        lambda path, content_type, file_size_bytes: "https://storage.example/signed-put",
+    )
+
+    response = await create_generative_upload_url(
+        _request(),
+        GenerativeUploadUrlRequest(
+            filename="camera-export",
+            content_type="image/heic",
+            file_size_bytes=4_096,
+        ),
+        user,
+    )
+
+    assert response.kind == "image"
+    assert response.gcs_path.endswith("/clip.jpg")
+
+
+@pytest.mark.parametrize("file_size_bytes", [0, (200 * 1024 * 1024) + 1])
+def test_direct_upload_url_rejects_invalid_declared_size(file_size_bytes):
+    with pytest.raises(ValidationError):
+        GenerativeUploadUrlRequest(
+            filename="clip.mp4",
+            content_type="video/mp4",
+            file_size_bytes=file_size_bytes,
+        )
+
+
+@pytest.mark.asyncio
+async def test_direct_upload_url_surfaces_signer_outage_as_retryable_503(monkeypatch):
+    import types
+
+    user = types.SimpleNamespace(id=uuid.uuid4())
+
+    def fail_sign(*_args, **_kwargs):
+        raise RuntimeError("signer unavailable")
+
+    monkeypatch.setattr("app.routes.generative_jobs.storage.signed_put_url", fail_sign)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await create_generative_upload_url(
+            _request(),
+            GenerativeUploadUrlRequest(
+                filename="clip.mp4",
+                content_type="video/mp4",
+                file_size_bytes=4_096,
+            ),
+            user,
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Upload service unavailable — try again"
+
+
+@pytest.mark.asyncio
 async def test_validate_direct_uploads_checks_owner_and_real_gcs_metadata(monkeypatch):
     import types
 

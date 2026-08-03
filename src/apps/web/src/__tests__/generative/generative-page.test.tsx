@@ -217,6 +217,42 @@ describe("GenerativePage — mobile batch upload progress", () => {
     ]);
   });
 
+  it("retries only failed clips and retains the original selection order", async () => {
+    mockUsePolledJobStatus.mockReturnValue({ data: null, error: null, refetch: mockRefetch });
+    const { uploadGenerativeClip } = require("@/lib/generative-api");
+    uploadGenerativeClip.mockReset();
+    uploadGenerativeClip.mockImplementation((file: File) =>
+      file.name === "first.mp4"
+        ? Promise.resolve({ gcs_path: "dev-user/u/first", kind: "video" })
+        : Promise.reject(new Error("network failed")),
+    );
+    const result = render(<GenerativePage />);
+    const input = result.container.querySelector("input[type=file]") as HTMLInputElement;
+    const files = [
+      new File(["a"], "first.mp4", { type: "video/mp4" }),
+      new File(["b"], "second.mp4", { type: "video/mp4" }),
+    ];
+
+    await act(async () => {
+      Object.defineProperty(input, "files", { value: files, configurable: true });
+      fireEvent.change(input);
+    });
+    const retry = await screen.findByRole("button", { name: /retry failed clips/i });
+    uploadGenerativeClip.mockResolvedValueOnce({
+      gcs_path: "dev-user/u/second",
+      kind: "video",
+    });
+    await act(async () => fireEvent.click(retry));
+
+    expect(await screen.findByText(/second\.mp4/)).toBeInTheDocument();
+    expect(screen.queryByText(/Didn't upload:/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "• first.mp4",
+      "• second.mp4",
+    ]);
+    expect(uploadGenerativeClip).toHaveBeenCalledTimes(3);
+  });
+
   it("rejects a selection above the backend's 20-clip limit before uploading", async () => {
     mockUsePolledJobStatus.mockReturnValue({ data: null, error: null, refetch: mockRefetch });
     const { uploadGenerativeClip } = require("@/lib/generative-api");

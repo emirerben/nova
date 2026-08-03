@@ -163,6 +163,57 @@ describe("uploadGenerativeClip", () => {
     );
   });
 
+  it("surfaces FastAPI validation-array messages without starting a byte upload", async () => {
+    const fetchMock = installFetchMock().mockResolvedValueOnce(
+      response({ detail: [{ msg: "File should be greater than 0" }] }, 422) as Response,
+    );
+
+    await expect(
+      uploadGenerativeClip(new File(["video"], "clip.mp4", { type: "video/mp4" })),
+    ).rejects.toThrow("File should be greater than 0");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces relay rejection after a CORS-level direct PUT failure", async () => {
+    const fetchMock = installFetchMock()
+      .mockResolvedValueOnce(
+        response({
+          upload_url: "https://storage.example/put",
+          gcs_path: "dev-user/u/generative/b/clip.mp4",
+          kind: "video",
+          content_type: "video/mp4",
+          upload_headers: { "x-goog-if-generation-match": "0" },
+        }) as Response,
+      )
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(
+        response({ detail: "Storage rejected the upload (403)." }, 502) as Response,
+      );
+
+    await expect(
+      uploadGenerativeClip(new File(["video"], "clip.mp4", { type: "video/mp4" })),
+    ).rejects.toThrow("Storage rejected the upload (403).");
+  });
+
+  it("rejects a server-classified audio result from the clip upload API", async () => {
+    const fetchMock = installFetchMock()
+      .mockResolvedValueOnce(
+        response({
+          upload_url: "https://storage.example/put",
+          gcs_path: "voiceover-uploads/direct/u/b/voice.webm",
+          kind: "audio",
+          content_type: "audio/webm",
+          upload_headers: {},
+        }) as Response,
+      )
+      .mockResolvedValueOnce(response({}, 200) as Response);
+
+    await expect(
+      uploadGenerativeClip(new File(["video"], "clip.webm", { type: "video/webm" })),
+    ).rejects.toThrow("Clip upload must be a video or image");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("starts no more than two signed uploads at once", async () => {
     const releaseInitialPuts: Array<() => void> = [];
     let initCalls = 0;
