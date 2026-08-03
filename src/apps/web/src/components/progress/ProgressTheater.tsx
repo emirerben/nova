@@ -96,7 +96,7 @@ export function ProgressTheater({
   isSuccess,
   receiptText = "Your edits are ready",
   variants,
-  onRetry: _onRetry,
+  onRetry,
   retrying = false,
   size = "full",
   children,
@@ -190,9 +190,16 @@ export function ProgressTheater({
   // Detail line from variants.
   const detail = detailLine(variants);
 
+  // Terminal + not successful: every variant failed (or the job died before
+  // any rendered). Distinct from isTerminal && isSuccess above — without this
+  // branch the headline fell through to the last-seen phase label or
+  // "Working on it…", claiming active progress on a render that's already dead.
+  const isFailed = isTerminal && !isSuccess;
+
   // Headline text.
   const headlineText = (() => {
     if (isTerminal && isSuccess) return receiptText;
+    if (isFailed) return "This one didn't render";
     if (currentPhase && phaseLabels[currentPhase]) return phaseLabels[currentPhase];
     return "Working on it…";
   })();
@@ -252,6 +259,17 @@ export function ProgressTheater({
             >
               {leaveNote}
             </p>
+          )}
+          {isFailed && onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className={`min-h-11 rounded-full px-4 text-[13px] font-semibold transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                tone === "light" ? "bg-[#0c0c0e] text-white" : "bg-amber-300 text-zinc-900"
+              }`}
+            >
+              Try again
+            </button>
           )}
         </>
       )}

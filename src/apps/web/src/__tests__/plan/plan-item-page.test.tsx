@@ -495,6 +495,75 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
     // The theater renders with generative phases — no crash, light-shell present.
     expect(screen.getByTestId("light-shell")).toBeInTheDocument();
   });
+
+  it("test_all_variants_failed_shows_a_working_retry_button: dead-end variant gets a Try again control that re-dispatches", async () => {
+    // Root cause of the "there is no such thing appearing" report: a job that
+    // creates one variant before failing routes through showResults (variants.length
+    // > 0), not the variants.length === 0 whole-item-retry branch — so the
+    // Generate button vanished with nothing replacing it. This is the fix:
+    // ProgressTheater's onRetry now covers exactly this case.
+    const item = makeItem({
+      status: "failed",
+      current_job_id: "job-dead-end",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variants = [makeVariant("v1", "failed", null)];
+    const job = makeJob({
+      status: "variants_failed",
+      variants,
+      started_at: "2026-06-06T10:00:00Z",
+      finished_at: "2026-06-06T10:02:00Z",
+    });
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job },
+      error: null,
+      refetch: mockRefetch,
+    });
+    mockGeneratePlanItem.mockResolvedValue(undefined);
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("This one didn't render")).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Try again" });
+
+    await act(async () => {
+      fireEvent.click(retryButton);
+    });
+
+    expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+  });
+
+  it("test_zero_variants_failed_has_no_duplicate_retry_button: whole-item setup form (not ProgressTheater) owns retry when nothing rendered at all", async () => {
+    // variants.length === 0 already gets the Generate button via
+    // showSetupControls — ProgressTheater must not also show one there
+    // (allVariantsFailed requires variants.length > 0).
+    const item = makeItem({
+      status: "failed",
+      current_job_id: "job-empty",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const job = makeJob({
+      status: "processing_failed",
+      variants: [],
+      started_at: "2026-06-06T10:00:00Z",
+      finished_at: "2026-06-06T10:02:00Z",
+    });
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
 });
 
 describe("PlanItemPage — result cleanup", () => {

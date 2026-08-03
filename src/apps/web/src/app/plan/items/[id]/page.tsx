@@ -1182,6 +1182,14 @@ export default function PlanItemPage() {
   const isGenerating = item.status === "generating";
   const showResults = isGenerating || variants.length > 0;
   const showSetupControls = !isGenerating && variants.length === 0;
+  // A variant can exist and still be a dead end: the first render created one
+  // variant object before failing, so showSetupControls (and its Generate
+  // button) never comes back — FocusedResults renders instead, but per-variant
+  // edit controls (song swap, captions) all require data that's only written
+  // on a SUCCESSFUL render (e.g. base_video_url), so none of them apply either.
+  // This drives the ProgressTheater "Try again" button below.
+  const allVariantsFailed =
+    variants.length > 0 && variants.every((v) => v.render_status === "failed");
   // Conformance in-flight: clips attached + guide present + verdict pending,
   // bounded by the poll window — resolves to the tile, the on-track line, or
   // (when guards skipped the run) silently vanishes. Never hangs.
@@ -2029,6 +2037,7 @@ export default function PlanItemPage() {
                   retrying={data.job.retrying ?? false}
                   size="full"
                   tone="light"
+                  onRetry={allVariantsFailed && !generating ? handleGenerate : undefined}
                 >
                   {null}
                 </ProgressTheater>

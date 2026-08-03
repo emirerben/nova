@@ -33,6 +33,10 @@ export function variantFailureCopy(errorClass?: string | null): string {
     case "encoder_error":
       return "Something went wrong while rendering — try again.";
     default:
-      return "This one didn't render. Changing the song or style starts a fresh try.";
+      // Was "Changing the song or style starts a fresh try" — wrong for any
+      // archetype with no song/style concept (e.g. subtitled). The "Try again"
+      // button above (ProgressTheater) now covers every archetype, so this can
+      // point at that instead of prescribing an edit that may not exist.
+      return "This one didn't render — try again above.";
   }
 }
