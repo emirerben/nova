@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.3.0] — 2026-08-03
+
+### Added
+- **Creators can now give individual clips either of the two reference-derived film looks and tune the result themselves.** Olive Film adds warm olive highlights, green-cool shadows, and restrained colour; Smoky Split-Tone adds a deeper warm/teal grade with softer texture. Both are optional in the Clip inspector, with Strength, Warmth, Contrast, Grain, and Vignette controls plus Reset. Original remains the default, Stadium Diffusion remains available, and the editor preview follows the settings that burn into the saved video.
+
 ## [0.22.2.0] — 2026-08-03
 
 ### Changed

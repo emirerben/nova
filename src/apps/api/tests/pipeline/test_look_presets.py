@@ -54,9 +54,7 @@ def test_reference_look_defaults_and_persisted_fallbacks() -> None:
     assert default_look_adjustments("stadium_diffusion") is None
     assert normalize_look_adjustments("olive_film", {"grain": 9}) == olive
     assert normalize_look_adjustments("olive_film", {}) == olive
-    assert normalize_look_adjustments(
-        "smoky_split_tone", {"warmth": 0.5}
-    ) == smoky
+    assert normalize_look_adjustments("smoky_split_tone", {"warmth": 0.5}) == smoky
 
 
 def test_user_controls_change_grade_grain_and_vignette_independently() -> None:
