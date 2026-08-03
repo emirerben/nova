@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-19",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -212,6 +212,66 @@
       "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
       "source": "tiktok:@izzsiomoi (2026-06)",
       "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "outsider-credibility-ootd-01",
+      "niche": "professional lifestyle & fashion",
+      "pillar": "everyday work outfits",
+      "idea": "show what you actually wore to [work/event] as someone who explicitly does not have the expected credential — the lack of authority is the point",
+      "hook_pattern": "what I wore to [occasion] as someone who doesn't [expected credential]",
+      "filming_context": "mirror or building exterior, 6-10s, single look — the disclaimer in the caption does the emotional work; don't explain it in-video",
+      "source": "tiktok:@allexmarielle (2026-07)",
+      "performance": {"engagement_rate": 0.142, "view_index": 3.1, "sampled_at": "2026-07"}
+    },
+    {
+      "id": "weekly-ritual-micro-vlog-01",
+      "niche": "city lifestyle & food",
+      "pillar": "seasonal moments",
+      "idea": "a 6-10s micro-vlog capturing one specific recurring ritual — a day of the week, a season, a morning habit — framed as a feeling, not a report",
+      "hook_pattern": "I ❤️ [day/ritual]",
+      "filming_context": "single ambient clip, natural light, no narration — the brevity and the feeling carry it; highest engagement comes from clips where nothing happens except the atmosphere",
+      "source": "tiktok:@allexmarielle (2026-07)",
+      "performance": {"engagement_rate": 0.216, "view_index": 2.3, "sampled_at": "2026-07"}
+    },
+    {
+      "id": "surrender-humor-language-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "self-deprecating commentary",
+      "idea": "document the moment you gave up trying to do something the local way and defaulted to a familiar tool — the admission of defeat is the content",
+      "hook_pattern": "gave up and used [tool/app]",
+      "filming_context": "5-10s candid moment of the surrender — phone screen or the moment of capitulation — minimal text lets the relatable premise land",
+      "source": "tiktok:@izzsiomoi (2026-07)",
+      "performance": {"engagement_rate": 0.010, "view_index": 22.7, "sampled_at": "2026-07"}
+    },
+    {
+      "id": "wardrobe-eternal-struggle-01",
+      "niche": "professional lifestyle & fashion",
+      "pillar": "everyday work outfits",
+      "idea": "a vlog capturing the eternal, unsolvable [wardrobe/planning/life] problem — frame it as the problem that will never be fixed, with genuine exasperation",
+      "hook_pattern": "the [problem] that will never be solved",
+      "filming_context": "candid, slightly chaotic — show the actual mess or the struggle in process; longer format (60-130s) works here when the detail is relatable and specific",
+      "source": "tiktok:@nermozdemir (2026-07)",
+      "performance": {"engagement_rate": 0.041, "view_index": 12.3, "sampled_at": "2026-07"}
+    },
+    {
+      "id": "once-in-a-lifetime-vlog-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "core memories",
+      "idea": "document a rare, unrepeatable experience — a place, event, or milestone you may never do again — and frame it explicitly as once-in-a-lifetime",
+      "hook_pattern": "one of the once-in-a-lifetime ones",
+      "filming_context": "let the experience unfold naturally; longer format (90-180s) earns its length here when each beat of the event is genuinely distinct; don't rush the payoff",
+      "source": "tiktok:@nermozdemir (2026-07)",
+      "performance": {"engagement_rate": 0.048, "view_index": 9.3, "sampled_at": "2026-07"}
+    },
+    {
+      "id": "binary-decision-comment-bait-01",
+      "niche": "professional lifestyle & fashion",
+      "pillar": "mindset & growth",
+      "idea": "end a post mid-story with a binary choice — keep going or stop — and let the comments decide; the open loop forces engagement before the viewer leaves",
+      "hook_pattern": "keep going or stop?",
+      "filming_context": "30s of context that sets up a real decision point; the question must be genuinely unresolved — if the answer is obvious the engagement pull collapses",
+      "source": "tiktok:@nermozdemir (2026-07)",
+      "performance": {"engagement_rate": 0.033, "view_index": 8.2, "sampled_at": "2026-07"}
     }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-19",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -322,6 +322,20 @@
       "highlight_color": "#FFE08A",
       "niche": "professional lifestyle & city aesthetics",
       "source": "tiktok market research 2026-06"
+    },
+    {
+      "id": "relatable-defeat-cluster-01",
+      "content_profile": "wardrobe struggles, planning failures, relatable everyday frustrations — content where the honest premise is that nothing works out and that is the whole joke",
+      "effect": "fade-in",
+      "text": "this never gets easier",
+      "highlight_word": "never",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "layout": "cluster",
+      "niche": "professional lifestyle & fashion",
+      "source": "tiktok market research 2026-07"
     }
   ]
 }

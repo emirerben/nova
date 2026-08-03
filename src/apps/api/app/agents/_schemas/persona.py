@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field
 #                "update persona from feedback" re-tunes the lane toward what works.
 # 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
 # 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-07-11-kria"
+PERSONA_PROMPT_VERSION = "2026-07-19"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8
