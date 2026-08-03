@@ -2,6 +2,7 @@
 
 import datetime
 import json
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -92,6 +93,34 @@ def presigned_put_url(
         content_type=content_type,
     )
     return url, object_path
+
+
+def signed_put_url(
+    object_path: str,
+    content_type: str,
+    file_size_bytes: int,
+    expiration_minutes: int = 15,
+) -> str:
+    """Sign an exact GCS object path for a browser PUT.
+
+    Route code owns path construction and authorization. Keeping that decision at
+    the HTTP boundary lets this helper stay a small signing primitive while still
+    pinning the exact Content-Type and byte count into the V4 signature. The
+    generation precondition makes the random object key create-only, so the URL
+    cannot overwrite a source after job validation.
+    """
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=expiration_minutes),
+        method="PUT",
+        content_type=content_type,
+        headers={
+            "content-length": str(file_size_bytes),
+            "x-goog-if-generation-match": "0",
+        },
+    )
 
 
 def presigned_put_url_for_plan_item(
@@ -362,6 +391,29 @@ def signed_get_url(object_path: str, expiration_minutes: int = 5) -> str:
         version="v4",
         expiration=datetime.timedelta(minutes=expiration_minutes),
         method="GET",
+    )
+
+
+def signed_download_url(
+    object_path: str,
+    filename: str,
+    expiration_minutes: int = 360,
+) -> str:
+    """Generate a signed GET that streams as a browser attachment.
+
+    The response header, not the cross-origin ``download`` attribute, owns the
+    filename on mobile browsers. Strip path/control/punctuation characters so a
+    variant id can never become a malformed Content-Disposition header.
+    """
+    safe_filename = re.sub(r"[^A-Za-z0-9._-]+", "", filename.replace("..", ""))
+    safe_filename = safe_filename.lstrip(".")[:120] or "kria-video.mp4"
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=expiration_minutes),
+        method="GET",
+        response_disposition=f'attachment; filename="{safe_filename}"',
     )
 
 

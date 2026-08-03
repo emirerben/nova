@@ -1,5 +1,19 @@
 # Nova infra
 
+## GCS browser upload CORS (`gcs-cors.json`)
+
+Allows production and local web origins to upload directly to signed GCS URLs.
+The `x-goog-if-generation-match` header makes each upload key create-only; keep
+it in the allowlist or browsers will fall back to the slower API relay.
+
+```bash
+gcloud storage buckets update gs://$STORAGE_BUCKET --cors-file=infra/gcs-cors.json
+gcloud storage buckets describe gs://$STORAGE_BUCKET --format='default(cors_config)'
+```
+
+Apply this configuration before enabling a web build that sends the precondition
+header. Vercel preview domains are intentionally excluded and use the relay.
+
 ## GCS bucket lifecycle (`gcs-lifecycle.json`)
 
 Deletes per-job objects after 1 day. Scoped by prefix so curated assets persist.

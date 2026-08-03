@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.2.0] — 2026-08-03
+
+### Changed
+- **Creating a video on a phone now sends each clip straight to storage instead of relaying every byte through the API first.** Uploads run two at a time to protect mobile memory and bandwidth, retain completed clips when another fails, preserve selection order, and let the user retry only the failed files.
+- **Video downloads now start through the browser's native download path.** The page no longer fetches the entire MP4 into JavaScript memory before saving, avoiding the long apparent pause and memory pressure seen on mobile.
+
+### Fixed
+- **Direct uploads now fail safely across deploy skew and restricted browser origins.** Exact-size, create-only upload signatures, ownership and stored-file validation, rate limiting, a scoped relay fallback, and production bucket CORS configuration prevent duplicate writes and keep older API/frontend versions compatible during rollout.
+
 ## [0.22.1.4] — 2026-08-02
 
 ### Fixed

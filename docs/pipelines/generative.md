@@ -68,6 +68,19 @@ allowlist trap, and why a burn-dict reader must mirror the renderer's fallbacks.
 - `song_text` — matched song + AI hero-intro overlay
 - `original_text` — clips' original audio + AI intro
 
+## Browser upload and download contract
+
+`POST /generative-jobs/upload-url` signs one exact-size, create-only GCS `PUT`
+for an owned clip or voiceover path. The browser uploads at most two files at a
+time; when bucket CORS blocks a direct request, `/uploads/relay` forwards the
+same signed request without minting a second object key. Job creation verifies
+the stored object's owner, size, and media type before enqueueing work.
+
+Ready variant and Library responses expose a separate `download_url` signed as
+an attachment. Playback continues to use `video_url`; downloads hand the
+attachment URL to the browser so the MP4 is never buffered as a JavaScript blob.
+The bucket CORS apply and verification commands live in `infra/README.md`.
+
 ## Landscape and Smart Captions rollout
 
 Both features ship dark and reuse existing render paths; enabling them is an

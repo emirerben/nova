@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 import uuid
+from typing import Literal
 
 import structlog
 from cryptography.fernet import Fernet
@@ -582,7 +583,7 @@ async def get_batch_import_status(batch_id: str) -> DriveImportBatchStatus:
 _RELAY_MAX_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB — matches the presigned clip cap
 
 
-def _validate_relay_url(signed_url: str, user_id: str) -> None:
+def _validate_relay_url(signed_url: str, user_id: str) -> str:
     from urllib.parse import urlparse  # noqa: PLC0415
 
     parsed = urlparse(signed_url)
@@ -601,12 +602,18 @@ def _validate_relay_url(signed_url: str, user_id: str) -> None:
     object_path = path[len(bucket_prefix) :]
     # Every browser-minted upload path is user-scoped or a dev-user path this
     # user owns. Restrict the relay to the caller's own prefixes.
-    allowed = (f"users/{user_id}/", "dev-user/", "slot-uploads/")
+    allowed = (
+        f"users/{user_id}/",
+        f"dev-user/{user_id}/",
+        f"voiceover-uploads/direct/{user_id}/",
+        "slot-uploads/",
+    )
     if not object_path.startswith(allowed):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Relay URL outside your upload scope.",
         )
+    return object_path
 
 
 @router.post("/relay")
@@ -615,12 +622,25 @@ async def relay_signed_upload(
     file: UploadFile = File(...),  # noqa: B008
     signed_url: str = Form(...),
     content_type: str = Form("application/octet-stream"),
+    file_size_bytes: int | None = Form(None),
+    if_generation_match: Literal["0"] | None = Form(None),
 ) -> dict:
     """PUT `file` to `signed_url` server-side. Streams from the multipart body
     to GCS in chunks — never the whole file in memory."""
     import httpx  # noqa: PLC0415
 
-    _validate_relay_url(signed_url, str(current_user.id))
+    object_path = _validate_relay_url(signed_url, str(current_user.id))
+    if file_size_bytes is not None:
+        if file_size_bytes < 1 or file_size_bytes > 200 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="File too large. Maximum 200 MB.",
+            )
+        if file.size is not None and file.size != file_size_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Upload size does not match its signed request.",
+            )
 
     async def _chunks():
         sent = 0
@@ -633,12 +653,27 @@ async def relay_signed_upload(
                 )
             yield chunk
 
+    upstream_headers = {"Content-Type": content_type}
+    if file_size_bytes is not None:
+        upstream_headers["Content-Length"] = str(file_size_bytes)
+    if if_generation_match is not None:
+        upstream_headers["x-goog-if-generation-match"] = if_generation_match
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
         upstream = await client.put(
             signed_url,
             content=_chunks(),
-            headers={"Content-Type": content_type},
+            headers=upstream_headers,
         )
+    if upstream.status_code == 412 and if_generation_match == "0" and file_size_bytes is not None:
+        try:
+            metadata = await run_in_threadpool(storage.object_metadata, object_path)
+            expected_type = content_type.split(";", 1)[0].strip().lower()
+            actual_type = metadata.content_type.split(";", 1)[0].strip().lower()
+            if metadata.size == file_size_bytes and actual_type == expected_type:
+                return {"ok": True, "already_uploaded": True}
+        except Exception:  # noqa: BLE001 — fall through to the upstream error
+            pass
     if upstream.status_code not in (200, 201):
         log.warning("upload_relay_failed", status=upstream.status_code, body=upstream.text[:200])
         raise HTTPException(

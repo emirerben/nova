@@ -155,7 +155,12 @@ function FocusedVariantPanel({
             onClick={
               session.isSaving
                 ? undefined
-                : () => downloadVideo(variant.output_url!, `kria-${variant.variant_id}.mp4`)
+                : () =>
+                    downloadVideo(
+                      variant.download_url ?? variant.output_url!,
+                      `kria-${variant.variant_id}.mp4`,
+                      !variant.download_url,
+                    )
             }
             className={`mt-2 w-full rounded-lg border py-2 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px] ${
               session.isSaving

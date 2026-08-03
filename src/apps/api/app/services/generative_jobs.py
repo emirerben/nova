@@ -20,10 +20,24 @@ from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
     coerce_montage_preset,
 )
+from app.services.generative_upload_paths import direct_clip_owner
 
 DEFAULT_PLATFORMS = ["tiktok", "instagram", "youtube"]
 CONTENT_PLAN_PRIMARY_VARIANT_POLICY = "content_plan_primary"
 _SMART_PRESET_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def _validate_generative_clip_paths(user_id: uuid.UUID, clip_paths: list[str]) -> None:
+    """Validate both legacy and user-owned direct-upload clip namespaces."""
+    legacy_paths: list[str] = []
+    for path in clip_paths:
+        owner = direct_clip_owner(path)
+        if owner is None:
+            legacy_paths.append(path)
+        elif owner != str(user_id):
+            raise ValueError("Direct-upload clip owner mismatch")
+    if legacy_paths:
+        _validate_clip_path_prefixes(legacy_paths)
 
 
 # Upper bounds on the persona context stashed onto the job. Keeps a runaway
@@ -224,7 +238,7 @@ def build_generative_job(
     """
     if not clip_paths:
         raise ValueError("At least 1 clip is required")
-    _validate_clip_path_prefixes(clip_paths)
+    _validate_generative_clip_paths(user_id, clip_paths)
     # Declared edit shape (montage default). The orchestrator's archetype dispatch
     # resolves it against the footage and falls back to montage when unsupported.
     # Coerce here so an unknown/legacy value can never reach the render path.

@@ -26,6 +26,8 @@ export interface LibraryJob {
   status: LibraryJobStatus;
   raw_status: string;
   output_url: string | null;
+  /** Fresh attachment-signed URL when the job retains its owned GCS path. */
+  download_url?: string | null;
   output_variant_id: string | null;
   tiktok_publishable: boolean;
   tiktok_publication: {

@@ -42,7 +42,7 @@ from app.models import (
 )
 from app.services import tiktok_client
 from app.services.token_crypto import decrypt_token
-from app.storage import signed_get_url
+from app.storage import signed_download_url, signed_get_url
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -80,7 +80,7 @@ def _derived_status(job: Job) -> str:
     return "generating"
 
 
-def _preview(job: Job) -> tuple[str | None, str | None]:
+def _preview(job: Job) -> tuple[str | None, str | None, str | None]:
     """One playable URL for the library tile, across every job mode.
 
     Generative/content_plan jobs keep per-variant outputs in
@@ -92,10 +92,19 @@ def _preview(job: Job) -> tuple[str | None, str | None]:
     if isinstance(variants, list):
         for v in variants:
             if v.get("render_status") == "ready" and v.get("output_url"):
-                return v["output_url"], str(v.get("variant_id") or "") or None
-        return None, None
+                return (
+                    v["output_url"],
+                    str(v.get("variant_id") or "") or None,
+                    v.get("video_path") if isinstance(v.get("video_path"), str) else None,
+                )
+        return None, None, None
     url = plan.get("output_url")
-    return (url if isinstance(url, str) else None), None
+    output_path = plan.get("output_path")
+    return (
+        url if isinstance(url, str) else None,
+        None,
+        output_path if isinstance(output_path, str) else None,
+    )
 
 
 class LibraryTikTokPublication(BaseModel):
@@ -124,6 +133,7 @@ class LibraryJob(BaseModel):
     status: str  # derived: ready | generating | failed
     raw_status: str
     output_url: str | None
+    download_url: str | None = None
     output_variant_id: str | None = None
     tiktok_publishable: bool = False
     tiktok_publication: LibraryTikTokPublication | None = None
@@ -142,7 +152,17 @@ def _to_library_job(
     feedback_signal: str | None = None,
     tiktok_publication: TikTokPublication | None = None,
 ) -> LibraryJob:
-    output_url, output_variant_id = _preview(job)
+    output_url, output_variant_id, output_path = _preview(job)
+    download_url: str | None = None
+    if output_path:
+        try:
+            download_url = signed_download_url(
+                output_path,
+                f"kria-{str(job.id)[:8]}.mp4",
+                expiration_minutes=360,
+            )
+        except Exception:  # noqa: BLE001 — a library row must survive signing failure
+            log.warning("library_download_sign_failed", job_id=str(job.id), exc_info=True)
     plan = job.assembly_plan or {}
     has_owned_output = bool(
         output_variant_id
@@ -155,6 +175,7 @@ def _to_library_job(
         status=_derived_status(job),
         raw_status=job.status,
         output_url=output_url,
+        download_url=download_url,
         output_variant_id=output_variant_id,
         tiktok_publishable=bool(output_url and has_owned_output),
         tiktok_publication=(

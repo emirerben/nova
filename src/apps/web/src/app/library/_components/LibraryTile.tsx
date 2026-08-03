@@ -72,7 +72,13 @@ export default function LibraryTile({
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => downloadVideo(job.output_url!, `kria-${job.id.slice(0, 8)}.mp4`)}
+                onClick={() =>
+                  downloadVideo(
+                    job.download_url ?? job.output_url!,
+                    `kria-${job.id.slice(0, 8)}.mp4`,
+                    !job.download_url,
+                  )
+                }
                 className="min-h-11 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-medium text-[#3f3f46] transition-colors hover:border-zinc-400"
               >
                 Download

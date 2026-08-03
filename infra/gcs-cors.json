@@ -1,0 +1,13 @@
+[
+  {
+    "origin": [
+      "https://usekria.com",
+      "https://www.usekria.com",
+      "https://nova-video.vercel.app",
+      "http://localhost:3000"
+    ],
+    "method": ["GET", "HEAD", "PUT"],
+    "responseHeader": ["Content-Type", "x-goog-if-generation-match"],
+    "maxAgeSeconds": 3600
+  }
+]
