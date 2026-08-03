@@ -681,7 +681,11 @@ interface UploadUrl {
   gcs_path: string;
 }
 
-function uploadContentTypeForFile(file: File): string {
+// Single source of truth for the declared upload content type. The signing
+// request (requestUploadUrls) and the PUT header MUST both go through this
+// function — a divergence becomes a GCS 403 SignatureDoesNotMatch that Safari
+// surfaces as a bare fetch TypeError.
+export function uploadContentTypeForFile(file: File): string {
   if (file.type) return file.type;
   const name = file.name.toLowerCase();
   if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
@@ -715,24 +719,41 @@ export async function uploadToGcs(uploadUrl: string, file: File): Promise<void> 
     });
     if (!res.ok) throw new Error(`Upload failed (${res.status})`);
   } catch (err) {
-    // "Failed to fetch" (TypeError) = the bucket's CORS config doesn't list this
-    // origin (any localhost) — the request never left the browser. Relay the
-    // SAME signed URL through the API, where CORS doesn't apply.
+    // A fetch TypeError is ambiguous: bucket CORS blocking this origin (any
+    // localhost) OR a network drop mid-PUT (iOS tab suspension, blip). Only
+    // relay where the relay can actually succeed — the Next proxy buffers the
+    // whole body in memory and Vercel caps request bodies at ~4.5MB, so
+    // relaying a real video is a guaranteed cryptic 413/504 after paying the
+    // upload cost twice.
     if (err instanceof TypeError) {
-      await relaySignedUpload(uploadUrl, file);
-      return;
+      if (canRelayFallback(file)) {
+        await relaySignedUpload(uploadUrl, file);
+        return;
+      }
+      throw new Error("Upload interrupted. Check your connection and retry.");
     }
     throw err;
   }
 }
 
+// The Next proxy relay buffers the full body in memory and Vercel caps request
+// bodies at ~4.5MB — the relay is only viable for small files, or on local dev
+// where the proxy is local and uncapped.
+const RELAY_FALLBACK_MAX_BYTES = 4 * 1024 * 1024;
+
+function canRelayFallback(file: File): boolean {
+  const host = typeof window !== "undefined" ? window.location.hostname : "";
+  if (host === "localhost" || host === "127.0.0.1") return true;
+  return file.size <= RELAY_FALLBACK_MAX_BYTES;
+}
+
 /** Server-side PUT of `file` to `signedUrl` via the API relay (bucket-CORS bypass). */
-async function relaySignedUpload(signedUrl: string, file: File): Promise<void> {
+async function relaySignedUpload(signedUrl: string, file: File, signal?: AbortSignal): Promise<void> {
   const form = new FormData();
   form.append("file", file, file.name);
   form.append("signed_url", signedUrl);
   form.append("content_type", uploadContentTypeForFile(file));
-  const res = await fetch(`${PLAN_BASE}/uploads/relay`, { method: "POST", body: form });
+  const res = await fetch(`${PLAN_BASE}/uploads/relay`, { method: "POST", body: form, signal });
   if (res.status === 401) throw new NotAuthenticatedError();
   if (!res.ok) {
     let detail = `Upload failed (${res.status})`;
@@ -750,8 +771,9 @@ async function relaySignedUpload(signedUrl: string, file: File): Promise<void> {
  * PUT a file to GCS with progress reporting and abort support (XHR-based).
  *
  * onProgress is called with a value 0–1 as bytes are sent.
- * Pass an AbortSignal to cancel mid-upload (slot returns to idle; the orphaned
- * GCS object is cleaned up by the 24h lifecycle rule).
+ * Pass an AbortSignal to cancel mid-upload (slot returns to idle). NOTE: a
+ * cancelled/partial object persists under users/… — that prefix has NO
+ * lifecycle delete rule; cleanup is a tracked follow-up.
  */
 export function uploadToGcsWithProgress(
   uploadUrl: string,
@@ -769,16 +791,21 @@ export function uploadToGcsWithProgress(
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else reject(new Error(`Upload failed (${xhr.status})`));
     });
-    // Network-level failure = bucket CORS blocked this origin (any localhost).
-    // Fall back to the API relay; progress becomes indeterminate (0.5) since
-    // fetch-multipart has no upload progress events, then jumps to done.
+    // Network-level failure is ambiguous: bucket CORS blocked this origin
+    // (any localhost) OR the connection dropped mid-PUT. Relay only where the
+    // relay can succeed (see canRelayFallback); progress becomes indeterminate
+    // (0.5) since fetch-multipart has no upload progress events.
     xhr.addEventListener("error", () => {
       if (signal?.aborted) {
         reject(new DOMException("Upload cancelled", "AbortError"));
         return;
       }
+      if (!canRelayFallback(file)) {
+        reject(new Error("Upload interrupted. Check your connection and retry."));
+        return;
+      }
       onProgress(0.5);
-      relaySignedUpload(uploadUrl, file)
+      relaySignedUpload(uploadUrl, file, signal)
         .then(() => {
           onProgress(1);
           resolve();
