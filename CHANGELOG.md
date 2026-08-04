@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.5.0] — 2026-08-04
+
+### Fixed
+- **Nova’s editor recommendations now appear against the video you are actually viewing, without needing a page refresh.** Suggestions wait for the current edit state to finish loading, automatically recover when that state changes mid-request, and return sooner when the recommendation service cannot respond.
+- **Every compatible recommendation in a Nova batch can now be accepted and seen immediately in the preview.** Accepting the first card no longer invalidates the rest; refresh and retry states settle reliably; and an older destructive recommendation is safely replaced instead of deleting a clip, title, sound, overlay, or camera effect that changed after Nova reviewed it.
+- **Nova now understands follow-ups such as “the third one” when they refer to its own numbered answer.** The editor chat resolves these references against the latest assistant response instead of treating them as an unrelated or ambiguous request.
+
 ## [0.22.4.0] — 2026-08-03
 
 ### Fixed
