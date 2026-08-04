@@ -143,9 +143,13 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
         prompt_id="edit_director",
         prompt_version=EDIT_DIRECTOR_PROMPT_VERSION,
         model=settings.edit_director_model,
-        max_attempts=2,
-        backoff_s=(2.0,),
-        timeout_s=45.0,
+        # Pro is the quality path, but a proactive card rail cannot spend two
+        # 45s attempts before the Flash fallback even starts. Production traces
+        # showed 100-120s end-to-end waits. One bounded attempt preserves the
+        # deep review when it returns promptly and caps failover latency.
+        max_attempts=1,
+        backoff_s=(),
+        timeout_s=30.0,
         thinking_level="high",
         enable_json_repair=True,
     )
@@ -343,9 +347,9 @@ class EditDirectorFallbackAgent(EditDirectorAgent):
         prompt_id="edit_director",
         prompt_version=EDIT_DIRECTOR_PROMPT_VERSION,
         model=settings.edit_director_fallback_model,
-        max_attempts=2,
-        backoff_s=(1.0,),
-        timeout_s=25.0,
+        max_attempts=1,
+        backoff_s=(),
+        timeout_s=20.0,
         thinking_level="medium",
         enable_json_repair=True,
     )

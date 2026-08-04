@@ -1,0 +1,61 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-04-v13",
+  "input": {
+    "utterance": "Help me with the third one. Fix whatever's needed",
+    "prior_turns": [
+      {
+        "role": "user",
+        "content": "What are the main problems in this draft?"
+      },
+      {
+        "role": "assistant",
+        "content": "Here are the main issues:\n\n1. Duration: The draft is too long.\n2. Music: The background track is missing.\n3. Visual Alignment: The product overlay should end at the next speech pause."
+      }
+    ],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "sfx", "overlay", "caption", "music", "title", "tool"],
+      "has_narrated_captions": true,
+      "text_bars": [
+        {"text": "the editor builds the first cut", "start_s": 5.0, "end_s": 7.5, "font_family": "Montserrat", "size_px": 58},
+        {"text": "then the creator refines it", "start_s": 12.0, "end_s": 14.5, "font_family": "Montserrat", "size_px": 58},
+        {"text": "the product improves each week", "start_s": 20.0, "end_s": 22.5, "font_family": "Montserrat", "size_px": 58},
+        {"text": "episode one", "start_s": 28.0, "end_s": 31.0, "font_family": "Playfair Display", "size_px": 72}
+      ],
+      "slots": [],
+      "speech_map": {
+        "words": [
+          {"text": "product", "start_s": 3.2, "end_s": 3.7},
+          {"text": "demo", "start_s": 6.2, "end_s": 6.7}
+        ],
+        "pauses": [
+          {"after": "product", "start_s": 3.7, "end_s": 4.2},
+          {"after": "demo", "start_s": 6.7, "end_s": 7.2}
+        ]
+      },
+      "overlays": {
+        "cards": [
+          {"index": 0, "id": "overlay-1", "kind": "image", "start_s": 3.2, "end_s": 12.0, "position": "custom", "x_frac": 0.2, "y_frac": 0.42, "scale": 0.34, "display_mode": "pip"}
+        ],
+        "asset_pool": [],
+        "pending_suggestions": []
+      },
+      "total_duration_s": 35.0
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_overlay\",\"overlay_index\":0,\"patch\":{\"end_s\":6.7}}],\"confidence\":0.9,\"reply\":\"Aligned the opening visual with the end of the product demo so it clears at the next speech pause.\",\"suggestions\":[\"Align the next overlay\",\"Tighten the opening text\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {"op": "patch_overlay", "overlay_index": 0, "patch": {"end_s": 6.7}}
+    ],
+    "confidence": 0.9,
+    "reply": "Aligned the opening visual with the end of the product demo so it clears at the next speech pause.",
+    "suggestions": ["Align the next overlay", "Tighten the opening text"],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "synthetic_regression_from_production_shape",
+    "case": "ordinal follow-up resolves against the assistant's numbered diagnosis before draft bar indices"
+  }
+}

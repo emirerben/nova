@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import uuid
+from unittest.mock import Mock
 
 import pytest
+from fastapi import HTTPException
 
 from app.agents._runtime import ModelClient, ModelInvocation, RunContext, SchemaError
 from app.agents.edit_director import (
@@ -138,6 +140,13 @@ def test_director_repairs_truncated_json_before_validation() -> None:
     assert len(output.suggestions) == 3
     assert EditDirectorAgent.spec.enable_json_repair is True
     assert EditDirectorFallbackAgent.spec.enable_json_repair is True
+
+
+def test_director_review_latency_has_a_bounded_primary_and_fallback_budget() -> None:
+    assert EditDirectorAgent.spec.max_attempts == 1
+    assert EditDirectorAgent.spec.timeout_s <= 30.0
+    assert EditDirectorFallbackAgent.spec.max_attempts == 1
+    assert EditDirectorFallbackAgent.spec.timeout_s <= 20.0
 
 
 def test_director_prompt_includes_exact_operation_field_contract() -> None:
@@ -312,3 +321,33 @@ async def test_director_falls_back_from_pro_to_flash(monkeypatch) -> None:
     assert response.requested_model == _director.settings.edit_director_model
     assert response.model_used == _director.settings.edit_director_fallback_model
     assert response.fallback_reason == "TerminalError"
+
+
+@pytest.mark.asyncio
+async def test_director_skips_fallback_when_a_newer_snapshot_supersedes_primary(
+    monkeypatch,
+) -> None:
+    job_id = uuid.uuid4()
+    fallback = Mock()
+
+    def primary_failure(*args, **kwargs):  # noqa: ARG001
+        from app.agents._runtime import TerminalError
+
+        _director._latest_revision_by_job[str(job_id)] = "revision-2"
+        raise TerminalError("stale primary")
+
+    monkeypatch.setattr(_director.EditDirectorAgent, "run", primary_failure)
+    monkeypatch.setattr(_director.EditDirectorFallbackAgent, "run", fallback)
+
+    with pytest.raises(HTTPException) as caught:
+        await _director.run_director(
+            _director.DirectorSuggestionsBody(
+                snapshot=_snapshot(),
+                snapshot_revision="revision-1",
+            ),
+            job_id=job_id,
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "edit_director_request_superseded"
+    fallback.assert_not_called()

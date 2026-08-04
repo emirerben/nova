@@ -280,6 +280,27 @@ def test_format_snapshot_renders_beat_marks() -> None:
     assert "median interval between listed marks" in rendered
 
 
+def test_copilot_prompt_resolves_numbered_prior_answer_before_draft_indices() -> None:
+    rendered = _agent().render_prompt(
+        EditCopilotInput(
+            utterance="Help me with the third one. Fix whatever's needed",
+            prior_turns=[
+                {
+                    "role": "assistant",
+                    "content": (
+                        "1. Duration Over Cap. 2. No Background Music. "
+                        "3. Visual Alignment: synchronize overlays and text with pauses."
+                    ),
+                }
+            ],
+            variant_snapshot=_snapshot(),
+        )
+    )
+
+    assert "numbered item in the latest assistant reply" in rendered
+    assert "not text bar 3" in rendered
+
+
 def test_format_snapshot_renders_meta_only_captions() -> None:
     from app.agents.edit_copilot import _format_snapshot
 
@@ -998,12 +1019,12 @@ def test_format_snapshot_renders_sfx_roles_and_suggestions() -> None:
     assert "roles=" not in plain_line
 
 
-def test_prompt_version_bumped_for_caption_emphasis_and_effect_catalog() -> None:
-    # Caption emphasis claimed v9 on main; the added effect vocabulary advances
-    # the combined prompt to the next unique version.
+def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
+    # Numbered follow-up resolution changes model behavior and must retain a
+    # unique prompt version for trace and eval attribution.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-07-27-v12"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-04-v13"
 
 
 def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:
