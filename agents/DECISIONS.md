@@ -755,7 +755,9 @@ hand-rolled; there is no shortcut.
    future entry is covered automatically) — meant to be pinged by a service
    OUTSIDE this app entirely (UptimeRobot, cron-job.org, a scheduled GH
    Actions workflow), since that's the only kind of check immune to Beat's
-   own death.
+   own death. [2026-08-04: that external pinger now exists —
+   `.github/workflows/beat-health.yml`, every 15 min; see the 2026-08-04
+   entry below for the incident its two-day absence allowed.]
 
 7. **The Fly API token now lives on the public `api` process, not just
    `worker`/`beat`** — the wake hook fires from FastAPI request handlers.

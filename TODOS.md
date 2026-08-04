@@ -23,8 +23,8 @@ these items would make it *shorter*.
   Priority: P2. Every queued render still waits for whatever holds the slot —
   users see "queued" for up to ~20 min behind a long render. Options, roughly
   increasing cost: (a) route clip/track-analysis tasks to their own queue +
-  small process (they need torch/media deps — won't fit the 512MB `light`
-  box, needs its own sizing); (b) second `worker` machine draining the same
+  small process (they need torch/media deps — won't fit the `light`
+  box even at its post-incident 1024MB, needs its own sizing); (b) second `worker` machine draining the same
   queues (doubles render throughput, ~doubles worker cost; revisit the
   concurrency=1 encode-contention rationale in fly.toml before co-locating);
   (c) per-queue concurrency tuning. Cost decision — needs Emir. Start:
@@ -1316,7 +1316,7 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 ## Loading progress system — follow-ups (added 2026-06-06)
 
 - [ ] **Author DESIGN.md via /design-consultation** — codify the loading system's reusable rules (D6 truth rules, D13 mood tiers, D14 motion constants, D15 host-owns-surface) right after implementation while decisions are fresh.
-- [ ] **SSE for generative job status** — extend the template `/events` SSE pattern + `useJobStream` to generative so variant arrivals and the D12 climax land instantly instead of up to 2s late; sanity-check connection capacity on the 512MB API VM first.
+- [ ] **SSE for generative job status** — extend the template `/events` SSE pattern + `useJobStream` to generative so variant arrivals and the D12 climax land instantly instead of up to 2s late; sanity-check connection capacity on the 2048MB API VM first.
 - [ ] **Baseline refresh from real phase data** — extend `scripts/aggregate_phase_timings.py` with a `phase_log` DB reader and refresh `app/services/phase_baselines.py` from prod percentiles once PR2's instrumentation has soaked (~1–2 weeks of generative jobs).
 
 ## Landing page design system
@@ -1526,7 +1526,7 @@ Grouped by area; none block ship.
 
 ### Backend correctness / safety (informational)
 - **T-REV-1 (P2)** — `_WHISPER_WALL_CLOCK_S = 90` in `transcript_source.py` is defined + documented as bounding ASR but NEVER referenced; `transcribe_variant_video` runs Whisper unbounded. A slow/local backend can exceed the match task's soft_time_limit=240. Wire the wall-clock into `transcribe_whisper` or drop the dead constant.
-- **T-REV-2 (P2)** — `/uploads/relay` (`routes/uploads.py`) streams up to 2GB per request through the prod API VM (1 shared CPU / 512MB), holds an httpx connection up to 600s, no concurrency bound, available to every authenticated user. Now the pool-upload FALLBACK (post-review), so hit less, but still an unbounded resource path. Consider a concurrency semaphore + smaller relay cap. Also: the relay cap comment claims it "matches the presigned clip cap" but the presigned caps are 4GB (uploads.py / plan_items.py `_MAX_BYTES_PER_FILE`) — comment is wrong.
+- **T-REV-2 (P2)** — `/uploads/relay` (`routes/uploads.py`) streams up to 2GB per request through the prod API VM (1 shared CPU / 2048MB), holds an httpx connection up to 600s, no concurrency bound, available to every authenticated user. Now the pool-upload FALLBACK (post-review), so hit less, but still an unbounded resource path. Consider a concurrency semaphore + smaller relay cap. Also: the relay cap comment claims it "matches the presigned clip cap" but the presigned caps are 4GB (uploads.py / plan_items.py `_MAX_BYTES_PER_FILE`) — comment is wrong.
 - **T-REV-3 (P3)** — `/uploads/relay` uses `CurrentUserOrSynthetic`: an unauthenticated caller (no X-User-Id) gets the synthetic user and can relay-PUT to `dev-user/*`, `slot-uploads/*`. Confirm the synthetic-user path is acceptable for the relay in prod or require a real user.
 - **T-REV-4 (P3)** — receipt reason vocab drift: `SuggestionRail.receiptLines` special-cases reason `"hook"`/`"intro"` for the "shown smaller to protect your intro" copy, but the backend demote reasons are structural (`cap`/`no_dims`/`panorama`/`low_res`/`gap`/`window_too_short`) — so that nicer copy never fires (falls to generic "shown smaller"). Either map a structural reason → "intro" when the demote was intro-driven, or drop the dead FE branch.
 
@@ -1678,8 +1678,9 @@ render path directly, unlike the mostly-infra autostop work.
 `worker_ready` prewarm itself (`worker.py`) and `agentic_template_build_task`
 — admin-only, not on any customer render path. So this is real but
 low-severity: today a fresh rootfs re-downloads ~350MB from HuggingFace on
-every worker boot, affecting only admin template-building shortly after a
-cold start (more frequent now that the render worker scales to zero and
+every render-worker boot (since v0.23.3.0 the prewarm is queue-gated and
+never fires on the `light` machine), affecting only admin template-building
+shortly after a cold start (more frequent now that the render worker scales to zero and
 reboots more often).
 **Why:** Removes a network dependency at boot; frees ~450-600MB resident
 memory if the eager prewarm is also dropped once weights are baked in.
@@ -1687,7 +1688,10 @@ Admin-only impact, no user-facing urgency.
 **How:** Set `HF_HOME` in the Dockerfile, pre-download the ViT-B/32
 checkpoint during the image build instead of at runtime. Consider dropping
 the `worker_ready` prewarm signal entirely at the same time, since baked-in
-weights make lazy first-call load already fast.
+weights make lazy first-call load already fast. Note: since v0.23.3.0 the
+prewarm is gated by `_worker_consumes_render_queues` (worker.py), pinned by
+`tests/test_worker_prewarm_gate.py` — dropping the prewarm means retiring
+that gate + test together, consciously.
 **Effort:** S (CC: ~20min)
 **Priority:** P3
 **Depends on:** —
