@@ -11,11 +11,14 @@ clamps/dedupes before this task ever sees items.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from typing import Literal
 
 import structlog
 from celery.exceptions import Retry
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext
@@ -27,9 +30,10 @@ from app.agents._schemas.content_plan import (
 from app.agents._schemas.persona import Persona
 from app.agents.content_plan_generator import ContentPlanGeneratorAgent
 from app.database import sync_session
-from app.models import ContentPlan, PlanItem, User
+from app.models import ContentPlan, Job, PlanItem, User
 from app.models import Persona as PersonaRow
 from app.services.content_plan_dedup import choose_replacements, flag_replacement_indices
+from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 from app.services.seed_provenance import match_specs_to_seeds
 from app.worker import celery_app
 
@@ -386,6 +390,30 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
 PLAN_JOBS_QUEUE = "plan-jobs"
 
 
+DispatchOutcome = Literal[
+    "dispatched", "already_active", "invalid_clips", "missing_row", "publish_failed"
+]
+
+
+@dataclass(frozen=True)
+class DispatchResult:
+    """Typed outcome of the PlanItem → render dispatch (plans/014).
+
+    outcome:
+      dispatched     — Job minted + orchestrator enqueued (job_id set)
+      already_active — a non-terminal render already exists (job_id = that job)
+      invalid_clips  — no clips, or build_generative_job rejected them
+      missing_row    — item/plan row not found (or malformed id)
+      publish_failed — Job minted but the broker publish failed; the Job row was
+                       flipped to processing_failed/dispatch_publish_failed so it
+                       can never sit as a forever-"queued" ghost (the reaper
+                       deliberately never reaps `queued` — see tasks/reaper.py)
+    """
+
+    outcome: DispatchOutcome
+    job_id: str | None = None
+
+
 def _narrative_clip_order(item: PlanItem, clip_paths: list[str]) -> tuple[list[str], int]:
     """Reorder clip_paths so guide-shot clips lead IN GUIDE ORDER, pool after.
 
@@ -436,17 +464,19 @@ def _dispatch_item_render(
     item: PlanItem,
     plan: ContentPlan,
     persona_data: dict,
-) -> str | None:
+) -> DispatchResult:
     """Mint a generative Job for an item's clips, persist it, dispatch its render.
 
     The single source of truth for the PlanItem → render contract, shared by the
-    per-item generate task and the activation seed. Reuses the generative pipeline
-    verbatim: build_generative_job (shared with the public route) →
+    per-item generate path (`dispatch_item_render_for` — route AND task) and the
+    activation seed. Reuses the generative pipeline verbatim:
+    build_generative_job (shared with the public route) →
     orchestrate_generative_job UNCHANGED. The only plan-specific bits are
     mode="content_plan", the content_plan_item_id reverse link, and the throttled
     queue. Item render state is derived from this Job's status at read time (no
-    PlanItem status write — plan T2). Returns the job id, or None if the item had
-    no clips / clip validation failed (best-effort — never raises).
+    PlanItem status write — plan T2). Never raises (plans/014 C7: a publish
+    failure must not abort the activation loop's remaining items) — every exit
+    is a typed DispatchResult.
 
     `item.clip_gcs_paths` must already be set on the session before calling.
     """
@@ -464,7 +494,7 @@ def _dispatch_item_render(
     clip_paths = list(item.clip_gcs_paths or [])
     if not clip_paths:
         log.warning("plan_item_render.no_clips", plan_item_id=str(item.id))
-        return None
+        return DispatchResult("invalid_clips")
     # Narrative clip order (filming-guide alignment): reorder clip_paths so the
     # guide's shot clips come first IN GUIDE ORDER (clip_assignments stores them
     # in attach-request order, which is client-controlled and not the guide
@@ -534,7 +564,7 @@ def _dispatch_item_render(
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
-        return None
+        return DispatchResult("invalid_clips")
     session.add(job)
     session.flush()  # populate job.id
     item.current_job_id = job.id
@@ -547,9 +577,47 @@ def _dispatch_item_render(
     # Dispatch onto the throttled plan-jobs queue (concurrency=1 worker) via the
     # shared sync helper — keeps celery_task_id correlation and routes the queue
     # without bypassing the job_dispatch contract (guarded in tests).
-    enqueue_orchestrator_sync(orchestrate_generative_job, job_id, queue=PLAN_JOBS_QUEUE)
+    try:
+        enqueue_orchestrator_sync(orchestrate_generative_job, job_id, queue=PLAN_JOBS_QUEUE)
+    except Exception as exc:  # noqa: BLE001
+        # Containment (plans/014 A1/C4): the Job row is already committed, and
+        # the reaper deliberately never reaps `queued` — an uncontained publish
+        # failure would strand a forever-"queued" ghost the item reads as
+        # "generating". Flip it terminal so the UI shows failed + retry.
+        #
+        # CONDITIONAL on status still being "queued" (review 2026-08-04, CX1):
+        # apply_async raising does not prove Redis rejected the message. If it
+        # was actually delivered, the worker may already have flipped the job
+        # to "processing" — an unconditional write would mark a RUNNING render
+        # failed and invite a duplicate. rowcount 0 ⇒ the worker owns it ⇒
+        # report dispatched (the render is genuinely under way).
+        res = session.execute(
+            sa_update(Job)
+            .where(Job.id == uuid.UUID(job_id), Job.status == "queued")
+            .values(
+                status="processing_failed",
+                failure_reason="dispatch_publish_failed",
+                error_detail=("The render couldn't be handed to the queue. Give it another go."),
+            )
+        )
+        session.commit()
+        if res.rowcount == 0:
+            log.warning(
+                "plan_item_render.publish_raised_but_claimed",
+                plan_item_id=str(item.id),
+                job_id=job_id,
+                error=str(exc),
+            )
+            return DispatchResult("dispatched", job_id=job_id)
+        log.error(
+            "plan_item_render.publish_failed",
+            plan_item_id=str(item.id),
+            job_id=job_id,
+            error=str(exc),
+        )
+        return DispatchResult("publish_failed", job_id=job_id)
     log.info("plan_item_render.dispatched", plan_item_id=str(item.id), job_id=job_id)
-    return job_id
+    return DispatchResult("dispatched", job_id=job_id)
 
 
 def _load_persona_data(session, plan: ContentPlan) -> dict:  # noqa: ANN001
@@ -572,6 +640,44 @@ def _load_persona_data(session, plan: ContentPlan) -> dict:  # noqa: ANN001
     return {}
 
 
+def dispatch_item_render_for(plan_item_id: str) -> DispatchResult:
+    """Load + lock a plan item, re-check for an active render, then dispatch.
+
+    The ONE entry point shared by the interactive generate route (which runs
+    it in a worker thread — plans/014) and the generate_plan_item_videos task,
+    so the two paths can never drift. The SELECT … FOR UPDATE on the item row
+    makes the active-render re-check race-safe: two concurrent Generate
+    requests serialize here — the first mints, the second sees the fresh
+    current_job_id inside the lock and returns already_active.
+    `jobs.content_plan_item_id` has no uniqueness constraint (retries mint new
+    rows by design), so this lock is the duplicate-mint guard for every
+    minting path (the activation loop applies the same lock+re-check inline).
+
+    TRUST BOUNDARY: performs NO ownership check — callers passing a
+    client-supplied id MUST verify ownership first (the route does, via
+    _load_owned_item); task/activation callers are server-internal.
+    """
+    with sync_session() as session:
+        try:
+            item_uuid = uuid.UUID(str(plan_item_id))
+        except (TypeError, ValueError):
+            log.warning("plan_item_videos.bad_item_id", plan_item_id=str(plan_item_id))
+            return DispatchResult("missing_row")
+        item = session.get(PlanItem, item_uuid, with_for_update=True)
+        if item is None:
+            log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
+            return DispatchResult("missing_row")
+        plan = session.get(ContentPlan, item.content_plan_id)
+        if plan is None:
+            log.warning("plan_item_videos.missing_plan", plan_item_id=plan_item_id)
+            return DispatchResult("missing_row")
+        if item.current_job_id is not None:
+            current = session.get(Job, item.current_job_id)
+            if current is not None and current.status not in PLAN_ITEM_JOB_TERMINAL:
+                return DispatchResult("already_active", job_id=str(current.id))
+        return _dispatch_item_render(session, item, plan, _load_persona_data(session, plan))
+
+
 @celery_app.task(
     name="app.tasks.content_plan_build.generate_plan_item_videos",
     bind=True,
@@ -580,15 +686,13 @@ def _load_persona_data(session, plan: ContentPlan) -> dict:  # noqa: ANN001
 )
 def generate_plan_item_videos(self, plan_item_id: str) -> None:  # noqa: ANN001
     """Mint a generative Job for a plan item's themed clips and dispatch its render."""
-    with sync_session() as session:
-        item = session.get(PlanItem, uuid.UUID(str(plan_item_id)))
-        if item is None:
-            log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
-            return
-        plan = session.get(ContentPlan, item.content_plan_id)
-        if plan is None:
-            return
-        _dispatch_item_render(session, item, plan, _load_persona_data(session, plan))
+    result = dispatch_item_render_for(str(plan_item_id))
+    if result.outcome not in ("dispatched", "already_active"):
+        log.warning(
+            "plan_item_videos.not_dispatched",
+            plan_item_id=str(plan_item_id),
+            outcome=result.outcome,
+        )
 
 
 # Activation seed (T8): how many plan items one seed batch may auto-generate. Each
@@ -716,9 +820,25 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             return
         _set_activation_phase(session, plan, "starting_renders")
         for item_id, paths in by_item.items():
-            item = session.get(PlanItem, uuid.UUID(item_id))
+            # FOR UPDATE + active-render skip (review 2026-08-04, CA2/CX2): the
+            # activation analysis runs for minutes while the user can attach
+            # clips and hit Generate on the same items. Without the lock +
+            # re-check, activation would silently clobber the user's clip
+            # assignments AND mint a second Job over their in-flight render.
+            # Same guard as dispatch_item_render_for — every minting path locks.
+            item = session.get(PlanItem, uuid.UUID(item_id), with_for_update=True)
             if item is None or item.content_plan_id != plan.id:
                 continue
+            if item.current_job_id is not None:
+                current = session.get(Job, item.current_job_id)
+                if current is not None and current.status not in PLAN_ITEM_JOB_TERMINAL:
+                    log.info(
+                        "activate_plan.skip_active_item",
+                        plan_id=plan_id,
+                        item_id=item_id,
+                        job_id=str(item.current_job_id),
+                    )
+                    continue
             # Assign the matched seed clip(s) to the item server-side. NOTE: these
             # paths live under the plan's `.../seed/` prefix, NOT the item's
             # `.../{item_id}/` prefix that the public attach_clips route enforces.
@@ -732,7 +852,7 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
 
             set_item_clips(item, [ClipAssignment(gcs_path=p, shot_id=None) for p in paths])
             session.flush()
-            if _dispatch_item_render(session, item, plan, persona_data) is not None:
+            if _dispatch_item_render(session, item, plan, persona_data).outcome == "dispatched":
                 dispatched += 1
 
         plan = session.get(ContentPlan, pid)

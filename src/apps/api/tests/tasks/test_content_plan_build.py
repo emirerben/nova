@@ -26,7 +26,7 @@ from app.tasks.content_plan_build import (
 def _session_with(item, plan, persona_row) -> MagicMock:
     session = MagicMock()
 
-    def _get(model, _pk):
+    def _get(model, _pk, **_kw):
         return {PlanItem: item, ContentPlan: plan, PersonaRow: persona_row}.get(model)
 
     session.get = MagicMock(side_effect=_get)
@@ -676,7 +676,7 @@ def _reroll_session(item, plan, persona_row=None) -> MagicMock:
     """sync_session context mock that routes get() by model class."""
     session = MagicMock()
 
-    def _get(model, _pk):  # noqa: ANN001
+    def _get(model, _pk, **_kw):  # noqa: ANN001
         return {PlanItem: item, ContentPlan: plan, PersonaRow: persona_row}.get(model)
 
     session.get = MagicMock(side_effect=_get)
