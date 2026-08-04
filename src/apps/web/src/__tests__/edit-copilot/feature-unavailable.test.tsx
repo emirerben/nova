@@ -251,8 +251,7 @@ describe("useEditDirector when the API has no director route", () => {
           omniEnabled: false,
           itemId: "item-1",
           variantId: "variant-1",
-          materialRevision: revision,
-          buildSnapshot: () => snapshot(),
+          buildSnapshot: () => ({ ...snapshot(), total_duration_s: revision }),
           applyOpsAtomic: jest.fn(),
           onApplied: jest.fn(),
         }),
@@ -260,7 +259,7 @@ describe("useEditDirector when the API has no director route", () => {
     );
 
     await act(async () => {
-      jest.advanceTimersByTime(250);
+      jest.advanceTimersByTime(1200);
       await Promise.resolve();
     });
 
@@ -268,7 +267,7 @@ describe("useEditDirector when the API has no director route", () => {
     expect(result.current.error).toBe(DIRECTOR_UNAVAILABLE_MESSAGE);
     expect(suggestionsMock).toHaveBeenCalledTimes(1);
 
-    // Each edit bumps materialRevision. Before the fix this re-fired the doomed
+    // Each edit changes the complete snapshot. Before the fix this re-fired the doomed
     // request and repainted the failure; now it must stay quiet.
     for (const revision of [2, 3, 4]) {
       rerender({ revision });
@@ -289,7 +288,6 @@ describe("useEditDirector when the API has no director route", () => {
         omniEnabled: false,
         itemId: "item-1",
         variantId: "variant-1",
-        materialRevision: 1,
         buildSnapshot: () => snapshot(),
         applyOpsAtomic: jest.fn(),
         onApplied: jest.fn(),
@@ -297,7 +295,7 @@ describe("useEditDirector when the API has no director route", () => {
     );
 
     await act(async () => {
-      jest.advanceTimersByTime(250);
+      jest.advanceTimersByTime(1200);
       await Promise.resolve();
     });
     expect(result.current.unavailable).toBe(true);

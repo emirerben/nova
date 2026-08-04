@@ -3948,7 +3948,6 @@ export default function EditorShell({
     omniEnabled: OMNI_GENERATED_VIDEO_UI_ENABLED,
     itemId,
     variantId: variant?.variant_id ?? variantParam ?? "",
-    materialRevision: history.version,
     buildSnapshot: buildCopilotDraftSnapshot,
     applyOpsAtomic: applyDirectorDraftOps,
     onApplied: handleCopilotOps,

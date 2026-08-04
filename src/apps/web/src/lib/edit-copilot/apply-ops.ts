@@ -33,7 +33,12 @@ import {
   type TextStylePatchKey,
 } from "./ops";
 import {
+  cameraEffectMutationFingerprint,
+  overlayMutationFingerprint,
   roundCopilotNumber,
+  sfxMutationFingerprint,
+  slotMutationFingerprint,
+  textMutationFingerprint,
   type CopilotSnapshot,
   type CopilotCaptionCueSnapshot,
   type CopilotSlotSnapshot,
@@ -214,6 +219,39 @@ function textFingerprintMatches(
   return fields.every((field) => sameValue(textValue(bar, snap, field), snap[field]));
 }
 
+const COMPLETE_TEXT_FINGERPRINT_FIELDS: Array<
+  TextStylePatchKey | "text" | "start_s" | "end_s"
+> = [
+  "text",
+  "start_s",
+  "end_s",
+  "font_family",
+  "size_px",
+  "color",
+  "highlight_color",
+  "effect",
+  "alignment",
+  "text_case",
+  "letter_spacing",
+  "line_spacing",
+  "max_width_frac",
+  "stroke_width",
+  "position",
+  "x_frac",
+  "y_frac",
+];
+
+function completeTextFingerprintMatches(
+  bar: TextElementBar,
+  snap: CopilotTextSnapshotBar,
+): boolean {
+  if (snap.mutation_fingerprint) {
+    return textMutationFingerprint(bar) === snap.mutation_fingerprint;
+  }
+  return bar.role === snap.role &&
+    textFingerprintMatches(bar, snap, COMPLETE_TEXT_FINGERPRINT_FIELDS);
+}
+
 function slotDuration(slots: DraftSlot[], grid: number[], index: number): number {
   return round(sequentialSlotLayout(slots, grid).windows[index]?.durationS ?? slots[index]?.durationS ?? 0);
 }
@@ -240,6 +278,40 @@ function slotFingerprintMatches(
     output_end_s: win?.startS == null ? null : round(win.startS + win.durationS),
   };
   return fields.every((field) => sameValue(values[field], snap[field]));
+}
+
+function completeSlotFingerprintMatches(
+  slots: DraftSlot[],
+  grid: number[],
+  slot: DraftSlot,
+  index: number,
+  snap: CopilotSlotSnapshot,
+): boolean {
+  if (snap.mutation_fingerprint) {
+    return slotMutationFingerprint(slot) === snap.mutation_fingerprint &&
+      index === snap.index &&
+      slotFingerprintMatches(
+        slots,
+        grid,
+        slot,
+        index,
+        snap,
+        ["output_start_s", "output_end_s"],
+      );
+  }
+  return slotFingerprintMatches(
+    slots,
+    grid,
+    slot,
+    index,
+    snap,
+    ["in_s", "duration_s", "removed", "output_start_s", "output_end_s"],
+  ) &&
+    slot.slotId === snap.slot_id &&
+    slot.clipIndex === snap.clip_index &&
+    (slot.momentDescription == null || slot.momentDescription === snap.moment) &&
+    (slot.transitionAfter ?? "cut") === (snap.transition_after ?? "cut") &&
+    sameValue(slot.transitionDurationS ?? null, snap.transition_duration_s ?? null);
 }
 
 function reject(op: string, label: string, reason: RejectedOpReason, detail: string): RejectedOp {
@@ -365,19 +437,33 @@ function overlayForSnap(cards: MediaOverlay[], snap: CopilotOverlayCardSnapshot)
 function sfxValue(
   placement: SoundEffectPlacement,
   snap: CopilotSfxPlacementSnapshot,
-  key: "at_s" | "gain",
+  key: "at_s" | "gain" | "duration_s" | "label",
 ): unknown {
   if (key === "at_s") return round(placement.at_s);
   if (key === "gain") return round(placement.gain ?? snap.gain);
+  if (key === "duration_s") {
+    return placement.duration_s == null ? null : round(placement.duration_s);
+  }
+  if (key === "label") return placement.label?.slice(0, 60) ?? null;
   return undefined;
 }
 
 function sfxFingerprintMatches(
   placement: SoundEffectPlacement,
   snap: CopilotSfxPlacementSnapshot,
-  fields: Array<"at_s" | "gain">,
+  fields: Array<"at_s" | "gain" | "duration_s" | "label">,
 ): boolean {
   return fields.every((field) => sameValue(sfxValue(placement, snap, field), snap[field]));
+}
+
+function completeSfxFingerprintMatches(
+  placement: SoundEffectPlacement,
+  snap: CopilotSfxPlacementSnapshot,
+): boolean {
+  if (snap.mutation_fingerprint) {
+    return sfxMutationFingerprint(placement) === snap.mutation_fingerprint;
+  }
+  return sfxFingerprintMatches(placement, snap, ["at_s", "gain", "duration_s", "label"]);
 }
 
 function overlayValue(
@@ -399,6 +485,39 @@ function overlayFingerprintMatches(
   fields: OverlayPatchKey[],
 ): boolean {
   return fields.every((field) => sameValue(overlayValue(card, snap, field), snap[field]));
+}
+
+const COMPLETE_OVERLAY_FINGERPRINT_FIELDS: OverlayPatchKey[] = [
+  "start_s",
+  "end_s",
+  "position",
+  "x_frac",
+  "y_frac",
+  "scale",
+  "display_mode",
+];
+
+function completeOverlayFingerprintMatches(
+  card: MediaOverlay,
+  snap: CopilotOverlayCardSnapshot,
+): boolean {
+  if (snap.mutation_fingerprint) {
+    return overlayMutationFingerprint(card) === snap.mutation_fingerprint;
+  }
+  return card.kind === snap.kind &&
+    overlayFingerprintMatches(card, snap, COMPLETE_OVERLAY_FINGERPRINT_FIELDS);
+}
+
+function completeCameraEffectFingerprintMatches(
+  effect: CameraEffect,
+  snap: NonNullable<CopilotSnapshot["camera_effects"]>[number],
+): boolean {
+  if (snap.mutation_fingerprint) {
+    return cameraEffectMutationFingerprint(effect) === snap.mutation_fingerprint;
+  }
+  return sameValue(round(effect.start_s), snap.start_s) &&
+    sameValue(round(effect.end_s), snap.end_s) &&
+    sameValue(round(effect.intensity), snap.intensity);
 }
 
 function captionMetaValue(
@@ -668,7 +787,7 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "unsupported_field", "Lyric timing is locked to the vocal."));
         continue;
       }
-      if (!textFingerprintMatches(bar, snap, ["text"])) {
+      if (!completeTextFingerprintMatches(bar, snap)) {
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "text was changed after Nova read it"));
         continue;
       }
@@ -751,7 +870,7 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "clip slot no longer exists"));
         continue;
       }
-      if (!slotFingerprintMatches(slots, grid, slot, index, snap, ["removed"])) {
+      if (!completeSlotFingerprintMatches(slots, grid, slot, index, snap)) {
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip was changed after Nova read it"));
         continue;
       }
@@ -846,6 +965,10 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "sound placement no longer exists"));
         continue;
       }
+      if (!completeSfxFingerprintMatches(placement, snap)) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "sound placement changed after Nova read it"));
+        continue;
+      }
       workingSfx = placements.filter((sfx) => sfx.id !== placement.id);
       nextSfx = workingSfx;
       applied.push({ label: `Removed "${placement.label ?? snap.label ?? "sound"}"`, from: "present", to: "removed" });
@@ -881,6 +1004,10 @@ export function applyCopilotOps(
       const card = snap ? overlayForSnap(overlays, snap) : null;
       if (!snap || !card) {
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "overlay no longer exists"));
+        continue;
+      }
+      if (!completeOverlayFingerprintMatches(card, snap)) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "overlay changed after Nova read it"));
         continue;
       }
       workingOverlays = overlays.filter((overlay) => overlay.id !== card.id);
@@ -1129,11 +1256,7 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "camera effect no longer exists"));
         continue;
       }
-      if (
-        !sameValue(round(effect.start_s), snap.start_s) ||
-        !sameValue(round(effect.end_s), snap.end_s) ||
-        !sameValue(round(effect.intensity), snap.intensity)
-      ) {
+      if (!completeCameraEffectFingerprintMatches(effect, snap)) {
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "camera effect changed after Nova read it"));
         continue;
       }
@@ -1156,6 +1279,10 @@ export function applyCopilotOps(
         : null;
       if (!snap || !effect) {
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "camera effect no longer exists"));
+        continue;
+      }
+      if (!completeCameraEffectFingerprintMatches(effect, snap)) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "camera effect changed after Nova read it"));
         continue;
       }
       workingCameraEffects = workingCameraEffects.filter((candidate) => candidate.id !== effect.id);

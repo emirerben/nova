@@ -1017,6 +1017,126 @@ describe("Director editor operations", () => {
     expect(result.rejected).toHaveLength(1);
   });
 
+  it("applies every non-overlapping Director card against one source snapshot", () => {
+    const source = extendedCtx();
+
+    const text = applyCopilotOpsAtomic(
+      [{ op: "edit_text", bar_index: 0, text: "A sharper hook" }],
+      source,
+    );
+    expect(text.rejected).toEqual([]);
+    const bars = source.bars.map((item) =>
+      item.id === "bar-1" ? { ...item, text: "A sharper hook" } : item
+    );
+
+    const title = applyCopilotOpsAtomic(
+      [{ op: "set_title", title: "Building Nova" }],
+      { ...source, bars },
+    );
+    expect(title.rejected).toEqual([]);
+
+    const sound = applyCopilotOpsAtomic(
+      [{ op: "add_sfx", effect_id: "effect-1", at_s: 0.5, gain: 0.6 }],
+      { ...source, bars, title: title.nextTitle ?? source.title },
+    );
+    expect(sound.rejected).toEqual([]);
+
+    expect({
+      text: bars[0].text,
+      title: title.nextTitle,
+      sfx: sound.nextSfx?.map((item) => item.sound_effect_id),
+    }).toEqual({
+      text: "A sharper hook",
+      title: "Building Nova",
+      sfx: ["effect-1", "effect-1"],
+    });
+  });
+
+  it("rejects destructive Director cards when any snapshotted target field changed", () => {
+    const extended = extendedCtx();
+    const changedText = applyCopilotOpsAtomic(
+      [{ op: "remove_text", bar_index: 0 }],
+      {
+        ...extended,
+        bars: extended.bars.map((item) =>
+          item.id === "bar-1" ? { ...item, shadow_enabled: true } : item
+        ),
+      },
+    );
+    expect(changedText.rejected).toEqual([
+      expect.objectContaining({ reason: "user_changed" }),
+    ]);
+
+    const changedSound = applyCopilotOpsAtomic(
+      [{ op: "remove_sfx", sfx_index: 0 }],
+      {
+        ...extended,
+        sfx: extended.sfx.map((item) => ({ ...item, trim_start_s: 0.1 })),
+      },
+    );
+    expect(changedSound.rejected).toEqual([
+      expect.objectContaining({ reason: "user_changed" }),
+    ]);
+
+    const changedOverlay = applyCopilotOpsAtomic(
+      [{ op: "remove_overlay", overlay_index: 0 }],
+      {
+        ...extended,
+        overlays: extended.overlays.map((item) => ({ ...item, exit_token: "dissolve-out" as const })),
+      },
+    );
+    expect(changedOverlay.rejected).toEqual([
+      expect.objectContaining({ reason: "user_changed" }),
+    ]);
+
+    const director = directorCtx();
+    const changedClip = applyCopilotOpsAtomic(
+      [{ op: "remove_clip", slot_index: 1 }],
+      {
+        ...director,
+        slots: director.slots.map((item) =>
+          item.key === "b" ? { ...item, lookPreset: "smoky_split_tone" as const } : item
+        ),
+      },
+    );
+    expect(changedClip.rejected).toEqual([
+      expect.objectContaining({ reason: "user_changed" }),
+    ]);
+
+    const changedCamera = applyCopilotOpsAtomic(
+      [{ op: "remove_camera_effect", camera_effect_index: 0 }],
+      {
+        ...director,
+        cameraEffects: director.cameraEffects.map((item) => ({
+          ...item,
+          token: "alternate_camera_pulse",
+        })),
+      },
+    );
+    expect(changedCamera.rejected).toEqual([
+      expect.objectContaining({ reason: "user_changed" }),
+    ]);
+  });
+
+  it("rejects a remove-clip card after a sibling recommendation reordered its target", () => {
+    const source = directorCtx();
+    const reordered = applyCopilotOpsAtomic(
+      [{ op: "reorder_clip", from_index: 1, to_index: 0 }],
+      source,
+    );
+    expect(reordered.rejected).toEqual([]);
+
+    const staleRemoval = applyCopilotOpsAtomic(
+      [{ op: "remove_clip", slot_index: 1 }],
+      { ...source, slots: reordered.nextSlots ?? source.slots },
+    );
+
+    expect(staleRemoval.rejected).toEqual([
+      expect.objectContaining({ reason: "user_changed" }),
+    ]);
+    expect(staleRemoval.nextSlots).toBeNull();
+  });
+
   it("inserts a completed generated asset at the nearest clip boundary", () => {
     const result = applyCopilotOpsAtomic(
       [{
