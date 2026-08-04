@@ -552,6 +552,21 @@ class Settings(BaseSettings):
         "dedicated vCPU count so each concurrent FFmpeg encode gets a real core.",
     )
 
+    PLAN_SYNC_DISPATCH_ENABLED: bool = Field(
+        default=True,
+        description="POST /plan-items/{id}/generate mints the render Job "
+        "synchronously in-request (plans/014) so the item flips to "
+        "'generating' immediately, instead of waiting for the single-slot "
+        "render worker to run the dispatch task (observed: ~8 min of frozen "
+        "'Starting…' behind an in-flight render, 2026-08-04). Also makes a "
+        "duplicate Generate an idempotent 200 (FOR-UPDATE re-check in "
+        "dispatch_item_render_for). false → legacy async dispatch via "
+        "generate_plan_item_videos.delay() with the 409 double-generate "
+        "guard — byte-identical route contract to pre-014. Apply: "
+        "`fly secrets set PLAN_SYNC_DISPATCH_ENABLED=false --app nova-video` "
+        "+ `fly machine restart <id>` (api).",
+    )
+
     RENDER_AUTOSTOP_ENABLED: bool = Field(
         default=False,
         description="Stop the `worker` Fly machine when render_worker_idle() "

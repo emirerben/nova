@@ -12,6 +12,15 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.tasks.content_plan_build import DispatchResult
+
+
+def _patch_dispatch_ok():
+    """Stub the plans/014 sync dispatch helper with a successful outcome."""
+    return patch(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        return_value=DispatchResult("dispatched", job_id=str(uuid.uuid4())),
+    )
 
 
 def _user() -> MagicMock:
@@ -119,16 +128,53 @@ def test_generate_requires_clips(client: TestClient) -> None:
 
 
 def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
+    # plans/014: the sync path dispatches in-request via dispatch_item_render_for
+    # (real-DB coverage lives in test_plan_item_sync_dispatch.py; here we pin
+    # only that the route routes through the helper).
     user = _user()
     item, plan = _owned_item(user.id, clips=[f"users/{0}/plan/0/a.mp4"])
     db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
-    with patch("app.tasks.content_plan_build.generate_plan_item_videos") as task:
-        task.delay = MagicMock()
+    with _patch_dispatch_ok() as dispatch:
         resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 200
-    task.delay.assert_called_once_with(str(item.id))
+    dispatch.assert_called_once_with(str(item.id))
+
+
+def test_generate_unknown_dispatch_outcome_is_500(client: TestClient) -> None:
+    """CA3/M1 pin: a future DispatchOutcome the route doesn't map must surface
+    as an explicit 500 — never fall through to the 200 success path (the
+    silent-no-op class plans/014 exists to kill)."""
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        # Literal is not runtime-enforced on the frozen dataclass — exactly the
+        # hole a future outcome value would slip through.
+        return_value=DispatchResult("future_outcome"),  # type: ignore[arg-type]
+    ):
+        resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 500
+
+
+def test_generate_missing_row_outcome_is_404(client: TestClient) -> None:
+    """Route mapping pin: missing_row (item deleted between the ownership load
+    and the helper's locked re-load — TOCTOU) surfaces as 404, not success."""
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        return_value=DispatchResult("missing_row"),
+    ):
+        resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 404
 
 
 def test_generate_rejects_photo_clip_for_classic_montage(client: TestClient) -> None:
@@ -177,11 +223,10 @@ def test_generate_allows_narrated_without_voiceover_when_self_narration_on(
     db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
-    with patch("app.tasks.content_plan_build.generate_plan_item_videos") as task:
-        task.delay = MagicMock()
+    with _patch_dispatch_ok() as dispatch:
         resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 200
-    task.delay.assert_called_once_with(str(item.id))
+    dispatch.assert_called_once_with(str(item.id))
 
 
 def test_generate_self_narration_on_still_requires_clips(monkeypatch, client: TestClient) -> None:
@@ -201,6 +246,7 @@ def test_generate_self_narration_on_still_requires_clips(monkeypatch, client: Te
 
 
 def test_generate_allows_narrated_with_voiceover(client: TestClient) -> None:
+
     user = _user()
     item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
     item.edit_format = "narrated_ready"
@@ -208,11 +254,10 @@ def test_generate_allows_narrated_with_voiceover(client: TestClient) -> None:
     db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
-    with patch("app.tasks.content_plan_build.generate_plan_item_videos") as task:
-        task.delay = MagicMock()
+    with _patch_dispatch_ok() as dispatch:
         resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 200
-    task.delay.assert_called_once_with(str(item.id))
+    dispatch.assert_called_once_with(str(item.id))
 
 
 def test_set_voiceover_stores_path(client: TestClient) -> None:

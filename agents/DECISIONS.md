@@ -825,3 +825,61 @@ that NONE of them still apply — not just the one that's easiest to prove
 unused. "Unused capability" and "unused VM class" are different claims;
 this incident is what happens when the first gets treated as proof of the
 second.
+
+## [2026-08-04] Frozen "Starting…" on Generate — mint the Job in-request, don't shorten the queue (plans/014, v0.23.2.0)
+
+A mobile user tapped Generate on a plan item and sat on a disabled
+"Starting…" button for ~8 minutes (plan item `f2b9201d`, job `4fb8fa0f`).
+Root cause, prod-verified from the admin API: `POST /plan-items/{id}/generate`
+didn't create the Job row — it only enqueued the `generate_plan_item_videos`
+Celery task on the default `celery` queue, and the Job (whose existence is
+what flips `derive_item_status()` to `"generating"`) was minted by that task.
+The single `worker` machine (`--concurrency=1`, draining `celery` +
+`plan-jobs` + `overlay-jobs`) had an in-flight render (`61c4d859`) holding
+the slot, so the tiny Job-minting task waited behind it head-of-line. FIFO
+drain signature: `61c4d859` finished at 11:25:35.99Z and the user's Job was
+created 244 ms later. Corroboration: content_plan jobs routinely showed
+multi-minute `created→started` gaps, while public generative jobs'
+`created_at` is the click time — because `POST /generative-jobs` builds the
+Job synchronously in the route. Ruled out: render-worker autostop (not
+enabled in Fly secrets), mobile-specific frontend paths, poll caching.
+
+**Decision — make the wait visible, not shorter.** The fix ports the public
+generative-jobs pattern: Generate mints the Job in-request
+(`dispatch_item_render_for` in `content_plan_build.py`, run via
+`anyio.to_thread.run_sync`), so the page's immediate post-tap refetch flips
+to the progress view and shows an honest "queued" phase. The single-slot head-of-line
+blocking itself is deliberately NOT fixed here — worker topology is a cost
+decision (second machine / analysis lane split) deferred to TODOS.md
+("Render-worker queue latency" section). Kill switch:
+`PLAN_SYNC_DISPATCH_ENABLED=false` restores the legacy `.delay()`+409
+contract byte-identically.
+
+**Sub-decisions worth keeping:**
+
+- **One dispatch entry point, route AND task.** `dispatch_item_render_for`
+  (SELECT … FOR UPDATE on the item + active-render re-check) is shared by
+  the route thread and the Celery task body, so the two paths can't drift.
+  The activation loop applies the same lock+re-check inline — every minting
+  path locks, which is the duplicate-mint guard since
+  `jobs.content_plan_item_id` deliberately has no uniqueness constraint
+  (retries mint new rows).
+- **Duplicate Generate ⇒ idempotent 200, not 409.** A lost-response mobile
+  retry self-heals into the render that's already running instead of
+  stranding the user on an error banner.
+- **Publish-failure containment is CONDITIONAL on `status == "queued"`.**
+  `apply_async` raising does not prove Redis rejected the message; if the
+  worker already flipped the job to `processing`, an unconditional
+  `processing_failed` write would mark a RUNNING render failed and invite a
+  duplicate. rowcount 0 ⇒ the worker owns it ⇒ report dispatched. A genuine
+  publish failure flips the Job terminal (`dispatch_publish_failed`) because
+  the reaper deliberately never reaps `queued` — an uncontained failure
+  would strand a forever-"generating" ghost.
+- **Status buckets single-sourced** in `app/services/job_status.py`:
+  `plan_items.py`'s hand-copied bucket had drifted from `me.py`'s (missing
+  `template_ready`/`music_ready`), so a template/music job pinned to a plan
+  day read as "generating" forever AND blocked new generates. The dispatch
+  re-check and the read path must share one terminal set or a failed item
+  refuses to re-generate / a live render double-dispatches.
+
+Full plan + prod evidence table + review deltas: `plans/014-sync-plan-generate-registration.md`.

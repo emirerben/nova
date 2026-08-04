@@ -41,31 +41,19 @@ from app.models import (
     VideoFeedback,
 )
 from app.services import tiktok_client
+from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.token_crypto import decrypt_token
 from app.storage import signed_download_url, signed_get_url
 
 log = structlog.get_logger()
 router = APIRouter()
 
-# Job.status buckets — kept in lockstep with plan_items.derive_item_status so the
-# library tiles and the plan dashboard agree on "ready"/"failed" across every job mode
-# (generative variants, content_plan, template, music, auto_music).
-_JOB_READY = {
-    "variants_ready",
-    "variants_ready_partial",
-    "done",
-    "clips_ready",
-    "template_ready",
-    "music_ready",
-}
-_JOB_FAILED = {
-    "variants_failed",
-    "matching_failed",
-    "no_labeled_tracks",
-    "processing_failed",
-    "posting_failed",
-    "cancelled",
-}
+# Job.status buckets — derived from the shared constants (plans/014 review) so
+# the library tiles and the plan dashboard structurally agree on "ready"/
+# "failed" across every job mode; the old hand-copied "lockstep" comment here
+# is exactly how plan_items' copy drifted (missing template_ready/music_ready).
+_JOB_READY = PLAN_ITEM_JOB_READY
+_JOB_FAILED = PLAN_ITEM_JOB_FAILED
 
 _DEFAULT_LIMIT = 24
 _MAX_LIMIT = 60

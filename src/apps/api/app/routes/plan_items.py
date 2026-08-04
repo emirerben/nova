@@ -111,6 +111,7 @@ from app.schemas.montage_preset import (
     coerce_montage_preset,
     is_collage_montage_preset,
 )
+from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
     is_heif_overlay,
@@ -154,16 +155,10 @@ _SFX_ALLOWED_CONTENT_TYPES = {
 _MAX_SFX_CARDS = 20  # max placements per variant
 _MAX_SFX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB per effect
 
-# Job.status buckets (mode="content_plan" reuses the generative variant states).
-_JOB_READY = {"variants_ready", "variants_ready_partial", "done", "clips_ready"}
-_JOB_FAILED = {
-    "variants_failed",
-    "matching_failed",
-    "no_labeled_tracks",
-    "processing_failed",
-    "posting_failed",
-    "cancelled",
-}
+# Job.status buckets — single-sourced with the dispatch-time active-render
+# re-check in tasks/content_plan_build.py (plans/014): the two must never drift.
+_JOB_READY = PLAN_ITEM_JOB_READY
+_JOB_FAILED = PLAN_ITEM_JOB_FAILED
 
 
 def _is_image_clip_path(path: str) -> bool:
@@ -1463,20 +1458,68 @@ async def generate_item(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Photos require a collage preset",
         )
-    # Idempotency guard (dogfood: double-clicking Generate minted two render
-    # jobs). The Job is created async by the task, so also reject while the
-    # row state says a dispatch is pending/in flight.
-    if derive_item_status(item) == "generating":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A render is already in progress for this item",
-        )
-    from app.tasks.content_plan_build import generate_plan_item_videos  # noqa: PLC0415
+    from app.tasks.content_plan_build import (  # noqa: PLC0415
+        dispatch_item_render_for,
+        generate_plan_item_videos,
+    )
 
-    generate_plan_item_videos.delay(str(item.id))
-    # current_job_id is set by the task, not synchronously here; reload with the
-    # relationship eager-loaded so serialization never lazy-loads on the session.
-    reloaded = await _load_owned_item(item_id, user.id, db)
+    if not settings.PLAN_SYNC_DISPATCH_ENABLED:
+        # Kill-switch fallback (plans/014) — byte-identical legacy contract:
+        # 409 off derived status, Job minted asynchronously by the task, the
+        # frontend waits out its registration window.
+        if derive_item_status(item) == "generating":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A render is already in progress for this item",
+            )
+        generate_plan_item_videos.delay(str(item.id))
+        reloaded = await _load_owned_item(item_id, user.id, db)
+        instruction_level = await _get_instruction_level(reloaded, db)
+        return plan_item_response(reloaded, instruction_level=instruction_level)
+
+    # Sync dispatch (plans/014): mint the Job in-request so derive_item_status
+    # flips to "generating" before the response — the page's immediate refetch
+    # sees a registered render instead of minutes of frozen "Starting…" while
+    # a dispatch task waits behind the single-slot render worker.
+    # No pre-flight "already generating" 409 here: the helper's FOR-UPDATE
+    # re-check owns that race, and an active render maps to an idempotent 200
+    # (D5) so a lost-response retry self-heals instead of stranding the user
+    # on an error banner while the render actually runs.
+    from anyio import to_thread  # noqa: PLC0415
+
+    # Capture BEFORE db.expire_all(): `user` is an ORM row loaded on THIS
+    # request session (get_current_user shares the cached get_db dependency),
+    # so a post-expire attribute access would lazy-refresh synchronously inside
+    # the async handler → MissingGreenlet 500 on every successful generate
+    # (review 2026-08-04, performance P1).
+    owner_id = user.id
+    result = await to_thread.run_sync(dispatch_item_render_for, str(item.id))
+    if result.outcome == "missing_row":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
+    if result.outcome == "invalid_clips":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Your clips couldn't be validated — re-upload them and try again",
+        )
+    if result.outcome == "publish_failed":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The render couldn't be queued — give it another go",
+        )
+    if result.outcome not in ("dispatched", "already_active"):
+        # A future/unknown outcome must never read as success (review CA3/M1) —
+        # the silent-no-op class this whole feature exists to kill.
+        log.error("plan_item_generate.unexpected_outcome", outcome=result.outcome)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Generation failed unexpectedly — try again",
+        )
+    # dispatched | already_active → 200 with the item's current state. The
+    # helper committed on a SEPARATE sync session; expire this async session's
+    # identity map or the reload serves the pre-dispatch row and the response
+    # misses the fresh current_job_id (plans/014 A2).
+    db.expire_all()
+    reloaded = await _load_owned_item(item_id, owner_id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
     return plan_item_response(reloaded, instruction_level=instruction_level)
 
