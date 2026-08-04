@@ -1,6 +1,6 @@
 # 014 — Synchronous job registration for plan-item Generate
 
-**Status:** REVIEWED (eng review 2026-08-04) — ready to implement
+**Status:** DONE — shipped v0.23.2.0 (2026-08-04)
 **Owner:** Yasin
 **Incident:** 2026-08-04 ~11:17Z — mobile user stuck on a frozen "Starting…" button for ~8 minutes after tapping Generate (usekria.com, plan item `f2b9201d`, job `4fb8fa0f`).
 
@@ -217,14 +217,14 @@ Unchanged call sites — deliberately out of this PR's blast radius:
 
 ### Checklist
 
-- [ ] Extract `dispatch_item_render_for` (typed result) in `content_plan_build.py`; task body delegates to it
-- [ ] FOR-UPDATE item lock + in-lock active-job re-check → `already_active` (C1)
-- [ ] Publish-failure containment inside the helper (mark failed + commit; NO re-raise in any context — C4)
-- [ ] Route: flag-gated sync dispatch via `anyio.to_thread.run_sync` + `db.expire_all()` + typed-result → HTTP mapping (`already_active` ⇒ 200 current state — D5)
-- [ ] `PLAN_SYNC_DISPATCH_ENABLED` in `config.py` (default `true`, kill-switch description per house style)
-- [ ] All 8 tests above
-- [ ] `plans/README.md`: add 014 row
-- [ ] `CLAUDE.md` env-var list: one line for the kill switch
+- [x] Extract `dispatch_item_render_for` (typed result) in `content_plan_build.py`; task body delegates to it
+- [x] FOR-UPDATE item lock + in-lock active-job re-check → `already_active` (C1)
+- [x] Publish-failure containment inside the helper (mark failed + commit; NO re-raise in any context — C4)
+- [x] Route: flag-gated sync dispatch via `anyio.to_thread.run_sync` + `db.expire_all()` + typed-result → HTTP mapping (`already_active` ⇒ 200 current state — D5)
+- [x] `PLAN_SYNC_DISPATCH_ENABLED` in `config.py` (default `true`, kill-switch description per house style)
+- [x] All 8 tests above
+- [x] `plans/README.md`: add 014 row
+- [x] `CLAUDE.md` env-var list: one line for the kill switch
 
 ## Rollout
 

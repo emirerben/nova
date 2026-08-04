@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Plan-item render state buckets are single-sourced (`app/services/job_status.py`) across the dashboard and the library; the new `PLAN_SYNC_DISPATCH_ENABLED` kill switch (default on) restores the legacy async dispatch if needed. Root `package.json` version re-synced with VERSION (drifted in 0.23.1.0).
+- API contract (sync dispatch on): a duplicate `POST /plan-items/{id}/generate` returns 200 with the already-running render (was 409); invalid clips return 422, and a failed queue hand-off returns 502 with the job marked `failure_reason="dispatch_publish_failed"`.
 
 ## [0.23.1.0] — 2026-08-04
 

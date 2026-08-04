@@ -70,7 +70,7 @@ Rules:
 - `src/apps/web/src/app/plan/_components/ui/SeedProvenanceBadge.tsx` — "From your idea" lime badge rendered on TodayCard, PlanItemCard, and item detail page; driven by `source_idea_seed_text` from the API
 - `src/apps/api/prompts/` — LLM prompt templates (template analysis, transcription)
 - `agents/` — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
-- `plans/` — DONE implementation plans from the June 12 audit (`plans/README.md` has execution order + status; 001–004 all shipped)
+- `plans/` — implementation plans (`plans/README.md` has status; 001–004 June-audit + 005–014 post-audit)
 
 ## Local dev
 ```bash
