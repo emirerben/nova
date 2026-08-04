@@ -274,6 +274,45 @@ def _sweep_stale_tmpdirs(sender=None, **kwargs):  # pragma: no cover (signal wir
         print(f"[task_prerun] tmp sweep failed (non-fatal): {exc!r}")
 
 
+def _worker_consumes_render_queues(sender) -> bool:
+    """True when this worker process consumes at least one render-worker
+    queue. Deliberately coarse: it matches machine SIZING, not per-task CLIP
+    need — an overlay-jobs-only worker (dev-auto.sh 7b) prewarms a model it
+    won't use, which is fine on render-sized VMs. If a small dedicated
+    analysis/overlay process is ever split out (TODOS worker-topology (a)),
+    revisit this before pointing it at a render queue.
+
+    `sender` is the celery.worker.consumer.Consumer instance that
+    `worker_ready` passes; `sender.app.amqp.queues.consume_from` reflects the
+    queues this process was started with. `-Q maintenance` (the `light` Fly
+    machine) restricts it to {"maintenance"}; the render worker's
+    `-Q celery,plan-jobs,overlay-jobs` and a bare local-dev worker (no `-Q`,
+    consumes the default `celery` queue) both pass.
+
+    Fail-CLOSED (False) when the consumer shape can't be read. The asymmetry:
+    wrongly skipping the prewarm on the render worker costs one ~3-5s lazy
+    model load on the first template analysis after a deploy; wrongly
+    prewarming on the light machine loads torch + ViT-B/32 (~450-600MB peak,
+    see clip_font_matcher.py) into a small VM sized for DB/HTTP maintenance
+    tasks. That second failure mode is exactly the 2026-08-02 incident: the
+    prewarm OOM crash-looped the 512MB light machine until flyd's restart
+    budget ran out, parking it `stopped` through every subsequent deploy and
+    silently killing the stale-job sweeper, the daily digest, and the TikTok
+    polls for two days. See agents/DECISIONS.md (2026-08-04).
+    """
+    try:
+        from app.services.queue_state import RENDER_WORKER_QUEUES  # noqa: PLC0415
+
+        consumed = set(sender.app.amqp.queues.consume_from.keys())
+    except Exception as exc:  # noqa: BLE001
+        print(f"[worker_ready] queue introspection failed — skipping CLIP prewarm: {exc!r}")
+        return False
+    if not consumed & RENDER_WORKER_QUEUES:
+        print("[worker_ready] no render queue consumed — skipping CLIP prewarm")
+        return False
+    return True
+
+
 @worker_ready.connect
 def _prewarm_clip_font_matcher(sender, **kwargs):  # pragma: no cover (signal wiring)
     """Load the CLIP font matcher singleton at worker boot.
@@ -284,9 +323,19 @@ def _prewarm_clip_font_matcher(sender, **kwargs):  # pragma: no cover (signal wi
     completes promptly. Memory residency is unchanged — the singleton was
     going to load eventually; we just shift the timing.
 
+    Gated to workers that consume a render queue: worker_ready fires in
+    EVERY celery worker process, including the small `light` maintenance
+    machine where no CLIP-using task can ever execute and the model doesn't
+    fit in RAM — see _worker_consumes_render_queues for the incident this
+    guards against.
+
     Runs in a background thread so a slow first-time weights download
     can't block worker readiness.
     """
+    if not _worker_consumes_render_queues(sender):
+        # The gate already printed the accurate skip reason (no render queue
+        # vs introspection failure) — don't restate a guess here.
+        return
 
     def _run():
         try:

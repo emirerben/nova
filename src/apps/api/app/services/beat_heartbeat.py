@@ -5,10 +5,9 @@ exact blind spot: if Beat's process/machine goes down entirely, nothing
 Beat-scheduled fires, including a heartbeat check. This module writes a
 Redis timestamp from the `task_success` signal (app/worker.py) on every
 Beat-scheduled task's successful completion, and exposes a read-side check
-consumed by `GET /health/beat` (app/main.py) — meant to be pinged by a
-service that runs OUTSIDE this app entirely (UptimeRobot, cron-job.org, a
-scheduled GitHub Actions workflow), since that's the only kind of check
-immune to Beat's own death.
+consumed by `GET /health/beat` (app/main.py) — pinged from OUTSIDE this app
+by `.github/workflows/beat-health.yml` (15-min cron, since 2026-08-04),
+since that's the only kind of check immune to Beat's own death.
 
 Why this specifically matters now: before render-worker autostop, if Beat
 died, the render worker kept running and kept consuming jobs normally (it

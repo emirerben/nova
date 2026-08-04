@@ -627,11 +627,10 @@ class Settings(BaseSettings):
     BEAT_HEARTBEAT_STALE_AFTER_MIN: int = Field(
         default=10,
         description="Minutes since the last successful Beat-scheduled task "
-        "before GET /health/beat reports unhealthy. Meant to be pinged by a "
-        "service OUTSIDE this app (UptimeRobot, cron-job.org, a scheduled "
-        "GitHub Actions workflow) — this is the only mechanism that can "
-        "detect Celery Beat being fully dead, since any check that is "
-        "itself Beat-scheduled shares Beat's exact blind spot. Matters "
+        "before GET /health/beat reports unhealthy. Pinged from OUTSIDE this "
+        "app by .github/workflows/beat-health.yml (15-min cron) — the only "
+        "mechanism that can detect Celery Beat being fully dead, since any "
+        "check that is itself Beat-scheduled shares Beat's exact blind spot. Matters "
         "specifically because RENDER_AUTOSTOP_ENABLED makes Beat's health a "
         "prerequisite for the render worker ever restarting on a missed "
         "wake-hook call. 5x the fastest Beat interval (2 min, the render- "

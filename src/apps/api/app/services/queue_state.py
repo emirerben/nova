@@ -73,8 +73,12 @@ _QUEUE_SCAN_CAP = 100
 #     on `routing_key in RENDER_WORKER_QUEUES` — verified empirically that
 #     Celery's routing_key equals the target queue name in this app's
 #     config, since no custom exchange topology is declared)
-# Keep this in sync with fly.toml's worker `-Q` flag by hand; there is no
-# way to share a literal between TOML and Python.
+#   - _worker_consumes_render_queues() in app/worker.py (the worker_ready
+#     CLIP-prewarm gate — the 2026-08-04 light-machine OOM fix)
+# Hand-synced with fly.toml's worker `-Q` flag (no way to share a literal
+# between TOML and Python) — but drift now fails CI:
+# tests/test_worker_prewarm_gate.py pins both this set against the worker
+# line AND the light line's disjointness from it.
 RENDER_WORKER_QUEUES: frozenset[str] = frozenset({"celery", "plan-jobs", "overlay-jobs"})
 
 RuntimeStateLiteral = Literal["active", "reserved", "not_found", "unknown"]

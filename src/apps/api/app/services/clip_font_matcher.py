@@ -13,7 +13,10 @@ artifact):
   * peak per worker:         ~450-600MB
 
 Combined with FFmpeg subprocess working sets at 1080×1920 (800MB-1.4GB peak)
-this is why the worker bumped to 4096MB. See fly.toml [[vm]] worker block.
+this is part of the render worker VM's memory budget — fly.toml [[vm]]
+worker block is the sizing source of truth. This profile is also why the
+worker_ready prewarm is queue-gated (app/worker.py) — it does NOT fit the
+small `light` maintenance VM (2026-08-04 incident, agents/DECISIONS.md).
 """
 
 from __future__ import annotations

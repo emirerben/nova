@@ -32,11 +32,14 @@ primary_region = "iad"
   # post-PR #103). One task per worker means each task gets the full CPU
   # allocation. Trade-off: half the parallel throughput, but each render
   # completes in roughly a quarter of the wall-clock.
-  # -Q celery,plan-jobs: also drain the content-plan render queue. Per-item plan
-  # renders (generate_plan_item_videos → orchestrate_generative_job) are routed to
-  # `plan-jobs` so generate-first-week can enqueue 7 at once; the single
-  # concurrency=1 slot serializes them, so they can never run simultaneously and
-  # OOM the 6GB worker (plan T3). One worker, two queues, still one task at a time.
+  # -Q celery,plan-jobs,overlay-jobs: also drain the content-plan render and
+  # overlay queues. Per-item plan renders (generate_plan_item_videos →
+  # orchestrate_generative_job) are routed to `plan-jobs` so generate-first-week
+  # can enqueue 7 at once; the single concurrency=1 slot serializes them, so
+  # they can never run simultaneously and OOM the worker (sized in [[vm]]
+  # below; plan T3). One worker, three queues, still one task at a time.
+  # This -Q list is CI-pinned against app/services/queue_state.py's
+  # RENDER_WORKER_QUEUES by tests/test_worker_prewarm_gate.py.
   worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs"
   # 2026-08-02 (render-worker autostop): moves ALL Beat-triggered tasks
   # (sweep_stale_jobs, cleanup_agent_runs, send_daily_digest,
@@ -151,19 +154,26 @@ primary_region = "iad"
   memory_mb = 256
 
 # Light — small always-on VM for the Beat-triggered maintenance tasks
-# (see task_routes in app/worker.py). 512MB, not the 256MB beat/api-minimum
-# tier: cleanup_agent_runs runs batched DELETEs against a table that can
-# grow into the hundreds of thousands of rows, and concurrency=2 means two
-# of these light tasks can run at once. Deliberately does NOT host any
+# (see task_routes in app/worker.py). Deliberately does NOT host any
 # task that downloads media or loads torch (match_pool_clips,
 # style_vision_build.*, drive_import.*, agentic_template_build_task,
 # analyze_music_track_task all stay on the render worker) — those would
 # OOM this VM.
+# 2026-08-04: 512 → 1024. At 512MB the machine ran with ~7MB available
+# from its first minute (Fly Prometheus, 2026-08-02): celery parent + 2
+# prefork children of the full app import already filled the VM, and the
+# worker_ready CLIP prewarm (now queue-gated in app/worker.py — that gate
+# is the actual fix) OOM crash-looped it until flyd's on-failure restart
+# budget ran out and the machine parked `stopped` through every subsequent
+# deploy, silently killing the sweeper/digest/TikTok lanes for two days.
+# 1024 gives the baseline real headroom; concurrency=2 means two
+# maintenance tasks (e.g. cleanup_agent_runs batched DELETEs) can run at
+# once. See agents/DECISIONS.md (2026-08-04).
 [[vm]]
   processes = ["light"]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 512
+  memory_mb = 1024
 
 [[vm]]
   processes = ["worker"]
