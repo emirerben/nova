@@ -24,6 +24,8 @@ still a `NotImplementedError` stub as of Lane G; another agent fills it in).
 
 from __future__ import annotations
 
+import dataclasses
+import sys
 import types
 from typing import Any
 
@@ -314,3 +316,279 @@ def test_maybe_render_carousel_moment_no_local_paths_returns_none(monkeypatch):
     )
 
     assert result is None
+
+
+# ── _apply_moment_overrides: precedence, schema-missing degrades gracefully ─
+
+
+@dataclasses.dataclass(frozen=True)
+class _FullSpec:
+    """Stand-in for a post-landing `CarouselMomentSpec` (has mode/focus_moments/
+    seed) — lets override precedence be pinned without depending on the
+    concurrent lane's schema having landed yet."""
+
+    effect: str
+    clip_paths: tuple
+    duration_s: float = 4.0
+    mode: str = "stills"
+    focus_moments: tuple = ()
+    seed: int = 0
+
+
+@dataclasses.dataclass(frozen=True)
+class _PreLandingSpec:
+    """Stand-in for TODAY's `CarouselMomentSpec` (no mode/focus_moments/seed)
+    — exercises the schema-missing no-op path."""
+
+    effect: str
+    clip_paths: tuple
+    duration_s: float = 4.0
+
+
+def test_apply_moment_overrides_noop_when_moment_cfg_has_no_override_keys():
+    spec = _FullSpec(effect="cover_flow", clip_paths=("/a",), duration_s=3.0)
+    result = gb._apply_moment_overrides(spec, {"position": "outro"})
+    assert result is spec  # unchanged object, not just equal
+
+
+def test_apply_moment_overrides_effect_and_duration_win_over_base_spec():
+    spec = _FullSpec(effect="cover_flow", clip_paths=("/a",), duration_s=3.0)
+    result = gb._apply_moment_overrides(spec, {"effect": "flipbook", "duration_s": 5.5})
+    assert result.effect == "flipbook"
+    assert result.duration_s == 5.5
+    assert result.clip_paths == ("/a",)  # untouched fields preserved
+
+
+def test_apply_moment_overrides_mode_and_seed_win_when_schema_supports_them():
+    spec = _FullSpec(effect="cover_flow", clip_paths=("/a",), mode="rolling", seed=1)
+    result = gb._apply_moment_overrides(spec, {"mode": "stills", "seed": 99})
+    assert result.mode == "stills"
+    assert result.seed == 99
+
+
+def test_apply_moment_overrides_focus_override_parses_via_choreography(monkeypatch):
+    @dataclasses.dataclass(frozen=True)
+    class _FocusMomentStub:
+        card_index: int
+        hold_s: float = 2.0
+        zoom_s: float = 0.6
+
+    stub_mod = types.ModuleType("app.pipeline.carousel.choreography")
+    stub_mod.FocusMoment = _FocusMomentStub
+    monkeypatch.setitem(sys.modules, "app.pipeline.carousel.choreography", stub_mod)
+
+    spec = _FullSpec(effect="cover_flow", clip_paths=("/a", "/b"), mode="focus")
+    result = gb._apply_moment_overrides(spec, {"focus": [{"card_index": 1, "hold_s": 2.5}]})
+    assert result.focus_moments == (_FocusMomentStub(card_index=1, hold_s=2.5),)
+
+
+def test_apply_moment_overrides_mode_override_noop_on_pre_landing_schema(caplog):
+    """The current (pre-landing) CarouselMomentSpec has no `mode` field.
+    Overriding it must be a logged no-op, not a crash — this is the "schema
+    hasn't landed yet" degrade path."""
+    spec = _PreLandingSpec(effect="cover_flow", clip_paths=("/a",))
+    result = gb._apply_moment_overrides(spec, {"mode": "focus"})
+    assert result is spec
+    assert not hasattr(result, "mode")
+
+
+def test_apply_moment_overrides_focus_override_noop_on_pre_landing_schema():
+    spec = _PreLandingSpec(effect="cover_flow", clip_paths=("/a",))
+    result = gb._apply_moment_overrides(spec, {"focus": [{"card_index": 0}]})
+    assert result is spec
+
+
+# ── _stable_seed_from_variant: deterministic, not Python's randomized hash() ─
+
+
+def test_stable_seed_from_variant_is_deterministic():
+    assert gb._stable_seed_from_variant("variant-a") == gb._stable_seed_from_variant("variant-a")
+
+
+def test_stable_seed_from_variant_differs_across_variants():
+    assert gb._stable_seed_from_variant("variant-a") != gb._stable_seed_from_variant("variant-b")
+
+
+def test_stable_seed_from_variant_handles_none():
+    # Must not raise, and must stay deterministic (used when neither an
+    # explicit moment_cfg["seed"] nor a variant_id is available).
+    assert gb._stable_seed_from_variant(None) == gb._stable_seed_from_variant(None)
+
+
+# ── _direct_auto_carousel_spec: auto-mode ClipInfo/seed wiring ─────────────
+
+
+def test_direct_auto_carousel_spec_uses_probe_map_durations_with_fallback(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def _fake_direct(clips, *, seed, target_duration_s):
+        captured["clips"] = clips
+        captured["seed"] = seed
+        captured["target_duration_s"] = target_duration_s
+        return "SPEC"
+
+    import app.pipeline.carousel.director as director_mod
+
+    monkeypatch.setattr(director_mod, "direct_carousel_moment", _fake_direct)
+
+    probe_map = {"/a": types.SimpleNamespace(duration_s=5.0)}  # "/b" missing -> fallback
+    result = gb._direct_auto_carousel_spec(
+        {},  # no explicit overrides
+        clip_paths=["/a", "/b"],
+        probe_map=probe_map,
+        variant_id="variant-x",
+    )
+
+    assert result == "SPEC"
+    clips = captured["clips"]
+    assert [c.path for c in clips] == ["/a", "/b"]
+    assert clips[0].duration_s == 5.0
+    assert clips[1].duration_s == gb._AUTO_CAROUSEL_FALLBACK_DURATION_S
+    assert captured["seed"] == gb._stable_seed_from_variant("variant-x")
+    assert captured["target_duration_s"] == director_mod.DEFAULT_TARGET_DURATION_S
+
+
+def test_direct_auto_carousel_spec_explicit_seed_and_duration_override_defaults(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def _fake_direct(clips, *, seed, target_duration_s):
+        captured["seed"] = seed
+        captured["target_duration_s"] = target_duration_s
+        # A real (albeit pre-landing-shape) spec — `_apply_moment_overrides`
+        # runs on whatever this returns, and needs a real dataclass instance.
+        return _PreLandingSpec(effect="scale_sweep", clip_paths=("/a",))
+
+    import app.pipeline.carousel.director as director_mod
+
+    monkeypatch.setattr(director_mod, "direct_carousel_moment", _fake_direct)
+
+    result = gb._direct_auto_carousel_spec(
+        {"seed": 777, "duration_s": 9.5},
+        clip_paths=["/a"],
+        probe_map={},
+        variant_id="variant-x",
+    )
+
+    assert captured["seed"] == 777
+    assert captured["target_duration_s"] == 9.5
+    assert result.duration_s == 9.5  # duration_s override applied on top
+
+
+# ── _maybe_render_carousel_moment: auto-mode passthrough ───────────────────
+
+
+def test_maybe_render_carousel_moment_auto_uses_director(monkeypatch):
+    """Flag-on, moment_cfg["auto"] truthy -> `_maybe_render_carousel_moment`
+    must route through `_direct_auto_carousel_spec` (not build a plain
+    CarouselMomentSpec directly) and hand its result straight to
+    `render_carousel_moment`."""
+    sentinel_spec = object()
+    captured: dict[str, Any] = {}
+
+    def _fake_direct_auto(moment_cfg, *, clip_paths, probe_map, variant_id):
+        captured["moment_cfg"] = moment_cfg
+        captured["clip_paths"] = clip_paths
+        captured["probe_map"] = probe_map
+        captured["variant_id"] = variant_id
+        return sentinel_spec
+
+    monkeypatch.setattr(gb, "_direct_auto_carousel_spec", _fake_direct_auto)
+
+    import app.pipeline.carousel.segment as segment_mod
+
+    def _fake_render(spec, work_dir):
+        captured["spec"] = spec
+        captured["work_dir"] = work_dir
+        return "/tmp/rendered.mp4"
+
+    monkeypatch.setattr(segment_mod, "render_carousel_moment", _fake_render)
+
+    probe_map = {"/a": types.SimpleNamespace(duration_s=4.0)}
+    result = gb._maybe_render_carousel_moment(
+        {"auto": True},
+        clip_id_to_local={"clip_1": "/a"},
+        steps=[_step("clip_1")],
+        variant_dir="/tmp/variant",
+        probe_map=probe_map,
+        variant_id="variant-x",
+    )
+
+    assert result == "/tmp/rendered.mp4"
+    assert captured["spec"] is sentinel_spec
+    assert captured["clip_paths"] == ["/a"]
+    assert captured["probe_map"] is probe_map
+    assert captured["variant_id"] == "variant-x"
+
+
+def test_maybe_render_carousel_moment_non_auto_still_builds_plain_spec_directly(monkeypatch):
+    """Belt-and-braces: a non-auto moment_cfg must NOT go anywhere near the
+    director, confirming the auto/non-auto branch really is a branch."""
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("must not call the director for a non-auto moment_cfg")
+
+    monkeypatch.setattr(gb, "_direct_auto_carousel_spec", _boom)
+
+    import app.pipeline.carousel.segment as segment_mod
+
+    monkeypatch.setattr(
+        segment_mod, "render_carousel_moment", lambda spec, work_dir: "/tmp/rendered.mp4"
+    )
+
+    result = gb._maybe_render_carousel_moment(
+        {"effect": "cover_flow"},
+        clip_id_to_local={"clip_1": "/a"},
+        steps=[_step("clip_1")],
+        variant_dir="/tmp/variant",
+    )
+
+    assert result == "/tmp/rendered.mp4"
+
+
+def test_maybe_render_carousel_moment_auto_render_failure_returns_none(monkeypatch):
+    """The never-raise contract must still hold when the director path itself
+    blows up (e.g. the concurrent lane's schema hasn't landed yet)."""
+
+    def _boom(*args, **kwargs):
+        raise TypeError("CarouselMomentSpec.__init__() got an unexpected keyword argument 'mode'")
+
+    monkeypatch.setattr(gb, "_direct_auto_carousel_spec", _boom)
+
+    result = gb._maybe_render_carousel_moment(
+        {"auto": True},
+        clip_id_to_local={"clip_1": "/a"},
+        steps=[_step("clip_1")],
+        variant_dir="/tmp/variant",
+    )
+
+    assert result is None
+
+
+def test_insert_carousel_moment_step_threads_probe_map_and_variant_id(monkeypatch):
+    """`_insert_carousel_moment_step` must pass its own `probe_map` and the
+    spec's `variant_id` down into `_maybe_render_carousel_moment` — auto mode
+    needs both (durations + a stable per-variant seed fallback)."""
+    captured: dict[str, Any] = {}
+
+    def _fake_maybe_render(
+        moment_cfg, *, clip_id_to_local, steps, variant_dir, probe_map, variant_id
+    ):
+        captured["probe_map"] = probe_map
+        captured["variant_id"] = variant_id
+        return None  # steps unchanged path is already covered elsewhere
+
+    monkeypatch.setattr(gb.settings, "carousel_effects_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_maybe_render_carousel_moment", _fake_maybe_render)
+
+    probe_map_sentinel: dict[str, Any] = {"marker": "probe-map"}
+    gb._insert_carousel_moment_step(
+        [_step("clip_1")],
+        {"variant_id": "variant-xyz", "carousel_moment": {"auto": True}},
+        clip_id_to_local={"clip_1": "/a"},
+        clip_id_to_gcs={"clip_1": "gs://a"},
+        probe_map=probe_map_sentinel,
+        variant_dir="/tmp/variant",
+    )
+
+    assert captured["probe_map"] is probe_map_sentinel
+    assert captured["variant_id"] == "variant-xyz"

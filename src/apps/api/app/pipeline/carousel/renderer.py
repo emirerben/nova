@@ -33,9 +33,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .cards import CardAsset
+from .choreography import FULLRES_SWITCH_T, FrameState
 from .effects import CardGeometry, CardTransform
 from .effects import transform_for as _transform_for
 from .spring import SpringFrame
+from .video_cards import VideoCardAsset
 
 if TYPE_CHECKING:
     import skia
@@ -183,62 +185,225 @@ def render_carousel_frames(
     """Render one opaque 1080x1920 RGB PNG per `SpringFrame` into `out_dir` as
     `frame_%04d.png`. Returns the list of written paths, in order.
 
-    Per frame: fill `background_rgb`, compute each card's `CardTransform` via
-    `transform_fn` (defaults to `effects.transform_for`) using
-    `lagged_virtual_scroll` (NOT `spring_frame.virtual_scroll` directly — see
-    that function's docstring for why), skip cards with `opacity <= 0`, sort
-    the rest back-to-front by `(z_index, index)`, and composite each card's
-    cached face onto its projected screen quad (with an optional blurred drop
-    shadow) using `skia.Matrix.setPolyToPoly`.
+    V2: a thin adapter over `render_choreography_frames` — converts each
+    `SpringFrame` into a still-only `FrameState` (`scroll_x=virtual_scroll`,
+    no focus) and each `CardAsset` into a `VideoCardAsset` with an empty
+    video tier (`card_frame_count=0`, so the new renderer falls back to the
+    static poster, exactly V1's only face source). Byte-identical output to
+    the pre-V2 single-function implementation — see
+    `render_choreography_frames`'s docstring for how it reproduces the
+    progress-vs-position scroll split (`lagged_virtual_scroll`) that made
+    this call site parity-proven in the first place; the carousel parity
+    suite (`tests/quality/carousel_parity.py`) re-verifies this end to end.
+    """
+    frame_states = [FrameState(t_s=sf.t_s, scroll_x=sf.virtual_scroll) for sf in spring_frames]
+    video_cards = [
+        VideoCardAsset(
+            index=card.index,
+            card_frames_dir="",
+            card_frame_count=0,
+            full_frames_dir=None,
+            full_frame_count=0,
+            poster_path=card.image_path,
+        )
+        for card in cards
+    ]
+    return render_choreography_frames(
+        effect,
+        frame_states,
+        video_cards,
+        geo,
+        out_dir,
+        background_rgb,
+        transform_fn=transform_fn,
+    )
+
+
+def lagged_frame_scroll_x(frame_states: list[FrameState], frame_idx: int) -> float:
+    """Generalizes `lagged_virtual_scroll` (see that function's docstring for
+    the full "why") to any `FrameState`-driven timeline: `render_choreography_
+    frames` always drives a frame's view-timeline PROGRESS from the
+    PRECEDING frame's `scroll_x`, whether that timeline came from replaying
+    `spring.simulate` (via `render_carousel_frames`'s adapter above) or was
+    authored directly by `choreography.build_timeline`/`rolling_timeline`.
+    Applying the same one-frame lag uniformly means V1's parity-proven
+    motion "feel" carries through unchanged into V2's new timelines too,
+    rather than the two diverging in an untested way."""
+    if frame_idx <= 0:
+        return frame_states[0].scroll_x
+    return frame_states[frame_idx - 1].scroll_x
+
+
+def render_choreography_frames(
+    effect: str,
+    frame_states: list[FrameState],
+    video_cards: list[VideoCardAsset],
+    geo: CardGeometry,
+    out_dir: str,
+    background_rgb: tuple[int, int, int] = (10, 10, 12),
+    *,
+    transform_fn: TransformFn | None = None,
+) -> list[str]:
+    """Render one opaque 1080x1920 RGB PNG per `FrameState` into `out_dir` as
+    `frame_%04d.png`. Superset of `render_carousel_frames`'s job (which now
+    delegates here — see that function's docstring): adds ROLLING VIDEO card
+    faces and FOCUS CHOREOGRAPHY (a card zooming to fullscreen and back).
+
+    Per frame:
+      - Base transform: `transform_fn` (defaults to `effects.transform_for`),
+        driven by `lagged_frame_scroll_x` for progress and the frame's own
+        `scroll_x` for layout position — same split `render_carousel_frames`
+        always used (see `lagged_frame_scroll_x`'s docstring).
+      - Card face: a video card (`card_frame_count > 0`) uses its JPEG frame
+        at `min(frame_idx, count - 1)` (clamped — see `video_cards.
+        resolve_video_card`'s docstring: a clip shorter than the requested
+        window simply runs out of frames, and clamping to the last one holds
+        that final frame rather than looping/erroring); a stills-only card
+        (`card_frame_count == 0`) uses its static poster, exactly V1.
+      - Focus: the card named by `FrameState.focus_card` (when `focus_t >
+        0`) is lerped from its normal carousel quad toward the full-canvas
+        rect (0,0)-(CANVAS_W,CANVAS_H) LINEARLY on `focus_t` — the easing
+        curve itself lives in `choreography.build_timeline`, which is what
+        actually advances `focus_t` frame to frame, so this lerp is
+        deliberately plain. Past `FULLRES_SWITCH_T`, its face source swaps
+        from the card tier to the full tier (`video_cards.FULL_TIER_*` —
+        already cover-cropped to the canvas' own 9:16 aspect, unlike the
+        card tier's 3:4 — so this is a clean reveal, not a cross-fade), and
+        that full-tier playback starts counting from ITS OWN frame 0 at the
+        moment focus first turned on (tracked via `focus_start_frame`, a
+        function-local dict keyed by card index — "video starts playing on
+        focus"). The focused card is ALWAYS drawn last (on top), skips its
+        own shadow/opacity/dim (fullscreen has no shadow to cast and is
+        never dimmed), and its rounded corner radius lerps
+        `geo.corner_radius -> 0` as it approaches fullscreen.
+      - Dim: every OTHER visible card multiplies toward black by
+        `FrameState.dim` (a flat alpha overlay on its own quad — the same
+        cheap quad approximation `_draw_quad`'s shadow already uses, not a
+        true per-pixel `filter: brightness()`).
     """
     import skia  # noqa: PLC0415
 
     resolve_transform: TransformFn = transform_fn or _transform_for
-    # Only the real dispatcher (`effects.transform_for`) knows about the
-    # progress-vs-layout-position scroll split (see `TransformFn`'s comment);
-    # a caller-supplied `transform_fn` (the smoke-test escape hatch) gets just
-    # the lagged `scroll_x`, same as before this split existed.
     uses_position_split = resolve_transform is _transform_for
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # Face content is static per card — load + cover-crop + rounded-rect-clip
-    # ONCE per render call, outside the frame loop. Only the per-frame
-    # transform changes.
-    face_cache: dict[int, skia.Image] = {
-        card.index: _load_card_face(card.image_path, geo) for card in cards
+    poster_faces: dict[int, skia.Image] = {
+        vc.index: _load_card_face(vc.poster_path, geo) for vc in video_cards
     }
 
     bg_r, bg_g, bg_b = background_rgb
     bg_color = skia.Color(bg_r, bg_g, bg_b, 255)
     sampling = skia.SamplingOptions(skia.FilterMode.kLinear, skia.MipmapMode.kLinear)
 
+    card_w = max(1, round(geo.card_w))
+    card_h = max(1, round(geo.card_h))
+
+    # First render-frame index at which each card's focus_t crossed above 0
+    # — drives "the full tier starts playing fresh on focus" (see docstring).
+    # Stays empty for cards that never focus.
+    focus_start_frame: dict[int, int] = {}
+
+    full_canvas_corners = [
+        (0.0, 0.0),
+        (float(CANVAS_W), 0.0),
+        (float(CANVAS_W), float(CANVAS_H)),
+        (0.0, float(CANVAS_H)),
+    ]
+
     out_paths: list[str] = []
-    for frame_idx in range(len(spring_frames)):
+    for frame_idx, fstate in enumerate(frame_states):
         surface = skia.Surface(CANVAS_W, CANVAS_H)
         canvas = surface.getCanvas()
         canvas.clear(bg_color)
 
-        scroll_x = lagged_virtual_scroll(spring_frames, frame_idx)
-        position_scroll_x = spring_frames[frame_idx].virtual_scroll
-        visible: list[tuple[CardTransform, CardAsset]] = []
-        for card in cards:
+        scroll_x = lagged_frame_scroll_x(frame_states, frame_idx)
+        position_scroll_x = fstate.scroll_x
+
+        # (sort_key, is_focus, corners, face, opacity, shadow_alpha, dim)
+        entries: list[
+            tuple[
+                tuple[int, int, int],
+                bool,
+                list[tuple[float, float]],
+                skia.Image,
+                float,
+                float,
+                float,
+            ]
+        ] = []
+        for vc in video_cards:
+            i = vc.index
             if uses_position_split:
                 t = resolve_transform(
-                    effect, scroll_x, card.index, geo, CANVAS_W, position_scroll_x=position_scroll_x
+                    effect, scroll_x, i, geo, CANVAS_W, position_scroll_x=position_scroll_x
                 )
             else:
-                t = resolve_transform(effect, scroll_x, card.index, geo, CANVAS_W)
-            if t.opacity <= 0.0:
-                continue
-            visible.append((t, card))
+                t = resolve_transform(effect, scroll_x, i, geo, CANVAS_W)
 
-        # Back-to-front: lower z_index paints first, index breaks ties.
-        visible.sort(key=lambda pair: (pair[0].z_index, pair[1].index))
+            is_focus = fstate.focus_card == i and fstate.focus_t > 0.0
 
-        for t, card in visible:
-            corners = project_card_corners(t, geo)
-            _draw_card(canvas, face_cache[card.index], t, corners, sampling)
+            if is_focus:
+                # Reset the playback origin on every not-focused -> focused
+                # transition (not just the first), so a card focused twice in
+                # one timeline restarts its full-tier playback each time
+                # instead of reusing a stale offset that clamps to a frozen
+                # last frame.
+                prev = frame_states[frame_idx - 1] if frame_idx > 0 else None
+                was_focused = prev is not None and prev.focus_card == i and prev.focus_t > 0.0
+                if not was_focused:
+                    focus_start_frame[i] = frame_idx
+                ft = max(0.0, min(1.0, fstate.focus_t))
+                base_corners = project_card_corners(t, geo)
+                corners = [
+                    (a[0] + (b[0] - a[0]) * ft, a[1] + (b[1] - a[1]) * ft)
+                    for a, b in zip(base_corners, full_canvas_corners, strict=True)
+                ]
+                radius = geo.corner_radius * (1.0 - ft)
+                use_full = ft > FULLRES_SWITCH_T and vc.full_frames_dir and vc.full_frame_count > 0
+                if use_full:
+                    full_idx = frame_idx - focus_start_frame[i]
+                    face = _load_jpeg_face(
+                        _clamped_frame_path(vc.full_frames_dir, full_idx, vc.full_frame_count),
+                        CANVAS_W,
+                        CANVAS_H,
+                        radius,
+                    )
+                elif vc.card_frames_dir and vc.card_frame_count > 0:
+                    face = _load_jpeg_face(
+                        _clamped_frame_path(vc.card_frames_dir, frame_idx, vc.card_frame_count),
+                        card_w,
+                        card_h,
+                        radius,
+                    )
+                else:
+                    face = poster_faces[i]
+                sort_key = (1, t.z_index, i)  # focused card always paints last (on top)
+                entries.append((sort_key, True, corners, face, 1.0, 0.0, 0.0))
+            else:
+                if t.opacity <= 0.0:
+                    continue
+                corners = project_card_corners(t, geo)
+                if vc.card_frames_dir and vc.card_frame_count > 0:
+                    face = _load_jpeg_face(
+                        _clamped_frame_path(vc.card_frames_dir, frame_idx, vc.card_frame_count),
+                        card_w,
+                        card_h,
+                        geo.corner_radius,
+                    )
+                else:
+                    face = poster_faces[i]
+                sort_key = (0, t.z_index, i)
+                entries.append(
+                    (sort_key, False, corners, face, t.opacity, t.shadow_alpha, fstate.dim)
+                )
+
+        entries.sort(key=lambda e: e[0])
+
+        for _sort_key, _is_focus, corners, face, opacity, shadow_alpha, dim in entries:
+            _draw_quad(
+                canvas, face, corners, sampling, opacity=opacity, shadow_alpha=shadow_alpha, dim=dim
+            )
 
         out_path = os.path.join(out_dir, f"frame_{frame_idx:04d}.png")
         _write_frame_png(surface.makeImageSnapshot(), out_path)
@@ -247,18 +412,65 @@ def render_carousel_frames(
     return out_paths
 
 
-def _draw_card(
+def _clamped_frame_path(frames_dir: str, frame_index: int, frame_count: int) -> str:
+    idx = max(0, min(frame_index, frame_count - 1))
+    return os.path.join(frames_dir, f"frame_{idx:04d}.jpg")
+
+
+def _load_jpeg_face(path: str, w: int, h: int, radius: float) -> skia.Image:
+    """Decode an already cover-cropped `w x h` JPEG frame (from
+    `video_cards.resolve_video_card`) and clip it to a rounded rect of
+    `radius` — the video-frame equivalent of `_load_card_face`, minus the
+    cover-crop step (already baked in at extraction time) and re-run EVERY
+    frame rather than cached (unlike `_load_card_face`'s one-shot poster:
+    the whole point here is that the content changes every frame)."""
+    import skia  # noqa: PLC0415
+
+    data = skia.Data.MakeFromFileName(path)
+    src = skia.Image.MakeFromEncoded(data) if data is not None else None
+    if src is None:
+        raise RuntimeError(f"render_choreography_frames: could not decode video frame {path!r}")
+
+    surface = skia.Surfaces.MakeRasterN32Premul(w, h)
+    canvas = surface.getCanvas()
+    canvas.clear(skia.ColorTRANSPARENT)
+    rrect = skia.RRect.MakeRectXY(skia.Rect.MakeWH(w, h), radius, radius)
+    canvas.save()
+    canvas.clipRRect(rrect, skia.ClipOp.kIntersect, True)
+    canvas.drawImageRect(
+        src,
+        skia.Rect.MakeWH(src.width(), src.height()),
+        skia.Rect.MakeWH(w, h),
+        skia.SamplingOptions(skia.FilterMode.kLinear, skia.MipmapMode.kLinear),
+        None,
+        skia.Canvas.SrcRectConstraint.kFast_SrcRectConstraint,
+    )
+    canvas.restore()
+    return surface.makeImageSnapshot()
+
+
+def _draw_quad(
     canvas: skia.Canvas,
     face: skia.Image,
-    t: CardTransform,
     corners: list[tuple[float, float]],
     sampling: skia.SamplingOptions,
+    *,
+    opacity: float,
+    shadow_alpha: float,
+    dim: float = 0.0,
 ) -> None:
+    """Composite `face` onto the screen-space quad `corners` (shadow, then
+    the image itself via `setPolyToPoly`, then an optional flat black `dim`
+    overlay on the same quad — CSS `filter: brightness(1 - dim)`
+    approximated as a cheap alpha wash rather than a true per-pixel
+    multiply). Shared primitive behind both `render_carousel_frames` (via
+    `_draw_card`, V1's exact original behavior: `dim` always 0.0) and
+    `render_choreography_frames`."""
     import skia  # noqa: PLC0415
 
     dst_points = [skia.Point(x, y) for x, y in corners]
 
-    if t.shadow_alpha > 0.0:
+    if shadow_alpha > 0.0:
         # Approximate the shadow as the same projected quad, offset down and
         # Gaussian-blurred. A true rounded-rect shadow would need the corner
         # radius warped through the same projective matrix; the quad
@@ -272,7 +484,7 @@ def _draw_card(
 
         shadow_paint = skia.Paint(AntiAlias=True)
         shadow_paint.setColor(skia.ColorBLACK)
-        shadow_paint.setAlphaf(max(0.0, min(1.0, t.shadow_alpha)))
+        shadow_paint.setAlphaf(max(0.0, min(1.0, shadow_alpha)))
         shadow_paint.setMaskFilter(
             skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, SHADOW_SIGMA_PX)
         )
@@ -289,12 +501,36 @@ def _draw_card(
         return  # degenerate quad (zero area) — nothing sane to draw
 
     paint = skia.Paint(AntiAlias=True)
-    paint.setAlphaf(max(0.0, min(1.0, t.opacity)))
+    paint.setAlphaf(max(0.0, min(1.0, opacity)))
 
     canvas.save()
     canvas.concat(matrix)
     canvas.drawImage(face, 0, 0, sampling, paint)
     canvas.restore()
+
+    if dim > 0.0:
+        dim_path = skia.Path()
+        dim_path.moveTo(dst_points[0].x(), dst_points[0].y())
+        for pt in dst_points[1:]:
+            dim_path.lineTo(pt.x(), pt.y())
+        dim_path.close()
+        dim_paint = skia.Paint(AntiAlias=True)
+        dim_paint.setColor(skia.ColorBLACK)
+        dim_paint.setAlphaf(max(0.0, min(1.0, dim)))
+        canvas.drawPath(dim_path, dim_paint)
+
+
+def _draw_card(
+    canvas: skia.Canvas,
+    face: skia.Image,
+    t: CardTransform,
+    corners: list[tuple[float, float]],
+    sampling: skia.SamplingOptions,
+) -> None:
+    """V1's original per-card draw call, now a thin shim over `_draw_quad`
+    (`dim` always 0.0 — V1 has no focus/dim concept). Kept as its own
+    function in case anything still calls it directly."""
+    _draw_quad(canvas, face, corners, sampling, opacity=t.opacity, shadow_alpha=t.shadow_alpha)
 
 
 def _load_card_face(image_path: str, geo: CardGeometry) -> skia.Image:

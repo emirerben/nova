@@ -116,6 +116,7 @@ didn't model at all:
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -228,50 +229,64 @@ def rubberband_offset(
     return damp(offset, overscroll * -0.2, t, frame_delta_ms)
 
 
-def simulate(
-    gesture: GestureTrace,
+def simulate_from(
+    state: SpringState,
+    drag_deltas_px: Sequence[float],
     snap_positions: list[float],
     snapport_width: float,
-    start_scroll: float = 0.0,
-    max_frames: int = 600,
+    fps: int,
+    *,
     bounds: tuple[float, float] | None = None,
-) -> list[SpringFrame]:
-    """Replay a scripted drag+release gesture through the spring and return one
-    SpringFrame per animation frame, from the pointerdown frame through settle
-    — frame `i` of the returned list lines up 1:1 with `trace[i]` of a
-    `tools/carousel_reference/capture.sh` browser capture (see this module's
-    docstring, point 2: the browser's `harness.js` also captures a frame right
-    after pointerdown, before any movement or ticking has happened).
+    max_frames: int = 600,
+    start_frame_index: int = 0,
+) -> tuple[SpringState, list[SpringFrame]]:
+    """Lower-level engine behind `simulate()`: replay `drag_deltas_px` (same
+    finger-delta convention as `GestureTrace.drag_deltas_px`) against an
+    ARBITRARY starting `state` — which need not be a fresh pointerdown; the
+    caller decides what `is_dragging`/`total_drag_px`/`tick_active` should be
+    going in — then release() and tick until settled.
 
-    Sign convention: `gesture.drag_deltas_px` are FINGER movement per frame
-    (negative = finger moves left = carousel advances). Blossom computes
-    `deltaX = pointerStart.x - clientX`, i.e. scroll delta = -finger_delta.
+    `frame_index` (hence each emitted `SpringFrame.t_s = frame_index / fps`)
+    starts counting from `start_frame_index`, NOT 0: this lets a caller chain
+    multiple calls (e.g. `choreography.build_timeline` stitching several
+    flicks back to back onto one continuous clock) by passing the previous
+    call's final frame count back in, with no special-casing here — the
+    delta loop below never itself branches on `max_frames` (mirroring
+    `simulate()`'s original behavior exactly: only the post-release settle
+    loop is bounded by it), so `max_frames` should be an ABSOLUTE frame-count
+    ceiling (comparable to `start_frame_index`), not a per-call budget.
+
+    `simulate()` below delegates its post-pointerdown drag+release+settle
+    loop to this function with `start_frame_index=1` (frame 0 is its own
+    synthetic pointerdown frame, emitted before this is ever called) — this
+    function's behavior/signature is otherwise free to be reused directly
+    (e.g. by `choreography.py`) with NO effect on `simulate()`'s existing
+    output; see `test_canonical_flick_matches_golden_trace` for the pin.
+
+    Returns `(final_state, frames)` — `frames` holds one `SpringFrame` per
+    animation frame advanced (delta loop + settle loop), NOT a frame for
+    `state` itself; the caller decides whether/how to represent the starting
+    instant (`simulate()` emits its own leading pointerdown frame for this;
+    `choreography.py`'s chained calls don't need to, each phase's frames
+    already end exactly where the next phase's `state` begins).
     """
-    frame_delta_ms = 1000 / gesture.fps
-    state = SpringState(
-        virtual_scroll=start_scroll, target=start_scroll, velocity=0.0, is_dragging=True
-    )
+    frame_delta_ms = 1000 / fps
     frames: list[SpringFrame] = []
-    frame_index = 0
+    frame_index = start_frame_index
 
     def _emit() -> None:
         nonlocal frame_index
         frame_index += 1
         frames.append(
             SpringFrame(
-                t_s=frame_index / gesture.fps,
+                t_s=frame_index / fps,
                 virtual_scroll=state.virtual_scroll,
                 velocity=state.velocity,
                 target=state.target,
             )
         )
 
-    # Frame 0: pointerdown only — no movement, no tick. The bundle's tick
-    # loop isn't requested until a pointermove's cumulative drag distance
-    # crosses DRAG_ACTIVATION_PX, and pointerdown itself is not a move.
-    _emit()
-
-    for finger_delta in gesture.drag_deltas_px:
+    for finger_delta in drag_deltas_px:
         scroll_delta = -finger_delta
         was_active = state.tick_active
         total_drag_px = state.total_drag_px + abs(scroll_delta)
@@ -306,4 +321,50 @@ def simulate(
         state = tick(state, frame_delta_ms)
         _emit()
 
-    return frames
+    return state, frames
+
+
+def simulate(
+    gesture: GestureTrace,
+    snap_positions: list[float],
+    snapport_width: float,
+    start_scroll: float = 0.0,
+    max_frames: int = 600,
+    bounds: tuple[float, float] | None = None,
+) -> list[SpringFrame]:
+    """Replay a scripted drag+release gesture through the spring and return one
+    SpringFrame per animation frame, from the pointerdown frame through settle
+    — frame `i` of the returned list lines up 1:1 with `trace[i]` of a
+    `tools/carousel_reference/capture.sh` browser capture (see this module's
+    docstring, point 2: the browser's `harness.js` also captures a frame right
+    after pointerdown, before any movement or ticking has happened).
+
+    Sign convention: `gesture.drag_deltas_px` are FINGER movement per frame
+    (negative = finger moves left = carousel advances). Blossom computes
+    `deltaX = pointerStart.x - clientX`, i.e. scroll delta = -finger_delta.
+
+    Delegates the post-pointerdown drag+release+settle loop to
+    `simulate_from` (see that function's docstring) — this function now only
+    owns the leading pointerdown-frame emission. Byte-identical output to
+    the pre-refactor single-function version; pinned by the golden trace test.
+    """
+    state = SpringState(
+        virtual_scroll=start_scroll, target=start_scroll, velocity=0.0, is_dragging=True
+    )
+    leading = SpringFrame(
+        t_s=1 / gesture.fps,
+        virtual_scroll=state.virtual_scroll,
+        velocity=state.velocity,
+        target=state.target,
+    )
+    _, rest = simulate_from(
+        state,
+        gesture.drag_deltas_px,
+        snap_positions,
+        snapport_width,
+        gesture.fps,
+        bounds=bounds,
+        max_frames=max_frames,
+        start_frame_index=1,
+    )
+    return [leading, *rest]
