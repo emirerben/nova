@@ -36,18 +36,31 @@ export interface TikTokPublication {
   id: string;
   job_id: string;
   variant_id: string | null;
+  /** Optional during the Fly-before-Vercel response-shape rollout. */
+  title?: string;
+  privacy_level?: string;
+  allow_comment?: boolean;
+  allow_duet?: boolean;
+  allow_stitch?: boolean;
+  creator_nickname?: string | null;
   processing_status: string;
   visibility_status: string;
+  public_at?: string | null;
   retryable: boolean;
   failure_code: string | null;
   failure_detail: string | null;
   latest_metrics: Record<string, number | null> | null;
   metrics_synced_at: string | null;
+  evaluation_metrics?: Record<string, number | null> | null;
+  evaluation_captured_at?: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export function shouldPollTikTokPublication(publication: TikTokPublication): boolean {
+  if (publication.id.startsWith("local-preview-")) {
+    return false;
+  }
   if (publication.processing_status === "submission_unknown") {
     return false;
   }
@@ -73,8 +86,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const getTikTokConnection = () => request<TikTokConnection>("/connection");
 
-export async function startTikTokOAuth(): Promise<void> {
-  const result = await request<{ authorization_url: string }>("/oauth/start", { method: "POST" });
+export async function startTikTokOAuth(returnTo?: string): Promise<void> {
+  const result = await request<{ authorization_url: string }>("/oauth/start", {
+    method: "POST",
+    body: JSON.stringify({ return_to: returnTo ?? null }),
+  });
   window.location.assign(result.authorization_url);
 }
 
@@ -111,3 +127,18 @@ export function createTikTokPublication(body: {
 
 export const getTikTokPublication = (id: string) =>
   request<TikTokPublication>(`/publications/${id}`);
+
+export function getTikTokPublicationReceipt(jobId: string, variantId?: string | null) {
+  const query = new URLSearchParams({ job_id: jobId });
+  if (variantId) query.set("variant_id", variantId);
+  return request<TikTokPublication | null>(`/publications/receipt?${query}`);
+}
+
+export function listTikTokPublications(filters?: { jobId?: string; variantId?: string | null }) {
+  const query = new URLSearchParams();
+  if (filters?.jobId) query.set("job_id", filters.jobId);
+  if (filters?.variantId) query.set("variant_id", filters.variantId);
+  const encoded = query.toString();
+  const suffix = encoded ? `?${encoded}` : "";
+  return request<TikTokPublication[]>(`/publications${suffix}`);
+}
