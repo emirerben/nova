@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.3.0] — 2026-08-04
+
+### Fixed
+- **Background maintenance runs again.** The always-on machine that drives housekeeping — the 5-minute stale-job sweeper, the daily digest email, and TikTok publish-status polling — had been silently dead since Aug 2: a model-prewarming step meant for the big render machine also ran on this small one at boot, repeatedly exhausted its memory, and Fly eventually gave up restarting it. The prewarm is now gated to machines that actually render (pinned by `tests/test_worker_prewarm_gate.py`), and the maintenance machine got enough memory headroom (512MB → 1024MB) that its normal workload no longer runs at the edge.
+
+### Added
+- **A watchdog for the watchdog.** A GitHub Actions check now pings the public `/health/beat` endpoint every 15 minutes and turns red when scheduled maintenance stops running — the failure mode above went unnoticed for two days precisely because this external monitor was designed but never wired up.
+
 ## [0.23.2.0] — 2026-08-04
 
 ### Fixed

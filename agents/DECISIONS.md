@@ -883,3 +883,54 @@ contract byte-identically.
   refuses to re-generate / a live render double-dispatches.
 
 Full plan + prod evidence table + review deltas: `plans/014-sync-plan-generate-registration.md`.
+
+## [2026-08-04] Light machine OOM'd into a permanent `stopped` — gate worker_ready hooks by consumed queue
+
+Two days after the autostop lane split (#764), the `light` machine
+(`48e2547a50d138`) was found `stopped` with the state surviving every deploy —
+meaning the 5-min stale-job sweeper, the daily digest, and all TikTok
+periodics had silently been dead since Aug 2 ~12:33Z. `/health/beat` was
+returning 503 with age ≈ 55h; nothing alerted.
+
+**Root cause (Fly Prometheus, org `emir-erben`):** `worker_ready` signal
+handlers in `app/worker.py` fire in EVERY celery worker process, so
+`_prewarm_clip_font_matcher` loaded torch + open-clip ViT-B/32 (~450-600MB
+peak per `clip_font_matcher.py`'s own docstring) on the 512MB light VM. The
+machine ran with ~7MB available from its first minute, thrashed through ~13
+OOM kill/reload cycles between 11:49Z and 12:33Z, exhausted flyd's
+`on-failure, max_retries: 10` restart budget, and parked `stopped`. Two
+compounding Fly behaviors made that permanent and invisible: `fly deploy`
+updates a stopped machine but leaves it stopped (observed directly in the
+machine's event log: `launch` → `stopped` on every subsequent deploy), and a
+machine's event history is truncated on update, so the OOM evidence was gone
+from `fly machine status` — the memory timeline had to come from the
+Prometheus API.
+
+**Decisions:**
+
+- **Gate the prewarm by consumed queues, fail-closed** —
+  `_worker_consumes_render_queues` (worker.py) checks
+  `sender.app.amqp.queues.consume_from` against `RENDER_WORKER_QUEUES` and
+  skips the prewarm for maintenance-only workers OR when introspection
+  fails. The asymmetry that justifies fail-closed: a wrongly-skipped prewarm
+  costs one ~3-5s lazy load on the render worker; a wrongly-run prewarm
+  kills the light machine. Pinned by `tests/test_worker_prewarm_gate.py`.
+  The fly.toml "light never loads torch" rule only ever covered task
+  routing; boot-time signal hooks were the uncovered class, and any future
+  `worker_ready` hook that loads a model must use the same gate.
+- **light 512 → 1024MB** (fly.toml) — even mid-thrash the baseline (celery
+  parent + 2 prefork children of the full app import) left single-digit MB
+  available; 512 was sized against the tasks, not the worker shape.
+- **Wire the external dead-man's switch that was designed but never
+  deployed** — `.github/workflows/beat-health.yml` pings `/health/beat`
+  every 15 min. `beat_heartbeat.py` predicted this exact blind spot ("a
+  check that is itself Beat-scheduled shares Beat's exact blind spot") and
+  the endpoint existed; the outside-the-app pinger was the missing half, and
+  its absence is why the outage ran 2+ days undetected.
+- **Recovery is NOT just `fly machine start`** — the stopped machine still
+  runs the old image; starting it without this fix re-enters the same OOM
+  loop (it survived ~66 min on Aug 2). Deploying this change recreates/
+  updates the machine config; if it stays `stopped` after the deploy, one
+  `fly machine start 48e2547a50d138 -a nova-video` brings the lane back on
+  the fixed image. Expect a brief drain burst: ~2 days of queued
+  maintenance messages (~5-6k, mostly no-op polls) are sitting in Redis.

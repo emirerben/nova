@@ -243,7 +243,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Merge method: squash
 - Process groups: api (FastAPI/uvicorn) + worker (Celery)
 - Release command: `python -m alembic upgrade head` (runs migrations on every deploy)
-- VM sizing: api = 1 shared CPU / 512MB, worker = 4 shared CPUs / 6144MB
+- VM sizing: fly.toml `[[vm]]` is the source of truth per process group
 - **Celery time-limit invariant:** every long-running task's `time_limit` MUST stay strictly under the worker's broker `visibility_timeout` (`app/worker.py`, currently 1900s). Render orchestrators use `soft_time_limit=1740, time_limit=1800`. Locked by `tests/tasks/test_task_time_limits.py`. See agents/DECISIONS.md "Celery time-limit invariant" for the prod incident.
 - Dockerfile: repo-root `Dockerfile` (cached dependency layer from pyproject.toml)
 - Docker image includes: `app/`, `assets/`, `prompts/`, `alembic.ini`
