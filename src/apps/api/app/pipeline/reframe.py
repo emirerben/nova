@@ -105,6 +105,7 @@ def _encoding_args(
         - image_clip rendering           image_clip.py:111, 217
         - render_color_hold()            interstitials.py:121
         - drive_import thumbnailing      drive_import.py:74
+        - encode_carousel_segment()      carousel/encode.py (Lane D)
 
       INTERMEDIATE — does NOT route through _encoding_args (intentionally)
         - normalize_orientation()        orientation.py — needs in-place

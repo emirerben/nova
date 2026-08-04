@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Blossom Carousel Reference — cover-flow</title>
+<script src="./harness.js"></script>
+<link rel="stylesheet" href="./lib/blossom-vendor/dist/blossom-carousel-web.css" />
+<style>
+  /* --- Shared 1080x1920 test-page geometry (mirrors the Python renderer) --- */
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1080px;
+    height: 1920px;
+    background: #0a0a0c;
+    overflow: hidden;
+  }
+
+  blossom-carousel.carousel {
+    display: flex;
+    align-items: center;
+    gap: 48px;
+    width: 1080px;
+    height: 1920px;
+    padding-inline: 270px;
+    box-sizing: border-box;
+    scroll-snap-type: x mandatory;
+    perspective: 1200px;
+  }
+
+  .card {
+    flex: 0 0 540px;
+    width: 540px;
+    height: 720px;
+    border-radius: 24px;
+    scroll-snap-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .marker {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    height: 32px;
+    border: 3px solid #fff;
+    box-sizing: border-box;
+    background: transparent;
+  }
+
+  /* --- cover-flow effect -------------------------------------------------
+     Sign convention (per effects.py's `rotate_y_deg = -35 * n`, where n>0
+     is a card to the right of center): a card ENTERING from the right at
+     0% progress gets rotateY(-35deg); a card that has EXITED to the left
+     at 100% progress gets rotateY(35deg). z-index is animated separately
+     (view-timeline animated z-index, mirroring Blossom's own flipbook/cards
+     examples which drive z-index and the 3D transform as two independent
+     `animation:` entries on the same element via `sibling-index()`) so the
+     card nearest center always draws on top regardless of DOM order. */
+  .card {
+    transform-style: preserve-3d;
+    animation:
+      cover-flow-transform linear both,
+      cover-flow-z linear both;
+    animation-timeline: view(inline);
+    animation-range: cover;
+  }
+
+  @keyframes cover-flow-transform {
+    0%   { transform: rotateY(-35deg) translateZ(-200px) scale(0.85); }
+    50%  { transform: rotateY(0deg)   translateZ(0px)     scale(1); }
+    100% { transform: rotateY(35deg)  translateZ(-200px)  scale(0.85); }
+  }
+
+  @keyframes cover-flow-z {
+    0%   { z-index: calc(100 - sibling-index()); }
+    50%  { z-index: 1000; }
+    100% { z-index: sibling-index(); }
+  }
+</style>
+</head>
+<body>
+  <blossom-carousel class="carousel">
+    <div class="card" style="background: hsl(0, 70%, 55%);">
+      <div class="marker" style="top: 40px;"></div>
+    </div>
+    <div class="card" style="background: hsl(67, 70%, 55%);">
+      <div class="marker" style="top: 100px;"></div>
+    </div>
+    <div class="card" style="background: hsl(134, 70%, 55%);">
+      <div class="marker" style="top: 160px;"></div>
+    </div>
+    <div class="card" style="background: hsl(201, 70%, 55%);">
+      <div class="marker" style="top: 220px;"></div>
+    </div>
+    <div class="card" style="background: hsl(268, 70%, 55%);">
+      <div class="marker" style="top: 280px;"></div>
+    </div>
+  </blossom-carousel>
+
+  <script type="module">
+    import "./lib/blossom-vendor/dist/blossom-carousel-web.es.js";
+    customElements.whenDefined("blossom-carousel").then(() => {
+      window.__markReady();
+    });
+  </script>
+</body>
+</html>

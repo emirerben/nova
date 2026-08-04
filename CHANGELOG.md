@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.1.0] — 2026-08-04
+
+### Added
+- **Blossom-carousel visual effects for rendered videos (dark launch).** A new effects engine ports the spring-physics carousel motion from blossom-carousel.com into the render pipeline: four effects — scale sweep, cover flow, cards stack, and flipbook — animate a viewer's clips as cards sliding through the frame with the library's exact scroll physics. Rendered as a self-contained 1080×1920 segment and spliced into generative montages behind `CAROUSEL_EFFECTS_ENABLED` (default off; no behavior change until flipped).
+- **Rolling video and fullscreen focus moments.** Cards can play their clips live while sliding (`mode: rolling`), or run a focus choreography (`mode: focus`): the carousel settles a chosen card at center, zooms it to fullscreen while its video plays (other cards dim), then returns and slides on — with multi-focus sequences visiting several clips in one moment.
+- **AI diversification (director).** A seeded director policy picks the effect, mode, and which clips earn fullscreen moments (ranked by interest and duration, with footage-length safeguards) per variant, guaranteeing sibling variants of one job get different treatments; opt-in via `carousel_moment: {"auto": true}`, with explicit fields overriding the director. Structured for a future LLM agent to replace the heuristic without touching the render path.
+- **Browser-parity harness proving the port is faithful.** A deterministic frame-stepped reference page runs the real vendored Blossom JS through a scripted flick; `make carousel-capture` + `make carousel-verify` gate every effect on SSIM ≥ 0.95 against the browser capture (achieved 0.984–0.994) and card motion-trace agreement within 2px (achieved ≤ 0.52px).
+
 ## [0.23.0.0] — 2026-08-04
 
 ### Added

@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Blossom Carousel Reference — scale-sweep</title>
+<script src="./harness.js"></script>
+<link rel="stylesheet" href="./lib/blossom-vendor/dist/blossom-carousel-web.css" />
+<style>
+  /* --- Shared 1080x1920 test-page geometry (mirrors the Python renderer) --- */
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1080px;
+    height: 1920px;
+    background: #0a0a0c;
+    overflow: hidden;
+  }
+
+  blossom-carousel.carousel {
+    display: flex;
+    align-items: center;
+    gap: 48px;
+    width: 1080px;
+    height: 1920px;
+    padding-inline: 270px;
+    box-sizing: border-box;
+    scroll-snap-type: x mandatory;
+  }
+
+  .card {
+    flex: 0 0 540px;
+    width: 540px;
+    height: 720px;
+    border-radius: 24px;
+    scroll-snap-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .marker {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    height: 32px;
+    border: 3px solid #fff;
+    box-sizing: border-box;
+    background: transparent;
+  }
+
+  /* --- scale-sweep effect ---------------------------------------------- */
+  /* Mirrors the intended effects.py scale_sweep_transform: cards scale up
+     to 1.0 / full opacity at viewport center, and back down to 0.5 / 0.35
+     opacity at the view edges. Uses `transform: scale(...)` (not the
+     standalone `scale` CSS property) because getComputedStyle().transform
+     is what harness.js reads into a DOMMatrixReadOnly for the trace —
+     the standalone `scale`/`rotate`/`translate` properties do NOT show up
+     in the computed `transform` value. */
+  .card {
+    animation: scale-sweep linear both;
+    animation-timeline: view(inline);
+    animation-range: cover;
+  }
+
+  @keyframes scale-sweep {
+    0%   { transform: scale(0.5); opacity: 0.35; }
+    50%  { transform: scale(1);   opacity: 1; }
+    100% { transform: scale(0.5); opacity: 0.35; }
+  }
+</style>
+</head>
+<body>
+  <blossom-carousel class="carousel">
+    <div class="card" style="background: hsl(0, 70%, 55%);">
+      <div class="marker" style="top: 40px;"></div>
+    </div>
+    <div class="card" style="background: hsl(67, 70%, 55%);">
+      <div class="marker" style="top: 100px;"></div>
+    </div>
+    <div class="card" style="background: hsl(134, 70%, 55%);">
+      <div class="marker" style="top: 160px;"></div>
+    </div>
+    <div class="card" style="background: hsl(201, 70%, 55%);">
+      <div class="marker" style="top: 220px;"></div>
+    </div>
+    <div class="card" style="background: hsl(268, 70%, 55%);">
+      <div class="marker" style="top: 280px;"></div>
+    </div>
+  </blossom-carousel>
+
+  <script type="module">
+    import "./lib/blossom-vendor/dist/blossom-carousel-web.es.js";
+    customElements.whenDefined("blossom-carousel").then(() => {
+      window.__markReady();
+    });
+  </script>
+</body>
+</html>

@@ -4638,6 +4638,278 @@ def _merge_contiguous_same_source_steps(
     return merged
 
 
+_AUTO_CAROUSEL_FALLBACK_DURATION_S = 3.0
+
+
+def _stable_seed_from_variant(variant_id: str | None) -> int:
+    """Deterministic seed derived from a variant identifier — stable across
+    processes/restarts (unlike Python's per-process-randomized `hash()` for
+    strings), so a re-render of the same variant (no explicit
+    `moment_cfg["seed"]`) still lands on the same director choice."""
+    import zlib  # noqa: PLC0415
+
+    return zlib.crc32((variant_id or "carousel-moment").encode("utf-8"))
+
+
+def _parse_focus_override(raw: Any) -> tuple | None:
+    """Best-effort: converts a `moment_cfg["focus"]` list of
+    `{"card_index", "hold_s"?, "zoom_s"?}` dicts into a tuple of
+    `choreography.FocusMoment`. Returns `None` (caller treats that as "no
+    override applied") on any shape mismatch or if `FocusMoment` hasn't
+    landed yet — never raises, matching the never-raise contract this whole
+    region operates under."""
+    try:
+        from app.pipeline.carousel.choreography import FocusMoment  # noqa: PLC0415
+
+        return tuple(
+            FocusMoment(
+                card_index=int(item["card_index"]),
+                **{k: v for k, v in item.items() if k in ("hold_s", "zoom_s")},
+            )
+            for item in raw
+        )
+    except Exception:  # noqa: BLE001 — override parsing is best-effort, never raise
+        log.warning("carousel_moment_focus_override_unparseable", exc_info=True)
+        return None
+
+
+def _apply_moment_overrides(spec: Any, moment_cfg: dict[str, Any]) -> Any:
+    """Explicit `moment_cfg` fields win over whatever produced `spec` — the
+    director's auto-picked choices, or the plain defaults the non-auto path
+    below already applied. Introspects `spec`'s own dataclass fields
+    (instead of assuming they exist) so this degrades gracefully if
+    `mode`/`focus_moments`/`seed` haven't landed on `CarouselMomentSpec` yet:
+    an override for a field that doesn't exist is a logged no-op, never a
+    crash. Factored out so override precedence is independently unit
+    testable without going through a full render."""
+    override_keys = {"effect", "duration_s", "mode", "focus", "seed"}
+    if not override_keys & moment_cfg.keys():
+        return spec  # nothing to override; skip the dataclass introspection below
+
+    from dataclasses import fields  # noqa: PLC0415
+
+    field_names = {f.name for f in fields(spec)}
+    overrides: dict[str, Any] = {}
+
+    if "effect" in moment_cfg and "effect" in field_names:
+        overrides["effect"] = moment_cfg["effect"]
+    if "duration_s" in moment_cfg and "duration_s" in field_names:
+        overrides["duration_s"] = float(moment_cfg["duration_s"])
+    if "mode" in moment_cfg:
+        if "mode" in field_names:
+            overrides["mode"] = moment_cfg["mode"]
+        else:
+            log.warning("carousel_moment_mode_override_unsupported_schema")
+    if "focus" in moment_cfg:
+        if "focus_moments" in field_names:
+            focus_moments = _parse_focus_override(moment_cfg["focus"])
+            if focus_moments is not None:
+                overrides["focus_moments"] = focus_moments
+        else:
+            log.warning("carousel_moment_focus_override_unsupported_schema")
+    if "seed" in moment_cfg and "seed" in field_names:
+        overrides["seed"] = moment_cfg["seed"]
+
+    if not overrides:
+        return spec
+    return replace(spec, **overrides)
+
+
+def _direct_auto_carousel_spec(
+    moment_cfg: dict[str, Any],
+    *,
+    clip_paths: list[str],
+    probe_map: dict | None,
+    variant_id: str | None,
+) -> Any:
+    """`moment_cfg["auto"]` path: build `director.ClipInfo`s from the local
+    clip paths + whatever duration the probe map already has for them (the
+    probe map is computed once per variant upstream — see
+    `_insert_carousel_moment_step`'s caller in `_render_generative_variant`),
+    ask the DIRECTOR for a spec, then let any explicit `moment_cfg` field
+    override its choice via `_apply_moment_overrides`.
+
+    Labels/interest are left at `ClipInfo`'s defaults: neither is trivially
+    reachable here without threading clip-analysis metadata through a new
+    parameter, which this wiring deliberately avoids — see
+    `director.direct_carousel_moment`'s "LLM handoff" docstring section for
+    the intended future path to real per-clip signal.
+    """
+    from app.pipeline.carousel import director as director_mod  # noqa: PLC0415
+
+    probe_map = probe_map or {}
+    clips = []
+    for path in clip_paths:
+        probe = probe_map.get(path)
+        duration_s = float(getattr(probe, "duration_s", 0.0) or 0.0)
+        if duration_s <= 0:
+            duration_s = _AUTO_CAROUSEL_FALLBACK_DURATION_S
+        clips.append(director_mod.ClipInfo(path=path, duration_s=duration_s))
+
+    seed = moment_cfg.get("seed")
+    if not isinstance(seed, int):
+        seed = _stable_seed_from_variant(variant_id)
+
+    target_duration_s = (
+        float(moment_cfg["duration_s"])
+        if "duration_s" in moment_cfg
+        else director_mod.DEFAULT_TARGET_DURATION_S
+    )
+
+    spec = director_mod.direct_carousel_moment(
+        clips, seed=seed, target_duration_s=target_duration_s
+    )
+    return _apply_moment_overrides(spec, moment_cfg)
+
+
+def _maybe_render_carousel_moment(
+    moment_cfg: dict[str, Any],
+    *,
+    clip_id_to_local: dict[str, str],
+    steps: list,
+    variant_dir: str,
+    probe_map: dict | None = None,
+    variant_id: str | None = None,
+) -> str | None:
+    """Render one Blossom-carousel moment segment for this variant.
+
+    Belt-and-braces around `render_carousel_moment`'s never-raise contract: any
+    exception — including an import-time failure of the carousel/skia-adjacent
+    modules themselves (e.g. a missing native lib on a given machine/arch) and
+    an unexpected bug in that never-supposed-to-raise function — is caught
+    here too, logged, and treated as "skip the moment": this helper itself
+    never raises. Callers only reach this when `settings.carousel_effects_enabled`
+    is True AND the spec actually requests a moment, so the carousel/skia-
+    adjacent modules are imported LAZILY here — the flag-off path imports none
+    of this.
+
+    `moment_cfg["auto"]` truthy hands mode/effect/focus selection to the
+    DIRECTOR (`app.pipeline.carousel.director.direct_carousel_moment`,
+    imported lazily so non-auto/flag-off callers never touch it either);
+    explicit `effect`/`mode`/`focus`/`duration_s`/`seed` keys in `moment_cfg`
+    still override the director's picks (`_apply_moment_overrides`). Without
+    `"auto"`, behavior is unchanged from before the director existed —
+    `mode`/`focus`/`seed` now pass through to `CarouselMomentSpec` too if
+    present in `moment_cfg`, but a `moment_cfg` that only ever set
+    `effect`/`duration_s`/`position` (every caller as of this writing) is
+    byte-identical.
+    """
+    try:
+        from app.pipeline.carousel.segment import (  # noqa: PLC0415
+            CarouselMomentSpec,
+            render_carousel_moment,
+        )
+
+        clip_paths: list[str] = []
+        for step in steps:
+            local_path = clip_id_to_local.get(getattr(step, "clip_id", None))
+            if local_path and local_path not in clip_paths:
+                clip_paths.append(local_path)
+            if len(clip_paths) >= 5:
+                break
+        if not clip_paths:
+            return None
+
+        if moment_cfg.get("auto"):
+            spec = _direct_auto_carousel_spec(
+                moment_cfg,
+                clip_paths=clip_paths,
+                probe_map=probe_map,
+                variant_id=variant_id,
+            )
+        else:
+            spec = CarouselMomentSpec(
+                effect=moment_cfg.get("effect", "scale_sweep"),
+                clip_paths=tuple(clip_paths),
+                duration_s=float(moment_cfg.get("duration_s", 4.0)),
+            )
+            spec = _apply_moment_overrides(spec, moment_cfg)
+
+        return render_carousel_moment(spec, variant_dir)
+    except Exception:  # noqa: BLE001 — the contract says never-raise; don't trust it blindly
+        log.warning("carousel_moment_render_failed", exc_info=True)
+        return None
+
+
+def _insert_carousel_moment_step(
+    steps: list,
+    spec: dict[str, Any],
+    *,
+    clip_id_to_local: dict[str, str],
+    clip_id_to_gcs: dict[str, str],
+    probe_map: dict,
+    variant_dir: str,
+) -> list:
+    """Splice a rendered Blossom-carousel moment into the montage `steps` list.
+
+    No-op — zero carousel imports, `steps` returned unchanged — unless
+    `settings.carousel_effects_enabled` is True AND `spec["carousel_moment"]`
+    is present. This is the entire kill switch: additive only, so the
+    flag-off (or spec-absent) output is byte-identical to pre-feature.
+
+    On success the rendered segment is registered as a synthetic clip (mirrors
+    the clip_id -> local path / clip_id -> probe maps the rest of this module
+    uses) and spliced in as an exact-window AssemblyStep, matching the shape
+    `_prepare_timeline_assembly` builds for user-pinned timeline windows.
+    `position` ("intro" | "middle" | "outro", default "intro") controls where.
+
+    Note: the synthetic clip has no GCS-backed source (it's a locally rendered
+    composite, not one of the user's uploaded clips), so `_build_ai_timeline`'s
+    clip_paths-index lookup can't map it — that function is documented
+    best-effort and returns None gracefully rather than raising, so a carousel
+    moment simply means no post-render clip-timeline editor for that variant.
+    """
+    if not settings.carousel_effects_enabled:
+        return steps
+    moment_cfg = spec.get("carousel_moment")
+    if not moment_cfg:
+        return steps
+
+    moment_path = _maybe_render_carousel_moment(
+        moment_cfg,
+        clip_id_to_local=clip_id_to_local,
+        steps=steps,
+        variant_dir=variant_dir,
+        probe_map=probe_map,
+        variant_id=spec.get("variant_id"),
+    )
+    if not moment_path:
+        return steps
+
+    from app.pipeline.agents.gemini_analyzer import AssemblyStep  # noqa: PLC0415
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+
+    try:
+        probe = probe_video(moment_path)
+        duration_s = float(probe.duration_s)
+    except Exception:  # noqa: BLE001 — a bad probe should skip, not fail the variant
+        log.warning("carousel_moment_probe_failed", exc_info=True)
+        return steps
+    if duration_s <= 0:
+        return steps
+
+    synthetic_id = f"__carousel_{spec.get('variant_id') or 'moment'}"
+    clip_id_to_local[synthetic_id] = moment_path
+    clip_id_to_gcs[synthetic_id] = moment_path
+    probe_map[moment_path] = probe
+
+    moment_step = AssemblyStep(
+        slot={"exact_window": True},
+        clip_id=synthetic_id,
+        moment={"start_s": 0.0, "end_s": round(duration_s, 3)},
+    )
+
+    position = moment_cfg.get("position", "intro")
+    new_steps = list(steps)
+    if position == "middle":
+        new_steps.insert(len(new_steps) // 2, moment_step)
+    elif position == "outro":
+        new_steps.append(moment_step)
+    else:  # "intro" (default) and any unrecognized value
+        new_steps.insert(0, moment_step)
+    return new_steps
+
+
 def _build_ai_timeline(
     *,
     steps: list,
@@ -8044,6 +8316,19 @@ def _render_generative_variant(
                     clip_metas=clip_metas,
                     is_music_variant=(track is not None and not voiceover_gcs_path),
                 )
+
+        # Blossom-carousel moment hook (Lane G, kill-switched): additive splice
+        # into the finalized montage `steps`, before assembly. No-op — zero
+        # carousel imports, `steps` unchanged — unless the flag is on AND the
+        # spec requests a moment. See `_insert_carousel_moment_step`.
+        steps = _insert_carousel_moment_step(
+            steps,
+            spec,
+            clip_id_to_local=clip_id_to_local,
+            clip_id_to_gcs=clip_id_to_gcs,
+            probe_map=probe_map,
+            variant_dir=variant_dir,
+        )
 
         assembled_path = os.path.join(variant_dir, "assembled.mp4")
         resolved_plans: list[dict] = []
