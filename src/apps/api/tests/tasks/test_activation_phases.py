@@ -149,3 +149,136 @@ def test_activation_phase_set_to_picking_days_after_matcher() -> None:
 
     # After the matcher succeeds, 'picking_days' should have been stamped.
     assert "picking_days" in phases_at_commit
+
+
+# ── Dispatch-loop lock/skip (plans/014 review CA2/CX2) ───────────────────────
+
+
+def _routing_session_factory(plan: MagicMock, item: MagicMock, job: MagicMock | None):  # noqa: ANN201
+    """sync_session mock whose get() routes by model class AND tolerates the
+    with_for_update kwarg the plans/014 loop now passes."""
+    from app.models import Job  # noqa: PLC0415
+
+    session = MagicMock()
+
+    def _get(model, _pk, **_kw):  # noqa: ANN001
+        if model is ContentPlan:
+            return plan
+        if model is PlanItem:
+            return item
+        if model is Job:
+            return job
+        return None
+
+    session.get = MagicMock(side_effect=_get)
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+    return ctx, session
+
+
+def _seeded_matcher_ingest(item: MagicMock) -> tuple[dict, MagicMock]:
+    seed_path = "users/u/plan/p/seed/a.mp4"
+    ingest_result: dict = {
+        "clip_id_to_gcs": {"c1": seed_path},
+        "clip_metas": [
+            MagicMock(
+                clip_id="c1",
+                hook_text="hook",
+                hook_score=0.8,
+                detected_subject="person",
+                transcript="hi",
+            )
+        ],
+    }
+    matched = MagicMock()
+    matched.assignments = [MagicMock(item_id=str(item.id), clip_gcs_path=seed_path)]
+    return ingest_result, matched
+
+
+def test_activation_skips_item_with_active_render() -> None:
+    """CA2/CX2 pin: an item whose linked Job is still non-terminal (the user hit
+    Generate while activation was analyzing) must be SKIPPED — no clip-assignment
+    clobber, no second Job — and count as not-dispatched (activated_empty)."""
+    from app.tasks.content_plan_build import DispatchResult  # noqa: PLC0415
+
+    plan = _make_plan()
+    item = _make_item(plan.id)
+    item.current_job_id = uuid.uuid4()
+    plan.items = [item]
+
+    active_job = MagicMock()
+    active_job.status = "processing"  # non-terminal
+
+    ctx, _session = _routing_session_factory(plan, item, active_job)
+    ingest_result, matched = _seeded_matcher_ingest(item)
+
+    with (
+        patch(
+            "app.tasks.content_plan_build._dispatch_item_render",
+            return_value=DispatchResult("dispatched", job_id="never"),
+        ) as dispatch,
+        patch("app.services.plan_clips.set_item_clips") as set_clips,
+    ):
+        _run_with_mocks(plan, ctx, ingest_result, matcher_return=matched)
+
+    dispatch.assert_not_called()
+    set_clips.assert_not_called()
+    assert plan.activation_status == "activated_empty"
+
+
+def test_activation_dispatches_when_linked_job_terminal() -> None:
+    """Companion pin: a TERMINAL linked job does not block activation — clips are
+    assigned, _dispatch_item_render runs, and outcome=='dispatched' counts the
+    plan as 'activated' (the DispatchResult-outcome counting, not truthiness)."""
+    from app.tasks.content_plan_build import DispatchResult  # noqa: PLC0415
+
+    plan = _make_plan()
+    item = _make_item(plan.id)
+    item.current_job_id = uuid.uuid4()
+    plan.items = [item]
+
+    done_job = MagicMock()
+    done_job.status = "variants_ready"  # terminal → re-generate allowed
+
+    ctx, _session = _routing_session_factory(plan, item, done_job)
+    ingest_result, matched = _seeded_matcher_ingest(item)
+
+    with (
+        patch(
+            "app.tasks.content_plan_build._dispatch_item_render",
+            return_value=DispatchResult("dispatched", job_id="j1"),
+        ) as dispatch,
+        patch("app.services.plan_clips.set_item_clips") as set_clips,
+    ):
+        _run_with_mocks(plan, ctx, ingest_result, matcher_return=matched)
+
+    dispatch.assert_called_once()
+    set_clips.assert_called_once()
+    assert plan.activation_status == "activated"
+
+
+def test_activation_publish_failure_counts_as_not_dispatched() -> None:
+    """plans/014 outcome-counting pin: a publish_failed DispatchResult (truthy
+    job_id!) must NOT count toward 'activated' — under the old `is not None`
+    truthiness check it would have."""
+    from app.tasks.content_plan_build import DispatchResult  # noqa: PLC0415
+
+    plan = _make_plan()
+    item = _make_item(plan.id)
+    item.current_job_id = None
+    plan.items = [item]
+
+    ctx, _session = _routing_session_factory(plan, item, None)
+    ingest_result, matched = _seeded_matcher_ingest(item)
+
+    with (
+        patch(
+            "app.tasks.content_plan_build._dispatch_item_render",
+            return_value=DispatchResult("publish_failed", job_id="j1"),
+        ),
+        patch("app.services.plan_clips.set_item_clips"),
+    ):
+        _run_with_mocks(plan, ctx, ingest_result, matcher_return=matched)
+
+    assert plan.activation_status == "activated_empty"

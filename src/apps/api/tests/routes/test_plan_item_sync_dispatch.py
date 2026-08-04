@@ -303,6 +303,27 @@ def test_dispatch_missing_row_branches() -> None:
     assert dispatch_item_render_for(str(uuid.uuid4())).outcome == "missing_row"
 
 
+def test_dispatch_empty_clips_is_invalid_clips() -> None:
+    """The no-clips guard in _dispatch_item_render must report invalid_clips.
+    Reachable in prod via the legacy task path (generate_plan_item_videos has
+    no clip pre-check — clips can be detached between route check and task
+    run), so it is not pure defense."""
+    _user_id, item_id = _seed_item(clips=[])
+    with patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(str(item_id))
+    assert result.outcome == "invalid_clips"
+    enqueue.assert_not_called()
+    assert _jobs_for(item_id) == []
+
+
+def test_task_swallows_not_dispatched_outcomes() -> None:
+    """generate_plan_item_videos logs-and-returns on a non-dispatch outcome —
+    it must never raise (Celery would retry-loop a permanently-missing row)."""
+    from app.tasks.content_plan_build import generate_plan_item_videos  # noqa: PLC0415
+
+    generate_plan_item_videos.run(str(uuid.uuid4()))  # missing_row → warning, no raise
+
+
 def test_added_template_job_is_terminal_for_generate() -> None:
     """CX3 pin: /me/jobs/{id}/add-to-plan can link a template/music job to a
     plan item. Those statuses must count as terminal — the item reads 'ready'

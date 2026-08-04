@@ -142,6 +142,41 @@ def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
     dispatch.assert_called_once_with(str(item.id))
 
 
+def test_generate_unknown_dispatch_outcome_is_500(client: TestClient) -> None:
+    """CA3/M1 pin: a future DispatchOutcome the route doesn't map must surface
+    as an explicit 500 — never fall through to the 200 success path (the
+    silent-no-op class plans/014 exists to kill)."""
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        # Literal is not runtime-enforced on the frozen dataclass — exactly the
+        # hole a future outcome value would slip through.
+        return_value=DispatchResult("future_outcome"),  # type: ignore[arg-type]
+    ):
+        resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 500
+
+
+def test_generate_missing_row_outcome_is_404(client: TestClient) -> None:
+    """Route mapping pin: missing_row (item deleted between the ownership load
+    and the helper's locked re-load — TOCTOU) surfaces as 404, not success."""
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        return_value=DispatchResult("missing_row"),
+    ):
+        resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 404
+
+
 def test_generate_rejects_photo_clip_for_classic_montage(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/still.jpg"])
