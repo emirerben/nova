@@ -8,6 +8,60 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Render-worker queue latency — deferrals (plans/014 eng review, 2026-08-04)
+
+Context: the 2026-08-04 "frozen Starting…" incident (plans/014). The single
+`worker` machine (`--concurrency=1`, queues `celery` + `plan-jobs` +
+`overlay-jobs`, fly.toml) serializes renders, clip-analysis tasks, AND the
+tiny Job-minting dispatch task. Prod evidence: a dispatch waited ~8 min behind
+an in-flight render (job `4fb8fa0f` created 244 ms after job `61c4d859`
+finished), then its orchestrator waited another ~6 min behind analysis tasks.
+plans/014 makes the wait *visible* (sync Job minting → honest "queued" phase);
+these items would make it *shorter*.
+
+- **Worker topology: get non-render tasks off the single render slot.**
+  Priority: P2. Every queued render still waits for whatever holds the slot —
+  users see "queued" for up to ~20 min behind a long render. Options, roughly
+  increasing cost: (a) route clip/track-analysis tasks to their own queue +
+  small process (they need torch/media deps — won't fit the 512MB `light`
+  box, needs its own sizing); (b) second `worker` machine draining the same
+  queues (doubles render throughput, ~doubles worker cost; revisit the
+  concurrency=1 encode-contention rationale in fly.toml before co-locating);
+  (c) per-queue concurrency tuning. Cost decision — needs Emir. Start:
+  fly.toml `[processes]`, `app/worker.py` task_routes, agents/DECISIONS.md
+  2026-08-02 autostop entry (lane-split precedent).
+- **Crash-window queued ghost: `dispatching` interim status.** Priority: P2.
+  plans/014's publish containment covers a RAISED publish; it cannot cover the
+  API process dying between the Job commit and the broker publish (deploy
+  SIGKILL/OOM — window is ms but real). The orphan sits `queued` forever (the
+  reaper deliberately excludes queued) and every retry now 200s as
+  already_active, so the user never even sees a failure. Sketch: mint as
+  status `dispatching`, flip to `queued` AFTER a successful publish, and add
+  `dispatching` to the reaper's reapable set (its existing 60-min staleness
+  threshold is generous for a seconds-wide window). Touches reaper vocabulary
+  + orchestrator pickup ordering — wants its own PR with reaper tests. Start:
+  `_dispatch_item_render` in `src/apps/api/app/tasks/content_plan_build.py`,
+  `_NON_TERMINAL_STATUSES` in `src/apps/api/app/tasks/reaper.py`.
+- **Sync-engine pool + broker publish budgets for the in-request dispatch.**
+  Priority: P2. `POST /plan-items/{id}/generate` now runs on `sync_engine`
+  (pool_size=2, max_overflow=3, default 30s pool_timeout — sized for Celery,
+  comment says so) inside anyio's shared ~40-token threadpool, and
+  `apply_async` has no explicit socket/publish timeout (a black-holed Redis
+  pins threads; same exposure as the legacy `.delay()`, now just on a hot
+  path). Fix shape: dedicated small engine (or raised overflow) with ~5s
+  pool_timeout mapped to 503, plus a bounded kombu retry_policy on the
+  dispatch publish. Start: `src/apps/api/app/database.py:36`,
+  `enqueue_orchestrator_sync` in `src/apps/api/app/services/job_dispatch.py`.
+- **Fetch timeout on mutating plan-api calls.** Priority: P2. `request()` in
+  `src/apps/web/src/lib/plan-api.ts` has no timeout/AbortController; on flaky
+  mobile signal a hung POST leaves the page in a silent forever-state (e.g.
+  Generate's `generating=true` with polling stopped pre-click — only
+  `visibilitychange` revives it). Add an ~30s AbortController timeout to
+  mutating requests, surfacing the existing error-banner path. Exclude
+  long-running transfers (`/uploads/relay` already takes a caller `signal`).
+  Blocked by: nothing; touches every mutation call site so it wants its own
+  review pass.
+
 ## Upload follow-ups — mobile uploader rework deferrals (v0.22.4.0 review, 2026-08-03)
 
 The shipped rework (per-clip progress cards, cancel/retry, picker-order coalesced
