@@ -5,9 +5,11 @@ Nova's editor has two distinct AI paths:
 - `nova.edit.copilot` uses `EDIT_COPILOT_MODEL` with low thinking and a 20-second
   request timeout for responsive chat-to-operation conversion.
 - `nova.edit.director` uses `EDIT_DIRECTOR_MODEL` with high thinking and a
-  45-second timeout for proactive editorial review. The suggestion endpoint
-  falls back to `EDIT_DIRECTOR_FALLBACK_MODEL` after exhausted timeouts, rate
-  limits, unavailable-model errors, refusals, or schema failures.
+  single 30-second attempt for proactive editorial review. The suggestion
+  endpoint falls back to one 20-second `EDIT_DIRECTOR_FALLBACK_MODEL` attempt
+  after a timeout, rate limit, unavailable-model error, refusal, or schema
+  failure. If a newer snapshot supersedes the primary request, the API returns
+  a conflict immediately instead of spending the fallback budget on stale work.
 
 The fleet-wide `GEMINI_MODEL` no longer rewrites an agent's declared model.
 Agent-run telemetry records requested/effective model, fallback reason, latency,
@@ -22,18 +24,32 @@ dismissed suggestion IDs. It returns three to five ranked suggestions. The
 endpoint is authenticated, ownership-checked, editability-checked, size-limited
 to 20 KB, rate-limited, and gated by `EDIT_DIRECTOR_ENABLED`.
 
-The editor requests an initial review after opening and debounces later requests
-against its material history revision. Playback, selection, and cosmetic
-interaction do not advance that revision. Responses are ignored when either the
-request ID or the snapshot hash is stale. The browser aborts superseded HTTP
-requests, and the API serializes Director runs per job so a newer revision does
-not fan out concurrent Pro calls behind an older request.
+The editor requests its initial review after the complete editor snapshot has
+settled, then tracks the full snapshot hash rather than only the undo-history
+revision. This includes asynchronously hydrated captions, capabilities, assets,
+overlays, and effects. Responses are ignored when either the request ID or the
+snapshot hash is stale. The browser aborts and restarts superseded HTTP requests,
+and the API serializes Director runs per job so a newer revision does not fan out
+concurrent Pro calls behind an older request. An explicit Refresh stays armed
+through hydration-driven aborts until a replacement review lands or fails.
 
 Instant suggestions contain one or more operations from the normal copilot
 contract. Acceptance validates and stages the complete bundle in memory first.
 If any operation is invalid or stale, no part of the bundle is applied.
 Successful acceptance creates one editor-history checkpoint; the user still
 uses the existing Undo and Save controls.
+
+A returned review remains stable while the user works through its cards, so
+accepting one non-overlapping recommendation does not invalidate the rest.
+Destructive operations compare a local-only fingerprint of the complete target
+entity against the reviewed snapshot before applying. These fingerprints are
+not serialized into the API or model prompt. A stale or rejected card triggers
+a replacement review instead of mutating a target the user changed meanwhile.
+
+Copilot follow-ups resolve ordinal references against the latest assistant
+answer first. For example, “help me with the third one” selects item 3 from the
+assistant's numbered diagnosis unless the user explicitly says “text bar 3”,
+“clip 3”, “caption 3”, or another current-draft object.
 
 ## Effects and transitions
 
