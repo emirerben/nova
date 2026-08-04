@@ -838,6 +838,13 @@ class Settings(BaseSettings):
     # (the #296/#297 parity incident class).
     fullscreen_cutaways_enabled: bool = False
 
+    # Blossom-style carousel moments (scale-sweep / cover-flow / cards-stack /
+    # flipbook) inserted into generative montage variants. Additive +
+    # kill-switched: when False no segment is inserted and no carousel code
+    # runs — output stays byte-identical to pre-feature. Default False pending
+    # parity-gate green.
+    carousel_effects_enabled: bool = False
+
     # Per-item "Ask Kria" advisor (plan dogfood feedback #2): conversational,
     # read-only advice about which clip fits which shot. Additive + auth'd; it
     # never writes state (the re-read offer goes through the clip-note PATCH).

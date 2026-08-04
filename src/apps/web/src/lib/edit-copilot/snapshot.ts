@@ -28,6 +28,71 @@ export const COPILOT_PAUSE_MARKS_MAX = 40;
 const SPEECH_WORDS_TRIM_MAX = 60;
 const COPILOT_SFX_SUGGESTIONS_MAX = 6;
 
+function stableMutationValue(value: unknown): unknown {
+  if (value === undefined) return { __nova_undefined__: true };
+  if (Array.isArray(value)) return value.map(stableMutationValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, stableMutationValue(item)]),
+    );
+  }
+  return value;
+}
+
+/** Compact opaque fingerprint for stale-target protection. It deliberately
+ * covers editor persistence fields that are too noisy or sensitive to put in
+ * the model-facing prose, while remaining deterministic across object-key order. */
+function mutationFingerprint(parts: readonly unknown[]): string {
+  const value = JSON.stringify(stableMutationValue(parts));
+  let left = 2166136261;
+  let right = 3339675911;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    left = Math.imul(left ^ code, 16777619);
+    right = Math.imul(right ^ code, 2246822519);
+  }
+  return `m1-${(left >>> 0).toString(16).padStart(8, "0")}${(right >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function attachMutationFingerprint(
+  target: { mutation_fingerprint?: string },
+  fingerprint: string,
+): void {
+  // Keep the guard local-only: JSON.stringify, request payloads, prompt
+  // formatters, and byte-budget accounting must never expose or count it.
+  Object.defineProperty(target, "mutation_fingerprint", {
+    value: fingerprint,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+}
+
+export function textMutationFingerprint(bar: TextElementBar): string {
+  return mutationFingerprint([bar]);
+}
+
+export function slotMutationFingerprint(slot: DraftSlot): string {
+  return mutationFingerprint([slot]);
+}
+
+export function sfxMutationFingerprint(placement: SoundEffectPlacement): string {
+  return mutationFingerprint([placement]);
+}
+
+export function overlayMutationFingerprint(card: MediaOverlay): string {
+  const persisted = { ...card };
+  // Signed URLs rotate independently of user edits and must not stale a card.
+  delete persisted.preview_url;
+  return mutationFingerprint([persisted]);
+}
+
+export function cameraEffectMutationFingerprint(effect: CameraEffect): string {
+  return mutationFingerprint([effect]);
+}
+
 /** Cap by even sampling, never by truncation — the FIRST and LAST marks are
  * always retained so late-video beats stay addressable for accents near the
  * end of the cut. Mirrored by `_BEAT_MARKS_SHOWN_MAX` in the server renderer
@@ -74,6 +139,8 @@ export interface CopilotTextSnapshotBar {
   position: string;
   x_frac: number | null;
   y_frac: number | null;
+  /** Opaque, local stale-target guard; never rendered into model prose. */
+  mutation_fingerprint?: string;
 }
 
 export interface CopilotSlotSnapshot {
@@ -90,6 +157,7 @@ export interface CopilotSlotSnapshot {
   output_end_s: number | null;
   transition_after?: EditorTransition;
   transition_duration_s?: number | null;
+  mutation_fingerprint?: string;
 }
 
 export interface CopilotCameraEffectSnapshot {
@@ -98,6 +166,7 @@ export interface CopilotCameraEffectSnapshot {
   start_s: number;
   end_s: number;
   intensity: number;
+  mutation_fingerprint?: string;
 }
 
 export interface CopilotVisualBlockSnapshot {
@@ -117,6 +186,7 @@ export interface CopilotSfxPlacementSnapshot {
   at_s: number;
   gain: number;
   duration_s: number | null;
+  mutation_fingerprint?: string;
 }
 
 export interface CopilotSfxCatalogSnapshot {
@@ -164,6 +234,7 @@ export interface CopilotOverlayCardSnapshot {
   y_frac: number;
   scale: number;
   display_mode: "pip" | "fullscreen";
+  mutation_fingerprint?: string;
 }
 
 export interface CopilotOverlayAssetSnapshot {
@@ -733,5 +804,31 @@ export function buildCopilotSnapshot(
   if (allowed.has("tool") && options.openTools) {
     snapshot.open_tools = options.openTools.filter((tool, index, arr) => arr.indexOf(tool) === index);
   }
-  return trimSnapshotToBudget(snapshot);
+  const trimmed = trimSnapshotToBudget(snapshot);
+  const textById = new Map(visibleBars.map((bar) => [bar.id, bar]));
+  for (const item of trimmed.text_bars) {
+    const bar = textById.get(item.id);
+    if (bar) attachMutationFingerprint(item, textMutationFingerprint(bar));
+  }
+  const slotByKey = new Map(slots.map((slot) => [slot.key, slot]));
+  for (const item of trimmed.slots) {
+    const slot = slotByKey.get(item.key);
+    if (slot) attachMutationFingerprint(item, slotMutationFingerprint(slot));
+  }
+  const sfxById = new Map((options.sfxPlacements ?? []).map((item) => [item.id, item]));
+  for (const item of trimmed.sfx?.placements ?? []) {
+    const placement = sfxById.get(item.id);
+    if (placement) attachMutationFingerprint(item, sfxMutationFingerprint(placement));
+  }
+  const overlayById = new Map((options.overlayCards ?? []).map((item) => [item.id, item]));
+  for (const item of trimmed.overlays?.cards ?? []) {
+    const card = overlayById.get(item.id);
+    if (card) attachMutationFingerprint(item, overlayMutationFingerprint(card));
+  }
+  const cameraById = new Map((options.cameraEffects ?? []).map((item) => [item.id, item]));
+  for (const item of trimmed.camera_effects ?? []) {
+    const effect = cameraById.get(item.id);
+    if (effect) attachMutationFingerprint(item, cameraEffectMutationFingerprint(effect));
+  }
+  return trimmed;
 }

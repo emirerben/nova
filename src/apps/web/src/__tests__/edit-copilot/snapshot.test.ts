@@ -117,6 +117,19 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.allowed_op_families).toEqual(["text", "clip", "title"]);
   });
 
+  it("keeps full-entity mutation fingerprints local and out of model payloads", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar({ shadow_enabled: true, rotation_deg: 4 })],
+      [slot({ lookPreset: "olive_film" })],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+    );
+
+    expect(snapshot.text_bars[0].mutation_fingerprint).toMatch(/^m1-[0-9a-f]{16}$/);
+    expect(snapshot.slots[0].mutation_fingerprint).toMatch(/^m1-[0-9a-f]{16}$/);
+    expect(JSON.stringify(snapshot)).not.toContain("mutation_fingerprint");
+  });
+
   it("removes disabled operation families from the snapshot", () => {
     const snapshot = buildCopilotSnapshot(
       [bar()],

@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.1.0] — 2026-08-04
+
+### Added
+- **Blossom-carousel visual effects for rendered videos (dark launch).** A new effects engine ports the spring-physics carousel motion from blossom-carousel.com into the render pipeline: four effects — scale sweep, cover flow, cards stack, and flipbook — animate a viewer's clips as cards sliding through the frame with the library's exact scroll physics. Rendered as a self-contained 1080×1920 segment and spliced into generative montages behind `CAROUSEL_EFFECTS_ENABLED` (default off; no behavior change until flipped).
+- **Rolling video and fullscreen focus moments.** Cards can play their clips live while sliding (`mode: rolling`), or run a focus choreography (`mode: focus`): the carousel settles a chosen card at center, zooms it to fullscreen while its video plays (other cards dim), then returns and slides on — with multi-focus sequences visiting several clips in one moment.
+- **AI diversification (director).** A seeded director policy picks the effect, mode, and which clips earn fullscreen moments (ranked by interest and duration, with footage-length safeguards) per variant, guaranteeing sibling variants of one job get different treatments; opt-in via `carousel_moment: {"auto": true}`, with explicit fields overriding the director. Structured for a future LLM agent to replace the heuristic without touching the render path.
+- **Browser-parity harness proving the port is faithful.** A deterministic frame-stepped reference page runs the real vendored Blossom JS through a scripted flick; `make carousel-capture` + `make carousel-verify` gate every effect on SSIM ≥ 0.95 against the browser capture (achieved 0.984–0.994) and card motion-trace agreement within 2px (achieved ≤ 0.52px).
+
+## [0.23.0.0] — 2026-08-04
+
+### Added
+- **Creators can now release a finished video from a dedicated TikTok desk on the item page.** Desktop and mobile keep the playable preview, connected profile, caption, and primary Publish action together; completed, processing, private, failed, and uncertain posts become durable receipts with item history and truthful performance states.
+- **TikTok publishing now opens as a full-screen two-step workspace.** Creators customize the caption, audience, interactions, commercial and AI disclosures, and music confirmation before reviewing one exact summary; the local connected-account preview exercises the complete flow without sending anything to TikTok.
+
+### Changed
+- **Connecting or reconnecting TikTok now returns creators to the exact video they were releasing.** Safe item-page return paths survive OAuth success, denial, and recoverable errors, while invalid or external destinations fall back to Library.
+- **The finished-video page is now release-first instead of lifecycle-first.** Stale Ready, Publish, and Learn tabs are gone; multiple finished variants use a compact selector; loading uses one calm Kria Beam treatment; and mobile keeps Publish above the fold.
+
+### Fixed
+- **Publishing no longer skips the TikTok customization step or traps creators in dead-end failures.** Settings can be retried, expired connections can be restored in context, submission details survive errors, unknown status offers safe TikTok and refresh actions, and local preview receipts never start invalid API polling.
+- **Video and receipt states now report what is actually known.** Playback failure replaces the real media frame with retry and download actions, duration never says “Ready,” missing metrics display as not reported instead of zero, and malformed legacy creator metadata cannot break a receipt response.
+
+## [0.22.5.0] — 2026-08-04
+
+### Fixed
+- **Nova’s editor recommendations now appear against the video you are actually viewing, without needing a page refresh.** Suggestions wait for the current edit state to finish loading, automatically recover when that state changes mid-request, and return sooner when the recommendation service cannot respond.
+- **Every compatible recommendation in a Nova batch can now be accepted and seen immediately in the preview.** Accepting the first card no longer invalidates the rest; refresh and retry states settle reliably; and an older destructive recommendation is safely replaced instead of deleting a clip, title, sound, overlay, or camera effect that changed after Nova reviewed it.
+- **Nova now understands follow-ups such as “the third one” when they refer to its own numbered answer.** The editor chat resolves these references against the latest assistant response instead of treating them as an unrelated or ambiguous request.
+
 ## [0.22.4.0] — 2026-08-03
 
 ### Fixed

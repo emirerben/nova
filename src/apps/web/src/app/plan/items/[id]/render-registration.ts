@@ -1,5 +1,5 @@
 // Lives outside page.tsx because Next's generated page-type check forbids
-// extra named exports from a page module (see auto-open-editor.ts).
+// extra named exports from a page module, so keep pure helpers in separate files.
 
 import type { PlanItem } from "@/lib/plan-api";
 

@@ -857,6 +857,14 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 **Priority:** P1 — submit by 2026-03-28 at latest
 **Depends on:** Nothing
 
+### Advanced TikTok release modes (deferred 2026-08-04)
+**What:** Add two explicit alternatives to direct posting: Kria-owned scheduled publishing for videos that keep their rendered audio, and “Finish in TikTok” draft handoff for creators who want to choose a TikTok-library sound.
+**Why:** TikTok's video Direct Post API exposes neither a scheduled-publish field nor a library-sound selector. Scheduling therefore needs a Kria queue, token refresh, publish-time creator revalidation, cancellation, and failure notifications; library music requires the creator to finish the draft inside TikTok. Combining either with the current release-desk redesign would expand the reliability and consent surface beyond this branch.
+**How:** Design the two modes as separate promises. For scheduling, persist timezone-aware intent, re-query creator info immediately before execution, fail safely on changed permissions or caps, and keep cancel/edit available until submission. For library music, use TikTok's upload-to-draft flow and make the remaining in-app action explicit; never imply Kria selected or attached the sound.
+**Effort:** L (human: ~2 weeks / CC: ~2 hours)
+**Priority:** P2 — revisit after the direct-publish release desk is stable in production
+**Depends on:** Audited TikTok Content Posting API access, durable scheduler/worker monitoring, and validated OAuth refresh behavior
+
 ### Platform Posting (Phase 2)
 **What:** Instagram and YouTube upload integrations. TikTok OAuth, Direct Post, token refresh, lifecycle tracking, and official metrics shipped in v0.20.0.0; audited public posting remains gated on TikTok approval.
 **Why:** Core monetization path — users want one-click posting, not just clip downloads.

@@ -20,7 +20,6 @@ export interface UseEditDirectorOptions {
   omniEnabled: boolean;
   itemId: string;
   variantId: string;
-  materialRevision: number;
   buildSnapshot: () => CopilotSnapshot;
   applyOpsAtomic: (
     ops: EditorSuggestion["ops"],
@@ -82,6 +81,7 @@ function writeDismissed(itemId: string, variantId: string, ids: string[]): void 
 /** Shown once when the API has no director route, in place of a dead retry. */
 export const DIRECTOR_UNAVAILABLE_MESSAGE =
   "Nova's proactive review isn't enabled on this server yet.";
+const DIRECTOR_REVIEW_DEBOUNCE_MS = 1200;
 
 function friendlyDirectorError(caught: unknown): string {
   if (caught instanceof DOMException && caught.name === "AbortError") return "";
@@ -110,6 +110,8 @@ export function useEditDirector(
   opts: UseEditDirectorOptions,
 ): UseEditDirectorResult {
   const [suggestions, setSuggestions] = useState<EditorSuggestion[]>([]);
+  const suggestionsRef = useRef<EditorSuggestion[]>([]);
+  suggestionsRef.current = suggestions;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -120,18 +122,30 @@ export function useEditDirector(
   const requestIdRef = useRef(0);
   const sourceSnapshotRef = useRef<CopilotSnapshot | null>(null);
   const sourceRevisionRef = useRef("");
-  const firstLoadRef = useRef(true);
   const optsRef = useRef(opts);
   const generationTokenRef = useRef(0);
+  // Stays armed across abort/restart cycles until a replacement review either
+  // lands or fails. A one-render latch loses refreshes during async hydration.
+  const forceRefreshRef = useRef(false);
   optsRef.current = opts;
+  // Unlike history.version, this includes async editor hydration (asset pool,
+  // captions, capabilities, overlays). A review started against a partial
+  // snapshot is cancelled and restarted once that real input settles.
+  const directorEnabled = opts.enabled;
+  const buildSnapshot = opts.buildSnapshot;
+  const currentSnapshotRevision = useMemo(
+    () => directorEnabled ? directorSnapshotRevision(buildSnapshot()) : "",
+    [directorEnabled, buildSnapshot],
+  );
 
   useEffect(() => {
+    suggestionsRef.current = [];
     setSuggestions([]);
     setError(null);
     setUnavailable(false);
     setModelUsed("");
     setFallbackReason(null);
-    firstLoadRef.current = true;
+    forceRefreshRef.current = false;
     generationTokenRef.current += 1;
     setGeneration(null);
   }, [opts.itemId, opts.variantId]);
@@ -142,23 +156,30 @@ export function useEditDirector(
 
   useEffect(() => {
     if (!opts.enabled || !opts.itemId || !opts.variantId) return;
-    // This effect re-runs on every material revision. Without this guard a
+    // This effect re-runs on every complete snapshot revision. Without this guard a
     // flag-off API re-fires a doomed request after each keystroke-sized edit
     // and repaints the failure, which is what put an error in the drawer
     // before the user had typed anything.
     if (unavailable) return;
+    const forceRefresh = forceRefreshRef.current;
+    // Keep a returned review stable while the user works through it. Director
+    // suggestions are server-validated to target distinct draft fields, and
+    // applyOpsAtomic rejects a card if its own target changed meanwhile.
+    if (suggestionsRef.current.length > 0 && !forceRefresh) return;
     const controller = new AbortController();
-    const delay = firstLoadRef.current ? 250 : 1200;
+    let activeRequestId = 0;
     const timer = window.setTimeout(() => {
-      firstLoadRef.current = false;
       const snapshot = optsRef.current.buildSnapshot();
       if (snapshot.allowed_op_families.length === 0) {
+        forceRefreshRef.current = false;
+        suggestionsRef.current = [];
         setSuggestions([]);
         return;
       }
       const revision = directorSnapshotRevision(snapshot);
       requestIdRef.current += 1;
       const requestId = requestIdRef.current;
+      activeRequestId = requestId;
       setLoading(true);
       setError(null);
       void editDirectorSuggestions(optsRef.current.itemId, optsRef.current.variantId, {
@@ -180,33 +201,36 @@ export function useEditDirector(
           }
           sourceSnapshotRef.current = snapshot;
           sourceRevisionRef.current = revision;
-          setSuggestions(
-            optsRef.current.omniEnabled
-              ? response.suggestions
-              : response.suggestions.filter((item) => item.apply_mode !== "omni_async"),
-          );
+          const nextSuggestions = optsRef.current.omniEnabled
+            ? response.suggestions
+            : response.suggestions.filter((item) => item.apply_mode !== "omni_async");
+          suggestionsRef.current = nextSuggestions;
+          setSuggestions(nextSuggestions);
+          forceRefreshRef.current = false;
           setModelUsed(response.model_used);
           setFallbackReason(response.fallback_reason ?? null);
         })
         .catch((caught) => {
           if (requestId !== requestIdRef.current || controller.signal.aborted) return;
+          forceRefreshRef.current = false;
           if (isFeatureUnavailable(caught)) setUnavailable(true);
           setError(friendlyDirectorError(caught));
         })
         .finally(() => {
           if (requestId === requestIdRef.current) setLoading(false);
         });
-    }, delay);
+    }, DIRECTOR_REVIEW_DEBOUNCE_MS);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
+      if (activeRequestId === requestIdRef.current) setLoading(false);
       requestIdRef.current += 1;
     };
   }, [
     opts.enabled,
     opts.itemId,
     opts.variantId,
-    opts.materialRevision,
+    currentSnapshotRevision,
     refreshKey,
     unavailable,
   ]);
@@ -223,9 +247,21 @@ export function useEditDirector(
     [modelUsed],
   );
 
+  const removeSuggestion = useCallback((suggestionId: string) => {
+    const remaining = suggestionsRef.current.filter((item) => item.id !== suggestionId);
+    suggestionsRef.current = remaining;
+    setSuggestions(remaining);
+  }, []);
+
+  const refreshReview = useCallback(() => {
+    forceRefreshRef.current = true;
+    setUnavailable(false);
+    setRefreshKey((value) => value + 1);
+  }, []);
+
   const dismiss = useCallback(
     (suggestion: EditorSuggestion) => {
-      setSuggestions((current) => current.filter((item) => item.id !== suggestion.id));
+      removeSuggestion(suggestion.id);
       const ids = [
         ...readDismissed(optsRef.current.itemId, optsRef.current.variantId),
         suggestion.id,
@@ -237,7 +273,7 @@ export function useEditDirector(
       );
       feedback(suggestion, "dismissed");
     },
-    [feedback],
+    [feedback, removeSuggestion],
   );
 
   const accept = useCallback(
@@ -248,7 +284,7 @@ export function useEditDirector(
         const sourceRevision = sourceRevisionRef.current;
         if (!source || directorSnapshotRevision(optsRef.current.buildSnapshot()) !== sourceRevision) {
           setError("The draft changed. Nova is refreshing this suggestion.");
-          setRefreshKey((value) => value + 1);
+          refreshReview();
           return;
         }
         generationTokenRef.current += 1;
@@ -370,7 +406,7 @@ export function useEditDirector(
             } catch {
               setError("The generated clip was added, but its preview could not refresh. Save or Undo still work.");
             }
-            setSuggestions((items) => items.filter((item) => item.id !== suggestion.id));
+            removeSuggestion(suggestion.id);
             feedback(suggestion, "accepted");
           })
           .catch(() => {
@@ -381,10 +417,9 @@ export function useEditDirector(
         return;
       }
       const source = sourceSnapshotRef.current;
-      const currentRevision = directorSnapshotRevision(optsRef.current.buildSnapshot());
-      if (!source || currentRevision !== sourceRevisionRef.current) {
+      if (!source) {
         setError("The draft changed. Nova is refreshing this suggestion.");
-        setRefreshKey((value) => value + 1);
+        refreshReview();
         return;
       }
       const result = optsRef.current.applyOpsAtomic(suggestion.ops, source);
@@ -393,14 +428,14 @@ export function useEditDirector(
           result.rejected[0]?.detail ??
             "That suggestion no longer fits the current draft.",
         );
-        setRefreshKey((value) => value + 1);
+        refreshReview();
         return;
       }
+      removeSuggestion(suggestion.id);
       optsRef.current.onApplied(result);
-      setSuggestions((current) => current.filter((item) => item.id !== suggestion.id));
       feedback(suggestion, "accepted");
     },
-    [feedback, generation],
+    [feedback, generation, refreshReview, removeSuggestion],
   );
 
   const cancelGeneration = useCallback(() => {
@@ -437,14 +472,9 @@ export function useEditDirector(
       modelUsed,
       fallbackReason,
       generation,
-      // Clearing the latch keeps the visible Refresh button honest: the guard
-      // exists to stop AUTOMATIC re-firing on every material revision, not to
-      // veto one deliberate click. Also lets a mid-session API deploy recover
-      // without reopening the editor.
-      refresh: () => {
-        setUnavailable(false);
-        setRefreshKey((value) => value + 1);
-      },
+      // Explicit refresh stays armed through snapshot-hydration aborts, so the
+      // visible button always produces a replacement review.
+      refresh: refreshReview,
       accept,
       dismiss,
       cancelGeneration,
@@ -457,6 +487,7 @@ export function useEditDirector(
       modelUsed,
       fallbackReason,
       generation,
+      refreshReview,
       accept,
       dismiss,
       cancelGeneration,

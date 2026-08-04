@@ -35,7 +35,7 @@ beforeAll(() => {
   window.HTMLMediaElement.prototype.play = jest.fn().mockResolvedValue(undefined);
 });
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 jest.mock("next/navigation", () => ({
@@ -115,6 +115,14 @@ jest.mock("@/lib/music-api", () => ({
   getMusicTracks: jest.fn().mockResolvedValue({ tracks: [] }),
 }));
 
+jest.mock("@/lib/tiktok-api", () => ({
+  ...jest.requireActual("@/lib/tiktok-api"),
+  getTikTokConnection: jest.fn(),
+  getTikTokPublicationReceipt: jest.fn(),
+  listTikTokPublications: jest.fn(),
+  getTikTokPublication: jest.fn(),
+}));
+
 jest.mock("@/lib/font-faces", () => ({ FONT_FACES: "" }));
 jest.mock("@/lib/download-video", () => ({ downloadVideo: jest.fn() }));
 jest.mock("@/lib/plan-text", () => ({ stripRationalePrefix: (s: string) => s }));
@@ -133,6 +141,21 @@ jest.mock("@/app/library/_components/FeedbackButtons", () => ({
 }));
 
 import PlanItemPage from "@/app/plan/items/[id]/page";
+import { useSearchParams } from "next/navigation";
+import { setVariantMediaOverlays } from "@/lib/plan-api";
+import {
+  getTikTokConnection,
+  getTikTokPublication,
+  getTikTokPublicationReceipt,
+  listTikTokPublications,
+} from "@/lib/tiktok-api";
+
+const mockGetTikTokConnection = getTikTokConnection as jest.MockedFunction<typeof getTikTokConnection>;
+const mockGetTikTokPublicationReceipt = getTikTokPublicationReceipt as jest.MockedFunction<typeof getTikTokPublicationReceipt>;
+const mockListTikTokPublications = listTikTokPublications as jest.MockedFunction<typeof listTikTokPublications>;
+const mockGetTikTokPublication = getTikTokPublication as jest.MockedFunction<typeof getTikTokPublication>;
+const mockUseSearchParams = useSearchParams as jest.MockedFunction<typeof useSearchParams>;
+const mockSetVariantMediaOverlays = setVariantMediaOverlays as jest.MockedFunction<typeof setVariantMediaOverlays>;
 
 const FLAG = "NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED";
 
@@ -195,6 +218,24 @@ function setData(variants) {
 
 beforeEach(() => {
   process.env[FLAG] = "true";
+  mockUseSearchParams.mockReturnValue(new URLSearchParams() as ReturnType<typeof useSearchParams>);
+  mockSetVariantMediaOverlays.mockClear();
+  mockGetTikTokConnection.mockResolvedValue({
+    available: true,
+    connected: true,
+    status: "connected",
+    account: { display_name: "Kria Studio", avatar_url: null },
+    granted_scopes: ["video.publish"],
+    can_publish: true,
+    can_analyze: true,
+    audited: true,
+    beta: false,
+    last_synced_at: null,
+    learned_post_count: 0,
+  });
+  mockListTikTokPublications.mockResolvedValue([]);
+  mockGetTikTokPublicationReceipt.mockResolvedValue(null);
+  mockGetTikTokPublication.mockReset();
 });
 
 afterEach(() => {
@@ -218,6 +259,156 @@ describe("Plan item page — overlay_apply_receipt cleanup", () => {
 
     expect(screen.queryByRole("button", { name: /place visuals for me/i })).toBeNull();
     expect(screen.queryByTestId("overlay-apply-receipt")).toBeNull();
-    expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "More video actions" })).toBeInTheDocument();
+  });
+
+  it("selects the active publication and polls it until TikTok reaches a terminal state", async () => {
+    jest.useFakeTimers();
+    const activePublication = {
+      id: "publication-active",
+      job_id: "job-1",
+      variant_id: "v1",
+      title: "Active video caption",
+      privacy_level: "SELF_ONLY",
+      allow_comment: false,
+      allow_duet: false,
+      allow_stitch: false,
+      creator_nickname: "Kria Studio",
+      processing_status: "processing",
+      visibility_status: "unknown",
+      public_at: null,
+      retryable: false,
+      failure_code: null,
+      failure_detail: null,
+      latest_metrics: null,
+      metrics_synced_at: null,
+      evaluation_metrics: null,
+      evaluation_captured_at: null,
+      created_at: "2026-08-01T10:00:00Z",
+      updated_at: "2026-08-01T10:00:00Z",
+    };
+    const allPublications = [
+      { ...activePublication, id: "wrong-variant", variant_id: "v2", title: "Wrong variant" },
+      activePublication,
+      {
+        ...activePublication,
+        id: "publication-previous-attempt",
+        title: "Previous attempt",
+        processing_status: "failed",
+        failure_code: "publish_failed",
+        created_at: "2026-07-31T10:00:00Z",
+      },
+      { ...activePublication, id: "wrong-job", job_id: "job-older", title: "Wrong job" },
+    ];
+    mockGetTikTokPublicationReceipt.mockResolvedValue(activePublication);
+    mockListTikTokPublications.mockResolvedValue(allPublications);
+    mockGetTikTokPublication
+      .mockRejectedValueOnce(new Error("temporary network failure"))
+      .mockResolvedValueOnce({
+        ...activePublication,
+        processing_status: "complete",
+        visibility_status: "private",
+        updated_at: "2026-08-01T10:05:00Z",
+      });
+    setData([makeVariant()]);
+
+    await act(async () => {
+      render(<PlanItemPage />);
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("Active video caption")).toBeInTheDocument();
+    expect(screen.queryByText("Wrong variant")).toBeNull();
+    expect(screen.queryByText("Wrong job")).toBeNull();
+    expect(screen.getByRole("button", { name: "TikTok history (2)" })).toBeInTheDocument();
+
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    expect(mockGetTikTokPublication).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Active video caption")).toBeInTheDocument();
+
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    expect(mockGetTikTokPublication).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText("Published privately")).toBeInTheDocument();
+
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    expect(mockGetTikTokPublication).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it("fails closed when the canonical receipt lookup fails", async () => {
+    mockGetTikTokPublicationReceipt.mockRejectedValue(new Error("temporary receipt lookup failure"));
+    mockListTikTokPublications.mockResolvedValue([]);
+    setData([makeVariant()]);
+
+    await act(async () => {
+      render(<PlanItemPage />);
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText(/Publishing stays paused to prevent a duplicate/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Publish to TikTok" })).toBeNull();
+    const receiptCallsBeforeRetry = mockGetTikTokPublicationReceipt.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(mockGetTikTokPublicationReceipt).toHaveBeenCalledTimes(receiptCallsBeforeRetry + 1);
+  });
+
+  it("keeps the connected preview account and publish sheet on the same simulated path", async () => {
+    mockUseSearchParams.mockReturnValue(
+      new URLSearchParams("tiktok_preview=connected") as ReturnType<typeof useSearchParams>,
+    );
+    mockGetTikTokConnection.mockResolvedValue({
+      available: true,
+      connected: false,
+      status: "disconnected",
+      account: null,
+      granted_scopes: [],
+      can_publish: false,
+      can_analyze: false,
+      audited: false,
+      beta: false,
+      last_synced_at: null,
+      learned_post_count: 0,
+    });
+    setData([
+      makeVariant({
+        media_overlays: [
+          {
+            id: "preview-card",
+            kind: "image",
+            src_gcs_path: "users/another-user/preview-card.png",
+            start_s: 0,
+            end_s: 2,
+            x: 0.1,
+            y: 0.1,
+            width: 0.4,
+            height: 0.4,
+          },
+        ],
+      }),
+    ]);
+
+    await act(async () => {
+      render(<PlanItemPage />);
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Connected TikTok account")).toBeInTheDocument();
+    expect(screen.getByText("Emir")).toBeInTheDocument();
+    expect(screen.queryByText("Connect TikTok before publishing.")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Publish to TikTok" }));
+
+    expect(await screen.findByRole("heading", { name: "Preview TikTok post" })).toBeInTheDocument();
+    expect(screen.getByText("No TikTok API request will be made.")).toBeInTheDocument();
+    expect(mockSetVariantMediaOverlays).not.toHaveBeenCalled();
   });
 });

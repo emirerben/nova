@@ -54,6 +54,11 @@ import pytest
 INTERMEDIATE_ALLOWLIST: set[tuple[str, str]] = {
     ("app/pipeline/reframe.py", "reframe_and_export"),
     ("app/pipeline/reframe.py", "_build_overlay_cmd"),
+    # Blossom-carousel moment segment (Lane D). Spliced into a montage's
+    # `steps` list as a synthetic exact-window clip and re-encoded downstream
+    # by the assembler's per-clip reframe/burn pass — same reasoning as
+    # image_clip.py's intermediate renders.
+    ("app/pipeline/carousel/encode.py", "encode_carousel_segment"),
 }
 
 # (file_relative_to_apps_api, enclosing_function_name): preset MUST be one of
@@ -120,6 +125,7 @@ FILES_TO_AUDIT: list[str] = [
     "app/pipeline/transitions.py",
     "app/pipeline/talking_head_assembler.py",
     "app/pipeline/masonry_montage.py",
+    "app/pipeline/carousel/encode.py",
 ]
 
 

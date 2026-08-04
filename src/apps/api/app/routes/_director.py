@@ -138,6 +138,15 @@ async def _run_director_once(
             fallback_reason=fallback_reason,
             error=str(exc)[:300],
         )
+        # A newer hydrated snapshot may have arrived while the primary model
+        # was running. Do not spend the fallback budget on a response the
+        # client has already superseded; release the per-job lock so the fresh
+        # review can start immediately.
+        if _latest_revision_by_job.get(str(job_id)) != body.snapshot_revision:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="edit_director_request_superseded",
+            ) from exc
         try:
             output = await asyncio.to_thread(
                 EditDirectorFallbackAgent(default_client()).run,

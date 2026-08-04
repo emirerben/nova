@@ -108,6 +108,10 @@ class OAuthStartResponse(BaseModel):
     authorization_url: str
 
 
+class OAuthStartBody(BaseModel):
+    return_to: str | None = None
+
+
 class PublishOptionsResponse(BaseModel):
     preview_url: str
     source_revision: str
@@ -145,29 +149,48 @@ class PublicationResponse(BaseModel):
     id: str
     job_id: str
     variant_id: str | None
+    title: str
+    privacy_level: str
+    allow_comment: bool
+    allow_duet: bool
+    allow_stitch: bool
+    creator_nickname: str | None
     processing_status: str
     visibility_status: str
+    public_at: datetime | None
     retryable: bool
     failure_code: str | None
     failure_detail: str | None
     latest_metrics: dict[str, Any] | None
     metrics_synced_at: datetime | None
+    evaluation_metrics: dict[str, Any] | None
+    evaluation_captured_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
 
 def _publication_response(row: TikTokPublication) -> PublicationResponse:
+    creator_nickname = (row.creator_info_snapshot or {}).get("creator_nickname")
     return PublicationResponse(
         id=str(row.id),
         job_id=str(row.job_id),
         variant_id=row.variant_id,
+        title=row.title,
+        privacy_level=row.privacy_level,
+        allow_comment=row.allow_comment,
+        allow_duet=row.allow_duet,
+        allow_stitch=row.allow_stitch,
+        creator_nickname=creator_nickname if isinstance(creator_nickname, str) else None,
         processing_status=row.processing_status,
         visibility_status=row.visibility_status,
+        public_at=row.public_at,
         retryable=row.retryable,
         failure_code=row.failure_code,
         failure_detail=row.failure_detail,
         latest_metrics=row.latest_metrics,
         metrics_synced_at=row.metrics_synced_at,
+        evaluation_metrics=row.evaluation_metrics,
+        evaluation_captured_at=row.evaluation_captured_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -210,12 +233,35 @@ async def connection(
     )
 
 
+def _safe_oauth_return_to(value: str | None) -> str | None:
+    """Allow OAuth to return only to owned in-app publishing surfaces."""
+
+    if not value or len(value) > 1024:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc or value.startswith("//") or "\\" in parsed.path:
+        return None
+    path = parsed.path.rstrip("/") or "/"
+    if any(segment in {".", ".."} for segment in path.split("/")):
+        return None
+    if path != "/library" and not path.startswith("/plan/items/"):
+        return None
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{path}{query}"
+
+
 @router.post("/oauth/start", response_model=OAuthStartResponse)
-async def oauth_start(user: CurrentUser) -> OAuthStartResponse:
+async def oauth_start(user: CurrentUser, body: OAuthStartBody | None = None) -> OAuthStartResponse:
     if not _connection_available(user.id):
         raise HTTPException(status_code=404, detail="TikTok integration is not available")
     state_value = secrets.token_urlsafe(32)
-    payload = json.dumps({"user_id": str(user.id)}, separators=(",", ":"))
+    payload = json.dumps(
+        {
+            "user_id": str(user.id),
+            "return_to": _safe_oauth_return_to(body.return_to if body else None),
+        },
+        separators=(",", ":"),
+    )
     client = _redis()
     try:
         await client.setex(f"tiktok:oauth:{state_value}", _OAUTH_STATE_TTL, payload)
@@ -232,9 +278,9 @@ async def oauth_start(user: CurrentUser) -> OAuthStartResponse:
     return OAuthStartResponse(authorization_url=url)
 
 
-def _callback_redirect(**params: str) -> RedirectResponse:
-    base = settings.tiktok_web_app_url
-    parsed = urlparse(base)
+def _callback_redirect(return_to: str | None = None, **params: str) -> RedirectResponse:
+    configured = settings.tiktok_web_app_url
+    parsed = urlparse(configured)
     origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
     allowed_origins = {value.rstrip("/") for value in settings.allowed_origins}
     if (
@@ -242,10 +288,11 @@ def _callback_redirect(**params: str) -> RedirectResponse:
         or not parsed.netloc
         or parsed.username
         or parsed.password
-        or parsed.path.rstrip("/") != "/library"
         or origin not in allowed_origins
     ):
-        base = "http://localhost:3000/library"
+        origin = "http://localhost:3000"
+    destination = _safe_oauth_return_to(return_to) or "/library"
+    base = f"{origin}{destination}"
     separator = "&" if "?" in base else "?"
     return RedirectResponse(f"{base}{separator}{urlencode(params)}", status_code=303)
 
@@ -266,10 +313,15 @@ async def oauth_callback(
         await client.aclose()
     if not raw:
         return _callback_redirect(tiktok="error", reason="expired_state")
-    if error or not code:
-        return _callback_redirect(tiktok="error", reason="access_denied")
     try:
-        user_id = uuid.UUID(str(json.loads(raw)["user_id"]))
+        state_payload = json.loads(raw)
+        return_to = _safe_oauth_return_to(state_payload.get("return_to"))
+    except (TypeError, ValueError):
+        return _callback_redirect(tiktok="error", reason="expired_state")
+    if error or not code:
+        return _callback_redirect(return_to, tiktok="error", reason="access_denied")
+    try:
+        user_id = uuid.UUID(str(state_payload["user_id"]))
         token_payload = await run_in_threadpool(tiktok_client.exchange_code, code)
         account = await run_in_threadpool(tiktok_client.user_info, token_payload.access_token)
         now = datetime.now(UTC)
@@ -300,7 +352,7 @@ async def oauth_callback(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        return _callback_redirect(tiktok="error", reason="account_already_connected")
+        return _callback_redirect(return_to, tiktok="error", reason="account_already_connected")
     except tiktok_client.TikTokAPIError as exc:
         await db.rollback()
         log.warning(
@@ -308,11 +360,11 @@ async def oauth_callback(
             error_code=exc.code,
             status_code=exc.status_code,
         )
-        return _callback_redirect(tiktok="error", reason="connection_failed")
+        return _callback_redirect(return_to, tiktok="error", reason="connection_failed")
     except (ValueError, KeyError, TokenCryptoError):
         await db.rollback()
-        return _callback_redirect(tiktok="error", reason="connection_failed")
-    return _callback_redirect(tiktok="connected")
+        return _callback_redirect(return_to, tiktok="error", reason="connection_failed")
+    return _callback_redirect(return_to, tiktok="connected")
 
 
 @router.delete("/connection", status_code=204)
@@ -506,20 +558,42 @@ async def create_publication(
 
 
 @router.get("/publications", response_model=list[PublicationResponse])
-async def list_publications(user: CurrentUser, db: AsyncSession = Depends(get_db)):
+async def list_publications(
+    user: CurrentUser,
+    job_id: uuid.UUID | None = None,
+    variant_id: str | None = Query(default=None, max_length=200),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(TikTokPublication).where(TikTokPublication.user_id == user.id)
+    if job_id is not None:
+        query = query.where(TikTokPublication.job_id == job_id)
+    if variant_id is not None:
+        query = query.where(TikTokPublication.variant_id == variant_id)
     rows = (
-        (
-            await db.execute(
-                select(TikTokPublication)
-                .where(TikTokPublication.user_id == user.id)
-                .order_by(desc(TikTokPublication.created_at))
-                .limit(100)
-            )
-        )
+        (await db.execute(query.order_by(desc(TikTokPublication.created_at)).limit(100)))
         .scalars()
         .all()
     )
     return [_publication_response(row) for row in rows]
+
+
+@router.get("/publications/receipt", response_model=PublicationResponse | None)
+async def get_publication_receipt(
+    user: CurrentUser,
+    job_id: uuid.UUID,
+    variant_id: str | None = Query(default=None, max_length=200),
+    db: AsyncSession = Depends(get_db),
+) -> PublicationResponse | None:
+    query = select(TikTokPublication).where(
+        TikTokPublication.user_id == user.id,
+        TikTokPublication.job_id == job_id,
+    )
+    if variant_id is not None:
+        query = query.where(TikTokPublication.variant_id == variant_id)
+    row = (
+        await db.execute(query.order_by(desc(TikTokPublication.created_at)).limit(1))
+    ).scalar_one_or_none()
+    return _publication_response(row) if row is not None else None
 
 
 @router.get("/publications/{publication_id}", response_model=PublicationResponse)
@@ -704,7 +778,10 @@ def _sanitize_creator_info(creator: dict[str, Any]) -> dict[str, Any]:
         "stitch_disabled",
         "max_video_post_duration_sec",
     }
-    return {key: creator[key] for key in allowed if key in creator}
+    sanitized = {key: creator[key] for key in allowed if key in creator}
+    if not isinstance(sanitized.get("creator_nickname"), str):
+        sanitized.pop("creator_nickname", None)
+    return sanitized
 
 
 def _erase_connection(row: OAuthToken) -> None:

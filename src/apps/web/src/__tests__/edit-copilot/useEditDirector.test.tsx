@@ -1,4 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
+import { useState } from "react";
 import {
   cancelOmniAsset,
   claimOmniAsset,
@@ -92,7 +93,7 @@ function appliedResult(): ApplyCopilotOpsResult {
 
 async function loadInitialReview(): Promise<void> {
   await act(async () => {
-    jest.advanceTimersByTime(250);
+    jest.advanceTimersByTime(1200);
     await Promise.resolve();
   });
 }
@@ -136,7 +137,6 @@ describe("useEditDirector", () => {
         omniEnabled: false,
         itemId: "item-1",
         variantId: "variant-1",
-        materialRevision: 1,
         buildSnapshot: () => current,
         applyOpsAtomic,
         onApplied,
@@ -165,6 +165,226 @@ describe("useEditDirector", () => {
     expect(suggestionsMock).toHaveBeenCalledTimes(2);
   });
 
+  it("accepts every non-overlapping recommendation from one review and applies each to preview state", async () => {
+    let current = snapshot();
+    const review = [
+      suggestion({ id: "director-text", title: "Sharper hook" }),
+      suggestion({
+        id: "director-title",
+        title: "Set a working title",
+        ops: [{ op: "set_title", title: "Building Nova" }],
+      }),
+      suggestion({
+        id: "director-sound",
+        title: "Add a hook sound",
+        ops: [{ op: "add_sfx", effect_id: "sfx-pop", at_s: 0.5, gain: 0.6 }],
+      }),
+    ];
+    suggestionsMock.mockResolvedValue({
+      suggestions: review,
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    });
+    const applyOpsAtomic = jest.fn((ops: EditorSuggestion["ops"]) => ({
+      ...appliedResult(),
+      applied: [{
+        label: String(ops[0]?.op),
+        from: "before",
+        to: "preview",
+      }],
+    }));
+
+    const { result } = renderHook(() => {
+      const [previewChanges, setPreviewChanges] = useState<string[]>([]);
+      const director = useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic,
+        onApplied: (applied) => {
+          current = snapshot(`preview-${previewChanges.length + 1}`);
+          setPreviewChanges((changes) => [
+            ...changes,
+            ...applied.applied.map((change) => change.label),
+          ]);
+        },
+      });
+      return { director, previewChanges };
+    });
+
+    await loadInitialReview();
+
+    for (const recommendation of review) {
+      act(() => result.current.director.accept(recommendation));
+    }
+
+    expect(applyOpsAtomic).toHaveBeenCalledTimes(3);
+    expect(result.current.previewChanges).toEqual([
+      "edit_text",
+      "set_title",
+      "add_sfx",
+    ]);
+    expect(result.current.director.suggestions).toEqual([]);
+
+    await act(async () => {
+      jest.advanceTimersByTime(1200);
+      await Promise.resolve();
+    });
+    expect(suggestionsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a manual refresh replace a visible review", async () => {
+    const current = snapshot();
+    suggestionsMock
+      .mockResolvedValueOnce({
+        suggestions: [suggestion({ id: "old-review" })],
+        snapshot_revision: directorSnapshotRevision(current),
+        requested_model: "gemini-3.1-pro-preview",
+        model_used: "gemini-3.1-pro-preview",
+        fallback_reason: null,
+      })
+      .mockResolvedValueOnce({
+        suggestions: [suggestion({ id: "fresh-review" })],
+        snapshot_revision: directorSnapshotRevision(current),
+        requested_model: "gemini-3.1-pro-preview",
+        model_used: "gemini-3.1-pro-preview",
+        fallback_reason: null,
+      });
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: () => appliedResult(),
+        onApplied: jest.fn(),
+      }),
+    );
+
+    await loadInitialReview();
+    expect(result.current.suggestions.map((item) => item.id)).toEqual(["old-review"]);
+
+    act(() => result.current.refresh());
+    await loadInitialReview();
+
+    expect(suggestionsMock).toHaveBeenCalledTimes(2);
+    expect(result.current.suggestions.map((item) => item.id)).toEqual(["fresh-review"]);
+  });
+
+  it("replaces a rejected stale card instead of letting the card guard veto refresh", async () => {
+    const current = snapshot();
+    const stale = suggestion({ id: "stale-card" });
+    suggestionsMock
+      .mockResolvedValueOnce({
+        suggestions: [stale],
+        snapshot_revision: directorSnapshotRevision(current),
+        requested_model: "gemini-3.1-pro-preview",
+        model_used: "gemini-3.1-pro-preview",
+        fallback_reason: null,
+      })
+      .mockResolvedValueOnce({
+        suggestions: [suggestion({ id: "replacement-card" })],
+        snapshot_revision: directorSnapshotRevision(current),
+        requested_model: "gemini-3.1-pro-preview",
+        model_used: "gemini-3.1-pro-preview",
+        fallback_reason: null,
+      });
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: () => ({
+          textActions: [],
+          nextSlots: null,
+          applied: [],
+          rejected: [{
+            op: "remove_text",
+            label: "Remove text",
+            reason: "user_changed",
+            detail: "text changed after Nova read it",
+          }],
+        }),
+        onApplied: jest.fn(),
+      }),
+    );
+
+    await loadInitialReview();
+    act(() => result.current.accept(stale));
+    await loadInitialReview();
+
+    expect(suggestionsMock).toHaveBeenCalledTimes(2);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.suggestions.map((item) => item.id)).toEqual(["replacement-card"]);
+  });
+
+  it("keeps an explicit refresh armed when hydration aborts its in-flight request", async () => {
+    let current = snapshot();
+    let resolveInterrupted: ((value: Awaited<ReturnType<typeof editDirectorSuggestions>>) => void) | null = null;
+    suggestionsMock
+      .mockResolvedValueOnce({
+        suggestions: [suggestion({ id: "old-card" })],
+        snapshot_revision: directorSnapshotRevision(current),
+        requested_model: "gemini-3.1-pro-preview",
+        model_used: "gemini-3.1-pro-preview",
+        fallback_reason: null,
+      })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveInterrupted = resolve;
+      }))
+      .mockImplementationOnce(async (_itemId, _variantId, body) => ({
+        suggestions: [suggestion({ id: "hydrated-card" })],
+        snapshot_revision: body.snapshot_revision,
+        requested_model: "gemini-3.1-pro-preview",
+        model_used: "gemini-3.1-pro-preview",
+        fallback_reason: null,
+      }));
+    const { result, rerender } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: () => appliedResult(),
+        onApplied: jest.fn(),
+      }),
+    );
+
+    await loadInitialReview();
+    act(() => result.current.refresh());
+    await act(async () => {
+      jest.advanceTimersByTime(1200);
+    });
+    expect(result.current.loading).toBe(true);
+
+    current = snapshot("hydrated while refreshing");
+    rerender();
+    await loadInitialReview();
+
+    await act(async () => {
+      resolveInterrupted?.({
+        suggestions: [suggestion({ id: "interrupted-card" })],
+        snapshot_revision: directorSnapshotRevision(snapshot()),
+        requested_model: "gemini-3.1-pro-preview",
+        model_used: "gemini-3.1-pro-preview",
+        fallback_reason: null,
+      });
+      await Promise.resolve();
+    });
+
+    expect(suggestionsMock).toHaveBeenCalledTimes(3);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.suggestions.map((item) => item.id)).toEqual(["hydrated-card"]);
+  });
+
   it("drops a response when the material draft changed while it was in flight", async () => {
     let current = snapshot();
     let resolveRequest: ((value: Awaited<ReturnType<typeof editDirectorSuggestions>>) => void) | null = null;
@@ -177,7 +397,6 @@ describe("useEditDirector", () => {
         omniEnabled: false,
         itemId: "item-1",
         variantId: "variant-1",
-        materialRevision: 1,
         buildSnapshot: () => current,
         applyOpsAtomic: () => appliedResult(),
         onApplied: jest.fn(),
@@ -185,7 +404,7 @@ describe("useEditDirector", () => {
     );
 
     await act(async () => {
-      jest.advanceTimersByTime(250);
+      jest.advanceTimersByTime(1200);
     });
     current = snapshot("user changed this");
     await act(async () => {
@@ -200,6 +419,58 @@ describe("useEditDirector", () => {
     });
 
     expect(result.current.suggestions).toEqual([]);
+  });
+
+  it("restarts an in-flight initial review when async editor hydration changes the snapshot", async () => {
+    let current = snapshot();
+    let resolveFirst: ((value: Awaited<ReturnType<typeof editDirectorSuggestions>>) => void) | null = null;
+    suggestionsMock
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveFirst = resolve;
+      }))
+      .mockImplementationOnce(async (_itemId, _variantId, body) => ({
+        suggestions: [suggestion({ id: "director-hydrated" })],
+        snapshot_revision: body.snapshot_revision,
+        requested_model: "gemini-3.1-pro-preview",
+        model_used: "gemini-3.1-pro-preview",
+        fallback_reason: null,
+      }));
+
+    const { result, rerender } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: () => appliedResult(),
+        onApplied: jest.fn(),
+      }),
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(1200);
+    });
+    current = snapshot("hydrated hook");
+    rerender();
+
+    await act(async () => {
+      resolveFirst?.({
+        suggestions: [suggestion({ id: "director-stale" })],
+        snapshot_revision: directorSnapshotRevision(snapshot()),
+        requested_model: "gemini-3.1-pro-preview",
+        model_used: "gemini-3.1-pro-preview",
+        fallback_reason: null,
+      });
+      jest.advanceTimersByTime(1200);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(suggestionsMock).toHaveBeenCalledTimes(2);
+    expect(result.current.suggestions.map((item) => item.id)).toEqual([
+      "director-hydrated",
+    ]);
   });
 
   it("polls an Omni asset and inserts it only after the normalized operation is ready", async () => {
@@ -266,7 +537,6 @@ describe("useEditDirector", () => {
         omniEnabled: true,
         itemId: "item-1",
         variantId: "variant-1",
-        materialRevision: 1,
         buildSnapshot: () => current,
         applyOpsAtomic,
         onApplied,
@@ -356,7 +626,6 @@ describe("useEditDirector", () => {
         omniEnabled: true,
         itemId: "item-1",
         variantId: "variant-1",
-        materialRevision: 1,
         buildSnapshot: () => current,
         applyOpsAtomic: () => appliedResult(),
         onApplied,
@@ -423,7 +692,6 @@ describe("useEditDirector", () => {
         omniEnabled: true,
         itemId: "item-1",
         variantId: "variant-1",
-        materialRevision: 1,
         buildSnapshot: () => current,
         applyOpsAtomic: () => appliedResult(),
         onApplied: jest.fn(),
@@ -485,7 +753,6 @@ describe("useEditDirector", () => {
         omniEnabled: true,
         itemId: "item-1",
         variantId: "variant-1",
-        materialRevision: 1,
         buildSnapshot: () => current,
         applyOpsAtomic: () => appliedResult(),
         onApplied,
@@ -552,7 +819,6 @@ describe("useEditDirector", () => {
         omniEnabled: true,
         itemId: "item-1",
         variantId: "variant-1",
-        materialRevision: 1,
         buildSnapshot: () => current,
         applyOpsAtomic,
         onApplied,
@@ -626,7 +892,6 @@ describe("useEditDirector", () => {
         omniEnabled: true,
         itemId: "item-1",
         variantId: "variant-1",
-        materialRevision: 1,
         buildSnapshot: () => current,
         applyOpsAtomic: () => appliedResult(),
         onApplied,

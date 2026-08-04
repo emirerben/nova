@@ -1,9 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isCoarsePointerDevice, shouldAutoOpenPlanItemEditor } from "./auto-open-editor";
 import { hasRenderRegistered } from "./render-registration";
 import {
   attachClips,
@@ -104,7 +103,6 @@ import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { barsToTextElements, seedBarsFromVariant } from "./_editor/editor-bars";
 import { planItemEditorDisabledReason } from "./_editor/editor-capabilities";
-import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 import {
   useVariantEditSession,
   type VariantEditSession,
@@ -129,7 +127,17 @@ import {
 } from "@/lib/edit-format";
 import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
 import { TikTokPublishDialog } from "@/components/TikTokPublishDialog";
-import { getTikTokConnection } from "@/lib/tiktok-api";
+import { TikTokReleaseRail } from "@/components/TikTokReleaseRail";
+import {
+  getTikTokConnection,
+  getTikTokPublication,
+  getTikTokPublicationReceipt,
+  listTikTokPublications,
+  shouldPollTikTokPublication,
+  startTikTokOAuth,
+  type TikTokConnection,
+  type TikTokPublication,
+} from "@/lib/tiktok-api";
 
 // How long a dispatched render may take to register its Job before we admit
 // failure. Plan-item renders are queued behind a single worker, and the Job row
@@ -169,16 +177,10 @@ const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRa
 // and the server's editor_capabilities are unconditionally present; this flag
 // only controls whether the entry point is shown.
 const TIKTOK_EDITOR_ENABLED = process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED === "true";
-function canOpenPlanItemEditor(variant: PlanItemVariant | null): boolean {
-  return Boolean(
-    TIKTOK_EDITOR_ENABLED &&
-      variant?.output_url &&
-      variant.render_status !== "rendering" &&
-      planItemEditorDisabledReason(variant) === null,
-  );
-}
 
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
+const TIKTOK_POLL_MAX_FAILURES = 3;
+const TIKTOK_POLL_INTERVAL_MS = 5_000;
 type PendingEdit = {
   priorFinishedAt: string | null;
   sawRendering: boolean;
@@ -494,9 +496,16 @@ function detectLandscapeClip(files: File[]): Promise<boolean> {
 
 export default function PlanItemPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get("tab") === "captions" ? "captions" : null;
+  const tiktokPreview = searchParams.get("tiktok_preview");
+  // Keep the approved connected-account flow visible on ordinary localhost
+  // item URLs. An explicit query still lets us exercise either state, while
+  // production always follows the account returned by the TikTok API.
+  const tiktokSimulation =
+    process.env.NODE_ENV !== "production" &&
+    (tiktokPreview === "connected" ||
+      (process.env.NODE_ENV === "development" && tiktokPreview == null));
   const itemId = params.id;
   const editorReturnSignal = useMemo(
     () =>
@@ -655,7 +664,6 @@ export default function PlanItemPage() {
   const jobIdBeforeGenerateRef = useRef<string | null>(null);
   const forceFreshFetchRef = useRef(false);
   const consumedEditorReturnRef = useRef<string | null>(null);
-  const autoOpenedEditorRef = useRef<string | null>(null);
 
   useEffect(() => {
     getMusicTracks()
@@ -909,46 +917,6 @@ export default function PlanItemPage() {
       setFocusedVariantId(firstReady.variant_id);
     }
   }, [variants, focusedVariantId]);
-
-  useEffect(() => {
-    const readyVariants = variants.filter(
-      (v) => v.render_status === "ready" && Boolean(v.output_url),
-    );
-    const variant = readyVariants[0] ?? null;
-    if (
-      !shouldAutoOpenPlanItemEditor({
-        editorEnabled: TIKTOK_EDITOR_ENABLED,
-        itemReady: item?.status === "ready",
-        hasEditorReturnSignal: editorReturnSignal !== null,
-        readyVariantCount: readyVariants.length,
-        canOpenVariant: canOpenPlanItemEditor(variant),
-        isCoarsePointer: isCoarsePointerDevice(),
-      })
-    ) {
-      return;
-    }
-    if (!item || !variant) return;
-    const jobId = item.current_job_id ?? "no-job";
-    const markerKey = `plan-item:auto-open-editor:${item.id}:${jobId}:${variant.variant_id}`;
-    if (autoOpenedEditorRef.current === markerKey) return;
-    autoOpenedEditorRef.current = markerKey;
-    try {
-      if (window.sessionStorage.getItem(markerKey) === "1") return;
-      window.sessionStorage.setItem(markerKey, "1");
-    } catch {
-      // Storage can be unavailable in private/embedded contexts; the navigation
-      // is still useful, but the URL return guard below prevents immediate loops.
-    }
-    router.push(
-      `/plan/items/${itemId}/edit?variant=${encodeURIComponent(variant.variant_id)}`,
-    );
-  }, [
-    editorReturnSignal,
-    item,
-    itemId,
-    router,
-    variants,
-  ]);
 
   // "✓ Updated" cue: detect when the focused variant's render_finished_at advances
   // (the exact moment StableVideo swaps in fresh bytes) and flash a transient badge.
@@ -1523,6 +1491,7 @@ export default function PlanItemPage() {
   const clipCount = item.clip_gcs_paths.length;
   const isGenerating = item.status === "generating";
   const showResults = isGenerating || variants.length > 0;
+  const showReleaseDesk = !isGenerating && variants.length > 0;
   const showSetupControls = !isGenerating && variants.length === 0;
   // A variant can exist and still be a dead end: the first render created one
   // variant object before failing, so showSetupControls (and its Generate
@@ -1604,24 +1573,28 @@ export default function PlanItemPage() {
 
           {/* Content: back link + editorial header + uploader + generate + progress */}
           <div>
-            <Link
-              href="/plan"
-              className="text-sm text-[#71717a] underline-offset-2 transition-colors hover:text-[#0c0c0e]"
-            >
-              ← back to plan
-            </Link>
-            {item.day_index != null && (
-              <div className="mb-1 mt-4 flex items-center gap-3">
-                <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#71717a]">
-                  Day {item.day_index}
-                </span>
-              </div>
+            {!showReleaseDesk && (
+              <>
+                <Link
+                  href="/plan"
+                  className="text-sm text-[#71717a] underline-offset-2 transition-colors hover:text-[#0c0c0e]"
+                >
+                  ← back to plan
+                </Link>
+                {item.day_index != null && (
+                  <div className="mb-1 mt-4 flex items-center gap-3">
+                    <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#71717a]">
+                      Day {item.day_index}
+                    </span>
+                  </div>
+                )}
+                <h1 className="font-display mt-4 text-3xl text-[#0c0c0e]">
+                  {item.theme ?? item.idea}
+                </h1>
+                {item.theme && <p className="mb-2 mt-2 text-[#3f3f46]">{item.idea}</p>}
+                <SeedProvenanceBadge item={item} />
+              </>
             )}
-            <h1 className="font-display mt-4 text-3xl text-[#0c0c0e]">
-              {item.theme ?? item.idea}
-            </h1>
-            {item.theme && <p className="mb-2 mt-2 text-[#3f3f46]">{item.idea}</p>}
-            <SeedProvenanceBadge item={item} />
 
             {showSetupControls && (
               <>
@@ -2381,7 +2354,7 @@ export default function PlanItemPage() {
             )}
 
             {/* ProgressTheater — light tone */}
-            {data?.job && (
+            {data?.job && item.status !== "ready" && (
               <div className="mt-8">
                 <ProgressTheater
                   phases={GENERATIVE_PHASE_ORDER}
@@ -2521,6 +2494,8 @@ export default function PlanItemPage() {
             renderingAction={renderingAction.current}
             updatedVariantId={updatedVariantId}
             requestedTab={requestedTab}
+            tiktokSimulation={tiktokSimulation}
+            onVariantSelect={setFocusedVariantId}
             overlaySuggestions={overlaySuggestions.laneEntries}
             onSuggestionEdit={overlaySuggestions.onSuggestionEdit}
             resolveSuggestionAssetUrl={resolveSuggestionAssetUrl}
@@ -2600,6 +2575,8 @@ function FocusedResults({
   renderingAction,
   updatedVariantId,
   requestedTab,
+  tiktokSimulation,
+  onVariantSelect,
   overlaySuggestions,
   onSuggestionEdit,
   resolveSuggestionAssetUrl,
@@ -2625,6 +2602,8 @@ function FocusedResults({
   renderingAction: { type: "song" | "text" | "style" | "other"; label: string } | null;
   updatedVariantId: string | null;
   requestedTab: EditorTab | null;
+  tiktokSimulation: boolean;
+  onVariantSelect: (variantId: string) => void;
   /** 006 T3: pending AI suggestions for the timeline lanes (from the page's
    *  useOverlaySuggestionState — same envelopes SuggestionRail reviews). */
   overlaySuggestions?: SuggestionLaneEntry[];
@@ -2794,20 +2773,90 @@ function FocusedResults({
   // Declared here (before the render_finished_at effect) so the effect can read it.
   // The full definition lives further down alongside handleDownload.
   const pendingExportRef = useRef<"download" | "publish" | null>(null);
+  const [exportPending, setExportPending] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
-  const [canPublishToTikTok, setCanPublishToTikTok] = useState(false);
+  const [tiktokConnection, setTikTokConnection] = useState<TikTokConnection | null>(null);
+  const [allTikTokPublications, setAllTikTokPublications] = useState<TikTokPublication[]>([]);
+  const [tiktokPublications, setTikTokPublications] = useState<TikTokPublication[]>([]);
+  const [tiktokReceiptState, setTikTokReceiptState] = useState<"loading" | "ready" | "error">("loading");
+  const [tiktokReceiptRefresh, setTikTokReceiptRefresh] = useState(0);
+  const [tiktokPollStalled, setTikTokPollStalled] = useState(false);
+  const [tiktokComparisonAvailable, setTikTokComparisonAvailable] = useState(true);
+  const upsertTikTokPublication = useCallback((publication: TikTokPublication) => {
+    setTikTokPublications((current) => [
+      publication,
+      ...current.filter((value) => value.id !== publication.id),
+    ]);
+    setAllTikTokPublications((current) => [
+      publication,
+      ...current.filter((value) => value.id !== publication.id),
+    ]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+    setTikTokReceiptState("loading");
+    setTikTokPollStalled(false);
+    setTikTokComparisonAvailable(true);
     void getTikTokConnection()
       .then((connection) => {
-        if (!cancelled) setCanPublishToTikTok(connection.can_publish);
+        if (!cancelled) setTikTokConnection(connection);
       })
       .catch(() => {
-        if (!cancelled) setCanPublishToTikTok(false);
+        if (!cancelled) setTikTokConnection(null);
+      });
+    void Promise.all([
+      item.current_job_id
+        ? getTikTokPublicationReceipt(item.current_job_id, variant?.variant_id)
+        : Promise.resolve(null),
+      item.current_job_id
+        ? listTikTokPublications({ jobId: item.current_job_id, variantId: variant?.variant_id })
+            .then((publications) => publications.filter(
+              (publication) =>
+                publication.job_id === item.current_job_id &&
+                (!variant?.variant_id || publication.variant_id === variant.variant_id),
+            ))
+            .catch(() => [])
+        : Promise.resolve([] as TikTokPublication[]),
+      listTikTokPublications()
+        .then((publications) => ({ publications, available: true }))
+        .catch(() => ({ publications: [] as TikTokPublication[], available: false })),
+    ])
+      .then(([itemPublication, itemHistory, comparisonResult]) => {
+        if (cancelled) return;
+        setTikTokPublications(itemPublication
+          ? [itemPublication, ...itemHistory.filter((publication) => publication.id !== itemPublication.id)]
+          : itemHistory);
+        setAllTikTokPublications(comparisonResult.publications);
+        setTikTokComparisonAvailable(comparisonResult.available);
+        setTikTokReceiptState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setTikTokReceiptState("error");
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [item.current_job_id, variant?.variant_id, tiktokReceiptRefresh]);
+  const latestTikTokPublication = tiktokPublications[0] ?? null;
+  useEffect(() => {
+    if (!latestTikTokPublication || !shouldPollTikTokPublication(latestTikTokPublication)) return;
+    let consecutiveFailures = 0;
+    const timer = window.setInterval(() => {
+      void getTikTokPublication(latestTikTokPublication.id)
+        .then((publication) => {
+          consecutiveFailures = 0;
+          setTikTokPollStalled(false);
+          upsertTikTokPublication(publication);
+        })
+        .catch(() => {
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= TIKTOK_POLL_MAX_FAILURES) {
+            window.clearInterval(timer);
+            setTikTokPollStalled(true);
+          }
+        });
+    }, TIKTOK_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [latestTikTokPublication, upsertTikTokPublication]);
 
   // When an export-triggered burn completes (render_finished_at advances), clear the CSS
   // preview layer — the burned output_url now has the cards composited in. Only fires when
@@ -2920,10 +2969,21 @@ function FocusedResults({
 
   useEffect(() => {
     if (!pendingExportRef.current) return;
+    if (editSession.commitError) {
+      // commit() intentionally catches HTTP failures so the inline editor can
+      // reopen with its draft intact. An export must still treat that settled
+      // promise as a failure; otherwise the unchanged pre-edit ready URL would
+      // be downloaded or published as though it contained the user's edits.
+      pendingExportRef.current = null;
+      setExportPending(false);
+      onError(editSession.commitError);
+      return;
+    }
     if (editSession.isSaving) return;
     if (variant?.render_status === "ready" && variant.output_url) {
       const action = pendingExportRef.current;
       pendingExportRef.current = null;
+      setExportPending(false);
       if (action === "download")
         downloadVideo(
           variant.download_url ?? variant.output_url,
@@ -2939,9 +2999,11 @@ function FocusedResults({
       // gone; the implicit retry is to click Download again (needsSfxBake stays
       // true after a failed bake).
       pendingExportRef.current = null;
+      setExportPending(false);
       onError("Couldn't prepare your video. Please try again.");
     }
   }, [
+    editSession.commitError,
     editSession.isSaving,
     variant?.render_status,
     variant?.output_url,
@@ -2950,7 +3012,7 @@ function FocusedResults({
     onError,
   ]);
 
-  const baking = (instantEligible && editSession.isSaving) || pendingExportRef.current !== null;
+  const baking = (instantEligible && editSession.isSaving) || exportPending;
 
   // Inline SFX dirtiness (D5): does the download need a fresh SFX bake, and is
   // the latest set persisted? Computed from the variant + placements — no
@@ -2964,6 +3026,11 @@ function FocusedResults({
 
   const prepareExactExport = useCallback(async (action: "download" | "publish") => {
     if (!variant) return;
+    if (pendingExportRef.current) return;
+    if (variant.render_status !== "ready" || !variant.output_url) {
+      onError("This video is still rendering. Try again when it is ready.");
+      return;
+    }
 
     // Flush the latest SFX placements before any bake. SFX edits save on a
     // 600ms debounce; without this, a fast Download (or the post-overlay SFX
@@ -2985,12 +3052,14 @@ function FocusedResults({
       // removed (inline copy under the button explains why).
       if (failedOverlayCount > 0) return;
       pendingExportRef.current = action;
+      setExportPending(true);
       try {
         await flushSfx();
         await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards, { render: true });
         markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
       } catch (err) {
         pendingExportRef.current = null;
+        setExportPending(false);
         onError(
           err instanceof Error
             ? err.message
@@ -3004,12 +3073,14 @@ function FocusedResults({
     // Inline compare (not a sticky flag) → "nothing changed" downloads instantly.
     if (needsSfxBake) {
       pendingExportRef.current = action;
+      setExportPending(true);
       try {
         await flushSfx();
         await renderVariantSfx(itemId, variant.variant_id);
         markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
       } catch (err) {
         pendingExportRef.current = null;
+        setExportPending(false);
         onError(
           err instanceof Error
             ? err.message
@@ -3019,9 +3090,9 @@ function FocusedResults({
       return;
     }
 
-    if (!variant.output_url && !editSession.isDirty) return;
     if (instantEligible && editSession.isDirty) {
       pendingExportRef.current = action;
+      setExportPending(true);
       void editSession.commit();
       return;
     }
@@ -3041,12 +3112,13 @@ function FocusedResults({
   }, [prepareExactExport]);
 
   const handlePublish = useCallback(() => {
+    if (tiktokSimulation) {
+      setPublishOpen(true);
+      return;
+    }
     void prepareExactExport("publish");
-  }, [prepareExactExport]);
+  }, [prepareExactExport, tiktokSimulation]);
 
-  // Item pages now present one primary output. Keep the deeper inline editor
-  // machinery dormant here; the full-screen editor owns post-render editing.
-  const showInlineEditorControls = false;
   // "Kria's pick" is always the first variant (index 0 in the variants array)
   const isKriaPick = variant != null && variants.length > 0 && variants[0].variant_id === variant.variant_id;
 
@@ -3075,27 +3147,58 @@ function FocusedResults({
     !!variant.output_url &&
     variant.render_status !== "rendering";
   const editorEntryDisabledReason = planItemEditorDisabledReason(variant);
-
-  // The editor panel reveals PlanVariantEditor filtered to the active tab.
-  // We keep one PlanVariantEditor instance and use the tab to scroll/focus.
-  const focusedEditable = variant && (!!variant.output_url || variant.render_status === "failed");
+  const editorHref = editorEntryEligible && !editorEntryDisabledReason && variant
+    ? `/plan/items/${itemId}/edit?variant=${variant.variant_id}`
+    : null;
+  const releaseVariantLabel = [isKriaPick ? "Kria's pick" : null, modePill]
+    .filter(Boolean)
+    .join(" · ") || "Original";
+  const releaseTikTokConnection: TikTokConnection | null = tiktokSimulation
+    ? {
+        available: true,
+        connected: true,
+        status: "connected",
+        account: tiktokConnection?.account ?? { display_name: "Emir" },
+        granted_scopes: ["video.publish"],
+        can_publish: true,
+        can_analyze: true,
+        audited: true,
+        beta: false,
+        last_synced_at: null,
+        learned_post_count: 0,
+      }
+    : tiktokConnection;
 
   return (
-    <div className="mt-8">
-      {/* Hero + rail: on desktop they are side-by-side */}
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+    <div className="mt-2 lg:-mt-4">
+      <div className="grid grid-cols-[minmax(132px,0.78fr)_minmax(0,1.22fr)] gap-x-4 gap-y-6 lg:grid-cols-[minmax(210px,0.75fr)_minmax(320px,430px)_minmax(300px,0.95fr)] lg:items-start lg:gap-8 xl:gap-12">
+        <section className="order-1 col-span-2 lg:col-span-1 lg:pt-3" aria-labelledby="release-item-title">
+          <Link
+            href="/plan"
+            className="inline-flex min-h-11 items-center text-sm text-[#3f3f46] transition-colors hover:text-[#0c0c0e]"
+          >
+            ← Back to plan
+          </Link>
+          {item.day_index != null && (
+            <p className="mt-4 text-xs font-medium text-[#71717a]">Day {item.day_index}</p>
+          )}
+          <h1
+            id="release-item-title"
+            className="mt-1 line-clamp-2 font-display text-[clamp(32px,9vw,42px)] font-medium leading-[1.02] text-[#0c0c0e] lg:mt-2 lg:line-clamp-none lg:text-[clamp(36px,4vw,58px)] lg:leading-[1.05]"
+          >
+            {item.theme ?? item.idea}
+          </h1>
+          {item.theme && <p className="mt-4 hidden text-sm leading-relaxed text-[#3f3f46] lg:block">{item.idea}</p>}
+          <div className="mt-4 hidden lg:block"><SeedProvenanceBadge item={item} /></div>
+          {variant && !isGenerating && (
+            <p className="mt-6 hidden border-l-2 border-lime-600 pl-3 text-sm leading-relaxed text-[#3f3f46] lg:block">
+              {deriveRationale(variant, variants.length)}
+            </p>
+          )}
+        </section>
 
-        {/* ── HERO: large video player ── */}
-        <div className="w-full shrink-0 sm:max-w-xs lg:w-[300px]">
-          {/* data-variant-preview: stable DOM hook for the SuggestionRail reveal
-              (row click seeks this variant's preview video — plans/005 1A). */}
+        <div className="order-2 w-full lg:mx-auto lg:max-w-[430px]">
           <div className="relative" data-variant-preview={variant?.variant_id}>
-            {/* "Kria's pick" badge */}
-            {isKriaPick && variant?.output_url && (
-              <span className="absolute left-3 top-3 z-10 rounded-full border border-lime-300 bg-lime-50 px-2.5 py-0.5 text-[11px] font-semibold text-lime-800">
-                Kria&apos;s pick
-              </span>
-            )}
             {instantEligible && variant && (activeTab !== "timeline" || textLaneOpen) ? (
               <LiveEditPreview
                 variant={variant}
@@ -3130,348 +3233,80 @@ function FocusedResults({
                 onCardMediaError={handleCardMediaError}
                 onRemoveCard={handleRemoveFailedCard}
                 onRequestEditCard={handleRequestEditCard}
+                onDownload={handleDownload}
               />
             )}
           </div>
-          {/* Text-mode pill below video */}
-          {modePill && !isGenerating && (
-            <div className="mt-2 flex justify-center">
-              <span className="rounded-full border border-zinc-200 bg-white px-3 py-0.5 text-xs text-[#71717a]">
-                {modePill}
-              </span>
-            </div>
+          {variants.filter((value) => value.output_url).length > 1 && (
+            <VariantReleasePicker
+              variants={variants}
+              selectedVariantId={variant?.variant_id ?? null}
+              onSelect={onVariantSelect}
+            />
           )}
         </div>
 
-        {/* ── RAIL: rationale + actions + feedback ── */}
-        <div className="min-w-0 flex-1 space-y-5">
+        <div className="order-3 lg:pt-3">
+          <TikTokReleaseRail
+            connection={releaseTikTokConnection}
+            publication={latestTikTokPublication}
+            publications={tiktokPublications}
+            comparisonPublications={allTikTokPublications}
+            receiptState={tiktokSimulation ? "ready" : tiktokReceiptState}
+            pollingStalled={tiktokPollStalled}
+            videoReady={Boolean(variant?.render_status === "ready" && variant.output_url)}
+            comparisonAvailable={tiktokComparisonAvailable}
+            canPublish={Boolean(
+              (tiktokSimulation || tiktokReceiptState === "ready") &&
+              releaseTikTokConnection?.can_publish &&
+              item.current_job_id &&
+              variant?.render_status === "ready" &&
+              variant.output_url,
+            )}
+            baking={baking}
+            editHref={editorHref}
+            durationSeconds={variant?.duration_s ?? null}
+            variantLabel={releaseVariantLabel}
+            captionPreview={item.idea}
+            onPublish={handlePublish}
+            onDownload={handleDownload}
+            onConnect={() => void startTikTokOAuth(`${window.location.pathname}${window.location.search}`)}
+            onReceiptRetry={() => setTikTokReceiptRefresh((value) => value + 1)}
+            simulation={tiktokSimulation}
+          />
 
-          {/* Rationale blurb */}
-          {variant && !isGenerating && (
-            <p className="text-sm text-[#3f3f46]">
-              {deriveRationale(variant, variants.length)}
+          {failedOverlayCount > 0 && (
+            <p className="mt-4 text-sm text-[#3f3f46]">
+              {failedOverlayCount === 1
+                ? "One visual couldn't load. Refresh or remove it before exporting."
+                : `${failedOverlayCount} visuals couldn't load. Refresh or remove them before exporting.`}
             </p>
           )}
-          {isGenerating && (
-            <p className="text-sm text-[#71717a]">
-              Edit controls unlock as soon as a variant finishes rendering.
-            </p>
-          )}
-
-          {/* ── Unplaced shots info card ── */}
-          {variant && (variant.unplaced_shots?.length ?? 0) > 0 && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-700">
-                Not in this take
-              </p>
-              <ul className="space-y-0.5">
-                {variant.unplaced_shots!.map((shot) => (
-                  <li key={shot.clip_id} className="text-xs text-amber-800">
-                    <span className="font-medium">Shot {shot.shot_index}</span>
-                    {" – "}
-                    {unplacedShotCopy(shot.reason)}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* ── Editor row: 4 icon+label buttons ── */}
-          {showInlineEditorControls && focusedEditable && (
-            <div>
-              <div className="flex gap-2">
-                {EDITOR_TABS.map((tab) => {
-                  // Archetype-gated (isCaptionArchetype mirrors the backend's
-                  // _is_editable_caption_variant), NOT cue-count-gated — a cue-count
-                  // gate would make the tab vanish the moment subtitles are toggled
-                  // off, trapping the user with no way back on (the bug the plan-item
-                  // redesign's User Challenge caught).
-                  const hasCaptions = !!variant && isCaptionArchetype(variant);
-                  if (tab.id === "captions" && !hasCaptions) return null;
-                  // Caption variants have no song to edit — only Captions + Clips.
-                  if (hasCaptions && tab.id === "song") return null;
-                  // Hide Song tab when no song is swappable
-                  if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
-                  // Timeline: show when SFX is enabled or this variant has a text lane.
-                  if (tab.id === "timeline" && !SOUND_EFFECTS_ENABLED && !textLaneEligible) return null;
-                  const isActive = activeTab === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      aria-pressed={isActive}
-                      onClick={() => {
-                        // Any manual tab interaction (open OR close) settles the
-                        // caption auto-open: a user who dismisses the Captions tab
-                        // must not have it force-reopened by a later "ready" poll
-                        // (FocusedResults is keyed by variant_id, so this ref
-                        // survives polls within the same variant).
-                        autoOpenedCaptionsRef.current = true;
-                        setActiveTab(isActive ? null : tab.id);
-                      }}
-                      className={`flex flex-col items-center gap-0.5 rounded-xl border px-3 py-2 text-center transition-colors ${
-                        isActive
-                          ? "border-lime-600 bg-lime-50 text-lime-800"
-                          : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-                      }`}
-                    >
-                      <span className="text-sm font-semibold leading-none">{tab.icon}</span>
-                      <span className="text-[10px] leading-tight">{tab.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Inline editor panel — slides open below the tab row */}
-              {activeTab !== null && variant && (
-                <div className="mt-3">
-                  {activeTab === "captions" ? (
-                    variant.base_video_url && variant.caption_cues ? (
-                    <div className="space-y-3" data-plan-captions-panel>
-                    <CaptionEditor
-                      // Re-mount (re-seed cues) whenever a server render replaces them —
-                      // a language re-transcribe swaps all cues, and the editor otherwise
-                      // keeps the cue state it seeded at mount (stale English after a
-                      // switch to Türkçe). render_finished_at advances on every reburn/
-                      // re-transcribe, so this re-seeds from the fresh server cues.
-                      key={`${variant.variant_id}:${variant.render_finished_at ?? ""}`}
-                      itemId={itemId}
-                      variantId={variant.variant_id}
-                      baseVideoUrl={variant.base_video_url}
-                      initialCues={variant.caption_cues}
-                      initialFont={variant.voiceover_caption_font}
-                      initialCaptionStyle={variant.voiceover_caption_style ?? "sentence"}
-                      initialCaptionsEnabled={variant.captions_enabled ?? true}
-                      wordHint={
-                        variant.resolved_archetype === "subtitled"
-                          ? "Each word pops as you say it"
-                          : undefined
-                      }
-                      rendering={variant.render_status === "rendering"}
-                      // Subtitled captions are machine-transcribed from the clip's own
-                      // audio — nudge review before Apply (D6). Narrated (own voiceover)
-                      // doesn't need it.
-                      reviewFirst={variant.resolved_archetype === "subtitled"}
-                      // Preview offset mirrors the burn. A stored caption_margin_v
-                      // wins; absent legacy rows keep subtitled=384/1920 (20%) and
-                      // narrated=180/1920 (9.4%).
-                      previewBottomCqh={
-                        variant.caption_margin_v != null
-                          ? (variant.caption_margin_v / 1920) * 100
-                          : variant.resolved_archetype === "subtitled"
-                            ? 20
-                            : 9.4
-                      }
-                      // D5 language override — chip + re-transcribe, subtitled only.
-                      captionLanguage={
-                        variant.resolved_archetype === "subtitled"
-                          ? (variant.caption_language ?? "en")
-                          : null
-                      }
-                      onChangeLanguage={
-                        variant.resolved_archetype === "subtitled"
-                          ? async (language) => {
-                              try {
-                                await setPlanItemCaptionLanguage(
-                                  itemId,
-                                  variant.variant_id,
-                                  language,
-                                );
-                                markVariantRendering(
-                                  variant.variant_id,
-                                  variant.render_finished_at ?? null,
-                                );
-                                refetch();
-                              } catch (err) {
-                                onError(
-                                  err instanceof Error
-                                    ? err.message
-                                    : "Couldn't change the caption language.",
-                                );
-                              }
-                            }
-                          : undefined
-                      }
-                      onApplied={() => {
-                        markVariantRendering(
-                          variant.variant_id,
-                          variant.render_finished_at ?? null,
-                        );
-                        refetch();
-                      }}
-                    />
-                    {variant.resolved_archetype === "narrated" && (
-                      <BackgroundSoundControl
-                        key={`${variant.variant_id}:bed:${variant.render_finished_at ?? ""}`}
-                        itemId={itemId}
-                        variantId={variant.variant_id}
-                        initialBedLevel={variant.voiceover_bed_level ?? null}
-                        rendering={variant.render_status === "rendering"}
-                        onCommitted={() => {
-                          markVariantRendering(
-                            variant.variant_id,
-                            variant.render_finished_at ?? null,
-                          );
-                          refetch();
-                        }}
-                      />
-                    )}
-                    </div>
-                    ) : (
-                      <div
-                        data-plan-captions-panel
-                        data-testid="captions-unavailable"
-                        className="rounded-xl border border-zinc-200 bg-white px-4 py-6 text-center text-[13px] text-[#3f3f46]"
-                      >
-                        {variant.render_status === "rendering" ? (
-                          "Your captions are still processing — check back in a moment."
-                        ) : textLaneEligible ? (
-                          // Flag-on subtitled clip with no detectable speech renders
-                          // ready with null cues (backend: "empty-caption state, NOT a
-                          // failure"). Don't dead-end — styled text for this variant
-                          // lives in the Timeline lane, so route there.
-                          <>
-                            No speech detected in this clip — add styled text in the
-                            Timeline tab instead.
-                            <button
-                              type="button"
-                              onClick={() => {
-                                autoOpenedCaptionsRef.current = true;
-                                setActiveTab("timeline");
-                              }}
-                              className="mt-3 inline-flex min-h-11 items-center justify-center rounded-full bg-[#0c0c0e] px-4 text-[13px] font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-                            >
-                              Open the Timeline tab
-                            </button>
-                          </>
-                        ) : (
-                          // Ready render with no captions and no text lane — there is
-                          // simply nothing to caption (no "yet": none are coming).
-                          "No captions for this edit — there's no speech to caption."
-                        )}
-                      </div>
-                    )
-                  ) : (
-                    <FocusedVariantControls
-                      itemId={itemId}
-                      variant={variant}
-                      tracks={tracks}
-                      styleSets={styleSets}
-                      session={editSession}
-                      instantEligible={instantEligible}
-                      baking={baking}
-                      activeTab={activeTab}
-                      refetch={refetch}
-                      markVariantRendering={markVariantRendering}
-                      onSwap={onSwap}
-                      onRetext={onRetext}
-                      onRemoveText={onRemoveText}
-                      onChangeStyle={onChangeStyle}
-                      onResize={onResize}
-                      onChangeLayout={onChangeLayout}
-                      overlayCards={overlayCards}
-                      setOverlayCards={setOverlayCards}
-                      localPreviewUrls={localPreviewUrls}
-                      setLocalPreviewUrls={setLocalPreviewUrls}
-                      sfxPlacements={sfxPlacements}
-                      setSfxPlacements={setSfxPlacements}
-                      glossaryEffects={glossaryEffects}
-                      glossaryLoading={glossaryLoading}
-                      currentTimeS={currentTimeS}
-                      onError={onError}
-                      overlaySuggestions={overlaySuggestions}
-                      onSuggestionEdit={onSuggestionEdit}
-                      resolveAssetMeta={resolveAssetMeta}
-                      externalEditCardId={requestedEditCardId}
-                      onExternalEditHandled={() => setRequestedEditCardId(null)}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Download button */}
-          {variant && (instantEligible ? variant.base_video_url : variant.output_url) && (
-            <>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                {editorEntryEligible && (
-                  editorEntryDisabledReason ? (
-                    <InkButton
-                      type="button"
-                      disabled
-                      title={editorEntryDisabledReason}
-                      className="w-full sm:flex-1"
-                    >
-                      Edit
-                    </InkButton>
-                  ) : (
-                    <Link
-                      href={`/plan/items/${itemId}/edit?variant=${variant.variant_id}`}
-                      className="w-full sm:flex-1"
-                    >
-                      <InkButton type="button" className="w-full">
-                        Edit
-                      </InkButton>
-                    </Link>
-                  )
-                )}
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  disabled={baking}
-                  className="inline-flex min-h-11 w-full items-center justify-center rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-1"
-                >
-                  {baking ? "Preparing your video…" : "Download"}
-                </button>
-                {canPublishToTikTok && item.current_job_id && (
-                  <button
-                    type="button"
-                    onClick={handlePublish}
-                    disabled={baking}
-                    className="inline-flex min-h-11 w-full items-center justify-center rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 sm:flex-1"
-                  >
-                    {baking ? "Preparing your video…" : "Publish to TikTok"}
-                  </button>
-                )}
-              </div>
-              {/* Plan 009 T4: failed card media blocks the overlay-bake path —
-                  say so inline instead of silently no-oping the click. */}
-              {failedOverlayCount > 0 && (
-                <p className="mt-1 text-center text-xs text-[#3f3f46]">
-                  {failedOverlayCount === 1
-                    ? "1 visual couldn't load — refresh or remove it."
-                    : `${failedOverlayCount} visuals couldn't load — refresh or remove them.`}
-                </p>
-              )}
-              {((instantEligible && editSession.isDirty) || needsSfxBake) && !baking && (
-                <p className="mt-1 text-center text-xs text-[#a1a1aa]">
-                  Unsaved — downloads will include your changes
-                </p>
-              )}
-            </>
-          )}
-
-          {item.current_job_id && variant && (
-            <TikTokPublishDialog
-              open={publishOpen}
-              jobId={item.current_job_id}
-              variantId={variant.variant_id}
-              onClose={() => setPublishOpen(false)}
-            />
-          )}
-
-          {/* Feedback */}
-          {item.current_job_id && !isGenerating && (
-            <div className="border-t border-zinc-200 pt-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">
-                How&apos;s this one?
-              </p>
-              <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
-            </div>
+          {((instantEligible && editSession.isDirty) || needsSfxBake) && !baking && (
+            <p className="mt-3 text-xs text-[#71717a]">Your next export will include these edits.</p>
           )}
         </div>
       </div>
+
+      {item.current_job_id && variant && (
+        <TikTokPublishDialog
+          open={publishOpen}
+          jobId={item.current_job_id}
+          variantId={variant.variant_id}
+          videoTitle={item.theme ?? item.idea}
+          variantLabel={releaseVariantLabel}
+          accountAvatarUrl={releaseTikTokConnection?.account?.avatar_url ?? null}
+          simulation={tiktokSimulation && variant.output_url
+            ? {
+                creatorNickname: releaseTikTokConnection?.account?.display_name ?? "Emir",
+                previewUrl: variant.output_url,
+                durationSeconds: variant.duration_s ?? null,
+              }
+            : null}
+          onClose={() => setPublishOpen(false)}
+          onPublished={upsertTikTokPublication}
+        />
+      )}
     </div>
   );
 }
@@ -4405,6 +4240,53 @@ function LiveEditPreview({
   );
 }
 
+function VariantReleasePicker({
+  variants,
+  selectedVariantId,
+  onSelect,
+}: {
+  variants: PlanItemVariant[];
+  selectedVariantId: string | null;
+  onSelect: (variantId: string) => void;
+}) {
+  const readyVariants = variants.filter((value) => value.output_url);
+  if (readyVariants.length < 2) return null;
+  return (
+    <div className="mt-3" aria-label="Visual variants">
+      <p className="sr-only">Choose the version to publish</p>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {readyVariants.map((value, index) => {
+          const selected = value.variant_id === selectedVariantId;
+          return (
+            <button
+              key={value.variant_id}
+              type="button"
+              aria-pressed={selected}
+              aria-label={`Publish version ${index + 1}`}
+              onClick={() => onSelect(value.variant_id)}
+              className={`flex min-h-11 shrink-0 items-center gap-2 rounded-lg border px-2 text-xs font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600 ${
+                selected
+                  ? "border-lime-600 bg-lime-50 text-lime-800"
+                  : "border-zinc-200 bg-white text-[#3f3f46]"
+              }`}
+            >
+              <video
+                src={value.output_url ?? undefined}
+                muted
+                playsInline
+                preload="metadata"
+                aria-hidden="true"
+                className="aspect-[9/16] h-8 rounded bg-zinc-100 object-cover"
+              />
+              Version {index + 1}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Large hero player for the focused variant. */
 function Hero({
   variant,
@@ -4421,6 +4303,7 @@ function Hero({
   onCardMediaError,
   onRemoveCard,
   onRequestEditCard,
+  onDownload,
 }: {
   variant: PlanItemVariant | null;
   generating: boolean;
@@ -4443,9 +4326,12 @@ function Hero({
   onCardMediaError?: (cardId: string) => void;
   onRemoveCard?: (cardId: string) => void;
   onRequestEditCard?: (cardId: string) => void;
+  onDownload?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoTime, setVideoTime] = useState(0);
+  const [playbackFailed, setPlaybackFailed] = useState(false);
+  const [playbackRetry, setPlaybackRetry] = useState(0);
 
   // Sync SFX audio elements to the video playhead for instant preview.
   useSfxPreview(videoRef, sfxPlacements, sfxAudioUrls);
@@ -4494,9 +4380,6 @@ function Hero({
     return () => el.removeEventListener("timeupdate", onTimeUpdate);
   }, [heroSrcPresent, liveMode]);
 
-  if (!variant) return <SkeletonTile />;
-  const failed = variant.render_status === "failed";
-
   // StableVideo identity: composite of variant_id + render_finished_at so it
   // adopts a new src on BOTH a re-render of the same variant (render_finished_at
   // advances) and a focus switch to a different variant (variant_id changes).
@@ -4505,22 +4388,72 @@ function Hero({
   // In live mode the identity keys on the pre-overlay GCS path instead (the
   // "live:" prefix forces the adopt when the mode flips), so re-signed poll URLs
   // never restart base playback.
-  const heroIdentity = liveMode
-    ? `live:${variant.variant_id}:${variant.pre_media_overlay_video_path ?? ""}`
-    : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+  const heroIdentity = !variant
+    ? "pending"
+    : liveMode
+      ? `live:${variant.variant_id}:${variant.pre_media_overlay_video_path ?? ""}`
+      : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+
+  useEffect(() => {
+    setPlaybackFailed(false);
+    setPlaybackRetry(0);
+  }, [heroIdentity]);
+
+  if (!variant) return <SkeletonTile />;
+  const failed = variant.render_status === "failed";
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
-      {heroSrc ? (
+      {heroSrc && !playbackFailed ? (
         <StableVideo
+          key={`${heroIdentity}:${playbackRetry}`}
           ref={videoRef}
           src={heroSrc}
           identity={heroIdentity}
           controls
           playsInline
           preload="metadata"
+          onLoadedData={() => setPlaybackFailed(false)}
+          onError={() => setPlaybackFailed(true)}
           className="h-full w-full object-contain"
         />
+      ) : heroSrc && playbackFailed ? (
+        <div className="flex h-full flex-col items-center justify-center px-5 text-center">
+          <p className="font-display text-base leading-tight text-[#0c0c0e] lg:text-2xl">
+            Preview unavailable
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-[#3f3f46] lg:hidden">
+            The finished video is safe.
+          </p>
+          <p className="mt-2 hidden max-w-xs text-sm leading-relaxed text-[#3f3f46] lg:block">
+            The finished video is still safe. Try the preview again or download the exact file.
+          </p>
+          <div className="mt-3 flex w-full flex-col justify-center gap-2 px-2 lg:mt-5 lg:w-auto lg:flex-row lg:flex-wrap lg:gap-3 lg:px-0">
+            <button
+              type="button"
+              aria-label="Try video again"
+              onClick={() => {
+                setPlaybackFailed(false);
+                setPlaybackRetry((value) => value + 1);
+              }}
+              className="min-h-10 rounded-full bg-[#0c0c0e] px-3 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 lg:min-h-11 lg:px-5 lg:text-sm"
+            >
+              <span className="lg:hidden">Try again</span>
+              <span className="hidden lg:inline">Try video again</span>
+            </button>
+            {onDownload && (
+              <button
+                type="button"
+                aria-label="Download video"
+                onClick={onDownload}
+                className="min-h-10 rounded-full border border-zinc-300 bg-white px-3 text-xs font-semibold text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 lg:min-h-11 lg:px-5 lg:text-sm"
+              >
+                <span className="lg:hidden">Download</span>
+                <span className="hidden lg:inline">Download video</span>
+              </button>
+            )}
+          </div>
+        </div>
       ) : failed ? (
         <div className="flex h-full items-center justify-center px-4 text-center text-sm text-[#3f3f46]">
           {variantFailureCopy(variant.error_class)}
@@ -4537,7 +4470,7 @@ function Hero({
           LEGACY mode: only freshly-uploaded cards (blob URL, not yet burned)
           render, so pixels already baked into output_url are never doubled;
           in configuration-only mode (no video yet) they show un-gated. */}
-      <LiveOverlayCardsLayer
+      {!playbackFailed && <LiveOverlayCardsLayer
         cards={overlayCards}
         resolveCardSrc={(card) =>
           liveMode
@@ -4549,12 +4482,12 @@ function Hero({
         mainVideoRef={videoRef}
         onCardMediaError={onCardMediaError}
         onRemoveCard={onRemoveCard}
-      />
+      />}
       {/* 007 Fix 2: direct-manipulation layer for kept AI overlay suggestions —
           drag to reposition, corner handle to resize; every gesture routes
           through onSuggestionEdit (implicit staging, zero network until Apply).
           Gated inside on NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED + non-empty. */}
-      {suggestionEntries && onSuggestionEdit && (
+      {!playbackFailed && suggestionEntries && onSuggestionEdit && (
         <HeroOverlayEditor
           entries={suggestionEntries}
           onSuggestionEdit={onSuggestionEdit}

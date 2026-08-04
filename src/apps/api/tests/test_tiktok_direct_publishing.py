@@ -20,16 +20,22 @@ from app.models import TikTokPublication
 from app.routes.me import _to_library_job
 from app.routes.tiktok import (
     CreatePublicationBody,
+    OAuthStartBody,
     _apply_webhook,
     _callback_redirect,
     _minimize_disconnected_publication,
     _parse_range,
+    _publication_response,
     _read_bounded_webhook_body,
     _RedactTikTokMediaAccessFilter,
+    _safe_oauth_return_to,
     _validate_post_settings,
     _verify_webhook,
     create_publication,
+    get_publication_receipt,
+    list_publications,
     media_verification,
+    oauth_callback,
     oauth_start,
     request_sync,
 )
@@ -134,6 +140,110 @@ def test_stale_publish_recovery_is_duplicate_safe_at_retry_boundary() -> None:
     assert submitting.retryable is False
     assert _can_submit_failed(True, 3) is True
     assert _can_submit_failed(True, 4) is False
+
+
+def test_publication_response_carries_release_receipt_and_frozen_learning_fields() -> None:
+    now = datetime(2026, 8, 1, 10, tzinfo=UTC)
+    row = TikTokPublication(
+        id=uuid.UUID("00000000-0000-0000-0000-000000000004"),
+        user_id=uuid.UUID("00000000-0000-0000-0000-000000000003"),
+        job_id=uuid.UUID("00000000-0000-0000-0000-000000000002"),
+        variant_id="song_text",
+        idempotency_key="receipt-test",
+        request_hash="hash",
+        source_object_path="generative-jobs/job/output.mp4",
+        source_generation="42",
+        title="A precise caption #topic",
+        privacy_level="PUBLIC_TO_EVERYONE",
+        allow_comment=True,
+        allow_duet=False,
+        allow_stitch=True,
+        music_usage_confirmed=True,
+        consent_version="2026-08-01",
+        consented_at=now,
+        creator_info_snapshot={"creator_nickname": "Kria Studio"},
+        processing_status="complete",
+        visibility_status="public",
+        public_at=now,
+        retryable=False,
+        evaluation_metrics={"view_count": 2000, "window_hours": 72},
+        evaluation_captured_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+
+    response = _publication_response(row)
+
+    assert response.title == "A precise caption #topic"
+    assert response.creator_nickname == "Kria Studio"
+    assert response.privacy_level == "PUBLIC_TO_EVERYONE"
+    assert response.allow_comment is True
+    assert response.allow_duet is False
+    assert response.allow_stitch is True
+    assert response.public_at == now
+    assert response.evaluation_metrics == {"view_count": 2000, "window_hours": 72}
+    assert response.evaluation_captured_at == now
+
+
+def test_publication_response_tolerates_malformed_legacy_creator_metadata() -> None:
+    now = datetime.now(UTC)
+    row = TikTokPublication(
+        id=uuid.uuid4(),
+        job_id=uuid.uuid4(),
+        title="caption",
+        privacy_level="SELF_ONLY",
+        allow_comment=False,
+        allow_duet=False,
+        allow_stitch=False,
+        creator_info_snapshot={"creator_nickname": {"unexpected": "shape"}},
+        processing_status="complete",
+        visibility_status="private",
+        retryable=False,
+        created_at=now,
+        updated_at=now,
+    )
+
+    assert _publication_response(row).creator_nickname is None
+
+
+@pytest.mark.asyncio
+async def test_list_publications_can_scope_the_canonical_item_receipt() -> None:
+    user = MagicMock(id=uuid.UUID("00000000-0000-0000-0000-000000000003"))
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    db.execute.return_value = result
+    job_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
+
+    assert await list_publications(user, job_id=job_id, variant_id="song_text", db=db) == []
+
+    statement = db.execute.await_args.args[0]
+    sql = str(statement)
+    assert "tiktok_publications.user_id" in sql
+    assert "tiktok_publications.job_id" in sql
+    assert "tiktok_publications.variant_id" in sql
+    assert job_id in statement.compile().params.values()
+    assert "song_text" in statement.compile().params.values()
+
+
+@pytest.mark.asyncio
+async def test_dedicated_receipt_lookup_is_owned_and_exact() -> None:
+    user = MagicMock(id=uuid.UUID("00000000-0000-0000-0000-000000000003"))
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute.return_value = result
+    job_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
+
+    assert await get_publication_receipt(user, job_id=job_id, variant_id="song_text", db=db) is None
+
+    statement = db.execute.await_args.args[0]
+    sql = str(statement)
+    assert "tiktok_publications.user_id" in sql
+    assert "tiktok_publications.job_id" in sql
+    assert "tiktok_publications.variant_id" in sql
+    assert job_id in statement.compile().params.values()
+    assert "song_text" in statement.compile().params.values()
 
 
 def test_publishable_output_rejects_arbitrary_signed_url_path() -> None:
@@ -349,6 +459,85 @@ def test_callback_redirect_rejects_external_invalid_or_credentialed_targets() ->
         with patch("app.routes.tiktok.settings.tiktok_web_app_url", value):
             response = _callback_redirect(tiktok="connected")
         assert str(response.headers["location"]).startswith("http://localhost:3000/library?")
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("/plan/items/item-1?tiktok=return", "/plan/items/item-1?tiktok=return"),
+        ("/library", "/library"),
+        ("//attacker.example/plan/items/item-1", None),
+        ("https://attacker.example/plan/items/item-1", None),
+        ("/plan/items/../admin", None),
+        (r"/plan/items/item-1\\admin", None),
+        ("/admin", None),
+    ],
+)
+def test_oauth_return_path_is_limited_to_owned_publishing_surfaces(
+    value: str, expected: str | None
+) -> None:
+    assert _safe_oauth_return_to(value) == expected
+
+
+def test_callback_redirect_returns_to_the_item_and_preserves_its_query() -> None:
+    with (
+        patch("app.routes.tiktok.settings.tiktok_web_app_url", "https://example.test/library"),
+        patch("app.routes.tiktok.settings.allowed_origins", ["https://example.test"]),
+    ):
+        response = _callback_redirect("/plan/items/item-1?tiktok=return", tiktok="connected")
+    assert response.headers["location"] == (
+        "https://example.test/plan/items/item-1?tiktok=return&tiktok=connected"
+    )
+
+
+@pytest.mark.asyncio
+async def test_oauth_start_persists_the_safe_item_return_in_state() -> None:
+    user = MagicMock(id=uuid.uuid4())
+    redis = AsyncMock()
+    with (
+        patch("app.routes.tiktok._connection_available", return_value=True),
+        patch("app.routes.tiktok._redis", return_value=redis),
+        patch("app.routes.tiktok.secrets.token_urlsafe", return_value="state-1"),
+        patch(
+            "app.routes.tiktok.tiktok_client.authorization_url",
+            return_value="https://tiktok.test/oauth",
+        ),
+    ):
+        response = await oauth_start(
+            user,
+            OAuthStartBody(return_to="/plan/items/item-1?tiktok_preview=connected"),
+        )
+
+    assert response.authorization_url == "https://tiktok.test/oauth"
+    payload = json.loads(redis.setex.await_args.args[2])
+    assert payload == {
+        "user_id": str(user.id),
+        "return_to": "/plan/items/item-1?tiktok_preview=connected",
+    }
+    redis.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_restores_the_state_item_on_access_denial() -> None:
+    redis = AsyncMock()
+    redis.getdel.return_value = json.dumps(
+        {
+            "user_id": str(uuid.uuid4()),
+            "return_to": "/plan/items/item-1?tiktok_preview=connected",
+        }
+    )
+    with (
+        patch("app.routes.tiktok._redis", return_value=redis),
+        patch("app.routes.tiktok.settings.tiktok_web_app_url", "https://example.test/library"),
+        patch("app.routes.tiktok.settings.allowed_origins", ["https://example.test"]),
+    ):
+        response = await oauth_callback("state-1", error="access_denied", db=MagicMock())
+
+    assert response.headers["location"] == (
+        "https://example.test/plan/items/item-1?tiktok_preview=connected"
+        "&tiktok=error&reason=access_denied"
+    )
+    redis.aclose.assert_awaited_once()
 
 
 def _body(**changes) -> CreatePublicationBody:

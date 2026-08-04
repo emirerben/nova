@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Blossom Carousel Reference — flipbook</title>
+<script src="./harness.js"></script>
+<link rel="stylesheet" href="./lib/blossom-vendor/dist/blossom-carousel-web.css" />
+<style>
+  /* --- Shared 1080x1920 test-page geometry (mirrors the Python renderer) --- */
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1080px;
+    height: 1920px;
+    background: #0a0a0c;
+    overflow: hidden;
+  }
+
+  blossom-carousel.carousel {
+    display: flex;
+    align-items: center;
+    gap: 48px;
+    width: 1080px;
+    height: 1920px;
+    padding-inline: 270px;
+    box-sizing: border-box;
+    scroll-snap-type: x mandatory;
+    perspective: 1200px;
+  }
+
+  .card {
+    flex: 0 0 540px;
+    width: 540px;
+    height: 720px;
+    border-radius: 24px;
+    scroll-snap-align: center;
+    scroll-snap-stop: always;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .marker {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    height: 32px;
+    border: 3px solid #fff;
+    box-sizing: border-box;
+    background: transparent;
+  }
+
+  /* --- flipbook (pivot-at-spine 3D page turn) ------------------------------
+     Follows Blossom's own `advanced/flipbook` example structure: sticky
+     centering (same 270px inset adaptation as cards.html — see its comment
+     for why), perspective on the carousel, and an animated z-index via
+     `sibling-index()` so the page currently at the spine (viewport center)
+     always draws above its neighbors mid-turn. Per this lane's task spec,
+     z-index is pinned to 1000 only at the 50% (fully-turned/flat) keyframe;
+     transform goes through the -200px/+200px translateZ dip on either side
+     so the page reads as pivoting away from camera as it turns, rather than
+     just rotating in place. */
+  .card {
+    transform-style: preserve-3d;
+    animation:
+      flip-transform linear both,
+      flip-z linear both;
+    animation-timeline: view(inline);
+    animation-range: cover;
+  }
+
+  @keyframes flip-z {
+    0%   { z-index: calc(100 - sibling-index()); }
+    50%  { z-index: 1000; }
+    100% { z-index: sibling-index(); }
+  }
+
+  @keyframes flip-transform {
+    0%   { transform: translateZ(-200px) rotateY(-35deg); }
+    50%  { transform: none; }
+    100% { transform: translateZ(-200px) rotateY(35deg); }
+  }
+</style>
+</head>
+<body>
+  <blossom-carousel class="carousel">
+    <div class="card" style="background: hsl(0, 70%, 55%);">
+      <div class="marker" style="top: 40px;"></div>
+    </div>
+    <div class="card" style="background: hsl(67, 70%, 55%);">
+      <div class="marker" style="top: 100px;"></div>
+    </div>
+    <div class="card" style="background: hsl(134, 70%, 55%);">
+      <div class="marker" style="top: 160px;"></div>
+    </div>
+    <div class="card" style="background: hsl(201, 70%, 55%);">
+      <div class="marker" style="top: 220px;"></div>
+    </div>
+    <div class="card" style="background: hsl(268, 70%, 55%);">
+      <div class="marker" style="top: 280px;"></div>
+    </div>
+  </blossom-carousel>
+
+  <script type="module">
+    import "./lib/blossom-vendor/dist/blossom-carousel-web.es.js";
+    customElements.whenDefined("blossom-carousel").then(() => {
+      window.__markReady();
+    });
+  </script>
+</body>
+</html>

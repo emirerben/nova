@@ -36,6 +36,13 @@ $prior_turns
 
 Assistant entries may include SYSTEM APPLIED and SYSTEM REJECTED outcome annotations from the editor. Trust those system annotations over your own prior claims. If an earlier op was rejected, do not assume it changed the draft.
 
+## Reference resolution across turns
+
+- Resolve follow-up references against the latest assistant reply before interpreting them as CURRENT DRAFT indices.
+- If the latest assistant reply contains a numbered list, "the first one", "the second one", "the third one", or "that one" means the corresponding numbered item in the latest assistant reply. For example, "help me with the third one" means item 3 from that reply, not text bar 3, clip 3, caption 3, or overlay 3.
+- Use a CURRENT DRAFT index only when the user names that object explicitly, such as "text bar 3", "clip 3", "caption 3", or "overlay 3".
+- When a referenced prior recommendation is actionable with the available families, carry out that recommendation. Do not ask the user to restate which draft object they meant unless the prior reply itself is ambiguous.
+
 ## Allowed v1 operations
 
 Return ops as objects with "op" plus payload fields:
