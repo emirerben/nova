@@ -5,6 +5,7 @@ import { createTikTokPublication, getTikTokPublishOptions } from "@/lib/tiktok-a
 jest.mock("@/lib/tiktok-api", () => ({
   getTikTokPublishOptions: jest.fn(),
   createTikTokPublication: jest.fn(),
+  startTikTokOAuth: jest.fn(),
 }));
 
 const mockedOptions = getTikTokPublishOptions as jest.MockedFunction<typeof getTikTokPublishOptions>;
@@ -19,6 +20,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  window.sessionStorage.clear();
   mockedOptions.mockResolvedValue({
     preview_url: "https://example.test/video.mp4",
     source_revision: "a".repeat(64),
@@ -36,7 +38,7 @@ beforeEach(() => {
   });
 });
 
-it("requires manual privacy and music confirmation with interactions off", async () => {
+it("requires manual privacy and music confirmation before review", async () => {
   render(
     <TikTokPublishDialog
       open
@@ -46,19 +48,22 @@ it("requires manual privacy and music confirmation with interactions off", async
     />,
   );
 
-  await screen.findByText(/Posting as/);
-  expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("");
-  expect((screen.getByLabelText("Comment") as HTMLInputElement).checked).toBe(false);
-  expect((screen.getByLabelText(/Duet/) as HTMLInputElement).disabled).toBe(true);
-  expect((screen.getByLabelText("Stitch") as HTMLInputElement).checked).toBe(false);
+  await screen.findByText("Creator");
+  expect(document.activeElement).toBe(screen.getByRole("heading", { name: "TikTok post details" }));
+  expect((screen.getByRole("radio", { name: /Only you/ }) as HTMLInputElement).checked).toBe(false);
+  expect((screen.getByLabelText("Comments off") as HTMLInputElement).checked).toBe(false);
+  fireEvent.focus(screen.getByLabelText("Comments off"));
+  expect(screen.getByLabelText("Comments off").closest("label")?.className).toContain("focus-within:outline");
+  expect((screen.getByLabelText("Duet unavailable") as HTMLInputElement).disabled).toBe(true);
+  expect((screen.getByLabelText("Stitch off") as HTMLInputElement).checked).toBe(false);
   expect(
-    (screen.getByRole("button", { name: "Publish now" }) as HTMLButtonElement).disabled,
+    (screen.getByRole("button", { name: "Review post" }) as HTMLButtonElement).disabled,
   ).toBe(true);
 
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "SELF_ONLY" } });
+  fireEvent.click(screen.getByRole("radio", { name: /Only you/ }));
   fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
   expect(
-    (screen.getByRole("button", { name: "Publish now" }) as HTMLButtonElement).disabled,
+    (screen.getByRole("button", { name: "Review post" }) as HTMLButtonElement).disabled,
   ).toBe(false);
 });
 
@@ -87,9 +92,10 @@ it("submits the exact source revision and unchecked interaction defaults", async
       onPublished={onPublished}
     />,
   );
-  await screen.findByText(/Posting as/);
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "SELF_ONLY" } });
+  await screen.findByText("Creator");
+  fireEvent.click(screen.getByRole("radio", { name: /Only you/ }));
   fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
+  fireEvent.click(screen.getByRole("button", { name: "Review post" }));
   fireEvent.click(screen.getByRole("button", { name: "Publish now" }));
 
   await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
@@ -106,13 +112,87 @@ it("submits the exact source revision and unchecked interaction defaults", async
   expect(onPublished).toHaveBeenCalledWith(expect.objectContaining({ id: "publication-1" }));
 });
 
+it("shows the exact confirmation summary and returns to editable details", async () => {
+  render(
+    <TikTokPublishDialog open jobId="job-1" variantId="song_text" onClose={jest.fn()} />,
+  );
+  await screen.findByText("Creator");
+  fireEvent.change(screen.getByRole("textbox"), {
+    target: { value: "Final caption #kria" },
+  });
+  fireEvent.click(screen.getByRole("radio", { name: /Only you/ }));
+  fireEvent.click(screen.getByLabelText("Comments off"));
+  fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
+  fireEvent.click(screen.getByRole("button", { name: "Review post" }));
+
+  expect(screen.getByRole("heading", { name: "Confirm TikTok post" })).not.toBeNull();
+  expect(screen.getByText("Final caption #kria")).not.toBeNull();
+  expect(screen.getByText("Comments on")).not.toBeNull();
+  expect(screen.getByText(/Changes or removal may need to be made in TikTok/)).not.toBeNull();
+
+  expect(screen.getAllByRole("button", { name: "Edit details" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+  expect(screen.getByDisplayValue("Final caption #kria")).not.toBeNull();
+});
+
+it("prevents rapid double submission while the first request is pending", async () => {
+  let resolvePublication: ((value: Awaited<ReturnType<typeof createTikTokPublication>>) => void) | undefined;
+  mockedCreate.mockImplementation(() => new Promise((resolve) => { resolvePublication = resolve; }));
+  render(
+    <TikTokPublishDialog open jobId="job-1" variantId="song_text" onClose={jest.fn()} />,
+  );
+  await screen.findByText("Creator");
+  fireEvent.click(screen.getByRole("radio", { name: /Only you/ }));
+  fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
+  fireEvent.click(screen.getByRole("button", { name: "Review post" }));
+  const publish = screen.getByRole("button", { name: "Publish now" });
+  fireEvent.click(publish);
+  fireEvent.click(publish);
+
+  expect(mockedCreate).toHaveBeenCalledTimes(1);
+  expect((screen.getByRole("button", { name: "Sending to TikTok…" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Exit" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByRole("dialog", { name: "Publish to TikTok" })).not.toBeNull();
+  resolvePublication?.({
+    id: "publication-1",
+    job_id: "job-1",
+    variant_id: "song_text",
+    processing_status: "queued",
+    visibility_status: "unknown",
+    retryable: false,
+    failure_code: null,
+    failure_detail: null,
+    latest_metrics: null,
+    metrics_synced_at: null,
+    created_at: "2026-08-01T00:00:00Z",
+    updated_at: "2026-08-01T00:00:00Z",
+  });
+});
+
 it("shows publish-options failures instead of a stuck loading state", async () => {
   mockedOptions.mockRejectedValue(new Error("Reconnect TikTok"));
   render(
     <TikTokPublishDialog open jobId="job-1" variantId="song_text" onClose={jest.fn()} />,
   );
   expect(await screen.findByText("Reconnect TikTok")).not.toBeNull();
-  expect(screen.queryByText(/Checking your TikTok/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Retry settings" })).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Return to item" })).not.toBeNull();
+  expect(screen.queryByText(/Checking TikTok settings/)).toBeNull();
+});
+
+it("resets the workspace scroll position when moving to confirmation", async () => {
+  render(
+    <TikTokPublishDialog open jobId="job-1" variantId="song_text" onClose={jest.fn()} />,
+  );
+  await screen.findByText("Creator");
+  const scroll = screen.getByTestId("tiktok-publish-scroll");
+  scroll.scrollTop = 480;
+  fireEvent.click(screen.getByRole("radio", { name: /Only you/ }));
+  fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
+  fireEvent.click(screen.getByRole("button", { name: "Review post" }));
+
+  expect(scroll.scrollTop).toBe(0);
+  expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Confirm TikTok post" }));
 });
 
 it("keeps the dialog recoverable after publication submission fails", async () => {
@@ -120,29 +200,70 @@ it("keeps the dialog recoverable after publication submission fails", async () =
   render(
     <TikTokPublishDialog open jobId="job-1" variantId="song_text" onClose={jest.fn()} />,
   );
-  await screen.findByText(/Posting as/);
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "SELF_ONLY" } });
+  await screen.findByText("Creator");
+  fireEvent.click(screen.getByRole("radio", { name: /Only you/ }));
   fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
+  fireEvent.click(screen.getByRole("button", { name: "Review post" }));
   fireEvent.click(screen.getByRole("button", { name: "Publish now" }));
 
-  expect(await screen.findByText("The video changed")).not.toBeNull();
+  expect(await screen.findByText("The video changed before TikTok received it.")).not.toBeNull();
+  expect(screen.getByText("Your details are still here. Review them and try again.")).not.toBeNull();
   expect((screen.getByRole("button", { name: "Publish now" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+it("simulates the connected publish flow without calling TikTok APIs", async () => {
+  const onPublished = jest.fn();
+  render(
+    <TikTokPublishDialog
+      open
+      jobId="job-1"
+      variantId="song_text"
+      videoTitle="Preview caption"
+      simulation={{
+        creatorNickname: "Emir",
+        previewUrl: "https://example.test/local-preview.mp4",
+        durationSeconds: 18,
+      }}
+      onClose={jest.fn()}
+      onPublished={onPublished}
+    />,
+  );
+
+  expect(await screen.findByText("No TikTok API request will be made.")).not.toBeNull();
+  expect(screen.getByRole("dialog", { name: "Preview TikTok post" })).not.toBeNull();
+  expect(screen.getByTestId("tiktok-publish-workspace").className).toContain("fixed inset-0");
+  expect(screen.getByTestId("tiktok-publish-workspace").className).not.toContain("md:w-[560px]");
+  fireEvent.click(screen.getByRole("radio", { name: /Public/ }));
+  fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
+  fireEvent.click(screen.getByRole("button", { name: "Review post" }));
+  expect(screen.getByText("Post summary")).not.toBeNull();
+  expect(screen.getByText("Completing this preview creates a local receipt only. Nothing will be sent to TikTok.")).not.toBeNull();
+  expect(screen.queryByText(/Publishing creates a TikTok post/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Simulate publish" }));
+
+  expect(mockedOptions).not.toHaveBeenCalled();
+  expect(mockedCreate).not.toHaveBeenCalled();
+  expect(onPublished).toHaveBeenCalledWith(expect.objectContaining({
+    job_id: "job-1",
+    creator_nickname: "Emir",
+    processing_status: "processing",
+  }));
 });
 
 it("blocks TikTok's invalid branded-content plus private-privacy combination", async () => {
   render(
     <TikTokPublishDialog open jobId="job-1" variantId="song_text" onClose={jest.fn()} />,
   );
-  await screen.findByText(/Posting as/);
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "SELF_ONLY" } });
+  await screen.findByText("Creator");
+  fireEvent.click(screen.getByRole("radio", { name: /Only you/ }));
   fireEvent.click(screen.getByLabelText("This video promotes a brand, product, or service"));
   fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
 
   expect(screen.getByText("Choose at least one commercial-content type.")).not.toBeNull();
-  expect((screen.getByRole("button", { name: "Publish now" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Review post" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(screen.getByLabelText("Branded Content"));
 
   expect(screen.getByText(/Branded Content Policy and Music Usage Confirmation/)).not.toBeNull();
   expect(screen.getByText(/does not allow branded content/)).not.toBeNull();
-  expect((screen.getByRole("button", { name: "Publish now" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Review post" }) as HTMLButtonElement).disabled).toBe(true);
 });

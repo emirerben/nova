@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.0.0] — 2026-08-04
+
+### Added
+- **Creators can now release a finished video from a dedicated TikTok desk on the item page.** Desktop and mobile keep the playable preview, connected profile, caption, and primary Publish action together; completed, processing, private, failed, and uncertain posts become durable receipts with item history and truthful performance states.
+- **TikTok publishing now opens as a full-screen two-step workspace.** Creators customize the caption, audience, interactions, commercial and AI disclosures, and music confirmation before reviewing one exact summary; the local connected-account preview exercises the complete flow without sending anything to TikTok.
+
+### Changed
+- **Connecting or reconnecting TikTok now returns creators to the exact video they were releasing.** Safe item-page return paths survive OAuth success, denial, and recoverable errors, while invalid or external destinations fall back to Library.
+- **The finished-video page is now release-first instead of lifecycle-first.** Stale Ready, Publish, and Learn tabs are gone; multiple finished variants use a compact selector; loading uses one calm Kria Beam treatment; and mobile keeps Publish above the fold.
+
+### Fixed
+- **Publishing no longer skips the TikTok customization step or traps creators in dead-end failures.** Settings can be retried, expired connections can be restored in context, submission details survive errors, unknown status offers safe TikTok and refresh actions, and local preview receipts never start invalid API polling.
+- **Video and receipt states now report what is actually known.** Playback failure replaces the real media frame with retry and download actions, duration never says “Ready,” missing metrics display as not reported instead of zero, and malformed legacy creator metadata cannot break a receipt response.
+
 ## [0.22.5.0] — 2026-08-04
 
 ### Fixed

@@ -36,7 +36,7 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED = "true";
@@ -288,7 +288,7 @@ describe("pendingEdits fingerprint (editor return)", () => {
     expect(screen.queryByLabelText("Rendering new version")).toBeNull();
   });
 
-  it("auto-opens the native editor once for a single ready editable variant", async () => {
+  it("keeps a single ready editable variant on the release desk", async () => {
     mockUsePolledJobStatus.mockReturnValue({
       data: {
         item: ITEM,
@@ -301,10 +301,11 @@ describe("pendingEdits fingerprint (editor return)", () => {
     });
 
     const { rerender } = await act(async () => render(<PlanItemPage />));
-    expect(mockRouterPush).toHaveBeenCalledWith("/plan/items/test-item-id/edit?variant=v1");
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(screen.getByRole("complementary", { name: "Release desk" })).toBeInTheDocument();
 
     await act(async () => { rerender(<PlanItemPage />); });
-    expect(mockRouterPush).toHaveBeenCalledTimes(1);
+    expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
   it("does not auto-open again on editor return", async () => {
@@ -374,11 +375,9 @@ describe("download-triggered SFX bake failure (C1 regression)", () => {
     const { rerender } = await act(async () => render(<PlanItemPage />));
 
     // Click Download → triggers the SFX bake (needsSfxBake true, never baked).
-    const downloadBtn = screen.getByRole("button", { name: /^Download$/i });
-    await act(async () => {
-      fireEvent.click(downloadBtn);
-    });
-    expect(mockRenderSfx).toHaveBeenCalledTimes(1);
+    fireEvent.click(await screen.findByRole("button", { name: "More video actions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download video" }));
+    await waitFor(() => expect(mockRenderSfx).toHaveBeenCalledTimes(1));
 
     // Backend bake fails with a fresh fingerprint (clears the download pin).
     mockUsePolledJobStatus.mockReturnValue({
@@ -399,5 +398,35 @@ describe("download-triggered SFX bake failure (C1 regression)", () => {
     expect(screen.getByText(/Couldn't prepare your video\. Please try again/i)).toBeInTheDocument();
     // And the stale video was NOT silently downloaded.
     expect(mockDownloadVideo).not.toHaveBeenCalled();
+  });
+
+  it("locks export actions while the SFX bake request is still dispatching", async () => {
+    const TS1 = "2026-06-01T10:00:00Z";
+    let resolveBake!: () => void;
+    mockRenderSfx.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveBake = resolve; }),
+    );
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: ITEM, job: makeJob({ variants: [variantWithUnbakedSfx("ready", TS1)] }) },
+      error: null,
+      refetch: mockRefetch,
+    } as ReturnType<typeof usePolledJobStatus>);
+
+    await act(async () => render(<PlanItemPage />));
+    fireEvent.click(await screen.findByRole("button", { name: "More video actions" }));
+    const download = await screen.findByRole("button", { name: "Download video" });
+
+    fireEvent.click(download);
+
+    expect(screen.getByRole("button", { name: "More video actions" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Download video" })).toBeNull();
+    await waitFor(() => expect(mockRenderSfx).toHaveBeenCalledTimes(1));
+
+    // A stale reference to the just-removed menu action must not dispatch a
+    // second backend render during the same preparation window.
+    fireEvent.click(download);
+    expect(mockRenderSfx).toHaveBeenCalledTimes(1);
+
+    await act(async () => { resolveBake(); });
   });
 });

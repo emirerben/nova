@@ -24,7 +24,7 @@ Object.defineProperty(window, "matchMedia", {
 // jsdom does not implement scrollIntoView — the auto-open scroll effect calls it.
 Element.prototype.scrollIntoView = jest.fn();
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 process.env.NEXT_PUBLIC_SUBTITLED_ENABLED = "true";
@@ -153,7 +153,7 @@ describe("Caption archetype item-page cleanup", () => {
 
     expect(screen.queryByTestId("caption-editor")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /captions/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "More video actions" })).toBeInTheDocument();
   });
 
   it("does not expose a captions fallback panel for no-cue variants on the item page", async () => {

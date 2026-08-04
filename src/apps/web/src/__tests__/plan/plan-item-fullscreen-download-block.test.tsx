@@ -9,7 +9,7 @@
  *  - asset load failure lifts to page state: the failed tile renders and the
  *    Download button's overlay-bake path is BLOCKED (no setVariantMediaOverlays
  *    render:true dispatch) with the inline copy
- *    "1 visual couldn't load — refresh or remove it."
+ *    "One visual couldn't load. Refresh or remove it before exporting."
  *  - the tile's Remove button clears the card and unblocks Download (which
  *    then serves the burned output directly — no overlay bake needed).
  */
@@ -246,6 +246,11 @@ describe("Plan item hero — fullscreen card live preview", () => {
 });
 
 describe("Plan item page — Download blocked while a card's media failed", () => {
+  async function downloadFromReleaseDesk() {
+    fireEvent.click(await screen.findByRole("button", { name: "More video actions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download video" }));
+  }
+
   it("onError → tile + inline copy; Download does NOT dispatch the overlay bake", async () => {
     setData([liveVariant()]);
     await act(async () => {
@@ -262,13 +267,11 @@ describe("Plan item page — Download blocked while a card's media failed", () =
       "This visual couldn't load",
     );
     expect(
-      screen.getByText("1 visual couldn't load — refresh or remove it."),
+      screen.getByText("One visual couldn't load. Refresh or remove it before exporting."),
     ).toBeInTheDocument();
 
     // Download click: the overlay-bake branch is gated — nothing dispatches.
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Download" }));
-    });
+    await downloadFromReleaseDesk();
     expect(mockSetVariantMediaOverlays).not.toHaveBeenCalled();
     expect(mockRenderVariantSfx).not.toHaveBeenCalled();
     expect(mockDownloadVideo).not.toHaveBeenCalled();
@@ -291,13 +294,11 @@ describe("Plan item page — Download blocked while a card's media failed", () =
     expect(document.querySelector('[data-overlay-card="card-fs"]')).toBeNull();
     expect(screen.queryByTestId("overlay-card-failed-card-fs")).toBeNull();
     expect(
-      screen.queryByText("1 visual couldn't load — refresh or remove it."),
+      screen.queryByText("One visual couldn't load. Refresh or remove it before exporting."),
     ).toBeNull();
 
     // Download now proceeds: no cards left → no overlay bake, direct download.
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Download" }));
-    });
+    await downloadFromReleaseDesk();
     expect(mockSetVariantMediaOverlays).not.toHaveBeenCalled();
     expect(mockDownloadVideo).toHaveBeenCalledWith(
       OUTPUT_URL,
@@ -312,9 +313,7 @@ describe("Plan item page — Download blocked while a card's media failed", () =
       render(<PlanItemPage />);
     });
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Download" }));
-    });
+    await downloadFromReleaseDesk();
     expect(mockSetVariantMediaOverlays).toHaveBeenCalledWith(
       "test-item-id",
       "v1",

@@ -42,7 +42,7 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 jest.mock("next/navigation", () => ({
@@ -223,7 +223,7 @@ describe("Plan item page — native editor handoff cleanup", () => {
     expect(screen.queryByRole("button", { name: /^Remove text$/ })).toBeNull();
     expect(screen.queryByRole("slider", { name: /intro text size/i })).toBeNull();
     expect(screen.queryByText(/Unsaved — downloads will include your changes/i)).toBeNull();
-    expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "More video actions" })).toBeInTheDocument();
     expect(mockEditPlanItemVariant).not.toHaveBeenCalled();
     expect(mockSetPlanItemIntroSize).not.toHaveBeenCalled();
     expect(mockRetextPlanItem).not.toHaveBeenCalled();
@@ -239,7 +239,7 @@ describe("Plan item page — native editor handoff cleanup", () => {
     expect(screen.queryByRole("button", { name: /Timeline/i })).toBeNull();
     expect(screen.queryByText(/Editorial · synced/)).toBeNull();
     expect(screen.queryByRole("button", { name: /^Remove text$/ })).toBeNull();
-    expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "More video actions" })).toBeInTheDocument();
   });
 
   // Regression for the #576 follow-up: instant-eligible variants (agent_text intro)

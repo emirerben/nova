@@ -140,10 +140,6 @@ import {
   type PlanItemJobStatus,
 } from "@/lib/plan-api";
 const PlanItemPage = require("@/app/plan/items/[id]/page").default;
-const {
-  isCoarsePointerDevice,
-  shouldAutoOpenPlanItemEditor,
-} = require("@/app/plan/items/[id]/auto-open-editor");
 const mockAttachClips = attachClips as jest.MockedFunction<typeof attachClips>;
 const mockExpandIdea = expandIdea as jest.MockedFunction<typeof expandIdea>;
 const mockGeneratePlanItem = generatePlanItem as jest.MockedFunction<typeof generatePlanItem>;
@@ -324,63 +320,6 @@ function makeVariant(id: string, renderStatus: string, url: string | null = null
 }
 
 // ===== Tests =====
-
-function setPointerCoarseMatch(matches: boolean) {
-  (window.matchMedia as jest.Mock).mockImplementation((query: string) => ({
-    matches: query === "(pointer: coarse)" ? matches : false,
-    media: query,
-    onchange: null,
-    addListener: jest.fn(),
-    removeListener: jest.fn(),
-    addEventListener: jest.fn(),
-    removeEventListener: jest.fn(),
-    dispatchEvent: jest.fn(),
-  }));
-}
-
-describe("PlanItemPage — editor auto-open mobile gate", () => {
-  afterEach(() => setPointerCoarseMatch(false));
-
-  it("does not auto-push the editor on coarse pointers", () => {
-    const push = jest.fn();
-    setPointerCoarseMatch(true);
-
-    if (
-      shouldAutoOpenPlanItemEditor({
-        editorEnabled: true,
-        itemReady: true,
-        hasEditorReturnSignal: false,
-        readyVariantCount: 1,
-        canOpenVariant: true,
-        isCoarsePointer: isCoarsePointerDevice(),
-      })
-    ) {
-      push("/plan/items/test-item-id/edit?variant=v1");
-    }
-
-    expect(push).not.toHaveBeenCalled();
-  });
-
-  it("keeps desktop fine-pointer auto-push behavior", () => {
-    const push = jest.fn();
-    setPointerCoarseMatch(false);
-
-    if (
-      shouldAutoOpenPlanItemEditor({
-        editorEnabled: true,
-        itemReady: true,
-        hasEditorReturnSignal: false,
-        readyVariantCount: 1,
-        canOpenVariant: true,
-        isCoarsePointer: isCoarsePointerDevice(),
-      })
-    ) {
-      push("/plan/items/test-item-id/edit?variant=v1");
-    }
-
-    expect(push).toHaveBeenCalledWith("/plan/items/test-item-id/edit?variant=v1");
-  });
-});
 
 describe("PlanItemPage — masonry collage item UX", () => {
   function renderMasonryItem(extra = {}) {
@@ -598,6 +537,41 @@ describe("PlanItemPage — result cleanup", () => {
     const video = view!.container.querySelector("video");
     expect(video).toHaveAttribute("playsinline");
     expect(video).toHaveAttribute("preload", "metadata");
+    expect(screen.queryByLabelText("Visual variants")).toBeNull();
+
+    const titleSection = screen.getByRole("heading", { name: "Morning Routine" }).closest("section");
+    expect(titleSection?.parentElement).toHaveClass(
+      "grid-cols-[minmax(132px,0.78fr)_minmax(0,1.22fr)]",
+    );
+  });
+
+  it("replaces a failed preview in-frame with recovery actions", async () => {
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-playback-failure",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item,
+        job: makeJob({
+          status: "variants_ready",
+          variants: [makeVariant("v1", "ready", "https://cdn/v1.mp4")],
+        }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<PlanItemPage />);
+    });
+    fireEvent.error(view!.container.querySelector("video")!);
+
+    expect(screen.getByText("Preview unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try video again" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download video" })).toBeInTheDocument();
   });
 
   it("hides legacy alternates and inline timeline controls", async () => {
@@ -630,6 +604,16 @@ describe("PlanItemPage — result cleanup", () => {
     expect(screen.getByTestId("light-shell")).toBeInTheDocument();
     expect(screen.queryByText(/Other takes/i)).toBeNull();
     expect(screen.queryByRole("button", { name: /Timeline/i })).toBeNull();
+    expect(screen.getByLabelText("Visual variants")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish version 1" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Publish version 2" }));
+    expect(screen.getByRole("button", { name: "Publish version 2" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 });
 

@@ -9,10 +9,15 @@ is a release gate, not a configuration shortcut: keep unaudited users on
 ## What ships
 
 - OAuth through TikTok Login Kit with one-use, 10-minute state values.
+- Item-aware OAuth return paths so a creator who connects or reconnects from a
+  finished video lands back on that exact release desk.
 - Direct Post from an immutable GCS snapshot of an owned, generation-checked
   Nova render.
+- A release-first item-page desk and full-screen Details → Confirm workspace for
+  caption, privacy, interactions, disclosures, and music confirmation.
 - Signed webhook reconciliation with rate-limited polling as a fallback.
-- Library status for processing, moderation/visibility, and public metrics.
+- Item-page receipts and Library status for processing, moderation/visibility,
+  publication history, and public metrics.
 - Official account and latest-30-video sync every 12 hours.
 - Low-confidence edit correlations from age-aligned, linked Nova posts. These
   associations never override a user-edited style.
@@ -29,12 +34,13 @@ callback, webhook, and media URLs directly on FastAPI.
 | Method | FastAPI path | Purpose |
 | --- | --- | --- |
 | `GET` | `/tiktok/connection` | Connection metadata, scopes, rollout state, and separate publish/analyze capabilities |
-| `POST` | `/tiktok/oauth/start` | Create one-use OAuth state and return TikTok's authorization URL |
-| `GET` | `/tiktok/oauth/callback` | Consume state, exchange credentials, and redirect to the allowlisted Library |
+| `POST` | `/tiktok/oauth/start` | Create one-use OAuth state, optionally preserving a safe `/library` or `/plan/items/...` `return_to`, and return TikTok's authorization URL |
+| `GET` | `/tiktok/oauth/callback` | Consume state, exchange credentials, and return to the preserved item release desk or Library fallback |
 | `DELETE` | `/tiktok/connection` | Revoke best-effort, erase credentials, and start account-data cleanup |
 | `GET` | `/tiktok/publish-options?job_id=&variant_id=` | Resolve the owned final render and fetch fresh creator capabilities |
 | `POST` | `/tiktok/publications` | Create an idempotent publication from an approved `source_revision` |
-| `GET` | `/tiktok/publications` | Return the user's 100 most recent publication records |
+| `GET` | `/tiktok/publications?job_id=&variant_id=` | Return the user's 100 most recent publication records, optionally filtered to one job or variant |
+| `GET` | `/tiktok/publications/receipt?job_id=&variant_id=` | Return the newest owned receipt for a job or variant, or `null` when it has never been submitted |
 | `GET` | `/tiktok/publications/{publication_id}` | Read one owned publication's lifecycle and metrics |
 | `POST` | `/tiktok/sync` | Queue a rate-limited official metrics sync |
 | `GET`, `HEAD` | `/tiktok/media/{publication_id}/{token}.mp4` | Serve the immutable snapshot to TikTok, including one byte range |
@@ -89,9 +95,11 @@ TIKTOK_PERFORMANCE_SYNC_ENABLED=false
 TIKTOK_PUBLISHING_BETA_USER_IDS=<comma-separated-or-json-user-uuids>
 ```
 
-`TIKTOK_WEB_APP_URL` must be the `/library` path on an origin already present
-in `ALLOWED_ORIGINS`. The callback fails closed to the local Library URL when
-the scheme, credentials, path, or origin is not allowlisted.
+`TIKTOK_WEB_APP_URL` supplies the trusted web origin and should use the
+`/library` fallback path on an origin already present in `ALLOWED_ORIGINS`.
+The callback ignores any untrusted destination supplied by the browser: only
+relative `/library` and `/plan/items/...` return paths are preserved, external
+origins and path traversal are rejected, and the safe fallback is Library.
 
 `TOKEN_ENCRYPTION_KEY` and the TikTok client credentials are mandatory for a
 working connection. Token encryption fails closed when the key is missing or
@@ -108,7 +116,9 @@ and partial-scope capabilities from `GET /tiktok/connection`.
 
 - Keep all three capability flags `false`.
 - Add test users' Nova UUIDs to `TIKTOK_PUBLISHING_BETA_USER_IDS`.
-- Deploy API and worker, then connect from the Library.
+- Deploy API and worker, then connect from the Library or a finished video's
+  release desk. Confirm the OAuth callback returns to the surface that started
+  the connection.
 - Confirm the connected nickname and granted scopes. A partial grant is valid:
   the UI prompts for reconnection only for the missing capability.
 
@@ -145,11 +155,16 @@ that change as the broad-launch switch.
 
 ## Publishing lifecycle
 
-The user previews a finalized render first. Nova returns an opaque
-`source_revision`, reads fresh creator capabilities, and requires a manual
-privacy choice plus music, commercial-content, and AIGC declarations. On
-submission Nova rechecks the source object's GCS generation and ETag. A changed
-render returns `409` and must be previewed again.
+The user previews a finalized render first. The item page keeps that preview,
+the connected TikTok profile, caption, and primary Publish action together.
+Publish opens a full-screen two-step workspace: Details collects caption,
+privacy, interactions, commercial-content and AIGC declarations, plus music
+confirmation; Confirm shows the exact submission summary before the API call.
+
+Nova returns an opaque `source_revision` and reads fresh creator capabilities.
+On submission it rechecks the source object's GCS generation and ETag. A
+changed render returns `409` and must be previewed again. Submission errors keep
+the creator's entered details so retrying does not restart the form.
 
 Accepted publications return `202`. The worker copies the approved generation
 to `tiktok-publish/<publication-id>.mp4`, mints a two-hour media token, and lets
@@ -213,8 +228,12 @@ make broker dispatch best-effort rather than a durability boundary.
   `can_publish` / `can_analyze` values.
 - OAuth denial, expired state, replay, and duplicate-account connection fail
   without exposing codes or tokens.
-- The callback redirects only to the allowlisted Library URL.
+- OAuth started from an item returns to that exact relative item path and query
+  on success or recoverable error; external, traversal, malformed, and oversized
+  destinations fall back to the allowlisted Library.
 - Publish options show the exact variant and a fresh source revision.
+- The receipt endpoint returns only the signed-in user's newest matching job or
+  variant publication, while the history endpoint applies the same filters.
 - Changing the render after preview produces `409`.
 - TikTok can issue `HEAD` and final-byte range requests without a redirect.
 - Signed webhook duplicates are harmless and stale or replayed signatures fail.
@@ -235,5 +254,8 @@ cd ../web
 npm test -- --runInBand src/__tests__/tiktok src/__tests__/lib/tiktok-api.test.ts
 ```
 
-CI and local testing use mocked TikTok responses. A live TikTok account is a
-release-environment check, not a CI dependency.
+CI and local testing use mocked TikTok responses. In non-production localhost,
+open a finished item with `?tiktok_preview=connected` to exercise the connected
+profile, Details, Confirm, and receipt flow without calling TikTok. Local preview
+publication IDs never enter the real publication polling loop. A live TikTok
+account remains a release-environment check, not a CI dependency.
