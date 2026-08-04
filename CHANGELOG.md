@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.2.0] — 2026-08-04
+
+### Fixed
+- **Generate video now responds instantly.** Tapping Generate on a plan item used to freeze on a disabled "Starting…" button for minutes whenever another render was occupying the worker (observed: 8 minutes on mobile) — the render only "registered" when a background task got its turn. The render job is now created the moment you tap, so the page switches to the progress view right away and honestly shows "queued" while it waits its turn.
+- **Retrying Generate can no longer go wrong.** Tapping Generate again (a second tab, or a retry after a dropped mobile connection) now safely returns the render that's already running instead of an error — and two simultaneous taps can no longer start duplicate renders (row-level lock).
+- **Failures now say so.** Invalid clips fail immediately with a clear message instead of a silent 15-minute stall, and a queue hand-off failure marks the render failed (with a working Retry) instead of leaving the item spinning "generating" forever. A hand-off that actually reached the worker despite a network blip is detected and left to run — a live render is never falsely marked failed.
+- **Videos pinned from your library now read as finished.** A completed template or music video added to a plan day no longer shows the day stuck on "generating" and no longer blocks generating a fresh edit for that day.
+- **Plan activation no longer races your own uploads.** If you attach clips and hit Generate while the initial plan analysis is still running, activation now skips that item instead of overwriting your clips and starting a second render.
+
+### Changed
+- Plan-item render state buckets are single-sourced (`app/services/job_status.py`) across the dashboard and the library; the new `PLAN_SYNC_DISPATCH_ENABLED` kill switch (default on) restores the legacy async dispatch if needed. Root `package.json` version re-synced with VERSION (drifted in 0.23.1.0).
+
 ## [0.23.1.0] — 2026-08-04
 
 ### Added
