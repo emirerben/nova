@@ -81,6 +81,8 @@ function writeDismissed(itemId: string, variantId: string, ids: string[]): void 
 /** Shown once when the API has no director route, in place of a dead retry. */
 export const DIRECTOR_UNAVAILABLE_MESSAGE =
   "Nova's proactive review isn't enabled on this server yet.";
+export const DIRECTOR_CAPABILITY_MISMATCH_MESSAGE =
+  "Nova's proactive review is updating. Try again shortly.";
 const DIRECTOR_REVIEW_DEBOUNCE_MS = 1200;
 
 function friendlyDirectorError(caught: unknown): string {
@@ -163,8 +165,8 @@ export function useEditDirector(
     if (unavailable) return;
     const forceRefresh = forceRefreshRef.current;
     // Keep a returned review stable while the user works through it. Director
-    // suggestions are server-validated to target distinct draft fields, and
-    // applyOpsAtomic rejects a card if its own target changed meanwhile.
+    // suggestions are server-validated into sequentially compatible edit
+    // domains, and applyOpsAtomic rejects a card if its own target changed.
     if (suggestionsRef.current.length > 0 && !forceRefresh) return;
     const controller = new AbortController();
     let activeRequestId = 0;
@@ -189,6 +191,7 @@ export function useEditDirector(
           optsRef.current.itemId,
           optsRef.current.variantId,
         ),
+        omni_enabled: optsRef.current.omniEnabled,
       }, controller.signal)
         .then((response) => {
           if (requestId !== requestIdRef.current) return;
@@ -209,6 +212,9 @@ export function useEditDirector(
           forceRefreshRef.current = false;
           setModelUsed(response.model_used);
           setFallbackReason(response.fallback_reason ?? null);
+          if (nextSuggestions.length === 0 && response.suggestions.length > 0) {
+            setError(DIRECTOR_CAPABILITY_MISMATCH_MESSAGE);
+          }
         })
         .catch((caught) => {
           if (requestId !== requestIdRef.current || controller.signal.aborted) return;

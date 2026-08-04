@@ -35,10 +35,11 @@ class DirectorSuggestionsBody(BaseModel):
     snapshot: dict = Field(default_factory=dict)
     snapshot_revision: str = Field(min_length=1, max_length=128)
     dismissed_suggestion_ids: list[str] = Field(default_factory=list, max_length=30)
+    omni_enabled: bool = False
 
 
 class DirectorSuggestionsResponse(BaseModel):
-    suggestions: list[EditorSuggestion]
+    suggestions: list[EditorSuggestion] = Field(min_length=1, max_length=5)
     snapshot_revision: str
     requested_model: str
     model_used: str
@@ -117,7 +118,7 @@ async def _run_director_once(
     agent_input = EditDirectorInput(
         variant_snapshot=director_snapshot,
         dismissed_suggestion_ids=body.dismissed_suggestion_ids,
-        omni_enabled=settings.omni_generated_video_enabled,
+        omni_enabled=settings.omni_generated_video_enabled and body.omni_enabled,
     )
     ctx = RunContext(job_id=str(job_id), request_id=body.snapshot_revision)
     fallback_reason: str | None = None
