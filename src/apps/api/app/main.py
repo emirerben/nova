@@ -153,10 +153,10 @@ async def health_beat(response: Response) -> dict:
     """Reports whether Celery Beat is alive, via a heartbeat any
     Beat-scheduled task writes on success (app/services/beat_heartbeat.py).
 
-    Meant to be pinged by a service OUTSIDE this app entirely (UptimeRobot,
-    cron-job.org, a scheduled GitHub Actions workflow) — this is the only
-    kind of check immune to Beat's own death, since any check that is
-    itself Beat-scheduled shares Beat's exact blind spot. Matters
+    Pinged from OUTSIDE this app by .github/workflows/beat-health.yml
+    (15-min cron) — the only kind of check immune to Beat's own death,
+    since any check that is itself Beat-scheduled shares Beat's exact
+    blind spot. Matters
     specifically because RENDER_AUTOSTOP_ENABLED makes Beat's health a
     prerequisite for the render worker ever restarting on a missed
     wake-hook call (see agents/DECISIONS.md).

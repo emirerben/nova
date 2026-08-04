@@ -934,5 +934,7 @@ Prometheus API.
   loop (it survived ~66 min on Aug 2). Deploying this change recreates/
   updates the machine config; if it stays `stopped` after the deploy, one
   `fly machine start 48e2547a50d138 -a nova-video` brings the lane back on
-  the fixed image. Expect a brief drain burst: ~2 days of queued
+  the fixed image (the ID is valid as of 2026-08-04 — a recreating deploy
+  mints a new one, so resolve the current `light` machine via
+  `fly machine list -a nova-video` first). Expect a brief drain burst: ~2 days of queued
   maintenance messages (~5-6k, mostly no-op polls) are sitting in Redis.

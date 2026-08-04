@@ -2,7 +2,10 @@ name: Beat health check
 
 # External dead-man's switch for the Celery Beat → light-machine maintenance
 # lane. GET /health/beat returns 200 while a Beat-scheduled task has succeeded
-# within BEAT_HEARTBEAT_STALE_AFTER_MIN (10 min), 503 once the lane is stale.
+# within BEAT_HEARTBEAT_STALE_AFTER_MIN (default 10 min — config.py is
+# authoritative), 503 once the lane is stale. Detection latency is staleness
+# threshold + cron interval (+ GitHub cron slip), so ~25-45 min worst case —
+# change the threshold or the cron consciously together.
 # This MUST live outside the app: any check that is itself Beat-scheduled
 # shares Beat's exact blind spot (app/services/beat_heartbeat.py has the full
 # rationale). The 2026-08-02 incident this closes: the light machine OOM
@@ -32,17 +35,26 @@ jobs:
       - name: Ping /health/beat
         run: |
           body=$(mktemp)
-          # --retry (+ --retry-connrefused for runner-side DNS/connect blips)
-          # absorbs transient failures over ~a couple of minutes worst case;
+          # --retry-all-errors: plain --retry skips DNS failures (curl exit 6),
+          # a classic transient runner blip — retry every failure over ~1 min;
           # a genuinely stale lane keeps returning 503 and still fails the
           # run. curl prints 000 via -w itself when no response arrives.
-          code=$(curl -sS --retry 3 --retry-delay 20 --retry-connrefused \
+          code=$(curl -sS --retry 3 --retry-delay 20 --retry-all-errors \
             --max-time 20 -o "$body" -w '%{http_code}' \
             https://nova-video.fly.dev/health/beat || true)
           # Single line + truncated: response text can never start a new log
           # line, so it can't smuggle ::workflow-commands:: into the runner.
           echo "HTTP $code: $(head -c 300 "$body" | tr -d '\r\n')"
           if [ "$code" != "200" ]; then
-            echo "::error::Beat maintenance lane unhealthy (HTTP $code). The light machine is likely stopped — check 'fly machine list -a nova-video' and agents/DECISIONS.md (2026-08-04)."
+            # Distinguish failure classes so a red run points at the right
+            # incident — false positives are how a dead-man's switch gets
+            # ignored the day it's real.
+            if grep -q '"status":"stale"' "$body" 2>/dev/null; then
+              echo "::error::Beat maintenance lane STALE (HTTP $code from the app). The light machine is likely stopped — check 'fly machine list -a nova-video' and agents/DECISIONS.md (2026-08-04)."
+            elif [ "$code" = "000" ] || [ -z "$code" ]; then
+              echo "::error::No HTTP response after retries (runner network/DNS, or the whole app is down). Re-run the workflow; if it persists, check 'fly status -a nova-video'."
+            else
+              echo "::error::Unexpected HTTP $code from /health/beat (proxy/api-level — NOT necessarily the light machine). Check 'fly status -a nova-video'."
+            fi
             exit 1
           fi

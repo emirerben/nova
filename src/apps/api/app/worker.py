@@ -276,15 +276,18 @@ def _sweep_stale_tmpdirs(sender=None, **kwargs):  # pragma: no cover (signal wir
 
 def _worker_consumes_render_queues(sender) -> bool:
     """True when this worker process consumes at least one render-worker
-    queue — the only workers where the CLIP font matcher can ever run.
+    queue. Deliberately coarse: it matches machine SIZING, not per-task CLIP
+    need — an overlay-jobs-only worker (dev-auto.sh 7b) prewarms a model it
+    won't use, which is fine on render-sized VMs. If a small dedicated
+    analysis/overlay process is ever split out (TODOS worker-topology (a)),
+    revisit this before pointing it at a render queue.
 
     `sender` is the celery.worker.consumer.Consumer instance that
     `worker_ready` passes; `sender.app.amqp.queues.consume_from` reflects the
     queues this process was started with. `-Q maintenance` (the `light` Fly
     machine) restricts it to {"maintenance"}; the render worker's
     `-Q celery,plan-jobs,overlay-jobs` and a bare local-dev worker (no `-Q`,
-    falls back to every declared queue) both include the default `celery`
-    queue.
+    consumes the default `celery` queue) both pass.
 
     Fail-CLOSED (False) when the consumer shape can't be read. The asymmetry:
     wrongly skipping the prewarm on the render worker costs one ~3-5s lazy

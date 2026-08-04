@@ -72,6 +72,18 @@ def test_gate_matches_every_render_worker_queue_individually():
         assert _worker_consumes_render_queues(_sender_consuming(queue)) is True
 
 
+def _fly_toml_queues(process_name: str) -> set[str]:
+    """Parse a fly.toml process line's `-Q` list. The capture runs to the
+    next whitespace or closing quote — NOT a char-class allowlist — so any
+    legal queue name (dots included) is captured whole; a truncating match
+    would make the drift guards below pass on exactly the renames they
+    exist to catch."""
+    fly_toml = (Path(__file__).parents[4] / "fly.toml").read_text()
+    match = re.search(rf'^\s*{process_name}\s*=\s*"[^"]*-Q\s+([^"\s]+)', fly_toml, re.MULTILINE)
+    assert match, f"could not find the {process_name} process's -Q list in fly.toml"
+    return set(match.group(1).split(","))
+
+
 def test_render_worker_queues_match_fly_toml_worker_command():
     """RENDER_WORKER_QUEUES is hand-synced with fly.toml's worker `-Q` list
     (queue_state.py says so). A queue rename in fly.toml alone would silently
@@ -79,10 +91,18 @@ def test_render_worker_queues_match_fly_toml_worker_command():
     together so the drift fails CI instead."""
     from app.services.queue_state import RENDER_WORKER_QUEUES
 
-    fly_toml = (Path(__file__).parents[4] / "fly.toml").read_text()
-    match = re.search(r'^\s*worker\s*=\s*"[^"]*-Q\s+([\w,-]+)', fly_toml, re.MULTILINE)
-    assert match, "could not find the worker process's -Q list in fly.toml"
-    assert set(match.group(1).split(",")) == set(RENDER_WORKER_QUEUES)
+    assert _fly_toml_queues("worker") == set(RENDER_WORKER_QUEUES)
+
+
+def test_light_queues_stay_disjoint_from_render_queues():
+    """The inverse invariant: the light machine's `-Q` list must never
+    intersect RENDER_WORKER_QUEUES. A fly.toml edit like
+    `light = "... -Q maintenance,celery"` would pass the prewarm gate on the
+    small VM and re-open the 2026-08-02 OOM incident with no code change —
+    this makes that edit fail CI instead."""
+    from app.services.queue_state import RENDER_WORKER_QUEUES
+
+    assert _fly_toml_queues("light").isdisjoint(RENDER_WORKER_QUEUES)
 
 
 def test_real_celery_app_exposes_the_introspection_surface():
