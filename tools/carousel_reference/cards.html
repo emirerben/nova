@@ -1,0 +1,158 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Blossom Carousel Reference — cards</title>
+<script src="./harness.js"></script>
+<link rel="stylesheet" href="./lib/blossom-vendor/dist/blossom-carousel-web.css" />
+<style>
+  /* --- Shared 1080x1920 test-page geometry (mirrors the Python renderer) --- */
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1080px;
+    height: 1920px;
+    background: #0a0a0c;
+    overflow: hidden;
+  }
+
+  blossom-carousel.carousel {
+    display: flex;
+    align-items: center;
+    gap: 48px;
+    width: 1080px;
+    height: 1920px;
+    padding-inline: 270px;
+    box-sizing: border-box;
+    scroll-snap-type: x mandatory;
+  }
+
+  .card {
+    flex: 0 0 540px;
+    width: 540px;
+    height: 720px;
+    border-radius: 24px;
+    scroll-snap-align: center;
+    scroll-snap-stop: always;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .marker {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    height: 32px;
+    border: 3px solid #fff;
+    box-sizing: border-box;
+    background: transparent;
+  }
+
+  /* --- cards (transform-only smart-stack) ----------------------------------
+     ROUND 2 SIMPLIFICATION (see agents/DECISIONS.md + effects.py's
+     `cards_stack_transform` docstring for the full writeup): this page
+     originally used `position: sticky` (Blossom's own `advanced/cards` /
+     `advanced/smart-stack` examples do too), pinning each card at a fixed
+     centered inset as its scroll track passed underneath. Round 1 found
+     that gave ~43px motion-gate failures; Round 2 traced the root cause
+     past mere "the pinned rect stops moving" (expected, and modelable) to
+     something deeper: once a card is CSS-sticky-stuck, Chromium's
+     `animation-timeline: view(inline)` PROGRESS for that card stops being a
+     pure function of `(scrollLeft, card index)` — captured-trace evidence:
+     two different cards at nearly identical unstuck "flow" positions
+     (~230px apart from center by <2px) produced view-timeline progress
+     0.209 vs 0.304, a gap that only shrinks/grows with unrelated scroll
+     history, not the cards' current geometry. Most likely culprit: the
+     documented native `scroll-snap-type: x mandatory` + `position: sticky`
+     circular-resolution quirk this page used to work around in its ready
+     script (see git history) — the browser's transient pre-reset
+     scrollLeft (~2330 before the old `scroller.scrollLeft = 0` hack ran)
+     appears to leave the timeline's cached "stuck" progress primed from
+     that transient, not from the post-reset scroll position. That's
+     hysteresis, not a closed-form function of the two inputs `effects.py`
+     is allowed to depend on — per the task's own escape hatch, simplified
+     instead of modeled.
+
+     Fix: drop `position: sticky` entirely (this page no longer pins
+     anything to a fixed screen position — no more native-snap-vs-sticky
+     circular resolution, so the old `has-snap`/`scrollBehavior` workaround
+     script below is gone too). Structurally this now matches
+     `flipbook.html` exactly (same `padding-inline: 270px` centering, same
+     per-card `animation-timeline: view(inline)`, same `sibling-index()`
+     z-index split, `position: relative` inherited from the base `.card`
+     rule above) — only the keyframe SHAPE differs (`stack-transform`'s
+     asymmetric translateX/scale/opacity below vs flipbook's symmetric
+     rotateY/translateZ). `view_progress()`'s existing plain
+     `(viewport_w - left) / (viewport_w + card_w)` formula (already proven
+     exact for `flipbook_transform`/`cover_flow_transform`) applies here
+     unchanged — no floor/clamp constant needed anymore.
+
+     Numeric depth step is per this lane's task spec:
+       STACK_STEP_PX = 24      (translateX offset per depth step)
+       STACK_SCALE_STEP = 0.06 (scale reduction per depth step)
+       exit multiplier = 1.6x  (already-passed cards travel out faster,
+                                 plus an opacity fade so they read as
+                                 "gone" rather than merely small) */
+  .card {
+    animation:
+      stack-transform linear both,
+      stack-z linear both;
+    animation-timeline: view(inline);
+    animation-range: cover;
+  }
+
+  @keyframes stack-z {
+    0%   { z-index: calc(100 - sibling-index()); }
+    50%  { z-index: 1000; }
+    100% { z-index: sibling-index(); }
+  }
+
+  @keyframes stack-transform {
+    /* entering (has not reached center yet): one depth-step back, slightly
+       scaled down, still fully opaque/queued */
+    0%   { transform: translateX(24px) scale(0.94); opacity: 1; }
+    /* centered / active card */
+    50%  { transform: translateX(0) scale(1); opacity: 1; }
+    /* passed (already scrolled by): pushed out 1.6x the entering offset
+       and faded, matching the task's "passed cards translating off at
+       1.6x with opacity fade" */
+    100% { transform: translateX(-38.4px) scale(0.94); opacity: 0.3; }
+  }
+</style>
+</head>
+<body>
+  <blossom-carousel class="carousel">
+    <div class="card" style="background: hsl(0, 70%, 55%);">
+      <div class="marker" style="top: 40px;"></div>
+    </div>
+    <div class="card" style="background: hsl(67, 70%, 55%);">
+      <div class="marker" style="top: 100px;"></div>
+    </div>
+    <div class="card" style="background: hsl(134, 70%, 55%);">
+      <div class="marker" style="top: 160px;"></div>
+    </div>
+    <div class="card" style="background: hsl(201, 70%, 55%);">
+      <div class="marker" style="top: 220px;"></div>
+    </div>
+    <div class="card" style="background: hsl(268, 70%, 55%);">
+      <div class="marker" style="top: 280px;"></div>
+    </div>
+  </blossom-carousel>
+
+  <script type="module">
+    import "./lib/blossom-vendor/dist/blossom-carousel-web.es.js";
+    customElements.whenDefined("blossom-carousel").then(() => {
+      // No native-resnap workaround needed here (Round 1 needed one — see
+      // git history / effects.py's `cards_stack_transform` docstring): that
+      // bug was `position: sticky`'s scroll-snap AREA being computed from
+      // its own already-stuck box, a circular relationship specific to
+      // sticky. Round 2 dropped `position: sticky` from `.card` entirely
+      // (see the `.card` rule's comment above), so this page now lays out
+      // and resnaps exactly like `flipbook.html` (also `scroll-snap-type: x
+      // mandatory` + `scroll-snap-align: center`, no sticky) — card 0 is
+      // naturally centered at `scrollLeft = 0` with no correction required.
+      window.__markReady();
+    });
+  </script>
+</body>
+</html>

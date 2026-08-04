@@ -1,0 +1,67 @@
+{
+  "name": "@blossom-carousel/web",
+  "version": "1.4.2",
+  "author": "Jesper Vos",
+  "license": "MIT",
+  "description": "A native-scroll-first carousel component for the web.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jespervos/blossom-carousel"
+  },
+  "bugs": {
+    "url": "https://github.com/jespervos/blossom-carousel/issues"
+  },
+  "homepage": "https://www.blossom-carousel.com",
+  "keywords": [
+    "blossom",
+    "carousel",
+    "slider",
+    "slideshow",
+    "scroll",
+    "scroller",
+    "drag",
+    "dragging",
+    "js",
+    "vanilla",
+    "javascript",
+    "typescript",
+    "web",
+    "html",
+    "css",
+    "svelte",
+    "react",
+    "vue"
+  ],
+  "type": "module",
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "main": "dist/blossom-carousel-web.umd.js",
+  "module": "dist/blossom-carousel-web.es.js",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/blossom-carousel-web.es.js",
+      "require": "./dist/blossom-carousel-web.umd.cjs"
+    },
+    "./style.css": "./dist/blossom-carousel-web.css"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@blossom-carousel/core": "^1.1.8",
+    "@types/node": "^25.8.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.3",
+    "vite-plugin-dts": "^5.0.0",
+    "@blossom-carousel/navigation": "0.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  }
+}

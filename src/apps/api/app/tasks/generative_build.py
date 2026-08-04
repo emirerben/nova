@@ -4638,6 +4638,126 @@ def _merge_contiguous_same_source_steps(
     return merged
 
 
+def _maybe_render_carousel_moment(
+    moment_cfg: dict[str, Any],
+    *,
+    clip_id_to_local: dict[str, str],
+    steps: list,
+    variant_dir: str,
+) -> str | None:
+    """Render one Blossom-carousel moment segment for this variant.
+
+    Belt-and-braces around `render_carousel_moment`'s never-raise contract: any
+    exception — including an import-time failure of the carousel/skia-adjacent
+    modules themselves (e.g. a missing native lib on a given machine/arch) and
+    an unexpected bug in that never-supposed-to-raise function — is caught
+    here too, logged, and treated as "skip the moment": this helper itself
+    never raises. Callers only reach this when `settings.carousel_effects_enabled`
+    is True AND the spec actually requests a moment, so the carousel/skia-
+    adjacent modules are imported LAZILY here — the flag-off path imports none
+    of this.
+    """
+    try:
+        from app.pipeline.carousel.segment import (  # noqa: PLC0415
+            CarouselMomentSpec,
+            render_carousel_moment,
+        )
+
+        clip_paths: list[str] = []
+        for step in steps:
+            local_path = clip_id_to_local.get(getattr(step, "clip_id", None))
+            if local_path and local_path not in clip_paths:
+                clip_paths.append(local_path)
+            if len(clip_paths) >= 5:
+                break
+        if not clip_paths:
+            return None
+
+        spec = CarouselMomentSpec(
+            effect=moment_cfg.get("effect", "scale_sweep"),
+            clip_paths=tuple(clip_paths),
+            duration_s=float(moment_cfg.get("duration_s", 4.0)),
+        )
+        return render_carousel_moment(spec, variant_dir)
+    except Exception:  # noqa: BLE001 — the contract says never-raise; don't trust it blindly
+        log.warning("carousel_moment_render_failed", exc_info=True)
+        return None
+
+
+def _insert_carousel_moment_step(
+    steps: list,
+    spec: dict[str, Any],
+    *,
+    clip_id_to_local: dict[str, str],
+    clip_id_to_gcs: dict[str, str],
+    probe_map: dict,
+    variant_dir: str,
+) -> list:
+    """Splice a rendered Blossom-carousel moment into the montage `steps` list.
+
+    No-op — zero carousel imports, `steps` returned unchanged — unless
+    `settings.carousel_effects_enabled` is True AND `spec["carousel_moment"]`
+    is present. This is the entire kill switch: additive only, so the
+    flag-off (or spec-absent) output is byte-identical to pre-feature.
+
+    On success the rendered segment is registered as a synthetic clip (mirrors
+    the clip_id -> local path / clip_id -> probe maps the rest of this module
+    uses) and spliced in as an exact-window AssemblyStep, matching the shape
+    `_prepare_timeline_assembly` builds for user-pinned timeline windows.
+    `position` ("intro" | "middle" | "outro", default "intro") controls where.
+
+    Note: the synthetic clip has no GCS-backed source (it's a locally rendered
+    composite, not one of the user's uploaded clips), so `_build_ai_timeline`'s
+    clip_paths-index lookup can't map it — that function is documented
+    best-effort and returns None gracefully rather than raising, so a carousel
+    moment simply means no post-render clip-timeline editor for that variant.
+    """
+    if not settings.carousel_effects_enabled:
+        return steps
+    moment_cfg = spec.get("carousel_moment")
+    if not moment_cfg:
+        return steps
+
+    moment_path = _maybe_render_carousel_moment(
+        moment_cfg, clip_id_to_local=clip_id_to_local, steps=steps, variant_dir=variant_dir
+    )
+    if not moment_path:
+        return steps
+
+    from app.pipeline.agents.gemini_analyzer import AssemblyStep  # noqa: PLC0415
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+
+    try:
+        probe = probe_video(moment_path)
+        duration_s = float(probe.duration_s)
+    except Exception:  # noqa: BLE001 — a bad probe should skip, not fail the variant
+        log.warning("carousel_moment_probe_failed", exc_info=True)
+        return steps
+    if duration_s <= 0:
+        return steps
+
+    synthetic_id = f"__carousel_{spec.get('variant_id') or 'moment'}"
+    clip_id_to_local[synthetic_id] = moment_path
+    clip_id_to_gcs[synthetic_id] = moment_path
+    probe_map[moment_path] = probe
+
+    moment_step = AssemblyStep(
+        slot={"exact_window": True},
+        clip_id=synthetic_id,
+        moment={"start_s": 0.0, "end_s": round(duration_s, 3)},
+    )
+
+    position = moment_cfg.get("position", "intro")
+    new_steps = list(steps)
+    if position == "middle":
+        new_steps.insert(len(new_steps) // 2, moment_step)
+    elif position == "outro":
+        new_steps.append(moment_step)
+    else:  # "intro" (default) and any unrecognized value
+        new_steps.insert(0, moment_step)
+    return new_steps
+
+
 def _build_ai_timeline(
     *,
     steps: list,
@@ -8044,6 +8164,19 @@ def _render_generative_variant(
                     clip_metas=clip_metas,
                     is_music_variant=(track is not None and not voiceover_gcs_path),
                 )
+
+        # Blossom-carousel moment hook (Lane G, kill-switched): additive splice
+        # into the finalized montage `steps`, before assembly. No-op — zero
+        # carousel imports, `steps` unchanged — unless the flag is on AND the
+        # spec requests a moment. See `_insert_carousel_moment_step`.
+        steps = _insert_carousel_moment_step(
+            steps,
+            spec,
+            clip_id_to_local=clip_id_to_local,
+            clip_id_to_gcs=clip_id_to_gcs,
+            probe_map=probe_map,
+            variant_dir=variant_dir,
+        )
 
         assembled_path = os.path.join(variant_dir, "assembled.mp4")
         resolved_plans: list[dict] = []

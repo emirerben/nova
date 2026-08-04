@@ -1,6 +1,7 @@
 .PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint verify \
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays \
+        carousel-capture carousel-verify \
         workspace-pull workspace-push workspace-status
 
 PYTHON ?= python3
@@ -109,6 +110,49 @@ verify-overlays:
 		-v "$(CURDIR)/$(OVERLAY_VERIFY_OUT):/app/$(OVERLAY_VERIFY_OUT)" \
 		-v "$(CURDIR)/src/apps/api/tests/fixtures/overlay_verify:/app/tests/fixtures/overlay_verify:ro" \
 		api python -m app.cli.verify_overlays $(ARGS) --out /app/$(OVERLAY_VERIFY_OUT)
+
+# ── Carousel parity (browser reference vs. our Python/Skia render) ────────────
+# `carousel-capture` drives the gstack browse daemon through one of the four
+# reference HTML pages (tools/carousel_reference/) and dumps its motion trace
+# + a reference.mp4. `carousel-verify` then renders our side through the real
+# pipeline and compares SSIM + per-frame motion deltas against that capture.
+# See tools/carousel_reference/README.md and src/apps/api/tests/quality/carousel_parity.py.
+#
+# EFFECT uses the Python pipeline's effect names (scale_sweep, cover_flow,
+# cards_stack, flipbook — see app/pipeline/carousel/effects.py:EFFECTS), NOT
+# capture.sh's own vocabulary, which is the HTML page filenames (scale-sweep,
+# cover-flow, cards, flipbook — hyphenated, and "cards" not "cards_stack").
+# CAROUSEL_HTML_SLUG below is the one-line translation between the two; do
+# not pass a hyphenated slug to EFFECT directly.
+#
+# Usage:
+#   make carousel-capture EFFECT=scale_sweep     # needs the gstack browse daemon
+#   make carousel-capture EFFECT=cover_flow
+#   make carousel-capture EFFECT=cards_stack
+#   make carousel-capture EFFECT=flipbook
+#   make carousel-verify  EFFECT=scale_sweep [SSIM_MIN=0.95] [TRACE_TOL_PX=2.0]
+CAROUSEL_REF_DIR := tools/carousel_reference
+EFFECT ?= scale_sweep
+CAROUSEL_OUT_DIR ?= $(CAROUSEL_REF_DIR)/out/$(EFFECT)
+CAROUSEL_HTML_SLUG := $(shell echo "$(EFFECT)" | sed -e 's/cards_stack/cards/' -e 's/_/-/g')
+SSIM_MIN ?= 0.95
+TRACE_TOL_PX ?= 2.0
+
+carousel-capture:
+	@echo "carousel-capture: EFFECT=$(EFFECT) (capture.sh slug: $(CAROUSEL_HTML_SLUG)) -> $(CAROUSEL_OUT_DIR)"
+	@echo "NOTE: requires the gstack browse daemon — see tools/carousel_reference/README.md 'Capturing' prerequisites."
+	(cd $(CAROUSEL_REF_DIR) && ./capture.sh $(CAROUSEL_HTML_SLUG) "$(CURDIR)/$(CAROUSEL_OUT_DIR)")
+
+carousel-verify: api-install-dev
+	@if [ ! -f "$(CAROUSEL_OUT_DIR)/trace.json" ]; then \
+		echo "ERROR: no trace.json at $(CAROUSEL_OUT_DIR). Run 'make carousel-capture EFFECT=$(EFFECT)' first."; \
+		exit 2; \
+	fi
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m app.cli.verify_carousel \
+		--effect $(EFFECT) \
+		--reference "$(CURDIR)/$(CAROUSEL_OUT_DIR)" \
+		--ssim-min $(SSIM_MIN) \
+		--trace-tol-px $(TRACE_TOL_PX))
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
