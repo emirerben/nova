@@ -1,0 +1,53 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-08-05",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 5.0,
+      "subject": "a street cat walking into the frame and sitting on a filming setup",
+      "hook_text": "",
+      "hook_score": 6.5,
+      "energy": 5.0,
+      "description": "a cat strolls into an outdoor filming setup, sits directly on the ring light bag, refuses to move"
+    },
+    "hero_transcript": "arkadaşlar kedi geldi, ekipmanın üstüne oturdu",
+    "tone": "samimi, enerjik güzellik içerik üreticisi; yakın arkadaşıyla konuşur gibi",
+    "content_pillars": [
+      "saç bakım rutinleri",
+      "uygun fiyatlı güzellik ürünleri",
+      "hızlı makyaj"
+    ],
+    "theme": "5 dakikada toparlanma rutini",
+    "idea": "sabah rutininin en hızlı halini çek",
+    "form": {
+      "effect": "static",
+      "size_class": "large",
+      "position": "top"
+    },
+    "exemplars": [
+      {
+        "id": "comedy-relatable-static-01",
+        "content_profile": "comedic, relatable everyday chaos, candid or self-deprecating",
+        "effect": "static",
+        "text": "nobody warned me about this part",
+        "highlight_word": "nobody",
+        "position": "top",
+        "size_class": "large",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FF6B6B"
+      }
+    ],
+    "language": "tr"
+  },
+  "raw_text": "{\"text\": \"bu kedi çekimi ele geçirdi\", \"highlight_word\": \"kedi\"}",
+  "output": {
+    "text": "bu kedi çekimi ele geçirdi",
+    "highlight_word": "kedi"
+  },
+  "meta": {
+    "source": "hand_authored_adversarial",
+    "case": "PERSONA-FOOTAGE CONFLICT (TR) — beauty persona + street-cat footage. Wrong output: 'bu kedi bakış açımı değiştirdi' (tr_degistirdi slop class). Correct: Turkish, lowercase, in-the-moment, footage-only; diacritics intact."
+  }
+}

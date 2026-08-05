@@ -938,3 +938,54 @@ Prometheus API.
   mints a new one, so resolve the current `light` machine via
   `fly machine list -a nova-video` first). Expect a brief drain burst: ~2 days of queued
   maintenance messages (~5-6k, mostly no-op polls) are sitting in Redis.
+
+## [2026-08-05] Intro-hook transformation slop — ban the pattern class, lint the exemplars, scan don't warn (plans/015)
+
+A montage plan-item render burned "the monkey changed my whole marketing
+perspective" as its opening hook: intro_writer glued unrelated footage (a
+monkey) to a persona pillar (marketing) with a fabricated transformation
+claim. Root cause was three-way: the prompt's DON'T list banned slop as
+LITERAL strings ("changed everything") that paraphrase trivially; the pillar
+instruction outweighed the existing drop-the-theme escape clause (a subjective
+"changed my perspective" isn't an invented fact/place/event, so the clause
+never fired); and the exemplar library itself shipped the banned frame —
+`transformation-before-after-karaoke-01` read "this is what changed
+everything" (added PR #338, phrase banned later by PR #507; prompt/exemplar
+drift with no guard).
+
+**Decisions:**
+
+- **Ban the pattern CLASS in the prompt, not more strings** — retrospective
+  transformation / lesson-learned framing is named as a class with examples,
+  plus a translate-don't-echo rule for plan ideas that arrive already
+  slop-framed ("how X changed my life"). The existing pillar escape clause at
+  write_intro_text.txt was deliberately left untouched: rewriting it was
+  wording churn carrying over-correction risk (model drops persona when
+  aligned); escalate only if live shadow A/B says the ban alone is
+  insufficient.
+- **One deterministic pattern source, three free consumers** —
+  `slop_structural_failures()` in `app/agents/intro_writer.py` (same shape as
+  sequence_quote's `quote_structural_failures`) feeds the eval structural
+  floor, `tests/agents/test_overlay_examples_slop_guard.py` (every exemplar
+  AND every recorded fixture output must pass — kills the #338/#507 drift
+  class), and `scripts/dev/scan_intro_slop.py`. Turkish trap worth knowing:
+  `str.casefold()` maps İ to `i` + U+0307 combining dot BETWEEN letters, so
+  naive lowercase regexes silently miss uppercase Turkish — the normalizer
+  strips U+0307 and a test pins it.
+- **No runtime enforcement, no runtime warn** — a parse()-level rejection
+  would downgrade good hooks to the generic fallback on any false positive
+  (rejected at eng review), and a runtime warn was cut too: persisted
+  `intro_text` is REUSED on re-render with no LLM call, so a runtime hook
+  structurally cannot see legacy slop, ships with the fix (no baseline), and
+  conflates deliberate false positives into a blind rate. The offline scanner
+  (read-only) gives the pre-deploy baseline, the legacy remediation list, and
+  the post-deploy delta instead.
+- **Rubric had the incentive backwards** — persona_coherence scored 1 for
+  "ignores the persona/theme", punishing the correct drop-the-theme behavior
+  on conflict footage. Now: dropping an unhonorable theme scores 5 (conflict
+  rule); lesson-glue lines score an automatic 1 on persona_coherence AND
+  voice_match, with the monkey line as the calibrated example. Four
+  adversarial fixtures (marketing/monkey, fitness/cooking, TR, slop-framed
+  idea) pin the desired outputs.
+- **Merge gate:** live judge shadow A/B on a keyed machine (repo
+  prompt-change rule) — replay CI guards artifacts, not model behavior.

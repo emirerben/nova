@@ -135,7 +135,9 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
         # 2026-05-28 — added $language_hint block (en|tr).
         # 2026-06-14 — weekly research refresh: added professional-ootd-static-01 overlay example.
         # 2026-07-17 — added `behind_subject` occlusion-flag decision (text-behind-subject).
-        prompt_version="2026-07-17",
+        # 2026-08-05 — bank content edit (plans/015 anti-slop): transformation-before-
+        #              after-karaoke-01 retexted; no matcher-prompt text change.
+        prompt_version="2026-08-05",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

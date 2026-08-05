@@ -39,6 +39,7 @@ from app.agents.intro_writer import (
 from app.agents.intro_writer import (
     IntroWriterInput,
     IntroWriterOutput,
+    slop_structural_failures,
 )
 from app.agents.music_matcher import MusicMatcherInput, MusicMatcherOutput
 from app.agents.overlay_examples import load_overlay_examples
@@ -1276,6 +1277,13 @@ def check_intro_writer(output: IntroWriterOutput, input: IntroWriterInput) -> li
             failures.append(
                 f"highlight_word={output.highlight_word!r} is not a token of text {text!r}"
             )
+    # Transformation-slop floor (plans/015): imports the SAME pattern fn the
+    # exemplar guard test and offline scanner use, so the eval can never drift
+    # from the one source of truth in the agent module.
+    failures.extend(
+        f"transformation-slop pattern matched: {name} in {text!r}"
+        for name in slop_structural_failures(text)
+    )
     return failures
 
 
