@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-08-02",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -76,6 +76,17 @@
       "sample_hooks": ["felt cute this week", "before office", "the walk that fixes everything", "chic"],
       "source": "tiktok:@allexmarielle (2026-06)",
       "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "taste-opinion-curator-01",
+      "niche": "minimal lifestyle & fashion",
+      "summary": "You post ultra-short (6-15s) opinion clips where you declare your aesthetic taste as a standalone POV — things you find chic, underrated, tacky, or perfect — no voiceover, just footage and a punchy text line. The opinion IS the content.",
+      "tone": "opinionated, confident, quietly editorial",
+      "content_pillars": ["taste declarations (things I find chic/tacky/underrated)", "minimal wardrobe opinions", "aesthetic micro-takes", "style dos and don'ts"],
+      "audience": "people who share the taste or are curious whether they do — the polarizing POV is the hook",
+      "sample_hooks": ["things I find kinda chic", "things I find a bit much", "this is actually underrated"],
+      "source": "tiktok:@allexmarielle (2026-08)",
+      "performance": {"engagement_rate": 0.149, "view_index": 7.1, "sampled_at": "2026-08"}
     }
   ]
 }

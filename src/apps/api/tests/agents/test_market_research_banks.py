@@ -223,8 +223,10 @@ def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
     #                  (allexmarielle 9to5 professional aesthetic lane).
     # Bump 2026-07-11-kria: product rename only; banks untouched.
-    assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
+    # Bump 2026-08-02: weekly research refresh — added taste-opinion-curator-01
+    #                  (allexmarielle opinion-reveal lane, vi=7.1x, 14.9% eng).
+    assert archetypes_version() == "2026-08-02"
+    assert PERSONA_PROMPT_VERSION == "2026-08-02"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -246,8 +248,11 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             banks untouched (new block is conditional-empty when no seeds).
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
-    assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
+    # 2026-08-02: weekly research refresh — added taste-opinion-reveal-01 (vi=7.1x),
+    #             outfit-problem-never-solved-01 (vi=11.2x), failure-to-discovery-01
+    #             (vi=29.6x), bucket-list-experience-01 (vi=9.6x).
+    assert content_ideas_version() == "2026-08-02"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-08-02"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -264,10 +269,12 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # (ultrashort-aesthetic-clip 6-10s sweet spot, event-community-reach vi=64x discovery spike).
     # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
     # Persona/content plan bumped to 2026-07-11-kria: product rename only; banks untouched.
-    assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
+    # Bump 2026-08-02: weekly research refresh — added 2 corpus factors
+    # (opinion-reveal-ultrashort vi=7.1x 14.9% eng, failure-to-discovery vi=29.6x FYP spike).
+    assert success_factors_version() == "2026-08-02"
+    assert PERSONA_PROMPT_VERSION == "2026-08-02"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-08-02"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-08-02"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -293,9 +300,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  consuming-agent prompt change with no bank-content edit, so
     #                  only the matcher's own prompt_version moves; library_version()
     #                  is untouched.
-    assert library_version() == "2026-06-14"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-07-17"
+    # Bump 2026-08-02: weekly research refresh — added lifestyle-taste-static-01 and
+    #                  discovery-confession-static-01; bumped both consuming agents.
+    assert library_version() == "2026-08-02"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-08-02"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-08-02"
 
 
 @pytest.mark.parametrize(
