@@ -101,7 +101,11 @@ import {
   COPILOT_UNAVAILABLE_MESSAGE,
   useEditCopilot,
 } from "@/lib/edit-copilot/useEditCopilot";
-import { useEditDirector } from "@/lib/edit-copilot/useEditDirector";
+import {
+  useEditDirector,
+  type DirectorApplyPresentation,
+  type DirectorPreviewFocus,
+} from "@/lib/edit-copilot/useEditDirector";
 import type { CaptionMetaPatch, CopilotOp } from "@/lib/edit-copilot/ops";
 import {
   initTextEditorState,
@@ -874,6 +878,8 @@ export default function EditorShell({
   const [copilotSaveNoticeDismissed, setCopilotSaveNoticeDismissed] = useState(true);
   const panEnabled = zoomPct > 100;
   const [currentTime, setCurrentTime] = useState(0);
+  const [pendingCopilotFocus, setPendingCopilotFocus] =
+    useState<DirectorPreviewFocus | null>(null);
   const [duration, setDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const renderedMusicAudioRef = useRef<HTMLAudioElement>(null);
@@ -2148,6 +2154,30 @@ export default function EditorShell({
     (id: string) => selectElement("text", id),
     [selectElement],
   );
+
+  const revealCopilotFocus = useCallback((focus: DirectorPreviewFocus) => {
+    setPendingCopilotFocus({ ...focus });
+  }, []);
+
+  // Apply handlers enqueue this focus while they enqueue reducer/state updates.
+  // Running the reveal after React commits guarantees selection and transport
+  // read the new text/SFX/overlay state instead of the pre-apply render.
+  useEffect(() => {
+    if (!pendingCopilotFocus) return;
+    pausePlayback();
+    seekPlaybackTo(pendingCopilotFocus.seekS);
+    selectElement(pendingCopilotFocus.kind, pendingCopilotFocus.id, {
+      preserveOverlayTool: true,
+    });
+    setPendingCopilotFocus((current) =>
+      current === pendingCopilotFocus ? null : current,
+    );
+  }, [
+    pausePlayback,
+    pendingCopilotFocus,
+    seekPlaybackTo,
+    selectElement,
+  ]);
 
   const patchBar = useCallback(
     (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => {
@@ -3768,7 +3798,7 @@ export default function EditorShell({
   );
 
   const handleCopilotOps = useCallback(
-    (result: ApplyCopilotOpsResult): { undoVersion?: number } => {
+    (result: ApplyCopilotOpsResult): DirectorApplyPresentation => {
       if (result.renderRequest) {
         if (!readOnly && variant) {
           void editPlanItemVariant(itemId, variant.variant_id, {
@@ -3892,6 +3922,9 @@ export default function EditorShell({
             .filter((overlay) => JSON.stringify(beforeOverlayById.get(overlay.id)) !== JSON.stringify(overlay))
             .map((overlay) => overlay.id)
         : [];
+      const changedOverlay = result.nextOverlays?.find((overlay) =>
+        changedOverlayIds.includes(overlay.id),
+      ) ?? null;
       const addedSfx = result.nextSfx?.find((sfx) => !beforeSfxIds.has(sfx.id)) ?? null;
       flashCopilotTargets({
         textIds: feedback.textIds,
@@ -3904,17 +3937,14 @@ export default function EditorShell({
         ],
       });
 
-      if (addedSfx) {
-        pausePlayback();
-        seekPlaybackTo(addedSfx.at_s ?? 0);
-        selectElement("sfx", addedSfx.id, { preserveOverlayTool: true });
-      } else if (feedback.first) {
-        pausePlayback();
-        seekPlaybackTo(feedback.first.seekS);
-        selectElement(feedback.first.kind, feedback.first.id, { preserveOverlayTool: true });
-      }
+      const previewFocus: DirectorPreviewFocus | undefined = addedSfx
+        ? { kind: "sfx", id: addedSfx.id, seekS: addedSfx.at_s ?? 0 }
+        : feedback.first ?? (changedOverlay
+          ? { kind: "overlay", id: changedOverlay.id, seekS: changedOverlay.start_s }
+          : undefined);
+      if (previewFocus) revealCopilotFocus(previewFocus);
 
-      return { undoVersion: version };
+      return { undoVersion: version, previewFocus };
     },
     [
       clip.state.grid,
@@ -3923,11 +3953,9 @@ export default function EditorShell({
       localOverlays,
       localSfx,
       overlaySuggestions,
-      pausePlayback,
       readOnly,
+      revealCopilotFocus,
       router,
-      seekPlaybackTo,
-      selectElement,
       slots,
       state.bars,
       itemId,
@@ -3951,6 +3979,7 @@ export default function EditorShell({
     buildSnapshot: buildCopilotDraftSnapshot,
     applyOpsAtomic: applyDirectorDraftOps,
     onApplied: handleCopilotOps,
+    onRevealApplied: revealCopilotFocus,
     onGeneratedAssetReady: reloadClipTimeline,
   });
 

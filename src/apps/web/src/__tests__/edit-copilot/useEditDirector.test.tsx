@@ -216,7 +216,7 @@ describe("useEditDirector", () => {
     expect(result.current.error).toBe(DIRECTOR_CAPABILITY_MISMATCH_MESSAGE);
   });
 
-  it("accepts every non-overlapping recommendation from one review and applies each to preview state", async () => {
+  it("accepts every non-overlapping recommendation and retains an exact receipt for each", async () => {
     let current = snapshot();
     const review = [
       suggestion({ id: "director-text", title: "Sharper hook" }),
@@ -262,6 +262,9 @@ describe("useEditDirector", () => {
             ...changes,
             ...applied.applied.map((change) => change.label),
           ]);
+          return {
+            previewFocus: { kind: "text", id: "bar-1", seekS: 1 },
+          };
         },
       });
       return { director, previewChanges };
@@ -280,12 +283,67 @@ describe("useEditDirector", () => {
       "add_sfx",
     ]);
     expect(result.current.director.suggestions).toEqual([]);
+    expect(result.current.director.appliedReceipts).toEqual([
+      expect.objectContaining({
+        suggestionId: "director-text",
+        title: "Sharper hook",
+        changes: [{ label: "edit_text", from: "before", to: "preview" }],
+        previewFocus: { kind: "text", id: "bar-1", seekS: 1 },
+      }),
+      expect.objectContaining({
+        suggestionId: "director-title",
+        title: "Set a working title",
+        changes: [{ label: "set_title", from: "before", to: "preview" }],
+      }),
+      expect.objectContaining({
+        suggestionId: "director-sound",
+        title: "Add a hook sound",
+        changes: [{ label: "add_sfx", from: "before", to: "preview" }],
+      }),
+    ]);
 
     await act(async () => {
       jest.advanceTimersByTime(1200);
       await Promise.resolve();
     });
     expect(suggestionsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the recommendation visible when the editor cannot commit it", async () => {
+    const current = snapshot();
+    const recommendation = suggestion();
+    suggestionsMock.mockResolvedValue({
+      suggestions: [recommendation],
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    });
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: () => appliedResult(),
+        onApplied: () => {
+          throw new Error("editor reducer failed");
+        },
+      }),
+    );
+
+    await loadInitialReview();
+    act(() => result.current.accept(recommendation));
+
+    expect(result.current.suggestions).toEqual([recommendation]);
+    expect(result.current.appliedReceipts).toEqual([]);
+    expect(result.current.error).toContain("couldn't confirm");
+    expect(feedbackMock).not.toHaveBeenCalledWith(
+      "item-1",
+      "variant-1",
+      expect.objectContaining({ action: "accepted" }),
+    );
   });
 
   it("lets a manual refresh replace a visible review", async () => {
