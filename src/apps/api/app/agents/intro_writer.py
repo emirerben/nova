@@ -63,27 +63,46 @@ _REFUSAL_PATTERNS = (
 # quote_structural_failures. Deliberately NOT enforced in parse(): a false
 # positive would downgrade a good hook to the generic fallback (eng-review D3).
 # Patterns are lowercase and matched against _normalize_for_slop() output.
+# The abstract-transformation objects that make "changed my X" slop. A concrete
+# object ("changed my shirt") is a legitimate in-the-moment hook — codex review
+# finding #4 — so the my/our branches require one of these within 2 words.
+_ABSTRACT_OBJ = r"(?:life|lives|mind|world|perspective|mindset|outlook|view|thinking|approach)"
+
 _SLOP_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # EN — retrospective transformation / lesson framing
     (
         "en_changed_my",
-        re.compile(r"\bchanged\s+(?:my|our|everything)\b|\bchanged\s+the\s+way\s+(?:i|we)\b"),
+        re.compile(
+            r"\bchanged\s+(?:my|our)\s+(?:\w+\s+){0,2}" + _ABSTRACT_OBJ + r"\b"
+            r"|\bchanged\s+everything\b|\bchanged\s+the\s+way\s+(?:i|we)\b"
+        ),
     ),
-    ("en_shifted_my", re.compile(r"\b(?:shifted|transformed|reshaped)\s+(?:my|our)\b")),
+    (
+        "en_shifted_my",
+        re.compile(
+            r"\b(?:shifted|transformed|reshaped)\s+(?:my|our)\s+(?:\w+\s+){0,2}"
+            + _ABSTRACT_OBJ
+            + r"\b"
+        ),
+    ),
     ("en_taught_me", re.compile(r"\btaught\s+(?:me|us)\b")),
     ("en_made_realize", re.compile(r"\bmade\s+me\s+(?:realize|rethink|see|understand)\b")),
     ("en_opened_eyes", re.compile(r"\bopened\s+my\s+eyes\b")),
-    (
-        "en_perspective",
-        re.compile(r"\b(?:whole|new|entire)\s+(?:\w+\s+){0,2}(?:perspective|mindset|outlook)\b"),
-    ),
+    # Adjacent only — "new camera perspective" (a filming instruction) must NOT
+    # match; "a whole new perspective" claims do.
+    ("en_perspective", re.compile(r"\b(?:whole|new|entire)\s+(?:perspective|mindset|outlook)\b")),
     # TR — same class. Lowercase with explicit [ıi] classes; input is normalized
     # below (casefold alone breaks on Turkish İ — see _normalize_for_slop).
+    # Object precedes the verb in Turkish and adverbs sit between ("fikrimi
+    # tamamen değiştirdi") — codex review finding #5 — so allow 0-2 tokens.
     (
         "tr_degistirdi",
-        re.compile(r"\b(?:hayat[ıi]m[ıi]|bak[ıi]ş\s+aç[ıi]m[ıi]|her\s+şeyi)\s+değiştirdi\b"),
+        re.compile(
+            r"\b(?:hayat[ıi]m[ıi]z?[ıi]?|bak[ıi]ş\s+aç[ıi]m[ıi]z?[ıi]?|fikr[ıi]m[ıi]"
+            r"|dünyam[ıi]|her\s+şeyi)\s+(?:[\wçşğıöü]+\s+){0,2}değiştirdi\b"
+        ),
     ),
-    ("tr_ogretti", re.compile(r"\bbana\s+[\wçşğıöü\s]{0,24}öğretti\b")),
+    ("tr_ogretti", re.compile(r"\bbana\s+(?:[\wçşğıöü]+\s+){0,4}öğretti\b")),
 )
 
 _COMBINING_DOT_ABOVE = "̇"

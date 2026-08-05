@@ -11,7 +11,7 @@
 - **Runtime LLM calls per job: unchanged.** Still exactly one `overlay_format_matcher` + one `intro_writer` call per montage render; same model (`gemini-2.5-flash`), same `thinking_budget=512`, same output caps. All new guards are regexes and fixtures — free.
 - **Prompt length delta:** W1 adds ~100 input tokens per intro_writer call (~$0.00001/job at flash pricing — noise, noted for honesty).
 - **CI cost: zero.** Structural floor + guard test + fixtures run in replay mode, no network.
-- **One-time validation cost only:** the repo's prompt-change rule mandates live judge evals before merging any prompt bump. Minimized: iterate in replay/structural first, then ONE live shadow A/B pass (intro suite: 14 fixtures = 9 golden + 1 existing adversarial + 4 new; plus one matcher fixture) — ~$2-4, one-time, keyed machine. No recurring cost.
+- **One-time validation cost only:** the repo's prompt-change rule mandates live judge evals before merging any prompt bump. Minimized: iterate in replay/structural first, then ONE live judged pass (intro suite: 14 fixtures = 9 golden + 1 existing adversarial + 4 new; plus the matcher suite's 3 fixtures — the runner discovers all of them, codex review #2) — ~$2-5, one-time, keyed machine. No recurring cost.
 - **Legacy remediation (optional, W6):** clearing a slopped persisted intro forces ONE intro_writer re-run on the next re-render — ~$0.0001 per affected job, bounded by the scan's list, one-time.
 - **Explicitly rejected on spend grounds:** second-pass LLM critique/rewrite agent (~2x per-hook cost), model upgrade to a pro tier, thinking-budget increase.
 
@@ -251,14 +251,27 @@ Offline (this machine, CI — all free):
   live-eval rule below being followed on future prompt edits — green CI alone
   is not behavioral coverage.
 
-Live (keyed machine — REQUIRED before merge, prompt-change rule):
-- Shadow A/B: `NOVA_EVAL_MODE=live pytest tests/evals/test_intro_writer_evals.py
-  -v --eval-mode=live --with-judge --allow-cost --shadow-prompts-dir=prompts.candidate`
-  — candidate must not regress any golden fixture and must pass the 4 new
-  adversarial fixtures. If conflict fixtures still fail → escalate W1.4
+Live (keyed machine — REQUIRED before merge, prompt-change rule).
+**Procedure corrected per codex review #1** — on THIS branch `prompts/` already
+IS the candidate, so `--shadow-prompts-dir=prompts.candidate` would compare the
+new prompt against itself:
+- **Primary gate (absolute, on the branch checkout):**
+  `NOVA_EVAL_MODE=live pytest tests/evals/test_intro_writer_evals.py -v
+  --eval-mode=live --with-judge --allow-cost`
+  — judge avg ≥ 3.5 on ALL 14 fixtures (9 golden + injection + 4 new
+  adversarial). If a conflict fixture fails → escalate W1.4
   (conditional-pillar rewrite) and re-run once.
-- Run `test_overlay_format_matcher_evals.py` live once (its prompt_version
-  bumped via the bank tripwire; behavior should be unchanged — regression
+- **Comparative check (optional but recommended):** from a `main` checkout,
+  copy this branch's `write_intro_text.txt` into
+  `prompts.candidate/write_intro_text.txt` and run the same command with
+  `--shadow-prompts-dir=prompts.candidate` — primary = old prompt (baseline),
+  shadow = new prompt; per-fixture `Δ` must not be negative on goldens.
+  Caveat: the shadow overlay applies `.txt` prompts only, so the shadow run
+  sees the OLD exemplar bank — conservative for the candidate (it wins despite
+  the tainted exemplar).
+- Run `test_overlay_format_matcher_evals.py` live once — the suite runs all 3
+  matcher fixtures (codex review #2; spend note updated) — its prompt_version
+  bumped via the bank tripwire; behavior should be unchanged (regression
   check).
 
 Rollout: no feature flag — the prompt version IS the rollout; deploy ships it.

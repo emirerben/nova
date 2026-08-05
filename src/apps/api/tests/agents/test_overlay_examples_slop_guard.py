@@ -54,24 +54,44 @@ def test_every_recorded_intro_fixture_output_passes_slop_lint(fixture_path):
     assert not failures, (
         f"{fixture_path.name}: recorded output {text!r} matches slop patterns {failures}"
     )
+    # The eval runner replays raw_text through parse() — output.text is the
+    # decorative twin (codex review #3). Lint the raw side too so the fields
+    # can't diverge into a false green here while the runner sees slop.
+    raw = data.get("raw_text")
+    if isinstance(raw, str):
+        try:
+            raw_obj = json.loads(raw)
+        except ValueError:
+            raw_obj = None
+        raw_text_field = str(raw_obj.get("text") or "") if isinstance(raw_obj, dict) else ""
+        if raw_text_field:
+            raw_failures = slop_structural_failures(raw_text_field)
+            assert not raw_failures, (
+                f"{fixture_path.name}: raw_text {raw_text_field!r} matches slop "
+                f"patterns {raw_failures} (runner replays THIS, not output.text)"
+            )
 
 
 # The reported prod line — the signature of the whole class.
 _MONKEY_LINE = "the monkey changed my whole marketing perspective"
 
 _SLOP_POSITIVES = [
-    (_MONKEY_LINE, {"en_changed_my", "en_perspective"}),
+    (_MONKEY_LINE, {"en_changed_my"}),
     ("this trip changed everything for us", {"en_changed_my"}),
     ("what this valley taught me about patience", {"en_taught_me"}),
     ("this morning made me realize what matters", {"en_made_realize"}),
     ("one bite reshaped my whole mindset", {"en_shifted_my", "en_perspective"}),
     ("this view opened my eyes", {"en_opened_eyes"}),
+    ("a whole new perspective on mornings", {"en_perspective"}),
     # Transformation claim on purpose — even a plausible-sounding hook in this
     # frame is banned; the prompt should say "berlin at 6am was not the plan".
     ("changed my mind about berlin", {"en_changed_my"}),
     ("bu rutin hayatımı değiştirdi", {"tr_degistirdi"}),
     ("bu sabah bakış açımı değiştirdi", {"tr_degistirdi"}),
+    # Adverb between object and verb + generic objects (codex review #5).
+    ("bu maymun fikrimi tamamen değiştirdi", {"tr_degistirdi"}),
     ("bu yolculuk bana sabrı öğretti", {"tr_ogretti"}),
+    ("bu gezi bana pazarlama hakkında çok şey öğretti", {"tr_ogretti"}),
 ]
 
 _CLEAN_NEGATIVES = [
@@ -81,6 +101,10 @@ _CLEAN_NEGATIVES = [
     "thirty euro hostel and a view like this",
     "this is what my tuesdays look like now",
     "the before nobody posted",
+    # Concrete objects after my/our are legitimate hooks (codex review #4).
+    "i changed my shirt in five seconds",
+    "shifted my bag to the other shoulder",
+    "try this new camera perspective",
     # Word-boundary traps (outside-voice #6): "my/our" must be whole words.
     "changed myth night at the hostel",
     "shifted mystery tour starts now",
