@@ -1,6 +1,6 @@
 # 015 — Intro-writer anti-slop: kill the "the monkey changed my whole marketing perspective" class
 
-**Status:** TODO
+**Status:** IN PROGRESS — implemented on PR #780; merge blocked on T5 (live judge shadow A/B, keyed machine)
 **Planned at:** `fdfaaab8` (2026-08-05)
 **Origin:** /investigate session 2026-08-05 (root cause verified static; learning key `intro-writer-persona-glue-slop`)
 **Priority:** P1 — burned-on-screen output quality on the highest-traffic prompt in the repo
