@@ -48,6 +48,16 @@ If any operation is invalid or stale, no part of the bundle is applied.
 Successful acceptance creates one editor-history checkpoint; the user still
 uses the existing Undo and Save controls.
 
+After React commits the accepted draft state, the editor pauses playback,
+seeks to and selects the first affected text, clip, sound, or overlay, then
+scrolls the next actionable recommendation into view. Each acceptance also
+leaves an in-session receipt with the exact applied deltas and a replay action.
+Receipts carry the editor-history version that created them; Undo, Redo, or any
+later edit marks older receipts as changed and disables replay rather than
+pretending their original target is still current. If the editor apply callback
+fails, Director keeps the recommendation visible and does not record accepted
+feedback or create a receipt.
+
 A returned review remains stable while the user works through its cards, so
 accepting one non-overlapping recommendation does not invalidate the rest.
 Destructive operations compare a local-only fingerprint of the complete target
