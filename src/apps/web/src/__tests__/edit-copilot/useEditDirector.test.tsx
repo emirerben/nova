@@ -10,6 +10,7 @@ import {
   type EditorSuggestion,
 } from "@/lib/plan-api";
 import {
+  DIRECTOR_CAPABILITY_MISMATCH_MESSAGE,
   directorSnapshotRevision,
   useEditDirector,
 } from "@/lib/edit-copilot/useEditDirector";
@@ -146,6 +147,12 @@ describe("useEditDirector", () => {
     await loadInitialReview();
     expect(result.current.suggestions).toHaveLength(2);
     expect(result.current.modelUsed).toBe("gemini-3.1-pro-preview");
+    expect(suggestionsMock).toHaveBeenCalledWith(
+      "item-1",
+      "variant-1",
+      expect.objectContaining({ omni_enabled: false }),
+      expect.any(AbortSignal),
+    );
 
     act(() => result.current.accept(first));
     expect(applyOpsAtomic).toHaveBeenCalledWith(first.ops, current);
@@ -163,6 +170,50 @@ describe("useEditDirector", () => {
       await Promise.resolve();
     });
     expect(suggestionsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces an old-server Omni-only response instead of silently showing an empty rail", async () => {
+    const current = snapshot();
+    const omni = suggestion({
+      id: "director-omni",
+      apply_mode: "omni_async",
+      ops: [],
+      omni: {
+        action: "generate_insert",
+        prompt: "A restrained visual bridge",
+        insert_at_s: 2,
+        duration_s: 4,
+        source_clip_index: null,
+        source_start_s: null,
+        source_end_s: null,
+        reference_clip_index: null,
+        reference_frame_s: null,
+      },
+    });
+    suggestionsMock.mockResolvedValue({
+      suggestions: [omni],
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    });
+
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: jest.fn(() => appliedResult()),
+        onApplied: jest.fn(),
+      }),
+    );
+
+    await loadInitialReview();
+
+    expect(result.current.suggestions).toEqual([]);
+    expect(result.current.error).toBe(DIRECTOR_CAPABILITY_MISMATCH_MESSAGE);
   });
 
   it("accepts every non-overlapping recommendation from one review and applies each to preview state", async () => {
@@ -545,6 +596,12 @@ describe("useEditDirector", () => {
     );
 
     await loadInitialReview();
+    expect(suggestionsMock).toHaveBeenCalledWith(
+      "item-1",
+      "variant-1",
+      expect.objectContaining({ omni_enabled: true }),
+      expect.any(AbortSignal),
+    );
     act(() => result.current.accept(omni));
     await act(async () => {
       await Promise.resolve();

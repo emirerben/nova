@@ -1041,14 +1041,27 @@ describe("Director editor operations", () => {
     );
     expect(sound.rejected).toEqual([]);
 
+    const timeline = applyCopilotOpsAtomic(
+      [{ op: "set_clip_duration", slot_index: 0, duration_s: 1.5 }],
+      {
+        ...source,
+        bars,
+        title: title.nextTitle ?? source.title,
+        sfx: sound.nextSfx ?? source.sfx,
+      },
+    );
+    expect(timeline.rejected).toEqual([]);
+
     expect({
       text: bars[0].text,
       title: title.nextTitle,
       sfx: sound.nextSfx?.map((item) => item.sound_effect_id),
+      firstClipDuration: timeline.nextSlots?.[0].durationS,
     }).toEqual({
       text: "A sharper hook",
       title: "Building Nova",
       sfx: ["effect-1", "effect-1"],
+      firstClipDuration: 1.5,
     });
   });
 

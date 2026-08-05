@@ -210,6 +210,7 @@ export function editDirectorSuggestions(
     snapshot: CopilotSnapshot;
     snapshot_revision: string;
     dismissed_suggestion_ids: string[];
+    omni_enabled: boolean;
   },
   signal?: AbortSignal,
 ): Promise<EditDirectorSuggestionsResponse> {

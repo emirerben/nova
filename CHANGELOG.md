@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.4.0] — 2026-08-05
+
+### Fixed
+- **Nova's editor review now keeps every usable recommendation, even when the model returns a smaller batch.** One to five valid cards appear instead of the whole review failing because a sibling card was malformed or the response covered too few categories.
+- **Every recommendation shown in one review can now be accepted against that same draft.** Nova avoids combining timeline edits that would stale one another and keeps generated-video work separate from instant recommendations.
+- **Omni recommendations are now negotiated between the web editor and API.** Mixed-version deployments can no longer return an Omni-only batch that the current editor silently filters into an empty recommendation rail.
+
 ## [0.23.3.0] — 2026-08-04
 
 ### Fixed
