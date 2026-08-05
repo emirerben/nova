@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
+from app.agents.edit_director import EditorSuggestion
 from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
@@ -92,11 +94,39 @@ def _director_body() -> dict:
 
 def _director_response() -> DirectorSuggestionsResponse:
     return DirectorSuggestionsResponse(
-        suggestions=[],
+        suggestions=[
+            EditorSuggestion(
+                id="director-1",
+                category="text",
+                title="Sharpen the opening promise",
+                rationale="Make the first beat create a clearer question.",
+                expected_benefit="More curiosity in the opening second.",
+                confidence=0.9,
+                start_s=0,
+                end_s=1,
+                ops=[{"op": "set_title", "title": "A clearer promise"}],
+            )
+        ],
         snapshot_revision="revision-1",
         requested_model="gemini-3.1-pro-preview",
         model_used="gemini-3.1-pro-preview",
     )
+
+
+def test_director_response_enforces_one_to_five_suggestions() -> None:
+    one = _director_response()
+    five_suggestions = [
+        one.suggestions[0].model_copy(update={"id": f"director-{index}"}) for index in range(5)
+    ]
+
+    five = one.model_copy(update={"suggestions": five_suggestions})
+    assert len(DirectorSuggestionsResponse.model_validate(five.model_dump()).suggestions) == 5
+
+    for invalid_suggestions in ([], [*five_suggestions, five_suggestions[0]]):
+        payload = one.model_dump()
+        payload["suggestions"] = invalid_suggestions
+        with pytest.raises(ValidationError):
+            DirectorSuggestionsResponse.model_validate(payload)
 
 
 def test_director_routes_require_authentication(client: TestClient) -> None:

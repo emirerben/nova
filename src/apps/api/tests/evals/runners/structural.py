@@ -1754,15 +1754,12 @@ def check_edit_director(
     failures: list[str] = []
     suggestions = output.suggestions
     total = float(input.variant_snapshot.get("total_duration_s") or 0.0)
-    if not 3 <= len(suggestions) <= 5:
-        failures.append(f"suggestions has {len(suggestions)} items, expected 3-5")
+    if not 1 <= len(suggestions) <= 5:
+        failures.append(f"suggestions has {len(suggestions)} items, expected 1-5")
     if len({item.id for item in suggestions}) != len(suggestions):
         failures.append("suggestion ids are not unique")
     if len({item.title.casefold() for item in suggestions}) != len(suggestions):
         failures.append("suggestion titles are duplicated")
-    if len({item.category for item in suggestions}) < min(3, len(suggestions)):
-        failures.append("suggestions cover fewer than three creative categories")
-
     for index, item in enumerate(suggestions):
         if item.start_s > item.end_s:
             failures.append(f"suggestion {index}: start_s is after end_s")

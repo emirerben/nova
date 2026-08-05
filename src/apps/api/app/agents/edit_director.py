@@ -66,7 +66,7 @@ class EditDirectorInput(BaseModel):
 
 
 class EditDirectorOutput(BaseModel):
-    suggestions: list[EditorSuggestion] = Field(min_length=3, max_length=5)
+    suggestions: list[EditorSuggestion] = Field(min_length=1, max_length=5)
 
 
 def _clean_text(value: object, *, max_chars: int) -> str:
@@ -104,6 +104,21 @@ def _suggestion_id(category: str, ops: list[dict], omni: dict | None) -> str:
 def _operation_targets(op: dict) -> set[str]:
     """Return stable edit targets used to suppress contradictory suggestion cards."""
     name = str(op.get("op") or "")
+    # Clip structure, timing, and transitions share one compatibility domain.
+    # A reorder changes slot indices; a removal/split changes adjacency; and a
+    # duration edit shifts downstream output windows. The browser correctly
+    # rejects a later card whose original snapshot no longer describes that
+    # timeline, so Director must never put two such cards in one accept-all
+    # batch even when their nominal slot indices differ.
+    if name in {
+        "set_clip_duration",
+        "set_clip_in",
+        "reorder_clip",
+        "remove_clip",
+        "split_clip",
+        "set_transition",
+    }:
+        return {"timeline:any"}
     if "bar_index" in op:
         return {f"text:{op['bar_index']}"}
     if "cue_index" in op:
@@ -114,10 +129,6 @@ def _operation_targets(op: dict) -> set[str]:
         return {f"overlay:{op['overlay_index']}"}
     if "camera_effect_index" in op:
         return {f"camera:{op['camera_effect_index']}"}
-    if "boundary_index" in op:
-        return {f"transition:{op['boundary_index']}"}
-    if name == "reorder_clip":
-        return {"timeline:order"}
     if "slot_index" in op:
         return {f"slot:{op['slot_index']}"}
     if name == "add_text":
@@ -191,6 +202,7 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
         dismissed = set(input.dismissed_suggestion_ids)
         total = max(0.0, float(input.variant_snapshot.get("total_duration_s") or 0.0))
         parsed: list[EditorSuggestion] = []
+        selected_apply_mode: str | None = None
         seen: set[str] = set()
         seen_titles: set[str] = set()
         seen_targets: set[str] = set()
@@ -278,6 +290,16 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
             else:
                 continue
 
+            # A generated card is bound to the complete source revision. Any
+            # instant accept changes that revision, and completing one Omni
+            # card changes it for every other Omni card. Keep each returned
+            # rail homogeneous, with at most one asynchronous card, so every
+            # card shown can be accepted from the same review.
+            if selected_apply_mode is not None and apply_mode != selected_apply_mode:
+                continue
+            if apply_mode == "omni_async" and selected_apply_mode == "omni_async":
+                continue
+
             try:
                 confidence = max(0.0, min(1.0, float(raw.get("confidence", 0.7))))
                 start_s = max(0.0, float(raw.get("start_s", 0.0)))
@@ -291,22 +313,23 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
             suggestion_id = _suggestion_id(category, ops, omni_raw)
             if suggestion_id in dismissed or suggestion_id in seen:
                 continue
-            targets = (
-                {
-                    (
-                        f"omni-source:{omni.source_clip_index}"
-                        if omni.action == "restyle_segment"
-                        else "omni-insert"
-                    )
-                }
-                if omni is not None
-                else set().union(*(_operation_targets(op) for op in ops))
-            )
+            targets: set[str] = {"omni:any"} if omni is not None else set()
+            intra_card_conflict = False
+            if omni is None:
+                for op in ops:
+                    op_targets = _operation_targets(op)
+                    if targets & op_targets:
+                        intra_card_conflict = True
+                        break
+                    targets.update(op_targets)
+            if intra_card_conflict:
+                continue
             if targets & seen_targets:
                 continue
             seen.add(suggestion_id)
             seen_titles.add(title_key)
             seen_targets.update(targets)
+            selected_apply_mode = apply_mode
             parsed.append(
                 EditorSuggestion(
                     id=suggestion_id,
@@ -325,10 +348,12 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
             if len(parsed) == 5:
                 break
 
-        if len(parsed) < 3:
-            raise SchemaError(f"edit_director: expected 3 valid suggestions, got {len(parsed)}")
-        if len({item.category for item in parsed}) < 3:
-            raise SchemaError("edit_director: suggestions must cover at least 3 categories")
+        # Diversity and a 3-5 card rail are prompt-level quality goals. They
+        # cannot be response-wide validity gates after per-card filtering:
+        # discarding two useful, independently applicable cards turns a
+        # partial model miss into an empty rail and a 502 for the creator.
+        if not parsed:
+            raise SchemaError("edit_director: expected at least 1 valid suggestion, got 0")
         return EditDirectorOutput(suggestions=parsed)
 
     def schema_clarification(self) -> str:

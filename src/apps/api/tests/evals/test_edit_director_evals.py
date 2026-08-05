@@ -7,13 +7,54 @@ from pathlib import Path
 import pytest
 
 from app.agents._runtime import ModelClient, ModelInvocation
+from app.agents.edit_director import (
+    EditDirectorInput,
+    EditDirectorOutput,
+    EditorSuggestion,
+)
 from app.config import settings
 
 from .runners.eval_runner import discover_fixtures, load_fixture, run_eval
+from .runners.structural import check_edit_director
 
 AGENT_DIR = "edit_director"
 AGENT_NAME = "nova.edit.director"
 FIXTURE_PATHS = discover_fixtures(AGENT_DIR)
+
+
+def _suggestion(*, suggestion_id: str, title: str, ops: list[dict]) -> EditorSuggestion:
+    return EditorSuggestion(
+        id=suggestion_id,
+        category="text",
+        title=title,
+        rationale="The current wording can communicate the editorial intent more clearly.",
+        expected_benefit="Makes the opening easier to understand.",
+        confidence=0.9,
+        start_s=0.0,
+        end_s=2.0,
+        ops=ops,
+    )
+
+
+def test_structural_eval_accepts_partial_director_result() -> None:
+    """The eval contract must match the runtime's salvageable 1-5 card rail."""
+    output = EditDirectorOutput(
+        suggestions=[
+            _suggestion(
+                suggestion_id="director-title",
+                title="Clarify the working title",
+                ops=[{"op": "set_title", "title": "A clearer title"}],
+            ),
+            _suggestion(
+                suggestion_id="director-hook",
+                title="Sharpen the opening promise",
+                ops=[{"op": "edit_text", "bar_index": 0, "text": "Wait for the reveal"}],
+            ),
+        ]
+    )
+    input_data = EditDirectorInput(variant_snapshot={"total_duration_s": 9.0})
+
+    assert check_edit_director(output, input_data) == []
 
 
 class _ModelOverrideClient(ModelClient):

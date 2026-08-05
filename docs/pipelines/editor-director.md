@@ -20,9 +20,18 @@ accepted and dismissed suggestion IDs.
 
 `POST /plan-items/{item_id}/variants/{variant_id}/director/suggestions` accepts
 the complete unsaved editor snapshot plus a snapshot revision and up to 30
-dismissed suggestion IDs. It returns three to five ranked suggestions. The
+dismissed suggestion IDs. An optional `omni_enabled` capability defaults to
+false. The prompt still asks for three to five ranked suggestions across varied
+categories, but the API returns every valid non-conflicting card that survives
+per-card validation, from one to five, instead of failing the whole review. The
 endpoint is authenticated, ownership-checked, editability-checked, size-limited
 to 20 KB, rate-limited, and gated by `EDIT_DIRECTOR_ENABLED`.
+
+Returned instant cards target mutually compatible edit domains. Director keeps
+at most one clip-timeline mutation in a batch because timing, order, removal,
+split, and transition edits can stale one another's slot windows. Omni reviews
+are homogeneous and contain exactly one asynchronous card; they are never mixed
+with instant cards tied to the same source revision.
 
 The editor requests its initial review after the complete editor snapshot has
 settled, then tracks the full snapshot hash rather than only the undo-history
@@ -72,7 +81,10 @@ persisted transitions unless `EDIT_TRANSITIONS_ENABLED=true`.
 ## Omni generated assets
 
 Omni is a separate optional renderer, never a structured planner. It is gated by
-`OMNI_GENERATED_VIDEO_ENABLED=false` and its matching frontend flag.
+`OMNI_GENERATED_VIDEO_ENABLED=false` and its matching frontend flag. Director
+may emit Omni cards only when the server flag and the requesting client's
+`omni_enabled` capability are both true, so mixed-version rollouts cannot return
+an Omni-only review that the browser must hide.
 
 Supported actions are:
 
