@@ -611,11 +611,32 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 **Priority:** P3
 
 ### Clip notes → intro_writer (overlay text uses creator context)
+**Status update (2026-08-05, plans/015 eng review):** SHIPPED — `$clip_notes` landed in `write_intro_text.txt` at prompt_version 2026-06-18 (WS5); `IntroWriterInput.clip_notes` exists and `_run_text_agents` threads it. Verify and remove this entry.
 **What:** `all_candidates["clip_notes"]` already rides every plan-item render job (gcs_path → note). Thread it into `intro_writer`'s prompt so overlay/hook text can use facts like "famous vegan restaurant in Buenos Aires".
 **Why:** Deferred at eng review: intro_writer is the highest-traffic prompt and the prompt-change rule requires live evals — a rushed bump risks hook quality for a nice-to-have. Data is already plumbed; this is prompt-only work.
 **Depends on:** intro_writer live-eval run budget.
 **Effort:** S (CC: ~30min + eval run)
 **Priority:** P2
+
+### sequence_quote_writer anti-slop pass (plans/015 follow-up)
+**What:** Run the plans/015 treatment (pattern-class review, conflict fixtures, rubric calibration) over `sequence_quote_writer` — the rhythm-mode quote agent that shares the same persona/theme/idea inputs as intro_writer (`generative_build.py:7073`).
+**Why:** Same persona-glue channel, same slop risk — but its product surface is deliberately aphorism-like, so the transformation-frame ban may be WRONG there; it needs its own rubric judgment, not a copy-paste of 015. plans/015's W6 scanner reports on persisted `sequence_quote` values (report-only) to size the problem first.
+**Pros:** Closes the remaining persona-glue surface; scanner output arrives free with 015.
+**Cons:** Prompt-change rule means another one-time live-eval spend; rubric design is genuinely different (quotes may legitimately be reflective).
+**Context:** plans/015-intro-writer-anti-slop.md "NOT in scope"; investigation learning `intro-writer-persona-glue-slop` (2026-08-05).
+**Depends on:** plans/015 landed; W6 scan output.
+**Effort:** M (CC: ~30min + eval run)
+**Priority:** P2
+
+### Plan-footage mismatch detection (plans/015 outside-voice #10)
+**What:** Detect when uploaded footage has nothing to do with the plan item's theme/pillars (the "marketing plan item, monkey footage" case) and surface it — to the user ("this footage doesn't match the planned idea") and/or the planner (feedback loop).
+**Why:** plans/015 makes the HOOK honest (footage-only when persona can't be honored), but the rendered video then silently stops serving the plan item it was generated for — nobody is told the plan and the footage diverged. That's a product gap, not a prompt gap.
+**Pros:** Turns a silent quality failure into an actionable signal; detection can piggyback on existing clip metadata + persona context already in the job (zero recurring model spend if done with embeddings/keyword overlap, or amortized into the existing clip-analysis call).
+**Cons:** UX design needed (when/how to tell the user); mismatch scoring threshold needs tuning against real jobs.
+**Context:** plans/015-intro-writer-anti-slop.md "NOT in scope" + GSTACK REVIEW REPORT outside-voice finding #10; W6 scan + one-time live-judge notes provide the first labeled examples.
+**Depends on:** plans/015 W6 scan output.
+**Effort:** M-L
+**Priority:** P3
 
 ## Light editorial system — follow-up work
 

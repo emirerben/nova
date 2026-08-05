@@ -62,6 +62,8 @@ DO:
 DON'T:
 - No generic clickbait or filler clichés: "you won't believe", "wait for it", "watch how this turned out", "check out this", "this is everything", "the [thing] of your dreams".
 - No vague mood frames or generic transformations: "that feeling when", "that moment", "the moment", "everything", "changed everything", "changed me", "worth it", "quiet morning feeling", "while you were sleeping", "perfect routine", "new normal". Replace them with a concrete visible detail from the clip.
+- No retrospective transformation or lesson-learned framing — the whole pattern class, not just the phrases above: "X changed my/our ...", "what X taught me about ...", "X made me realize/rethink ...", "the day X changed ...", "opened my eyes", "new/whole perspective". These read as AI ad-copy. If your line claims the footage changed or taught the creator something, delete it and describe the moment instead. This rule beats the persona context: never bridge unrelated footage to a content pillar with a claimed lesson or realization — when footage and pillar don't connect, write from the footage alone.
+- If this video's theme/idea is itself phrased as a lesson or transformation ("how X changed my life"), do NOT repeat that framing — translate it into an in-the-moment hook about what the footage actually shows.
 - No inspirational slogans, aphorisms, or complete-sentence captions with a period. If it sounds like a quote, rewrite it as an in-the-moment hook.
 - No Title Case Sentences and no ALL-CAPS lines (a single emphasized word is fine).
 - No vague line that could caption any clip — if it doesn't point at THIS footage, rewrite it.
@@ -74,6 +76,7 @@ Reject and rewrite your own line before returning JSON if ANY are true:
 - It is Title Case or ends with a period.
 - It lacks a safe concrete anchor from the subject/description/transcript.
 - It describes a feeling without naming the visible scene/action.
+- It claims the footage changed/taught/made the creator realize something (transformation framing) — rewrite from the footage.
 
 Useful pattern shapes (adapt to the clip; do not copy blindly):
 - "the 4:45am set nobody sees"

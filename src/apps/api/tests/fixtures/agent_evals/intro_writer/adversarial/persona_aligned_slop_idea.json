@@ -1,0 +1,63 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-08-05",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 5.0,
+      "subject": "person finishing a heavy barbell set in a garage gym at dawn",
+      "hook_text": "",
+      "hook_score": 6.5,
+      "energy": 5.0,
+      "description": "dim garage gym, person racks the bar after a hard set, chalk dust in the air, first light through the door"
+    },
+    "hero_transcript": "day thirty, same bar, still heavy",
+    "tone": "high-energy, no-excuses gym motivation; talks like a tough-love trainer friend",
+    "content_pillars": [
+      "morning workout routines",
+      "discipline over motivation",
+      "home gym setups"
+    ],
+    "theme": "finishing the 30-day challenge",
+    "idea": "share how the gym changed my life this month",
+    "form": {
+      "effect": "karaoke-line",
+      "size_class": "jumbo",
+      "position": "center"
+    },
+    "exemplars": [
+      {
+        "id": "pov-surprise-karaoke-01",
+        "content_profile": "first-person POV, high energy, a surprising reveal or unexpected outcome",
+        "effect": "karaoke-line",
+        "text": "i did NOT expect this to happen",
+        "highlight_word": "NOT",
+        "position": "center",
+        "size_class": "jumbo",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A"
+      },
+      {
+        "id": "milestone-emotional-fadein-01",
+        "content_profile": "milestone or sentimental moment, family, celebration, emotional payoff",
+        "effect": "fade-in",
+        "text": "a year ago this felt impossible",
+        "highlight_word": "impossible",
+        "position": "center",
+        "size_class": "large",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFE08A"
+      }
+    ]
+  },
+  "raw_text": "{\"text\": \"day 30 and the bar is still heavy\", \"highlight_word\": \"still\"}",
+  "output": {
+    "text": "day 30 and the bar is still heavy",
+    "highlight_word": "still"
+  },
+  "meta": {
+    "source": "hand_authored_adversarial",
+    "case": "ALIGNED PERSONA + SLOP-FRAMED IDEA (eng-review D5 / outside-voice route 2) — the planner idea itself uses the transformation frame ('how the gym changed my life'). Wrong output echoes it. Correct: translate to an in-the-moment hook grounded in the footage; persona stays honored (gym/discipline), framing does not leak."
+  }
+}

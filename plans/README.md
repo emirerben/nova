@@ -20,6 +20,7 @@ Feature/incident plans written after the June audit (005-013 live alongside; onl
 | Plan | Title | Status |
 |------|-------|--------|
 | 014 | Synchronous job registration for plan-item Generate (frozen "Starting…" incident, 2026-08-04) | DONE |
+| 015 | Intro-writer anti-slop: pattern-class ban + exemplar guard + conflict evals (monkey/marketing incident, 2026-08-05) | IN PROGRESS (PR #780; blocked on T5 live judge run) |
 
 ## Dependency notes
 

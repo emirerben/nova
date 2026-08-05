@@ -264,10 +264,13 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # (ultrashort-aesthetic-clip 6-10s sweet spot, event-community-reach vi=64x discovery spike).
     # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
     # Persona/content plan bumped to 2026-07-11-kria: product rename only; banks untouched.
+    # Intro bumped to 2026-08-05: anti-slop pattern-class ban + translate-don't-echo
+    #                  (plans/015 — monkey/marketing incident); banks untouched here
+    #                  (success-factor bank unchanged; overlay bank moved separately).
     assert success_factors_version() == "2026-06-14"
     assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-08-05"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -293,9 +296,15 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  consuming-agent prompt change with no bank-content edit, so
     #                  only the matcher's own prompt_version moves; library_version()
     #                  is untouched.
-    assert library_version() == "2026-06-14"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-07-17"
+    # Bump 2026-08-05: anti-slop exemplar retext (plans/015) — transformation-before-
+    #                  after-karaoke-01 no longer demonstrates the banned "changed
+    #                  everything" frame (prompt/exemplar drift from PR #338/#507);
+    #                  bank content edit, so BOTH consuming agents bump. Guard:
+    #                  tests/agents/test_overlay_examples_slop_guard.py now lints
+    #                  every exemplar against the slop pattern class.
+    assert library_version() == "2026-08-05"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-08-05"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-08-05"
 
 
 @pytest.mark.parametrize(

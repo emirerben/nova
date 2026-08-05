@@ -1,0 +1,64 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-08-05",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 5.0,
+      "subject": "person hand-rolling fresh pasta in a small kitchen at night",
+      "hook_text": "",
+      "hook_score": 6.5,
+      "energy": 5.0,
+      "description": "warm kitchen light, flour everywhere, close-up of hands rolling and cutting pasta dough, relaxed pace"
+    },
+    "hero_transcript": "okay it's midnight but we're making pasta from scratch",
+    "tone": "high-energy, no-excuses gym motivation; talks like a tough-love trainer friend",
+    "content_pillars": [
+      "morning workout routines",
+      "discipline over motivation",
+      "home gym setups"
+    ],
+    "theme": "week 2 of the 30-day discipline challenge",
+    "idea": "film the daily training habit that keeps the streak alive",
+    "form": {
+      "effect": "fade-in",
+      "size_class": "large",
+      "position": "center"
+    },
+    "exemplars": [
+      {
+        "id": "comedy-relatable-static-01",
+        "content_profile": "comedic, relatable everyday chaos, candid or self-deprecating",
+        "effect": "static",
+        "text": "nobody warned me about this part",
+        "highlight_word": "nobody",
+        "position": "top",
+        "size_class": "large",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FF6B6B"
+      },
+      {
+        "id": "food-night-cluster-01",
+        "content_profile": "food, nightlife, or city lifestyle moment where one short hook sells the sensory payoff",
+        "effect": "fade-in",
+        "text": "this bite changed plans",
+        "highlight_word": "bite",
+        "position": "center",
+        "size_class": "large",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFE08A",
+        "layout": "cluster"
+      }
+    ]
+  },
+  "raw_text": "{\"text\": \"pov: the pasta won tonight\", \"highlight_word\": \"pasta\"}",
+  "output": {
+    "text": "pov: the pasta won tonight",
+    "highlight_word": "pasta"
+  },
+  "meta": {
+    "source": "hand_authored_adversarial",
+    "case": "PERSONA-FOOTAGE CONFLICT — fitness persona + midnight-pasta footage. Wrong output glues the discipline theme onto cooking ('what pasta taught me about discipline'). Correct: footage-only, in-the-moment, playful; no lesson bridge."
+  }
+}
