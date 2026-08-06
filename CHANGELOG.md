@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.7.1] — 2026-08-06
+
+### Fixed
+- **AI-authored carousel moments are always dynamic now.** The director no longer picks the static "stills" mode for auto-authored moments — every authored moment either plays live video in all tiles (rolling) or runs the center-tile-expands-to-fullscreen focus choreography, with focus now the clear favorite (65%). Stills remains available for explicitly-configured moments only. (First live prod job rolled stills and read as a broken moment — this closes that.)
+
 ## [0.23.7.0] — 2026-08-06
 
 ### Added

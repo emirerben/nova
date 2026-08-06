@@ -84,14 +84,23 @@ def _clips(
 def test_mode_weights_qualified_includes_focus():
     clips = _clips(3.0, 3.0, 3.0)
     weights = director._mode_weights(clips)
-    assert weights == {"focus": 0.5, "rolling": 0.35, "stills": 0.15}
+    assert weights == {"focus": 0.65, "rolling": 0.35}
+
+
+def test_mode_weights_qualified_never_includes_stills():
+    # Stills excluded from AUTO authoring per product decision 2026-08-06 —
+    # the weight table itself must not carry a "stills" key, regardless of
+    # what allowed_modes a caller later passes.
+    clips = _clips(3.0, 3.0, 3.0)
+    weights = director._mode_weights(clips)
+    assert "stills" not in weights
 
 
 def test_mode_weights_unqualified_excludes_focus_too_few_clips():
     clips = _clips(3.0, 3.0)  # only 2 clips
     weights = director._mode_weights(clips)
     assert "focus" not in weights
-    assert weights == {"rolling": 0.6, "stills": 0.4}
+    assert weights == {"rolling": 1.0}
 
 
 def test_mode_weights_unqualified_excludes_focus_short_clip():
@@ -100,11 +109,27 @@ def test_mode_weights_unqualified_excludes_focus_short_clip():
     assert "focus" not in weights
 
 
+def test_mode_weights_unqualified_never_includes_stills():
+    clips = _clips(3.0, 3.0)  # only 2 clips -> unqualified table
+    weights = director._mode_weights(clips)
+    assert "stills" not in weights
+
+
 def test_short_clips_never_get_focus_across_many_seeds():
     clips = _clips(1.0, 1.5, 2.0)
     for seed in range(50):
         spec = director.direct_carousel_moment(clips, seed=seed)
         assert spec.mode != "focus"
+
+
+def test_short_clips_always_resolve_to_rolling_default_allowed_modes():
+    # Rolling has no minimum-duration/minimum-count floor, so with stills
+    # excluded from the weight tables a too-short/too-few clip pool must
+    # always resolve to rolling — never raise, never silently drop the mode.
+    clips = _clips(1.0, 1.5)
+    for seed in range(50):
+        spec = director.direct_carousel_moment(clips, seed=seed)
+        assert spec.mode == "rolling"
 
 
 # ── effect rules ─────────────────────────────────────────────────────────
