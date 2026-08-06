@@ -11,7 +11,7 @@ import {
   type EditorSuggestion,
   type OmniAssetResponse,
 } from "@/lib/plan-api";
-import type { ApplyCopilotOpsResult } from "./apply-ops";
+import type { ApplyCopilotOpsResult, ChangeChip } from "./apply-ops";
 import type { CopilotSnapshot } from "./snapshot";
 import { isFeatureUnavailable } from "./availability";
 
@@ -25,7 +25,8 @@ export interface UseEditDirectorOptions {
     ops: EditorSuggestion["ops"],
     snapshot: CopilotSnapshot,
   ) => ApplyCopilotOpsResult;
-  onApplied: (result: ApplyCopilotOpsResult) => { undoVersion?: number } | void;
+  onApplied: (result: ApplyCopilotOpsResult) => DirectorApplyPresentation | void;
+  onRevealApplied?: (focus: DirectorPreviewFocus) => void;
   onGeneratedAssetReady?: () => void | Promise<void>;
 }
 
@@ -36,8 +37,31 @@ export interface DirectorGenerationState {
   progress: number;
 }
 
+export interface DirectorPreviewFocus {
+  kind: "text" | "clip" | "sfx" | "overlay";
+  id: string;
+  seekS: number;
+}
+
+export interface DirectorApplyPresentation {
+  undoVersion?: number;
+  previewFocus?: DirectorPreviewFocus;
+}
+
+export interface DirectorAppliedReceipt {
+  id: string;
+  suggestionId: string;
+  title: string;
+  startS: number;
+  endS: number;
+  changes: ChangeChip[];
+  undoVersion?: number;
+  previewFocus?: DirectorPreviewFocus;
+}
+
 export interface UseEditDirectorResult {
   suggestions: EditorSuggestion[];
+  appliedReceipts: DirectorAppliedReceipt[];
   loading: boolean;
   error: string | null;
   /** The API cannot serve director reviews at all; polling has been stopped. */
@@ -48,6 +72,7 @@ export interface UseEditDirectorResult {
   refresh: () => void;
   accept: (suggestion: EditorSuggestion) => void;
   dismiss: (suggestion: EditorSuggestion) => void;
+  revealApplied: (receipt: DirectorAppliedReceipt) => void;
   cancelGeneration: () => void;
 }
 
@@ -84,6 +109,7 @@ export const DIRECTOR_UNAVAILABLE_MESSAGE =
 export const DIRECTOR_CAPABILITY_MISMATCH_MESSAGE =
   "Nova's proactive review is updating. Try again shortly.";
 const DIRECTOR_REVIEW_DEBOUNCE_MS = 1200;
+const MAX_APPLIED_RECEIPTS = 8;
 
 function friendlyDirectorError(caught: unknown): string {
   if (caught instanceof DOMException && caught.name === "AbortError") return "";
@@ -112,6 +138,7 @@ export function useEditDirector(
   opts: UseEditDirectorOptions,
 ): UseEditDirectorResult {
   const [suggestions, setSuggestions] = useState<EditorSuggestion[]>([]);
+  const [appliedReceipts, setAppliedReceipts] = useState<DirectorAppliedReceipt[]>([]);
   const suggestionsRef = useRef<EditorSuggestion[]>([]);
   suggestionsRef.current = suggestions;
   const [loading, setLoading] = useState(false);
@@ -126,6 +153,7 @@ export function useEditDirector(
   const sourceRevisionRef = useRef("");
   const optsRef = useRef(opts);
   const generationTokenRef = useRef(0);
+  const receiptSequenceRef = useRef(0);
   // Stays armed across abort/restart cycles until a replacement review either
   // lands or fails. A one-render latch loses refreshes during async hydration.
   const forceRefreshRef = useRef(false);
@@ -143,6 +171,7 @@ export function useEditDirector(
   useEffect(() => {
     suggestionsRef.current = [];
     setSuggestions([]);
+    setAppliedReceipts([]);
     setError(null);
     setUnavailable(false);
     setModelUsed("");
@@ -282,6 +311,38 @@ export function useEditDirector(
     [feedback, removeSuggestion],
   );
 
+  const completeAcceptance = useCallback(
+    (suggestion: EditorSuggestion, result: ApplyCopilotOpsResult): boolean => {
+      let presentation: DirectorApplyPresentation | void;
+      try {
+        presentation = optsRef.current.onApplied(result);
+      } catch {
+        setError("Nova couldn't confirm that change. Check the preview or Undo before retrying.");
+        return false;
+      }
+
+      receiptSequenceRef.current += 1;
+      const receipt: DirectorAppliedReceipt = {
+        id: `${suggestion.id}-${receiptSequenceRef.current}`,
+        suggestionId: suggestion.id,
+        title: suggestion.title,
+        startS: suggestion.start_s,
+        endS: suggestion.end_s,
+        changes: result.applied,
+        undoVersion: presentation?.undoVersion,
+        previewFocus: presentation?.previewFocus,
+      };
+      setAppliedReceipts((current) =>
+        [...current, receipt].slice(-MAX_APPLIED_RECEIPTS),
+      );
+      removeSuggestion(suggestion.id);
+      setError(null);
+      feedback(suggestion, "accepted");
+      return true;
+    },
+    [feedback, removeSuggestion],
+  );
+
   const accept = useCallback(
     (suggestion: EditorSuggestion) => {
       if (suggestion.apply_mode === "omni_async") {
@@ -406,14 +467,14 @@ export function useEditDirector(
             // cancellation affordance before mutating the draft so a slow
             // candidate refresh cannot release the asset underneath it.
             setGeneration(null);
-            optsRef.current.onApplied(result);
+            if (!completeAcceptance(suggestion, result)) {
+              return;
+            }
             try {
               await optsRef.current.onGeneratedAssetReady?.();
             } catch {
               setError("The generated clip was added, but its preview could not refresh. Save or Undo still work.");
             }
-            removeSuggestion(suggestion.id);
-            feedback(suggestion, "accepted");
           })
           .catch(() => {
             if (token !== generationTokenRef.current) return;
@@ -437,12 +498,14 @@ export function useEditDirector(
         refreshReview();
         return;
       }
-      removeSuggestion(suggestion.id);
-      optsRef.current.onApplied(result);
-      feedback(suggestion, "accepted");
+      completeAcceptance(suggestion, result);
     },
-    [feedback, generation, refreshReview, removeSuggestion],
+    [completeAcceptance, generation, refreshReview],
   );
+
+  const revealApplied = useCallback((receipt: DirectorAppliedReceipt) => {
+    if (receipt.previewFocus) optsRef.current.onRevealApplied?.(receipt.previewFocus);
+  }, []);
 
   const cancelGeneration = useCallback(() => {
     if (!generation) return;
@@ -472,6 +535,7 @@ export function useEditDirector(
   return useMemo(
     () => ({
       suggestions,
+      appliedReceipts,
       loading,
       error,
       unavailable,
@@ -483,10 +547,12 @@ export function useEditDirector(
       refresh: refreshReview,
       accept,
       dismiss,
+      revealApplied,
       cancelGeneration,
     }),
     [
       suggestions,
+      appliedReceipts,
       loading,
       error,
       unavailable,
@@ -496,6 +562,7 @@ export function useEditDirector(
       refreshReview,
       accept,
       dismiss,
+      revealApplied,
       cancelGeneration,
     ],
   );

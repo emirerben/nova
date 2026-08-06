@@ -1,0 +1,139 @@
+import "@testing-library/jest-dom";
+import { fireEvent, render, screen } from "@testing-library/react";
+import DirectorSuggestions from "@/app/plan/items/[id]/_editor/DirectorSuggestions";
+import type { DirectorAppliedReceipt } from "@/lib/edit-copilot/useEditDirector";
+import type { EditorSuggestion } from "@/lib/plan-api";
+
+describe("DirectorSuggestions applied receipts", () => {
+  it("keeps every accepted recommendation visible with its exact delta and replay action", () => {
+    const receipts: DirectorAppliedReceipt[] = [
+      {
+        id: "sound-1",
+        suggestionId: "sound",
+        title: "Punch up the hook text",
+        startS: 0,
+        endS: 0,
+        changes: [{ label: "Sound effect", from: "none", to: "Visual enter accent" }],
+        previewFocus: { kind: "sfx", id: "sfx-1", seekS: 0 },
+      },
+      {
+        id: "type-2",
+        suggestionId: "type",
+        title: "Modernize closing typography",
+        startS: 103.8,
+        endS: 107.8,
+        changes: [{
+          label: "Font",
+          from: "PlayfairDisplay-Bold",
+          to: "Montserrat Bold",
+        }],
+        previewFocus: { kind: "text", id: "closing", seekS: 105.8 },
+      },
+    ];
+    const onRevealApplied = jest.fn();
+
+    render(
+      <DirectorSuggestions
+        suggestions={[]}
+        appliedReceipts={receipts}
+        historyVersion={0}
+        loading={false}
+        error={null}
+        modelUsed="gemini-3.1-pro-preview"
+        fallbackReason={null}
+        generation={null}
+        onAccept={jest.fn()}
+        onDismiss={jest.fn()}
+        onRefresh={jest.fn()}
+        onRevealApplied={onRevealApplied}
+        onCancelGeneration={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("Applied Nova suggestions")).toHaveTextContent(
+      "Punch up the hook text",
+    );
+    expect(screen.getByLabelText("Applied Nova suggestions")).toHaveTextContent(
+      "Font: PlayfairDisplay-Bold → Montserrat Bold",
+    );
+    expect(screen.getAllByText("Showing this moment in preview.")).toHaveLength(2);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Show again" })[1]);
+    expect(onRevealApplied).toHaveBeenCalledWith(receipts[1]);
+  });
+
+  it("marks receipts changed and disables replay after editor history moves on", () => {
+    const receipt: DirectorAppliedReceipt = {
+      id: "type-2",
+      suggestionId: "type",
+      title: "Modernize closing typography",
+      startS: 103.8,
+      endS: 107.8,
+      changes: [{ label: "Font", from: "Playfair", to: "Montserrat" }],
+      undoVersion: 1,
+      previewFocus: { kind: "text", id: "closing", seekS: 105.8 },
+    };
+
+    render(
+      <DirectorSuggestions
+        suggestions={[]}
+        appliedReceipts={[receipt]}
+        historyVersion={2}
+        loading={false}
+        error={null}
+        modelUsed="gemini-3.1-pro-preview"
+        fallbackReason={null}
+        generation={null}
+        onAccept={jest.fn()}
+        onDismiss={jest.fn()}
+        onRefresh={jest.fn()}
+        onRevealApplied={jest.fn()}
+        onCancelGeneration={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Changed since")).toBeInTheDocument();
+    expect(screen.getByText("The preview has changed since this edit.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show again" })).not.toBeInTheDocument();
+  });
+
+  it("brings the next actionable recommendation into view", () => {
+    const scrollIntoView = jest.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const recommendation = (id: string): EditorSuggestion => ({
+      id,
+      category: "text",
+      title: `Recommendation ${id}`,
+      rationale: "Improve clarity.",
+      expected_benefit: "The change is easier to notice.",
+      confidence: 0.9,
+      start_s: 0,
+      end_s: 1,
+      apply_mode: "instant",
+      ops: [{ op: "set_title", title: id }],
+    });
+    const props = {
+      appliedReceipts: [] as DirectorAppliedReceipt[],
+      historyVersion: 0,
+      loading: false,
+      error: null,
+      modelUsed: "gemini-3.1-pro-preview",
+      fallbackReason: null,
+      generation: null,
+      onAccept: jest.fn(),
+      onDismiss: jest.fn(),
+      onRefresh: jest.fn(),
+      onRevealApplied: jest.fn(),
+      onCancelGeneration: jest.fn(),
+    };
+    const { rerender } = render(
+      <DirectorSuggestions suggestions={[recommendation("one"), recommendation("two")]} {...props} />,
+    );
+    rerender(<DirectorSuggestions suggestions={[recommendation("two")]} {...props} />);
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+  });
+});

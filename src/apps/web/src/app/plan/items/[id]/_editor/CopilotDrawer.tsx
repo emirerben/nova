@@ -178,6 +178,8 @@ export default function CopilotDrawer({
         {director && (
           <DirectorSuggestions
             suggestions={director.suggestions}
+            appliedReceipts={director.appliedReceipts}
+            historyVersion={historyVersion}
             loading={director.loading}
             error={director.error}
             modelUsed={director.modelUsed}
@@ -185,6 +187,7 @@ export default function CopilotDrawer({
             generation={director.generation}
             onAccept={director.accept}
             onDismiss={director.dismiss}
+            onRevealApplied={director.revealApplied}
             onRefresh={director.refresh}
             onCancelGeneration={director.cancelGeneration}
           />

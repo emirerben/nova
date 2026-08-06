@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.6.0] — 2026-08-05
+
+### Fixed
+- **Every accepted Nova recommendation now visibly changes the same video preview.** The editor waits for each change to commit, jumps to and selects the affected moment, and keeps the next recommendation in view so a full review can be accepted in sequence.
+- **Accepted recommendations now leave an exact, replayable receipt.** Each receipt shows what changed and can return to that preview moment; if the edit has since been undone or changed, Nova labels the receipt accordingly and disables stale replay.
+- **A failed editor commit no longer makes a recommendation disappear.** The card remains available, no accepted feedback is recorded, and Nova explains that the preview should be checked before retrying.
+
 ## [0.23.5.0] — 2026-08-05
 
 ### Fixed
