@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-08-05",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -60,8 +60,8 @@
       "id": "transformation-before-after-karaoke-01",
       "content_profile": "before/after or transformation montage, process to payoff, satisfying result",
       "effect": "karaoke-line",
-      "text": "this is what changed everything",
-      "highlight_word": "everything",
+      "text": "the before nobody posted",
+      "highlight_word": "before",
       "position": "center",
       "size_class": "jumbo",
       "text_color": "#FFFFFF",

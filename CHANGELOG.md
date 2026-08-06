@@ -9,6 +9,14 @@ All notable changes to this project will be documented in this file.
 - **Accepted recommendations now leave an exact, replayable receipt.** Each receipt shows what changed and can return to that preview moment; if the edit has since been undone or changed, Nova labels the receipt accordingly and disables stale replay.
 - **A failed editor commit no longer makes a recommendation disappear.** The card remains available, no accepted feedback is recorded, and Nova explains that the preview should be checked before retrying.
 
+## [0.23.5.0] — 2026-08-05
+
+### Fixed
+- **Montage opening text stopped inventing "life lessons" about your footage.** When a video's content didn't match the creator's persona (a monkey clip on a marketing-focused plan), the AI intro glued them together with a fake transformation claim — "the monkey changed my whole marketing perspective." The hook writer now treats that entire framing class as banned ("X changed my...", "what X taught me...", "made me realize..."), including when the plan's own idea arrives phrased that way, and writes from the footage when persona and footage don't connect. One of its own style examples had been teaching the banned phrase ("this is what changed everything"); it's replaced, and a new guard test lints every example against the ban so that drift can't recur.
+
+### Added
+- **Quality tripwires for intro hooks.** Deterministic slop patterns (English + Turkish, with the Turkish uppercase-İ casefold trap handled) now gate CI evals and every recorded fixture; four new persona-conflict eval fixtures pin the correct behavior; the eval judge rubric now rewards dropping an unhonorable theme instead of punishing it; and `scripts/dev/scan_intro_slop.py` measures slop across already-rendered videos — pre-deploy baseline, legacy remediation list, and post-deploy delta.
+
 ## [0.23.4.0] — 2026-08-05
 
 ### Fixed

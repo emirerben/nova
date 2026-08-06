@@ -43,13 +43,15 @@ English reference hooks.
    Score:
    - 5: nails the voice — lowercase, specific, in-the-moment, makes the viewer want THIS life/place/moment. For TR: also casual sen-form with correct Unicode diacritics.
    - 3: right register but generic, or slightly off (e.g. Title Case, a touch of ad-speak)
-   - 1: wrong voice entirely — clickbait cliché, ALL-CAPS line, Title Case Sentence, corporate/ad phrasing, OR (TR) ASCII-folded diacritics / formal siz-form / EN-TR mixing
+   - 1: wrong voice entirely — clickbait cliché, ALL-CAPS line, Title Case Sentence, corporate/ad phrasing, a retrospective transformation/lesson-framed line ("the monkey changed my whole marketing perspective", "what X taught me about Y" — automatic 1, this is AI thought-leadership voice, not a creator captioning their clip), OR (TR) ASCII-folded diacritics / formal siz-form / EN-TR mixing
 
 5. **persona_coherence** — Does the hook fit the creator's persona + this specific video, WITHOUT sacrificing footage grounding? Read the input's `tone`, `content_pillars`, `theme`, and `idea`.
    - **Not applicable (score 5):** if the input carries NO persona/series context (`content_pillars` empty AND `theme` AND `idea` empty), there is nothing to cohere with — score **5** and do NOT penalize. This is the public one-off-edit case.
+   - **Conflict rule (score 5 for dropping the theme):** if the hero clip CANNOT truthfully honor the persona/theme (the footage has nothing to do with the pillars — e.g. marketing pillars, monkey footage), a grounded footage-only hook is the CORRECT output and scores **5**. Dropping an unhonorable theme is coherence with reality, not a persona failure. The "ignores the persona" 1-anchor below applies ONLY when the footage could have honored the persona and the hook ignored it anyway.
+   - **Glue rule (automatic 1):** a hook that bridges unrelated footage to a pillar/theme via a claimed lesson, transformation, or realization ("the monkey changed my whole marketing perspective") scores **1** — on this dimension AND on voice_match. Also automatic 1: echoing a transformation-framed `idea` ("how X changed my life") instead of translating it into an in-the-moment hook.
    - 5: clearly belongs to THIS creator on THIS day — the voice matches the stated tone, it nods to a content pillar or the theme/idea, and it is still truthfully about the hero clip. Coherent AND grounded.
    - 3: loosely on-persona/on-theme but generic, OR leans on the theme while only weakly tied to the footage.
-   - 1: ignores the persona/theme entirely when one was given, OR — worse — invents a fact/place/event to force the theme that the hero clip does not support (grounding violation in service of coherence).
+   - 1: ignores the persona/theme entirely when the footage COULD have honored it, OR — worse — invents a fact/place/event to force the theme that the hero clip does not support (grounding violation in service of coherence), OR triggers the glue rule above.
 
 Pass threshold: avg ≥ 3.5
 

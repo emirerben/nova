@@ -1,0 +1,52 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-08-05",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 5.0,
+      "subject": "a monkey climbing onto a cafe table and grabbing food",
+      "hook_text": "",
+      "hook_score": 6.5,
+      "energy": 5.0,
+      "description": "handheld daytime clip, small monkey jumps on an outdoor cafe table, snatches a snack, people laughing off-screen"
+    },
+    "hero_transcript": "oh my god he's on the table, he took it, he actually took it",
+    "tone": "sharp, direct marketing-mentor voice; practical and confident",
+    "content_pillars": [
+      "marketing psychology",
+      "personal brand growth",
+      "content strategy"
+    ],
+    "theme": "why attention is the new currency",
+    "idea": "share a marketing lesson from something unexpected that happened today",
+    "form": {
+      "effect": "static",
+      "size_class": "large",
+      "position": "top"
+    },
+    "exemplars": [
+      {
+        "id": "comedy-relatable-static-01",
+        "content_profile": "comedic, relatable everyday chaos, candid or self-deprecating",
+        "effect": "static",
+        "text": "nobody warned me about this part",
+        "highlight_word": "nobody",
+        "position": "top",
+        "size_class": "large",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FF6B6B"
+      }
+    ]
+  },
+  "raw_text": "{\"text\": \"this monkey has zero respect for the plan\", \"highlight_word\": \"monkey\"}",
+  "output": {
+    "text": "this monkey has zero respect for the plan",
+    "highlight_word": "monkey"
+  },
+  "meta": {
+    "source": "hand_authored_adversarial",
+    "case": "PERSONA-FOOTAGE CONFLICT (the reported prod incident class) — marketing persona + monkey footage. The WRONG output is the persona-glue transformation claim ('the monkey changed my whole marketing perspective'). Correct behavior: drop the unhonorable pillars/theme and write a grounded, in-the-moment hook from the footage alone. persona_coherence rubric scores the drop as 5 (conflict rule)."
+  }
+}

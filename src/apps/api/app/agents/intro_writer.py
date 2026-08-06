@@ -52,6 +52,77 @@ _REFUSAL_PATTERNS = (
     re.compile(r"\bwrite\s+this\s+hook\b"),
 )
 
+# Transformation-slop pattern class (plans/015). The retrospective
+# transformation / lesson-learned frame ("the monkey changed my whole marketing
+# perspective") is the signature failure of persona-glued hooks: the model
+# bridges unrelated footage to a persona pillar with a claimed realization.
+# One source of truth, three consumers — the eval structural floor
+# (tests/evals/runners/structural.py), the exemplar guard test
+# (tests/agents/test_overlay_examples_slop_guard.py), and the offline scanner
+# (scripts/dev/scan_intro_slop.py) — same shape as sequence_quote_writer's
+# quote_structural_failures. Deliberately NOT enforced in parse(): a false
+# positive would downgrade a good hook to the generic fallback (eng-review D3).
+# Patterns are lowercase and matched against _normalize_for_slop() output.
+# The abstract-transformation objects that make "changed my X" slop. A concrete
+# object ("changed my shirt") is a legitimate in-the-moment hook — codex review
+# finding #4 — so the my/our branches require one of these within 2 words.
+_ABSTRACT_OBJ = r"(?:life|lives|mind|world|perspective|mindset|outlook|view|thinking|approach)"
+
+_SLOP_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    # EN — retrospective transformation / lesson framing
+    (
+        "en_changed_my",
+        re.compile(
+            r"\bchanged\s+(?:my|our)\s+(?:\w+\s+){0,2}" + _ABSTRACT_OBJ + r"\b"
+            r"|\bchanged\s+everything\b|\bchanged\s+the\s+way\s+(?:i|we)\b"
+        ),
+    ),
+    (
+        "en_shifted_my",
+        re.compile(
+            r"\b(?:shifted|transformed|reshaped)\s+(?:my|our)\s+(?:\w+\s+){0,2}"
+            + _ABSTRACT_OBJ
+            + r"\b"
+        ),
+    ),
+    ("en_taught_me", re.compile(r"\btaught\s+(?:me|us)\b")),
+    ("en_made_realize", re.compile(r"\bmade\s+me\s+(?:realize|rethink|see|understand)\b")),
+    ("en_opened_eyes", re.compile(r"\bopened\s+my\s+eyes\b")),
+    # Adjacent only — "new camera perspective" (a filming instruction) must NOT
+    # match; "a whole new perspective" claims do.
+    ("en_perspective", re.compile(r"\b(?:whole|new|entire)\s+(?:perspective|mindset|outlook)\b")),
+    # TR — same class. Lowercase with explicit [ıi] classes; input is normalized
+    # below (casefold alone breaks on Turkish İ — see _normalize_for_slop).
+    # Object precedes the verb in Turkish and adverbs sit between ("fikrimi
+    # tamamen değiştirdi") — codex review finding #5 — so allow 0-2 tokens.
+    (
+        "tr_degistirdi",
+        re.compile(
+            r"\b(?:hayat[ıi]m[ıi]z?[ıi]?|bak[ıi]ş\s+aç[ıi]m[ıi]z?[ıi]?|fikr[ıi]m[ıi]"
+            r"|dünyam[ıi]|her\s+şeyi)\s+(?:[\wçşğıöü]+\s+){0,2}değiştirdi\b"
+        ),
+    ),
+    ("tr_ogretti", re.compile(r"\bbana\s+(?:[\wçşğıöü]+\s+){0,4}öğretti\b")),
+)
+
+_COMBINING_DOT_ABOVE = "̇"
+
+
+def _normalize_for_slop(text: str) -> str:
+    # str.casefold() maps Turkish İ (U+0130) to "i" + U+0307 COMBINING DOT
+    # ABOVE; the stray combining mark sits BETWEEN letters, so "DEĞİŞTİRDİ"
+    # would never match r"değiştirdi". [ıi] classes can't fix an in-word mark —
+    # strip it after casefolding.
+    return text.casefold().replace(_COMBINING_DOT_ABOVE, "")
+
+
+def slop_structural_failures(text: str) -> list[str]:
+    """Names of transformation-slop patterns the hook matches (empty = clean)."""
+    normalized = _normalize_for_slop(text or "")
+    if not normalized:
+        return []
+    return [name for name, pattern in _SLOP_PATTERNS if pattern.search(normalized)]
+
 
 class IntroWriterInput(BaseModel):
     hero_clip: ClipSummary
@@ -348,6 +419,12 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.intro_writer",
         prompt_id="write_intro_text",
+        # 2026-08-05 — anti-slop (plans/015): named the transformation/lesson-
+        #              framing pattern class in the DON'T list + translate-don't-
+        #              echo rule for slop-framed theme/idea + self-check line;
+        #              overlay_examples bank retexted transformation-before-after-
+        #              karaoke-01 (bank bump 2026-08-05). Existing pillar escape
+        #              clause deliberately untouched (staged — see plans/015 W1).
         # 2026-06-18 — WS5: added $clip_notes block — per-clip creator notes as
         #              DATA context for the hook writer. Empty → byte-identical to
         #              baseline (same discipline as $filming_guide and $preferences).
@@ -371,7 +448,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-06-18",
+        prompt_version="2026-08-05",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
