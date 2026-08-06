@@ -485,7 +485,7 @@ def test_maybe_render_carousel_moment_auto_uses_director(monkeypatch):
     sentinel_spec = object()
     captured: dict[str, Any] = {}
 
-    def _fake_direct_auto(moment_cfg, *, clip_paths, probe_map, variant_id):
+    def _fake_direct_auto(moment_cfg, *, clip_paths, probe_map, variant_id, **kwargs):
         captured["moment_cfg"] = moment_cfg
         captured["clip_paths"] = clip_paths
         captured["probe_map"] = probe_map
@@ -571,7 +571,7 @@ def test_insert_carousel_moment_step_threads_probe_map_and_variant_id(monkeypatc
     captured: dict[str, Any] = {}
 
     def _fake_maybe_render(
-        moment_cfg, *, clip_id_to_local, steps, variant_dir, probe_map, variant_id
+        moment_cfg, *, clip_id_to_local, steps, variant_dir, probe_map, variant_id, **kwargs
     ):
         captured["probe_map"] = probe_map
         captured["variant_id"] = variant_id

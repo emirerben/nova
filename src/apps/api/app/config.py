@@ -844,6 +844,15 @@ class Settings(BaseSettings):
     # parity-gate green.
     carousel_effects_enabled: bool = False
 
+    # Authoring policy that attaches `spec["carousel_moment"]` to ONE eligible
+    # montage-variant spec per job (see `_author_carousel_moments` in
+    # generative_build.py) so the render hook above actually fires on real
+    # jobs instead of only on manually-crafted specs. Requires
+    # `carousel_effects_enabled` at render time — authoring without the render
+    # flag would silently do nothing anyway, but this is checked separately
+    # (both flags, for clarity at the call site). Default False pending E2E.
+    carousel_auto_author_enabled: bool = False
+
     # Per-item "Ask Kria" advisor (plan dogfood feedback #2): conversational,
     # read-only advice about which clip fits which shot. Additive + auth'd; it
     # never writes state (the re-read offer goes through the clip-note PATCH).

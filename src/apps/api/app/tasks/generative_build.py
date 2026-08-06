@@ -1212,6 +1212,12 @@ def _run_generative_job(job_id: str) -> None:
             voiceover_caption_style=voiceover_caption_style,
             variant_policy=variant_policy,
         )
+        # Carousel-moment authoring policy (kill-switched, additive): attaches
+        # spec["carousel_moment"] to one eligible montage spec so the render
+        # hook in _render_generative_variant actually fires on real jobs. See
+        # _author_carousel_moments's docstring for the eligibility/selection
+        # rules. No-op — mutates nothing — unless both carousel flags are on.
+        _author_carousel_moments(initial_specs, job_id=job_id, n_clips=len(clip_metas))
         for spec in initial_specs:
             _upsert_variant_entry(
                 job_id,
@@ -1223,6 +1229,14 @@ def _run_generative_job(job_id: str) -> None:
                     "track_title": spec["track"].title if spec.get("track") else None,
                     "render_status": "pending",
                     "ok": False,
+                    # Seed the authored moment onto the row BEFORE the render even
+                    # starts (not just once `base` persists it below): a crash/OOM
+                    # between here and the first `_upsert_variant_entry(result)`
+                    # would otherwise leave this pending row as the only persisted
+                    # state, and _run_regenerate_variant's `existing.get(...)`
+                    # reads THIS row — so a carousel_moment authored but never
+                    # rendered must still be visible to a re-render.
+                    "carousel_moment": spec.get("carousel_moment"),
                 },
             )
 
@@ -4651,6 +4665,88 @@ def _stable_seed_from_variant(variant_id: str | None) -> int:
     return zlib.crc32((variant_id or "carousel-moment").encode("utf-8"))
 
 
+_CAROUSEL_POSITION_WEIGHTS: dict[str, float] = {"intro": 0.5, "middle": 0.3, "outro": 0.2}
+
+
+def _author_carousel_moments(
+    initial_specs: list[dict[str, Any]], *, job_id: str, n_clips: int
+) -> None:
+    """Authoring policy: attach `spec["carousel_moment"]` to ONE eligible spec
+    in `initial_specs`, in place, so the already-merged render hook
+    (`_insert_carousel_moment_step`) actually fires on real generative jobs
+    instead of only on manually-crafted specs.
+
+    Rules:
+      - No-op unless BOTH `settings.carousel_effects_enabled` (the render
+        flag) AND `settings.carousel_auto_author_enabled` (this policy) are
+        on. Authoring without the render flag would silently do nothing
+        anyway — checked separately from the render flag for clarity at this
+        call site.
+      - No-op if `n_clips < 3` — a carousel moment needs enough footage to
+        feel like a deck, not a rehash of the only 1-2 clips already in the
+        montage (mirrors `director.FOCUS_QUALIFY_MIN_CLIPS`'s spirit, applied
+        at the whole-job level here).
+      - Eligible specs are montage-path specs: no `archetype` key (excludes
+        talking_head/narrated/subtitled AND voiceover — voiceover renders
+        through the montage path too but narration timing shouldn't get a
+        carousel splice in v1) and no pre-existing `carousel_moment` key
+        (respects an already-authored or explicitly-configured spec).
+      - Exactly one eligible spec is chosen via
+        `random.Random(zlib.crc32(f"carousel-author:{job_id}".encode()))` —
+        the same crc32-seeding idiom as `_stable_seed_from_variant`, so a
+        re-run of the same job (no new job_id) always picks the same variant.
+      - Position is a seeded weighted choice off the same RNG:
+        `_CAROUSEL_POSITION_WEIGHTS` (intro 0.5 / middle 0.3 / outro 0.2).
+      - The moment's own seed is `_stable_seed_from_variant(job_id + variant
+        identifier)` — deterministic per (job, variant), independent of which
+        OTHER variant the job-level draw above picked.
+      - Emits `record_pipeline_event("assembly", "carousel_moment_authored",
+        ...)` when (and only when) it authors a spec — the orchestrator
+        already runs inside `pipeline_trace_for`, so no extra context binding
+        is needed here.
+    """
+    if not (settings.carousel_effects_enabled and settings.carousel_auto_author_enabled):
+        return
+    if n_clips < 3:
+        return
+
+    eligible = [
+        spec for spec in initial_specs if "archetype" not in spec and "carousel_moment" not in spec
+    ]
+    if not eligible:
+        return
+
+    import random  # noqa: PLC0415
+    import zlib  # noqa: PLC0415
+
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    rng = random.Random(zlib.crc32(f"carousel-author:{job_id}".encode()))
+    chosen = rng.choice(eligible)
+    position = rng.choices(
+        list(_CAROUSEL_POSITION_WEIGHTS),
+        weights=list(_CAROUSEL_POSITION_WEIGHTS.values()),
+        k=1,
+    )[0]
+
+    variant_ident = str(chosen.get("variant_id") or chosen.get("text_mode") or "variant")
+    moment_seed = _stable_seed_from_variant(f"{job_id}:{variant_ident}")
+
+    chosen["carousel_moment"] = {"auto": True, "seed": moment_seed, "position": position}
+
+    record_pipeline_event(
+        "assembly",
+        "carousel_moment_authored",
+        {"variant": variant_ident, "position": position},
+    )
+    log.info(
+        "generative_carousel_moment_authored",
+        job_id=job_id,
+        variant=variant_ident,
+        position=position,
+    )
+
+
 def _parse_focus_override(raw: Any) -> tuple | None:
     """Best-effort: converts a `moment_cfg["focus"]` list of
     `{"card_index", "hold_s"?, "zoom_s"?}` dicts into a tuple of
@@ -4715,12 +4811,46 @@ def _apply_moment_overrides(spec: Any, moment_cfg: dict[str, Any]) -> Any:
     return replace(spec, **overrides)
 
 
+def _carousel_clip_signal(meta: Any | None) -> tuple[float, tuple[str, ...]]:
+    """Map one clip's Gemini analysis (`ClipMeta`) to `director.ClipInfo`'s
+    `(interest, labels)` — best-effort: any missing/malformed field falls
+    back to `ClipInfo`'s own defaults (`interest=0.5`, `labels=()`), never
+    raises.
+
+    Normalization: `ClipMeta.hook_score` is 0..10 (`app/agents/clip_metadata.py`
+    `hook_score: float = Field(..., ge=0, le=10)`; same range documented in the
+    `analyze_clip` prompt template in `app/pipeline/prompt_loader.py`:
+    `"hook_score": float 0–10`) — divide by 10 for `ClipInfo.interest`'s 0..1
+    range. When `hook_score` is absent/zero, fall back to the clip's own peak
+    `best_moments[].energy` (same 0–10 scale per the same prompt/schema) as a
+    weaker but still-real interest signal. `detected_subject` (free-text) maps
+    1:1 to `labels` when non-empty.
+    """
+    if meta is None:
+        return 0.5, ()
+
+    interest = 0.5
+    hook_score = getattr(meta, "hook_score", None)
+    if isinstance(hook_score, (int, float)) and hook_score > 0:
+        interest = max(0.0, min(1.0, float(hook_score) / 10.0))
+    else:
+        best_moments = getattr(meta, "best_moments", None) or []
+        energies = [float(m.get("energy", 0.0) or 0.0) for m in best_moments if isinstance(m, dict)]
+        if energies:
+            interest = max(0.0, min(1.0, max(energies) / 10.0))
+
+    subject = str(getattr(meta, "detected_subject", "") or "").strip()
+    labels = (subject,) if subject else ()
+    return interest, labels
+
+
 def _direct_auto_carousel_spec(
     moment_cfg: dict[str, Any],
     *,
     clip_paths: list[str],
     probe_map: dict | None,
     variant_id: str | None,
+    clip_metas: list | None = None,
 ) -> Any:
     """`moment_cfg["auto"]` path: build `director.ClipInfo`s from the local
     clip paths + whatever duration the probe map already has for them (the
@@ -4729,22 +4859,36 @@ def _direct_auto_carousel_spec(
     ask the DIRECTOR for a spec, then let any explicit `moment_cfg` field
     override its choice via `_apply_moment_overrides`.
 
-    Labels/interest are left at `ClipInfo`'s defaults: neither is trivially
-    reachable here without threading clip-analysis metadata through a new
-    parameter, which this wiring deliberately avoids — see
-    `director.direct_carousel_moment`'s "LLM handoff" docstring section for
-    the intended future path to real per-clip signal.
+    `clip_metas` (optional, the job's Gemini `ClipMeta` list) is matched back
+    to each `clip_paths` entry via `ClipMeta.clip_path` — populated by every
+    branch of `_analyze_clips_parallel` (`app/tasks/template_orchestrate.py`)
+    with the SAME local path string used to build `clip_id_to_local`, so a
+    plain dict lookup is exact, no clip_id plumbing needed here. Each matched
+    meta's `(interest, labels)` come from `_carousel_clip_signal`. Omitting
+    `clip_metas` (the default) leaves `ClipInfo` at its neutral defaults —
+    byte-identical to before this parameter existed.
     """
     from app.pipeline.carousel import director as director_mod  # noqa: PLC0415
 
     probe_map = probe_map or {}
+    meta_by_path: dict[str, Any] = {}
+    for meta in clip_metas or []:
+        meta_path = str(getattr(meta, "clip_path", "") or "")
+        if meta_path:
+            meta_by_path[meta_path] = meta
+
     clips = []
     for path in clip_paths:
         probe = probe_map.get(path)
         duration_s = float(getattr(probe, "duration_s", 0.0) or 0.0)
         if duration_s <= 0:
             duration_s = _AUTO_CAROUSEL_FALLBACK_DURATION_S
-        clips.append(director_mod.ClipInfo(path=path, duration_s=duration_s))
+        interest, labels = _carousel_clip_signal(meta_by_path.get(path))
+        clips.append(
+            director_mod.ClipInfo(
+                path=path, duration_s=duration_s, interest=interest, labels=labels
+            )
+        )
 
     seed = moment_cfg.get("seed")
     if not isinstance(seed, int):
@@ -4770,6 +4914,8 @@ def _maybe_render_carousel_moment(
     variant_dir: str,
     probe_map: dict | None = None,
     variant_id: str | None = None,
+    clip_metas: list | None = None,
+    render_meta: dict[str, Any] | None = None,
 ) -> str | None:
     """Render one Blossom-carousel moment segment for this variant.
 
@@ -4793,6 +4939,18 @@ def _maybe_render_carousel_moment(
     present in `moment_cfg`, but a `moment_cfg` that only ever set
     `effect`/`duration_s`/`position` (every caller as of this writing) is
     byte-identical.
+
+    `clip_metas` (optional) is forwarded to `_direct_auto_carousel_spec` for
+    the auto path's per-clip interest/labels signal; omitted (the default)
+    keeps `ClipInfo` at its neutral defaults, same as before this param
+    existed.
+
+    `render_meta` (optional): when a caller passes an (empty) dict, it is
+    populated with the built spec's `{"effect", "mode"}` right before the
+    render call — a side-channel so `_insert_carousel_moment_step` can attach
+    those fields to its `carousel_moment_inserted` trace event without
+    changing this function's `str | None` return contract (every existing
+    caller/test that doesn't pass `render_meta` is unaffected).
     """
     try:
         from app.pipeline.carousel.segment import (  # noqa: PLC0415
@@ -4816,6 +4974,7 @@ def _maybe_render_carousel_moment(
                 clip_paths=clip_paths,
                 probe_map=probe_map,
                 variant_id=variant_id,
+                clip_metas=clip_metas,
             )
         else:
             spec = CarouselMomentSpec(
@@ -4824,6 +4983,10 @@ def _maybe_render_carousel_moment(
                 duration_s=float(moment_cfg.get("duration_s", 4.0)),
             )
             spec = _apply_moment_overrides(spec, moment_cfg)
+
+        if render_meta is not None:
+            render_meta["effect"] = getattr(spec, "effect", None)
+            render_meta["mode"] = getattr(spec, "mode", None)
 
         return render_carousel_moment(spec, variant_dir)
     except Exception:  # noqa: BLE001 — the contract says never-raise; don't trust it blindly
@@ -4839,6 +5002,7 @@ def _insert_carousel_moment_step(
     clip_id_to_gcs: dict[str, str],
     probe_map: dict,
     variant_dir: str,
+    clip_metas: list | None = None,
 ) -> list:
     """Splice a rendered Blossom-carousel moment into the montage `steps` list.
 
@@ -4853,6 +5017,24 @@ def _insert_carousel_moment_step(
     `_prepare_timeline_assembly` builds for user-pinned timeline windows.
     `position` ("intro" | "middle" | "outro", default "intro") controls where.
 
+    `clip_metas` (optional, the job's Gemini `ClipMeta` list — a parameter of
+    `_render_generative_variant`, in scope at its call site) is forwarded to
+    `_maybe_render_carousel_moment` for the auto-director's interest/labels
+    signal; omitted it behaves exactly as before this param existed.
+
+    Trace events (admin job-debug view, not the never-raise contract — a
+    `record_pipeline_event` failure is itself swallowed, see that function):
+    `carousel_moment_inserted` on a successful splice (effect/mode come from
+    `_maybe_render_carousel_moment`'s `render_meta` side-channel, duration_s
+    is the PROBED rendered duration, not the requested one);
+    `carousel_moment_skipped` when the render came back empty (caught
+    exception or a legitimate `None` from `render_carousel_moment` — this
+    function can't tell those apart, both surface as a falsy `moment_path`)
+    or when the probe of the rendered segment itself fails or reports a
+    non-positive duration — each alongside the pre-existing `log.warning`
+    (probe failure) or logged inside `_maybe_render_carousel_moment` (render
+    failure).
+
     Note: the synthetic clip has no GCS-backed source (it's a locally rendered
     composite, not one of the user's uploaded clips), so `_build_ai_timeline`'s
     clip_paths-index lookup can't map it — that function is documented
@@ -4865,15 +5047,26 @@ def _insert_carousel_moment_step(
     if not moment_cfg:
         return steps
 
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    variant_id = spec.get("variant_id")
+    render_meta: dict[str, Any] = {}
     moment_path = _maybe_render_carousel_moment(
         moment_cfg,
         clip_id_to_local=clip_id_to_local,
         steps=steps,
         variant_dir=variant_dir,
         probe_map=probe_map,
-        variant_id=spec.get("variant_id"),
+        variant_id=variant_id,
+        clip_metas=clip_metas,
+        render_meta=render_meta,
     )
     if not moment_path:
+        record_pipeline_event(
+            "assembly",
+            "carousel_moment_skipped",
+            {"variant_id": variant_id, "reason": "render_unavailable"},
+        )
         return steps
 
     from app.pipeline.agents.gemini_analyzer import AssemblyStep  # noqa: PLC0415
@@ -4884,11 +5077,21 @@ def _insert_carousel_moment_step(
         duration_s = float(probe.duration_s)
     except Exception:  # noqa: BLE001 — a bad probe should skip, not fail the variant
         log.warning("carousel_moment_probe_failed", exc_info=True)
+        record_pipeline_event(
+            "assembly",
+            "carousel_moment_skipped",
+            {"variant_id": variant_id, "reason": "probe_failed"},
+        )
         return steps
     if duration_s <= 0:
+        record_pipeline_event(
+            "assembly",
+            "carousel_moment_skipped",
+            {"variant_id": variant_id, "reason": "non_positive_duration"},
+        )
         return steps
 
-    synthetic_id = f"__carousel_{spec.get('variant_id') or 'moment'}"
+    synthetic_id = f"__carousel_{variant_id or 'moment'}"
     clip_id_to_local[synthetic_id] = moment_path
     clip_id_to_gcs[synthetic_id] = moment_path
     probe_map[moment_path] = probe
@@ -4907,6 +5110,18 @@ def _insert_carousel_moment_step(
         new_steps.append(moment_step)
     else:  # "intro" (default) and any unrecognized value
         new_steps.insert(0, moment_step)
+
+    record_pipeline_event(
+        "assembly",
+        "carousel_moment_inserted",
+        {
+            "variant_id": variant_id,
+            "position": position,
+            "effect": render_meta.get("effect"),
+            "mode": render_meta.get("mode"),
+            "duration_s": round(duration_s, 3),
+        },
+    )
     return new_steps
 
 
@@ -6074,6 +6289,14 @@ def _run_regenerate_variant(
             "music_start_s": existing_music_start_s,
             "music_window_video_duration_s": existing_music_window_duration_s,
             "storage_generation": render_gen_id,
+            # Carry an authored carousel moment forward across retext/swap-song/
+            # restyle re-renders — same lifecycle as music_start_s /
+            # user_style_knobs above. The persisted cfg's own "seed" keeps the
+            # director's mode/effect choice deterministic on re-render; if the
+            # clip set changed enough that eligibility now fails, that's handled
+            # downstream by _insert_carousel_moment_step's existing never-raise +
+            # `carousel_moment_skipped` trace event, not here.
+            "carousel_moment": existing.get("carousel_moment"),
         }
         # Voiceover variant re-render (e.g. the mix slider): re-attach the voice bed and
         # the resolved mix. Precedence: explicit slider value → the variant's persisted
@@ -7951,6 +8174,13 @@ def _render_generative_variant(
         # the user's saved song window. Successful resolution overwrites this
         # with the same snapped effective value below.
         "music_start_s": spec.get("music_start_s"),
+        # Seeded straight from `spec` (already fully decided by the authoring
+        # policy / carried forward by regen — see _run_regenerate_variant)
+        # into the persisted row on BOTH the success and failure return paths
+        # (both are `{**base, ...}`), so a renderer failure cannot silently
+        # drop an authored moment the same way a renderer failure cannot drop
+        # music_start_s above.
+        "carousel_moment": spec.get("carousel_moment"),
         "track_title": track_title,
         "style_set_id": style_set_id,
         # Agent-decided (or user-pinned) intro size. None for non-text variants.
@@ -8328,6 +8558,7 @@ def _render_generative_variant(
             clip_id_to_gcs=clip_id_to_gcs,
             probe_map=probe_map,
             variant_dir=variant_dir,
+            clip_metas=clip_metas,
         )
 
         assembled_path = os.path.join(variant_dir, "assembled.mp4")
