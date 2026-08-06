@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.7.0] — 2026-08-06
+
+### Added
+- **Generative jobs can now receive an AI-authored carousel moment (dark launch).** Behind `CAROUSEL_AUTO_AUTHOR_ENABLED` (default off): one montage variant per job — chosen deterministically per job — gets a Blossom-carousel moment at a seeded intro/middle/outro position, with the director's mode/effect/focus choices driven by real clip-analysis signals (hook scores and best-moment energy). Authored moments persist on the variant and survive re-renders (retext, swap-song, restyle). Admin job debug now records `carousel_moment_authored` / `carousel_moment_inserted` / `carousel_moment_skipped` events.
+
 ## [0.23.6.0] — 2026-08-05
 
 ### Fixed
