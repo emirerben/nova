@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.8.0] — 2026-08-07
+
+### Added
+- **TikTok reviewers can now inspect Kria's complete publishing experience without a login.** A public product workspace at `/tiktok` shows a real Kria video, walks through creator-controlled privacy and disclosure choices, explains processing and visibility states, and demonstrates how official public metrics inform bounded editing recommendations. It also links directly to the live product, Terms, and Privacy Policy so the TikTok Website URL meets review requirements without sharing a creator account.
+
 ## [0.23.7.1] — 2026-08-06
 
 ### Fixed

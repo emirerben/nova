@@ -65,6 +65,12 @@ describe("Header — isLight predicate", () => {
     expect(header!.className).toContain("bg-[#fafaf8]");
   });
 
+  it("test_header_light_on_tiktok: /tiktok is light", () => {
+    const { container } = renderWithPathname("/tiktok");
+    const header = container.querySelector("header");
+    expect(header!.className).toContain("bg-[#fafaf8]");
+  });
+
   it("test_header_dark_on_template_jobs: /template-jobs/x is NOT light", () => {
     const { container } = renderWithPathname("/template-jobs/abc123");
     const header = container.querySelector("header");

@@ -870,13 +870,17 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 **Priority:** P2 — run after beat sync code ships
 **Depends on:** ~~Beat sync feature shipped~~ ✓ unblocked by v0.3.0.0
 
-### TikTok Content API Application
-**What:** Submit TikTok Content API application at developer.tiktok.com.
-**Why:** 4-8 week approval window. Clock must start now even though platform posting (Phase 2) is deferred. This is a time-gated blocker — every day of delay pushes the TikTok launch date by a day.
-**How:** Create TikTok developer account, submit Content API application form (15 min).
-**Effort:** XS (15 minutes, one-time form)
-**Priority:** P1 — submit by 2026-03-28 at latest
-**Depends on:** Nothing
+### TikTok Content Posting audit approval
+
+**What:** Resubmit Kria's TikTok app with the public reviewer workspace and obtain audited Content Posting access.
+
+**Why:** TikTok rejected the Website URL because the prior destination appeared to be a landing or login page. Public privacy options must stay gated until TikTok approves the corrected application.
+
+**Context:** The original application was submitted. v0.23.8.0 adds a substantive, login-free reviewer workspace at `https://www.usekria.com/tiktok`; `docs/runbooks/tiktok-direct-publishing.md` contains the exact Website URL and Apply Reason copy for resubmission.
+
+**Effort:** XS (human: ~15 minutes to resubmit / CC: N/A)
+**Priority:** P0 — blocks audited public Direct Post access
+**Depends on:** v0.23.8.0 deployed at `https://www.usekria.com/tiktok`
 
 ### Advanced TikTok release modes (deferred 2026-08-04)
 **What:** Add two explicit alternatives to direct posting: Kria-owned scheduled publishing for videos that keep their rendered audio, and “Finish in TikTok” draft handoff for creators who want to choose a TikTok-library sound.
