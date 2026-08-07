@@ -26,6 +26,7 @@ import {
 } from "@/lib/text-presets";
 import PresetGrid from "./PresetGrid";
 import StylesDrawer from "./StylesDrawer";
+import CarouselPanel, { type CarouselPanelControl } from "./CarouselPanel";
 import CaptionsDrawer, { type CaptionsDrawerControl } from "./CaptionsDrawer";
 import CopilotDrawer from "./CopilotDrawer";
 import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
@@ -94,6 +95,7 @@ export default function ToolDrawer({
   onDuplicateVisualBlock,
   onDeleteVisualBlock,
   onRetimeVisualBlock,
+  carousel,
   layoutMode = "full",
   presentation = "panel",
   captions,
@@ -163,6 +165,10 @@ export default function ToolDrawer({
   onDuplicateVisualBlock?: (id: string) => void;
   onDeleteVisualBlock?: (id: string) => void;
   onRetimeVisualBlock?: (id: string) => void;
+  /** Carousel-as-a-moment control (Visuals drawer "Add a block" grid). Absent
+   *  or `capable: false` shows the entry point disabled with an honest reason
+   *  via the focusable-disabled pattern (aria-disabled + onDisabledTap). */
+  carousel?: CarouselPanelControl & { onDisabledTap: (reason: string) => void };
   layoutMode?: EditorLayoutMode;
   /** "sheet" when hosted inside the mobile bottom-sheet primitive, which owns
    *  the chrome (width, entrance animation, title row, close button). Default
@@ -439,6 +445,7 @@ export default function ToolDrawer({
             onDuplicateBlock={onDuplicateVisualBlock}
             onDeleteBlock={onDeleteVisualBlock}
             onRetimeBlock={onRetimeVisualBlock}
+            carousel={carousel}
           />
         </div>
       )}
@@ -627,6 +634,7 @@ function VisualsDrawer({
   onDuplicateBlock,
   onDeleteBlock,
   onRetimeBlock,
+  carousel,
 }: {
   blocks: VisualBlock[];
   assets: PoolAsset[];
@@ -649,10 +657,12 @@ function VisualsDrawer({
   onDuplicateBlock?: (id: string) => void;
   onDeleteBlock?: (id: string) => void;
   onRetimeBlock?: (id: string) => void;
+  carousel?: CarouselPanelControl & { onDisabledTap: (reason: string) => void };
 }) {
   const ready = assets.filter((asset) => asset.status === "ready");
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [draggedShot, setDraggedShot] = useState<{ blockId: string; shotId: string } | null>(null);
+  const [carouselOpen, setCarouselOpen] = useState(false);
 
   function contrastRatio(foreground: string, background: string): number | null {
     const parse = (value: string) => {
@@ -696,6 +706,10 @@ function VisualsDrawer({
     } as Partial<VisualBlock>);
   }
 
+  if (carouselOpen && carousel) {
+    return <CarouselPanel control={carousel} onBack={() => setCarouselOpen(false)} />;
+  }
+
   return (
     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 pb-5">
       <section>
@@ -711,6 +725,37 @@ function VisualsDrawer({
               {preset === "card" ? "Text card" : preset}
             </button>
           ))}
+          {carousel && (
+            <button
+              type="button"
+              aria-disabled={carousel.capable ? undefined : true}
+              aria-describedby={carousel.capable ? undefined : "carousel-block-reason"}
+              title={
+                carousel.capable ? undefined : (carousel.reason ?? "Carousel isn't available for this edit")
+              }
+              onClick={() => {
+                if (!carousel.capable) {
+                  carousel.onDisabledTap(
+                    carousel.reason ?? "Carousel isn't available for this edit",
+                  );
+                  return;
+                }
+                setCarouselOpen(true);
+              }}
+              className={`col-span-2 min-h-11 rounded-lg border px-2 text-[12px] font-semibold text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                carousel.capable
+                  ? "border-zinc-200 bg-white hover:border-zinc-400"
+                  : "cursor-not-allowed border-zinc-200 bg-white opacity-40"
+              }`}
+            >
+              Carousel
+            </button>
+          )}
+          {carousel && !carousel.capable && (
+            <span id="carousel-block-reason" className="sr-only">
+              {carousel.reason ?? "Carousel isn't available for this edit"}
+            </span>
+          )}
         </div>
       </section>
 

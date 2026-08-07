@@ -659,6 +659,8 @@ TEXT_VARIANT = {
 
 
 def test_edit_intro_layout_happy_path(client: TestClient) -> None:
+    from app.tasks.generative_build import CAROUSEL_MOMENT_UNSET
+
     user = _user()
     job = _job([dict(TEXT_VARIANT)])
     item, plan = _owned_item(user.id, job=job)
@@ -689,6 +691,9 @@ def test_edit_intro_layout_happy_path(client: TestClient) -> None:
         cluster_body_size_px_override=None,
         cluster_accent_size_px_override=None,
         text_behind_subject=None,
+        # No carousel_moment in the request body → the Celery-safe "leave it
+        # alone" sentinel (see generative_build.CAROUSEL_MOMENT_UNSET).
+        carousel_moment_override=CAROUSEL_MOMENT_UNSET,
     )
 
 
@@ -697,6 +702,8 @@ def test_edit_accepts_full_batch_payload(client: TestClient) -> None:
     /edit (text + style_set_id + text_size_px in one request) so the instant
     editor commits the whole session as one re-render. Asserts every field
     threads through to regenerate_generative_variant.delay(...)."""
+    from app.tasks.generative_build import CAROUSEL_MOMENT_UNSET
+
     user = _user()
     job = _job([dict(TEXT_VARIANT)])
     item, plan = _owned_item(user.id, job=job)
@@ -732,6 +739,7 @@ def test_edit_accepts_full_batch_payload(client: TestClient) -> None:
         cluster_body_size_px_override=None,
         cluster_accent_size_px_override=None,
         text_behind_subject=None,
+        carousel_moment_override=CAROUSEL_MOMENT_UNSET,
     )
 
 
@@ -783,6 +791,80 @@ def test_edit_requires_at_least_one_field(client: TestClient) -> None:
         resp = client.post(f"/plan-items/{item.id}/variants/song_text/edit", json={})
     assert resp.status_code == 422
     regen.delay.assert_not_called()
+
+
+def test_edit_carousel_only_payload_dispatches_carousel_override(
+    client: TestClient, monkeypatch
+) -> None:
+    """The plan /edit route threads `carousel_moment` (tri-state) into
+    `dispatch_edit_variant` — a carousel-only payload (no text/style fields,
+    the only kind the CarouselPanel UI sends) is a valid, standalone edit
+    that reaches `regenerate_generative_variant.delay(...)` with the cleaned
+    override. See the tri-state comment on `edit_item_variant` in
+    routes/plan_items.py."""
+    from app.config import settings
+
+    user = _user()
+    variant = dict(
+        TEXT_VARIANT,
+        ai_timeline={
+            "slots": [
+                {"clip_index": 0, "source_gcs_path": "generative-jobs/j/sources/000_a.mp4"},
+                {"clip_index": 1, "source_gcs_path": "generative-jobs/j/sources/001_b.mp4"},
+            ]
+        },
+    )
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/edit",
+            json={
+                "carousel_moment": {
+                    "position": "outro",
+                    "effect": "cover_flow",
+                    "mode": "rolling",
+                }
+            },
+        )
+    assert resp.status_code == 200
+    regen.delay.assert_called_once()
+    assert regen.delay.call_args.kwargs["carousel_moment_override"] == {
+        "position": "outro",
+        "effect": "cover_flow",
+        "mode": "rolling",
+    }
+    # Every other batch field stayed unset — a carousel-only payload never
+    # implicitly touches text/style.
+    assert regen.delay.call_args.kwargs["override_text"] is None
+    assert regen.delay.call_args.kwargs["style_set_id"] is None
+
+
+def test_edit_carousel_absent_leaves_moment_unchanged(client: TestClient) -> None:
+    """`carousel_moment` absent from the request body -> the Celery-safe
+    "leave it alone" sentinel (mirrors test_edit_intro_layout_happy_path's
+    assertion for the same field, pinned again here alongside its carousel
+    sibling above)."""
+    from app.tasks.generative_build import CAROUSEL_MOMENT_UNSET
+
+    user = _user()
+    job = _job([dict(TEXT_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    valid_style = style_set_ids(applies_to="generative")[0]
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/edit",
+            json={"style_set_id": valid_style},
+        )
+    assert resp.status_code == 200
+    assert regen.delay.call_args.kwargs["carousel_moment_override"] == CAROUSEL_MOMENT_UNSET
 
 
 # ── captions (on-video caption editor) ───────────────────────────────────────

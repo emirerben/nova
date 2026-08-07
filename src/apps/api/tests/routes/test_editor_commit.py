@@ -2910,6 +2910,9 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
             "value": "portrait",
             "reason": "disabled",
         },
+        # _arm leaves carousel_effects_enabled at its default (False).
+        "carousel": False,
+        "carousel_reason": "Carousel effects are disabled",
     }
 
 

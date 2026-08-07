@@ -48,6 +48,16 @@ class CarouselMomentSpec:
     mode: str = "stills"  # "stills" | "rolling" | "focus"
     focus_moments: tuple[FocusMoment, ...] = ()  # only consulted when mode == "focus"
     seed: int = 0  # only consulted when mode in ("rolling", "focus")
+    # Explicit user-requested cap on a `mode="focus"` moment's total length
+    # (seconds), clamped by the caller to [2.0, 15.0] before it reaches here.
+    # `None` (the default) preserves this dataclass's pre-existing behavior:
+    # `duration_s` is ignored for focus mode and the natural choreography
+    # length is hard-capped at `MAX_FOCUS_TOTAL_S` — see `_render_focus_mode`.
+    # Only ever set via the carousel-editor dispatch path
+    # (`_apply_moment_overrides` in generative_build.py); the auto-director
+    # never sets it, so an auto-authored focus moment's length is unaffected
+    # by this field existing.
+    focus_duration_cap_s: float | None = None
 
 
 def _fit_duration(frames: list[SpringFrame], target_n: int) -> list[SpringFrame]:
@@ -218,14 +228,29 @@ def _render_focus_mode(
         n_cards, geo, _VIEWPORT_W, focus_moments=focus_moments, fps=FPS, seed=spec.seed
     )
 
-    hard_cap_n = max(1, round(MAX_FOCUS_TOTAL_S * FPS))
-    if len(frame_states) > hard_cap_n:
-        log.info(
-            "carousel_moment_focus_trimmed original_frames=%d cap_frames=%d",
-            len(frame_states),
-            hard_cap_n,
-        )
-        frame_states = frame_states[:hard_cap_n]
+    if spec.focus_duration_cap_s is not None:
+        # Explicit user cap (the carousel editor's duration_s): FIT (trim or
+        # pad, via the same helper stills mode uses) to exactly the
+        # requested length, rather than only trimming when it's exceeded —
+        # a cap longer than the natural settle trace pads by holding the
+        # final frame, same as `_fit_duration`'s stills-mode contract.
+        cap_n = max(1, round(min(spec.focus_duration_cap_s, MAX_FOCUS_TOTAL_S) * FPS))
+        if len(frame_states) != cap_n:
+            log.info(
+                "carousel_moment_focus_duration_fit original_frames=%d target_frames=%d",
+                len(frame_states),
+                cap_n,
+            )
+        frame_states = _fit_duration(frame_states, cap_n)
+    else:
+        hard_cap_n = max(1, round(MAX_FOCUS_TOTAL_S * FPS))
+        if len(frame_states) > hard_cap_n:
+            log.info(
+                "carousel_moment_focus_trimmed original_frames=%d cap_frames=%d",
+                len(frame_states),
+                hard_cap_n,
+            )
+            frame_states = frame_states[:hard_cap_n]
 
     total_s = (len(frame_states) / FPS) if frame_states else spec.duration_s
     focus_indices = {m.card_index for m in focus_moments}

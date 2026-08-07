@@ -1205,6 +1205,32 @@ def _capture_delay(monkeypatch):
     return calls
 
 
+def _carousel_job(
+    *,
+    render_status="ready",
+    resolved_archetype=None,
+    clip_count=3,
+    carousel_moment=None,
+):
+    """A montage-path variant with a persisted `ai_timeline` carrying
+    `clip_count` distinct clips — the ground truth `_variant_clip_count`
+    (and therefore `_carousel_capability_reason`/dispatch validation) reads."""
+    import types
+    import uuid
+
+    slots = [{"clip_index": i, "order": i} for i in range(clip_count)]
+    variant = {
+        "variant_id": "song_text",
+        "render_status": render_status,
+        "text_mode": "agent_text",
+        "resolved_archetype": resolved_archetype,
+        "ai_timeline": {"slots": slots},
+    }
+    if carousel_moment is not None:
+        variant["carousel_moment"] = carousel_moment
+    return types.SimpleNamespace(id=uuid.uuid4(), assembly_plan={"variants": [variant]})
+
+
 def test_dispatch_edit_enqueues_combined_kwargs(monkeypatch):
     from app.routes.generative_jobs import dispatch_edit_variant
 
@@ -1744,6 +1770,458 @@ def test_dispatch_edit_layout_rejected_with_remove_text(monkeypatch):
             intro_layout="cluster",
         )
     assert exc.value.status_code == 422
+
+
+# ── dispatch_edit_variant: carousel_moment (Blossom carousel editor) ────────────
+
+
+def test_dispatch_edit_carousel_absent_does_not_enqueue_override_kwarg(monkeypatch):
+    """Not passing `carousel_moment` at all must translate to the Celery-safe
+    CAROUSEL_MOMENT_UNSET sentinel — "leave whatever's persisted alone",
+    same lifecycle as every other untouched field on this combined dispatch."""
+    from app.routes.generative_jobs import dispatch_edit_variant
+    from app.tasks.generative_build import CAROUSEL_MOMENT_UNSET
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _editable_job(),
+        "song_text",
+        text="new hook",
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+    )
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["carousel_moment_override"] == CAROUSEL_MOMENT_UNSET
+
+
+def test_dispatch_edit_carousel_absent_alone_is_not_a_valid_edit_field(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+def test_dispatch_edit_carousel_null_alone_is_a_valid_edit_field_and_removes(monkeypatch):
+    """Explicit top-level `null` both counts as an edit field on its own AND
+    is always allowed (no eligibility check) — a moment must be clearable
+    even when the flag is off or the archetype changed underneath it."""
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", False)
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _carousel_job(render_status="ready"),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        carousel_moment=None,
+    )
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["carousel_moment_override"] is None
+
+
+def test_dispatch_edit_carousel_dict_enqueues_cleaned_override(monkeypatch):
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _carousel_job(clip_count=3),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        carousel_moment={
+            "position": "outro",
+            "mode": "focus",
+            "effect": "cover_flow",
+            "focus_clip_index": 2,
+            "duration_s": 5.0,
+            "transition": "crossfade",
+        },
+    )
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["carousel_moment_override"] == {
+        "position": "outro",
+        "mode": "focus",
+        "effect": "cover_flow",
+        "focus_clip_index": 2,
+        "duration_s": 5.0,
+        "transition": "crossfade",
+    }
+
+
+def test_dispatch_edit_carousel_rejects_when_flag_disabled(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", False)
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _carousel_job(),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            carousel_moment={"position": "intro"},
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "Carousel effects are disabled"
+    assert calls == []
+
+
+@pytest.mark.parametrize("archetype", ["talking_head", "narrated", "subtitled"])
+def test_dispatch_edit_carousel_rejects_unsupported_archetype(monkeypatch, archetype):
+    from fastapi import HTTPException
+
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _carousel_job(resolved_archetype=archetype),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            carousel_moment={"position": "intro"},
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "Not available for this edit type"
+    assert calls == []
+
+
+def test_dispatch_edit_carousel_rejects_fewer_than_two_clips(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _carousel_job(clip_count=1),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            carousel_moment={"position": "intro"},
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "Needs at least 2 clips"
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "field,bad_value",
+    [
+        ("position", "sideways"),
+        ("mode", "shuffle"),
+        ("effect", "glitch_wipe"),
+        ("transition", "wipe"),
+    ],
+)
+def test_dispatch_edit_carousel_rejects_bad_enum_values(monkeypatch, field, bad_value):
+    from fastapi import HTTPException
+
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _carousel_job(),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            carousel_moment={field: bad_value},
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "requested,expected",
+    [(0.5, 2.0), (1.9, 2.0), (2.0, 2.0), (8.0, 8.0), (15.0, 15.0), (30.0, 15.0)],
+)
+def test_dispatch_edit_carousel_clamps_duration_s(monkeypatch, requested, expected):
+    """Contract: clamp 2.0..15.0, never reject."""
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _carousel_job(),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        carousel_moment={"duration_s": requested},
+    )
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["carousel_moment_override"]["duration_s"] == pytest.approx(expected)
+
+
+def test_dispatch_edit_carousel_rejects_null_duration_s(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _carousel_job(),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            carousel_moment={"duration_s": None},
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+def test_dispatch_edit_carousel_focus_clip_index_out_of_bounds_rejected(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _carousel_job(clip_count=3),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            carousel_moment={"focus_clip_index": 3},  # valid range is 0..2
+        )
+    assert exc.value.status_code == 422
+    assert "focus_clip_index" in exc.value.detail
+    assert calls == []
+
+
+def test_dispatch_edit_carousel_focus_clip_index_negative_rejected(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _carousel_job(clip_count=3),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            carousel_moment={"focus_clip_index": -1},
+        )
+    assert exc.value.status_code == 422
+
+
+def test_dispatch_edit_carousel_focus_clip_index_rejects_non_int(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _carousel_job(clip_count=3),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            carousel_moment={"focus_clip_index": True},  # bool is an int subclass — reject anyway
+        )
+    assert exc.value.status_code == 422
+
+
+def test_dispatch_edit_carousel_focus_clip_index_valid_in_range(monkeypatch):
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _carousel_job(clip_count=3),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        carousel_moment={"focus_clip_index": 0},
+    )
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["carousel_moment_override"]["focus_clip_index"] == 0
+
+
+def test_dispatch_edit_carousel_focus_clip_index_null_clears_no_bounds_check(monkeypatch):
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _carousel_job(clip_count=3),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        carousel_moment={"focus_clip_index": None},
+    )
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["carousel_moment_override"]["focus_clip_index"] is None
+
+
+# ── _editor_capabilities: carousel / carousel_reason ─────────────────────────
+
+
+def test_editor_capabilities_carousel_true_when_eligible(monkeypatch):
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    job = _carousel_job(clip_count=3)
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert caps["carousel"] is True
+    assert caps["carousel_reason"] is None
+
+
+def test_editor_capabilities_carousel_false_when_flag_disabled(monkeypatch):
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", False)
+    job = _carousel_job(clip_count=3)
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert caps["carousel"] is False
+    assert caps["carousel_reason"] == "Carousel effects are disabled"
+
+
+@pytest.mark.parametrize("archetype", ["talking_head", "narrated", "subtitled"])
+def test_editor_capabilities_carousel_false_for_unsupported_archetype(monkeypatch, archetype):
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    job = _carousel_job(clip_count=3, resolved_archetype=archetype)
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert caps["carousel"] is False
+    assert caps["carousel_reason"] == "Not available for this edit type"
+
+
+def test_editor_capabilities_carousel_false_below_two_clips(monkeypatch):
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    job = _carousel_job(clip_count=1)
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert caps["carousel"] is False
+    assert caps["carousel_reason"] == "Needs at least 2 clips"
+
+
+def test_editor_capabilities_carousel_true_for_voiceover_variant(monkeypatch):
+    """Voiceover is montage-path and explicitly allowed for a manual/editor
+    moment (item 5b) — only the auto-authoring policy excludes it."""
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True)
+    job = _carousel_job(clip_count=2)
+    job.assembly_plan["variants"][0]["variant_id"] = "voiceover_only"
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert caps["carousel"] is True
+    assert caps["carousel_reason"] is None
+
+
+def test_variant_clip_count_excludes_synthetic_carousel_segment():
+    """BUG B: a spliced carousel-moment step registers its rendered segment's
+    LOCAL file path (never a real GCS object key — see
+    `_insert_carousel_moment_step`) as an extra "clip" in ai_timeline.
+    `_variant_clip_count` must not count it, or `focus_clip_index` bounds
+    validation (and `_carousel_capability_reason`) drift on every carousel
+    render (4 real clips -> 5 counted)."""
+    from app.routes.generative_jobs import _variant_clip_count
+
+    variant = {
+        "ai_timeline": {
+            "slots": [
+                {"clip_index": 0, "source_gcs_path": "generative-jobs/j/sources/000_a.mp4"},
+                {"clip_index": 1, "source_gcs_path": "generative-jobs/j/sources/001_b.mp4"},
+                # The synthetic carousel-moment segment: a local render path,
+                # never uploaded.
+                {
+                    "clip_index": 2,
+                    "source_gcs_path": "/tmp/variant_dir/carousel_moment_scale_sweep.mp4",
+                },
+            ]
+        }
+    }
+
+    assert _variant_clip_count(variant) == 2
+
+
+def test_variant_clip_count_missing_source_gcs_path_is_not_treated_as_synthetic():
+    """A slot with no `source_gcs_path` at all (minimal fixture, or a
+    not-yet-probed timeline entry) must still count — only an unambiguous
+    absolute local path marks a slot synthetic (see `_carousel_job`, which
+    never sets `source_gcs_path` on its fixture slots)."""
+    from app.routes.generative_jobs import _variant_clip_count
+
+    variant = {"ai_timeline": {"slots": [{"clip_index": 0}, {"clip_index": 1}]}}
+
+    assert _variant_clip_count(variant) == 2
 
 
 # ── Transcript-synced sequence variants (intro_mode="sequence", D19/T4) ──────────

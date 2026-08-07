@@ -36,10 +36,12 @@ import {
   retimeVisualBlock,
   requestOverlayUploadUrls,
   requestPoolAssetUploadUrls,
+  setVariantCarouselMoment,
   sha256HexOfFile,
   updatePoolAssetContext,
   uploadToGcs,
   type CameraEffect,
+  type CarouselMoment,
   type MediaOverlay,
   type OverlaySuggestion,
   type PlanItem,
@@ -52,6 +54,7 @@ import {
   type TextElement,
   type VisualBlock,
 } from "@/lib/plan-api";
+import type { CarouselClipThumb } from "./CarouselPanel";
 import { normalizeCameraEffect } from "@/lib/camera-effects";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
@@ -77,6 +80,7 @@ import {
   type GenerativeStyleSet,
   type LookAdjustments,
   type LookPreset,
+  resolveCarouselFocusClipIndex,
 } from "@/lib/generative-api";
 import {
   defaultLookAdjustments,
@@ -95,6 +99,7 @@ import {
   allowedOpFamiliesFromCapabilities,
   buildCopilotSnapshot,
   type CopilotCaptionMetaSnapshot,
+  type CopilotCarouselSnapshot,
   type CopilotSnapshot,
 } from "@/lib/edit-copilot/snapshot";
 import {
@@ -976,6 +981,34 @@ export default function EditorShell({
   ]);
   const slots = localSlots ?? clip.state.slots;
   const reloadClipTimeline = clip.reload;
+  // Carousel focus-tile strip: one thumbnail per clip actually in the
+  // timeline, in slot order, deduped (a clip can occupy more than one slot).
+  // Reuses the same clip.clips (signed_url per clip_index) the Filmstrip
+  // draws from — no separate fetch.
+  //
+  // A carousel-moment segment's synthetic slot (clip id prefix
+  // `__carousel_*` server-side) has no entry in `clip.clips` — that list is
+  // built strictly from the job's real uploaded clip pool
+  // (`job.all_candidates.clip_paths`), never the rendered segment. Skipping
+  // slots with no `clip.clips` match keeps the strip (and therefore
+  // `focus_clip_index` semantics) limited to real clips, even if the
+  // timeline itself still carries a stale synthetic slot.
+  const carouselClips = useMemo<CarouselClipThumb[]>(() => {
+    const out: CarouselClipThumb[] = [];
+    const seen = new Set<number>();
+    for (const slot of slots) {
+      if (slot.removed || seen.has(slot.clipIndex)) continue;
+      const source = clip.clips.find((c) => c.clip_index === slot.clipIndex) ?? null;
+      if (!source) continue;
+      seen.add(slot.clipIndex);
+      out.push({
+        clipIndex: slot.clipIndex,
+        label: `Clip ${out.length + 1}`,
+        signedUrl: source.signed_url ?? null,
+      });
+    }
+    return out;
+  }, [slots, clip.clips]);
   const clipDirty = useMemo(
     () => slotsDifferFromBaseline(clip.state.baseline, slots),
     [clip.state.baseline, slots],
@@ -3627,6 +3660,32 @@ export default function EditorShell({
           }
         : undefined;
     const renderLayoutSwitchable = intro != null && intro.switch_blocked_reason === null;
+    // Carousel-as-a-moment (Blossom carousel): mirrors capabilities.carousel /
+    // carousel_reason 1:1 — same source `_editor_capabilities().carousel` the
+    // CarouselPanel disabled-state reads (see carouselCapable/carouselReason
+    // below). Independent of renderLayoutSwitchable — either one unlocks the
+    // shared "render" op family; each op still gates on its own section.
+    const carouselMomentAvailable = !readOnly && capabilities?.carousel === true;
+    const rawCarouselMoment = variant?.carousel_moment ?? null;
+    const carousel: CopilotCarouselSnapshot = {
+      eligible: capabilities?.carousel === true,
+      reason: capabilities?.carousel === true ? null : capabilities?.carousel_reason ?? null,
+      current: rawCarouselMoment
+        ? {
+            position: rawCarouselMoment.position ?? null,
+            mode: rawCarouselMoment.mode ?? null,
+            effect: rawCarouselMoment.effect ?? null,
+            // Prefer the flat contract field; fall back to the internal
+            // `focus: [{card_index}]` render shape for moments persisted
+            // before the backend started writing both (see
+            // resolveCarouselFocusClipIndex).
+            focus_clip_index: resolveCarouselFocusClipIndex(rawCarouselMoment),
+            duration_s: rawCarouselMoment.duration_s ?? null,
+            transition: rawCarouselMoment.transition ?? null,
+          }
+        : null,
+      n_clips: carouselClips.length,
+    };
     const allowedFamilies = allowedOpFamiliesFromCapabilities(capabilities, {
       sfxEnabled: SOUND_EFFECTS_UI_ENABLED,
       overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
@@ -3634,6 +3693,7 @@ export default function EditorShell({
       musicSwappable,
       mixAllowed,
       renderLayoutSwitchable,
+      carouselMomentAvailable,
       cameraEffectsEnabled: capabilities?.camera_effects !== false,
       transitionsEnabled: EDIT_TRANSITIONS_UI_ENABLED,
       visualBlocksEnabled:
@@ -3675,6 +3735,8 @@ export default function EditorShell({
       mixLevel,
       intro,
       renderLayoutSwitchable,
+      carousel,
+      carouselMomentAvailable,
       title,
       cameraEffects: localCameraEffects,
       visualBlocks: localVisualBlocks,
@@ -3683,6 +3745,7 @@ export default function EditorShell({
   }, [
     capabilities,
     captionMeta,
+    carouselClips,
     clip.clips,
     clip.state.grid,
     clipDirty,
@@ -3766,6 +3829,13 @@ export default function EditorShell({
 
   const flashTimerRef = useRef<number | null>(null);
   const copilotRenderNavTimerRef = useRef<number | null>(null);
+  // handleCopilotOps (below) is defined before dispatchCarouselMoment (further
+  // down, alongside the rest of the carousel-editor state) — a ref indirection
+  // lets it call the latest dispatchCarouselMoment closure without a forward
+  // reference in its own dependency array (same "latest ref" idiom useEditCopilot
+  // uses for optsRef). Reassigned unconditionally on every render, right after
+  // dispatchCarouselMoment itself is declared.
+  const dispatchCarouselMomentRef = useRef<(config: CarouselMoment | null) => void>(() => {});
   const flashCopilotTargets = useCallback(
     (targets: {
       textIds?: string[];
@@ -3801,21 +3871,28 @@ export default function EditorShell({
     (result: ApplyCopilotOpsResult): DirectorApplyPresentation => {
       if (result.renderRequest) {
         if (!readOnly && variant) {
-          void editPlanItemVariant(itemId, variant.variant_id, {
-            intro_layout: result.renderRequest.layout,
-          })
-            .then(() => {
-              if (copilotRenderNavTimerRef.current !== null) {
-                window.clearTimeout(copilotRenderNavTimerRef.current);
-              }
-              copilotRenderNavTimerRef.current = window.setTimeout(() => {
-                copilotRenderNavTimerRef.current = null;
-                router.push(`/plan/items/${itemId}`);
-              }, 1400);
+          if (result.renderRequest.kind === "set_carousel_moment") {
+            // dispatchCarouselMoment already owns the request + nav-timer +
+            // error-toast lifecycle (declared below, reached via a ref indirection
+            // — see dispatchCarouselMomentRef) — reuse it instead of duplicating.
+            dispatchCarouselMomentRef.current(result.renderRequest.config);
+          } else {
+            void editPlanItemVariant(itemId, variant.variant_id, {
+              intro_layout: result.renderRequest.layout,
             })
-            .catch((err) => {
-              setToast(err instanceof Error ? err.message : "Couldn't update the intro layout.");
-            });
+              .then(() => {
+                if (copilotRenderNavTimerRef.current !== null) {
+                  window.clearTimeout(copilotRenderNavTimerRef.current);
+                }
+                copilotRenderNavTimerRef.current = window.setTimeout(() => {
+                  copilotRenderNavTimerRef.current = null;
+                  router.push(`/plan/items/${itemId}`);
+                }, 1400);
+              })
+              .catch((err) => {
+                setToast(err instanceof Error ? err.message : "Couldn't update the intro layout.");
+              });
+          }
         }
         return {};
       }
@@ -3961,6 +4038,69 @@ export default function EditorShell({
       itemId,
       variant,
       lyricsOptionalActive,
+    ],
+  );
+
+  // Carousel-as-a-moment: same full-render dispatch + post-apply navigation
+  // as the Classic/Editorial intro_layout switch above (handleCopilotOps'
+  // renderRequest branch) — call the endpoint, then hop back to the video
+  // page after a brief beat so the toast/confirm has time to be seen. `null`
+  // removes the moment; any other value adds/updates it (partial merges
+  // server-side).
+  const [carouselApplyPending, setCarouselApplyPending] = useState(false);
+  const [confirmRemoveCarousel, setConfirmRemoveCarousel] = useState(false);
+  const dispatchCarouselMoment = useCallback(
+    (config: CarouselMoment | null) => {
+      if (!variant || readOnly) return;
+      setCarouselApplyPending(true);
+      void setVariantCarouselMoment(itemId, variant.variant_id, config)
+        .then(() => {
+          if (copilotRenderNavTimerRef.current !== null) {
+            window.clearTimeout(copilotRenderNavTimerRef.current);
+          }
+          copilotRenderNavTimerRef.current = window.setTimeout(() => {
+            copilotRenderNavTimerRef.current = null;
+            router.push(`/plan/items/${itemId}`);
+          }, 1400);
+        })
+        .catch((err) => {
+          setToast(
+            err instanceof Error
+              ? err.message
+              : config === null
+                ? "Couldn't remove the carousel."
+                : "Couldn't update the carousel.",
+          );
+        })
+        .finally(() => setCarouselApplyPending(false));
+    },
+    [itemId, readOnly, router, variant],
+  );
+  dispatchCarouselMomentRef.current = dispatchCarouselMoment;
+  const carouselCapable = !readOnly && capabilities?.carousel === true;
+  const carouselReason = readOnly
+    ? readOnlyReason
+    : capabilities?.carousel === true
+      ? null
+      : editorReasonCopy(capabilities?.carousel_reason ?? "carousel isn't available for this edit");
+  const carouselControl = useMemo(
+    () => ({
+      capable: carouselCapable,
+      reason: carouselReason,
+      current: variant?.carousel_moment ?? null,
+      clips: carouselClips,
+      busy: carouselApplyPending,
+      onApply: (config: CarouselMoment) => dispatchCarouselMoment(config),
+      onRemove: () => setConfirmRemoveCarousel(true),
+      onDisabledTap: setToast,
+    }),
+    [
+      carouselCapable,
+      carouselReason,
+      variant?.carousel_moment,
+      carouselClips,
+      carouselApplyPending,
+      dispatchCarouselMoment,
     ],
   );
 
@@ -5416,6 +5556,7 @@ export default function EditorShell({
               onDuplicateVisualBlock={duplicateVisualBlock}
               onDeleteVisualBlock={deleteVisualBlock}
               onRetimeVisualBlock={retimeBlock}
+              carousel={carouselControl}
               layoutMode={layoutMode}
               copilot={{
                 messages: copilot.messages,
@@ -5490,6 +5631,7 @@ export default function EditorShell({
               onDuplicateVisualBlock={duplicateVisualBlock}
               onDeleteVisualBlock={deleteVisualBlock}
               onRetimeVisualBlock={retimeBlock}
+              carousel={carouselControl}
               layoutMode={layoutMode}
 	              onClose={() => setActiveTool(null)}
 	            />
@@ -5911,6 +6053,7 @@ export default function EditorShell({
             onDuplicateVisualBlock={duplicateVisualBlock}
             onDeleteVisualBlock={deleteVisualBlock}
             onRetimeVisualBlock={retimeBlock}
+            carousel={carouselControl}
             layoutMode={layoutMode}
             onClose={() => dispatchPocket({ type: "CLOSE_SHEET" })}
           />
@@ -6114,6 +6257,19 @@ export default function EditorShell({
           router.push(`/plan/items/${itemId}`);
         }}
         onCancel={() => setConfirmLeave(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmRemoveCarousel}
+        question="Remove this carousel?"
+        detail="This re-renders the video without the carousel moment (about 3 minutes)."
+        confirmLabel="Remove"
+        cancelLabel="Keep it"
+        onConfirm={() => {
+          setConfirmRemoveCarousel(false);
+          dispatchCarouselMoment(null);
+        }}
+        onCancel={() => setConfirmRemoveCarousel(false)}
       />
     </div>
   );

@@ -142,6 +142,7 @@ def _full_snapshot(*, allowed=None) -> dict:
             },
             "mix": {"music_level": 0.5},
             "intro": _intro(),
+            "carousel": _carousel(),
             "title": "Old title",
             "open_tools": ["text", "sounds", "overlays", "styles"],
             "visual_blocks": [
@@ -171,6 +172,17 @@ def _intro(**overrides) -> dict:
     }
     intro.update(overrides)
     return intro
+
+
+def _carousel(**overrides) -> dict:
+    carousel = {
+        "eligible": True,
+        "reason": None,
+        "current": None,
+        "n_clips": 4,
+    }
+    carousel.update(overrides)
+    return carousel
 
 
 def _parse(raw_ops: list[dict], *, confidence: float = 0.9, allowed=None, snapshot=None):
@@ -623,6 +635,173 @@ def test_copilot_set_intro_layout_sequence_capable_allows_cluster() -> None:
     assert out.ops == [{"op": "set_intro_layout", "layout": "cluster"}]
 
 
+def test_copilot_set_carousel_moment_add_parses() -> None:
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"position": "intro"}}],
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == [{"op": "set_carousel_moment", "config": {"position": "intro"}}]
+
+
+def test_copilot_set_carousel_moment_missing_config_key_drop() -> None:
+    out = _parse([{"op": "set_carousel_moment"}], snapshot=_full_snapshot())
+    assert out.ops == []
+
+
+def test_copilot_set_carousel_moment_family_not_allowed_drop() -> None:
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"position": "intro"}}],
+        snapshot=_full_snapshot(allowed=["text"]),
+    )
+    assert out.ops == []
+    assert out.confidence == 0.9
+
+
+def test_copilot_set_carousel_moment_missing_carousel_section_drop() -> None:
+    snap = _full_snapshot()
+    snap.pop("carousel")
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"position": "intro"}}],
+        snapshot=snap,
+    )
+    assert out.ops == []
+    assert out.confidence == 0.9
+
+
+def test_copilot_set_carousel_moment_ineligible_add_drop() -> None:
+    snap = _full_snapshot()
+    snap["carousel"] = _carousel(eligible=False, reason="Needs at least 2 clips")
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"position": "intro"}}],
+        confidence=0.9,
+        snapshot=snap,
+    )
+    assert out.ops == []
+    assert out.confidence == 0.9
+
+
+def test_copilot_set_carousel_moment_remove_bypasses_eligibility() -> None:
+    # Explicit removal is always allowed, mirroring dispatch_edit_variant — even
+    # when the section reports ineligible (e.g. after a flag flip or archetype
+    # change), a stale carousel can still be cleared.
+    snap = _full_snapshot()
+    snap["carousel"] = _carousel(
+        eligible=False,
+        reason="Needs at least 2 clips",
+        current={
+            "position": "intro",
+            "mode": "focus",
+            "effect": "cover_flow",
+            "focus_clip_index": 0,
+            "duration_s": 4.0,
+            "transition": "crossfade",
+        },
+    )
+    out = _parse([{"op": "set_carousel_moment", "config": None}], snapshot=snap)
+    assert out.ops == [{"op": "set_carousel_moment", "config": None}]
+
+
+def test_copilot_set_carousel_moment_remove_noop_when_nothing_to_remove_drop() -> None:
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": None}],
+        confidence=0.9,
+        snapshot=_full_snapshot(),  # default current=None
+    )
+    assert out.ops == []
+    assert out.confidence == 0.9
+
+
+def test_copilot_set_carousel_moment_noop_config_matches_current_drop() -> None:
+    snap = _full_snapshot()
+    snap["carousel"] = _carousel(
+        current={
+            "position": "intro",
+            "mode": "focus",
+            "effect": "cover_flow",
+            "focus_clip_index": 0,
+            "duration_s": 4.0,
+            "transition": "crossfade",
+        }
+    )
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"position": "intro", "mode": "focus"}}],
+        confidence=0.9,
+        snapshot=snap,
+    )
+    assert out.ops == []
+    assert out.confidence == 0.9
+
+
+def test_copilot_set_carousel_moment_mode_stills_rejected() -> None:
+    # "stills" is a legal persisted value (auto-authored moments) but the
+    # copilot must never be able to WRITE it.
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"mode": "stills"}}],
+        confidence=0.9,
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == []
+    assert out.confidence == 0.4
+    assert out.needs_clarification
+
+
+def test_copilot_set_carousel_moment_duration_clamped() -> None:
+    snap = _full_snapshot()
+    snap["carousel"] = _carousel(current={"duration_s": 4.0})
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"duration_s": 100}}],
+        snapshot=snap,
+    )
+    assert out.ops == [{"op": "set_carousel_moment", "config": {"duration_s": 15.0}}]
+
+    snap["carousel"] = _carousel(current={"duration_s": 4.0})
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"duration_s": 0.1}}],
+        snapshot=snap,
+    )
+    assert out.ops == [{"op": "set_carousel_moment", "config": {"duration_s": 2.0}}]
+
+
+def test_copilot_set_carousel_moment_focus_clip_index_negative_rejected() -> None:
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"focus_clip_index": -1}}],
+        confidence=0.9,
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == []
+    assert out.confidence == 0.4
+
+
+def test_copilot_set_carousel_moment_focus_clip_index_null_lets_nova_pick() -> None:
+    snap = _full_snapshot()
+    snap["carousel"] = _carousel(current={"focus_clip_index": 2})
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"focus_clip_index": None}}],
+        snapshot=snap,
+    )
+    assert out.ops == [{"op": "set_carousel_moment", "config": {"focus_clip_index": None}}]
+
+
+def test_copilot_set_carousel_moment_invalid_config_type_rejected() -> None:
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": "intro"}],
+        confidence=0.9,
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == []
+    assert out.confidence == 0.4
+
+
+def test_copilot_set_carousel_moment_empty_config_rejected() -> None:
+    out = _parse(
+        [{"op": "set_carousel_moment", "config": {"unsupported_field": "x"}}],
+        confidence=0.9,
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == []
+    assert out.confidence == 0.4
+
+
 def test_copilot_patch_overlay_whitelist_and_empty_drop() -> None:
     out = _parse(
         [{"op": "patch_overlay", "overlay_index": 0, "patch": {"scale": 2, "unknown": "x"}}],
@@ -1021,10 +1200,12 @@ def test_format_snapshot_renders_sfx_roles_and_suggestions() -> None:
 
 def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # Numbered follow-up resolution changes model behavior and must retain a
-    # unique prompt version for trace and eval attribution.
+    # unique prompt version for trace and eval attribution. Bumped again for
+    # the set_carousel_moment op (2026-08-07-v14) — update this pin whenever
+    # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-04-v13"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-07-v14"
 
 
 def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:

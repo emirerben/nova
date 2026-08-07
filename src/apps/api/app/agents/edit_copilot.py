@@ -26,7 +26,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-04-v13"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-07-v14"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -55,7 +55,7 @@ _OVERLAY_OPS = {
 }
 _CAPTION_OPS = {"edit_caption", "set_caption_timing", "set_caption_meta", "set_caption_emphasis"}
 _MUSIC_OPS = {"swap_music", "set_mix"}
-_RENDER_OPS = frozenset({"set_intro_layout"})
+_RENDER_OPS = frozenset({"set_intro_layout", "set_carousel_moment"})
 _TITLE_OPS = {"set_title"}
 _TOOL_OPS = {"open_tool"}
 _EFFECT_OPS = {"add_camera_effect", "patch_camera_effect", "remove_camera_effect"}
@@ -102,6 +102,7 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "swap_music": frozenset({"track_id"}),
     "set_mix": frozenset({"music_level"}),
     "set_intro_layout": frozenset({"layout"}),
+    "set_carousel_moment": frozenset({"config"}),
     "set_title": frozenset({"title"}),
     "open_tool": frozenset({"tool"}),
     "add_camera_effect": frozenset({"start_s", "end_s"}),
@@ -147,6 +148,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "swap_music": frozenset({"track_id"}),
     "set_mix": frozenset({"music_level"}),
     "set_intro_layout": frozenset({"layout"}),
+    "set_carousel_moment": frozenset({"config"}),
     "set_title": frozenset({"title"}),
     "open_tool": frozenset({"tool"}),
     "add_camera_effect": frozenset({"start_s", "end_s", "intensity"}),
@@ -446,6 +448,39 @@ def _format_snapshot(snapshot: dict) -> str:
             f"{_clean_prompt_data(intro.get('switch_blocked_reason'), max_chars=40)!r}"
         )
         lines.append(f"text={_clean_prompt_data(intro.get('text'), max_chars=300)!r}")
+
+    carousel = snapshot.get("carousel")
+    if isinstance(carousel, dict):
+        lines.append(
+            "\nCAROUSEL (Blossom carousel — full-screen multi-clip moment; "
+            "re-render, not a draft edit):"
+        )
+        lines.append(
+            "eligible="
+            f"{bool(carousel.get('eligible'))} "
+            "reason="
+            f"{_clean_prompt_data(carousel.get('reason'), max_chars=80)!r} "
+            "n_clips="
+            f"{_clean_prompt_data(carousel.get('n_clips'), max_chars=10)!r}"
+        )
+        current = carousel.get("current")
+        if isinstance(current, dict):
+            lines.append(
+                "current: position="
+                f"{_clean_prompt_data(current.get('position'), max_chars=20)!r} "
+                "mode="
+                f"{_clean_prompt_data(current.get('mode'), max_chars=20)!r} "
+                "effect="
+                f"{_clean_prompt_data(current.get('effect'), max_chars=20)!r} "
+                "focus_clip_index="
+                f"{_clean_prompt_data(current.get('focus_clip_index'), max_chars=10)!r} "
+                "duration_s="
+                f"{_fmt_round3(_first_number(current, ('duration_s',)))} "
+                "transition="
+                f"{_clean_prompt_data(current.get('transition'), max_chars=20)!r}"
+            )
+        else:
+            lines.append("current: (none — no carousel configured)")
 
     lines.append("\nTEXT BARS (indices are authoritative for this turn):")
     if text_bars:
@@ -1020,8 +1055,10 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         aliases = {"music", "audio", "mix"}
     elif name in _MUSIC_OPS:
         aliases = {"music", "audio"}
-    elif name in _RENDER_OPS:
+    elif name == "set_intro_layout":
         aliases = {"render", "layout", "intro_layout"}
+    elif name in _RENDER_OPS:
+        aliases = {"render", "carousel", "carousel_moment"}
     elif name in _TITLE_OPS:
         aliases = {"title"}
     elif name in _TOOL_OPS:
@@ -1415,6 +1452,80 @@ def _coerce_payload(
             if key in out and out[key] not in {"cut", "fade"}:
                 state.invalid_value()
                 return None
+
+    if name == "set_carousel_moment":
+        carousel = snapshot.get("carousel") if isinstance(snapshot, dict) else None
+        if not isinstance(carousel, dict):
+            log.warning("edit_copilot.drop_missing_carousel_section")
+            return None
+        current = carousel.get("current") if isinstance(carousel.get("current"), dict) else None
+        config = out.get("config")
+        if config is None:
+            # Explicit removal is always allowed — mirrors dispatch_edit_variant's
+            # "no eligibility check on removal" rule (a moment can need clearing
+            # even after a flag flip or an archetype change that would otherwise
+            # reject an add).
+            if current is None:
+                return None  # no-op: nothing to remove
+            out["config"] = None
+            return out
+        if not isinstance(config, dict):
+            state.invalid_value()
+            return None
+        if carousel.get("eligible") is not True:
+            log.warning(
+                "edit_copilot.drop_ineligible_carousel",
+                reason=carousel.get("reason"),
+            )
+            return None
+        cleaned: dict[str, Any] = {}
+        if "position" in config:
+            if config["position"] not in {"intro", "middle", "outro"}:
+                state.invalid_value()
+                return None
+            cleaned["position"] = config["position"]
+        if "mode" in config:
+            # "stills" is a legal persisted value (auto-authored moments) but is
+            # NEVER a valid copilot write — the vocabulary below intentionally
+            # excludes it (mirrors CarouselMoment on the web side).
+            if config["mode"] not in {"focus", "rolling"}:
+                state.invalid_value()
+                return None
+            cleaned["mode"] = config["mode"]
+        if "effect" in config:
+            if config["effect"] not in {"scale_sweep", "cover_flow", "cards_stack", "flipbook"}:
+                state.invalid_value()
+                return None
+            cleaned["effect"] = config["effect"]
+        if "focus_clip_index" in config:
+            idx = config["focus_clip_index"]
+            if idx is not None:
+                if isinstance(idx, bool) or not isinstance(idx, int) or idx < 0:
+                    state.invalid_value()
+                    return None
+            cleaned["focus_clip_index"] = idx
+        if "duration_s" in config:
+            duration = _as_float(config["duration_s"])
+            if duration is None:
+                state.invalid_value()
+                return None
+            cleaned["duration_s"] = max(2.0, min(15.0, duration))
+        if "transition" in config:
+            if config["transition"] not in {"crossfade", "none"}:
+                state.invalid_value()
+                return None
+            cleaned["transition"] = config["transition"]
+        if not cleaned:
+            state.invalid_value()
+            return None
+        # No-op detection: every field the model proposed already matches the
+        # persisted moment (config is a partial patch, so only compare the
+        # fields actually present).
+        if current is not None and all(
+            key in current and current[key] == value for key, value in cleaned.items()
+        ):
+            return None
+        out["config"] = cleaned
 
     return out
 

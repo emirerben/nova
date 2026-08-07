@@ -22,6 +22,59 @@ export const SEQUENCE_TEXT_LOCKED_HINT =
 export type GenerativeTextMode = "lyrics" | "agent_text" | "none";
 export type RenderedMontagePreset = "masonry" | "polaroid_wall";
 
+/**
+ * Carousel-as-a-moment: a full-screen multi-clip carousel burned in at a
+ * position in the edit. Mirrors `carousel_moment` on the variant-edit dispatch
+ * endpoint (backend contract, "carousel as an editable visual template").
+ * Every field is optional at the wire level — a PATCH-style partial merges
+ * over the current moment server-side. `null` (not this type) on the wire
+ * means "remove the moment"; the client sends that as a literal `null`, never
+ * as this interface.
+ */
+export interface CarouselMoment {
+  position?: "intro" | "middle" | "outro";
+  mode?: "focus" | "rolling";
+  effect?: "scale_sweep" | "cover_flow" | "cards_stack" | "flipbook";
+  /** null = "let Nova pick" (server auto-selects the focus tile). */
+  focus_clip_index?: number | null;
+  /** 2..15 seconds. */
+  duration_s?: number;
+  transition?: "crossfade" | "none";
+}
+
+/**
+ * A `CarouselMoment` as it may come back off the wire (`variant.carousel_moment`),
+ * widened with the internal render-time focus shape. The pipeline reads ONLY
+ * `focus` (`_apply_moment_overrides`/`_parse_focus_override`), never
+ * `focus_clip_index` — the backend now persists both fields side by side
+ * (`_merge_carousel_moment_override`), but a moment persisted before that fix
+ * landed may carry ONLY this one. NOT part of the `CarouselMoment` contract
+ * type itself (that type also shapes the POST payload / copilot snapshot,
+ * where `keyof CarouselMoment` must stay exactly the contract fields) — kept
+ * as a separate read-side type so widening it here can't leak `focus` into
+ * those other surfaces.
+ */
+export type CarouselMomentPersisted = CarouselMoment & {
+  focus?: Array<{ card_index: number }>;
+};
+
+/**
+ * `focus_clip_index` is the contract field every reader should use — but a
+ * moment persisted before the backend started writing it alongside `focus`
+ * (see `CarouselMomentPersisted`) may have only the internal render-time
+ * shape. Falls back to that shape's `focus[0].card_index` so already-
+ * persisted moments still prefill correctly.
+ */
+export function resolveCarouselFocusClipIndex(
+  moment: CarouselMomentPersisted | null | undefined,
+): number | null {
+  if (!moment) return null;
+  if (moment.focus_clip_index !== undefined && moment.focus_clip_index !== null) {
+    return moment.focus_clip_index;
+  }
+  return moment.focus?.[0]?.card_index ?? null;
+}
+
 export interface GenerativeVariant {
   variant_id: string;
   rank: number;
@@ -523,6 +576,12 @@ export interface EditVariantPayload {
    * wire level (undefined = keep current); gated server-side by
    * settings.text_behind_subject_enabled. */
   text_behind_subject?: boolean;
+  /**
+   * Carousel-as-a-moment (partial merges over the current moment server-side).
+   * `undefined` = unchanged (field omitted from the request body); explicit
+   * `null` = remove the moment entirely. See CarouselMoment.
+   */
+  carousel_moment?: CarouselMoment | null;
 }
 
 export async function editVariant(

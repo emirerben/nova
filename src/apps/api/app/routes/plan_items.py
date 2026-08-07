@@ -1954,7 +1954,22 @@ async def edit_item_variant(
     the plan page picks the intro layout (Classic / Editorial word-cluster)
     after a render. One request → one re-render.
     """
+    from app.routes.generative_jobs import _UNSET  # noqa: PLC0415
+
     job = await _owned_item_render_job(item_id, user.id, db)
+    # Tri-state (mirrors generative_jobs.edit_variant): absent from the request
+    # -> _UNSET (leave unchanged); explicit top-level `null` -> None (remove);
+    # an object -> only the fields the client actually set (exclude_unset), so
+    # an omitted nested field merges over the persisted value instead of being
+    # treated as an explicit null. Without this, dispatch_edit_variant always
+    # sees carousel_moment=_UNSET here, so a carousel-only edit (the only kind
+    # the CarouselPanel UI sends) 422s with "Provide at least one edit field."
+    if "carousel_moment" not in req.model_fields_set:
+        carousel_moment_field: object = _UNSET
+    elif req.carousel_moment is None:
+        carousel_moment_field = None
+    else:
+        carousel_moment_field = req.carousel_moment.model_dump(exclude_unset=True)
     dispatch_edit_variant(
         job,
         variant_id,
@@ -1973,6 +1988,7 @@ async def edit_item_variant(
         cluster_body_size_px=req.cluster_body_size_px,
         cluster_accent_size_px=req.cluster_accent_size_px,
         text_behind_subject=req.text_behind_subject,
+        carousel_moment=carousel_moment_field,
     )
     await db.commit()
     log.info(

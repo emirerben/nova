@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.9.0] — 2026-08-07
+
+### Added
+- **Carousel moments are now a visual template you control in the editor.** A new "Carousel" card in the Visuals drawer opens a full panel: pick the effect (scale sweep, cover flow, cards stack, flipbook), choose Focus (center tile plays fullscreen) or Rolling (all tiles play), select which clip gets the fullscreen focus, set the position (intro/middle/outro), length (2–15s), and crossfade or hard-cut boundaries. Editing an existing moment prefills the panel; Remove takes it out. Changes trigger a full re-render (~3 min) with the same disclosure flow as intro-layout switches.
+- **Nova (chat) has full carousel control.** "Add a carousel intro with cover flow", "make clip 3 the fullscreen focus", "make it shorter", "remove the carousel" — one new `set_carousel_moment` op with no-op detection, eligibility gating, and honest redirects when unavailable. Prompt v14, 60/60 live-eval fixtures green.
+- **Manual carousel adds now work on voiceover edits** (the pre-splice duration truncation that would have clipped the moment is fixed); talk-to-camera, narrated, and subtitled edits honestly report "not available for this edit type" pending their own splice support.
+
+### Fixed
+- Carousel-only edits from the plan-item editor no longer 422 (route drift) and no longer silently drop the moment via the fast-reburn path.
+- A serialization bug that would have disabled fast-reburn for **all** editor commits (sentinel identity lost across the Celery boundary) was caught in review and fixed before release.
+- The synthetic carousel segment no longer pollutes clip counts/indices in the editor after a render, and the chosen focus clip now prefills correctly when reopening the panel.
+
 ## [0.23.8.0] — 2026-08-07
 
 ### Added

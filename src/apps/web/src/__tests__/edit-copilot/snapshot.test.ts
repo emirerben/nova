@@ -430,6 +430,82 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.allowed_op_families).not.toContain("render");
   });
 
+  it("emits the carousel section and render family when the moment is eligible", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      {
+        carousel: {
+          eligible: true,
+          reason: null,
+          current: {
+            position: "intro",
+            mode: "focus",
+            effect: "cover_flow",
+            focus_clip_index: 0,
+            duration_s: 4,
+            transition: "crossfade",
+          },
+          n_clips: 4,
+        },
+        carouselMomentAvailable: true,
+      },
+    );
+
+    expect(snapshot.carousel).toEqual({
+      eligible: true,
+      reason: null,
+      current: {
+        position: "intro",
+        mode: "focus",
+        effect: "cover_flow",
+        focus_clip_index: 0,
+        duration_s: 4,
+        transition: "crossfade",
+      },
+      n_clips: 4,
+    });
+    expect(snapshot.allowed_op_families).toContain("render");
+  });
+
+  it("withholds the render family but keeps the carousel section when ineligible", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      {
+        carousel: { eligible: false, reason: "Needs at least 2 clips", current: null, n_clips: 1 },
+        carouselMomentAvailable: false,
+      },
+    );
+
+    expect(snapshot.carousel?.eligible).toBe(false);
+    expect(snapshot.carousel?.reason).toBe("Needs at least 2 clips");
+    expect(snapshot.allowed_op_families).not.toContain("render");
+  });
+
+  it("unlocks the render family from carouselMomentAvailable independent of the intro switch", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      {
+        carousel: { eligible: true, reason: null, current: null, n_clips: 4 },
+        carouselMomentAvailable: true,
+        renderLayoutSwitchable: false,
+      },
+    );
+
+    expect(snapshot.allowed_op_families).toContain("render");
+  });
+
   it("derives allowed families from server capabilities and client flags", () => {
     expect(
       allowedOpFamiliesFromCapabilities(

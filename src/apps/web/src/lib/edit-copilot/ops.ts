@@ -1,5 +1,5 @@
 import fontRegistryJson from "@/data/font-registry.json";
-import type { EditorTransition } from "@/lib/generative-api";
+import type { CarouselMoment, EditorTransition } from "@/lib/generative-api";
 
 export type CopilotOpFamily =
   | "text"
@@ -134,6 +134,7 @@ export type CopilotOp =
   | { op: "swap_music"; track_id: string }
   | { op: "set_mix"; music_level: number }
   | { op: "set_intro_layout"; layout: "linear" | "cluster" }
+  | { op: "set_carousel_moment"; config: CarouselMoment | null }
   | { op: "set_title"; title: string }
   | { op: "add_camera_effect"; start_s: number; end_s: number; intensity?: number }
   | {
@@ -278,6 +279,16 @@ const ALLOWED_OVERLAY_POSITIONS = new Set(["top", "center", "bottom", "custom"])
 const ALLOWED_DISPLAY_MODES = new Set(["pip", "fullscreen"]);
 const ALLOWED_CAPTION_STYLES = new Set(["sentence", "word"]);
 const ALLOWED_TOOLS = new Set(["text", "sounds", "overlays", "styles"]);
+// Carousel-as-a-moment (Blossom carousel). Mode intentionally excludes "stills" —
+// the API legally accepts it (auto-authored moments), but the copilot must never
+// emit it (see CarouselMoment in generative-api.ts, which carries the same
+// restriction at the type level).
+const ALLOWED_CAROUSEL_POSITIONS = new Set(["intro", "middle", "outro"]);
+const ALLOWED_CAROUSEL_MODES = new Set(["focus", "rolling"]);
+const ALLOWED_CAROUSEL_EFFECTS = new Set(["scale_sweep", "cover_flow", "cards_stack", "flipbook"]);
+const ALLOWED_CAROUSEL_TRANSITIONS = new Set(["crossfade", "none"]);
+const CAROUSEL_DURATION_MIN_S = 2;
+const CAROUSEL_DURATION_MAX_S = 15;
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 const STYLE_PATCH_KEY_SET = new Set<string>(TEXT_STYLE_PATCH_KEYS);
 const OVERLAY_PATCH_KEY_SET = new Set<string>(OVERLAY_PATCH_KEYS);
@@ -529,7 +540,7 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
     return "caption";
   }
   if (op.op === "swap_music" || op.op === "set_mix") return "music";
-  if (op.op === "set_intro_layout") return "render";
+  if (op.op === "set_intro_layout" || op.op === "set_carousel_moment") return "render";
   if (op.op === "set_title") return "title";
   if (op.op === "open_tool") return "tool";
   if (
@@ -857,6 +868,59 @@ export function validateCopilotOp(
         return reject("invalid_value", "layout must be linear or cluster", opName);
       }
       return { ok: true, op: { op: opName, layout: raw.layout } };
+    }
+    case "set_carousel_moment": {
+      if (raw.config === undefined) {
+        return reject("missing_required", "set_carousel_moment requires config", opName);
+      }
+      if (raw.config === null) {
+        return { ok: true, op: { op: opName, config: null } };
+      }
+      if (!isRecord(raw.config)) {
+        return reject("invalid_type", "config must be an object or null", opName);
+      }
+      const config: CarouselMoment = {};
+      for (const [key, value] of Object.entries(raw.config)) {
+        if (key === "position") {
+          if (typeof value !== "string" || !ALLOWED_CAROUSEL_POSITIONS.has(value)) {
+            return reject("invalid_value", "position must be intro, middle, or outro", opName);
+          }
+          config.position = value as CarouselMoment["position"];
+        } else if (key === "mode") {
+          if (typeof value !== "string" || !ALLOWED_CAROUSEL_MODES.has(value)) {
+            return reject("invalid_value", "mode must be focus or rolling", opName);
+          }
+          config.mode = value as CarouselMoment["mode"];
+        } else if (key === "effect") {
+          if (typeof value !== "string" || !ALLOWED_CAROUSEL_EFFECTS.has(value)) {
+            return reject("invalid_value", "effect is not supported", opName);
+          }
+          config.effect = value as CarouselMoment["effect"];
+        } else if (key === "focus_clip_index") {
+          if (value !== null && !integerIndex(value)) {
+            return reject(
+              "invalid_type",
+              "focus_clip_index must be a non-negative integer or null",
+              opName,
+            );
+          }
+          config.focus_clip_index = value as number | null;
+        } else if (key === "duration_s") {
+          if (!finiteNumber(value)) {
+            return reject("invalid_type", "duration_s must be a number", opName);
+          }
+          config.duration_s = clamp(value, CAROUSEL_DURATION_MIN_S, CAROUSEL_DURATION_MAX_S);
+        } else if (key === "transition") {
+          if (typeof value !== "string" || !ALLOWED_CAROUSEL_TRANSITIONS.has(value)) {
+            return reject("invalid_value", "transition must be crossfade or none", opName);
+          }
+          config.transition = value as CarouselMoment["transition"];
+        }
+      }
+      if (Object.keys(config).length === 0) {
+        return reject("empty_patch", "config contains no carousel fields", opName);
+      }
+      return { ok: true, op: { op: opName, config } };
     }
     case "set_title": {
       if (typeof raw.title !== "string") return reject("missing_required", "set_title requires title", opName);
