@@ -1,7 +1,8 @@
 """The DIRECTOR: picks which Blossom-carousel treatment a generative variant
-gets — mode (rolling/focus/stills), effect (scale_sweep/cover_flow/
-cards_stack/flipbook), and (for `mode="focus"`) which card(s) get a
-hold-and-zoom beat — from a deterministic, seeded heuristic. No LLM call in
+gets — mode (rolling/focus for AUTO authoring; stills too for an explicit,
+non-auto `moment_cfg` — see the mode policy below), effect (scale_sweep/
+cover_flow/cards_stack/flipbook), and (for `mode="focus"`) which card(s) get
+a hold-and-zoom beat — from a deterministic, seeded heuristic. No LLM call in
 v1; this is the piece that makes multiple variants of the same job feel
 different from each other instead of all reaching for the same effect.
 
@@ -13,15 +14,40 @@ Mode (`_choose_mode` / `_mode_weights`):
     enough to hold on (see the hold-duration floor below), and reads as
     thin with only 1-2 cards.
   - Qualified clip sets: weighted seeded choice over
-    {focus: 0.5, rolling: 0.35, stills: 0.15} — focus is the most
-    "produced"-feeling treatment, so it's favored when the footage supports
-    it.
-  - Non-qualified clip sets (short and/or few clips): weighted seeded choice
-    over {rolling: 0.6, stills: 0.4} — no focus candidate, and rolling reads
-    better than stills on a small card count.
+    {focus: 0.65, rolling: 0.35} — focus is the flagship, most
+    "produced"-feeling treatment, so it's strongly favored when the footage
+    supports it.
+  - Non-qualified clip sets (short and/or few clips): {rolling: 1.0} — no
+    focus candidate, and rolling has NO minimum-duration or minimum-count
+    floor (unlike focus's qualify check and its per-candidate hold-duration
+    floor below), so it's always a legal, always-reachable draw. A clip
+    pool too short/few for focus never bottoms out at zero qualifying
+    modes — it always resolves to rolling, either directly here or via the
+    mode=="focus" -> no-qualifying-candidate -> "falls back to rolling"
+    path in `_build_focus_moments`/`direct_carousel_moment` below.
+  - `stills` (static cards — no video playback, no tile-focus-expand) is
+    deliberately NOT a key in either weight table above, per product
+    decision 2026-08-06: auto-authored moments must always be dynamic, and
+    a static card reads as a broken moment in a real edit. It's excluded
+    from `direct_carousel_moment`'s weighted-selection vocabulary itself
+    (not merely filtered out downstream by a caller's `allowed_modes`), so
+    this holds even for a caller that omits `allowed_modes` entirely — the
+    weights dict reflects the real policy instead of relying on
+    `allowed_modes` to renormalize away a dead entry. `stills` remains
+    reachable through this module only by explicitly restricting
+    `allowed_modes` to a set that contains it (e.g.
+    `allowed_modes=("stills",)`), which forces `_restrict_weights`'s
+    uniform-fallback branch since no weight-table entry survives the
+    filter. The real "stills" entry point for a human is an EXPLICIT
+    (non-auto) `moment_cfg["mode"] = "stills"`, applied via
+    `_apply_moment_overrides` in `generative_build.py` — that path
+    constructs `CarouselMomentSpec` directly and never calls this module
+    at all. `generative_build._direct_auto_carousel_spec` (the only AUTO
+    caller) passes `allowed_modes=("focus", "rolling")`.
   - `allowed_modes` filters the candidate set before the weighted draw
-    (renormalized); if the filter empties it out entirely, falls back to a
-    uniform draw over `allowed_modes` itself rather than raising.
+    (kept as-is — no separate renormalization step); if the filter empties
+    it out entirely, falls back to a uniform draw over `allowed_modes`
+    itself rather than raising.
 
 Effect (`_choose_effect` / `_effect_weights`):
   - Base weight 1.0 for all four effects in `effects.EFFECTS`, then:
@@ -85,6 +111,14 @@ in `specs_already_used`; if the attempts are exhausted, it returns whatever
 the last attempt produced rather than raising (never-block-a-render
 contract, same spirit as the rest of the carousel package).
 
+With `stills` excluded from AUTO authoring, the reachable (mode, effect)
+space for `generative_build._direct_auto_carousel_spec` (which doesn't
+restrict `allowed_effects`) shrinks from 3 modes x 4 effects = 12 pairs to
+2 modes x 4 effects = 8 pairs — still comfortably inside
+`MAX_DIVERSIFY_ATTEMPTS` (25), so a job with up to 8 carousel-moment
+variants can still get a fully distinct pair per variant before
+`diversify()` has to repeat one.
+
 ## LLM handoff
 
 v1 is pure stdlib heuristics — no network call, so it works with the same
@@ -123,8 +157,10 @@ from .effects import EFFECTS  # noqa: E402
 FOCUS_QUALIFY_MIN_CLIPS = 3
 FOCUS_QUALIFY_MIN_DURATION_S = 2.5
 
-MODE_WEIGHTS_FOCUS_QUALIFIED: dict[str, float] = {"focus": 0.5, "rolling": 0.35, "stills": 0.15}
-MODE_WEIGHTS_FOCUS_UNQUALIFIED: dict[str, float] = {"rolling": 0.6, "stills": 0.4}
+# `stills` is intentionally absent from both tables — see the module
+# docstring's mode-policy bullet on why AUTO authoring never draws it.
+MODE_WEIGHTS_FOCUS_QUALIFIED: dict[str, float] = {"focus": 0.65, "rolling": 0.35}
+MODE_WEIGHTS_FOCUS_UNQUALIFIED: dict[str, float] = {"rolling": 1.0}
 
 EFFECT_WEIGHT_MULTIPLIER_LARGE_DECK = 2.0  # cover_flow / flipbook, >= 4 clips
 EFFECT_WEIGHT_MULTIPLIER_SMALL_DECK = 2.0  # scale_sweep, == 3 clips
@@ -141,6 +177,11 @@ HOLD_S_MAX = 3.0
 FOCUS_DURATION_HEADROOM_S = 1.5  # clip must be >= hold_s + this
 
 DEFAULT_TARGET_DURATION_S = 6.0
+# "stills" stays in this default set for the module's general API (a caller
+# CAN still force it via allowed_modes=("stills",)), but it's harmless for
+# AUTO authoring's dynamic-only guarantee: neither MODE_WEIGHTS table above
+# has a "stills" entry, so the weighted draw never lands on it unless a
+# caller explicitly narrows allowed_modes to a set that contains it.
 DEFAULT_ALLOWED_MODES: tuple[str, ...] = ("rolling", "focus", "stills")
 
 MAX_DIVERSIFY_ATTEMPTS = 25

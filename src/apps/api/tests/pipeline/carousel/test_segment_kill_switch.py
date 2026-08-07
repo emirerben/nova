@@ -421,10 +421,11 @@ def test_stable_seed_from_variant_handles_none():
 def test_direct_auto_carousel_spec_uses_probe_map_durations_with_fallback(monkeypatch):
     captured: dict[str, Any] = {}
 
-    def _fake_direct(clips, *, seed, target_duration_s):
+    def _fake_direct(clips, *, seed, target_duration_s, allowed_modes=None):
         captured["clips"] = clips
         captured["seed"] = seed
         captured["target_duration_s"] = target_duration_s
+        captured["allowed_modes"] = allowed_modes
         return "SPEC"
 
     import app.pipeline.carousel.director as director_mod
@@ -446,12 +447,15 @@ def test_direct_auto_carousel_spec_uses_probe_map_durations_with_fallback(monkey
     assert clips[1].duration_s == gb._AUTO_CAROUSEL_FALLBACK_DURATION_S
     assert captured["seed"] == gb._stable_seed_from_variant("variant-x")
     assert captured["target_duration_s"] == director_mod.DEFAULT_TARGET_DURATION_S
+    # AUTO authoring must never let the director draw "stills" (product
+    # decision 2026-08-06) — confirmed at the wiring boundary here.
+    assert captured["allowed_modes"] == ("focus", "rolling")
 
 
 def test_direct_auto_carousel_spec_explicit_seed_and_duration_override_defaults(monkeypatch):
     captured: dict[str, Any] = {}
 
-    def _fake_direct(clips, *, seed, target_duration_s):
+    def _fake_direct(clips, *, seed, target_duration_s, allowed_modes=None):
         captured["seed"] = seed
         captured["target_duration_s"] = target_duration_s
         # A real (albeit pre-landing-shape) spec — `_apply_moment_overrides`
@@ -543,6 +547,33 @@ def test_maybe_render_carousel_moment_non_auto_still_builds_plain_spec_directly(
     )
 
     assert result == "/tmp/rendered.mp4"
+
+
+def test_maybe_render_carousel_moment_non_auto_explicit_stills_still_works(monkeypatch):
+    """Stills stays valid for an EXPLICITLY-configured (non-auto) moment —
+    the "auto-authored moments must always be dynamic" restriction (product
+    decision 2026-08-06) only applies to the director's own auto-pick via
+    `_direct_auto_carousel_spec`; a caller that explicitly asks for
+    `mode="stills"` on the plain (non-auto) path must still get it."""
+    captured: dict[str, Any] = {}
+
+    import app.pipeline.carousel.segment as segment_mod
+
+    def _fake_render(spec, work_dir):
+        captured["spec"] = spec
+        return "/tmp/rendered.mp4"
+
+    monkeypatch.setattr(segment_mod, "render_carousel_moment", _fake_render)
+
+    result = gb._maybe_render_carousel_moment(
+        {"mode": "stills", "effect": "cover_flow"},
+        clip_id_to_local={"clip_1": "/a"},
+        steps=[_step("clip_1")],
+        variant_dir="/tmp/variant",
+    )
+
+    assert result == "/tmp/rendered.mp4"
+    assert captured["spec"].mode == "stills"
 
 
 def test_maybe_render_carousel_moment_auto_render_failure_returns_none(monkeypatch):

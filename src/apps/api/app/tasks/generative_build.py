@@ -4901,7 +4901,19 @@ def _direct_auto_carousel_spec(
     )
 
     spec = director_mod.direct_carousel_moment(
-        clips, seed=seed, target_duration_s=target_duration_s
+        clips,
+        seed=seed,
+        target_duration_s=target_duration_s,
+        # Stills excluded from AUTO authoring per product decision
+        # 2026-08-06: static cards (no video playback, no tile-focus-expand)
+        # read as a broken moment in real edits. Auto-authored moments must
+        # always be dynamic — either every tile playing live video
+        # ("rolling") or the center-tile-plays-then-expands-to-fullscreen
+        # choreography ("focus", the flagship). An explicit (non-auto)
+        # moment_cfg may still request mode="stills" via
+        # `_apply_moment_overrides` below — this restriction only applies
+        # to the director's own auto-pick.
+        allowed_modes=("focus", "rolling"),
     )
     return _apply_moment_overrides(spec, moment_cfg)
 

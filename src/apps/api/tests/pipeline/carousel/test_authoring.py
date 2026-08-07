@@ -236,7 +236,7 @@ def test_pre_existing_carousel_moment_excluded_but_sibling_spec_still_eligible(m
 def test_direct_auto_carousel_spec_maps_clip_meta_to_interest_and_labels(monkeypatch):
     captured: dict[str, Any] = {}
 
-    def _fake_direct(clips, *, seed, target_duration_s):
+    def _fake_direct(clips, *, seed, target_duration_s, allowed_modes=None):
         captured["clips"] = clips
         return object()
 
@@ -291,7 +291,7 @@ def test_direct_auto_carousel_spec_maps_clip_meta_to_interest_and_labels(monkeyp
 def test_direct_auto_carousel_spec_without_clip_metas_uses_defaults(monkeypatch):
     captured: dict[str, Any] = {}
 
-    def _fake_direct(clips, *, seed, target_duration_s):
+    def _fake_direct(clips, *, seed, target_duration_s, allowed_modes=None):
         captured["clips"] = clips
         return object()
 
@@ -309,6 +309,61 @@ def test_direct_auto_carousel_spec_without_clip_metas_uses_defaults(monkeypatch)
     clip = captured["clips"][0]
     assert clip.interest == 0.5
     assert clip.labels == ()
+
+
+def test_direct_auto_carousel_spec_passes_allowed_modes_excluding_stills(monkeypatch):
+    """`_direct_auto_carousel_spec` must forward `allowed_modes=("focus",
+    "rolling")` to the director — the actual wiring that keeps stills out
+    of AUTO authoring (product decision 2026-08-06)."""
+    captured: dict[str, Any] = {}
+
+    def _fake_direct(clips, *, seed, target_duration_s, allowed_modes=None):
+        captured["allowed_modes"] = allowed_modes
+        return object()
+
+    monkeypatch.setattr(director_mod, "direct_carousel_moment", _fake_direct)
+    monkeypatch.setattr(gb, "_apply_moment_overrides", lambda spec, cfg: spec)
+
+    gb._direct_auto_carousel_spec(
+        {},
+        clip_paths=["/a.mp4"],
+        probe_map={"/a.mp4": types.SimpleNamespace(duration_s=3.0)},
+        variant_id="v1",
+    )
+
+    assert captured["allowed_modes"] == ("focus", "rolling")
+    assert "stills" not in captured["allowed_modes"]
+
+
+def test_auto_authored_spec_never_stills():
+    """End-to-end sweep through the REAL (non-monkeypatched) director:
+    `_direct_auto_carousel_spec` must never surface mode="stills",
+    regardless of seed or clip-pool shape — including a too-short/too-few
+    pool that can never qualify for "focus" and must resolve to "rolling"
+    instead (rolling has no minimum-duration/minimum-count floor)."""
+    qualifying_probe_map = {
+        f"/clip_{i}.mp4": types.SimpleNamespace(duration_s=6.0) for i in range(5)
+    }
+    short_probe_map = {
+        "/short_0.mp4": types.SimpleNamespace(duration_s=1.0),
+        "/short_1.mp4": types.SimpleNamespace(duration_s=1.5),
+    }
+    single_clip_probe_map = {"/only.mp4": types.SimpleNamespace(duration_s=0.5)}
+
+    clip_pools = (qualifying_probe_map, short_probe_map, single_clip_probe_map)
+
+    for probe_map in clip_pools:
+        clip_paths = list(probe_map)
+        for seed in range(50):
+            spec = gb._direct_auto_carousel_spec(
+                {"seed": seed},
+                clip_paths=clip_paths,
+                probe_map=probe_map,
+                variant_id=f"variant-{seed}",
+            )
+            assert spec.mode in ("focus", "rolling"), (
+                f"seed={seed} clip_paths={clip_paths} produced mode={spec.mode!r}"
+            )
 
 
 # ── Trace events: insert / skip (`_insert_carousel_moment_step`) ────────────
