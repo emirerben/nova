@@ -71,6 +71,32 @@ streams bytes directly from GCS and cannot sit behind a redirecting URL. If the
 current Fly hostname cannot satisfy TikTok's verification, provision an owned
 custom API domain before enabling publishing.
 
+### Reviewer-facing Website URL
+
+Use `https://www.usekria.com/tiktok` for TikTok's **Website URL** field. It is a
+public, substantive product workspace rather than Kria's marketing homepage or
+Google-gated Library. A reviewer can inspect a real Kria output, exercise the
+exact-preview consent flow, see private publication reconciliation, understand
+official metrics and learning thresholds, and reach the Terms, Privacy Policy,
+and live product without receiving credentials to a creator account.
+
+Suggested Apply Reason text for this resubmission:
+
+```text
+We updated the Website URL to https://www.usekria.com/tiktok.
+
+This URL is a fully developed, public product workspace and does not require a
+login. It lets reviewers inspect a real Kria video, complete the interactive
+Direct Post approval flow, review the processing and visibility lifecycle, and
+see how official TikTok metrics inform bounded performance learning. The page
+also links to Kria's live product, Terms of Service, and Privacy Policy.
+
+The interactive submission on this public page is explicitly demo-only and
+does not create a TikTok post. The separately uploaded review video shows the
+complete live account connection and Direct Post flow. Until Content Posting
+audit approval, live Direct Posts remain limited to “Only you”.
+```
+
 ## Required configuration
 
 Generate a Fernet key once and store it with the API and worker secrets:
