@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 
 import pytest
 from pydantic import ValidationError
@@ -621,6 +622,17 @@ def _stable_digest(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _portable_compiled_patch(value: dict) -> dict:
+    """Exclude host-font measurements covered by render-geometry tests."""
+
+    patch = deepcopy(value)
+    for cue in patch.get("caption_cues", []):
+        cue.pop("smart_render_lines", None)
+        cue.pop("smart_render_font_size_px", None)
+        cue.pop("smart_render_box", None)
+    return patch
+
+
 def _reference_hook_assets() -> list[dict]:
     return [
         {
@@ -712,8 +724,8 @@ def test_v2_plan_and_compiled_patch_remain_byte_stable() -> None:
     assert _stable_digest(planned.caption_cues) == (
         "6a9a15141e8b12e3405e3ec46f2a16e8bce665eca0fe1da5bbd91a96f95731d2"
     )
-    assert _stable_digest(compiled.compiled_patch) == (
-        "d65fae7897f11371be04242bbaf7ec0ab1f45f2eeb7c0e7cc4a4c6f9b23255b0"
+    assert _stable_digest(_portable_compiled_patch(compiled.compiled_patch)) == (
+        "eef711aac6c69dd657856b5c5d636406061bcf11ac421d50aacb761be1e4ca2e"
     )
 
 
