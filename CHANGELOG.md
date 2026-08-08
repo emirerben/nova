@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.0.0] — 2026-08-08
+
+### Changed
+- **Kria now places each generated visual once, at its strongest contextual moment.** Scene matching, Smart editing, and automatic overlay placement rank the full video before choosing a placement, so repeated words no longer produce the same overlay over and over. Ties resolve deterministically to the earliest clear mention, while creator-added repeats remain untouched.
+- **Nova now treats a generated visual and its entrance accents as one edit.** Copilot and Director can explicitly bundle an overlay with its sound and camera treatment without accidentally linking unrelated effects from the same request.
+
+### Fixed
+- **Removing a generated overlay now removes the sound and camera effects that belong to it.** This works from the full editor, timeline, failed-media recovery tile, Copilot, and Director; Undo restores the whole bundle in one step. Older clients receive the same protection server-side, and legacy unlinked effects are never guessed or deleted.
+- Overlay clears and camera rebuilds can no longer be lost to background autosaves, stale render workers, failed renders, or deletion of the final card. The next export rebuilds from the clean base exactly once, then returns to the normal instant-download path.
+- Smart visual selection now keeps later high-confidence matches through density limits, safely reflows partially deduplicated pair layouts, and never leaves orphaned entrance sounds or camera moves when a visual proposal is rejected.
+
 ## [0.23.9.0] — 2026-08-07
 
 ### Added

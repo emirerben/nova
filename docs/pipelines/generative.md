@@ -428,6 +428,17 @@ terminal write. Caption tasks ride the standard render ceilings
 (`soft_time_limit=1740`, `time_limit=1800`, under the 1900s broker
 visibility_timeout).
 
+Generated overlay bundles use explicit ownership, never timing guesses.
+`MediaOverlay.source` + `effect_group_id` link a generated card to SFX and
+camera effects carrying the same generated source/group. Removing the owner
+card cascades those siblings in the browser and again at the commit boundary
+for older clients; manual and legacy ungrouped effects are preserved. A
+camera-effect cascade sets the sticky `overlay_camera_rebuild_pending` marker
+because camera motion is baked into the clean base. Only a token-winning full
+or caption-camera render clears it. Metadata-only overlay saves also set
+`media_overlays_render_dirty`, including deletion-to-zero, so the next export
+applies the desired card list exactly once.
+
 Editor gating (`_editor_capabilities` in `routes/generative_jobs.py`, mirrored
 by `src/apps/web/src/app/plan/items/[id]/_editor/editor-capabilities.ts`):
 
