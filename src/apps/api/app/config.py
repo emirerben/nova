@@ -171,12 +171,13 @@ class Settings(BaseSettings):
     smart_captions_enabled: bool = False
 
     # Fleet-wide default Smart Captions preset for users WITHOUT a
-    # creator_style_assignments row. Both must be set (e.g. "cigdem" + "v2")
-    # or the default is off and rollout stays per-assignment. An existing row
-    # always wins — enabled=false stays a per-creator opt-out. Rollback: unset
-    # both (fly secrets unset) + machine restart; assigned creators keep v2.
-    smart_captions_default_preset_id: str = ""
-    smart_captions_default_preset_version: str = ""
+    # creator_style_assignments row. New unassigned creators default to the
+    # reviewed v3 style once both master gates are enabled. An existing row
+    # always wins, including explicit v1/v2 pins and enabled=false opt-outs.
+    # Rollback: set both secrets to empty + restart; assigned creators remain
+    # pinned to their stored versions.
+    smart_captions_default_preset_id: str = "cigdem"
+    smart_captions_default_preset_version: str = "v3"
 
     # The word→visual matching brain (nova.compose.scene_matcher): one Gemini
     # call per v2 render pairing pool assets with the exact spoken word and

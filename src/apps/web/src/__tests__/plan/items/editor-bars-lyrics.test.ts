@@ -113,6 +113,31 @@ describe("barsToTextElements includeLyrics option (lyrics-optional elements mode
 });
 
 describe("editor bar transition metadata", () => {
+  it("preserves a generated reveal endpoint and schedule through save and reload", () => {
+    const sequence: TextElement = {
+      id: "scheduled-text",
+      text: "Kria",
+      start_s: 4,
+      end_s: 6,
+      reveal_s: 4.25,
+      role: "generative_sequence",
+      effect: "typewriter",
+      source_params: { reveal_schedule_s: [4, 4.083, 4.167, 4.25] },
+    };
+    const originals = new Map([[sequence.id, sequence]]);
+    const saved = barsToTextElements(seedBarsFromVariant(variant([sequence])), originals);
+    const reloaded = seedBarsFromVariant(variant(saved));
+
+    expect(saved[0]).toMatchObject({
+      reveal_s: 4.25,
+      source_params: { reveal_schedule_s: [4, 4.083, 4.167, 4.25] },
+    });
+    expect(reloaded[0]).toMatchObject({
+      reveal_s: 4.25,
+      source_params: { reveal_schedule_s: [4, 4.083, 4.167, 4.25] },
+    });
+  });
+
   it("preserves sequence fade tails through both save and preview serialization", () => {
     const sequence: TextElement = {
       id: "sequence-1",
