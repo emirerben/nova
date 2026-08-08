@@ -110,7 +110,13 @@ export type CopilotOp =
   | { op: "reorder_clip"; from_index: number; to_index: number }
   | { op: "remove_clip"; slot_index: number }
   | { op: "split_clip"; slot_index: number; at_s: number }
-  | { op: "add_sfx"; effect_id: string; at_s: number; gain: number }
+  | {
+      op: "add_sfx";
+      effect_id: string;
+      at_s: number;
+      gain: number;
+      effect_bundle_id?: string;
+    }
   | { op: "patch_sfx"; sfx_index: number; at_s?: number; gain?: number }
   | { op: "remove_sfx"; sfx_index: number }
   | { op: "patch_overlay"; overlay_index: number; patch: OverlayPatch }
@@ -125,6 +131,7 @@ export type CopilotOp =
       y_frac?: number;
       scale?: number;
       display_mode?: "pip" | "fullscreen";
+      effect_bundle_id?: string;
     }
   | { op: "accept_overlay_suggestion"; suggestion_id: string }
   | { op: "edit_caption"; cue_index: number; text: string }
@@ -136,7 +143,13 @@ export type CopilotOp =
   | { op: "set_intro_layout"; layout: "linear" | "cluster" }
   | { op: "set_carousel_moment"; config: CarouselMoment | null }
   | { op: "set_title"; title: string }
-  | { op: "add_camera_effect"; start_s: number; end_s: number; intensity?: number }
+  | {
+      op: "add_camera_effect";
+      start_s: number;
+      end_s: number;
+      intensity?: number;
+      effect_bundle_id?: string;
+    }
   | {
       op: "patch_camera_effect";
       camera_effect_index: number;
@@ -696,6 +709,9 @@ export function validateCopilotOp(
           effect_id: raw.effect_id,
           at_s: clampAtS(raw.at_s, snapshot),
           gain: clamp(gain, 0, 2),
+          ...(typeof raw.effect_bundle_id === "string" && raw.effect_bundle_id.trim()
+            ? { effect_bundle_id: raw.effect_bundle_id.trim().slice(0, 80) }
+            : {}),
         },
       };
     }
@@ -777,6 +793,9 @@ export function validateCopilotOp(
         if (raw[key] === undefined) continue;
         if (!finiteNumber(raw[key])) return reject("invalid_type", `${key} must be a number`, opName);
         op[key] = key === "scale" ? clamp(raw[key], 0.05, 1) : clamp(raw[key], 0, 1);
+      }
+      if (typeof raw.effect_bundle_id === "string" && raw.effect_bundle_id.trim()) {
+        op.effect_bundle_id = raw.effect_bundle_id.trim().slice(0, 80);
       }
       return { ok: true, op };
     }
@@ -955,6 +974,9 @@ export function validateCopilotOp(
           start_s: startS,
           end_s: endS,
           intensity: clamp(intensity, 0.01, 0.08),
+          ...(typeof raw.effect_bundle_id === "string" && raw.effect_bundle_id.trim()
+            ? { effect_bundle_id: raw.effect_bundle_id.trim().slice(0, 80) }
+            : {}),
         },
       };
     }

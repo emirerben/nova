@@ -56,6 +56,7 @@ import {
 } from "@/lib/plan-api";
 import type { CarouselClipThumb } from "./CarouselPanel";
 import { normalizeCameraEffect } from "@/lib/camera-effects";
+import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { canvasForOrientation } from "@/lib/overlay-constants";
@@ -2973,11 +2974,35 @@ export default function EditorShell({
     (id: string) => {
       if (readOnly || capabilities?.overlays === false) return;
       history.record();
-      setLocalOverlays((cur) => cur.filter((o) => o.id !== id));
+      const removed = removeOverlayEffectGroup(
+        {
+          overlays: localOverlays,
+          soundEffects: localSfx,
+          cameraEffects: localCameraEffects,
+        },
+        id,
+      );
+      setLocalOverlays(removed.overlays);
+      if (removed.soundEffects !== localSfx) {
+        setLocalSfx(removed.soundEffects);
+        setSfxDirty(true);
+      }
+      if (removed.cameraEffects !== localCameraEffects) {
+        setLocalCameraEffects(removed.cameraEffects);
+        setCameraEffectsDirty(true);
+      }
       setOverlaysDirty(true);
       clear();
     },
-    [capabilities?.overlays, clear, history, readOnly],
+    [
+      capabilities?.overlays,
+      clear,
+      history,
+      localCameraEffects,
+      localOverlays,
+      localSfx,
+      readOnly,
+    ],
   );
 
   const patchMixLevel = useCallback(
@@ -3072,12 +3097,24 @@ export default function EditorShell({
     (suggestion: OverlaySuggestion) => {
       if (readOnly || capabilities?.overlays === false) return;
       history.record();
-      setLocalOverlays((cur) => [...cur, { ...suggestion.overlay }]);
+      const effectGroupId = suggestion.overlay.effect_group_id ?? suggestion.id;
+      setLocalOverlays((cur) => [
+        ...cur,
+        {
+          ...suggestion.overlay,
+          source: suggestion.overlay.source ?? "overlay_suggestion",
+          effect_group_id: effectGroupId,
+        },
+      ]);
       setOverlaysDirty(true);
       // SFX child rides only when the sfx section can actually commit —
       // staging it with sound effects disabled would 404 the whole Save.
       if (suggestion.sfx && capabilities?.sfx !== false) {
-        const sfx = { ...suggestion.sfx };
+        const sfx = {
+          ...suggestion.sfx,
+          source: suggestion.sfx.source ?? "overlay_suggestion",
+          effect_group_id: suggestion.sfx.effect_group_id ?? effectGroupId,
+        };
         setLocalSfx((cur) => [...cur, sfx]);
         setSfxDirty(true);
       }

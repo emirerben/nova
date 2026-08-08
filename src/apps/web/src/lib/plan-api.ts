@@ -1016,6 +1016,9 @@ export function generateFirstWeek(
  */
 export interface MediaOverlay {
   id: string;
+  /** Generated-bundle provenance. Manual/legacy cards omit both fields. */
+  source?: string | null;
+  effect_group_id?: string | null;
   kind: "image" | "video";
   src_gcs_path: string;
   /** Fresh-signed read URL for the card asset — added by _variants_for_response on every
@@ -1067,6 +1070,7 @@ export interface SoundEffectPlacement {
   label?: string | null;
   /** Optional provenance for generated placements; manual placements use source="user"/"manual". */
   source?: string | null;
+  effect_group_id?: string | null;
   smart_role?: string | null;
   smart_event_id?: string | null;
   transcript_hash?: string | null;
@@ -1313,6 +1317,7 @@ export interface CameraEffect {
   intensity: number;
   easing: "sine_pulse";
   source: "smart_captions" | "user" | string;
+  effect_group_id?: string | null;
   event_id?: string | null;
   role?: string | null;
 }
@@ -1562,6 +1567,8 @@ export interface PlanItemVariant {
   visual_blocks_base_path?: string | null;
   /** GCS key of the clean (un-carded) variant before the first overlay apply-pass. */
   pre_media_overlay_video_path?: string | null;
+  /** Desired overlay metadata differs from the last successful render. */
+  media_overlays_render_dirty?: boolean;
   /** Fresh-signed playback URL for `pre_media_overlay_video_path`, added by
    *  `_variants_for_response` on every status read. Present only once a card
    *  burn has captured the clean base (absent when no burn ever happened).

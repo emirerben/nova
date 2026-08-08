@@ -1,4 +1,6 @@
 process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED = "true";
+process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED = "true";
+process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED = "true";
 
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -17,6 +19,8 @@ class ResizeObserverMock {
 }
 (global as unknown as { ResizeObserver: typeof ResizeObserverMock }).ResizeObserver =
   ResizeObserverMock;
+window.HTMLMediaElement.prototype.pause = jest.fn();
+window.HTMLMediaElement.prototype.play = jest.fn().mockResolvedValue(undefined);
 
 Object.defineProperty(window, "matchMedia", {
   writable: true,
@@ -132,7 +136,11 @@ function linkedText(id: string, text: string): TextElement {
   };
 }
 
-function makeVariant(textElements: TextElement[], visualBlocks: VisualBlock[] = [TEXT_CARD]) {
+function makeVariant(
+  textElements: TextElement[],
+  visualBlocks: VisualBlock[] = [TEXT_CARD],
+  extra: Partial<PlanItemVariant> = {},
+) {
   return {
     variant_id: "song_text",
     output_url: "https://storage.example/variant.mp4",
@@ -145,6 +153,7 @@ function makeVariant(textElements: TextElement[], visualBlocks: VisualBlock[] = 
     resolved_archetype: "montage",
     render_generation_id: "gen-current",
     editor_capabilities: CAPABILITIES,
+    ...extra,
   } as unknown as PlanItemVariant;
 }
 
@@ -233,6 +242,77 @@ describe("EditorShell linked text-card deletion", () => {
     expect(screen.queryByRole("button", { name: /^Text card,/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Primary title/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Supporting title/ })).toBeNull();
+  });
+});
+
+describe("EditorShell generated overlay bundle deletion", () => {
+  it("removes the linked SFX and camera effect in one command and Undo restores all lanes", async () => {
+    const overlay = {
+      id: "overlay-1",
+      kind: "image" as const,
+      src_gcs_path: "users/u1/logo.png",
+      label: "Logo",
+      position: "center" as const,
+      x_frac: 0.5,
+      y_frac: 0.5,
+      scale: 0.35,
+      start_s: 1,
+      end_s: 3,
+      z: 0,
+      source: "smart_captions" as const,
+      effect_group_id: "smart-event-1",
+    };
+    const soundEffect = {
+      id: "sfx-1",
+      sound_effect_id: "whoosh",
+      src_gcs_path: "sfx/whoosh.mp3",
+      at_s: 1,
+      gain: 1,
+      source: "smart_captions" as const,
+      effect_group_id: "smart-event-1",
+    };
+    const cameraEffect = {
+      id: "camera-1",
+      token: "semantic_crop_pulse" as const,
+      start_s: 1,
+      end_s: 3,
+      intensity: 0.04,
+      easing: "sine_pulse" as const,
+      source: "smart_captions" as const,
+      effect_group_id: "smart-event-1",
+    };
+    await renderShell(
+      makeVariant([], [], {
+        media_overlays: [overlay],
+        sound_effects: [soundEffect],
+        camera_effects: [cameraEffect],
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^Overlay row 1, Image,/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    expect(screen.queryByRole("button", { name: /^Overlay row 1, Image,/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Sound effect row 1,/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Camera focus,/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("button", { name: /^Overlay row 1, Image,/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Sound effect row 1,/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Camera focus,/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Overlay row 1, Image,/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalled());
+    expect(mockCommitEditorSession.mock.calls[0][2]).toMatchObject({
+      media_overlays: [],
+      sound_effects: [],
+      camera_effects: [],
+    });
   });
 });
 
