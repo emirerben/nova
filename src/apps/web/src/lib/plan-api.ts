@@ -13,7 +13,10 @@ import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
  * /api/auth/signin (NextAuth's default Google sign-in page).
  */
 
-import type { EditVariantPayload } from "@/lib/generative-api";
+import type { CarouselMoment, EditVariantPayload } from "@/lib/generative-api";
+// Re-exported so editor components can import the carousel-moment shape
+// alongside PlanItemVariant/editPlanItemVariant without a second import line.
+export type { CarouselMoment } from "@/lib/generative-api";
 import type { ArchetypeFallback } from "@/lib/plan-generate-gate";
 import type { CopilotOp } from "@/lib/edit-copilot/ops";
 import type { CopilotSnapshot } from "@/lib/edit-copilot/snapshot";
@@ -1334,6 +1337,9 @@ export interface EditorCapabilities {
   /** AI overlay suggestions inside the editor's Overlays drawer (plans/005-010).
    *  Deliberately does NOT check pool assets — the drawer owns the empty-pool state. */
   suggestions?: boolean;
+  /** Carousel-as-a-moment (see CarouselMoment / PlanItemVariant.carousel_moment). */
+  carousel?: boolean;
+  carousel_reason?: string | null;
   reason?: string;
   sfx_reason?: string | null;
   overlays_reason?: string | null;
@@ -1598,6 +1604,12 @@ export interface PlanItemVariant {
   intro_end_s?: number | null;
   /** Editor-shell capability map (see EditorCapabilities). Absent on legacy reads. */
   editor_capabilities?: EditorCapabilities | null;
+  /**
+   * Carousel-as-a-moment: current state of the variant's carousel, if any.
+   * null/absent = no carousel configured. Set via setVariantCarouselMoment,
+   * which drives the same full-render dispatch as intro_layout.
+   */
+  carousel_moment?: CarouselMoment | null;
 }
 
 export function retimeVisualBlock(
@@ -1804,6 +1816,23 @@ export function editPlanItemVariant(
         payload.text_size_px !== undefined ? Math.round(payload.text_size_px) : undefined,
     }),
   });
+}
+
+/**
+ * Carousel-as-a-moment: add/update (partial merges over the current moment
+ * server-side) or remove (pass `null`) the variant's carousel. Thin wrapper
+ * over editPlanItemVariant — same combined batch-edit endpoint, same full
+ * re-render lifecycle as the Classic/Editorial intro_layout switch. `null` is
+ * sent as a literal JSON `null` (remove); omitting the call entirely is the
+ * only way to leave the moment unchanged, since editPlanItemVariant always
+ * serializes whatever `config` value it's given.
+ */
+export function setVariantCarouselMoment(
+  itemId: string,
+  variantId: string,
+  config: CarouselMoment | null,
+): Promise<PlanItem> {
+  return editPlanItemVariant(itemId, variantId, { carousel_moment: config });
 }
 
 export function changePlanItemStyle(

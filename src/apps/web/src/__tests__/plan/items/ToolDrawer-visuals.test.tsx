@@ -4,6 +4,12 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import ToolDrawer from "@/app/plan/items/[id]/_editor/ToolDrawer";
 import type { PoolAsset, VisualBlock } from "@/lib/plan-api";
 
+/** ToolDrawer's `carousel` prop is `CarouselPanelControl & { onDisabledTap }`
+ *  (the gated-entry-point callback lives on the drawer, not the panel).
+ *  Derive the type from the real prop instead of importing CarouselPanelControl
+ *  alone, so this stays in lockstep with the component. */
+type CarouselControlProp = NonNullable<ComponentProps<typeof ToolDrawer>["carousel"]>;
+
 const assets: PoolAsset[] = [0, 1, 2].map((index) => ({
   id: `asset-${index}`,
   kind: "image",
@@ -152,5 +158,46 @@ describe("ToolDrawer visual blocks", () => {
 
     expect(screen.getByText(/dense reading load/i)).toBeInTheDocument();
     expect(screen.getByText(/contrast may be too low/i)).toBeInTheDocument();
+  });
+
+  function carouselControl(overrides: Partial<CarouselControlProp> = {}) {
+    return {
+      capable: true,
+      reason: null,
+      current: null,
+      clips: [],
+      busy: false,
+      onApply: jest.fn(),
+      onRemove: jest.fn(),
+      onDisabledTap: jest.fn(),
+      ...overrides,
+    };
+  }
+
+  it("gated carousel entry stays focusable and reports the honest reason instead of opening", () => {
+    const onDisabledTap = jest.fn();
+    renderVisuals({
+      carousel: carouselControl({ capable: false, reason: "song-synced edits don't support carousels", onDisabledTap }),
+    });
+
+    const entry = screen.getByRole("button", { name: "Carousel" });
+    expect(entry).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(entry);
+
+    expect(onDisabledTap).toHaveBeenCalledWith("song-synced edits don't support carousels");
+    // Gated tap never opens the panel.
+    expect(screen.queryByText("Add carousel")).not.toBeInTheDocument();
+  });
+
+  it("capable carousel entry opens the panel; Back returns to the block grid", () => {
+    renderVisuals({ carousel: carouselControl() });
+
+    const entry = screen.getByRole("button", { name: "Carousel" });
+    expect(entry).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(entry);
+
+    expect(screen.getByRole("button", { name: "Add carousel" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Add a block/ }));
+    expect(screen.getByRole("button", { name: "Carousel" })).toBeInTheDocument();
   });
 });

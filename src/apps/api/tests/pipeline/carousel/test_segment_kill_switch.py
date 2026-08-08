@@ -210,6 +210,204 @@ def test_position_controls_splice_index(monkeypatch, position, expected_index):
     assert len(result) == 3
 
 
+# ── inserted_duration_out (item 5a voiceover-fix side channel) ──────────────
+
+
+def test_inserted_duration_out_populated_on_success(monkeypatch):
+    monkeypatch.setattr(gb.settings, "carousel_effects_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_maybe_render_carousel_moment", lambda *a, **kw: "/tmp/moment.mp4")
+
+    import app.pipeline.probe as probe_mod
+
+    monkeypatch.setattr(
+        probe_mod, "probe_video", lambda path: types.SimpleNamespace(duration_s=4.25)
+    )
+
+    sink: dict[str, float] = {}
+    spec = {"variant_id": "v-dur", "carousel_moment": {"effect": "scale_sweep"}}
+    gb._insert_carousel_moment_step(
+        [_step("clip_1"), _step("clip_2")],
+        spec,
+        clip_id_to_local={"clip_1": "/a", "clip_2": "/b"},
+        clip_id_to_gcs={"clip_1": "gs://a", "clip_2": "gs://b"},
+        probe_map={},
+        variant_dir="/tmp",
+        inserted_duration_out=sink,
+    )
+
+    assert sink == {"duration_s": 4.25}
+
+
+def test_inserted_duration_out_untouched_when_skipped(monkeypatch):
+    """A render that never splices (flag off, no moment_cfg, render failure,
+    ...) must leave a caller-provided sink dict empty — never populated with
+    a stale/zero value."""
+    monkeypatch.setattr(gb.settings, "carousel_effects_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_maybe_render_carousel_moment", lambda *a, **kw: None)
+
+    sink: dict[str, float] = {}
+    spec = {"variant_id": "v-skip-dur", "carousel_moment": {"effect": "scale_sweep"}}
+    gb._insert_carousel_moment_step(
+        [_step("clip_1")],
+        spec,
+        clip_id_to_local={"clip_1": "/a"},
+        clip_id_to_gcs={"clip_1": "gs://a"},
+        probe_map={},
+        variant_dir="/tmp",
+        inserted_duration_out=sink,
+    )
+
+    assert sink == {}
+
+
+# ── Boundary crossfade (carousel_moment["transition"] == "crossfade", item 3) ─
+
+
+def test_transition_crossfade_intro_sets_only_outgoing_edge(monkeypatch):
+    """position="intro": the moment becomes step 0 — nothing precedes it, and
+    `_assemble_clips`/`_plan_slots` never read the first step's own
+    transition_in, so only the outgoing edge (into the old first step) is
+    what actually renders. Still harmless to set on the moment step itself."""
+    monkeypatch.setattr(gb.settings, "carousel_effects_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_maybe_render_carousel_moment", lambda *a, **kw: "/tmp/moment.mp4")
+
+    import app.pipeline.probe as probe_mod
+
+    monkeypatch.setattr(
+        probe_mod, "probe_video", lambda path: types.SimpleNamespace(duration_s=2.0)
+    )
+
+    spec = {
+        "variant_id": "v-xfade-intro",
+        "carousel_moment": {
+            "effect": "scale_sweep",
+            "position": "intro",
+            "transition": "crossfade",
+        },
+    }
+    result = gb._insert_carousel_moment_step(
+        [_step("clip_1"), _step("clip_2")],
+        spec,
+        clip_id_to_local={"clip_1": "/a", "clip_2": "/b"},
+        clip_id_to_gcs={"clip_1": "gs://a", "clip_2": "gs://b"},
+        probe_map={},
+        variant_dir="/tmp",
+    )
+
+    moment_step, next_step, _last = result
+    assert moment_step.clip_id == "__carousel_v-xfade-intro"
+    assert moment_step.slot["transition_in"] == "crossfade"
+    assert moment_step.slot["transition_duration_s"] == pytest.approx(0.4)
+    assert next_step.slot["transition_in"] == "crossfade"
+    assert next_step.slot["transition_duration_s"] == pytest.approx(0.4)
+
+
+def test_transition_crossfade_outro_sets_only_incoming_edge(monkeypatch):
+    """position="outro": the moment is appended last — no next step exists,
+    so only the incoming edge (from the old last step) is set."""
+    monkeypatch.setattr(gb.settings, "carousel_effects_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_maybe_render_carousel_moment", lambda *a, **kw: "/tmp/moment.mp4")
+
+    import app.pipeline.probe as probe_mod
+
+    monkeypatch.setattr(
+        probe_mod, "probe_video", lambda path: types.SimpleNamespace(duration_s=2.0)
+    )
+
+    spec = {
+        "variant_id": "v-xfade-outro",
+        "carousel_moment": {
+            "effect": "scale_sweep",
+            "position": "outro",
+            "transition": "crossfade",
+        },
+    }
+    steps = [_step("clip_1"), _step("clip_2")]
+    result = gb._insert_carousel_moment_step(
+        steps,
+        spec,
+        clip_id_to_local={"clip_1": "/a", "clip_2": "/b"},
+        clip_id_to_gcs={"clip_1": "gs://a", "clip_2": "gs://b"},
+        probe_map={},
+        variant_dir="/tmp",
+    )
+
+    prev_step, other_step, moment_step = result
+    assert moment_step.clip_id == "__carousel_v-xfade-outro"
+    assert moment_step.slot["transition_in"] == "crossfade"
+    assert moment_step.slot["transition_duration_s"] == pytest.approx(0.4)
+    # No step follows the moment — the original steps' slots stay untouched.
+    assert "transition_in" not in prev_step.slot
+    assert "transition_in" not in other_step.slot
+
+
+def test_transition_crossfade_middle_sets_both_edges(monkeypatch):
+    monkeypatch.setattr(gb.settings, "carousel_effects_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_maybe_render_carousel_moment", lambda *a, **kw: "/tmp/moment.mp4")
+
+    import app.pipeline.probe as probe_mod
+
+    monkeypatch.setattr(
+        probe_mod, "probe_video", lambda path: types.SimpleNamespace(duration_s=2.0)
+    )
+
+    spec = {
+        "variant_id": "v-xfade-mid",
+        "carousel_moment": {
+            "effect": "scale_sweep",
+            "position": "middle",
+            "transition": "crossfade",
+        },
+    }
+    result = gb._insert_carousel_moment_step(
+        [_step("clip_1"), _step("clip_2")],
+        spec,
+        clip_id_to_local={"clip_1": "/a", "clip_2": "/b"},
+        clip_id_to_gcs={"clip_1": "gs://a", "clip_2": "gs://b"},
+        probe_map={},
+        variant_dir="/tmp",
+    )
+
+    prev_step, moment_step, next_step = result
+    assert moment_step.clip_id == "__carousel_v-xfade-mid"
+    assert moment_step.slot["transition_in"] == "crossfade"
+    assert moment_step.slot["transition_duration_s"] == pytest.approx(0.4)
+    assert next_step.slot["transition_in"] == "crossfade"
+    assert next_step.slot["transition_duration_s"] == pytest.approx(0.4)
+    assert "transition_in" not in prev_step.slot
+
+
+def test_transition_absent_or_none_is_a_hard_cut_noop(monkeypatch):
+    """No `transition` key (or any value other than "crossfade") must not
+    touch any step's slot — same hard-cut boundary as before this option
+    existed."""
+    monkeypatch.setattr(gb.settings, "carousel_effects_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_maybe_render_carousel_moment", lambda *a, **kw: "/tmp/moment.mp4")
+
+    import app.pipeline.probe as probe_mod
+
+    monkeypatch.setattr(
+        probe_mod, "probe_video", lambda path: types.SimpleNamespace(duration_s=2.0)
+    )
+
+    spec = {
+        "variant_id": "v-no-xfade",
+        "carousel_moment": {"effect": "scale_sweep", "position": "middle", "transition": "none"},
+    }
+    result = gb._insert_carousel_moment_step(
+        [_step("clip_1"), _step("clip_2")],
+        spec,
+        clip_id_to_local={"clip_1": "/a", "clip_2": "/b"},
+        clip_id_to_gcs={"clip_1": "gs://a", "clip_2": "gs://b"},
+        probe_map={},
+        variant_dir="/tmp",
+    )
+
+    for step in result:
+        assert "transition_in" not in step.slot
+        assert "transition_duration_s" not in step.slot
+
+
 # ── _maybe_render_carousel_moment: clip-path selection + never-raise wrap ───
 
 

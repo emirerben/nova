@@ -777,3 +777,443 @@ def test_regen_inherits_existing_carousel_moment_and_reinserts_step(monkeypatch)
 
     spliced = assembled_steps[-1]
     assert any(step.clip_id.startswith("__carousel_") for step in spliced)
+
+
+# ── Carousel-editor dispatch: carousel_moment_override merge (end-to-end) ───
+#
+# Same real-`_run_regenerate_variant` drive as the test above (spec build ->
+# `_merge_carousel_moment_override` -> `_render_generative_variant` ->
+# `_insert_carousel_moment_step`), only varying the new
+# `carousel_moment_override` kwarg the carousel-editor dispatch path adds.
+
+
+def _carousel_regen_fixture(monkeypatch, *, existing_carousel_moment):
+    """Shared setup for the carousel_moment_override merge tests below —
+    factored out of `test_regen_inherits_existing_carousel_moment_and_reinserts_step`
+    (same fixtures, only the persisted `carousel_moment` varies)."""
+    from tests.tasks.test_generative_build import _Meta as _GBMeta
+    from tests.tasks.test_generative_build import _Probe as _GBProbe
+    from tests.tasks.test_generative_timeline_render import CLIP_PATHS as _REGEN_CLIP_PATHS
+    from tests.tasks.test_generative_timeline_render import JOB_ID as _REGEN_JOB_ID
+    from tests.tasks.test_generative_timeline_render import (
+        _existing_variant,
+        _patch_music_recipe,
+        _regen_setup,
+    )
+    from tests.tasks.test_generative_timeline_render import _track as _regen_track
+
+    monkeypatch.setattr(gb.settings, "carousel_effects_enabled", True, raising=False)
+
+    variant = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="agent_text",
+        music_track_id="t1",
+        carousel_moment=(
+            dict(existing_carousel_moment) if existing_carousel_moment is not None else None
+        ),
+    )
+    assembled_steps: list = []
+    _job, updates, _dl = _regen_setup(
+        monkeypatch, variants=[variant], track=_regen_track("t1"), assembled_steps=assembled_steps
+    )
+    _patch_music_recipe(monkeypatch, [0.0, 1.0])
+
+    metas = [_GBMeta("g_a", 8.0), _GBMeta("g_b", 6.0), _GBMeta("g_c", 5.0)]
+    ingest = {
+        "clip_metas": metas,
+        "clip_id_to_gcs": {
+            "g_a": _REGEN_CLIP_PATHS[0],
+            "g_b": _REGEN_CLIP_PATHS[1],
+            "g_c": _REGEN_CLIP_PATHS[2],
+        },
+        "clip_id_to_local": {"g_a": "/a.mp4", "g_b": "/b.mp4", "g_c": "/c.mp4"},
+        "probe_map": {
+            "/a.mp4": _GBProbe(6.0),
+            "/b.mp4": _GBProbe(6.0),
+            "/c.mp4": _GBProbe(6.0),
+        },
+        "hero": metas[0],
+    }
+    monkeypatch.setattr(gb, "_ingest_clips", lambda *a, **k: ingest, raising=False)
+
+    import app.pipeline.template_matcher as tm
+
+    match_steps = [
+        types.SimpleNamespace(
+            clip_id="g_a",
+            slot={"position": 1},
+            moment={"start_s": 0.0, "end_s": 2.0, "energy": 5.0, "description": "d"},
+        ),
+        types.SimpleNamespace(
+            clip_id="g_b",
+            slot={"position": 2},
+            moment={"start_s": 0.0, "end_s": 2.0, "energy": 5.0, "description": "d"},
+        ),
+    ]
+    monkeypatch.setattr(
+        tm,
+        "match",
+        lambda recipe, metas, **kw: types.SimpleNamespace(steps=match_steps),
+        raising=False,
+    )
+
+    import app.pipeline.carousel.segment as segment_mod
+    import app.pipeline.probe as probe_mod
+
+    monkeypatch.setattr(
+        segment_mod, "render_carousel_moment", lambda spec, work_dir: "/tmp/moment.mp4"
+    )
+    monkeypatch.setattr(
+        probe_mod, "probe_video", lambda path: types.SimpleNamespace(duration_s=3.0)
+    )
+
+    return _REGEN_JOB_ID, assembled_steps, updates
+
+
+def test_regen_carousel_override_unset_carries_moment_forward(monkeypatch):
+    """The `CAROUSEL_MOMENT_UNSET` default (no `carousel_moment_override` kwarg
+    passed) must behave byte-identically to before the param existed — this is
+    the same assertion `test_regen_inherits_existing_carousel_moment_and_reinserts_step`
+    makes, pinned again here alongside its siblings for the new kwarg's default."""
+    moment = {"auto": True, "seed": 111, "position": "outro"}
+    job_id, assembled_steps, updates = _carousel_regen_fixture(
+        monkeypatch, existing_carousel_moment=moment
+    )
+
+    gb._run_regenerate_variant(
+        job_id, "song_text", None, None, False, carousel_moment_override=gb.CAROUSEL_MOMENT_UNSET
+    )
+
+    assert updates[-1]["carousel_moment"] == moment
+    assert any(step.clip_id.startswith("__carousel_") for step in assembled_steps[-1])
+
+
+def test_regen_carousel_override_none_removes_moment(monkeypatch):
+    """Explicit `None` removes a previously-authored moment — no splice."""
+    moment = {"auto": True, "seed": 222, "position": "intro"}
+    job_id, assembled_steps, updates = _carousel_regen_fixture(
+        monkeypatch, existing_carousel_moment=moment
+    )
+
+    gb._run_regenerate_variant(
+        job_id, "song_text", None, None, False, carousel_moment_override=None
+    )
+
+    assert updates[-1]["carousel_moment"] is None
+    assert not any(step.clip_id.startswith("__carousel_") for step in assembled_steps[-1])
+
+
+def test_regen_carousel_override_dict_merges_sets_auto_false_and_splices_transition(
+    monkeypatch,
+):
+    """A partial editor edit merges over the persisted moment (present keys
+    win, absent keep), flips `auto` to False, and (item 3) a
+    `transition: "crossfade"` request sets the crossfade boundary fields on
+    the real spliced steps."""
+    moment = {"auto": True, "seed": 333, "position": "outro"}
+    job_id, assembled_steps, updates = _carousel_regen_fixture(
+        monkeypatch, existing_carousel_moment=moment
+    )
+
+    gb._run_regenerate_variant(
+        job_id,
+        "song_text",
+        None,
+        None,
+        False,
+        carousel_moment_override={
+            "position": "middle",
+            "effect": "cover_flow",
+            "transition": "crossfade",
+        },
+    )
+
+    persisted = updates[-1]["carousel_moment"]
+    assert persisted["auto"] is False
+    assert persisted["seed"] == 333  # kept from the persisted cfg, not user-set
+    assert persisted["position"] == "middle"  # overridden
+    assert persisted["effect"] == "cover_flow"
+    assert persisted["transition"] == "crossfade"
+
+    spliced = assembled_steps[-1]
+    moment_idx = next(i for i, s in enumerate(spliced) if s.clip_id.startswith("__carousel_"))
+    # "middle" of 2 pre-insertion steps -> index 1: both boundary edges are real.
+    assert moment_idx not in (0, len(spliced) - 1)
+    moment_step = spliced[moment_idx]
+    next_step = spliced[moment_idx + 1]
+    assert moment_step.slot["transition_in"] == "crossfade"
+    assert moment_step.slot["transition_duration_s"] == pytest.approx(0.4)
+    assert next_step.slot["transition_in"] == "crossfade"
+    assert next_step.slot["transition_duration_s"] == pytest.approx(0.4)
+
+
+def test_regen_carousel_override_focus_clip_index_translates_to_focus(monkeypatch):
+    """`focus_clip_index` (the dispatch-layer field) translates to the
+    `focus` list-of-dicts shape `_parse_focus_override` consumes — AND is
+    kept verbatim alongside it (BUG A: the editor panel/copilot snapshot read
+    `focus_clip_index` off the persisted moment; the pipeline only ever wrote
+    `focus`, so a chosen focus tile always prefilled as "Let Nova pick")."""
+    job_id, _assembled_steps, updates = _carousel_regen_fixture(
+        monkeypatch, existing_carousel_moment=None
+    )
+
+    gb._run_regenerate_variant(
+        job_id,
+        "song_text",
+        None,
+        None,
+        False,
+        carousel_moment_override={"mode": "focus", "focus_clip_index": 1},
+    )
+
+    persisted = updates[-1]["carousel_moment"]
+    assert persisted["auto"] is False
+    assert persisted["mode"] == "focus"
+    assert persisted["focus"] == [{"card_index": 1}]
+    assert persisted["focus_clip_index"] == 1
+
+
+# ── _merge_carousel_moment_override (unit) ───────────────────────────────────
+
+
+def test_merge_unset_carries_existing_forward():
+    existing = {"auto": True, "seed": 1, "position": "intro"}
+    assert gb._merge_carousel_moment_override(existing, gb.CAROUSEL_MOMENT_UNSET) == existing
+    assert gb._merge_carousel_moment_override(None, gb.CAROUSEL_MOMENT_UNSET) is None
+
+
+def test_merge_none_removes_regardless_of_existing():
+    assert gb._merge_carousel_moment_override({"auto": True}, None) is None
+    assert gb._merge_carousel_moment_override(None, None) is None
+
+
+def test_merge_dict_onto_none_existing_creates_moment_with_auto_false():
+    merged = gb._merge_carousel_moment_override(None, {"position": "outro"})
+    assert merged == {"auto": False, "position": "outro"}
+
+
+def test_merge_dict_present_keys_win_absent_keys_keep():
+    existing = {"auto": True, "seed": 42, "position": "intro", "effect": "scale_sweep"}
+    merged = gb._merge_carousel_moment_override(existing, {"position": "middle"})
+    assert merged == {
+        "auto": False,
+        "seed": 42,
+        "position": "middle",
+        "effect": "scale_sweep",
+    }
+
+
+def test_merge_focus_clip_index_int_translates_to_focus_list():
+    merged = gb._merge_carousel_moment_override({"auto": True}, {"focus_clip_index": 2})
+    assert merged["focus"] == [{"card_index": 2}]
+    # BUG A: focus_clip_index must be persisted verbatim alongside the
+    # translated `focus` list — the pipeline reads `focus`, but the editor
+    # panel prefill / copilot snapshot read `focus_clip_index` and never saw
+    # it, so a chosen focus tile always prefilled as "Let Nova pick".
+    assert merged["focus_clip_index"] == 2
+    assert merged["auto"] is False
+
+
+def test_merge_focus_clip_index_none_clears_existing_focus():
+    existing = {"auto": False, "focus": [{"card_index": 0}], "focus_clip_index": 0}
+    merged = gb._merge_carousel_moment_override(existing, {"focus_clip_index": None})
+    assert "focus" not in merged
+    assert "focus_clip_index" not in merged
+    assert merged["auto"] is False
+
+
+def test_merge_empty_dict_override_is_a_noop():
+    existing = {"auto": True, "seed": 7}
+    assert gb._merge_carousel_moment_override(existing, {}) == existing
+
+
+# ── _apply_moment_overrides: focus_duration_cap_s wiring (item 4) ───────────
+
+
+def test_apply_moment_overrides_sets_focus_duration_cap_from_duration_s():
+    from app.pipeline.carousel.segment import CarouselMomentSpec
+
+    spec = CarouselMomentSpec(effect="scale_sweep", clip_paths=("/a.mp4", "/b.mp4"), mode="focus")
+    out = gb._apply_moment_overrides(spec, {"duration_s": 6.5})
+
+    assert out.duration_s == pytest.approx(6.5)
+    assert out.focus_duration_cap_s == pytest.approx(6.5)
+
+
+def test_apply_moment_overrides_no_duration_s_leaves_cap_unset():
+    from app.pipeline.carousel.segment import CarouselMomentSpec
+
+    spec = CarouselMomentSpec(effect="scale_sweep", clip_paths=("/a.mp4", "/b.mp4"), mode="focus")
+    out = gb._apply_moment_overrides(spec, {"effect": "cover_flow"})
+
+    assert out.focus_duration_cap_s is None
+
+
+# ── BUG B: synthetic carousel clip must not pollute clip indices/counts ─────
+#
+# `_insert_carousel_moment_step` registers the rendered segment as
+# `clip_id_to_gcs[f"__carousel_{variant_id}"] = moment_path` (a LOCAL file
+# path, never uploaded) so the render pipeline can treat it as one more
+# assembly step. That's correct for rendering, but three OTHER readers of
+# the same clip_id_to_gcs/steps must never treat it as a real source clip:
+# `_build_ai_timeline` (or the persisted timeline grows a phantom clip_index
+# on every carousel render), `_variant_clip_count` (read-side belt-and-
+# braces for any already-persisted phantom slot), and
+# `_maybe_render_carousel_moment`'s own clip-path collection (or a re-edit
+# could source a NEW moment's cards off a PREVIOUS moment's rendered
+# segment — carousel-inside-carousel).
+
+
+def test_build_ai_timeline_excludes_synthetic_carousel_clip():
+    """The persisted `ai_timeline` must skip the spliced carousel-moment step
+    entirely — not just its `clip_index` mapping. Without this, a variant's
+    visible clip count creeps 4 -> 5 on the first carousel render, and every
+    later `focus_clip_index` bounds check is off by one."""
+    steps = [
+        AssemblyStep(clip_id="g_a", slot={}, moment={"start_s": 0.0, "end_s": 2.0, "energy": 5.0}),
+        AssemblyStep(
+            clip_id="__carousel_song_text",
+            slot={"exact_window": True},
+            moment={"start_s": 0.0, "end_s": 3.0},
+        ),
+        AssemblyStep(clip_id="g_b", slot={}, moment={"start_s": 0.0, "end_s": 2.0, "energy": 5.0}),
+    ]
+    resolved_plans = [
+        {"start_s": 0.0, "duration_s": 2.0},
+        {"start_s": 0.0, "duration_s": 3.0},
+        {"start_s": 0.0, "duration_s": 2.0},
+    ]
+    clip_id_to_gcs = {
+        "g_a": "generative-jobs/j/sources/000_a.mp4",
+        "g_b": "generative-jobs/j/sources/001_b.mp4",
+        # Appended last, exactly as `_insert_carousel_moment_step` does.
+        "__carousel_song_text": "/tmp/variant_dir/carousel_moment_scale_sweep.mp4",
+    }
+    clip_id_to_local = {
+        "g_a": "/a.mp4",
+        "g_b": "/b.mp4",
+        "__carousel_song_text": "/tmp/variant_dir/carousel_moment_scale_sweep.mp4",
+    }
+    probe_map = {
+        "/a.mp4": types.SimpleNamespace(duration_s=6.0),
+        "/b.mp4": types.SimpleNamespace(duration_s=6.0),
+        "/tmp/variant_dir/carousel_moment_scale_sweep.mp4": types.SimpleNamespace(duration_s=3.0),
+    }
+
+    tl = gb._build_ai_timeline(
+        steps=steps,
+        resolved_plans=resolved_plans,
+        clip_id_to_gcs=clip_id_to_gcs,
+        clip_id_to_local=clip_id_to_local,
+        probe_map=probe_map,
+        beat_grid=[],
+    )
+
+    assert tl is not None
+    assert len(tl["slots"]) == 2
+    assert {s["clip_index"] for s in tl["slots"]} == {0, 1}
+    assert all(s["source_gcs_path"].startswith("generative-jobs/") for s in tl["slots"])
+    # `order` stays dense (0, 1) despite the skipped middle entry.
+    assert [s["order"] for s in tl["slots"]] == [0, 1]
+
+
+def test_maybe_render_carousel_moment_excludes_synthetic_clip_from_card_sources(monkeypatch):
+    """Carousel-inside-carousel guard: a `__carousel_*` step present in
+    `steps` (e.g. a stale entry that slipped through some other path) must
+    never become a CARD SOURCE for a NEW moment — `render_carousel_moment`
+    must only ever see the real clips."""
+    import app.pipeline.carousel.segment as segment_mod
+
+    captured: dict = {}
+
+    def _fake_render(spec, work_dir):
+        captured["clip_paths"] = spec.clip_paths
+        return "/tmp/rendered_moment.mp4"
+
+    monkeypatch.setattr(segment_mod, "render_carousel_moment", _fake_render)
+
+    steps = [_step("__carousel_previous"), _step("g_a"), _step("g_b")]
+    clip_id_to_local = {
+        "__carousel_previous": "/tmp/old_moment.mp4",
+        "g_a": "/a.mp4",
+        "g_b": "/b.mp4",
+    }
+
+    path = gb._maybe_render_carousel_moment(
+        {"effect": "scale_sweep", "duration_s": 4.0},
+        clip_id_to_local=clip_id_to_local,
+        steps=steps,
+        variant_dir="/tmp/variant",
+    )
+
+    assert path == "/tmp/rendered_moment.mp4"
+    assert captured["clip_paths"] == ("/a.mp4", "/b.mp4")
+    assert "/tmp/old_moment.mp4" not in captured["clip_paths"]
+
+
+# ── Fast-reburn: a carousel edit must always force a full render ────────────
+
+
+def test_carousel_moment_override_forces_full_render_never_fast_reburn(monkeypatch):
+    """`_is_fast_reburn_eligible` has no carousel awareness (see the guard
+    comment above the fast-reburn `if` in `_run_regenerate_variant`) — an
+    add/update carousel edit must always take the full re-assembly leg even
+    when every OTHER fast-reburn condition (cached base, text-only variant)
+    is satisfied: `_reburn_text_on_base` can only re-burn text onto an
+    already-flattened base, it has no way to splice a multi-clip carousel
+    segment into it. Without the `carousel_moment_override is
+    CAROUSEL_MOMENT_UNSET` guard, a carousel-only edit would silently take
+    the fast path and the carousel_moment_override would be dropped on the
+    floor — the render "succeeds" but the moment never lands."""
+    from tests.tasks.test_generative_build import _Meta as _GBMeta
+    from tests.tasks.test_generative_build import _Probe as _GBProbe
+    from tests.tasks.test_generative_timeline_render import CLIP_PATHS as _REGEN_CLIP_PATHS
+    from tests.tasks.test_generative_timeline_render import JOB_ID as _REGEN_JOB_ID
+    from tests.tasks.test_generative_timeline_render import _existing_variant, _regen_setup
+
+    # text_mode="none" (the _existing_variant default) is one of the two
+    # `_is_fast_reburn_eligible` text modes AND keeps `agent_text` None, so
+    # the full render leg's real Skia/ffprobe text burn is never reached —
+    # this test only cares which LEG gets taken, not the text burn itself.
+    variant = _existing_variant(
+        variant_id="original_text",
+        rank=3,
+        base_video_path=f"generative-jobs/{_REGEN_JOB_ID}/base_3_original_text.mp4",
+    )
+    _job, updates, _dl = _regen_setup(monkeypatch, variants=[variant])
+
+    metas = [_GBMeta("g_a", 8.0)]
+    ingest = {
+        "clip_metas": metas,
+        "clip_id_to_gcs": {"g_a": _REGEN_CLIP_PATHS[0]},
+        "clip_id_to_local": {"g_a": "/a.mp4"},
+        "probe_map": {"/a.mp4": _GBProbe(6.0)},
+        "hero": metas[0],
+    }
+    monkeypatch.setattr(gb, "_ingest_clips", lambda *a, **k: ingest, raising=False)
+
+    # Sanity: every OTHER fast-reburn condition says "the fast path is fine"
+    # — proves the carousel override, not some other ineligibility, is what
+    # forces the full leg below.
+    assert gb._is_fast_reburn_eligible(variant, None, None, gb.settings) is True
+
+    monkeypatch.setattr(
+        gb,
+        "_reburn_text_on_base",
+        lambda **kw: (_ for _ in ()).throw(
+            AssertionError("fast-reburn must never run for a carousel-moment edit")
+        ),
+        raising=False,
+    )
+
+    gb._run_regenerate_variant(
+        _REGEN_JOB_ID,
+        "original_text",
+        None,
+        None,
+        False,
+        carousel_moment_override={"position": "outro"},
+    )
+
+    assert updates[-1]["ok"] is True

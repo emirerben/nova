@@ -210,6 +210,11 @@ def _no_celery(monkeypatch):
 
     stub = types.ModuleType("app.tasks.generative_build")
     stub.regenerate_generative_variant = _Task()
+    # dispatch_edit_variant's function-local import also pulls in the
+    # tri-state CAROUSEL_MOMENT_UNSET sentinel (see generative_build.py) —
+    # any distinct object works here since these tests never pass a
+    # carousel_moment_override, so the sentinel value itself is never asserted.
+    stub.CAROUSEL_MOMENT_UNSET = object()
     monkeypatch.setitem(sys.modules, "app.tasks.generative_build", stub)
     return sent
 

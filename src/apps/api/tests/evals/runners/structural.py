@@ -1716,12 +1716,14 @@ def check_edit_copilot(output: Any) -> list[str]:
         "swap_music",
         "set_mix",
         "set_intro_layout",
+        "set_carousel_moment",
         "set_title",
         "open_tool",
         "add_camera_effect",
         "patch_camera_effect",
         "remove_camera_effect",
         "set_transition",
+        "set_visual_fade",
     }
     failures: list[str] = []
 

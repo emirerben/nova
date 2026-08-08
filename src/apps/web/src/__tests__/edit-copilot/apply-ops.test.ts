@@ -521,6 +521,135 @@ describe("applyCopilotOps", () => {
     ]);
   });
 
+  it("maps set_carousel_moment add to a renderRequest without touching the draft", () => {
+    const base = extendedCtx();
+    const snapshot = {
+      ...base.snapshot,
+      allowed_op_families: [...base.snapshot.allowed_op_families, "render" as const],
+      carousel: { eligible: true, reason: null, current: null, n_clips: 4 },
+    };
+    const res = applyCopilotOps(
+      [{ op: "set_carousel_moment", config: { position: "intro" } }],
+      { ...base, snapshot },
+    );
+
+    expect(res.renderRequest).toEqual({
+      kind: "set_carousel_moment",
+      config: { position: "intro" },
+    });
+    expect(res.textActions).toEqual([]);
+    expect(res.nextSlots).toBeNull();
+    expect(res.nextSfx).toBeUndefined();
+    expect(res.nextOverlays).toBeUndefined();
+    expect(res.applied).toEqual([
+      { label: "Carousel", from: "none", to: "intro (re-rendering)" },
+    ]);
+  });
+
+  it("maps set_carousel_moment removal to a renderRequest", () => {
+    const base = extendedCtx();
+    const snapshot = {
+      ...base.snapshot,
+      allowed_op_families: [...base.snapshot.allowed_op_families, "render" as const],
+      carousel: {
+        eligible: true,
+        reason: null,
+        current: {
+          position: "intro" as const,
+          mode: "focus" as const,
+          effect: "cover_flow" as const,
+          focus_clip_index: 0,
+          duration_s: 4,
+          transition: "crossfade" as const,
+        },
+        n_clips: 4,
+      },
+    };
+    const res = applyCopilotOps([{ op: "set_carousel_moment", config: null }], {
+      ...base,
+      snapshot,
+    });
+
+    expect(res.renderRequest).toEqual({ kind: "set_carousel_moment", config: null });
+    expect(res.applied).toEqual([
+      { label: "Carousel", from: "intro · focus · cover_flow", to: "removed (re-rendering)" },
+    ]);
+  });
+
+  it("rejects set_carousel_moment for no-op config, ineligible add, missing section, empty removal, and mixed batches", () => {
+    const base = extendedCtx();
+    const current = {
+      position: "intro" as const,
+      mode: "focus" as const,
+      effect: "cover_flow" as const,
+      focus_clip_index: 0,
+      duration_s: 4,
+      transition: "crossfade" as const,
+    };
+    const withCarousel = {
+      ...base.snapshot,
+      allowed_op_families: [...base.snapshot.allowed_op_families, "render" as const],
+      carousel: { eligible: true, reason: null, current, n_clips: 4 },
+    };
+
+    const noop = applyCopilotOps(
+      [{ op: "set_carousel_moment", config: { position: "intro", mode: "focus" } }],
+      { ...base, snapshot: withCarousel },
+    );
+    expect(noop.rejected).toMatchObject([
+      { reason: "no_effect", detail: "carousel already matches this configuration" },
+    ]);
+
+    const ineligible = applyCopilotOps(
+      [{ op: "set_carousel_moment", config: { position: "outro" } }],
+      {
+        ...base,
+        snapshot: {
+          ...withCarousel,
+          carousel: { eligible: false, reason: "Needs at least 2 clips", current: null, n_clips: 1 },
+        },
+      },
+    );
+    expect(ineligible.rejected).toMatchObject([
+      { reason: "capability_disabled", detail: "Needs at least 2 clips" },
+    ]);
+
+    const missing = applyCopilotOps(
+      [{ op: "set_carousel_moment", config: { position: "intro" } }],
+      {
+        ...base,
+        snapshot: { ...base.snapshot, allowed_op_families: [...base.snapshot.allowed_op_families, "render" as const] },
+      },
+    );
+    expect(missing.rejected).toMatchObject([{ reason: "target_missing" }]);
+
+    const emptyRemoval = applyCopilotOps(
+      [{ op: "set_carousel_moment", config: null }],
+      {
+        ...base,
+        snapshot: { ...withCarousel, carousel: { eligible: true, reason: null, current: null, n_clips: 4 } },
+      },
+    );
+    expect(emptyRemoval.rejected).toMatchObject([
+      { reason: "no_effect", detail: "no carousel to remove" },
+    ]);
+
+    const mixed = applyCopilotOps(
+      [
+        { op: "set_carousel_moment", config: { position: "outro" } },
+        { op: "edit_text", bar_index: 0, text: "new hook" },
+      ],
+      { ...base, snapshot: withCarousel },
+    );
+    expect(mixed.renderRequest).toBeUndefined();
+    expect(mixed.rejected).toMatchObject([
+      {
+        op: "set_carousel_moment",
+        detail: "a carousel change re-renders the video — ask for it on its own",
+      },
+    ]);
+  });
+
   it("aggregates multiple output channels in one call and rejects disabled families", () => {
     const res = applyCopilotOps(
       [

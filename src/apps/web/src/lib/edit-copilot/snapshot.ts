@@ -291,6 +291,29 @@ export interface CopilotIntroSnapshot {
   switch_blocked_reason: null | "unsaved_edits" | "manual_text_edits" | "read_only" | "rendering";
 }
 
+/**
+ * Carousel-as-a-moment (Blossom carousel) — mirrors the editor's
+ * `_editor_capabilities().carousel`/`carousel_reason` pair server-side. `current`
+ * reflects whatever fields the variant's persisted `carousel_moment` actually
+ * carries (an auto-authored moment can be sparse — mode/effect are the
+ * director's choice at render time); absent fields are null. `mode` on
+ * `current` may legally read "stills" (auto-authoring only) even though the
+ * copilot itself must never emit that value.
+ */
+export interface CopilotCarouselSnapshot {
+  eligible: boolean;
+  reason: string | null;
+  current: {
+    position: "intro" | "middle" | "outro" | null;
+    mode: "focus" | "rolling" | "stills" | null;
+    effect: "scale_sweep" | "cover_flow" | "cards_stack" | "flipbook" | null;
+    focus_clip_index: number | null;
+    duration_s: number | null;
+    transition: "crossfade" | "none" | null;
+  } | null;
+  n_clips: number;
+}
+
 export interface CopilotSnapshot {
   text_bars: CopilotTextSnapshotBar[];
   slots: CopilotSlotSnapshot[];
@@ -335,6 +358,7 @@ export interface CopilotSnapshot {
     music_level: number | null;
   };
   intro?: CopilotIntroSnapshot;
+  carousel?: CopilotCarouselSnapshot;
   title?: string;
   camera_effects?: CopilotCameraEffectSnapshot[];
   visual_blocks?: CopilotVisualBlockSnapshot[];
@@ -356,6 +380,10 @@ export interface AllowedOpFamilyOptions {
   openTools?: Array<"text" | "visuals" | "sounds" | "overlays" | "styles">;
   readOnly?: boolean;
   renderLayoutSwitchable?: boolean;
+  /** Carousel-as-a-moment (Blossom carousel) is eligible for THIS variant right
+   * now (mirrors capabilities.carousel === true, not read-only). Unlocks the
+   * "render" family alongside (or independently of) renderLayoutSwitchable. */
+  carouselMomentAvailable?: boolean;
   cameraEffectsEnabled?: boolean;
   transitionsEnabled?: boolean;
   visualBlocksEnabled?: boolean;
@@ -398,6 +426,7 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
   };
   mixLevel?: number | null;
   intro?: CopilotIntroSnapshot;
+  carousel?: CopilotCarouselSnapshot;
   title?: string | null;
   cameraEffects?: CameraEffect[];
   visualBlocks?: VisualBlock[];
@@ -428,7 +457,7 @@ export function allowedOpFamiliesFromCapabilities(
 ): CopilotOpFamily[] {
   if (options.readOnly) return [];
   if (allCoreCapabilitiesFalse(capabilities)) {
-    return options.renderLayoutSwitchable ? ["render"] : [];
+    return options.renderLayoutSwitchable || options.carouselMomentAvailable ? ["render"] : [];
   }
   const families: CopilotOpFamily[] = [];
   if (capabilities?.text_elements !== false) families.push("text");
@@ -437,7 +466,7 @@ export function allowedOpFamiliesFromCapabilities(
   if (capabilities?.overlays !== false && options.overlaysEnabled) families.push("overlay");
   if (options.captionsPresent) families.push("caption");
   if (options.musicSwappable || options.mixAllowed) families.push("music");
-  if (options.renderLayoutSwitchable) families.push("render");
+  if (options.renderLayoutSwitchable || options.carouselMomentAvailable) families.push("render");
   if (options.titleEditable !== false) families.push("title");
   if (capabilities?.camera_effects !== false && options.cameraEffectsEnabled) {
     families.push("effect");
@@ -787,6 +816,12 @@ export function buildCopilotSnapshot(
     snapshot.intro = {
       ...options.intro,
       text: truncate(options.intro.text, 300),
+    };
+  }
+  if (options.carousel) {
+    snapshot.carousel = {
+      ...options.carousel,
+      reason: truncate(options.carousel.reason, 200),
     };
   }
   if (allowed.has("title") && options.title != null) {

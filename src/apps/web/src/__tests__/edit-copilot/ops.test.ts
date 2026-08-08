@@ -199,6 +199,99 @@ describe("edit-copilot extended op validation", () => {
       .toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
   });
 
+  it("validates carousel-moment config shape and clamps duration_s", () => {
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { position: "intro", mode: "focus" } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({
+      ok: true,
+      op: { op: "set_carousel_moment", config: { position: "intro", mode: "focus" } },
+    });
+    expect(
+      validateCopilotOp({ op: "set_carousel_moment", config: null }, validationSnapshot),
+    ).toMatchObject({ ok: true, op: { op: "set_carousel_moment", config: null } });
+    expect(validateCopilotOp({ op: "set_carousel_moment" }, validationSnapshot)).toMatchObject({
+      ok: false,
+      rejection: { reason: "missing_required" },
+    });
+    expect(
+      validateCopilotOp({ op: "set_carousel_moment", config: "intro" }, validationSnapshot),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_type" } });
+    expect(
+      validateCopilotOp({ op: "set_carousel_moment", config: {} }, validationSnapshot),
+    ).toMatchObject({ ok: false, rejection: { reason: "empty_patch" } });
+    // "stills" is a legally persisted mode (auto-authored moments) but the
+    // copilot must never be able to WRITE it — not in the op vocabulary.
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { mode: "stills" } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { position: "sideways" } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { duration_s: 100 } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { config: { duration_s: 15 } } });
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { duration_s: 0.1 } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { config: { duration_s: 2 } } });
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { focus_clip_index: 2 } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { config: { focus_clip_index: 2 } } });
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { focus_clip_index: null } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { config: { focus_clip_index: null } } });
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { focus_clip_index: -1 } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_type" } });
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { effect: "cover_flow" } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { config: { effect: "cover_flow" } } });
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { effect: "spin" } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { transition: "crossfade" } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true, op: { config: { transition: "crossfade" } } });
+    expect(
+      validateCopilotOp(
+        { op: "set_carousel_moment", config: { transition: "wipe" } },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+  });
+
   it("clamps camera effects and validates effect patches against the snapshot", () => {
     expect(
       validateCopilotOp(

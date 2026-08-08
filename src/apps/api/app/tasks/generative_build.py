@@ -165,6 +165,17 @@ _VOICEOVER_ONLY_DEFAULT_MIX = 1.0
 _VOICEOVER_MUSIC_DEFAULT_MIX = 0.7
 _VOICEOVER_MAX_DURATION_S = 60.0
 
+# Celery-safe tri-state sentinel for `regenerate_generative_variant`'s
+# `carousel_moment_override` kwarg (the editable-carousel dispatch path).
+# A plain string so it survives task serialization unmolested; distinguishes
+# "no carousel edit requested this render" (carry the persisted moment
+# forward unchanged) from the two real values `None` (explicit removal) and
+# `dict` (partial edit) — see `_merge_carousel_moment_override` below.
+# Defined this early (well before `regenerate_generative_variant`'s def) so
+# it's available as a default-argument value at function-definition time —
+# Python evaluates defaults when the `def` executes, not lazily.
+CAROUSEL_MOMENT_UNSET = "__carousel_moment_unset__"
+
 # Bounded concurrency for the HDR→SDR pre-tonemap. Each conversion is a CPU-bound
 # zscale linear-light tonemap + crf16 x264 encode; the prod worker is
 # shared-cpu-4x / 6144MB, so 2 concurrent tonemaps is the safe ceiling — more
@@ -2000,6 +2011,7 @@ def regenerate_generative_variant(
     text_behind_subject: bool | None = None,
     orientation_override: str | None = None,
     force_full_render: bool = False,
+    carousel_moment_override: Any = CAROUSEL_MOMENT_UNSET,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -2016,6 +2028,12 @@ def regenerate_generative_variant(
     `text_behind_subject`: explicit text-behind-subject toggle (None = leave the
     persisted `intro_behind_subject` decision alone). Kwarg name is a frozen
     contract with the route layer's `.delay(...)` call.
+
+    `carousel_moment_override`: tri-state carousel-editor edit — the
+    `CAROUSEL_MOMENT_UNSET` sentinel default (leave the persisted moment
+    alone), `None` (explicit removal), or a validated partial-edit dict.
+    Merged onto the persisted `carousel_moment` by
+    `_merge_carousel_moment_override` inside `_run_regenerate_variant`.
 
     """
     log.info(
@@ -2063,6 +2081,7 @@ def regenerate_generative_variant(
                 text_behind_subject=text_behind_subject,
                 orientation_override=orientation_override,
                 force_full_render=force_full_render,
+                carousel_moment_override=carousel_moment_override,
             )
         except OperationalError:
             raise
@@ -4667,6 +4686,77 @@ def _stable_seed_from_variant(variant_id: str | None) -> int:
 
 _CAROUSEL_POSITION_WEIGHTS: dict[str, float] = {"intro": 0.5, "middle": 0.3, "outro": 0.2}
 
+# `CAROUSEL_MOMENT_UNSET` (the tri-state sentinel for
+# `regenerate_generative_variant`'s `carousel_moment_override` kwarg) is
+# defined near the top of this module (before `regenerate_generative_variant`
+# itself), NOT here — it's used as a default-argument value, which Python
+# evaluates at `def`-time, so it must exist before that function is defined.
+
+# Boundary crossfade applied at a carousel moment's edge(s) when the editor
+# requests `carousel_moment.transition == "crossfade"` — see
+# `_insert_carousel_moment_step`. "crossfade" is already the INTERNAL
+# transition vocabulary value (`transitions.translate_transition("crossfade")
+# == "crossfade"`; XFADE_MAP maps it to ffmpeg's `fade`), matching the same
+# literal `slot["transition_in"]` value `_prepare_timeline_assembly` writes
+# for the identical user-facing "crossfade" choice on the timeline editor.
+_CAROUSEL_MOMENT_TRANSITION_DURATION_S = 0.4
+
+
+def _merge_carousel_moment_override(
+    existing_cfg: dict[str, Any] | None,
+    override: Any,
+) -> dict[str, Any] | None:
+    """Merge a carousel-editor edit onto a variant's persisted `carousel_moment`.
+
+    `override` is one of three states (see `CAROUSEL_MOMENT_UNSET`'s docstring):
+      - `CAROUSEL_MOMENT_UNSET`: no edit requested this render — `existing_cfg`
+        carries forward unchanged (same lifecycle as `music_start_s` /
+        `user_style_knobs` on the spec dict this feeds into).
+      - `None`: explicit removal — the variant loses its carousel moment.
+      - `dict`: partial edit, already field-validated by
+        `dispatch_edit_variant`. Present keys win over `existing_cfg`; absent
+        keys keep whatever `existing_cfg` already had (or nothing, for a
+        variant with no prior moment). `focus_clip_index` (an int, or `None`
+        to clear) is translated to the `focus` list-of-dicts shape
+        `_apply_moment_overrides`/`_parse_focus_override` already consume:
+        `[{"card_index": n}]` — AND kept verbatim as `focus_clip_index`
+        alongside it: the render pipeline only ever reads `focus`, but the
+        editor-contract/UI/copilot-snapshot side reads `focus_clip_index`
+        (flat int, per the API contract on `CarouselMoment`/
+        `CarouselMomentEditRequest`). Persisting only the translated shape
+        made the editor panel prefill "Let Nova pick" even when a specific
+        clip was chosen — the panel's `current?.focus_clip_index` never
+        existed on the persisted dict. Both keys now carry the same value so
+        neither reader needs to know about the other's shape.
+
+    ANY key present in `override` sets `auto=False` on the merged result —
+    once the user has touched the moment, the auto-director must stop
+    re-rolling mode/effect on their behalf (product decision, see the API
+    contract in the carousel-editor plan). `seed` is not touched here; it
+    stays whatever `existing_cfg` already carried (or absent, for a brand
+    new manual moment), keeping any pinned focus/rolling choreography
+    deterministic across re-renders.
+    """
+    if override == CAROUSEL_MOMENT_UNSET:
+        return existing_cfg
+    if override is None:
+        return None
+    merged: dict[str, Any] = dict(existing_cfg or {})
+    if override:
+        merged["auto"] = False
+        if "focus_clip_index" in override:
+            idx = override["focus_clip_index"]
+            if idx is None:
+                merged.pop("focus", None)
+                merged.pop("focus_clip_index", None)
+            else:
+                merged["focus"] = [{"card_index": int(idx)}]
+                merged["focus_clip_index"] = int(idx)
+        for key in ("position", "mode", "effect", "duration_s", "transition"):
+            if key in override:
+                merged[key] = override[key]
+    return merged or None
+
 
 def _author_carousel_moments(
     initial_specs: list[dict[str, Any]], *, job_id: str, n_clips: int
@@ -4791,6 +4881,12 @@ def _apply_moment_overrides(spec: Any, moment_cfg: dict[str, Any]) -> Any:
         overrides["effect"] = moment_cfg["effect"]
     if "duration_s" in moment_cfg and "duration_s" in field_names:
         overrides["duration_s"] = float(moment_cfg["duration_s"])
+        # An explicit duration_s also caps a mode="focus" moment's natural
+        # choreography length (ignored otherwise — see CarouselMomentSpec's
+        # docstring on this field). Auto-authored moments never set
+        # "duration_s" in moment_cfg, so this never fires for them.
+        if "focus_duration_cap_s" in field_names:
+            overrides["focus_duration_cap_s"] = float(moment_cfg["duration_s"])
     if "mode" in moment_cfg:
         if "mode" in field_names:
             overrides["mode"] = moment_cfg["mode"]
@@ -4972,7 +5068,20 @@ def _maybe_render_carousel_moment(
 
         clip_paths: list[str] = []
         for step in steps:
-            local_path = clip_id_to_local.get(getattr(step, "clip_id", None))
+            step_clip_id = getattr(step, "clip_id", None)
+            # Belt-and-braces (carousel-inside-carousel guard): a rendered
+            # carousel-moment segment is a synthetic, locally-rendered
+            # composite (see `_insert_carousel_moment_step`'s
+            # `synthetic_id = f"__carousel_{variant_id}"`), never a real
+            # source clip — it must never become a CARD SOURCE for a new
+            # moment. `steps` should already be clean on every traced call
+            # path (fresh match / `_prepare_timeline_assembly` both derive
+            # strictly from the job's real `clip_paths`), but this filter
+            # makes that invariant hold even if a future code path lets a
+            # stale synthetic step slip through.
+            if isinstance(step_clip_id, str) and step_clip_id.startswith("__carousel_"):
+                continue
+            local_path = clip_id_to_local.get(step_clip_id)
             if local_path and local_path not in clip_paths:
                 clip_paths.append(local_path)
             if len(clip_paths) >= 5:
@@ -5015,6 +5124,7 @@ def _insert_carousel_moment_step(
     probe_map: dict,
     variant_dir: str,
     clip_metas: list | None = None,
+    inserted_duration_out: dict[str, float] | None = None,
 ) -> list:
     """Splice a rendered Blossom-carousel moment into the montage `steps` list.
 
@@ -5052,6 +5162,27 @@ def _insert_carousel_moment_step(
     clip_paths-index lookup can't map it — that function is documented
     best-effort and returns None gracefully rather than raising, so a carousel
     moment simply means no post-render clip-timeline editor for that variant.
+
+    `moment_cfg["transition"] == "crossfade"` (the carousel editor's boundary
+    option) sets `transition_in`/`transition_duration_s` on BOTH edges of the
+    splice: the moment step's own slot (the incoming edge, from whatever
+    precedes it) and the step immediately after the insertion point (the
+    outgoing edge, into whatever follows). `_assemble_clips`/`_plan_slots`
+    only ever consult a step's `transition_in` to describe the cut INTO that
+    step — i.e. it never reads the very first step's own value — so for
+    `position="intro"` (insertion index 0) only the outgoing edge actually
+    renders; for `position="outro"` there is no next step, so only the
+    incoming edge applies; `"middle"` gets both. `moment_cfg["transition"]`
+    absent/"none"/anything else is a no-op — same hard-cut boundary as before
+    this option existed.
+
+    `inserted_duration_out` (optional): when provided (an empty dict), the
+    successfully-rendered moment's PROBED duration is written to
+    `inserted_duration_out["duration_s"]` — the side-channel
+    `_render_generative_variant` uses to extend a voiceover variant's
+    `-t` mix-truncation target by the spliced moment's length (otherwise the
+    voiceover mix, sized to the voice BEFORE the splice, chops the moment
+    off the tail). Never populated when no moment was inserted.
     """
     if not settings.carousel_effects_enabled:
         return steps
@@ -5108,6 +5239,9 @@ def _insert_carousel_moment_step(
     clip_id_to_gcs[synthetic_id] = moment_path
     probe_map[moment_path] = probe
 
+    if inserted_duration_out is not None:
+        inserted_duration_out["duration_s"] = duration_s
+
     moment_step = AssemblyStep(
         slot={"exact_window": True},
         clip_id=synthetic_id,
@@ -5117,11 +5251,29 @@ def _insert_carousel_moment_step(
     position = moment_cfg.get("position", "intro")
     new_steps = list(steps)
     if position == "middle":
-        new_steps.insert(len(new_steps) // 2, moment_step)
+        insertion_index = len(new_steps) // 2
+        new_steps.insert(insertion_index, moment_step)
     elif position == "outro":
+        insertion_index = len(new_steps)
         new_steps.append(moment_step)
     else:  # "intro" (default) and any unrecognized value
+        insertion_index = 0
         new_steps.insert(0, moment_step)
+
+    if moment_cfg.get("transition") == "crossfade":
+        # Incoming edge: transition INTO the moment step, from whatever
+        # precedes it. A no-op when the moment is the very first step in the
+        # whole assembly (nothing precedes it) — the renderer never reads the
+        # first step's own transition_in — but harmless to set regardless.
+        moment_step.slot["transition_in"] = "crossfade"
+        moment_step.slot["transition_duration_s"] = _CAROUSEL_MOMENT_TRANSITION_DURATION_S
+        # Outgoing edge: transition INTO the step immediately after the
+        # moment, from the moment. Absent for "outro" (nothing follows it).
+        next_index = insertion_index + 1
+        if next_index < len(new_steps):
+            next_step = new_steps[next_index]
+            next_step.slot["transition_in"] = "crossfade"
+            next_step.slot["transition_duration_s"] = _CAROUSEL_MOMENT_TRANSITION_DURATION_S
 
     record_pipeline_event(
         "assembly",
@@ -5168,7 +5320,18 @@ def _build_ai_timeline(
         durations = [float(p.get("duration_s") or 0.0) for p in resolved_plans]
         beats_per_slot = _derive_duration_beats(durations, [float(b) for b in beat_grid or []])
         slots: list[dict[str, Any]] = []
-        for order, (step, plan) in enumerate(zip(steps, resolved_plans)):
+        for zip_index, (step, plan) in enumerate(zip(steps, resolved_plans)):
+            # A spliced carousel-moment step (`_insert_carousel_moment_step`'s
+            # synthetic `__carousel_{variant_id}` clip_id) is a locally
+            # rendered composite, never a real source clip — it must never
+            # occupy a `clip_index` slot in the persisted timeline. Without
+            # this skip, `clip_id_to_gcs[synthetic_id] = moment_path` (the
+            # segment's LOCAL file path, appended after every real clip) gets
+            # its own trailing index, growing the timeline's distinct
+            # clip_index/clip count by one on every carousel'd variant and
+            # shifting focus-tile indices on the next edit.
+            if isinstance(step.clip_id, str) and step.clip_id.startswith("__carousel_"):
+                continue
             gcs = clip_id_to_gcs.get(step.clip_id)
             if gcs is None or gcs not in gcs_to_index:
                 return None
@@ -5182,8 +5345,8 @@ def _build_ai_timeline(
                     "source_duration_s": round(float(getattr(probe, "duration_s", 0.0) or 0.0), 3),
                     "in_s": round(float(plan["start_s"]), 3),
                     "duration_s": round(float(plan["duration_s"]), 3),
-                    "duration_beats": beats_per_slot[order],
-                    "order": order,
+                    "duration_beats": beats_per_slot[zip_index],
+                    "order": len(slots),
                     "moment_energy": moment.get("energy"),
                     "moment_description": moment.get("description"),
                 }
@@ -5476,6 +5639,7 @@ def _run_regenerate_variant(
     text_behind_subject: bool | None = None,
     orientation_override: str | None = None,
     force_full_render: bool = False,
+    carousel_moment_override: Any = CAROUSEL_MOMENT_UNSET,
 ) -> None:
     from app.services.pipeline_trace import (  # noqa: PLC0415
         record_pipeline_event,
@@ -5907,9 +6071,18 @@ def _run_regenerate_variant(
     # An EXPLICIT timeline_override always forces a re-assembly — the cached base
     # was rendered from the previous slot layout. (A merely-persisted user_timeline
     # is fine: the base was re-cached by the override render that persisted it.)
+    # A carousel-moment edit (add/update/remove) ALSO always forces a full
+    # re-assembly: `_reburn_text_on_base` only re-burns the text overlay onto
+    # the already-flattened base video, it has no way to splice a multi-clip
+    # carousel segment into that base. `_is_fast_reburn_eligible` has no
+    # carousel awareness (it only checks track/mix/orientation/base/text_mode),
+    # so without this guard a carousel-only edit (no text/style field set)
+    # silently takes the fast path and the carousel_moment_override is dropped
+    # on the floor — the render "succeeds" but the moment never lands.
     if (
         timeline_override is None
         and not force_full_render
+        and carousel_moment_override == CAROUSEL_MOMENT_UNSET
         and _is_fast_reburn_eligible(
             existing,
             new_track_id,
@@ -6308,7 +6481,15 @@ def _run_regenerate_variant(
             # clip set changed enough that eligibility now fails, that's handled
             # downstream by _insert_carousel_moment_step's existing never-raise +
             # `carousel_moment_skipped` trace event, not here.
-            "carousel_moment": existing.get("carousel_moment"),
+            #
+            # `carousel_moment_override` (the carousel editor's dispatch path)
+            # merges onto that persisted value: UNSET carries it forward
+            # unchanged (the line above, byte-identical to before this param
+            # existed), `None` removes it, a dict partial-merges. See
+            # `_merge_carousel_moment_override`.
+            "carousel_moment": _merge_carousel_moment_override(
+                existing.get("carousel_moment"), carousel_moment_override
+            ),
         }
         # Voiceover variant re-render (e.g. the mix slider): re-attach the voice bed and
         # the resolved mix. Precedence: explicit slider value → the variant's persisted
@@ -8563,6 +8744,7 @@ def _render_generative_variant(
         # into the finalized montage `steps`, before assembly. No-op — zero
         # carousel imports, `steps` unchanged — unless the flag is on AND the
         # spec requests a moment. See `_insert_carousel_moment_step`.
+        _carousel_insert_sink: dict[str, float] = {}
         steps = _insert_carousel_moment_step(
             steps,
             spec,
@@ -8571,7 +8753,16 @@ def _render_generative_variant(
             probe_map=probe_map,
             variant_dir=variant_dir,
             clip_metas=clip_metas,
+            inserted_duration_out=_carousel_insert_sink,
         )
+        if voiceover_gcs_path and "duration_s" in _carousel_insert_sink:
+            # `voiceover_target_s` was sized to the voice BEFORE this splice
+            # (min(footage, voice, cap), above) — extend it by the spliced
+            # moment's real rendered length so `_mix_user_voiceover`'s final
+            # `-t` truncation doesn't chop the moment off the tail. Only the
+            # mix-stage target changes; the recipe/slot layout built earlier
+            # from the pre-splice value is untouched.
+            voiceover_target_s += _carousel_insert_sink["duration_s"]
 
         assembled_path = os.path.join(variant_dir, "assembled.mp4")
         resolved_plans: list[dict] = []

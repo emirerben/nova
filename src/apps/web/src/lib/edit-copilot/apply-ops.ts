@@ -3,6 +3,7 @@ import type { TextEditorAction, TextElementBar } from "@/lib/timeline/text-timel
 import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
 import type {
   CameraEffect,
+  CarouselMoment,
   EditorCapabilities,
   MediaOverlay,
   OverlaySuggestion,
@@ -41,6 +42,7 @@ import {
   textMutationFingerprint,
   type CopilotSnapshot,
   type CopilotCaptionCueSnapshot,
+  type CopilotCarouselSnapshot,
   type CopilotSlotSnapshot,
   type CopilotTextSnapshotBar,
   type CopilotSfxPlacementSnapshot,
@@ -104,7 +106,9 @@ export interface ApplyCopilotOpsResult {
   acceptedSuggestionRefs?: AcceptedSuggestionRef[];
   nextMusicTrackId?: string;
   nextMixLevel?: number;
-  renderRequest?: { kind: "set_intro_layout"; layout: "linear" | "cluster" };
+  renderRequest?:
+    | { kind: "set_intro_layout"; layout: "linear" | "cluster" }
+    | { kind: "set_carousel_moment"; config: CarouselMoment | null };
   nextTitle?: string;
   captionMetaPatch?: CaptionMetaPatch;
   openTool?: "text" | "visuals" | "sounds" | "overlays" | "styles";
@@ -180,6 +184,15 @@ function fmt(value: unknown): string {
 
 function fmtSeconds(value: number): string {
   return `${round(value).toFixed(1)}s`;
+}
+
+/** Short human summary for a carousel-moment change chip. */
+function describeCarouselMoment(current: CopilotCarouselSnapshot["current"]): string {
+  if (!current) return "none";
+  const bits = [current.position, current.mode, current.effect].filter(
+    (bit): bit is NonNullable<typeof bit> => bit != null,
+  );
+  return bits.length > 0 ? bits.join(" · ") : "carousel";
 }
 
 function textValue(bar: TextElementBar, snap: CopilotTextSnapshotBar, key: TextStylePatchKey | "text" | "start_s" | "end_s"): unknown {
@@ -345,6 +358,7 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "swap_music") return "Swapped song";
   if (op.op === "set_mix") return "Music volume";
   if (op.op === "set_intro_layout") return "Intro layout";
+  if (op.op === "set_carousel_moment") return "Carousel";
   if (op.op === "set_title") return "Title set";
   if (op.op === "add_camera_effect") return "Add camera effect";
   if (op.op === "patch_camera_effect") return `Camera effect ${op.camera_effect_index + 1}`;
@@ -1215,6 +1229,58 @@ export function applyCopilotOps(
         from: label(ctx.snapshot.intro.layout),
         to: `${label(op.layout)} (re-rendering)`,
       });
+    } else if (op.op === "set_carousel_moment") {
+      const carousel = ctx.snapshot.carousel;
+      if (!carousel) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "carousel is not available"));
+        continue;
+      }
+      if (renderRequest || hasDraftMutation() || rawOps.length > 1) {
+        rejected.push(reject(
+          op.op,
+          labelForOp(op),
+          "capability_disabled",
+          "a carousel change re-renders the video — ask for it on its own",
+        ));
+        continue;
+      }
+      const currentLabel = describeCarouselMoment(carousel.current);
+      if (op.config === null) {
+        if (!carousel.current) {
+          rejected.push(reject(op.op, labelForOp(op), "no_effect", "no carousel to remove"));
+          continue;
+        }
+        renderRequest = { kind: "set_carousel_moment", config: null };
+        applied.push({ label: "Carousel", from: currentLabel, to: "removed (re-rendering)" });
+      } else {
+        if (!carousel.eligible) {
+          rejected.push(reject(
+            op.op,
+            labelForOp(op),
+            "capability_disabled",
+            carousel.reason ?? "carousel is not available for this edit",
+          ));
+          continue;
+        }
+        const current = carousel.current;
+        const currentValueAt = (key: keyof CarouselMoment): unknown =>
+          current ? (current[key] ?? null) : null;
+        const isNoOp =
+          current != null &&
+          (Object.entries(op.config) as Array<[keyof CarouselMoment, unknown]>).every(([key, value]) =>
+            sameValue(currentValueAt(key), value ?? null),
+          );
+        if (isNoOp) {
+          rejected.push(reject(op.op, labelForOp(op), "no_effect", "carousel already matches this configuration"));
+          continue;
+        }
+        renderRequest = { kind: "set_carousel_moment", config: op.config };
+        applied.push({
+          label: "Carousel",
+          from: currentLabel,
+          to: `${describeCarouselMoment({ ...current, ...op.config } as NonNullable<CopilotCarouselSnapshot["current"]>)} (re-rendering)`,
+        });
+      }
     } else if (op.op === "set_title") {
       if (ctx.snapshot.title === undefined || ctx.title === undefined) {
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "title is no longer available"));

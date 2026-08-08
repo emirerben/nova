@@ -198,6 +198,50 @@ def test_render_carousel_moment_focus_mode_clamps_out_of_range_card_index(tmp_pa
     assert result is not None
 
 
+def test_render_carousel_moment_focus_mode_honors_explicit_duration_cap_trim(tmp_path, two_clips):
+    """Carousel-editor duration_s (item 4): an explicit `focus_duration_cap_s`
+    shorter than the natural choreography length TRIMS to it, rather than the
+    unconditional MAX_FOCUS_TOTAL_S=15.0 cap the auto/no-override path uses."""
+    a, b = two_clips
+    spec = CarouselMomentSpec(
+        effect="cover_flow",
+        clip_paths=(a, b),
+        mode="focus",
+        focus_moments=(FocusMoment(card_index=1, hold_s=0.3, zoom_s=0.2),),
+        seed=1,
+        focus_duration_cap_s=1.0,
+    )
+
+    result = render_carousel_moment(spec, str(tmp_path))
+
+    assert result is not None
+    probe = probe_video(result)
+    assert probe.duration_s == pytest.approx(1.0, abs=0.15)
+
+
+def test_render_carousel_moment_focus_mode_no_cap_ignores_duration_s(tmp_path, two_clips):
+    """Control: `focus_duration_cap_s=None` (the default — never set by the
+    auto-director) preserves the pre-existing behavior byte-for-byte: the
+    natural choreography length governs, hard-capped only at
+    MAX_FOCUS_TOTAL_S, same as `test_render_carousel_moment_focus_mode_returns_valid_mp4`."""
+    a, b = two_clips
+    spec = CarouselMomentSpec(
+        effect="cover_flow",
+        clip_paths=(a, b),
+        mode="focus",
+        focus_moments=(FocusMoment(card_index=1, hold_s=0.3, zoom_s=0.2),),
+        seed=1,
+        duration_s=1.0,  # deliberately short — must be ignored for focus mode
+    )
+
+    result = render_carousel_moment(spec, str(tmp_path))
+
+    assert result is not None
+    probe = probe_video(result)
+    assert 0.5 < probe.duration_s < 15.5
+    assert probe.duration_s != pytest.approx(1.0, abs=0.15)
+
+
 def test_render_carousel_moment_invalid_mode_returns_none(tmp_path, two_clips):
     a, b = two_clips
     spec = CarouselMomentSpec(

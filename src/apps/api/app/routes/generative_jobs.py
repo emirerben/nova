@@ -28,7 +28,7 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -561,6 +561,30 @@ class SetMixRequest(BaseModel):
     mix: float = Field(..., ge=0.0, le=1.0)
 
 
+class CarouselMomentEditRequest(BaseModel):
+    """Partial carousel-moment config for the carousel editor panel.
+
+    All fields optional — an omitted field keeps the variant's persisted
+    value; the top-level `EditVariantRequest.carousel_moment` itself is what
+    carries the absent/null/dict tri-state (see `dispatch_edit_variant`):
+    omitting `carousel_moment` entirely leaves the moment unchanged, an
+    explicit top-level `null` removes it, and a `CarouselMomentEditRequest`
+    body here partial-merges over whatever's persisted (present keys win,
+    absent keys keep). Enum/range validation happens in
+    `dispatch_edit_variant`, matching every other loosely-typed field on
+    `EditVariantRequest` (font_family, effect, text_color, ...).
+    """
+
+    position: str | None = None  # "intro" | "middle" | "outro"
+    mode: str | None = None  # "focus" | "rolling" | "stills"
+    effect: str | None = None  # "scale_sweep" | "cover_flow" | "cards_stack" | "flipbook"
+    # Index into the variant's ordered carousel clips; only meaningful for
+    # mode="focus". Explicit `null` clears a previously-pinned focus card.
+    focus_clip_index: int | None = None
+    duration_s: float | None = None  # clamped to [2.0, 15.0] in dispatch, not rejected
+    transition: str | None = None  # "crossfade" | "none"
+
+
 class EditVariantRequest(BaseModel):
     """Combined text/style/size edit — the instant-edit "Done" commit.
 
@@ -597,6 +621,12 @@ class EditVariantRequest(BaseModel):
     # settings.text_behind_subject_enabled; a stale client sending this while the
     # flag is off is coerced to None (not rejected) in dispatch_edit_variant.
     text_behind_subject: bool | None = None
+    # Carousel-moment edit (Blossom carousel). Tri-state at THIS level:
+    # absent (field not in the request body) = leave unchanged; explicit
+    # `null` = remove the moment; an object = partial edit. `edit_variant`
+    # reads `model_fields_set` to tell absent from explicit-null (both
+    # otherwise deserialize to Python `None` on this field).
+    carousel_moment: CarouselMomentEditRequest | None = None
 
 
 class TextElementsRequest(BaseModel):
@@ -3095,6 +3125,7 @@ def dispatch_edit_variant(
     cluster_body_size_px: int | None = None,
     cluster_accent_size_px: int | None = None,
     text_behind_subject: bool | None = None,
+    carousel_moment: object = _UNSET,
 ) -> None:
     """Validate + enqueue a combined text/style/size/layout edit as ONE re-render.
 
@@ -3102,6 +3133,12 @@ def dispatch_edit_variant(
     the user pays for one render instead of one per field. Reuses the same
     validation rules as the per-field dispatchers; `regenerate_generative_variant`
     already accepts all overrides together.
+
+    `carousel_moment` (Blossom carousel) is tri-state, using the module's
+    `_UNSET` sentinel: `_UNSET` (the default) = no carousel edit requested,
+    the persisted moment (if any) is left alone; `None` = explicit removal;
+    a `dict` (field-validated below) = partial edit, merged over whatever's
+    persisted by `_merge_carousel_moment_override` on the worker side.
     """
     variant = require_editable_variant(job, variant_id)
 
@@ -3148,6 +3185,7 @@ def dispatch_edit_variant(
         and cluster_body_size_px is None
         and cluster_accent_size_px is None
         and text_behind_subject is None
+        and carousel_moment is _UNSET
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -3304,6 +3342,95 @@ def dispatch_edit_variant(
                 detail="`text_color` must be a hex color (#RRGGBB).",
             )
 
+    # Carousel-moment edit (Blossom carousel). `carousel_moment_override` is
+    # what actually reaches `regenerate_generative_variant.delay(...)` below —
+    # `_UNSET` (untouched by this block) means "no carousel edit requested",
+    # translated to the Celery-safe `CAROUSEL_MOMENT_UNSET` sentinel at the
+    # enqueue call since the route-local `_UNSET` object can't survive task
+    # serialization.
+    carousel_moment_override: object = _UNSET
+    if carousel_moment is not _UNSET:
+        if carousel_moment is None:
+            # Explicit removal is always allowed — no eligibility check. A
+            # moment can need clearing even after a flag flip or an
+            # archetype change that would otherwise reject an ADD.
+            carousel_moment_override = None
+        else:
+            reason = _carousel_capability_reason(variant)
+            if reason is not None:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=reason)
+            cleaned_moment: dict[str, Any] = {}
+            if "position" in carousel_moment:
+                position_val = carousel_moment["position"]
+                if position_val not in _CAROUSEL_POSITIONS:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            "`carousel_moment.position` must be one of "
+                            f"{sorted(_CAROUSEL_POSITIONS)}."
+                        ),
+                    )
+                cleaned_moment["position"] = position_val
+            if "mode" in carousel_moment:
+                mode_val = carousel_moment["mode"]
+                if mode_val not in _CAROUSEL_MODES:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"`carousel_moment.mode` must be one of {sorted(_CAROUSEL_MODES)}.",
+                    )
+                cleaned_moment["mode"] = mode_val
+            if "effect" in carousel_moment:
+                carousel_effect_val = carousel_moment["effect"]
+                if carousel_effect_val not in _CAROUSEL_EFFECTS:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"`carousel_moment.effect` must be one of {sorted(_CAROUSEL_EFFECTS)}."
+                        ),
+                    )
+                cleaned_moment["effect"] = carousel_effect_val
+            if "focus_clip_index" in carousel_moment:
+                focus_idx = carousel_moment["focus_clip_index"]
+                if focus_idx is not None:
+                    if not isinstance(focus_idx, int) or isinstance(focus_idx, bool):
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="`carousel_moment.focus_clip_index` must be an integer.",
+                        )
+                    clip_count = _variant_clip_count(variant)
+                    if not (0 <= focus_idx < clip_count):
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=(
+                                "`carousel_moment.focus_clip_index` must be between 0 and "
+                                f"{clip_count - 1}."
+                            ),
+                        )
+                cleaned_moment["focus_clip_index"] = focus_idx
+            if "duration_s" in carousel_moment:
+                duration_val = carousel_moment["duration_s"]
+                if duration_val is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="`carousel_moment.duration_s` cannot be null.",
+                    )
+                # Clamp, don't reject — matches the API contract ("clamp 2.0..15.0").
+                cleaned_moment["duration_s"] = max(
+                    _CAROUSEL_DURATION_MIN_S, min(_CAROUSEL_DURATION_MAX_S, float(duration_val))
+                )
+            if "transition" in carousel_moment:
+                transition_val = carousel_moment["transition"]
+                if transition_val not in _CAROUSEL_TRANSITIONS:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            "`carousel_moment.transition` must be one of "
+                            f"{sorted(_CAROUSEL_TRANSITIONS)}."
+                        ),
+                    )
+                cleaned_moment["transition"] = transition_val
+            carousel_moment_override = cleaned_moment
+
     # Persist render_status="rendering" before enqueuing — full dict replacement so
     # SQLAlchemy tracks the change without flag_modified.
     _variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -3314,7 +3441,10 @@ def dispatch_edit_variant(
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": _variants}
     mark_reattempt(job)
 
-    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+    from app.tasks.generative_build import (  # noqa: PLC0415
+        CAROUSEL_MOMENT_UNSET,
+        regenerate_generative_variant,
+    )
 
     regenerate_generative_variant.delay(
         str(job.id),
@@ -3334,6 +3464,11 @@ def dispatch_edit_variant(
         cluster_body_size_px_override=cluster_body_size_px,
         cluster_accent_size_px_override=cluster_accent_size_px,
         text_behind_subject=text_behind_subject,
+        carousel_moment_override=(
+            CAROUSEL_MOMENT_UNSET
+            if carousel_moment_override is _UNSET
+            else carousel_moment_override
+        ),
     )
 
 
@@ -3437,6 +3572,55 @@ def _timeline_parts(variant: dict) -> tuple[list[dict], list[dict], list[float]]
     user_slots = [s for s in (user.get("slots") or []) if isinstance(s, dict)]
     beat_grid = [float(b) for b in (user.get("beat_grid") or ai.get("beat_grid") or [])]
     return ai_slots, user_slots, beat_grid
+
+
+def _is_synthetic_carousel_slot(slot: dict) -> bool:
+    """True for a carousel-moment segment's synthetic timeline slot — never a
+    real uploaded clip.
+
+    `_insert_carousel_moment_step` (generative_build.py) registers the
+    rendered carousel segment under `clip_id_to_gcs[synthetic_id] =
+    moment_path`, where `moment_path` is a LOCAL filesystem path
+    (`render_carousel_moment` never uploads it — see its docstring). Every
+    real clip's `source_gcs_path` is a bucket-relative GCS object key
+    ("generative-jobs/...", "music-uploads/...", ...) which never starts with
+    "/"; a synthetic slot's does. A slot with no `source_gcs_path` at all
+    (e.g. a minimal test fixture, or a not-yet-probed timeline entry) is NOT
+    treated as synthetic — only an unambiguous absolute local path is, so
+    this never over-filters real data.
+    """
+    path = slot.get("source_gcs_path")
+    return isinstance(path, str) and path.startswith("/")
+
+
+def _variant_clip_count(variant: dict) -> int:
+    """Best-effort count of distinct source clips a variant's montage uses.
+
+    Read from the persisted timeline (the user-edited cut if present, else
+    the AI cut) — the same ground truth `_timeline_parts` already exposes to
+    the timeline editor. Used by the carousel-editor dispatch validation
+    (`focus_clip_index` bounds) and `_editor_capabilities`'s `carousel` flag
+    (>= 2 clips). Returns 0 (unknown) for a variant with no persisted
+    timeline yet — e.g. not rendered, or a masonry/visual-blocks preset,
+    which don't populate `ai_timeline` (see the
+    `GENERATIVE_TIMELINE_EDITOR_ENABLED` guard in `_render_generative_variant`)
+    — callers treat 0 as "can't derive a clip count", never as "zero clips".
+
+    A carousel-moment segment's synthetic slot (see
+    `_is_synthetic_carousel_slot`) is excluded — belt-and-braces alongside
+    `_build_ai_timeline`'s write-side fix, which stops NEW timelines from
+    ever persisting one. Without this, a carousel'd variant's clip count
+    creeps up by one on every render (4 real clips -> 5 counted), corrupting
+    `focus_clip_index` bounds validation on the next edit.
+    """
+    ai_slots, user_slots, _beat_grid = _timeline_parts(variant)
+    effective = user_slots if user_slots else ai_slots
+    indices = {
+        s.get("clip_index")
+        for s in effective
+        if isinstance(s.get("clip_index"), int) and not _is_synthetic_carousel_slot(s)
+    }
+    return len(indices)
 
 
 _MUSIC_WINDOW_VARIANTS = frozenset({"song_text", "song_lyrics"})
@@ -3743,6 +3927,40 @@ def _timeline_error(status_code: int, code: str, **context: object) -> HTTPExcep
     return HTTPException(status_code=status_code, detail=detail)
 
 
+# ── Carousel-moment editor (Blossom carousel) ───────────────────────────────
+# Talking_head/narrated/subtitled render through caption/talking-head-specific
+# assemblers, not the montage `steps` list `_insert_carousel_moment_step`
+# splices into — a carousel moment on those is a no-op at best (see
+# `_author_carousel_moments`'s montage-path eligibility rule in
+# generative_build.py, which excludes archetype specs for the same reason).
+# Voiceover (voiceover_only/voiceover_music) renders through the montage path
+# too and IS supported for a manual/editor moment (auto-authoring still
+# excludes it — see generative_build.py's `_author_carousel_moments`).
+_CAROUSEL_UNSUPPORTED_ARCHETYPES = frozenset({"talking_head", "narrated", "subtitled"})
+_CAROUSEL_POSITIONS = frozenset({"intro", "middle", "outro"})
+_CAROUSEL_MODES = frozenset({"focus", "rolling", "stills"})
+_CAROUSEL_EFFECTS = frozenset({"scale_sweep", "cover_flow", "cards_stack", "flipbook"})
+_CAROUSEL_TRANSITIONS = frozenset({"crossfade", "none"})
+_CAROUSEL_DURATION_MIN_S = 2.0
+_CAROUSEL_DURATION_MAX_S = 15.0
+
+
+def _carousel_capability_reason(variant: dict) -> str | None:
+    """Single source of truth for whether a variant can carry a carousel-moment
+    edit — honest reasons shared by BOTH `dispatch_edit_variant`'s validation
+    (the 422 body on an add/edit) and `_editor_capabilities`'s
+    `carousel`/`carousel_reason` pair (what the editor UI gates on before the
+    user ever opens the panel). `None` means eligible.
+    """
+    if not settings.carousel_effects_enabled:
+        return "Carousel effects are disabled"
+    if variant.get("resolved_archetype") in _CAROUSEL_UNSUPPORTED_ARCHETYPES:
+        return "Not available for this edit type"
+    if _variant_clip_count(variant) < 2:
+        return "Needs at least 2 clips"
+    return None
+
+
 def _editor_capabilities(job: Job, variant: dict) -> dict:
     """E4: server-derived editor capability map for one variant (kills FE 404-probing).
 
@@ -3820,6 +4038,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         background_music_reason = "song_or_lyric_variant"
     else:
         background_music_reason = effects_reason
+    carousel_reason = _carousel_capability_reason(variant)
     return {
         # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
         "text_elements": (
@@ -3885,6 +4104,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             "value": _variant_orientation(variant),
             "reason": orientation_reason,
         },
+        "carousel": carousel_reason is None,
+        "carousel_reason": carousel_reason,
     }
 
 
@@ -6132,6 +6353,17 @@ async def edit_variant(
     /intro-size, which would enqueue one render each.
     """
     job = await _load_generative_job(job_id, db, current_user)
+    # Tri-state (see EditVariantRequest.carousel_moment / dispatch_edit_variant):
+    # absent from the request -> _UNSET (leave unchanged); explicit top-level
+    # `null` -> None (remove); an object -> only the fields the client
+    # actually set (exclude_unset), so an omitted nested field merges over
+    # the persisted value instead of being treated as an explicit null.
+    if "carousel_moment" not in req.model_fields_set:
+        carousel_moment_field: object = _UNSET
+    elif req.carousel_moment is None:
+        carousel_moment_field = None
+    else:
+        carousel_moment_field = req.carousel_moment.model_dump(exclude_unset=True)
     dispatch_edit_variant(
         job,
         variant_id,
@@ -6150,6 +6382,7 @@ async def edit_variant(
         cluster_body_size_px=req.cluster_body_size_px,
         cluster_accent_size_px=req.cluster_accent_size_px,
         text_behind_subject=req.text_behind_subject,
+        carousel_moment=carousel_moment_field,
     )
     await db.commit()
     log.info(
