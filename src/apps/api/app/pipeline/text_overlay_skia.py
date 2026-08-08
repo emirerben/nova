@@ -2429,6 +2429,31 @@ def _lyric_line_alpha(overlay: dict, t_local: float, duration_s: float) -> float
     return 1.0
 
 
+def _typewriter_visible_text_at(
+    reveal_text: str,
+    *,
+    t_local: float,
+    raw_schedule: object,
+    start_s: float,
+) -> str:
+    """Return the renderer's visible typewriter slice at one local timestamp."""
+
+    if isinstance(raw_schedule, list) and raw_schedule:
+        schedule = sorted(
+            round(max(0.0, _finite_float(at_s, start_s) - start_s), 3) for at_s in raw_schedule
+        )
+        revealed_steps = max(1, sum(at_s <= t_local for at_s in schedule))
+        visible_chars = max(
+            1,
+            math.ceil(len(reveal_text) * revealed_steps / max(1, len(schedule))),
+        )
+    else:
+        # Generic and user-authored typewriter elements retain the legacy speed.
+        chars_per_s = 12.0
+        visible_chars = max(1, int(t_local * chars_per_s) + 1)
+    return reveal_text[:visible_chars]
+
+
 def _draw_with_animation(
     canvas: skia.Canvas,
     overlay: dict,
@@ -2468,21 +2493,12 @@ def _draw_with_animation(
             progress = min(1.0, t_local / max(duration_s, 0.01))
         alpha = _ease_out_cubic(progress)
     elif effect == "typewriter":
-        raw_schedule = overlay.get("reveal_schedule_s")
-        if isinstance(raw_schedule, list) and raw_schedule:
-            start_s = _finite_float(overlay.get("start_s"), 0.0)
-            schedule = sorted(
-                max(0.0, _finite_float(at_s, start_s) - start_s) for at_s in raw_schedule
-            )
-            revealed_steps = max(1, sum(at_s <= t_local for at_s in schedule))
-            visible_chars = max(
-                1,
-                math.ceil(len(reveal_text) * revealed_steps / max(1, len(schedule))),
-            )
-        else:
-            chars_per_s = 12.0
-            visible_chars = max(1, int(t_local * chars_per_s) + 1)
-        visible_text = reveal_text[:visible_chars]
+        visible_text = _typewriter_visible_text_at(
+            reveal_text,
+            t_local=t_local,
+            raw_schedule=overlay.get("reveal_schedule_s"),
+            start_s=_finite_float(overlay.get("start_s"), 0.0),
+        )
     elif effect == "stream-in":
         # "How an AI returns an answer" — reveal WORD by word (not char) with a
         # blinking cursor while streaming. Pairs with text_anchor="left" so the

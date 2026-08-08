@@ -50,6 +50,8 @@ export interface TextElementBar {
    * stay fully opaque until this final window, then use the Skia quadratic
    * fade curve. */
   fade_out_ms?: number | null;
+  /** Absolute assembled-time endpoint for generated reveal effects. */
+  reveal_s?: number | null;
   alignment?: string;
   /** Display-case transform ("none" | "upper" | "lower" | "title") — resolved
    * at compile/layout time on both renderers (T11, parity-gated). */
@@ -232,6 +234,48 @@ function withHistory(
   return { bars: next, past, future: [] };
 }
 
+function roundMillis(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+/** Keep persisted absolute reveal timing local to a bar when its start moves. */
+function shiftRevealTiming(bar: TextElementBar, nextStartS: number): TextElementBar {
+  const delta = nextStartS - bar.start_s;
+  if (Math.abs(delta) < 1e-9) return { ...bar, start_s: nextStartS };
+
+  const revealS =
+    typeof bar.reveal_s === "number" && Number.isFinite(bar.reveal_s)
+      ? roundMillis(bar.reveal_s + delta)
+      : bar.reveal_s;
+  let sourceParams = bar.source_params;
+  const rawSchedule = sourceParams?.reveal_schedule_s;
+  if (Array.isArray(rawSchedule)) {
+    sourceParams = {
+      ...sourceParams,
+      reveal_schedule_s: rawSchedule.map((value) =>
+        typeof value === "number" && Number.isFinite(value)
+          ? roundMillis(value + delta)
+          : value,
+      ),
+    };
+  }
+  return { ...bar, start_s: nextStartS, reveal_s: revealS, source_params: sourceParams };
+}
+
+function patchBarWithRevealTiming(
+  bar: TextElementBar,
+  patch: Partial<Omit<TextElementBar, "id" | "role">>,
+): TextElementBar {
+  const requestedStart = patch.start_s;
+  const shifted =
+    typeof requestedStart === "number" && Number.isFinite(requestedStart)
+      ? shiftRevealTiming(bar, requestedStart)
+      : bar;
+  // Explicit source_params/reveal_s in a patch intentionally wins over the
+  // derived shift; ordinary timing patches inherit the shifted values.
+  return { ...shifted, ...patch };
+}
+
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
 export function textReducer(
@@ -255,7 +299,11 @@ export function textReducer(
         if (b.id !== action.id) return b;
         const dur = b.end_s - b.start_s;
         const newStart = Math.max(0, action.start_s);
-        return { ...b, start_s: Math.round(newStart * 10) / 10, end_s: Math.round((newStart + dur) * 10) / 10 };
+        const roundedStart = Math.round(newStart * 10) / 10;
+        return {
+          ...shiftRevealTiming(b, roundedStart),
+          end_s: Math.round((roundedStart + dur) * 10) / 10,
+        };
       });
       return withHistory(state, next);
     }
@@ -265,7 +313,7 @@ export function textReducer(
       const next = state.bars.map((b) => {
         if (b.id !== action.id) return b;
         const newStart = Math.max(0, Math.min(action.start_s, b.end_s - 0.1));
-        return { ...b, start_s: Math.round(newStart * 10) / 10 };
+        return shiftRevealTiming(b, Math.round(newStart * 10) / 10);
       });
       return withHistory(state, next);
     }
@@ -298,7 +346,7 @@ export function textReducer(
         return state;
       }
       const left: TextElementBar = { ...bar, end_s: at };
-      const right: TextElementBar = { ...bar, id: action.newId, start_s: at };
+      const right: TextElementBar = { ...shiftRevealTiming(bar, at), id: action.newId };
       const next = state.bars.flatMap((b) =>
         b.id === action.id ? [left, right] : [b],
       );
@@ -360,7 +408,7 @@ export function textReducer(
       const patch = isLyricLine(target) ? lyricPatch(action.patch) : action.patch;
       if (Object.keys(patch).length === 0) return state;
       const next = state.bars.map((b) =>
-        b.id === action.id ? { ...b, ...patch } : b,
+        b.id === action.id ? patchBarWithRevealTiming(b, patch) : b,
       );
       return withHistory(state, next);
     }
@@ -375,7 +423,7 @@ export function textReducer(
         const patch = isLyricLine(b) ? lyricPatch(raw) : raw;
         if (Object.keys(patch).length === 0) return b;
         touched = true;
-        return { ...b, ...patch };
+        return patchBarWithRevealTiming(b, patch);
       });
       // No matching bar (or every patch filtered to empty) → leave the undo
       // stack alone rather than recording a step that changes nothing.

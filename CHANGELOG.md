@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.10.0] — 2026-08-08
+
+### Added
+- **New Smart Captions videos use a cleaner, quicker highlighted-text style.** Context titles and section keywords are now light yellow with no outline, keep the existing subtle shadow, and finish their typewriter reveal in 250ms so the motion fits short spoken moments.
+
+### Changed
+- Newly eligible creators without a saved style assignment now start on the reviewed `cigdem/v3` preset. Existing v1/v2 assignments, creator opt-outs, saved edits, and user-authored typewriter text keep their current styling and timing.
+
+### Fixed
+- The editor preview and final Skia render now follow the same persisted reveal schedule, including matching keyboard-tick sound effects. Moving, trimming the start, splitting, undoing, redoing, saving, and reloading generated text keep that timing attached to the text instead of drifting on the timeline.
+
 ## [0.23.9.0] — 2026-08-07
 
 ### Added

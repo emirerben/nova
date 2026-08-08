@@ -689,6 +689,34 @@ def test_v1_plan_and_compiled_patch_remain_byte_stable() -> None:
     )
 
 
+def test_v2_plan_and_compiled_patch_remain_byte_stable() -> None:
+    cues = [
+        _cue("Peki neden maskot kullanıyorlardı?", 0.0, 2.0),
+        _cue("Birincisi somutlaştırma önemlidir.", 4.0, 6.0),
+        _cue("Takip et şimdi.", 8.0, 9.0),
+    ]
+
+    planned = plan_smart_captions(
+        cues,
+        preset_version="v2",
+        language="tr",
+        use_agent=False,
+    )
+
+    assert planned is not None
+    compiled = compile_smart_plan(planned.document, planned.caption_cues)
+    assert planned.document.schema_version == SMART_EDIT_SCHEMA_VERSION_V2
+    assert _stable_digest(planned.document.model_dump(mode="json")) == (
+        "7197f7a171cab4117e0c58192eba60a581d870ac17b780d47a107ff5b046b41d"
+    )
+    assert _stable_digest(planned.caption_cues) == (
+        "6a9a15141e8b12e3405e3ec46f2a16e8bce665eca0fe1da5bbd91a96f95731d2"
+    )
+    assert _stable_digest(compiled.compiled_patch) == (
+        "d65fae7897f11371be04242bbaf7ec0ab1f45f2eeb7c0e7cc4a4c6f9b23255b0"
+    )
+
+
 def test_v2_schema_accepts_typed_camera_and_audio_lanes_but_v1_rejects_them() -> None:
     event_id = "0" * 24
     payload = {
@@ -734,6 +762,24 @@ def test_v2_schema_accepts_typed_camera_and_audio_lanes_but_v1_rejects_them() ->
 
     payload["schema_version"] = SMART_EDIT_SCHEMA_VERSION
     with pytest.raises(ValidationError, match="schema v1"):
+        SmartEditPlanDocument.model_validate(payload)
+
+
+def test_v3_uses_the_modern_v2_schema_and_planner_path() -> None:
+    planned = plan_smart_captions(
+        [_cue("Dört başlıkta anlatayım: 1.", 0.0, 2.0), _cue("Kria nettir.", 2.1, 3.0)],
+        preset_version="v3",
+        language="tr",
+        use_agent=False,
+    )
+
+    assert planned is not None
+    assert planned.document.preset_version == "v3"
+    assert planned.document.schema_version == SMART_EDIT_SCHEMA_VERSION_V2
+    payload = planned.document.model_dump(mode="json")
+    payload["schema_version"] = SMART_EDIT_SCHEMA_VERSION
+    payload["events"] = []
+    with pytest.raises(ValidationError, match=r"v2\+"):
         SmartEditPlanDocument.model_validate(payload)
 
 
