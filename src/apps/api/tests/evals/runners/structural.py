@@ -1710,6 +1710,7 @@ def check_edit_copilot(output: Any) -> list[str]:
         "remove_overlay",
         "accept_overlay_suggestion",
         "edit_caption",
+        "replace_caption_text",
         "set_caption_timing",
         "set_caption_meta",
         "set_caption_emphasis",
@@ -1735,8 +1736,12 @@ def check_edit_copilot(output: Any) -> list[str]:
         failures.append("reply is empty")
     if len(output.suggestions) > 5:
         failures.append(f"suggestions has {len(output.suggestions)} items (max 5)")
-    if len(output.ops) > _EDIT_COPILOT_MAX_OPS:
-        failures.append(f"ops has {len(output.ops)} items (max {_EDIT_COPILOT_MAX_OPS})")
+    ordinary_op_count = sum(op.get("op") != "replace_caption_text" for op in output.ops)
+    bulk_caption_op_count = sum(op.get("op") == "replace_caption_text" for op in output.ops)
+    if ordinary_op_count > _EDIT_COPILOT_MAX_OPS:
+        failures.append(f"ops has {ordinary_op_count} ordinary items (max {_EDIT_COPILOT_MAX_OPS})")
+    if bulk_caption_op_count > 1:
+        failures.append("ops has more than one replace_caption_text item (max 1)")
     if output.needs_clarification and output.ops:
         failures.append("needs_clarification=true must return ops=[]")
 

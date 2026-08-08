@@ -128,6 +128,7 @@ export type CopilotOp =
     }
   | { op: "accept_overlay_suggestion"; suggestion_id: string }
   | { op: "edit_caption"; cue_index: number; text: string }
+  | { op: "replace_caption_text"; find: string; replace: string }
   | { op: "set_caption_timing"; cue_index: number; start_s?: number; end_s?: number }
   | { op: "set_caption_meta"; patch: CaptionMetaPatch }
   | { op: "set_caption_emphasis"; cue_index: number; emphasis: boolean }
@@ -533,6 +534,7 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
   }
   if (
     op.op === "edit_caption" ||
+    op.op === "replace_caption_text" ||
     op.op === "set_caption_timing" ||
     op.op === "set_caption_meta" ||
     op.op === "set_caption_emphasis"
@@ -799,6 +801,24 @@ export function validateCopilotOp(
       const text = cleanUserText(raw.text, 500);
       if (!text) return reject("invalid_value", "caption text must be non-empty", opName);
       return { ok: true, op: { op: opName, cue_index: raw.cue_index, text } };
+    }
+    case "replace_caption_text": {
+      if (typeof raw.find !== "string" || typeof raw.replace !== "string") {
+        return reject("missing_required", "replace_caption_text requires find and replace", opName);
+      }
+      if (snapshot?.captions?.cues_editable === false) {
+        return reject("invalid_index", "This draft has caption settings but no editable cue list.", opName);
+      }
+      const find = cleanUserText(raw.find, 500);
+      if (!find) return reject("invalid_value", "caption find text must be non-empty", opName);
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          find,
+          replace: cleanUserText(raw.replace, 500),
+        },
+      };
     }
     case "set_caption_timing": {
       if (!integerIndex(raw.cue_index)) {
