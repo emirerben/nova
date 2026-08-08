@@ -26,7 +26,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-07-v14"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-08-v15"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -123,7 +123,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "reorder_clip": frozenset({"from_index", "to_index"}),
     "remove_clip": frozenset({"slot_index"}),
     "split_clip": frozenset({"slot_index", "at_s"}),
-    "add_sfx": frozenset({"effect_id", "at_s", "gain"}),
+    "add_sfx": frozenset({"effect_id", "at_s", "gain", "effect_bundle_id"}),
     "patch_sfx": frozenset({"sfx_index", "at_s", "gain"}),
     "remove_sfx": frozenset({"sfx_index"}),
     "add_overlay": frozenset(
@@ -136,6 +136,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
             "y_frac",
             "scale",
             "display_mode",
+            "effect_bundle_id",
         }
     ),
     "patch_overlay": frozenset({"overlay_index", "patch"}),
@@ -151,7 +152,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "set_carousel_moment": frozenset({"config"}),
     "set_title": frozenset({"title"}),
     "open_tool": frozenset({"tool"}),
-    "add_camera_effect": frozenset({"start_s", "end_s", "intensity"}),
+    "add_camera_effect": frozenset({"start_s", "end_s", "intensity", "effect_bundle_id"}),
     "patch_camera_effect": frozenset({"camera_effect_index", "start_s", "end_s", "intensity"}),
     "remove_camera_effect": frozenset({"camera_effect_index"}),
     "set_transition": frozenset({"boundary_index", "transition", "duration_s"}),
@@ -188,7 +189,8 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("split_clip", '{"op":"split_clip","slot_index":0,"at_s":4.2}'),
     (
         "add_sfx",
-        '{"op":"add_sfx","effect_id":"sfx_pop","at_s":1.2,"gain":1.0}',
+        '{"op":"add_sfx","effect_id":"sfx_pop","at_s":1.2,"gain":1.0,'
+        '"effect_bundle_id":"reveal_1"}',
     ),
     (
         "patch_sfx",
@@ -198,7 +200,8 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
     (
         "add_overlay",
         '{"op":"add_overlay","asset_id":"asset_1","start_s":1.0,'
-        '"end_s":3.5,"position":"bottom","scale":0.5}',
+        '"end_s":3.5,"position":"bottom","scale":0.5,'
+        '"effect_bundle_id":"reveal_1"}',
     ),
     (
         "patch_overlay",
@@ -232,7 +235,8 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("set_title", '{"op":"set_title","title":"new working title"}'),
     (
         "add_camera_effect",
-        '{"op":"add_camera_effect","start_s":1.0,"end_s":2.2,"intensity":0.04}',
+        '{"op":"add_camera_effect","start_s":1.0,"end_s":2.2,'
+        '"intensity":0.04,"effect_bundle_id":"reveal_1"}',
     ),
     (
         "patch_camera_effect",
@@ -1250,6 +1254,13 @@ def _coerce_payload(
         if not isinstance(out.get("emphasis"), bool):
             state.invalid_value()
             return None
+
+    if "effect_bundle_id" in out:
+        bundle_id = out["effect_bundle_id"]
+        if not isinstance(bundle_id, str) or not bundle_id.strip():
+            state.invalid_value()
+            return None
+        out["effect_bundle_id"] = bundle_id.strip()[:80]
 
     for key in (
         "start_s",

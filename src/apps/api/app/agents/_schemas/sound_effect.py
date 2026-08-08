@@ -53,6 +53,7 @@ class SoundEffectPlacement(BaseModel):
     # omit these fields or carry source="user"/"manual"; Smart Captions and
     # autoplace outputs keep them so dedupe can stay precise after validation.
     source: str | None = Field(default=None)
+    effect_group_id: str | None = Field(default=None)
     smart_role: str | None = Field(default=None)
     smart_event_id: str | None = Field(default=None)
     transcript_hash: str | None = Field(default=None)

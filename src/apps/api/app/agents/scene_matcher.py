@@ -36,7 +36,6 @@ _WORD_ID_RE = re.compile(r"^w\d{6}$")
 _TAG_ROLES = {"list_item", "context_shift", "payoff", "cta"}
 _MAX_MATCHES = 12
 _MAX_TAGS = 30
-_MAX_MATCHES_PER_ASSET = 2
 # Word-granular presentation hints (Smart Captions plan 011, Feature A). Bounded
 # like every other output field so a "tag everything" failure mode cannot balloon
 # output tokens on the render critical path. The parser slices [: _MAX * 2] before
@@ -123,7 +122,7 @@ class SceneMatcherAgent(Agent[SceneMatcherInput, SceneMatcherOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.scene_matcher",
         prompt_id="scene_matcher",
-        prompt_version="2026-07-22.2",
+        prompt_version="2026-08-08.one-best-visual",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -170,8 +169,12 @@ class SceneMatcherAgent(Agent[SceneMatcherInput, SceneMatcherOutput]):
         known_words = {str(word.get("word_id")) for word in input.words}
         known_assets = {asset.asset_id for asset in input.assets}
 
-        matches: list[SceneMatch] = []
-        per_asset: dict[str, int] = {}
+        # One generated visual gets one globally best moment. The model may
+        # still return duplicates, so rank them server-side: high confidence
+        # wins, then the earliest exact spoken mention. Manual editor cards do
+        # not pass through this parser and remain freely repeatable.
+        best_by_asset: dict[str, tuple[int, int, SceneMatch]] = {}
+        word_index = {str(word.get("word_id")): index for index, word in enumerate(input.words)}
         for raw in payload["matches"][: _MAX_MATCHES * 2]:
             if not isinstance(raw, dict):
                 continue
@@ -188,22 +191,27 @@ class SceneMatcherAgent(Agent[SceneMatcherInput, SceneMatcherOutput]):
                 continue
             if confidence not in {"high", "medium"}:
                 confidence = "medium"
-            if per_asset.get(asset_id, 0) >= _MAX_MATCHES_PER_ASSET:
-                continue
-            per_asset[asset_id] = per_asset.get(asset_id, 0) + 1
             try:
-                matches.append(
-                    SceneMatch(
-                        asset_id=asset_id,
-                        anchor_word_id=anchor,
-                        confidence=confidence,
-                        reason=str(raw.get("reason") or "")[:200],
-                    )
+                match = SceneMatch(
+                    asset_id=asset_id,
+                    anchor_word_id=anchor,
+                    confidence=confidence,
+                    reason=str(raw.get("reason") or "")[:200],
                 )
             except Exception:  # noqa: BLE001 — one bad item never erases the rest
                 continue
-            if len(matches) >= _MAX_MATCHES:
-                break
+            rank = (0 if confidence == "high" else 1, word_index[anchor])
+            current = best_by_asset.get(asset_id)
+            if current is None or rank < current[:2]:
+                best_by_asset[asset_id] = (*rank, match)
+
+        matches = [
+            ranked[2]
+            for ranked in sorted(
+                best_by_asset.values(),
+                key=lambda item: (item[0], item[1], item[2].asset_id),
+            )[:_MAX_MATCHES]
+        ]
 
         cue_tags: list[SceneCueTag] = []
         seen_anchor_roles: set[tuple[str, str]] = set()

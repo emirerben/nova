@@ -924,6 +924,92 @@ class EditorCommitResponse(BaseModel):
     sections: EditorCommitSections
 
 
+def _is_generated_effect_source(value: object) -> bool:
+    source = str(value or "").strip()
+    return source in {"smart_captions", "overlay_suggestion", "edit_ai"}
+
+
+def _removed_overlay_effect_groups(
+    existing: list[dict] | None,
+    replacement: list[dict] | None,
+) -> set[str]:
+    """Groups whose generated owner card was explicitly removed.
+
+    Legacy cards have no group and are deliberately ignored: timing proximity
+    is not proof of ownership and could delete an unrelated manual effect.
+    """
+
+    kept_ids = {
+        str(item.get("id"))
+        for item in replacement or []
+        if isinstance(item, dict) and item.get("id")
+    }
+    return {
+        str(item.get("effect_group_id"))
+        for item in existing or []
+        if isinstance(item, dict)
+        and item.get("id")
+        and str(item.get("id")) not in kept_ids
+        and item.get("effect_group_id")
+        and _is_generated_effect_source(item.get("source"))
+    }
+
+
+def _without_generated_effect_groups(
+    effects: list[dict] | None,
+    removed_group_ids: set[str],
+) -> list[dict]:
+    return [
+        effect
+        for effect in effects or []
+        if not (
+            isinstance(effect, dict)
+            and str(effect.get("effect_group_id") or "") in removed_group_ids
+            and _is_generated_effect_source(effect.get("source"))
+        )
+    ]
+
+
+def cascade_removed_overlay_effect_groups(
+    variant: dict,
+    replacement_overlays: list[dict],
+    *,
+    sound_effects: list[dict] | None = None,
+    camera_effects: list[dict] | None = None,
+) -> tuple[list[dict] | None, list[dict] | None]:
+    """Return explicit sibling-lane replacements for removed generated cards.
+
+    ``None`` means the lane was neither supplied by the caller nor changed by
+    the cascade. This lets commit/render routing avoid materializing empty
+    lanes or forcing a full render when no grouped camera effect existed.
+    """
+
+    removed_group_ids = _removed_overlay_effect_groups(
+        list(variant.get("media_overlays") or []),
+        replacement_overlays,
+    )
+    if not removed_group_ids:
+        return sound_effects, camera_effects
+
+    sfx_source = (
+        sound_effects if sound_effects is not None else list(variant.get("sound_effects") or [])
+    )
+    camera_source = (
+        camera_effects if camera_effects is not None else list(variant.get("camera_effects") or [])
+    )
+    filtered_sfx = _without_generated_effect_groups(sfx_source, removed_group_ids)
+    filtered_camera = _without_generated_effect_groups(camera_source, removed_group_ids)
+    cascaded_sfx = (
+        filtered_sfx if sound_effects is not None or len(filtered_sfx) != len(sfx_source) else None
+    )
+    cascaded_camera = (
+        filtered_camera
+        if camera_effects is not None or len(filtered_camera) != len(camera_source)
+        else None
+    )
+    return cascaded_sfx, cascaded_camera
+
+
 class OrientationRequest(BaseModel):
     orientation: str
 
@@ -2317,6 +2403,26 @@ def _caption_reburn_enqueue_thunk(
     return _enqueue
 
 
+def _caption_camera_rerender_enqueue_thunk(
+    job_id: str, variant_id: str, render_gen_id: str
+) -> Callable[[], None]:
+    """Deferred caption-base rebuild after a grouped camera-effect removal."""
+
+    def _enqueue() -> None:
+        from app.tasks.generative_build import rerender_caption_camera_effects  # noqa: PLC0415
+
+        rerender_caption_camera_effects.apply_async(
+            args=[job_id, variant_id],
+            kwargs={"render_gen_id": render_gen_id},
+            queue="overlay-jobs",
+        )
+
+    return _enqueue
+
+
+_OVERLAY_CAMERA_REBUILD_PENDING = "overlay_camera_rebuild_pending"
+
+
 def dispatch_set_media_overlays(
     job: Job,
     variant_id: str,
@@ -2334,13 +2440,12 @@ def dispatch_set_media_overlays(
     frontend immediately reflects the in-progress state — same pattern as
     dispatch_edit_timeline (persist first, enqueue second).
 
-    Returns None on the montage fast-pass branch (enqueued inline, as before).
-    On the caption-reburn branch it returns a deferred-enqueue thunk INSTEAD of
-    enqueuing (R1-1): `reburn_narrated_captions`' start write is token-checked
-    against the just-minted `render_generation_id`, so async routes MUST
-    `await db.commit()` before invoking the thunk — a worker dequeuing before
-    the commit would read the old generation, discard its start write, and
-    strand the variant in "rendering" behind the 409 gate.
+    Returns None when the montage fast-pass can enqueue inline. Caption reburns
+    and generated-effect cascades return a deferred-enqueue thunk INSTEAD of
+    enqueuing: those workers read state persisted alongside the newly minted
+    `render_generation_id`, so async routes MUST `await db.commit()` before
+    invoking the thunk. Otherwise a fast worker could rebake a deleted sibling
+    or discard its token-checked start write against the old generation.
     """
     from app.config import settings as _settings  # noqa: PLC0415
 
@@ -2355,6 +2460,13 @@ def dispatch_set_media_overlays(
         overlays_raw=overlays_raw,
         user_id=user_id,
         variant_context=variant,
+    )
+    cascaded_sfx, cascaded_camera_effects = cascade_removed_overlay_effect_groups(
+        variant,
+        validated,
+    )
+    camera_rebuild_required = bool(
+        cascaded_camera_effects is not None or variant.get(_OVERLAY_CAMERA_REBUILD_PENDING)
     )
 
     # Persist render_status="rendering" first (row-locked by the DB session the
@@ -2387,6 +2499,10 @@ def dispatch_set_media_overlays(
             v["render_generation_id"] = render_gen_id
             if caption_reburn_route:
                 v["media_overlays"] = validated or None
+            if cascaded_sfx is not None:
+                v["sound_effects"] = cascaded_sfx or None
+            if cascaded_camera_effects is not None:
+                v["camera_effects"] = cascaded_camera_effects or None
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")
@@ -2400,6 +2516,8 @@ def dispatch_set_media_overlays(
     # race: the reburn's start write is token-gated, so it returns a thunk the
     # caller invokes after its commit (R1-1).
 
+    if caption_reburn_route and camera_rebuild_required:
+        return _caption_camera_rerender_enqueue_thunk(str(job.id), variant_id, render_gen_id)
     if caption_reburn_route:
         return _caption_reburn_enqueue_thunk(str(job.id), variant_id, render_gen_id)
 
@@ -2410,11 +2528,34 @@ def dispatch_set_media_overlays(
     # On macOS the CLIP model causes SIGSEGV in forked prefork children; the
     # solo worker avoids the fork entirely. Prod: fly.toml worker listens on
     # celery,plan-jobs,overlay-jobs so no extra process needed.
-    regenerate_generative_variant.apply_async(
-        args=[str(job.id), variant_id],
-        kwargs={"media_overlays_override": validated, "render_gen_id": render_gen_id},
-        queue="overlay-jobs",
-    )
+    regen_kwargs: dict = {
+        "media_overlays_override": validated,
+        "render_gen_id": render_gen_id,
+    }
+    if camera_rebuild_required:
+        # Camera effects are base-affecting. Persist the overlay replacement too
+        # and rebuild from authoritative variant state instead of taking the
+        # lightweight outer-overlay pass.
+        for v in variants:
+            if v.get("variant_id") == variant_id:
+                v["media_overlays"] = validated or None
+                break
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+        flag_modified(job, "assembly_plan")
+        regen_kwargs = {"render_gen_id": render_gen_id, "force_full_render": True}
+
+    def _enqueue() -> None:
+        regenerate_generative_variant.apply_async(
+            args=[str(job.id), variant_id],
+            kwargs=regen_kwargs,
+            queue="overlay-jobs",
+        )
+
+    if cascaded_sfx is not None or camera_rebuild_required:
+        # The worker reads cascaded siblings from persisted state. Defer until
+        # the route commits so an eager/fast worker cannot rebake deleted effects.
+        return _enqueue
+    _enqueue()
     return None
 
 
@@ -5385,6 +5526,25 @@ def prepare_editor_commit(
                 duration_s=visual_block_variant_duration(variant),
             )
 
+    # Older clients may commit only the overlay section. Enforce the bundle
+    # invariant server-side so linked generated effects cannot be orphaned.
+    # Explicit group IDs are the sole linkage; legacy timing is never guessed.
+    if validated_overlays is not None:
+        validated_sfx, validated_camera_effects = cascade_removed_overlay_effect_groups(
+            variant,
+            validated_overlays,
+            sound_effects=validated_sfx,
+            camera_effects=validated_camera_effects,
+        )
+    pending_overlay_camera_rebuild = bool(
+        validated_overlays is not None and variant.get(_OVERLAY_CAMERA_REBUILD_PENDING)
+    )
+    if pending_overlay_camera_rebuild and validated_camera_effects is None:
+        # render=false may already have removed both the overlay and its camera
+        # sibling. Preserve the base-affecting signal for this independent Save
+        # entrypoint even though there is no longer an overlay to diff against.
+        validated_camera_effects = list(variant.get("camera_effects") or [])
+
     effective_motion_scenes = (
         validated_motion_scenes
         if validated_motion_scenes is not None
@@ -5616,6 +5776,7 @@ def prepare_editor_commit(
         "visual_blocks_override": validated_visual_blocks,
         "motion_scenes_override": validated_motion_scenes,
         "camera_effects_override": validated_camera_effects,
+        "pending_overlay_camera_rebuild": pending_overlay_camera_rebuild,
         "orientation_override": validated_orientation,
         "new_track_id": payload.music_track_id,
         "remove_music": payload.remove_music,
@@ -5797,6 +5958,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
             or prep.get("text_requires_full_render") is True
             or prep.get("orientation_override") is not None
             or prep.get("remove_music") is True
+            or prep.get("pending_overlay_camera_rebuild") is True
         ):
             kwargs["force_full_render"] = True
     elif prep["media_overlays_override"] is not None:

@@ -46,6 +46,7 @@ def _variant(media_overlays):
         "pre_media_overlay_video_path": "gs://bucket/v1.mp4_pre_overlay",
         "sound_effects": None,
         "pre_sfx_video_path": None,
+        "media_overlays_render_dirty": True,
     }
 
 
@@ -81,11 +82,12 @@ def _patch_common(monkeypatch, job, *, mutate_during_apply=None):
     monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda obj, key: None)
 
 
-def _run(job):
+def _run(job, *, overlays_raw=None, render_gen_id=None):
     gb._run_media_overlay_pass(
         job_id="00000000-0000-0000-0000-000000000001",
         variant_id="v1",
-        overlays_raw=[_card()],
+        overlays_raw=[_card()] if overlays_raw is None else overlays_raw,
+        expected_render_gen_id=render_gen_id,
     )
 
 
@@ -100,6 +102,7 @@ def test_unchanged_list_is_written_back(monkeypatch):
     assert v["media_overlays"][0]["display_mode"] == "pip"
     assert v["render_status"] == "ready"
     assert v["output_url"] == "gs://bucket/v1.mp4?sig=overlaid"
+    assert v["media_overlays_render_dirty"] is False
 
 
 def test_autosave_during_bake_survives_write_back(monkeypatch):
@@ -110,6 +113,7 @@ def test_autosave_during_bake_survives_write_back(monkeypatch):
 
     def _mutate():
         job.assembly_plan["variants"][0]["media_overlays"] = [toggled]
+        job.assembly_plan["variants"][0]["media_overlays_render_dirty"] = True
 
     _patch_common(monkeypatch, job, mutate_during_apply=_mutate)
     _run(job)
@@ -119,3 +123,29 @@ def test_autosave_during_bake_survives_write_back(monkeypatch):
     assert v["render_status"] == "ready"
     assert v["output_url"] == "gs://bucket/v1.mp4?sig=overlaid"
     assert v["pre_media_overlay_video_path"]
+    assert v["media_overlays_render_dirty"] is True
+
+
+def test_clear_only_clears_dirty_when_desired_state_is_unchanged(monkeypatch):
+    variant = _variant(None)
+    job = _FakeJob(variant)
+    _patch_common(monkeypatch, job)
+
+    _run(job, overlays_raw=[])
+
+    v = job.assembly_plan["variants"][0]
+    assert v["media_overlays"] is None
+    assert v["media_overlays_render_dirty"] is False
+
+
+def test_stale_generation_leaves_dirty_state_untouched(monkeypatch):
+    variant = _variant([_card()])
+    variant["render_generation_id"] = "winner"
+    job = _FakeJob(variant)
+    _patch_common(monkeypatch, job)
+
+    _run(job, render_gen_id="stale")
+
+    v = job.assembly_plan["variants"][0]
+    assert v["media_overlays_render_dirty"] is True
+    assert v["render_generation_id"] == "winner"

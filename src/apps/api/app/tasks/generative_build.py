@@ -2667,15 +2667,18 @@ def _run_media_overlay_pass(
                     )
                     and _settings_ov.smart_music_bed_enabled
                 ) or (bool(variant.get("sound_effects")) and _settings_ov.sound_effects_enabled)
-                if clear:
-                    variant["media_overlays"] = None
-                elif _canon_cards(variant.get("media_overlays")) == overlays_at_start:
-                    variant["media_overlays"] = [card.model_dump() for card in cards or []]
-                    variant["media_overlays_applied_ids"] = None
+                if _canon_cards(variant.get("media_overlays")) == overlays_at_start:
+                    if clear:
+                        variant["media_overlays"] = None
+                    else:
+                        variant["media_overlays"] = [card.model_dump() for card in cards or []]
+                        variant["media_overlays_applied_ids"] = None
                 else:
                     stale_write_skipped = True
                 if pre_clean is not None:
                     variant["pre_media_overlay_video_path"] = pre_clean
+                if not stale_write_skipped:
+                    variant["media_overlays_render_dirty"] = False
                 variant["output_url"] = output_url
                 if will_reapply_sfx:
                     variant["render_status"] = "rendering"
@@ -6661,6 +6664,13 @@ def _run_regenerate_variant(
         # are rejected above, so no fresh subtitled summary is clobbered.)
         result["silence_cut"] = None
         result["base_video_stale"] = False
+        if force_full_render:
+            # A token-winning full rebuild is the only safe place to consume
+            # the sticky camera-removal marker. If user cards remain, their
+            # reapply pass clears the overlay-dirty bit after it lands.
+            result["overlay_camera_rebuild_pending"] = False
+            if not persisted_media_overlays:
+                result["media_overlays_render_dirty"] = False
         if not _update_variant_entry(
             job_id,
             variant_id,
@@ -12701,9 +12711,8 @@ def _run_rerender_caption_camera_effects(
         output_url = upload_public_read(final_local, new_video_gcs)
         duration_s = _rendered_duration_s(final_local)
 
-    will_reapply = _will_reapply_media_layers(
-        _fresh_variant_snapshot(job_id, variant_id) or variant
-    )
+    fresh_for_reapply = _fresh_variant_snapshot(job_id, variant_id) or variant
+    will_reapply = _will_reapply_media_layers(fresh_for_reapply)
     patch: dict[str, Any] = {
         "video_path": new_video_gcs,
         "output_url": output_url,
@@ -12713,8 +12722,11 @@ def _run_rerender_caption_camera_effects(
         "pre_sfx_video_path": None,
         "visual_blocks_base_path": None,
         "visual_blocks_cache_stale": False,
+        "overlay_camera_rebuild_pending": False,
         **({"subject_matte_path": camera_matte_path} if camera_matte_persist else {}),
     }
+    if not fresh_for_reapply.get("media_overlays"):
+        patch["media_overlays_render_dirty"] = False
     if duration_s is not None:
         patch["duration_s"] = duration_s
     if will_reapply:
@@ -12840,9 +12852,8 @@ def _run_reburn_narrated_captions(
     # FRESH persisted lane state, not the stale snapshot, so a mid-burn save is
     # still re-applied and a mid-burn clear isn't resurrected. The reapply preps
     # re-read again under a row lock before running their pass.
-    will_reapply = _will_reapply_media_layers(
-        _fresh_variant_snapshot(job_id, variant_id) or variant
-    )
+    fresh_for_reapply = _fresh_variant_snapshot(job_id, variant_id) or variant
+    will_reapply = _will_reapply_media_layers(fresh_for_reapply)
     # Local name `patch` is load-bearing: tests/test_media_overlay_byteidentity.py's
     # AST guard exempts merge-patch dicts assigned to locals named `patch`.
     patch: dict[str, Any] = {
@@ -12860,7 +12871,9 @@ def _run_reburn_narrated_captions(
         # OV-7: the reapply chain owns the final ready/failed — no effect-less
         # "ready" observable between burn and reapply.
         patch["render_status"] = "rendering"
-    else:
+    if not fresh_for_reapply.get("media_overlays"):
+        patch["media_overlays_render_dirty"] = False
+    if not will_reapply:
         patch["render_status"] = "ready"
         # Advance the render fingerprint so the hero player (keyed off
         # render_finished_at) swaps to the reburned video instead of showing

@@ -37,6 +37,9 @@ from the draft exactly. Prefer a small coherent bundle over many decorative chan
 Do not combine clip timing/order mutations with beat- or speech-timed operations;
 changing clips makes those timing marks stale. A visual fade only targets a
 VISUAL BLOCK listed in the draft.
+When one overlay and an add_sfx/add_camera_effect are intentionally one removable
+treatment, give those add operations the same short effect_bundle_id. Omit it
+from unrelated effects, even inside the same suggestion.
 
 Editorial priorities:
 - The first 2-3 seconds should create curiosity without unsupported clickbait.

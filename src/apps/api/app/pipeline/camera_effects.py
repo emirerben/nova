@@ -75,7 +75,7 @@ def normalize_camera_effects(
             "easing": easing,
             "source": source,
         }
-        for key in ("event_id", "role"):
+        for key in ("event_id", "effect_group_id", "role"):
             value = raw.get(key)
             if value is not None and str(value).strip():
                 item[key] = str(value).strip()
@@ -110,6 +110,7 @@ def camera_effects_from_intents(
             "easing": "sine_pulse",
             "source": "smart_captions",
             "event_id": intent.get("event_id"),
+            "effect_group_id": intent.get("effect_group_id") or intent.get("event_id"),
             "role": intent.get("role"),
         }
         normalized = normalize_camera_effects([effect], duration_s=duration_s)

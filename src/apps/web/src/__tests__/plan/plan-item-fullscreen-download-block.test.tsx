@@ -10,8 +10,8 @@
  *    Download button's overlay-bake path is BLOCKED (no setVariantMediaOverlays
  *    render:true dispatch) with the inline copy
  *    "One visual couldn't load. Refresh or remove it before exporting."
- *  - the tile's Remove button clears the card and unblocks Download (which
- *    then serves the burned output directly — no overlay bake needed).
+ *  - the tile's Remove button persists the empty desired state and unblocks
+ *    Download, which restores the clean pre-overlay render.
  */
 
 // @ts-nocheck
@@ -46,7 +46,7 @@ beforeAll(() => {
   window.HTMLMediaElement.prototype.play = jest.fn().mockResolvedValue(undefined);
 });
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 jest.mock("next/navigation", () => ({
@@ -278,7 +278,29 @@ describe("Plan item page — Download blocked while a card's media failed", () =
   });
 
   it("Remove on the tile clears the card, hides the copy, and unblocks Download", async () => {
-    setData([liveVariant()]);
+    setData([
+      makeVariant({
+        media_overlays: [
+          makeFullscreenCard({
+            source: "smart_captions",
+            effect_group_id: "smart-event-1",
+          }),
+        ],
+        sound_effects: [
+          {
+            id: "sfx-1",
+            sound_effect_id: "whoosh",
+            src_gcs_path: "sfx/whoosh.mp3",
+            at_s: 0,
+            gain: 1,
+            source: "smart_captions",
+            effect_group_id: "smart-event-1",
+          },
+        ],
+        pre_media_overlay_video_path: "generative-jobs/j1/v1_pre_overlay.mp4",
+        pre_overlay_video_url: PRE_OVERLAY_URL,
+      }),
+    ]);
     await act(async () => {
       render(<PlanItemPage />);
     });
@@ -296,15 +318,30 @@ describe("Plan item page — Download blocked while a card's media failed", () =
     expect(
       screen.queryByText("One visual couldn't load. Refresh or remove it before exporting."),
     ).toBeNull();
-
-    // Download now proceeds: no cards left → no overlay bake, direct download.
-    await downloadFromReleaseDesk();
-    expect(mockSetVariantMediaOverlays).not.toHaveBeenCalled();
-    expect(mockDownloadVideo).toHaveBeenCalledWith(
-      OUTPUT_URL,
-      expect.any(String),
-      true,
+    expect(mockSetVariantMediaOverlays).toHaveBeenCalledWith(
+      "test-item-id",
+      "v1",
+      [],
+      { render: false },
     );
+
+    // The locally-removed card differs from the last persisted snapshot until
+    // refetch lands, so an immediate Download still sends the empty render.
+    await downloadFromReleaseDesk();
+    await waitFor(() => {
+      expect(mockSetVariantMediaOverlays).toHaveBeenLastCalledWith(
+        "test-item-id",
+        "v1",
+        [],
+        { render: true },
+      );
+    });
+    expect(mockSetVariantSoundEffects).toHaveBeenCalledWith(
+      "test-item-id",
+      "v1",
+      [],
+    );
+    expect(mockDownloadVideo).not.toHaveBeenCalled();
   });
 
   it("Download still bakes normally when no card is failed (regression)", async () => {

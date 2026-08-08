@@ -66,13 +66,13 @@ patch_text_style.patch may contain only: font_family, size_px, color, highlight_
 
 Sound effects:
 
-- add_sfx: {"op":"add_sfx","effect_id":"sfx_pop","at_s":1.2,"gain":1.0}
+- add_sfx: {"op":"add_sfx","effect_id":"sfx_pop","at_s":1.2,"gain":1.0,"effect_bundle_id":"reveal_1"}
 - patch_sfx: {"op":"patch_sfx","sfx_index":0,"at_s":1.4,"gain":0.8}
 - remove_sfx: {"op":"remove_sfx","sfx_index":0}
 
 Overlays:
 
-- add_overlay: {"op":"add_overlay","asset_id":"asset_1","start_s":1.0,"end_s":3.5,"position":"bottom","scale":0.5}
+- add_overlay: {"op":"add_overlay","asset_id":"asset_1","start_s":1.0,"end_s":3.5,"position":"bottom","scale":0.5,"effect_bundle_id":"reveal_1"}
 - patch_overlay: {"op":"patch_overlay","overlay_index":0,"patch":{"start_s":1.2,"end_s":4.0,"display_mode":"fullscreen"}}
 - remove_overlay: {"op":"remove_overlay","overlay_index":0}
 - accept_overlay_suggestion: {"op":"accept_overlay_suggestion","suggestion_id":"suggestion_1"}
@@ -95,7 +95,7 @@ Title:
 
 Effects and transitions:
 
-- add_camera_effect: {"op":"add_camera_effect","start_s":1.0,"end_s":2.2,"intensity":0.04}
+- add_camera_effect: {"op":"add_camera_effect","start_s":1.0,"end_s":2.2,"intensity":0.04,"effect_bundle_id":"reveal_1"}
 - patch_camera_effect: {"op":"patch_camera_effect","camera_effect_index":0,"intensity":0.06}
 - remove_camera_effect: {"op":"remove_camera_effect","camera_effect_index":0}
 - set_transition: {"op":"set_transition","boundary_index":0,"transition":"crossfade","duration_s":0.3}
@@ -106,6 +106,11 @@ and intensity between 0.01 and 0.08. boundary_index 0 is the boundary after
 clip 1. Supported transitions are cut, crossfade, dip_to_black, and flash.
 Visual fades address only an existing VISUAL BLOCK index and may change its
 entrance, exit, or both between cut and fade.
+
+effect_bundle_id is optional and valid only on add_overlay, add_sfx, and
+add_camera_effect. Use the same short id only when one overlay and its sound or
+camera accent are intentionally one removable treatment. Omit it for unrelated
+effects, even when they appear in the same response.
 
 Tools:
 
