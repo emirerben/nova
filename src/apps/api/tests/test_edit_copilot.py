@@ -468,6 +468,39 @@ def test_copilot_new_ops_coerce_and_clamp() -> None:
     ]
 
 
+def test_copilot_preserves_explicit_effect_bundle_ids_only_on_add_ops() -> None:
+    out = _parse(
+        [
+            {
+                "op": "add_overlay",
+                "asset_id": "asset-1",
+                "start_s": 1,
+                "end_s": 2,
+                "effect_bundle_id": " reveal-1 ",
+            },
+            {
+                "op": "add_sfx",
+                "effect_id": "pop",
+                "at_s": 1,
+                "effect_bundle_id": "reveal-1",
+            },
+            {
+                "op": "add_camera_effect",
+                "start_s": 1,
+                "end_s": 2,
+                "effect_bundle_id": "reveal-1",
+            },
+        ],
+        snapshot=_full_snapshot(),
+    )
+
+    assert [op["effect_bundle_id"] for op in out.ops] == [
+        "reveal-1",
+        "reveal-1",
+        "reveal-1",
+    ]
+
+
 @pytest.mark.parametrize(
     "op",
     [
@@ -1201,11 +1234,11 @@ def test_format_snapshot_renders_sfx_roles_and_suggestions() -> None:
 def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # Numbered follow-up resolution changes model behavior and must retain a
     # unique prompt version for trace and eval attribution. Bumped again for
-    # the set_carousel_moment op (2026-08-07-v14) — update this pin whenever
+    # explicit overlay-effect bundle linkage (2026-08-08-v15) — update this pin whenever
     # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-07-v14"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-08-v15"
 
 
 def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:

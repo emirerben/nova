@@ -14,7 +14,11 @@ from app.agents.smart_edit_planner import (
 )
 from app.pipeline.camera_effects import camera_effects_from_intents
 from app.smart_edit.compiler import compile_smart_plan, resolve_sfx_placements
-from app.smart_edit.planner import _merge_agent_with_guards, plan_smart_captions
+from app.smart_edit.planner import (
+    _best_visual_proposal_indexes,
+    _merge_agent_with_guards,
+    plan_smart_captions,
+)
 from app.smart_edit.presets import load_preset
 from app.smart_edit.schemas import (
     SMART_EDIT_SCHEMA_VERSION,
@@ -138,6 +142,7 @@ def test_camera_intents_materialize_stable_editable_effects_without_duplicates()
             "easing": "sine_pulse",
             "source": "smart_captions",
             "event_id": "event-list-1",
+            "effect_group_id": "event-list-1",
             "role": "list_item",
         }
     ]
@@ -411,6 +416,62 @@ def test_agent_merge_restores_omitted_grounded_candidates() -> None:
         ("hook", []),
         ("example", ["bear"]),
     ]
+
+
+def test_smart_fallback_materializes_repeated_asset_only_once() -> None:
+    cues = [
+        _cue("Kria makes editing simple", 0.0, 2.0),
+        _cue("Now Kria handles captions too", 7.0, 9.0),
+    ]
+    asset = {
+        "id": "kria-logo",
+        "kind": "image",
+        "gcs_path": "users/u/kria.png",
+        "source_filename": "kria-logo.png",
+        "analysis": {"subject": "Kria logo"},
+    }
+
+    planned = plan_smart_captions(
+        cues,
+        preset_version="v2",
+        language="en",
+        assets=[asset],
+        use_agent=False,
+    )
+    assert planned is not None
+    compiled = compile_smart_plan(
+        planned.document,
+        planned.caption_cues,
+        assets_by_id={asset["id"]: asset},
+    )
+
+    assert [item["src_gcs_path"] for item in compiled.media_overlays] == ["users/u/kria.png"]
+
+
+def test_visual_dedupe_falls_back_when_higher_confidence_candidate_is_invalid() -> None:
+    invalid = SmartPlannerProposal(
+        role="example",
+        start_word_id="missing",
+        end_word_id="missing",
+        anchor_word_id="missing",
+        confidence_tier="high",
+        scene_token="pip_visual",
+        visual_asset_ids=["kria-logo"],
+    )
+    valid = SmartPlannerProposal(
+        role="example",
+        start_word_id="w000001",
+        end_word_id="w000002",
+        anchor_word_id="w000001",
+        confidence_tier="medium",
+        scene_token="pip_visual",
+        visual_asset_ids=["kria-logo"],
+    )
+
+    assert _best_visual_proposal_indexes(
+        [invalid, valid],
+        {"w000001": 0, "w000002": 1},
+    ) == {"kria-logo": 1}
 
 
 def test_chapter_marker_inside_declaration_cue_anchors_number_and_sfx_to_marker() -> None:

@@ -221,12 +221,21 @@ class TestBuildSuggestionsFullscreen:
 
     def test_max_two_takeovers_third_demotes(self):
         stats = {}
-        out = _build(
-            [
-                _raw(start=10.0, end=13.0),
-                _raw(start=20.0, end=23.0),
-                _raw(start=30.0, end=33.0),
-            ],
+        placements = [
+            _raw(start=10.0, end=13.0),
+            _raw(start=20.0, end=23.0),
+            _raw(start=30.0, end=33.0),
+        ]
+        for index, placement in enumerate(placements, start=1):
+            placement.asset_id = f"a{index}"
+        out = build_suggestions(
+            placements,
+            assets_by_id={f"a{index}": _asset() for index in range(1, 4)},
+            words=_WORDS,
+            duration_s=60.0,
+            occupied=[],
+            glossary=[],
+            fullscreen_enabled=True,
             stats=stats,
         )
         modes = [s["overlay"]["display_mode"] for s in out]

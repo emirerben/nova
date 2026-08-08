@@ -376,8 +376,12 @@ def build_suggestions(
     out: list[dict] = []
     fullscreen_count = 0
     density_count = 0
+    used_asset_ids: set[str] = set()
     for p in candidates:
         asset_id = str(getattr(p, "asset_id", ""))
+        if asset_id in used_asset_ids:
+            _trace("autoplace_item_dropped", reason="duplicate_asset", asset_id=asset_id)
+            continue
         asset = assets_by_id.get(asset_id)
         if asset is None:
             _trace("autoplace_item_dropped", reason="unknown_asset", asset_id=asset_id)
@@ -462,6 +466,7 @@ def build_suggestions(
             _trace("autoplace_item_dropped", reason="density_cap", asset_id=asset_id)
             continue
 
+        suggestion_id = uuid.uuid4().hex
         if is_fs:
             overlay = {
                 "id": uuid.uuid4().hex,
@@ -475,6 +480,8 @@ def build_suggestions(
                 "start_s": round(start, 3),
                 "end_s": round(end, 3),
                 "z": 10,
+                "source": "overlay_suggestion",
+                "effect_group_id": suggestion_id,
             }
         else:
             resolved = resolve_slot(slot, asset.get("aspect"))
@@ -489,6 +496,8 @@ def build_suggestions(
                 "start_s": round(start, 3),
                 "end_s": round(end, 3),
                 "z": 10,
+                "source": "overlay_suggestion",
+                "effect_group_id": suggestion_id,
             }
         if kind == "video" and asset_dur:
             overlay["clip_duration_s"] = float(asset_dur)
@@ -514,11 +523,14 @@ def build_suggestions(
                 "id": uuid.uuid4().hex,
                 "at_s": round(start, 3),
                 "gain": 1.0,
+                "source": "overlay_suggestion",
+                "effect_group_id": suggestion_id,
                 **sfx_fields,
             }
 
         try:
             suggestion = OverlaySuggestion(
+                id=suggestion_id,
                 asset_id=asset_id,
                 confidence_tier=tier,
                 reason=str(getattr(p, "reason", "") or ""),
@@ -545,6 +557,7 @@ def build_suggestions(
             taken.append((start, end, is_hook_burst))
         if not is_hook_burst:
             density_count += 1
+        used_asset_ids.add(asset_id)
         out.append(suggestion.model_dump())
 
     # Timeline order for the rail (10B was rejected — rows read as the video plays).

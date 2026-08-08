@@ -455,7 +455,7 @@ def compile_smart_plan(
                         "clip_duration_s": asset.get("duration_s"),
                         "z": zone.z + lane.group_order,
                         "source": "smart_captions",
-                        "event_id": event.event_id,
+                        "effect_group_id": event.event_id,
                         "composition_group_id": lane.composition_group_id,
                         "entrance_token": lane.entrance_token,
                     }
@@ -759,6 +759,8 @@ def resolve_sfx_placements(
             src_gcs_path=str(effect.get("audio_gcs_path")),
             duration_s=effect.get("duration_s"),
             label=str(effect.get("name") or role)[:40],
+            source="smart_captions",
+            effect_group_id=str(intent.get("event_id") or "") or None,
         )
         payload = placement.model_dump(exclude_none=True)
         payload["smart_role"] = role

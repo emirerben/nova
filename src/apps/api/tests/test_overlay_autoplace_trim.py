@@ -111,6 +111,67 @@ def _placement(
 WORDS = [{"word": "w", "start_s": 5.0, "end_s": 5.4}]
 
 
+def test_generated_asset_is_emitted_once_at_strongest_candidate() -> None:
+    trace: list[tuple[str, dict]] = []
+    out = build_suggestions(
+        [
+            _placement(5.0, 8.0, tier="likely"),
+            _placement(12.0, 15.0, tier="confident"),
+            _placement(20.0, 23.0, tier="confident"),
+        ],
+        assets_by_id={"a1": _asset(kind="image", duration=None)},
+        words=[
+            {"word": "first", "start_s": 5.0, "end_s": 5.4},
+            {"word": "best", "start_s": 12.0, "end_s": 12.4},
+            {"word": "later", "start_s": 20.0, "end_s": 20.4},
+        ],
+        duration_s=30.0,
+        occupied=[],
+        glossary=[],
+        trace=lambda event, **fields: trace.append((event, fields)),
+    )
+
+    assert [item["overlay"]["start_s"] for item in out] == [12.0]
+    assert [fields["reason"] for event, fields in trace if event == "autoplace_item_dropped"] == [
+        "duplicate_asset",
+        "duplicate_asset",
+    ]
+
+
+def test_rejected_strongest_candidate_falls_back_to_next_valid_moment() -> None:
+    out = build_suggestions(
+        [
+            _placement(5.0, 8.0, tier="confident"),
+            _placement(12.0, 15.0, tier="likely"),
+        ],
+        assets_by_id={"a1": _asset(kind="image", duration=None)},
+        words=[
+            {"word": "blocked", "start_s": 5.0, "end_s": 5.4},
+            {"word": "fallback", "start_s": 12.0, "end_s": 12.4},
+        ],
+        duration_s=30.0,
+        occupied=[(4.0, 9.0)],
+        glossary=[],
+    )
+
+    assert [item["overlay"]["start_s"] for item in out] == [12.0]
+
+
+def test_manual_repeat_of_asset_does_not_suppress_generated_nonoverlap() -> None:
+    out = build_suggestions(
+        [_placement(5.0, 8.0)],
+        assets_by_id={"a1": _asset(kind="image", duration=None)},
+        words=WORDS,
+        duration_s=30.0,
+        # Existing manual cards contribute timing only. Their asset identity is
+        # deliberately absent, so a later generated use of the same asset stays valid.
+        occupied=[(1.0, 3.0)],
+        glossary=[],
+    )
+
+    assert [item["asset_id"] for item in out] == ["a1"]
+
+
 def test_video_trim_uses_final_window_and_lands_in_envelope() -> None:
     # Main 60s → cap 9s; requested window 6s stays; trim = moment-based 6s slice.
     out = build_suggestions(

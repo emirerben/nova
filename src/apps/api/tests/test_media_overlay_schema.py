@@ -34,6 +34,30 @@ def _card(**kw) -> dict:
     return base
 
 
+def test_generated_effect_group_round_trips_without_affecting_legacy_cards() -> None:
+    generated = MediaOverlay.model_validate(
+        _card(source="smart_captions", effect_group_id="event-1")
+    ).model_dump()
+    legacy = MediaOverlay.model_validate(_card()).model_dump()
+
+    assert generated["source"] == "smart_captions"
+    assert generated["effect_group_id"] == "event-1"
+    assert legacy["source"] is None
+    assert legacy["effect_group_id"] is None
+
+
+def test_manual_repeats_of_the_same_asset_remain_valid() -> None:
+    cards = coerce_media_overlays(
+        [
+            _card(id="first", start_s=0.0, end_s=2.0),
+            _card(id="second", start_s=5.0, end_s=7.0),
+        ]
+    )
+
+    assert cards is not None
+    assert [card.id for card in cards] == ["first", "second"]
+
+
 class TestDisplayMode:
     """Plan 009 T1: display_mode field + coercing validator (version-skew safe)."""
 

@@ -64,6 +64,11 @@ class MediaOverlay(BaseModel):
         default_factory=lambda: uuid.uuid4().hex,
         description="Stable uuid hex, server-assigned when absent.",
     )
+    # Optional generated-bundle provenance. Legacy/manual cards omit these.
+    # effect_group_id links an AI-authored card to the SFX/camera effects that
+    # arrived with it so deleting the card can remove only those siblings.
+    source: str | None = None
+    effect_group_id: str | None = None
     kind: Literal["image", "video"] = Field(
         description="Determines ingest path: image uses -loop 1; video uses tpad clone."
     )
