@@ -29,6 +29,36 @@ export interface AnimationState {
   dissolveProgress: number;
 }
 
+export interface AnimationTimingOptions {
+  /** Persisted Smart Captions schedule in absolute assembled-video seconds. */
+  revealScheduleS?: unknown;
+  /** Element start in the same absolute coordinate space as the schedule. */
+  absoluteStartS?: number;
+}
+
+/** Normalize the renderer's absolute typewriter schedule to element-local time. */
+export function normalizeTypewriterRevealSchedule(
+  rawSchedule: unknown,
+  absoluteStartS: number,
+): number[] | null {
+  if (!Array.isArray(rawSchedule) || rawSchedule.length === 0) return null;
+  const start = Number.isFinite(absoluteStartS) ? absoluteStartS : 0;
+  return rawSchedule
+    .map((raw) => {
+      const parsed =
+        typeof raw === "number"
+          ? raw
+          : typeof raw === "string" && raw.trim() !== ""
+            ? Number(raw)
+            : start;
+      const absolute = Number.isFinite(parsed) ? parsed : start;
+      // Persisted schedules are millisecond-granular. Round after converting
+      // absolute timestamps so binary float drift cannot delay a reveal frame.
+      return Math.round(Math.max(0, absolute - start) * 1000) / 1000;
+    })
+    .sort((a, b) => a - b);
+}
+
 // Mirrors app.pipeline.dissolve_effect.DEFAULT_DISSOLVE_PARAMS.
 export const DISSOLVE_OUT_PARAMS = {
   durationS: 1.0,
@@ -475,6 +505,7 @@ export function animationStateAt(
   tLocal: number,
   durationS: number,
   text: string,
+  timing?: AnimationTimingOptions,
 ): AnimationState {
   let {
     scale,
@@ -498,9 +529,24 @@ export function animationStateAt(
     alpha = easeOutCubic(progress);
   } else if (effect === "typewriter") {
     const revealText = normalizeAnimatedRevealText(text);
-    const CHARS_PER_S = 12.0;
-    const visibleChars = Math.max(1, Math.floor(tLocal * CHARS_PER_S) + 1);
-    visibleText = revealText.slice(0, visibleChars);
+    const schedule = normalizeTypewriterRevealSchedule(
+      timing?.revealScheduleS,
+      timing?.absoluteStartS ?? 0,
+    );
+    if (schedule) {
+      const codePoints = Array.from(revealText);
+      const revealedSteps = Math.max(1, schedule.filter((atS) => atS <= tLocal).length);
+      const visibleChars = Math.max(
+        1,
+        Math.ceil((codePoints.length * revealedSteps) / schedule.length),
+      );
+      visibleText = codePoints.slice(0, visibleChars).join("");
+    } else {
+      // Generic and user-authored typewriter elements retain the legacy speed.
+      const CHARS_PER_S = 12.0;
+      const visibleChars = Math.max(1, Math.floor(tLocal * CHARS_PER_S) + 1);
+      visibleText = revealText.slice(0, visibleChars);
+    }
   } else if (effect === "stream-in") {
     const revealText = normalizeAnimatedRevealText(text);
     const WORDS_PER_S = 6.0;
