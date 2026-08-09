@@ -185,11 +185,14 @@ export default function CopilotDrawer({
             modelUsed={director.modelUsed}
             fallbackReason={director.fallbackReason}
             generation={director.generation}
+            serverRendering={director.serverRendering}
             onAccept={director.accept}
             onDismiss={director.dismiss}
             onRevealApplied={director.revealApplied}
             onRefresh={director.refresh}
             onCancelGeneration={director.cancelGeneration}
+            canRestoreOriginalTiming={director.canRestoreOriginalTiming}
+            onRestoreOriginalTiming={director.restoreOriginalTiming}
           />
         )}
 
@@ -198,7 +201,7 @@ export default function CopilotDrawer({
             <p>What should we change?</p>
             <p className="mt-1 text-[#3f3f46]">
               I can rewrite your hook, restyle text, and tighten or reorder cuts.
-              Everything previews instantly — nothing renders until you save.
+              Draft edits preview instantly. Timing changes explain the rebuild before they run.
             </p>
           </div>
         )}

@@ -465,8 +465,9 @@ def test_assemble_spine_cut_happy_path():
     plan = _cut_plan_6_5()
     seen: dict = {}
 
-    def _fn(path, dur, *, cache_key=None):
+    def _fn(path, dur, *, cache_key=None, source_fingerprint=None):
         seen["analysis"] = (path, dur, cache_key)
+        seen["source_fingerprint"] = source_fingerprint
         return _entry(plan)
 
     reframe_calls, cmds, events, out_ctx = _run_assemble_with_cut(
@@ -478,6 +479,7 @@ def test_assemble_spine_cut_happy_path():
 
     # Uncapped analysis keys the per-job cache by the spine path itself (P1).
     assert seen["analysis"] == ("a.mp4", 6.5, "a.mp4")
+    assert seen["source_fingerprint"] == "a"
     # The cut executes inside the spine reframe with the plan's exact segments
     # and the punch-in CONSTANT (never a literal).
     spine = reframe_calls[0]
@@ -505,6 +507,7 @@ def test_assemble_spine_cut_happy_path():
         "version": 1,
         "original_duration_s": 6.5,
     }
+    assert out_ctx["spine_clip_id"] == "a"
     plan_events = [e for e in events if e[1] == "silence_cut_plan"]
     assert len(plan_events) == 1
     assert plan_events[0][2] == {
@@ -630,8 +633,9 @@ def test_assemble_spine_precap_bounds_detection_and_cut(tmp_path):
     )
     seen: dict = {}
 
-    def _fn(path, dur, *, cache_key=None):
+    def _fn(path, dur, *, cache_key=None, source_fingerprint=None):
         seen["analysis"] = (path, dur, cache_key)
+        seen["source_fingerprint"] = source_fingerprint
         return _entry(plan)
 
     reframe_calls, cmds, events, out_ctx = _run_assemble_with_cut(
@@ -678,7 +682,7 @@ def test_assemble_spine_cut_capped_cache_key_shared_across_variants(tmp_path):
     cache: dict[str, dict] = {}
     computed_paths: list[str] = []
 
-    def _fn(path, dur, *, cache_key=None):
+    def _fn(path, dur, *, cache_key=None, source_fingerprint=None):
         keys_seen.append(cache_key)
         if cache_key not in cache:
             computed_paths.append(path)  # the expensive whisper+LLM compute

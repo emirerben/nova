@@ -39,7 +39,7 @@ class DirectorSuggestionsBody(BaseModel):
 
 
 class DirectorSuggestionsResponse(BaseModel):
-    suggestions: list[EditorSuggestion] = Field(min_length=1, max_length=5)
+    suggestions: list[EditorSuggestion] = Field(default_factory=list, max_length=5)
     snapshot_revision: str
     requested_model: str
     model_used: str
@@ -83,6 +83,7 @@ async def run_director(
     body: DirectorSuggestionsBody,
     *,
     job_id: uuid.UUID,
+    authoritative_speech_cut: dict | None = None,
 ) -> DirectorSuggestionsResponse:
     job_key = str(job_id)
     _latest_revision_by_job[job_key] = body.snapshot_revision
@@ -92,13 +93,16 @@ async def run_director(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="edit_director_request_superseded",
             )
-        return await _run_director_once(body, job_id=job_id)
+        return await _run_director_once(
+            body, job_id=job_id, authoritative_speech_cut=authoritative_speech_cut
+        )
 
 
 async def _run_director_once(
     body: DirectorSuggestionsBody,
     *,
     job_id: uuid.UUID,
+    authoritative_speech_cut: dict | None = None,
 ) -> DirectorSuggestionsResponse:
     if _snapshot_size(body.snapshot) > _MAX_SNAPSHOT_BYTES:
         raise HTTPException(
@@ -106,6 +110,17 @@ async def _run_director_once(
             detail="snapshot exceeds 20KB",
         )
     director_snapshot = copy.deepcopy(body.snapshot)
+    # Client snapshots are prompt context, never authorization. Replace every
+    # cut-related field with the row-locked/server-derived variant context.
+    director_snapshot.pop("automatic_cut", None)
+    director_snapshot.pop("speech_cut_candidates", None)
+    director_snapshot.pop("speech_cut_revision", None)
+    if authoritative_speech_cut:
+        director_snapshot.update(copy.deepcopy(authoritative_speech_cut))
+        if authoritative_speech_cut.get("automatic_cut") is True:
+            families = director_snapshot.get("allowed_op_families")
+            if isinstance(families, list) and "automatic_cut" not in families:
+                director_snapshot["allowed_op_families"] = [*families, "automatic_cut"]
     allowed = director_snapshot.get("allowed_op_families")
     if isinstance(allowed, list):
         director_snapshot["allowed_op_families"] = [

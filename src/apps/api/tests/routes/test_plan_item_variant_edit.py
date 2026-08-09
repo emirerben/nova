@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.pipeline.speech_cut_state import cut_revision, make_candidate
 from app.pipeline.style_sets import style_set_ids
 from app.routes.generative_jobs import (
     dispatch_retext,
@@ -112,6 +113,27 @@ ORIGINAL_VARIANT = {
     "render_status": "ready",
     "rank": 3,
 }
+
+
+def _speech_variant() -> dict:
+    candidate = make_candidate(
+        start_s=2.0,
+        end_s=2.8,
+        reason="possible retake",
+        source="retake_review",
+        preview="let me restart",
+        source_fingerprint="source-a",
+        transcript_hash="transcript-a",
+    )
+    return {
+        "variant_id": "subtitled",
+        "resolved_archetype": "subtitled",
+        "render_status": "ready",
+        "ok": True,
+        "base_video_path": "generative-jobs/job/base.mp4",
+        "video_path": "generative-jobs/job/current.mp4",
+        "speech_cut_candidates": [candidate],
+    }
 
 
 def _override(user, db) -> None:
@@ -534,6 +556,155 @@ def test_edit_409_when_variant_rendering(client: TestClient) -> None:
     _override(user, db)
     resp = client.post(f"/plan-items/{item.id}/variants/song_text/retext", json={"text": "x"})
     assert resp.status_code == 409
+
+
+def test_speech_cut_202_is_a_queued_request_not_a_completed_receipt(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.config import settings
+
+    user = _user()
+    variant = _speech_variant()
+    revision = cut_revision(variant)
+    candidate_id = variant["speech_cut_candidates"][0]["candidate_id"]
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True, raising=False)
+
+    with (
+        patch("sqlalchemy.orm.attributes.flag_modified"),
+        patch("app.tasks.generative_build.rerender_speech_timing.apply_async") as enqueue,
+    ):
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/{candidate_id}/apply",
+            json={"expected_revision": revision},
+        )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "rendering"
+    assert response.json()["request"]["candidate_id"] == candidate_id
+    assert "receipt" not in response.json()
+    enqueue.assert_called_once()
+    assert job.assembly_plan["variants"][0]["speech_cut_candidates"][0]["status"] == "applying"
+    assert "speech_cut_last_receipt" not in job.assembly_plan["variants"][0]
+
+
+def test_speech_cut_enqueue_failure_restores_last_good_variant(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.config import settings
+
+    user = _user()
+    variant = _speech_variant()
+    original = dict(variant)
+    original["speech_cut_candidates"] = [dict(variant["speech_cut_candidates"][0])]
+    revision = cut_revision(variant)
+    candidate_id = variant["speech_cut_candidates"][0]["candidate_id"]
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    # Item lookup, initial Job row lock, then the fresh rollback row lock after
+    # the simulated broker failure.
+    db = _db([item, job, job], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True, raising=False)
+
+    with (
+        patch("sqlalchemy.orm.attributes.flag_modified"),
+        patch(
+            "app.tasks.generative_build.rerender_speech_timing.apply_async",
+            side_effect=RuntimeError("broker down"),
+        ),
+    ):
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/{candidate_id}/apply",
+            json={"expected_revision": revision},
+        )
+
+    assert response.status_code == 503
+    assert db.commit.await_count == 2
+    assert job.status == "variants_ready"
+    assert job.assembly_plan["variants"] == [original]
+    assert job.assembly_plan["speech_cut_control"] is None
+    assert "speech_cut_last_receipt" not in job.assembly_plan["variants"][0]
+
+
+def test_speech_cut_apply_rejects_stale_revision_without_commit_or_enqueue(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.config import settings
+
+    user = _user()
+    variant = _speech_variant()
+    candidate_id = variant["speech_cut_candidates"][0]["candidate_id"]
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True, raising=False)
+
+    with patch("app.tasks.generative_build.rerender_speech_timing.apply_async") as enqueue:
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/{candidate_id}/apply",
+            json={"expected_revision": "stale-revision"},
+        )
+
+    assert response.status_code == 409
+    db.commit.assert_not_awaited()
+    enqueue.assert_not_called()
+
+
+def test_speech_cut_apply_rejects_foreign_owner_without_lock_or_enqueue(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.config import settings
+
+    user = _user()
+    variant = _speech_variant()
+    candidate_id = variant["speech_cut_candidates"][0]["candidate_id"]
+    job = _job([variant])
+    item, plan = _owned_item(uuid.uuid4(), job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True, raising=False)
+
+    with patch("app.tasks.generative_build.rerender_speech_timing.apply_async") as enqueue:
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/{candidate_id}/apply",
+            json={"expected_revision": cut_revision(variant)},
+        )
+
+    assert response.status_code == 404
+    assert db.execute.await_count == 1
+    db.commit.assert_not_awaited()
+    enqueue.assert_not_called()
+
+
+def test_restore_original_timing_queues_full_rerender(client: TestClient) -> None:
+    user = _user()
+    variant = {
+        **_speech_variant(),
+        "silence_cut": {"removed": [{"start_s": 1.0, "end_s": 2.0}]},
+    }
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+
+    with (
+        patch("sqlalchemy.orm.attributes.flag_modified"),
+        patch("app.tasks.generative_build.rerender_speech_timing.apply_async") as enqueue,
+    ):
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/restore",
+            json={"expected_revision": cut_revision(variant)},
+        )
+
+    assert response.status_code == 202
+    assert response.json()["request"]["operation"] == "restore_original_timing"
+    assert response.json()["request"]["restored_s"] == 1.0
+    enqueue.assert_called_once()
 
 
 # ── shared-helper unit guards (single-sourced validation) ─────────────────────

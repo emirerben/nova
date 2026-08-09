@@ -61,11 +61,15 @@ from typing import Any, NamedTuple
 # faster-whisper's ``initial_prompt`` (transcribe(..., verbatim_prompt=…)) so the
 # ASR keeps filler vocalizations as tokens instead of politely dropping them —
 # rule 1 needs the tokens to cut them, and caption hygiene needs them to strip
-# them from cue input. TR + EN because the product ships both; the trailing
-# "dur baştan alayım" also primes restart phrasing for the retake detector.
-# Both integrations (subtitled + talking_head) import THIS constant — a caller
+# them from cue input. Keep this deliberately LEXICALLY NEUTRAL: putting Turkish
+# restart phrases in an auto-language Whisper prompt caused English production-
+# image renders to be classified as Turkish, after which caption correction
+# rewrote the English speech as Turkish. Non-lexical EN/TR vocalizations retain
+# the fillers without steering language detection; the retake agent sees the
+# actual transcript and does not need a scripted restart phrase. Both
+# integrations (subtitled + talking_head) import THIS constant — a caller
 # inlining its own copy would silently diverge the two paths' transcripts.
-SILENCE_CUT_VERBATIM_PROMPT = "Iıı, eee, şey, yani... uh, um, hmm, dur baştan alayım."
+SILENCE_CUT_VERBATIM_PROMPT = "Uh, um, erm, hmm... Iıı, eee, aaa."
 
 # -- removal reasons (persisted in Job.assembly_plan — treat as API) --------------
 REASON_SILENCE = "silence"
@@ -605,6 +609,8 @@ def build_cut_plan(
     duration_s: float,
     *,
     retake_spans: Sequence[tuple[int, int]] | None = None,
+    forced_removals: Sequence[Removal | dict[str, Any]] | None = None,
+    include_silence_and_fillers: bool = True,
 ) -> CutPlan:
     """Detect silence/filler/retake cuts and return the plan.
 
@@ -627,10 +633,26 @@ def build_cut_plan(
     silence_spans = _normalize_silences(silences, duration)
 
     raw: list[Removal] = []
-    raw.extend(_lexical_removals(cut_words, duration))
-    raw.extend(_acoustic_removals(cut_words, silence_spans, duration))
-    raw.extend(_pause_removals(cut_words, silence_spans, duration))
+    if include_silence_and_fillers:
+        raw.extend(_lexical_removals(cut_words, duration))
+        raw.extend(_acoustic_removals(cut_words, silence_spans, duration))
+        raw.extend(_pause_removals(cut_words, silence_spans, duration))
     raw.extend(_retake_removals(cut_words, retake_spans, duration))
+    for forced in forced_removals or []:
+        try:
+            if isinstance(forced, Removal):
+                raw.append(forced)
+            else:
+                raw.append(
+                    Removal(
+                        start_s=float(forced["start_s"]),
+                        end_s=float(forced["end_s"]),
+                        reason=str(forced.get("reason") or "manual_review"),
+                    )
+                )
+        except (KeyError, TypeError, ValueError):
+            # Corrupt optional JSON can never make a render fail.
+            continue
 
     removals = _merge_removals(raw, duration)
     removals = _absorb_micro_fragments(removals, cut_words, duration)

@@ -21,6 +21,32 @@ function formatTimeRange(startS: number, endS: number): string {
   return start === end ? `${start}s` : `${start}-${end}s`;
 }
 
+export function directorWillChange(suggestion: EditorSuggestion): string[] {
+  const labels = new Set<string>();
+  for (const operation of suggestion.ops) {
+    if (operation.op === "apply_speech_cut_candidate") {
+      labels.add("Remove the reviewed speech span and retime captions, text, and effects");
+    } else if (["edit_text", "add_text", "remove_text", "patch_text_style", "set_text_timing"].includes(operation.op)) {
+      labels.add("Text layer");
+    } else if (operation.op.includes("caption")) {
+      labels.add("Captions");
+    } else if (operation.op.includes("sfx")) {
+      labels.add("Sound effects");
+    } else if (operation.op.includes("overlay")) {
+      labels.add("Visual overlays");
+    } else if (operation.op.includes("clip") || operation.op === "set_transition") {
+      labels.add("Clip timing");
+    } else if (operation.op.includes("camera_effect") || operation.op === "set_visual_fade") {
+      labels.add("Visual effects");
+    } else if (operation.op === "swap_music" || operation.op === "set_mix") {
+      labels.add("Audio mix");
+    } else {
+      labels.add("Editor draft");
+    }
+  }
+  return Array.from(labels);
+}
+
 function AppliedReceipt({
   receipt,
   historyVersion,
@@ -84,11 +110,14 @@ export default function DirectorSuggestions({
   modelUsed,
   fallbackReason,
   generation,
+  serverRendering = false,
   onAccept,
   onDismiss,
   onRevealApplied,
   onRefresh,
   onCancelGeneration,
+  canRestoreOriginalTiming = false,
+  onRestoreOriginalTiming = () => {},
 }: {
   suggestions: EditorSuggestion[];
   appliedReceipts: DirectorAppliedReceipt[];
@@ -98,11 +127,14 @@ export default function DirectorSuggestions({
   modelUsed: string;
   fallbackReason: string | null;
   generation: DirectorGenerationState | null;
+  serverRendering?: boolean;
   onAccept: (suggestion: EditorSuggestion) => void;
   onDismiss: (suggestion: EditorSuggestion) => void;
   onRevealApplied: (receipt: DirectorAppliedReceipt) => void;
   onRefresh: () => void;
   onCancelGeneration: () => void;
+  canRestoreOriginalTiming?: boolean;
+  onRestoreOriginalTiming?: () => void;
 }) {
   const firstSuggestionRef = useRef<HTMLElement>(null);
   const firstSuggestionId = suggestions[0]?.id ?? null;
@@ -135,6 +167,17 @@ export default function DirectorSuggestions({
         </button>
       </div>
 
+      {canRestoreOriginalTiming && (
+        <button
+          type="button"
+          onClick={onRestoreOriginalTiming}
+          disabled={serverRendering}
+          className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-medium text-[#3f3f46] hover:bg-zinc-50 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+        >
+          Restore original timing
+        </button>
+      )}
+
       {loading && suggestions.length === 0 && (
         <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-[12px] text-[#71717a]">
           Reading the hook, rhythm, sound, and visual treatment…
@@ -144,6 +187,21 @@ export default function DirectorSuggestions({
       {error && (
         <div role="status" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#52525b]">
           {error}
+        </div>
+      )}
+
+      {!loading && !error && suggestions.length === 0 && (
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3">
+          <p className="text-[12px] font-semibold text-[#27272a]">No changes recommended</p>
+          <p className="mt-0.5 text-[11px] leading-4 text-[#71717a]">
+            Nova did not find a clear improvement for this draft. Refresh after your next edit.
+          </p>
+        </div>
+      )}
+
+      {serverRendering && (
+        <div role="status" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-[12px] text-[#3f3f46]">
+          Rebuilding the video with the reviewed cut. The current preview stays available until it succeeds.
         </div>
       )}
 
@@ -205,14 +263,26 @@ export default function DirectorSuggestions({
           <p className="mt-1.5 text-[11px] leading-4 text-[#71717a]">
             {suggestion.expected_benefit}
           </p>
+          <div className="mt-2 rounded-lg bg-zinc-50 px-2.5 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#71717a]">
+              Will change
+            </p>
+            {directorWillChange(suggestion).map((label) => (
+              <p key={label} className="mt-1 text-[11px] leading-4 text-[#3f3f46]">{label}</p>
+            ))}
+          </div>
           <div className="mt-3 flex items-center gap-2">
             <button
               type="button"
               onClick={() => onAccept(suggestion)}
-              disabled={generation !== null}
+              disabled={generation !== null || serverRendering}
               className="min-h-11 flex-1 rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
             >
-              {suggestion.apply_mode === "omni_async" ? "Generate & add" : "Accept"}
+              {suggestion.apply_mode === "omni_async"
+                ? "Generate & add"
+                : suggestion.apply_mode === "server_async"
+                  ? "Apply & rebuild"
+                  : "Accept"}
             </button>
             <button
               type="button"

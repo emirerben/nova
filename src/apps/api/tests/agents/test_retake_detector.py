@@ -232,6 +232,23 @@ def test_parse_empty_retakes_is_valid() -> None:
     assert out.retakes == []
 
 
+def test_parse_keeps_borderline_candidates_but_drops_auto_overlap() -> None:
+    out = _agent().parse(
+        json.dumps(
+            {
+                "retakes": [_span(2, 6, "certain abandoned take")],
+                "review_candidates": [
+                    _span(0, 3, "overlaps the automatic cut"),
+                    _span(9, 11, "plausible restart"),
+                ],
+            }
+        ),
+        _input(),
+    )
+    assert [(s.start_word, s.end_word) for s in out.retakes] == [(2, 6)]
+    assert [(s.start_word, s.end_word) for s in out.review_candidates] == [(9, 11)]
+
+
 def test_parse_rejects_invalid_json() -> None:
     with pytest.raises(SchemaError, match="invalid JSON"):
         _agent().parse("not json", _input())
@@ -323,7 +340,7 @@ def test_spec_shape() -> None:
     spec = RetakeDetectorAgent.spec
     assert spec.name == "nova.audio.retake_detector"
     assert spec.prompt_id == "retake_detector"
-    assert spec.prompt_version == "1"
+    assert spec.prompt_version == "2"
     assert RetakeDetectorAgent(None).required_fields() == ["retakes"]  # type: ignore[arg-type]
 
 

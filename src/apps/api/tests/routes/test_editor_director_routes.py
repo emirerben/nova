@@ -113,7 +113,7 @@ def _director_response() -> DirectorSuggestionsResponse:
     )
 
 
-def test_director_response_enforces_one_to_five_suggestions() -> None:
+def test_director_response_enforces_zero_to_five_suggestions() -> None:
     one = _director_response()
     five_suggestions = [
         one.suggestions[0].model_copy(update={"id": f"director-{index}"}) for index in range(5)
@@ -122,11 +122,14 @@ def test_director_response_enforces_one_to_five_suggestions() -> None:
     five = one.model_copy(update={"suggestions": five_suggestions})
     assert len(DirectorSuggestionsResponse.model_validate(five.model_dump()).suggestions) == 5
 
-    for invalid_suggestions in ([], [*five_suggestions, five_suggestions[0]]):
-        payload = one.model_dump()
-        payload["suggestions"] = invalid_suggestions
-        with pytest.raises(ValidationError):
-            DirectorSuggestionsResponse.model_validate(payload)
+    empty = one.model_dump()
+    empty["suggestions"] = []
+    assert DirectorSuggestionsResponse.model_validate(empty).suggestions == []
+
+    overflow = one.model_dump()
+    overflow["suggestions"] = [*five_suggestions, five_suggestions[0]]
+    with pytest.raises(ValidationError):
+        DirectorSuggestionsResponse.model_validate(overflow)
 
 
 def test_director_routes_require_authentication(client: TestClient) -> None:

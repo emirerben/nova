@@ -76,6 +76,7 @@ from app.routes.generative_jobs import (
     TimelineResponse,
     cascade_removed_overlay_effect_groups,
     dispatch_apply_captions,
+    dispatch_apply_speech_cut_candidate,
     dispatch_change_style,
     dispatch_edit_timeline,
     dispatch_edit_variant,
@@ -83,6 +84,7 @@ from app.routes.generative_jobs import (
     dispatch_get_timeline,
     dispatch_patch_scene_timing,
     dispatch_reset_timeline,
+    dispatch_restore_original_timing,
     dispatch_retext,
     dispatch_retranscribe_captions,
     dispatch_set_caption_position,
@@ -102,6 +104,8 @@ from app.routes.generative_jobs import (
     persist_variant_captions_enabled,
     prepare_editor_commit,
     require_editable_variant,
+    rollback_speech_cut_dispatch,
+    speech_cut_director_context,
     validate_media_overlays_for_user,
     validate_sound_effects_for_user,
     visual_block_variant_duration,
@@ -1544,6 +1548,101 @@ async def _owned_item_render_job(item_id: str, user_id: uuid.UUID, db: AsyncSess
     return job
 
 
+async def _locked_owned_item_render_job(item_id: str, user_id: uuid.UUID, db: AsyncSession) -> Job:
+    """Ownership-check first, then lock the JSONB writer row for revisions."""
+    owned = await _owned_item_render_job(item_id, user_id, db)
+    result = await db.execute(select(Job).where(Job.id == owned.id).with_for_update())
+    locked = result.scalar_one_or_none()
+    if locked is None:  # pragma: no cover - deleted between ownership read and lock
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    return locked
+
+
+class SpeechCutActionBody(BaseModel):
+    expected_revision: str = Field(min_length=1, max_length=64)
+
+
+class SpeechCutDispatchResponse(BaseModel):
+    status: Literal["rendering"] = "rendering"
+    request: dict
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/speech-cuts/{candidate_id}/apply",
+    response_model=SpeechCutDispatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def apply_plan_item_speech_cut(
+    item_id: str,
+    variant_id: str,
+    candidate_id: str,
+    body: SpeechCutActionBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> SpeechCutDispatchResponse:
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    request, enqueue = dispatch_apply_speech_cut_candidate(
+        job,
+        variant_id,
+        candidate_id=candidate_id,
+        expected_revision=body.expected_revision,
+    )
+    await db.commit()
+    try:
+        enqueue()
+    except Exception as exc:  # noqa: BLE001 — committed dispatch must be reversible
+        result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
+        fresh_job = result.scalar_one_or_none()
+        if fresh_job is not None:
+            rollback_speech_cut_dispatch(
+                fresh_job,
+                str(exc),
+                expected_operation_id=str(request.get("operation_id") or ""),
+            )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The cut could not be queued. The current video is unchanged.",
+        ) from exc
+    return SpeechCutDispatchResponse(request=request)
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/speech-cuts/restore",
+    response_model=SpeechCutDispatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def restore_plan_item_speech_timing(
+    item_id: str,
+    variant_id: str,
+    body: SpeechCutActionBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> SpeechCutDispatchResponse:
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    request, enqueue = dispatch_restore_original_timing(
+        job, variant_id, expected_revision=body.expected_revision
+    )
+    await db.commit()
+    try:
+        enqueue()
+    except Exception as exc:  # noqa: BLE001 — committed dispatch must be reversible
+        result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
+        fresh_job = result.scalar_one_or_none()
+        if fresh_job is not None:
+            rollback_speech_cut_dispatch(
+                fresh_job,
+                str(exc),
+                expected_operation_id=str(request.get("operation_id") or ""),
+            )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The timing restore could not be queued. The current video is unchanged.",
+        ) from exc
+    return SpeechCutDispatchResponse(request=request)
+
+
 @router.post("/{item_id}/variants/{variant_id}/swap-song", response_model=PlanItemResponse)
 async def swap_item_song(
     item_id: str,
@@ -1840,8 +1939,12 @@ async def plan_item_director_suggestions(
             detail="edit_director_not_enabled",
         )
     job = await _owned_item_render_job(item_id, user.id, db)
-    require_editable_variant(job, variant_id)
-    return await run_director(body, job_id=job.id)
+    variant = require_editable_variant(job, variant_id)
+    return await run_director(
+        body,
+        job_id=job.id,
+        authoritative_speech_cut=speech_cut_director_context(job, variant),
+    )
 
 
 @router.post(

@@ -227,13 +227,14 @@ def _extract_capped_audio(src_path: str, cap_s: float, wav_path: str) -> None:
 def _spine_silence_cut_plan(
     *,
     spine_path: str,
+    source_fingerprint: str,
     spine_dur: float,
     spine_probe: object | None,
     target_duration_s: float | None,
     tmpdir: str,
     silence_cut_fn: Callable[..., dict[str, Any]],
     job_id: str | None,
-) -> tuple[Any, float, int]:
+) -> tuple[Any, float, int, list[dict[str, Any]]]:
     """Spine silence-cut ANALYSIS (plans/010 T6): gates → pre-cap → shared analysis.
 
     Returns ``(plan | None, analysis_duration_s, retake_span_count)``. Every
@@ -249,12 +250,12 @@ def _spine_silence_cut_plan(
             has_audio = bool(probe_video(spine_path).has_audio)
         except Exception as exc:  # noqa: BLE001 — probe failure ⇒ skip the stage, render uncut
             log.warning("talking_head_spine_cut_probe_failed", job_id=job_id, error=str(exc))
-            return None, spine_dur, 0
+            return None, spine_dur, 0, []
     if not has_audio:
         record_pipeline_event(
             "silence_cut", "silence_cut_skipped_no_audio", {"variant_id": "talking_head"}
         )
-        return None, spine_dur, 0
+        return None, spine_dur, 0, []
 
     # Spine pre-cap (14A): bound the working window BEFORE detection so the
     # analysis WAV stays under whisper-1's 25 MB limit. A spine shorter than
@@ -284,12 +285,22 @@ def _spine_silence_cut_plan(
             record_pipeline_event(
                 "silence_cut", "silence_cut_analysis_failed", {"error": str(exc)[:200]}
             )
-            return None, spine_dur, 0
+            return None, spine_dur, 0, []
 
-    entry = silence_cut_fn(analysis_path, analysis_dur, cache_key=cache_key)
+    entry = silence_cut_fn(
+        analysis_path,
+        analysis_dur,
+        cache_key=cache_key,
+        source_fingerprint=source_fingerprint,
+    )
     if not isinstance(entry, dict) or entry.get("failed") or entry.get("plan") is None:
-        return None, analysis_dur, 0
-    return entry["plan"], analysis_dur, int(entry.get("retake_span_count") or 0)
+        return None, analysis_dur, 0, []
+    return (
+        entry["plan"],
+        analysis_dur,
+        int(entry.get("retake_span_count") or 0),
+        list(entry.get("review_candidates") or []),
+    )
 
 
 def schedule_broll(
@@ -474,6 +485,11 @@ def assemble_talking_head(
         TalkingHeadAssemblyError: the composite render failed.
     """
     selection = select_spine(clip_metas, clip_paths, spine_clip_id=spine_clip_id)
+    if silence_cut_out is not None and silence_cut_fn is not None:
+        # Candidate ranges are coordinates on this exact source. Persist the
+        # selected spine so review rerenders cannot silently choose a different
+        # speaker clip and apply a valid-looking range to the wrong media.
+        silence_cut_out["spine_clip_id"] = selection.spine_clip_id
     record_pipeline_event("assembly", "archetype_selected", {"archetype": "talking_head"})
     record_pipeline_event(
         "assembly",
@@ -499,10 +515,12 @@ def assemble_talking_head(
     sc_plan = None
     sc_analysis_dur = spine_dur
     sc_retake_count = 0
+    sc_review_candidates: list[dict[str, Any]] = []
     sc_apply_error: str | None = None
     if silence_cut_fn is not None:
-        sc_plan, sc_analysis_dur, sc_retake_count = _spine_silence_cut_plan(
+        sc_plan, sc_analysis_dur, sc_retake_count, sc_review_candidates = _spine_silence_cut_plan(
             spine_path=spine_path,
+            source_fingerprint=selection.spine_clip_id,
             spine_dur=spine_dur,
             # probe_map is path-keyed in prod (_probe_clips); the clip_id lookup
             # is a defensive mirror of _duration's keying.
@@ -610,6 +628,7 @@ def assemble_talking_head(
         )
         if sc_apply_error is None and silence_cut_out is not None:
             silence_cut_out["summary"] = plan_summary(sc_plan, original_duration_s=sc_analysis_dur)
+            silence_cut_out["review_candidates"] = sc_review_candidates
 
     # ── B-roll: reframe each; a failure drops that clip (best-effort). ──
     broll_sources: list[BrollSource] = []

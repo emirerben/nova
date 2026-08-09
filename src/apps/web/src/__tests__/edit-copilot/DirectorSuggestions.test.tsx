@@ -5,6 +5,48 @@ import type { DirectorAppliedReceipt } from "@/lib/edit-copilot/useEditDirector"
 import type { EditorSuggestion } from "@/lib/plan-api";
 
 describe("DirectorSuggestions applied receipts", () => {
+  it("shows an honest empty review and operation-derived change summary", () => {
+    const props = {
+      appliedReceipts: [] as DirectorAppliedReceipt[],
+      historyVersion: 0,
+      loading: false,
+      error: null,
+      modelUsed: "gemini-3.1-pro-preview",
+      fallbackReason: null,
+      generation: null,
+      onAccept: jest.fn(),
+      onDismiss: jest.fn(),
+      onRefresh: jest.fn(),
+      onRevealApplied: jest.fn(),
+      onCancelGeneration: jest.fn(),
+    };
+    const { rerender } = render(<DirectorSuggestions suggestions={[]} {...props} />);
+    expect(screen.getByText("No changes recommended")).toBeInTheDocument();
+
+    rerender(
+      <DirectorSuggestions
+        suggestions={[{
+          id: "cut-1",
+          category: "hook_pacing",
+          title: "Tighten the pause",
+          rationale: "The opening pause slows the hook.",
+          expected_benefit: "A faster opening.",
+          confidence: 0.9,
+          start_s: 1,
+          end_s: 1.6,
+          apply_mode: "server_async",
+          ops: [{ op: "apply_speech_cut_candidate", candidate_id: "candidate-1" }],
+        }]}
+        {...props}
+      />,
+    );
+    expect(screen.getByText("Will change")).toBeInTheDocument();
+    expect(screen.getByText(
+      "Remove the reviewed speech span and retime captions, text, and effects",
+    )).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply & rebuild" })).toBeInTheDocument();
+  });
+
   it("keeps every accepted recommendation visible with its exact delta and replay action", () => {
     const receipts: DirectorAppliedReceipt[] = [
       {

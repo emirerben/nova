@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 from fastapi import HTTPException
 
-from app.agents._runtime import ModelClient, ModelInvocation, RunContext, SchemaError
+from app.agents._runtime import ModelClient, ModelInvocation, RunContext
 from app.agents.edit_director import (
     EditDirectorAgent,
     EditDirectorFallbackAgent,
@@ -301,15 +301,14 @@ def test_director_drops_an_invalid_bundle_but_preserves_valid_siblings() -> None
     ]
 
 
-def test_director_fails_only_when_no_valid_suggestions_remain() -> None:
+def test_director_returns_zero_when_no_valid_suggestions_remain() -> None:
     invalid = _suggestion(
         "effect",
         "Change the intro layout",
         {"op": "set_intro_layout", "layout": "cluster"},
     )
 
-    with pytest.raises(SchemaError, match="expected at least 1 valid suggestion, got 0"):
-        _parse([invalid])
+    assert _parse([invalid]).suggestions == []
 
 
 def test_director_suppresses_conflicting_targets_without_discarding_low_diversity_cards() -> None:

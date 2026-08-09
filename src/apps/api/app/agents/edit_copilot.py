@@ -67,6 +67,7 @@ _TOOL_OPS = {"open_tool"}
 _EFFECT_OPS = {"add_camera_effect", "patch_camera_effect", "remove_camera_effect"}
 _TRANSITION_OPS = {"set_transition"}
 _VISUAL_OPS = {"set_visual_fade"}
+_SERVER_OPS = {"apply_speech_cut_candidate"}
 _VALID_OPS = (
     _TEXT_OPS
     | _STYLE_OPS
@@ -81,6 +82,7 @@ _VALID_OPS = (
     | _EFFECT_OPS
     | _TRANSITION_OPS
     | _VISUAL_OPS
+    | _SERVER_OPS
 )
 
 _OP_REQUIRED: dict[str, frozenset[str]] = {
@@ -117,6 +119,7 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "remove_camera_effect": frozenset({"camera_effect_index"}),
     "set_transition": frozenset({"boundary_index", "transition"}),
     "set_visual_fade": frozenset({"visual_block_index"}),
+    "apply_speech_cut_candidate": frozenset({"candidate_id"}),
 }
 
 _OP_FIELDS: dict[str, frozenset[str]] = {
@@ -165,6 +168,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "remove_camera_effect": frozenset({"camera_effect_index"}),
     "set_transition": frozenset({"boundary_index", "transition", "duration_s"}),
     "set_visual_fade": frozenset({"visual_block_index", "transition_in", "transition_out"}),
+    "apply_speech_cut_candidate": frozenset({"candidate_id"}),
 }
 
 # Field-exact examples for proactive Director prompts. Keep these next to the
@@ -205,6 +209,10 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
         '{"op":"patch_sfx","sfx_index":0,"at_s":1.4,"gain":0.8}',
     ),
     ("remove_sfx", '{"op":"remove_sfx","sfx_index":0}'),
+    (
+        "apply_speech_cut_candidate",
+        '{"op":"apply_speech_cut_candidate","candidate_id":"cut_123"}',
+    ),
     (
         "add_overlay",
         '{"op":"add_overlay","asset_id":"asset_1","start_s":1.0,'
@@ -646,6 +654,15 @@ def _format_snapshot(snapshot: dict) -> str:
                 "the pause's start time):"
             )
             lines.append("; ".join(pause_parts) if pause_parts else "(none detected)")
+
+    if snapshot.get("automatic_cut") is True:
+        lines.append("\nREVIEWABLE SPEECH CUT IDS (server-authoritative):")
+        candidates = snapshot.get("speech_cut_candidates")
+        for candidate in candidates if isinstance(candidates, list) else []:
+            if not isinstance(candidate, dict) or candidate.get("status") != "pending":
+                continue
+            cut_id = _clean_prompt_data(candidate.get("candidate_id"), max_chars=80)
+            lines.append(f"- candidate_id={cut_id!r}")
 
     if isinstance(snapshot.get("sfx"), dict):
         sfx = snapshot["sfx"]
@@ -1104,6 +1121,8 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         aliases = {"transition", "transitions", "timeline"}
     elif name in _VISUAL_OPS:
         aliases = {"visual", "visuals", "visual_blocks"}
+    elif name in _SERVER_OPS:
+        aliases = {"automatic_cut", "speech_cut", "speech_cuts"}
     else:
         aliases = {"clip", "clips", "timeline"}
     return bool(allowed & aliases)
@@ -1412,6 +1431,19 @@ def _coerce_payload(
             return None
         open_tools = snapshot.get("open_tools") if isinstance(snapshot, dict) else None
         if not isinstance(open_tools, list) or tool not in {str(item) for item in open_tools}:
+            state.invalid_value()
+            return None
+    if name == "apply_speech_cut_candidate":
+        if snapshot.get("automatic_cut") is not True:
+            state.invalid_value()
+            return None
+        candidates = snapshot.get("speech_cut_candidates")
+        if not isinstance(candidates, list) or not any(
+            isinstance(candidate, dict)
+            and candidate.get("candidate_id") == out.get("candidate_id")
+            and candidate.get("status") == "pending"
+            for candidate in candidates
+        ):
             state.invalid_value()
             return None
 
