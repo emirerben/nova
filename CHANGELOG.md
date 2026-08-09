@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.9.1] — 2026-08-08
+
+### Fixed
+- **"Replace every Kriya with Kria" now changes every caption, not only the cues Nova could see.** Bulk caption replacement searches the complete local caption draft case-insensitively, works past prompt cue/character limits, applies as one undoable edit, and reports the exact number of changed matches and lines.
+- **Nova can no longer say a caption edit succeeded when nothing or only part of the request applied.** Editor chat receipts now come from the client's actual apply result, with a full-caption stale guard that rejects queued edits if any caption changed after Nova read the draft.
 ## [0.23.10.0] — 2026-08-08
 
 ### Added

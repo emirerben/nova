@@ -3,6 +3,7 @@ import { editCopilotTurn } from "@/lib/plan-api";
 import {
   editCopilotStorageKey,
   messagesToCopilotTurns,
+  outcomeAuthoritativeReply,
   useEditCopilot,
   type CopilotMessage,
   type UseEditCopilotOptions,
@@ -125,6 +126,28 @@ describe("messagesToCopilotTurns", () => {
   });
 });
 
+describe("outcomeAuthoritativeReply", () => {
+  it("uses actual outcomes instead of a model success claim", () => {
+    expect(outcomeAuthoritativeReply({
+      modelReply: "Done, I changed every caption.",
+      intent: "edit",
+      needsClarification: false,
+      applied: [],
+      rejected: ["Replace caption text: No captions contain “Kriya”."],
+    })).toBe("I didn't change the draft. Replace caption text: No captions contain “Kriya”.");
+
+    expect(outcomeAuthoritativeReply({
+      modelReply: "Everything is fixed.",
+      intent: "edit",
+      needsClarification: false,
+      applied: ["Caption text replaced: Kriya → Kria · 14 matches in 12 lines"],
+      rejected: ["Clip 2: changed since request"],
+    })).toBe(
+      "Applied: Caption text replaced: Kriya → Kria · 14 matches in 12 lines.\n\nCouldn't apply: Clip 2: changed since request",
+    );
+  });
+});
+
 describe("useEditCopilot", () => {
   it("queues one follow-up and sends it with a post-apply snapshot", async () => {
     const first = deferred<EditCopilotTurnResponse>();
@@ -206,7 +229,7 @@ describe("useEditCopilot", () => {
       await result.current.send("cut clip 2");
     });
     expect(result.current.messages[1].text).toContain(
-      "Couldn't apply: Clip 2 duration",
+      "I didn't change the draft. Clip 2 duration",
     );
 
     await act(async () => {
@@ -244,7 +267,7 @@ describe("useEditCopilot", () => {
     const second = renderCopilot({ variantId: "variant-storage" });
     expect(second.result.current.messages.map((m) => m.text)).toEqual([
       "remember this",
-      "Stored",
+      "I didn't change the draft.",
     ]);
   });
 
@@ -386,7 +409,7 @@ describe("useEditCopilot", () => {
     expect(result.current.messages[0].pending).toBeUndefined();
     expect(result.current.messages[1]).toMatchObject({
       role: "assistant",
-      text: "Punchier now",
+      text: "I didn't change the draft.",
     });
   });
 
@@ -423,7 +446,7 @@ describe("useEditCopilot", () => {
       storedMessages("item-1", "variant-pending").map(
         (message) => message.text,
       ),
-    ).toEqual(["pending text", "Done pending"]);
+    ).toEqual(["pending text", "I didn't change the draft."]);
   });
 
   it("stop removes the optimistic bubble and restores the input", async () => {
