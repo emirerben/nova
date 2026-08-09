@@ -61,6 +61,15 @@ jobs:
       - name: Install web dependencies
         working-directory: src/apps/web
         run: pnpm install --no-frozen-lockfile
+      - name: Cache offline CanvasKit motion dependencies
+        working-directory: src/apps/web
+        run: |
+          deno cache --no-config --node-modules-dir=none \
+            npm:@webgpu/types@0.1.21 \
+            npm:canvaskit-wasm@0.40.0
+          deno cache --no-config --node-modules-dir=none \
+            ../../packages/motion-runtime/server/render-sequence.ts \
+            ../../packages/motion-runtime/server/render-frame.ts
       - name: Run web tests
         working-directory: src/apps/web
         # Jest only. CI previously ran lint + pytest but never the web Jest
