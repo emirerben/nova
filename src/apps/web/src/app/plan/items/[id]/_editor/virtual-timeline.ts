@@ -10,6 +10,7 @@ import { lookAdjustmentsEqual } from "@/lib/look-presets";
 const EPSILON = 1e-6;
 
 export interface VirtualTimelineEntry {
+  kind: "clip";
   slotIndex: number;
   slotKey: string;
   clipIndex: number;
@@ -22,18 +23,39 @@ export interface VirtualTimelineEntry {
   overlapBeforeS: number;
 }
 
+/**
+ * A spliced Blossom-carousel moment (Lane C: staged/undoable editor block).
+ * No `sourceUrl`/`slotKey`/etc — it isn't a source clip, it's a locally
+ * rendered composite (mirrors the backend's synthetic
+ * `__carousel_{variant_id}` clip, `_insert_carousel_moment_step` in
+ * generative_build.py). The virtual-preview transport has no video deck for
+ * this window; `useVirtualPreview` gates play/seek to a pause here and the
+ * mounted preview component (`CarouselBlockPreview`, Lane B swaps its
+ * internals) owns rendering it.
+ */
+export interface VirtualCarouselEntry {
+  kind: "carousel";
+  startS: number;
+  durationS: number;
+}
+
+export type VirtualEntry = VirtualTimelineEntry | VirtualCarouselEntry;
+
 export interface VirtualTimeline {
-  entries: VirtualTimelineEntry[];
+  entries: VirtualEntry[];
   totalDurationS: number;
   hasMissingSource: boolean;
 }
 
 export interface VirtualTimeMapping {
-  entry: VirtualTimelineEntry;
+  entry: VirtualEntry;
   entryIndex: number;
   virtualTimeS: number;
   localOffsetS: number;
-  sourceTimeS: number;
+  /** Position into the source clip's own timeline. `null` for a carousel
+   * entry (no single source file to seek into) — callers must check
+   * `entry.kind` before treating this as a video seek target. */
+  sourceTimeS: number | null;
 }
 
 export interface VirtualTransitionPreview {
@@ -50,12 +72,14 @@ export function virtualDeckLookPresetsAtTime(
 ): Record<"a" | "b", LookPreset> {
   const result: Record<"a" | "b", LookPreset> = { a: "none", b: "none" };
   const mapping = mapVirtualTime(timeline, timeS);
-  if (!mapping) return result;
+  // A carousel block has no source clip / look-preset filter of its own —
+  // the preview component owns that window's visuals entirely.
+  if (!mapping || mapping.entry.kind !== "clip") return result;
 
   result[activeDeck] = slots[mapping.entry.slotIndex]?.lookPreset ?? "none";
   if (transitionPreviewAtTime(timeline, timeS)) {
     const incoming = timeline.entries[mapping.entryIndex + 1];
-    if (incoming) {
+    if (incoming && incoming.kind === "clip") {
       result[activeDeck === "a" ? "b" : "a"] =
         slots[incoming.slotIndex]?.lookPreset ?? "none";
     }
@@ -71,11 +95,11 @@ export function virtualDeckLookAdjustmentsAtTime(
 ): Record<"a" | "b", LookAdjustments | null> {
   const result: Record<"a" | "b", LookAdjustments | null> = { a: null, b: null };
   const mapping = mapVirtualTime(timeline, currentTimeS);
-  if (!mapping) return result;
+  if (!mapping || mapping.entry.kind !== "clip") return result;
   result[activeDeck] = slots[mapping.entry.slotIndex]?.lookAdjustments ?? null;
   if (transitionPreviewAtTime(timeline, currentTimeS)) {
     const incoming = nextVirtualEntry(timeline, mapping.entryIndex);
-    if (incoming) {
+    if (incoming && incoming.kind === "clip") {
       const incomingDeck = activeDeck === "a" ? "b" : "a";
       result[incomingDeck] = slots[incoming.slotIndex]?.lookAdjustments ?? null;
     }
@@ -90,27 +114,38 @@ export function mapVirtualTimeToMusicTime(
   return Math.max(0, sectionStartS) + Math.max(0, virtualTimeS);
 }
 
+/** Position + duration of a staged carousel-moment block, as needed to splice
+ * it into the virtual timeline. Mirrors `CarouselMoment.position` /
+ * `duration_s` — the caller (EditorShell) resolves the effective staged/
+ * persisted config down to this shape. */
+export interface VirtualCarouselSplice {
+  position: "intro" | "middle" | "outro";
+  durationS: number;
+}
+
 export function buildVirtualTimeline(
   slots: DraftSlot[],
   clips: Pick<TimelineClip, "clip_index" | "signed_url">[],
   grid: number[] = [],
+  carousel?: VirtualCarouselSplice | null,
 ): VirtualTimeline {
   const clipUrlByIndex = new Map(clips.map((clip) => [clip.clip_index, clip.signed_url]));
   const windows = slotWindows(slots, grid);
-  const entries: VirtualTimelineEntry[] = [];
+  const clipEntries: VirtualTimelineEntry[] = [];
 
   slots.forEach((slot, slotIndex) => {
     const window = windows[slotIndex];
     if (slot.removed || !window || window.startS == null || window.durationS <= 0) {
       return;
     }
-    const previous = entries.at(-1);
+    const previous = clipEntries.at(-1);
     const overlapBeforeS = previous
       ? Math.round(
           Math.max(0, previous.startS + previous.durationS - window.startS) * 1000,
         ) / 1000
       : 0;
-    entries.push({
+    clipEntries.push({
+      kind: "clip",
       slotIndex,
       slotKey: slot.key,
       clipIndex: slot.clipIndex,
@@ -123,12 +158,66 @@ export function buildVirtualTimeline(
       overlapBeforeS,
     });
   });
+
+  let entries: VirtualEntry[] = clipEntries;
+
+  if (carousel && carousel.durationS > 0) {
+    // Mirror `_insert_carousel_moment_step`'s position resolution
+    // (app/tasks/generative_build.py), verbatim:
+    //
+    //   position = moment_cfg.get("position", "intro")
+    //   new_steps = list(steps)
+    //   if position == "middle":
+    //       insertion_index = len(new_steps) // 2
+    //       new_steps.insert(insertion_index, moment_step)
+    //   elif position == "outro":
+    //       insertion_index = len(new_steps)
+    //       new_steps.append(moment_step)
+    //   else:  # "intro" (default) and any unrecognized value
+    //       insertion_index = 0
+    //       new_steps.insert(0, moment_step)
+    //
+    // `steps` there is the per-clip AssemblyStep list BEFORE insertion — the
+    // direct analog of `clipEntries` here (both are the ordered, already
+    // removed-filtered list of real clips the montage assembles). So:
+    //   "intro"  -> index 0 (before every clip)
+    //   "outro"  -> index n (after every clip, i.e. appended)
+    //   "middle" -> index floor(n / 2) — inserted BEFORE the clip currently
+    //     sitting at that 0-based index. For n=4 that's before the 3rd clip
+    //     (1-based): 2 clips before the block, 2 after. For n=5 it's still
+    //     before the 3rd clip: 2 before, 3 after — floor division always
+    //     leaves any odd remainder AFTER the block, never before it.
+    const n = clipEntries.length;
+    const insertionIndex =
+      carousel.position === "middle"
+        ? Math.floor(n / 2)
+        : carousel.position === "outro"
+          ? n
+          : 0; // "intro" (default) and any unrecognized value
+    const before = insertionIndex > 0 ? clipEntries[insertionIndex - 1] : null;
+    const carouselStartS = before ? before.startS + before.durationS : 0;
+    const carouselEntry: VirtualCarouselEntry = {
+      kind: "carousel",
+      startS: carouselStartS,
+      durationS: carousel.durationS,
+    };
+    // Post-pass: every clip at/after the insertion point shifts later by the
+    // block's duration — it now plays AFTER the spliced-in carousel window.
+    const shifted: VirtualEntry[] = clipEntries.map((entry, index) =>
+      index >= insertionIndex
+        ? { ...entry, startS: entry.startS + carousel.durationS }
+        : entry,
+    );
+    shifted.splice(insertionIndex, 0, carouselEntry);
+    entries = shifted;
+  }
+
   const last = entries.at(-1);
 
   return {
     entries,
     totalDurationS: last ? last.startS + last.durationS : 0,
-    hasMissingSource: entries.some((entry) => !entry.sourceUrl),
+    hasMissingSource: clipEntries.some((entry) => !entry.sourceUrl),
   };
 }
 
@@ -144,6 +233,9 @@ export function transitionPreviewAtTime(
   for (let index = 0; index < timeline.entries.length - 1; index += 1) {
     const entry = timeline.entries[index];
     const next = timeline.entries[index + 1];
+    // No transition preview across a carousel-block boundary (v1) — the
+    // block has no video deck to crossfade with.
+    if (entry.kind !== "clip" || next.kind !== "clip") continue;
     if (entry.transitionAfter === "cut") continue;
     const durationS = Math.min(
       0.3,
@@ -187,7 +279,7 @@ export function mapVirtualTime(
       entryIndex: i,
       virtualTimeS,
       localOffsetS,
-      sourceTimeS: entry.inS + localOffsetS,
+      sourceTimeS: entry.kind === "clip" ? entry.inS + localOffsetS : null,
     };
   }
 
@@ -197,14 +289,14 @@ export function mapVirtualTime(
     entryIndex: endIndex,
     virtualTimeS: timeline.totalDurationS,
     localOffsetS: last.durationS,
-    sourceTimeS: last.inS + last.durationS,
+    sourceTimeS: last.kind === "clip" ? last.inS + last.durationS : null,
   };
 }
 
 export function nextVirtualEntry(
   timeline: VirtualTimeline,
   entryIndex: number,
-): VirtualTimelineEntry | null {
+): VirtualEntry | null {
   return timeline.entries[entryIndex + 1] ?? null;
 }
 

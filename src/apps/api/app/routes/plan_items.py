@@ -2887,6 +2887,7 @@ async def editor_commit_item(
             media_overlays=prep["sections"]["media_overlays"],
             visual_blocks=prep["sections"]["visual_blocks"],
             camera_effects=prep["sections"].get("camera_effects", False),
+            carousel_moment=prep["sections"].get("carousel_moment", False),
             title=cleaned_title is not None,
         ),
     )

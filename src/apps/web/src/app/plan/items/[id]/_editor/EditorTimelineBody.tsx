@@ -125,6 +125,20 @@ export interface EditorMotionBar {
   end_s: number;
 }
 
+export type CarouselBlockPosition = "intro" | "middle" | "outro";
+
+/** Staged carousel-moment block (Lane C, carousel-blocks train). No
+ *  `start_s` — the chip's window is derived from `position` + the CURRENT
+ *  clip layout (mirrors the server's `_insert_carousel_moment_step` splice,
+ *  same as `buildVirtualTimeline`'s `VirtualCarouselSplice` in
+ *  virtual-timeline.ts), so it stays correct as clips are trimmed/split. */
+export interface EditorCarouselBlockBar {
+  id: string;
+  effectLabel: string;
+  durationS: number;
+  position: CarouselBlockPosition;
+}
+
 export interface EditorTimelineBodyProps {
   durationS: number;
   /** Real rendered player duration, used to calibrate transition overlap. */
@@ -193,6 +207,15 @@ export interface EditorTimelineBodyProps {
     TimelineClip,
     "clip_index" | "signed_url" | "duration_s"
   >[];
+
+  /** Staged carousel-moment block, or null/undefined when none is staged. */
+  carouselBlock?: EditorCarouselBlockBar | null;
+  /** Chip click — opens the panel as inspector (mirrors the "Add a block"
+   *  entry point; the caller decides how to surface the panel). */
+  onSelectCarousel?: () => void;
+  /** Fired by either a drag onto one of the three position drop targets OR a
+   *  direct click on one (both stage + history.record() on the caller side). */
+  onSetCarouselPosition?: (position: CarouselBlockPosition) => void;
 
   sfx: EditorSfxBar[];
   onPreviewSfxTiming?: (
@@ -325,6 +348,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     clipPreviewMode = "rendered",
     clipsLoading,
     filmstripClips,
+    carouselBlock = null,
+    onSelectCarousel,
+    onSetCarouselPosition,
     sfx,
     onPreviewSfxTiming,
     hasMusic,
@@ -441,6 +467,31 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
 
   const playheadPx = secondsToPx(currentTimeS, pps);
   const windows = slotLayout.windows;
+  // Carousel-block window (Lane C): mirror the server's position resolution
+  // (`_insert_carousel_moment_step` in app/tasks/generative_build.py, same
+  // rule `buildVirtualTimeline`'s `VirtualCarouselSplice` implements for the
+  // virtual-preview transport) against the ACTIVE (non-removed, resolved)
+  // clip windows currently in this editor's layout — "intro" => before every
+  // clip, "outro" => after every clip, "middle" => floor(n/2), i.e. before
+  // the clip currently at that 0-based index.
+  const activeClipWindows = windows.filter((win, i) => {
+    const slot = slots[i];
+    return !!slot && !slot.removed && win.startS != null && win.durationS > 0;
+  });
+  const carouselWindow = carouselBlock
+    ? (() => {
+        const n = activeClipWindows.length;
+        const insertionIndex =
+          carouselBlock.position === "middle"
+            ? Math.floor(n / 2)
+            : carouselBlock.position === "outro"
+              ? n
+              : 0;
+        const before = insertionIndex > 0 ? activeClipWindows[insertionIndex - 1] : null;
+        const startS = before ? (before.startS ?? 0) + before.durationS : 0;
+        return { startS, durationS: carouselBlock.durationS };
+      })()
+    : null;
   const filmstripLayout =
     clipPreviewMode === "rendered"
       ? renderedSequentialSlotLayout(
@@ -577,6 +628,27 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       scrollRectLeft: rect.left,
       scrollLeft: el.scrollLeft,
     });
+  }
+
+  // Carousel-block reposition: the Video lane's three "drop targets" are the
+  // thirds of the visible track (left = intro, middle = middle, right =
+  // outro) rather than three separate widgets — the chip is draggable
+  // anywhere over the lane, and the drop x-position resolves which third it
+  // landed in. `onDragOver` must call preventDefault() or the browser never
+  // fires `drop` at all (HTML5 DnD spec default is "reject").
+  function handleCarouselDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (!carouselBlock) return;
+    e.preventDefault();
+  }
+  function handleCarouselDrop(e: React.DragEvent<HTMLDivElement>) {
+    if (!carouselBlock || !onSetCarouselPosition) return;
+    e.preventDefault();
+    const x = pointerTimelineX(e.clientX);
+    const totalPx = Math.max(1, secondsToPx(effectiveDurationS, pps));
+    const frac = Math.max(0, Math.min(1, x / totalPx));
+    const position: CarouselBlockPosition =
+      frac < 1 / 3 ? "intro" : frac < 2 / 3 ? "middle" : "outro";
+    onSetCarouselPosition(position);
   }
 
   function activateDrag(drag: ActiveDrag) {
@@ -1357,7 +1429,12 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               )}
 
               {/* ── Video lane (Clips + filmstrip) ── */}
-              <LaneTrack trackW={trackW} heightPx={TEXT_LANE_BASE_HEIGHT_PX}>
+              <LaneTrack
+                trackW={trackW}
+                heightPx={TEXT_LANE_BASE_HEIGHT_PX}
+                onDragOver={handleCarouselDragOver}
+                onDrop={handleCarouselDrop}
+              >
                 <Playline px={playheadPx} />
                 {clipsLoading ? (
                   <div className="absolute inset-1 rounded bg-zinc-200/60 motion-safe:animate-pulse" />
@@ -1447,6 +1524,42 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                       </button>
                     );
                   })
+                )}
+                {carouselBlock && carouselWindow && (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Carousel block, ${carouselBlock.effectLabel}, ${carouselWindow.durationS.toFixed(1)}s, ${carouselBlock.position}`}
+                    data-editor-bar-kind="carousel"
+                    data-editor-bar-id={carouselBlock.id}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", carouselBlock.id);
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectCarousel?.();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSelectCarousel?.();
+                      }
+                    }}
+                    className="absolute inset-y-0.5 flex min-w-11 cursor-grab items-center overflow-hidden rounded border border-violet-300 px-2 text-[10px] font-semibold text-white shadow-sm transition-colors hover:border-violet-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 active:cursor-grabbing"
+                    style={{
+                      left: secondsToPx(carouselWindow.startS, pps),
+                      width: Math.max(8, secondsToPx(carouselWindow.durationS, pps)),
+                      backgroundImage:
+                        "repeating-linear-gradient(135deg, #4c1d95, #4c1d95 6px, #5b21b6 6px, #5b21b6 12px)",
+                    }}
+                    title="Drag onto the video lane (left/middle/right third) to move it"
+                  >
+                    <span className="truncate drop-shadow">
+                      Carousel · {carouselBlock.effectLabel}
+                    </span>
+                  </div>
                 )}
               </LaneTrack>
 
@@ -1734,17 +1847,23 @@ function LaneTrack({
   heightPx,
   testId,
   children,
+  onDragOver,
+  onDrop,
 }: {
   trackW: number;
   heightPx: number;
   testId?: string;
   children: React.ReactNode;
+  onDragOver?: React.DragEventHandler<HTMLDivElement>;
+  onDrop?: React.DragEventHandler<HTMLDivElement>;
 }) {
   return (
     <div
       className="relative overflow-hidden border-b border-zinc-200 bg-zinc-50"
       style={{ width: trackW, height: heightPx }}
       data-testid={testId}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
     >
       {children}
     </div>

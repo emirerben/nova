@@ -27,6 +27,7 @@ import {
   type VisualBlock,
 } from "@/lib/plan-api";
 import type {
+  CarouselMoment,
   EditorTransition,
   LookAdjustments,
   LookPreset,
@@ -141,6 +142,14 @@ export interface EditorCommitRequest {
   motion_runtime_hash?: string;
   /** Full replacement scene camera-effect list. Omit when untouched. */
   camera_effects?: CameraEffect[];
+  /**
+   * Carousel-moment edit (Blossom carousel), staged like every other section —
+   * tri-state at the wire level: key omitted = untouched (server leaves the
+   * persisted moment alone), explicit `null` = remove, an object = partial
+   * edit merged over whatever's persisted. Always forces a full render
+   * server-side.
+   */
+  carousel_moment?: CarouselMoment | null;
   /** Working-state title. Omit when untouched; null clears. */
   title?: string | null;
   /** Lyrics editor state. Omit when untouched; any presence triggers full render. */
@@ -181,6 +190,7 @@ export interface EditorCommitResponse {
     visual_blocks?: boolean;
     motion_scenes?: boolean;
     camera_effects?: boolean;
+    carousel_moment?: boolean;
     title?: boolean;
     lyrics?: boolean;
     orientation?: boolean;
@@ -252,6 +262,8 @@ export function buildEditorCommitRequest({
   motionRuntimeHash,
   cameraEffectsDirty = false,
   cameraEffects = [],
+  carouselMomentDirty = false,
+  carouselMoment,
   acceptedSuggestions = [],
   titleDirty = true,
   title,
@@ -293,6 +305,10 @@ export function buildEditorCommitRequest({
   motionRuntimeHash?: string;
   cameraEffectsDirty?: boolean;
   cameraEffects?: CameraEffect[];
+  /** Undefined (untouched) vs. null (explicit removal) vs. an object
+   * (partial edit) — mirrors the wire tri-state on `carousel_moment`. */
+  carouselMomentDirty?: boolean;
+  carouselMoment?: CarouselMoment | null;
   acceptedSuggestions?: AcceptedSuggestionRef[];
   titleDirty?: boolean;
   title: string;
@@ -379,6 +395,7 @@ export function buildEditorCommitRequest({
     motion_scenes: motionScenesDirty ? motionScenes : undefined,
     motion_runtime_hash: motionScenesDirty ? motionRuntimeHash : undefined,
     camera_effects: cameraEffectsDirty ? cameraEffects : undefined,
+    carousel_moment: carouselMomentDirty ? (carouselMoment ?? null) : undefined,
     accepted_suggestion_ids: acceptedIds.length > 0 ? acceptedIds : undefined,
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,
     lyrics: lyricsDirty ? lyrics : undefined,

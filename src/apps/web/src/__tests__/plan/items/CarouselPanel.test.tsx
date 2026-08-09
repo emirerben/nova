@@ -1,21 +1,28 @@
 /**
- * CarouselPanel (carousel-as-a-moment) — panel primitive tests.
+ * CarouselPanel (carousel-as-a-staged-block) — panel primitive tests.
  *
- * Gating (capable/reason) is exercised through ToolDrawer's entry-point
- * button, not this file — CarouselPanel itself is only ever mounted once the
- * caller has already decided the feature is usable. This suite covers:
- * effect/mode/position/duration/transition controls, prefill from an
- * existing `current` moment, focus-tile selection (including "Let Nova
- * pick"), the exact apply payload shape (add vs update vs remove), and the
- * busy-disables-controls state.
+ * Lane C (carousel-blocks train) reshaped this panel from a dispatch-on-Apply
+ * form (collect fields locally, submit on click, no undo) into an inspector:
+ * every control patches the FULL config immediately via `onChange` — no
+ * submit button, no confirm dialog. Gating (capable/reason) is exercised
+ * through ToolDrawer's entry-point button, not this file — CarouselPanel
+ * itself is only ever mounted once the caller has already decided the
+ * feature is usable. This suite covers: effect/mode/position/duration/
+ * transition controls firing an immediate onChange with the merged config,
+ * prefill from an existing `current` moment, focus-tile selection (including
+ * "Let Nova pick"), Remove (one click, no confirm), the legacy "stills"
+ * gate (every control but Mode disabled until a real mode is picked), and
+ * that switching Mode resolves the gate.
  */
 
 import "@testing-library/jest-dom";
+import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import CarouselPanel, {
   type CarouselClipThumb,
   type CarouselPanelControl,
 } from "@/app/plan/items/[id]/_editor/CarouselPanel";
+import { naturalFocusTimelineLengthS } from "@/app/plan/items/[id]/_editor/carousel-preview-impl/geometry";
 import type { CarouselMoment } from "@/lib/plan-api";
 
 const CLIPS: CarouselClipThumb[] = [
@@ -24,39 +31,70 @@ const CLIPS: CarouselClipThumb[] = [
   { clipIndex: 2, label: "Clip 3", signedUrl: "https://cdn.example/clip2.mp4" },
 ];
 
+// Same clamp CarouselPanel applies (Math.max(2, Math.min(ceil(natural), 15)))
+// to the SAME engine call the panel makes — computed here rather than
+// hardcoded so this suite doesn't drift if the choreography engine's pacing
+// is ever tuned.
+function expectedFocusDefaultDurationS(nCards: number, focusClipIndex: number | null): number {
+  const naturalS = naturalFocusTimelineLengthS(nCards, focusClipIndex);
+  return Math.max(2, Math.min(Math.ceil(naturalS), 15));
+}
+
 function makeControl(overrides: Partial<CarouselPanelControl> = {}): CarouselPanelControl {
   return {
     capable: true,
     reason: null,
     current: null,
     clips: CLIPS,
-    busy: false,
-    onApply: jest.fn(),
+    onChange: jest.fn(),
     onRemove: jest.fn(),
     ...overrides,
   };
 }
 
 describe("CarouselPanel", () => {
-  it("defaults to scale_sweep / focus / Let Nova pick / middle / 6s / crossfade when adding fresh", () => {
-    const onApply = jest.fn();
-    const control = makeControl({ onApply });
-    render(<CarouselPanel control={control} onBack={jest.fn()} />);
+  it("a brand-new moment defaults to scale_sweep / focus / Let Nova pick / middle / crossfade, and Length defaults to the focus arc's natural length (not the flat 6s)", () => {
+    render(<CarouselPanel control={makeControl()} onBack={jest.fn()} />);
 
-    expect(screen.getByRole("button", { name: "Add carousel" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add carousel" }));
+    expect(screen.getByRole("radio", { name: "Scale sweep effect" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Focus" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("radio", { name: "Let Nova pick" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Middle" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Carousel length in seconds")).toHaveValue(
+      String(expectedFocusDefaultDurationS(CLIPS.length, null)),
+    );
+    expect(screen.getByRole("button", { name: "Crossfade" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // No submit step and nothing to remove yet.
+    expect(screen.queryByRole("button", { name: "Remove carousel" })).not.toBeInTheDocument();
+  });
 
-    expect(onApply).toHaveBeenCalledWith({
-      effect: "scale_sweep",
+  it("picking an effect stages the FULL config immediately (no submit button)", () => {
+    const onChange = jest.fn();
+    render(<CarouselPanel control={makeControl({ onChange })} onBack={jest.fn()} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: "Cover flow effect" }));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({
+      effect: "cover_flow",
       mode: "focus",
       focus_clip_index: null,
       position: "middle",
-      duration_s: 6,
+      duration_s: expectedFocusDefaultDurationS(CLIPS.length, null),
       transition: "crossfade",
     } satisfies CarouselMoment);
   });
 
-  it("prefills every control from an existing carousel_moment and shows Update", () => {
+  it("prefills every control from an existing carousel_moment", () => {
     const current: CarouselMoment = {
       effect: "cover_flow",
       mode: "rolling",
@@ -81,7 +119,7 @@ describe("CarouselPanel", () => {
       "true",
     );
     expect(screen.getByLabelText("Carousel length in seconds")).toHaveValue("9");
-    expect(screen.getByRole("button", { name: "Update carousel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove carousel" })).toBeInTheDocument();
     // Rolling mode hides the focus-tile strip entirely.
     expect(screen.queryByRole("radiogroup", { name: "Focus clip" })).not.toBeInTheDocument();
   });
@@ -104,63 +142,135 @@ describe("CarouselPanel", () => {
     );
   });
 
-  it("focus mode shows the clip strip; selecting a clip sets focus_clip_index", () => {
-    const onApply = jest.fn();
-    render(<CarouselPanel control={makeControl({ onApply })} onBack={jest.fn()} />);
+  it("selecting a focus tile stages focus_clip_index", () => {
+    const onChange = jest.fn();
+    render(<CarouselPanel control={makeControl({ onChange })} onBack={jest.fn()} />);
 
     fireEvent.click(screen.getByRole("radio", { name: "Clip 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add carousel" }));
 
-    expect(onApply).toHaveBeenCalledWith(
+    expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ mode: "focus", focus_clip_index: 1 }),
     );
   });
 
-  it('"Let Nova pick" resets focus_clip_index to null', () => {
-    const onApply = jest.fn();
+  it('"Let Nova pick" stages a null focus_clip_index', () => {
+    const onChange = jest.fn();
     const current: CarouselMoment = { mode: "focus", focus_clip_index: 2 };
-    render(<CarouselPanel control={makeControl({ current, onApply })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ current, onChange })} onBack={jest.fn()} />);
 
     expect(screen.getByRole("radio", { name: "Clip 3" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByRole("radio", { name: "Let Nova pick" }));
-    fireEvent.click(screen.getByRole("button", { name: "Update carousel" }));
 
-    expect(onApply).toHaveBeenCalledWith(
+    expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ focus_clip_index: null }),
     );
   });
 
-  it("switching to Rolling sends a null focus_clip_index regardless of prior selection", () => {
-    const onApply = jest.fn();
+  it("switching to Rolling stages a null focus_clip_index regardless of prior selection", () => {
+    const onChange = jest.fn();
     const current: CarouselMoment = { mode: "focus", focus_clip_index: 0 };
-    render(<CarouselPanel control={makeControl({ current, onApply })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ current, onChange })} onBack={jest.fn()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Rolling" }));
-    fireEvent.click(screen.getByRole("button", { name: "Update carousel" }));
 
-    expect(onApply).toHaveBeenCalledWith(
+    expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ mode: "rolling", focus_clip_index: null }),
     );
   });
 
-  it("position, length, and transition controls update the apply payload", () => {
-    const onApply = jest.fn();
-    render(<CarouselPanel control={makeControl({ onApply })} onBack={jest.fn()} />);
+  it("position, length, and transition controls each stage the merged config immediately", () => {
+    const onChange = jest.fn();
+    render(<CarouselPanel control={makeControl({ onChange })} onBack={jest.fn()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Intro" }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ position: "intro" }));
+
     fireEvent.change(screen.getByLabelText("Carousel length in seconds"), {
       target: { value: "12" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Hard cut" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add carousel" }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ duration_s: 12 }));
 
-    expect(onApply).toHaveBeenCalledWith(
-      expect.objectContaining({ position: "intro", duration_s: 12, transition: "none" }),
+    fireEvent.click(screen.getByRole("button", { name: "Hard cut" }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ transition: "none" }));
+
+    expect(onChange).toHaveBeenCalledTimes(3);
+  });
+
+  it("switching from Rolling to Focus resets Length to the focus arc's natural length, overriding an explicitly customized rolling duration", () => {
+    const onChange = jest.fn();
+    // A rolling duration deliberately customized away from the 6s default —
+    // proves the reset isn't just "duration_s happened to be unset".
+    const current: CarouselMoment = { mode: "rolling", duration_s: 10 };
+    render(<CarouselPanel control={makeControl({ current, onChange })} onBack={jest.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
+
+    const expected = expectedFocusDefaultDurationS(CLIPS.length, null);
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "focus", duration_s: expected }),
     );
   });
 
-  it('prefilled with a legacy "stills" moment: neither mode is pressed, Update is disabled, and a hint explains why', () => {
-    const onApply = jest.fn();
+  it("rolling mode is untouched: switching Focus -> Rolling keeps rolling's flat 6s default (no natural-length logic applied while rolling), even overriding a customized focus duration", () => {
+    const onChange = jest.fn();
+    // A focus duration deliberately customized away from its natural
+    // default — switching to Rolling should still land on the flat 6s.
+    const current: CarouselMoment = { mode: "focus", duration_s: 14 };
+    const Controlled = () => {
+      const [c, setC] = useState<CarouselMoment | null>(current);
+      return (
+        <CarouselPanel
+          control={makeControl({ current: c, onChange: (next) => (onChange(next), setC(next)) })}
+          onBack={jest.fn()}
+        />
+      );
+    };
+    render(<Controlled />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Rolling" }));
+
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mode: "rolling", duration_s: 6 }),
+    );
+    expect(screen.getByLabelText("Carousel length in seconds")).toHaveValue("6");
+  });
+
+  it("Length hint: hidden when the chosen duration already covers the natural focus-arc length, shown when it's shorter", () => {
+    const natural = naturalFocusTimelineLengthS(CLIPS.length, null);
+    const shortEnough = Math.max(2, Math.floor(natural) - 1); // strictly below natural
+    const longEnough = Math.min(15, Math.ceil(natural) + 2); // at/above natural, within DURATION_MAX
+
+    const { rerender } = render(
+      <CarouselPanel
+        control={makeControl({ current: { mode: "focus", duration_s: longEnough } })}
+        onBack={jest.fn()}
+      />,
+    );
+    expect(screen.queryByText(/Focus zoom needs/)).not.toBeInTheDocument();
+
+    rerender(
+      <CarouselPanel
+        control={makeControl({ current: { mode: "focus", duration_s: shortEnough } })}
+        onBack={jest.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(`Focus zoom needs ~${Math.ceil(natural)}s — shorter lengths cut it off`),
+    ).toBeInTheDocument();
+  });
+
+  it("Length hint never appears in rolling mode, regardless of how short the duration is", () => {
+    render(
+      <CarouselPanel
+        control={makeControl({ current: { mode: "rolling", duration_s: 2 } })}
+        onBack={jest.fn()}
+      />,
+    );
+    expect(screen.queryByText(/Focus zoom needs/)).not.toBeInTheDocument();
+  });
+
+  it('prefilled with a legacy "stills" moment: neither Mode button is pressed, every other control is disabled, and a hint explains why', () => {
+    const onChange = jest.fn();
     const current: CarouselMoment = {
       effect: "flipbook",
       position: "middle",
@@ -171,7 +281,7 @@ describe("CarouselPanel", () => {
       // values. Cast narrowly to simulate the real prefill shape.
       mode: "stills" as unknown as CarouselMoment["mode"],
     };
-    render(<CarouselPanel control={makeControl({ current, onApply })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ current, onChange })} onBack={jest.fn()} />);
 
     expect(screen.getByRole("button", { name: "Focus" })).toHaveAttribute(
       "aria-pressed",
@@ -186,25 +296,56 @@ describe("CarouselPanel", () => {
     expect(
       screen.getByText("This moment uses a legacy static style — pick a mode to update it."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Update carousel" })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Update carousel" }));
-    expect(onApply).not.toHaveBeenCalled();
+    // Every control but Mode is gated until a real mode is picked.
+    expect(screen.getByRole("radio", { name: "Flipbook effect" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Middle" })).toBeDisabled();
+    expect(screen.getByLabelText("Carousel length in seconds")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Focus" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rolling" })).not.toBeDisabled();
 
-    // Picking a mode clears the gate and lets Update proceed.
+    fireEvent.click(screen.getByRole("radio", { name: "Flipbook effect" }));
+    expect(onChange).not.toHaveBeenCalled();
+
+    // Picking a mode is always live (it's the one control that resolves the
+    // gate) and stages the fully-resolved config in one shot. The panel is
+    // controlled off `control.current`, so the gate itself only clears once
+    // the caller re-renders with the newly-staged current — an EditorShell
+    // integration concern, not this component's own state.
     fireEvent.click(screen.getByRole("button", { name: "Focus" }));
-    expect(
-      screen.queryByText("This moment uses a legacy static style — pick a mode to update it."),
-    ).not.toBeInTheDocument();
-    const updateButton = screen.getByRole("button", { name: "Update carousel" });
-    expect(updateButton).not.toBeDisabled();
-    fireEvent.click(updateButton);
-    expect(onApply).toHaveBeenCalledWith(
+    expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ mode: "focus", effect: "flipbook" }),
     );
   });
 
-  it("Remove only appears when a moment already exists, and calls onRemove", () => {
+  it("resolving the stills gate (parent re-renders with the newly-staged current) clears every disabled control", () => {
+    const Controlled = () => {
+      const [current, setCurrent] = useState<CarouselMoment>({
+        effect: "flipbook",
+        position: "middle",
+        duration_s: 5,
+        mode: "stills" as unknown as CarouselMoment["mode"],
+      });
+      return (
+        <CarouselPanel
+          control={makeControl({ current, onChange: setCurrent })}
+          onBack={jest.fn()}
+        />
+      );
+    };
+    render(<Controlled />);
+
+    expect(screen.getByRole("radio", { name: "Flipbook effect" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
+
+    expect(
+      screen.queryByText("This moment uses a legacy static style — pick a mode to update it."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Flipbook effect" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Focus" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("Remove only appears when a moment already exists, fires once, with no confirm dialog", () => {
     const onRemove = jest.fn();
     const { rerender } = render(
       <CarouselPanel control={makeControl({ onRemove })} onBack={jest.fn()} />,
@@ -219,20 +360,6 @@ describe("CarouselPanel", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Remove carousel" }));
     expect(onRemove).toHaveBeenCalledTimes(1);
-  });
-
-  it("busy disables every control and the apply/remove buttons", () => {
-    render(
-      <CarouselPanel
-        control={makeControl({ current: { effect: "cards_stack" }, busy: true })}
-        onBack={jest.fn()}
-      />,
-    );
-    expect(screen.getByRole("button", { name: "Updating…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Remove carousel" })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: "Scale sweep effect" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rolling" })).toBeDisabled();
-    expect(screen.getByLabelText("Carousel length in seconds")).toBeDisabled();
   });
 
   it("onBack returns to the Add-a-block grid", () => {

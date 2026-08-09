@@ -37,7 +37,6 @@ import {
   retimeVisualBlock,
   requestOverlayUploadUrls,
   requestPoolAssetUploadUrls,
-  setVariantCarouselMoment,
   sha256HexOfFile,
   updatePoolAssetContext,
   uploadToGcs,
@@ -203,6 +202,7 @@ import {
   slotsDifferFromBaseline,
   virtualDeckLookAdjustmentsAtTime,
   virtualDeckLookPresetsAtTime,
+  type VirtualCarouselSplice,
 } from "./virtual-timeline";
 import {
   deleteKeyAllowed,
@@ -941,6 +941,20 @@ export default function EditorShell({
       : null,
   );
   const [backgroundMusicDirty, setBackgroundMusicDirty] = useState(false);
+  // Carousel-moment (Blossom carousel), staged like every other batched-Save
+  // section — mirrors backgroundMusic/backgroundMusicDirty exactly (an
+  // object|null value + a dirty flag). Always holds the CURRENT effective
+  // moment (persisted until the user touches the panel, staged after), so
+  // prefill is simply "read this state" — never a separate staged-vs-
+  // persisted branch.
+  const [carouselMoment, setCarouselMoment] = useState<CarouselMoment | null>(
+    variant?.carousel_moment ?? null,
+  );
+  const [carouselMomentDirty, setCarouselMomentDirty] = useState(false);
+  // Bumped to force the ToolDrawer's carousel panel open from OUTSIDE the
+  // "Add a block" grid (the timeline chip's click handler) — see
+  // ToolDrawer's carouselOpenRequestKey prop.
+  const [carouselOpenRequestKey, setCarouselOpenRequestKey] = useState(0);
   const musicHydratedVariantIdRef = useRef<string | null>(null);
   const [overlayUploading, setOverlayUploading] = useState(false);
   const [poolAssets, setPoolAssets] = useState<PoolAsset[]>([]);
@@ -966,7 +980,7 @@ export default function EditorShell({
   useEffect(() => {
     const nextVariantId = variant?.variant_id ?? null;
     const changedVariant = musicHydratedVariantIdRef.current !== nextVariantId;
-    if (!changedVariant && (musicDirty || backgroundMusicDirty)) return;
+    if (!changedVariant && (musicDirty || backgroundMusicDirty || carouselMomentDirty)) return;
     musicHydratedVariantIdRef.current = nextVariantId;
     setSelectedMusicTrackId(variant?.music_track_id ?? null);
     setMusicRemoved(false);
@@ -985,12 +999,16 @@ export default function EditorShell({
     );
     setMusicDirty(false);
     setBackgroundMusicDirty(false);
+    setCarouselMoment(variant?.carousel_moment ?? null);
+    setCarouselMomentDirty(false);
   }, [
     backgroundMusicDirty,
     musicDirty,
+    carouselMomentDirty,
     variant?.background_music,
     variant?.music_preview_start_s,
     variant?.music_track_id,
+    variant?.carousel_moment,
     variant?.variant_id,
   ]);
   const slots = localSlots ?? clip.state.slots;
@@ -1151,6 +1169,8 @@ export default function EditorShell({
       musicDirty,
       backgroundMusic,
       backgroundMusicDirty,
+      carouselMoment,
+      carouselMomentDirty,
       lyricsEnabled,
       orientation,
       title,
@@ -1176,6 +1196,8 @@ export default function EditorShell({
       musicDirty,
       backgroundMusic,
       backgroundMusicDirty,
+      carouselMoment,
+      carouselMomentDirty,
       lyricsEnabled,
       orientation,
       title,
@@ -1202,6 +1224,8 @@ export default function EditorShell({
       setMusicDirty(doc.musicDirty ?? false);
       setBackgroundMusic(doc.backgroundMusic ?? null);
       setBackgroundMusicDirty(doc.backgroundMusicDirty ?? false);
+      setCarouselMoment(doc.carouselMoment ?? null);
+      setCarouselMomentDirty(doc.carouselMomentDirty ?? false);
       setLyricsEnabled(doc.lyricsEnabled ?? persistedLyricsEnabled(variant));
       setOrientation(doc.orientation ?? persistedOrientation(variant));
       setCaptionMeta(doc.captionMeta ?? null);
@@ -1388,6 +1412,7 @@ export default function EditorShell({
     !history.isAtBaseline ||
     musicDirty ||
     backgroundMusicDirty ||
+    carouselMomentDirty ||
     captionMetaDirty ||
     lyricsDirty ||
     orientationDirty ||
@@ -1588,7 +1613,9 @@ export default function EditorShell({
   // positive while a newly loaded variant hydrates its local start offset.
   const musicWindowDirty = !!songWindowState && musicDirty;
   const virtualPreviewRequested =
-    (clipDirty || musicWindowDirty) && !virtualFallback && clip.loadState === "ready";
+    (clipDirty || musicWindowDirty || carouselMomentDirty) &&
+    !virtualFallback &&
+    clip.loadState === "ready";
   const musicPreviewRequested =
     musicWindowDirty || backgroundMusicDirty || virtualPreviewRequested;
   const effectiveMusicTitle =
@@ -1686,11 +1713,32 @@ export default function EditorShell({
     musicTracksLoading,
     refreshMusicTracks,
   ]);
+  const carouselMomentPosition = carouselMoment?.position ?? null;
+  const carouselMomentDurationS = carouselMoment?.duration_s ?? null;
+  // Referentially stable across renders unless the block's position/duration
+  // actually changes: `useVirtualPreview`'s `timeline` is a `useMemo` keyed on
+  // this object's IDENTITY (see virtual-timeline splice deps), and EditorShell
+  // re-renders on every `currentTime` tick during playback (`onTimeUpdate:
+  // setCurrentTime` below). A fresh object literal here on every render broke
+  // that memo, rebuilding the whole virtual timeline dozens of times a second
+  // and re-firing useVirtualPreview's mapping effect (keyed on `timeline`) on
+  // every tick — which redundantly re-seeks/re-loads the ACTIVE deck outside
+  // the carousel window on every render, fighting its own smooth playback.
+  // `null` (no staged block) was already stable before this feature; this
+  // keeps the non-null case just as stable.
+  const carouselSplice = useMemo<VirtualCarouselSplice | null>(
+    () =>
+      carouselMomentPosition
+        ? { position: carouselMomentPosition, durationS: carouselMomentDurationS ?? 6 }
+        : null,
+    [carouselMomentPosition, carouselMomentDurationS],
+  );
   const virtualPreview = useVirtualPreview({
     enabled: virtualPreviewRequested,
     slots,
     clips: clip.clips,
     grid: clip.state.grid,
+    carousel: carouselSplice,
     currentTime,
     muted: videoMuted,
     musicAudioUrl: virtualMusicAudioUrl,
@@ -3773,7 +3821,13 @@ export default function EditorShell({
     // below). Independent of renderLayoutSwitchable — either one unlocks the
     // shared "render" op family; each op still gates on its own section.
     const carouselMomentAvailable = !readOnly && capabilities?.carousel === true;
-    const rawCarouselMoment = variant?.carousel_moment ?? null;
+    // Staged-first (Lane D): `carouselMoment` state already holds the
+    // session's EFFECTIVE moment (staged once touched, else the persisted
+    // `variant.carousel_moment` — see its declaration comment), so reading it
+    // directly here — instead of `variant?.carousel_moment` — is what makes
+    // the copilot see the user's own unsaved panel edits within the same
+    // session, not just what's on disk.
+    const rawCarouselMoment = carouselMoment;
     const carousel: CopilotCarouselSnapshot = {
       eligible: capabilities?.carousel === true,
       reason: capabilities?.carousel === true ? null : capabilities?.carousel_reason ?? null,
@@ -3858,6 +3912,7 @@ export default function EditorShell({
     capabilities,
     captionMeta,
     carouselClips,
+    carouselMoment,
     clip.clips,
     clip.state.grid,
     clipDirty,
@@ -3897,6 +3952,7 @@ export default function EditorShell({
         cameraEffects: localCameraEffects,
         visualBlocks: localVisualBlocks,
         motionScenes: localMotionScenes,
+        carouselMoment,
         poolAssets,
         pendingSuggestions: overlaySuggestions.rows,
         musicTrackId: effectiveMusicTrackId,
@@ -3913,6 +3969,7 @@ export default function EditorShell({
     [
       capabilities,
       captionMeta,
+      carouselMoment,
       clip.state.grid,
       effectiveMusicTrackId,
       localOverlays,
@@ -3945,13 +4002,6 @@ export default function EditorShell({
 
   const flashTimerRef = useRef<number | null>(null);
   const copilotRenderNavTimerRef = useRef<number | null>(null);
-  // handleCopilotOps (below) is defined before dispatchCarouselMoment (further
-  // down, alongside the rest of the carousel-editor state) — a ref indirection
-  // lets it call the latest dispatchCarouselMoment closure without a forward
-  // reference in its own dependency array (same "latest ref" idiom useEditCopilot
-  // uses for optsRef). Reassigned unconditionally on every render, right after
-  // dispatchCarouselMoment itself is declared.
-  const dispatchCarouselMomentRef = useRef<(config: CarouselMoment | null) => void>(() => {});
   const flashCopilotTargets = useCallback(
     (targets: {
       textIds?: string[];
@@ -3983,32 +4033,44 @@ export default function EditorShell({
     [],
   );
 
+  // Carousel-as-a-moment: staged like every other editor block (Lane C,
+  // carousel-blocks train) — every panel control (and, as of Lane D, every
+  // copilot set_carousel_moment op) patches `carouselMoment` immediately and
+  // records an undo step; nothing renders until the next batched Save (see
+  // handleSave's carouselMomentDirty/carouselMoment threading into
+  // buildEditorCommitRequest). Split out from `stageCarouselMoment` below so
+  // `handleCopilotOps` can apply the mutation WITHOUT a second
+  // `history.record()` — the whole copilot bundle (text/overlay/carousel/...)
+  // shares the single snapshot recorded at the top of that handler, same as
+  // every other draft-result field it applies inline.
+  const applyCarouselMoment = useCallback((config: CarouselMoment | null) => {
+    setCarouselMoment(config);
+    setCarouselMomentDirty(true);
+  }, []);
+
   const handleCopilotOps = useCallback(
     (result: ApplyCopilotOpsResult): DirectorApplyPresentation => {
       if (result.renderRequest) {
+        // set_intro_layout is the only op that still produces a renderRequest
+        // (carousel-as-a-moment is a staged draft mutation as of Lane D — see
+        // result.nextCarouselMoment below, applied inline like every other
+        // draft field, never through this branch).
         if (!readOnly && variant) {
-          if (result.renderRequest.kind === "set_carousel_moment") {
-            // dispatchCarouselMoment already owns the request + nav-timer +
-            // error-toast lifecycle (declared below, reached via a ref indirection
-            // — see dispatchCarouselMomentRef) — reuse it instead of duplicating.
-            dispatchCarouselMomentRef.current(result.renderRequest.config);
-          } else {
-            void editPlanItemVariant(itemId, variant.variant_id, {
-              intro_layout: result.renderRequest.layout,
+          void editPlanItemVariant(itemId, variant.variant_id, {
+            intro_layout: result.renderRequest.layout,
+          })
+            .then(() => {
+              if (copilotRenderNavTimerRef.current !== null) {
+                window.clearTimeout(copilotRenderNavTimerRef.current);
+              }
+              copilotRenderNavTimerRef.current = window.setTimeout(() => {
+                copilotRenderNavTimerRef.current = null;
+                router.push(`/plan/items/${itemId}`);
+              }, 1400);
             })
-              .then(() => {
-                if (copilotRenderNavTimerRef.current !== null) {
-                  window.clearTimeout(copilotRenderNavTimerRef.current);
-                }
-                copilotRenderNavTimerRef.current = window.setTimeout(() => {
-                  copilotRenderNavTimerRef.current = null;
-                  router.push(`/plan/items/${itemId}`);
-                }, 1400);
-              })
-              .catch((err) => {
-                setToast(err instanceof Error ? err.message : "Couldn't update the intro layout.");
-              });
-          }
+            .catch((err) => {
+              setToast(err instanceof Error ? err.message : "Couldn't update the intro layout.");
+            });
         }
         return {};
       }
@@ -4020,6 +4082,7 @@ export default function EditorShell({
         result.nextCameraEffects != null ||
         result.nextVisualBlocks != null ||
         result.nextMotionScenes != null ||
+        result.nextCarouselMoment !== undefined ||
         (result.acceptedSuggestionRefs?.length ?? 0) > 0 ||
         result.nextMusicTrackId !== undefined ||
         result.nextMixLevel !== undefined ||
@@ -4086,6 +4149,9 @@ export default function EditorShell({
       if (result.nextMotionScenes) {
         setLocalMotionScenes(result.nextMotionScenes);
         setMotionScenesDirty(true);
+      }
+      if (result.nextCarouselMoment !== undefined) {
+        applyCarouselMoment(result.nextCarouselMoment);
       }
       if (result.acceptedSuggestionRefs?.length) {
         setAcceptedSuggestions((cur) => {
@@ -4160,6 +4226,7 @@ export default function EditorShell({
       return { undoVersion: version, previewFocus };
     },
     [
+      applyCarouselMoment,
       clip.state.grid,
       flashCopilotTargets,
       history,
@@ -4177,42 +4244,19 @@ export default function EditorShell({
     ],
   );
 
-  // Carousel-as-a-moment: same full-render dispatch + post-apply navigation
-  // as the Classic/Editorial intro_layout switch above (handleCopilotOps'
-  // renderRequest branch) — call the endpoint, then hop back to the video
-  // page after a brief beat so the toast/confirm has time to be seen. `null`
-  // removes the moment; any other value adds/updates it (partial merges
-  // server-side).
-  const [carouselApplyPending, setCarouselApplyPending] = useState(false);
-  const [confirmRemoveCarousel, setConfirmRemoveCarousel] = useState(false);
-  const dispatchCarouselMoment = useCallback(
+  // CarouselPanel's own entry point: one explicit user action, one undo step
+  // (history.record() here, then delegate the actual state write to
+  // applyCarouselMoment — the same setter handleCopilotOps calls, but
+  // WITHOUT its own history.record(), since a copilot turn already recorded
+  // its single snapshot before applying any of its result fields).
+  const stageCarouselMoment = useCallback(
     (config: CarouselMoment | null) => {
-      if (!variant || readOnly) return;
-      setCarouselApplyPending(true);
-      void setVariantCarouselMoment(itemId, variant.variant_id, config)
-        .then(() => {
-          if (copilotRenderNavTimerRef.current !== null) {
-            window.clearTimeout(copilotRenderNavTimerRef.current);
-          }
-          copilotRenderNavTimerRef.current = window.setTimeout(() => {
-            copilotRenderNavTimerRef.current = null;
-            router.push(`/plan/items/${itemId}`);
-          }, 1400);
-        })
-        .catch((err) => {
-          setToast(
-            err instanceof Error
-              ? err.message
-              : config === null
-                ? "Couldn't remove the carousel."
-                : "Couldn't update the carousel.",
-          );
-        })
-        .finally(() => setCarouselApplyPending(false));
+      if (readOnly) return;
+      history.record();
+      applyCarouselMoment(config);
     },
-    [itemId, readOnly, router, variant],
+    [history, readOnly, applyCarouselMoment],
   );
-  dispatchCarouselMomentRef.current = dispatchCarouselMoment;
   const carouselCapable = !readOnly && capabilities?.carousel === true;
   const carouselReason = readOnly
     ? readOnlyReason
@@ -4223,21 +4267,13 @@ export default function EditorShell({
     () => ({
       capable: carouselCapable,
       reason: carouselReason,
-      current: variant?.carousel_moment ?? null,
+      current: carouselMoment,
       clips: carouselClips,
-      busy: carouselApplyPending,
-      onApply: (config: CarouselMoment) => dispatchCarouselMoment(config),
-      onRemove: () => setConfirmRemoveCarousel(true),
+      onChange: (config: CarouselMoment) => stageCarouselMoment(config),
+      onRemove: () => stageCarouselMoment(null),
       onDisabledTap: setToast,
     }),
-    [
-      carouselCapable,
-      carouselReason,
-      variant?.carousel_moment,
-      carouselClips,
-      carouselApplyPending,
-      dispatchCarouselMoment,
-    ],
+    [carouselCapable, carouselReason, carouselMoment, carouselClips, stageCarouselMoment],
   );
 
   const copilot = useEditCopilot({
@@ -4626,6 +4662,8 @@ export default function EditorShell({
         motionRuntimeHash: capabilities?.motion_runtime_hash ?? MOTION_RUNTIME_HASH,
         cameraEffectsDirty,
         cameraEffects: localCameraEffects,
+        carouselMomentDirty,
+        carouselMoment,
         // Filtered against the staged overlay ids inside the builder — an
         // accepted suggestion the user undid must not be resolved.
         acceptedSuggestions,
@@ -4682,6 +4720,7 @@ export default function EditorShell({
       setMusicDirty(false);
       setMusicRemoved(false);
       setBackgroundMusicDirty(false);
+      setCarouselMomentDirty(false);
       setCaptionMetaDirty(false);
       setCaptionMetaPatch({});
       setSaveState("idle");
@@ -4751,6 +4790,8 @@ export default function EditorShell({
     capabilities?.motion_runtime_hash,
     cameraEffectsDirty,
     localCameraEffects,
+    carouselMomentDirty,
+    carouselMoment,
     acceptedSuggestions,
     titleDirty,
     history,
@@ -5207,6 +5248,22 @@ export default function EditorShell({
     clipPreviewMode: virtualPreviewActive ? "virtual" : "rendered",
     clipsLoading: clip.loadState === "loading",
     filmstripClips: clip.clips,
+    carouselBlock: carouselMoment
+      ? {
+          id: "carousel-block",
+          effectLabel: (carouselMoment.effect ?? "scale_sweep").replace(/_/g, " "),
+          durationS: carouselMoment.duration_s ?? 6,
+          position: carouselMoment.position ?? "middle",
+        }
+      : null,
+    onSelectCarousel: () => {
+      setActiveTool("visuals");
+      setCarouselOpenRequestKey((k) => k + 1);
+    },
+    onSetCarouselPosition: (position) => {
+      if (!carouselMoment) return;
+      stageCarouselMoment({ ...carouselMoment, position });
+    },
     sfx: localSfx.map((p) => {
       const trimStart = p.trim_start_s ?? 0;
       const trimEnd = p.trim_end_s ?? p.duration_s ?? null;
@@ -5633,6 +5690,8 @@ export default function EditorShell({
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
             virtualPreview={virtualPreviewActive ? virtualPreview : null}
+            carouselMoment={carouselMoment}
+            carouselClips={clip.clips}
             allowManipulation={POCKET_UI ? !readOnly : false}
             stageHeightCss={
               POCKET_UI
@@ -5752,6 +5811,7 @@ export default function EditorShell({
               onDeleteVisualBlock={deleteVisualBlock}
               onRetimeVisualBlock={retimeBlock}
               carousel={carouselControl}
+              carouselOpenRequestKey={carouselOpenRequestKey}
               layoutMode={layoutMode}
               copilot={{
                 messages: copilot.messages,
@@ -5829,6 +5889,7 @@ export default function EditorShell({
               onDeleteVisualBlock={deleteVisualBlock}
               onRetimeVisualBlock={retimeBlock}
               carousel={carouselControl}
+              carouselOpenRequestKey={carouselOpenRequestKey}
               layoutMode={layoutMode}
 	              onClose={() => setActiveTool(null)}
 	            />
@@ -5909,6 +5970,8 @@ export default function EditorShell({
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
             virtualPreview={virtualPreviewActive ? virtualPreview : null}
+            carouselMoment={carouselMoment}
+            carouselClips={clip.clips}
             canvas={activeCanvas}
           />
         </div>
@@ -6268,6 +6331,7 @@ export default function EditorShell({
             onDeleteVisualBlock={deleteVisualBlock}
             onRetimeVisualBlock={retimeBlock}
             carousel={carouselControl}
+            carouselOpenRequestKey={carouselOpenRequestKey}
             layoutMode={layoutMode}
             onClose={() => dispatchPocket({ type: "CLOSE_SHEET" })}
           />
@@ -6473,18 +6537,6 @@ export default function EditorShell({
         onCancel={() => setConfirmLeave(false)}
       />
 
-      <ConfirmDialog
-        open={confirmRemoveCarousel}
-        question="Remove this carousel?"
-        detail="This re-renders the video without the carousel moment (about 3 minutes)."
-        confirmLabel="Remove"
-        cancelLabel="Keep it"
-        onConfirm={() => {
-          setConfirmRemoveCarousel(false);
-          dispatchCarouselMoment(null);
-        }}
-        onCancel={() => setConfirmRemoveCarousel(false)}
-      />
     </div>
   );
 }

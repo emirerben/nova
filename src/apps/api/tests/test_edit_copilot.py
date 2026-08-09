@@ -136,6 +136,7 @@ def _full_snapshot(*, allowed=None) -> dict:
             "music",
             "mix",
             "render",
+            "carousel",
             "title",
             "tool",
             "effect",
@@ -1337,12 +1338,15 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # Numbered follow-up resolution changes model behavior and must retain a
     # unique prompt version for trace and eval attribution. Bumped again for
     # bulk caption replacement, Creator Blocks, and explicit overlay-effect
-    # bundle linkage now share the integrated 2026-08-09-v17 prompt — update
-    # this pin whenever
-    # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
+    # bundle linkage (2026-08-09-v17), then again
+    # (2026-08-09-v18) for Lane D: set_carousel_moment moved off the "render"
+    # family onto its own "carousel" family and became a staged draft edit
+    # (no more single-op restriction, no re-render disclosure) — update this
+    # pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change
+    # rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-09-v17"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-09-v18"
 
 
 def _motion_snapshot() -> dict:

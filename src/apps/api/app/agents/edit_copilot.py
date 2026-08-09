@@ -27,7 +27,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-09-v17"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-09-v18"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -62,7 +62,13 @@ _CAPTION_OPS = {
     "set_caption_emphasis",
 }
 _MUSIC_OPS = {"swap_music", "set_mix"}
-_RENDER_OPS = frozenset({"set_intro_layout", "set_carousel_moment"})
+# set_intro_layout starts a server re-render (render family, single-op-only).
+_RENDER_OPS = frozenset({"set_intro_layout"})
+# set_carousel_moment is a staged/undoable local draft mutation (Lane D,
+# carousel-blocks train) — its own family, deliberately NOT part of
+# _RENDER_OPS: a variant can have one available without the other, and unlike
+# set_intro_layout it composes freely with any other op in the same turn.
+_CAROUSEL_OPS = frozenset({"set_carousel_moment"})
 _TITLE_OPS = {"set_title"}
 _TOOL_OPS = {"open_tool"}
 _EFFECT_OPS = {"add_camera_effect", "patch_camera_effect", "remove_camera_effect"}
@@ -79,6 +85,7 @@ _VALID_OPS = (
     | _CAPTION_OPS
     | _MUSIC_OPS
     | _RENDER_OPS
+    | _CAROUSEL_OPS
     | _TITLE_OPS
     | _TOOL_OPS
     | _EFFECT_OPS
@@ -541,7 +548,7 @@ def _format_snapshot(snapshot: dict) -> str:
     if isinstance(carousel, dict):
         lines.append(
             "\nCAROUSEL (Blossom carousel — full-screen multi-clip moment; "
-            "re-render, not a draft edit):"
+            "a staged local draft edit, applies instantly, undoable, renders on Save):"
         )
         lines.append(
             "eligible="
@@ -1224,8 +1231,8 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         aliases = {"music", "audio"}
     elif name == "set_intro_layout":
         aliases = {"render", "layout", "intro_layout"}
-    elif name in _RENDER_OPS:
-        aliases = {"render", "carousel", "carousel_moment"}
+    elif name in _CAROUSEL_OPS:
+        aliases = {"carousel", "carousel_moment"}
     elif name in _TITLE_OPS:
         aliases = {"title"}
     elif name in _TOOL_OPS:
@@ -1814,9 +1821,12 @@ def _coerce_payload(
         if not cleaned:
             state.invalid_value()
             return None
-        # No-op detection: every field the model proposed already matches the
-        # persisted moment (config is a partial patch, so only compare the
-        # fields actually present).
+        # No-op detection: every field the model proposed already matches
+        # `current` — the snapshot's staged-or-persisted moment as of Lane D
+        # (the web client builds "current" from its live `carouselMoment`
+        # state, not just the persisted variant, so an unsaved panel edit is
+        # what this compares against). config is a partial patch, so only
+        # compare the fields actually present.
         if current is not None and all(
             key in current and current[key] == value for key, value in cleaned.items()
         ):

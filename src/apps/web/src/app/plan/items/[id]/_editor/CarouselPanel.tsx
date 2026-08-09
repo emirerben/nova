@@ -1,24 +1,27 @@
 "use client";
 
 /**
- * CarouselPanel — "carousel as an editable visual template" (Visuals drawer).
+ * CarouselPanel — "carousel as a staged, undoable editor block" (Visuals drawer).
  *
  * Configures `carousel_moment` on the current variant: a full-screen
- * multi-clip carousel burned in at a position in the edit. Every apply is a
- * full server re-render (~3 min) — same lifecycle as the Classic/Editorial
- * intro_layout switch (EditorShell.handleCopilotOps), so this panel has no
- * live preview and no undo. It only collects the config and hands it to the
- * caller; EditorShell owns the dispatch + post-apply navigation back to the
- * video page, mirroring that same flow byte-for-byte.
+ * multi-clip carousel burned in at a position in the edit. Lane C
+ * (carousel-blocks train) retired the old dispatch-on-apply flow (one
+ * immediate full re-render per Add/Update/Remove, no undo, no batching) in
+ * favor of the SAME staged model every other editor block uses: every
+ * control here patches the working `carousel_moment` immediately (an undo
+ * step each), and the change rides the next batched Save alongside
+ * everything else. There is no Apply/Update button and no Remove confirm —
+ * both are one click, both are undoable via ⌘Z.
  *
  * Effect chips are STATIC CSS mini-mocks (no physics, no canvas) — enough to
  * signal the shape of each effect at a glance, same spirit as
  * LayoutPreviewCard's tile treatment but far cheaper to render.
  */
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import type { CarouselMoment } from "@/lib/plan-api";
 import { resolveCarouselFocusClipIndex } from "@/lib/generative-api";
+import { MAX_CARDS, naturalFocusTimelineLengthS } from "./carousel-preview-impl/geometry";
 
 export interface CarouselClipThumb {
   clipIndex: number;
@@ -34,14 +37,18 @@ export interface CarouselPanelControl {
    *  instead (aria-disabled + onDisabledTap), same as every other tool. */
   capable: boolean;
   reason: string | null;
-  /** Current moment (prefill), or null if none is configured yet. */
+  /** The session's EFFECTIVE moment: the staged value once the panel has
+   *  been touched, else the persisted `variant.carousel_moment`, else null
+   *  (no carousel configured — a brand-new block). The caller (EditorShell)
+   *  owns this precedence; the panel just renders whatever it's handed. */
   current: CarouselMoment | null;
   /** The variant's clips, in timeline order, for the focus-tile selector. */
   clips: CarouselClipThumb[];
-  /** True while an add/update/remove request is in flight. */
-  busy: boolean;
-  onApply: (config: CarouselMoment) => void;
-  /** Pressing Remove — the caller owns the confirm step. */
+  /** Stage a FULL replacement config immediately — every control below
+   *  calls this on change (no separate submit step). Each call is one undo
+   *  step; the change rides the next batched Save. */
+  onChange: (config: CarouselMoment) => void;
+  /** Stage removal (`null`) immediately — undoable, no confirm dialog. */
   onRemove: () => void;
 }
 
@@ -96,50 +103,64 @@ export default function CarouselPanel({
   /** Return to the "Add a block" grid. */
   onBack: () => void;
 }) {
-  const { current, clips, busy, onApply, onRemove } = control;
+  const { current, clips, onChange, onRemove } = control;
 
+  const effect: NonNullable<CarouselMoment["effect"]> = current?.effect ?? "scale_sweep";
   // null = no mode selected yet — only reachable via a prefill whose
   // persisted mode isn't one of the two pickable options ("stills", or any
   // other unrecognized value). A brand-new moment (current == null) always
   // starts on "focus".
-  const prefillMode: "focus" | "rolling" | null =
+  const mode: "focus" | "rolling" | null =
     current == null ? "focus" : isPickableMode(current.mode) ? current.mode : null;
+  const focusClipIndex = resolveCarouselFocusClipIndex(current);
+  const position: NonNullable<CarouselMoment["position"]> = current?.position ?? "middle";
+  const transition: NonNullable<CarouselMoment["transition"]> = current?.transition ?? "crossfade";
 
-  const [effect, setEffect] = useState<NonNullable<CarouselMoment["effect"]>>(
-    current?.effect ?? "scale_sweep",
+  // Natural (unfitted) length of the focus choreography for this clip pool —
+  // the SAME engine the preview renders through (buildTimeline via
+  // geometry.ts), just without the fit-to-durationS step. A focus arc
+  // (lead-in + flick + settle + zoom-in + hold + zoom-out + settle) runs
+  // ~10-13s; a short duration_s truncates it before the zoom plays. Cheap
+  // (pure math, no DOM) and memoized on the only two inputs that change it.
+  const nCardsForPreview = Math.min(clips.length, MAX_CARDS);
+  const naturalFocusDurationS = useMemo(
+    () => naturalFocusTimelineLengthS(nCardsForPreview, focusClipIndex),
+    [nCardsForPreview, focusClipIndex],
   );
-  const [mode, setMode] = useState<"focus" | "rolling" | null>(prefillMode);
-  const [focusClipIndex, setFocusClipIndex] = useState<number | null>(
-    resolveCarouselFocusClipIndex(current),
+  const focusDefaultDurationS = Math.max(
+    DURATION_MIN,
+    Math.min(Math.ceil(naturalFocusDurationS), DURATION_MAX),
   );
-  const [position, setPosition] = useState<NonNullable<CarouselMoment["position"]>>(
-    current?.position ?? "middle",
-  );
-  const [durationS, setDurationS] = useState<number>(current?.duration_s ?? DEFAULT_DURATION_S);
-  const [transition, setTransition] = useState<NonNullable<CarouselMoment["transition"]>>(
-    current?.transition ?? "crossfade",
-  );
-
-  // Resync per-field on the server's current moment (e.g. after this same
-  // apply lands and the variant refetches) — same pattern VariantCard uses
-  // for its voice/footage mix slider.
-  useEffect(() => setEffect(current?.effect ?? "scale_sweep"), [current?.effect]);
-  useEffect(() => setMode(prefillMode), [prefillMode]);
-  useEffect(
-    () => setFocusClipIndex(resolveCarouselFocusClipIndex(current)),
-    // `current` may carry the legacy `focus` shape (no `focus_clip_index`)
-    // for an already-persisted moment — depend on the whole object rather
-    // than a field that isn't in the strict `CarouselMoment` contract type.
-    [current],
-  );
-  useEffect(() => setPosition(current?.position ?? "middle"), [current?.position]);
-  useEffect(
-    () => setDurationS(current?.duration_s ?? DEFAULT_DURATION_S),
-    [current?.duration_s],
-  );
-  useEffect(() => setTransition(current?.transition ?? "crossfade"), [current?.transition]);
+  // Rolling keeps the flat 6s default unconditionally. Focus defaults to the
+  // natural arc length instead — ONLY as a fallback when nothing explicit is
+  // staged yet; once a value is staged (by the user OR by the mode-switch
+  // handler below), it's honored as-is.
+  const durationS =
+    current?.duration_s ?? (mode === "focus" ? focusDefaultDurationS : DEFAULT_DURATION_S);
+  const focusDurationTooShort = mode === "focus" && durationS < naturalFocusDurationS;
 
   const isUpdate = current != null;
+  // Legacy "stills" prefill: no resolvable mode yet. Every OTHER control
+  // stays disabled until the user picks Focus or Rolling — the same gate
+  // the old submit-on-Apply model enforced (nothing could be applied until
+  // mode resolved), now applied per-control since there's no single submit
+  // step to gate. Mode itself is always pickable, so it's exempt.
+  const stillsGated = mode === null;
+
+  /** Merge a partial change over the current effective config and stage the
+   *  whole thing immediately — every control below is "instant apply". */
+  function patch(partial: Partial<CarouselMoment>) {
+    const resolvedMode = partial.mode ?? mode ?? "focus";
+    onChange({
+      effect,
+      mode: resolvedMode,
+      focus_clip_index: resolvedMode === "focus" ? focusClipIndex : null,
+      position,
+      duration_s: durationS,
+      transition,
+      ...partial,
+    });
+  }
 
   return (
     <div className="space-y-5 px-5 pb-5">
@@ -160,8 +181,8 @@ export default function CarouselPanel({
               id={option.id}
               label={option.label}
               selected={effect === option.id}
-              disabled={busy}
-              onSelect={() => setEffect(option.id)}
+              disabled={stillsGated}
+              onSelect={() => patch({ effect: option.id })}
             />
           ))}
         </div>
@@ -174,9 +195,30 @@ export default function CarouselPanel({
             <button
               key={m}
               type="button"
-              disabled={busy}
               aria-pressed={mode === m}
-              onClick={() => setMode(m)}
+              onClick={() =>
+                patch({
+                  mode: m,
+                  focus_clip_index: m === "focus" ? focusClipIndex : null,
+                  // Any ACTUAL mode change resets Length to that mode's own
+                  // default — focus and rolling have different natural
+                  // paces (a focus zoom needs ~10-13s; rolling has none of
+                  // that structure), so a length tuned for one rarely
+                  // applies to the other. Entering focus resets to the
+                  // natural arc length (task a); entering rolling always
+                  // resets to the flat 6s default (task c — "unchanged"
+                  // means rolling's own default never varies, regardless of
+                  // what focus's default currently computes to). Re-clicking
+                  // the already-active mode is a no-op here (falls through
+                  // to patch()'s own default, i.e. whatever's on screen).
+                  ...(mode !== m
+                    ? {
+                        duration_s:
+                          m === "focus" ? focusDefaultDurationS : DEFAULT_DURATION_S,
+                      }
+                    : {}),
+                })
+              }
               className={segmentedBtnClass(mode === m)}
             >
               {m === "focus" ? "Focus" : "Rolling"}
@@ -200,8 +242,8 @@ export default function CarouselPanel({
           >
             <FocusTile
               selected={focusClipIndex === null}
-              disabled={busy}
-              onSelect={() => setFocusClipIndex(null)}
+              disabled={stillsGated}
+              onSelect={() => patch({ focus_clip_index: null })}
               label="Let Nova pick"
               autoPick
             />
@@ -209,8 +251,8 @@ export default function CarouselPanel({
               <FocusTile
                 key={clipThumb.clipIndex}
                 selected={focusClipIndex === clipThumb.clipIndex}
-                disabled={busy}
-                onSelect={() => setFocusClipIndex(clipThumb.clipIndex)}
+                disabled={stillsGated}
+                onSelect={() => patch({ focus_clip_index: clipThumb.clipIndex })}
                 label={clipThumb.label}
                 signedUrl={clipThumb.signedUrl}
               />
@@ -226,9 +268,9 @@ export default function CarouselPanel({
             <button
               key={p.id}
               type="button"
-              disabled={busy}
+              disabled={stillsGated}
               aria-pressed={position === p.id}
-              onClick={() => setPosition(p.id)}
+              onClick={() => patch({ position: p.id })}
               className={segmentedBtnClass(position === p.id)}
             >
               {p.label}
@@ -251,11 +293,16 @@ export default function CarouselPanel({
           max={DURATION_MAX}
           step={1}
           value={durationS}
-          disabled={busy}
+          disabled={stillsGated}
           aria-label="Carousel length in seconds"
-          onChange={(e) => setDurationS(Number(e.target.value))}
+          onChange={(e) => patch({ duration_s: Number(e.target.value) })}
           className="w-full accent-lime-600 disabled:opacity-40"
         />
+        {focusDurationTooShort && (
+          <p className="mt-1.5 text-[11px] text-amber-700">
+            Focus zoom needs ~{Math.ceil(naturalFocusDurationS)}s — shorter lengths cut it off
+          </p>
+        )}
       </section>
 
       <section>
@@ -265,9 +312,9 @@ export default function CarouselPanel({
             <button
               key={t}
               type="button"
-              disabled={busy}
+              disabled={stillsGated}
               aria-pressed={transition === t}
-              onClick={() => setTransition(t)}
+              onClick={() => patch({ transition: t })}
               className={segmentedBtnClass(transition === t)}
             >
               {t === "crossfade" ? "Crossfade" : "Hard cut"}
@@ -276,48 +323,15 @@ export default function CarouselPanel({
         </div>
       </section>
 
-      <p className="text-[11px] text-[#71717a]">
-        {isUpdate ? "Updating" : "Adding"} a carousel re-renders the whole video (about 3
-        minutes) and takes you back to the video page while it finishes. This isn&apos;t
-        undoable from the editor — use Update or Remove to change it again.
-      </p>
-
-      <div className="space-y-2">
+      {isUpdate && (
         <button
           type="button"
-          disabled={busy || mode === null}
-          onClick={() => {
-            if (mode === null) return; // guarded by disabled above; keeps the payload honest
-            onApply({
-              effect,
-              mode,
-              focus_clip_index: mode === "focus" ? focusClipIndex : null,
-              position,
-              duration_s: durationS,
-              transition,
-            });
-          }}
-          className="min-h-11 w-full rounded-full bg-[#0c0c0e] px-4 text-[13px] font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:opacity-40"
+          onClick={onRemove}
+          className="min-h-11 w-full rounded-lg border border-red-200 text-[13px] font-semibold text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500"
         >
-          {busy
-            ? isUpdate
-              ? "Updating…"
-              : "Adding…"
-            : isUpdate
-              ? "Update carousel"
-              : "Add carousel"}
+          Remove carousel
         </button>
-        {isUpdate && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onRemove}
-            className="min-h-11 w-full rounded-lg border border-red-200 text-[13px] font-semibold text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500 disabled:opacity-40"
-          >
-            Remove carousel
-          </button>
-        )}
-      </div>
+      )}
     </div>
   );
 }
