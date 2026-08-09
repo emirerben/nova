@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-08-09",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -136,6 +136,42 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
       "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+    },
+    {
+      "id": "ultrashort-subjective-list-corpus-10",
+      "factor": "A 10–15s clip listing 3–5 opinionated, unjustified observations ('things I find kinda X') outperforms longer considered pieces — the form IS the hook",
+      "why": "Delivery speed plus strong personal opinion signals taste without asking for time; the brevity drives near-100% completion and the opinion drives saves and shares",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched minimal-fashion set, a 15s 'things I find kinda chic' clip indexed 11.14x the account median at 13.9% engagement — the highest engagement-rate post in the entire batch",
+      "source": "tiktok market research 2026-08 (minimal-fashion account)"
+    },
+    {
+      "id": "collab-as-personal-secret-corpus-11",
+      "factor": "Frame a brand partnership as revealing your personal secret — 'the reason my [result] looks like this lately' — and introduce the product after the personal reveal, not before",
+      "why": "The secret-reveal structure creates curiosity before the product is visible; the creator's genuine aesthetic sells it as advice, not advertising, driving views far beyond a disclosed-ad frame",
+      "applies_to": ["plan", "hook"],
+      "provenance": "corpus",
+      "evidence": "In our fetched lifestyle set, a 11s partnership video framed as a personal skin-secret indexed 16.30x the account median — the single highest view_index in the full August 2026 batch",
+      "source": "tiktok market research 2026-08 (personal lifestyle account, partnership content)"
+    },
+    {
+      "id": "minimal-text-emotional-reveal-corpus-12",
+      "factor": "For a significant life moment, 2–4 words of on-screen text over footage outperforms full captions — underexplaining forces the viewer to interpret and re-watch",
+      "why": "Ambiguity is the engagement hook: the viewer fills in the meaning, invests emotionally, and re-watches to confirm their read; comments become an interpretation conversation",
+      "applies_to": ["hook", "all"],
+      "provenance": "corpus",
+      "evidence": "In our fetched lifestyle set, two minimal-text clips ('once in a lifetime' 179s at vi=9.46x; a 121s farm-callback at vi=7.50x) both significantly outperformed the same account's captioned content in the same period",
+      "source": "tiktok market research 2026-08 (personal lifestyle account)"
+    },
+    {
+      "id": "cliffhanger-binary-open-corpus-13",
+      "factor": "Open with a binary 'ok or continue?' choice framed around your situation — the video becomes the implicit answer and the comment section becomes the vote",
+      "why": "A binary choice is the lowest-friction engagement action on the platform; it converts passive watchers into commenters, which the algorithm reads as a strong intent signal",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched lifestyle set, a 30s clip opened with a binary question ('continue or stop?') indexed 7.19x the account median — strong outperformance for short-form content with no visually spectacular moment",
+      "source": "tiktok market research 2026-08 (personal lifestyle account)"
     }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-05",
+  "version": "2026-08-09",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -322,6 +322,30 @@
       "highlight_color": "#FFE08A",
       "niche": "professional lifestyle & city aesthetics",
       "source": "tiktok market research 2026-06"
+    },
+    {
+      "id": "minimal-life-reveal-static-01",
+      "content_profile": "personal lifestyle milestone or emotional life moment — footage carries the weight, text names the feeling in 2–4 words without explaining it",
+      "effect": "static",
+      "text": "once in a lifetime",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "niche": "personal lifestyle diary",
+      "source": "tiktok market research 2026-08"
+    },
+    {
+      "id": "cliffhanger-binary-question-karaoke-01",
+      "content_profile": "personal lifestyle or vlog — opens a story arc with a binary choice question, inviting the audience to vote in comments while the video gives the implicit answer",
+      "effect": "karaoke-line",
+      "text": "should I even continue?",
+      "highlight_word": "continue",
+      "position": "center",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FF5C5C",
+      "niche": "personal lifestyle diary",
+      "source": "tiktok market research 2026-08"
     }
   ]
 }
