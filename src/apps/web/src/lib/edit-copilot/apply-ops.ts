@@ -46,8 +46,8 @@ import {
   slotMutationFingerprint,
   textMutationFingerprint,
   type CopilotSnapshot,
-  type CopilotCaptionCueSnapshot,
   type CopilotCarouselSnapshot,
+  type CopilotCaptionCueSnapshot,
   type CopilotSlotSnapshot,
   type CopilotTextSnapshotBar,
   type CopilotSfxPlacementSnapshot,
@@ -117,12 +117,15 @@ export interface ApplyCopilotOpsResult {
   nextCameraEffects?: CameraEffect[] | null;
   nextVisualBlocks?: VisualBlock[] | null;
   nextMotionScenes?: MotionPresetInstance[] | null;
+  /** Tri-state, mirrors nextVisualBlocks conventions but for a single nullable
+   * value: `undefined` = untouched this turn, `null` = staged removal, an
+   * object = staged add/edit (Lane D — carousel-as-a-moment is a first-class
+   * draft mutation, not a render dispatch). */
+  nextCarouselMoment?: CarouselMoment | null;
   acceptedSuggestionRefs?: AcceptedSuggestionRef[];
   nextMusicTrackId?: string;
   nextMixLevel?: number;
-  renderRequest?:
-    | { kind: "set_intro_layout"; layout: "linear" | "cluster" }
-    | { kind: "set_carousel_moment"; config: CarouselMoment | null };
+  renderRequest?: { kind: "set_intro_layout"; layout: "linear" | "cluster" };
   nextTitle?: string;
   captionMetaPatch?: CaptionMetaPatch;
   openTool?: "text" | "visuals" | "sounds" | "overlays" | "styles";
@@ -143,6 +146,12 @@ export interface ApplyCopilotOpsContext {
   cameraEffects?: CameraEffect[];
   visualBlocks?: VisualBlock[];
   motionScenes?: MotionPresetInstance[];
+  /** The shell's live staged-or-persisted carousel moment (Lane C's
+   * `carouselMoment` state — always the session's EFFECTIVE moment, staged
+   * once touched, else the persisted `variant.carousel_moment`, else null).
+   * `undefined` means the caller hasn't threaded it (falls back to
+   * reconstructing a seed from `snapshot.carousel.current`). */
+  carouselMoment?: CarouselMoment | null;
   poolAssets?: PoolAsset[];
   pendingSuggestions?: OverlaySuggestion[];
   musicTrackId?: string | null;
@@ -208,13 +217,38 @@ function fmtSeconds(value: number): string {
   return `${round(value).toFixed(1)}s`;
 }
 
-/** Short human summary for a carousel-moment change chip. */
-function describeCarouselMoment(current: CopilotCarouselSnapshot["current"]): string {
-  if (!current) return "none";
-  const bits = [current.position, current.mode, current.effect].filter(
-    (bit): bit is NonNullable<typeof bit> => bit != null,
-  );
-  return bits.length > 0 ? bits.join(" · ") : "carousel";
+/** Reconstructs a CarouselMoment-shaped seed from the snapshot's persisted
+ * `carousel.current` (flattened contract fields) — used only when the caller
+ * hasn't threaded the shell's live `ctx.carouselMoment` (e.g. a test context
+ * built directly against `applyCopilotOps`). "stills" is a legal persisted
+ * mode (auto-authoring only) but isn't part of the CarouselMoment contract
+ * type, so it's dropped from the seed rather than carried into a merge
+ * target — mirrors CarouselPanel's isPickableMode gate. */
+function carouselMomentFromSnapshot(
+  current: CopilotCarouselSnapshot["current"],
+): CarouselMoment | null {
+  if (!current) return null;
+  const moment: CarouselMoment = {};
+  if (current.position != null) moment.position = current.position;
+  if (current.mode === "focus" || current.mode === "rolling") moment.mode = current.mode;
+  if (current.effect != null) moment.effect = current.effect;
+  if (current.focus_clip_index !== undefined) moment.focus_clip_index = current.focus_clip_index;
+  if (current.duration_s != null) moment.duration_s = current.duration_s;
+  if (current.transition != null) moment.transition = current.transition;
+  return moment;
+}
+
+/** Human-readable summary of a carousel config for chip receipts (from/to). */
+function describeCarouselMoment(moment: CarouselMoment | null): string {
+  if (!moment) return "none";
+  const parts: string[] = [];
+  if (moment.position) parts.push(moment.position);
+  if (moment.mode) parts.push(moment.mode);
+  if (moment.effect) parts.push(moment.effect.replaceAll("_", " "));
+  if (moment.focus_clip_index != null) parts.push(`clip ${moment.focus_clip_index + 1}`);
+  if (moment.duration_s != null) parts.push(fmtSeconds(moment.duration_s));
+  if (moment.transition) parts.push(moment.transition === "crossfade" ? "crossfade" : "hard cut");
+  return parts.length > 0 ? parts.join(" · ") : "carousel";
 }
 
 function textValue(bar: TextElementBar, snap: CopilotTextSnapshotBar, key: TextStylePatchKey | "text" | "start_s" | "end_s"): unknown {
@@ -661,6 +695,7 @@ export function applyCopilotOps(
   let workingVisualBlocks = ctx.visualBlocks ?? [];
   let nextMotionScenes: MotionPresetInstance[] | undefined;
   let workingMotionScenes = ctx.motionScenes ?? [];
+  let nextCarouselMoment: CarouselMoment | null | undefined;
   let acceptedSuggestionRefs: AcceptedSuggestionRef[] | undefined;
   let nextMusicTrackId: string | undefined;
   let nextMixLevel: number | undefined;
@@ -740,6 +775,7 @@ export function applyCopilotOps(
       nextCameraEffects !== undefined ||
       nextVisualBlocks !== undefined ||
       nextMotionScenes !== undefined ||
+      nextCarouselMoment !== undefined ||
       (acceptedSuggestionRefs?.length ?? 0) > 0 ||
       nextMusicTrackId !== undefined ||
       nextMixLevel !== undefined ||
@@ -1381,28 +1417,30 @@ export function applyCopilotOps(
         to: `${label(op.layout)} (re-rendering)`,
       });
     } else if (op.op === "set_carousel_moment") {
+      // Carousel-as-a-moment (Lane D, carousel-blocks train): a first-class
+      // staged/undoable draft mutation, same model as every other editor
+      // block — no render dispatch, no single-op-per-turn restriction, and
+      // it composes with any other op in the same bundle. Seeds from the
+      // shell's live staged-or-persisted value (ctx.carouselMoment — Lane
+      // C's invariant: that state always holds the session's EFFECTIVE
+      // moment) and falls back to reconstructing one from the snapshot's
+      // persisted `carousel.current` when the caller hasn't threaded it.
       const carousel = ctx.snapshot.carousel;
       if (!carousel) {
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "carousel is not available"));
         continue;
       }
-      if (renderRequest || hasDraftMutation() || rawOps.length > 1) {
-        rejected.push(reject(
-          op.op,
-          labelForOp(op),
-          "capability_disabled",
-          "a carousel change re-renders the video — ask for it on its own",
-        ));
-        continue;
-      }
-      const currentLabel = describeCarouselMoment(carousel.current);
+      const seed: CarouselMoment | null =
+        ctx.carouselMoment !== undefined
+          ? ctx.carouselMoment
+          : carouselMomentFromSnapshot(carousel.current);
       if (op.config === null) {
-        if (!carousel.current) {
+        if (seed == null) {
           rejected.push(reject(op.op, labelForOp(op), "no_effect", "no carousel to remove"));
           continue;
         }
-        renderRequest = { kind: "set_carousel_moment", config: null };
-        applied.push({ label: "Carousel", from: currentLabel, to: "removed (re-rendering)" });
+        nextCarouselMoment = null;
+        applied.push({ label: "Carousel", from: describeCarouselMoment(seed), to: "removed" });
       } else {
         if (!carousel.eligible) {
           rejected.push(reject(
@@ -1413,23 +1451,23 @@ export function applyCopilotOps(
           ));
           continue;
         }
-        const current = carousel.current;
-        const currentValueAt = (key: keyof CarouselMoment): unknown =>
-          current ? (current[key] ?? null) : null;
+        const seedValueAt = (key: keyof CarouselMoment): unknown =>
+          seed ? (seed[key] ?? null) : null;
         const isNoOp =
-          current != null &&
+          seed != null &&
           (Object.entries(op.config) as Array<[keyof CarouselMoment, unknown]>).every(([key, value]) =>
-            sameValue(currentValueAt(key), value ?? null),
+            sameValue(seedValueAt(key), value ?? null),
           );
         if (isNoOp) {
           rejected.push(reject(op.op, labelForOp(op), "no_effect", "carousel already matches this configuration"));
           continue;
         }
-        renderRequest = { kind: "set_carousel_moment", config: op.config };
+        const merged: CarouselMoment = { ...(seed ?? {}), ...op.config };
+        nextCarouselMoment = merged;
         applied.push({
           label: "Carousel",
-          from: currentLabel,
-          to: `${describeCarouselMoment({ ...current, ...op.config } as NonNullable<CopilotCarouselSnapshot["current"]>)} (re-rendering)`,
+          from: describeCarouselMoment(seed),
+          to: describeCarouselMoment(merged),
         });
       }
     } else if (op.op === "set_title") {
@@ -1790,6 +1828,7 @@ export function applyCopilotOps(
     nextCameraEffects,
     nextVisualBlocks,
     nextMotionScenes,
+    nextCarouselMoment,
     acceptedSuggestionRefs,
     nextMusicTrackId,
     nextMixLevel,

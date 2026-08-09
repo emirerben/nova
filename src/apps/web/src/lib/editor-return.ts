@@ -40,6 +40,7 @@ export interface EditorCommitSectionsLike {
   title?: boolean;
   lyrics?: boolean;
   orientation?: boolean;
+  carousel_moment?: boolean;
 }
 
 export function editorCommitStartedRender(sections: EditorCommitSectionsLike): boolean {
@@ -57,7 +58,8 @@ export function editorCommitStartedRender(sections: EditorCommitSectionsLike): b
       sections.motion_scenes ||
       sections.camera_effects ||
       sections.lyrics ||
-      sections.orientation,
+      sections.orientation ||
+      sections.carousel_moment,
   );
 }
 
