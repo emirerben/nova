@@ -2700,7 +2700,7 @@ async def editor_commit_item(
         ).scalar_one_or_none()
 
     visual_assets: dict[str, dict] | None = None
-    if commit_body.visual_blocks is not None:
+    if commit_body.visual_blocks is not None or commit_body.motion_scenes is not None:
         rows = (
             (await db.execute(select(PlanItemAsset).where(PlanItemAsset.plan_item_id == item.id)))
             .scalars()

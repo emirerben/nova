@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,9 +9,11 @@ from app.pipeline.motion_scene import (
     MOTION_MAX_ACTIVE_FRAMES,
     MOTION_RUNTIME_HASH,
     MotionSceneError,
+    _normalize_motion_asset,
     _render_sequence,
     _runtime_candidates,
     _runtime_root,
+    apply_motion_scenes,
     validate_motion_instances,
 )
 
@@ -37,7 +40,7 @@ def test_motion_contract_accepts_bounded_preset_and_normalizes_colors() -> None:
             "palette": {"primary": "#8B5CF6", "accent": "#D9FF43"},
         }
     ]
-    assert MOTION_RUNTIME_HASH.startswith("motion-v1:ck0.40.0:")
+    assert MOTION_RUNTIME_HASH.startswith("motion-v2:ck0.40.0:")
 
 
 @pytest.mark.parametrize(
@@ -45,7 +48,7 @@ def test_motion_contract_accepts_bounded_preset_and_normalizes_colors() -> None:
     [
         ({"end_frame_exclusive": 0}, "minimum of 1"),
         ({"end_frame_exclusive": 60, "start_frame": 60}, "greater than start_frame"),
-        ({"preset_id": "raw_svg"}, "'route_trace' was expected"),
+        ({"preset_id": "raw_svg"}, "not valid under any of the given schemas"),
         ({"intensity": 1.1}, "maximum of 1"),
         ({"palette": {"primary": "red", "accent": "#FFFFFF"}}, "does not match"),
     ],
@@ -58,20 +61,44 @@ def test_motion_contract_rejects_unbounded_or_executable_input(
         validate_motion_instances([_scene(**patch)], duration_frames=120)
 
 
-def test_motion_contract_uses_exclusive_end_and_bounded_span() -> None:
+def test_motion_contract_uses_exclusive_end_and_bounded_active_union() -> None:
     with pytest.raises(ValueError, match="exceeds the video duration"):
         validate_motion_instances([_scene(end_frame_exclusive=61)], duration_frames=60)
+    separated = [
+        _scene(id="first", start_frame=0, end_frame_exclusive=30),
+        _scene(id="last", start_frame=300, end_frame_exclusive=330),
+    ]
+    assert len(validate_motion_instances(separated)) == 2
     with pytest.raises(ValueError, match=f"maximum is {MOTION_MAX_ACTIVE_FRAMES}"):
         validate_motion_instances(
             [
-                _scene(id="first", start_frame=0, end_frame_exclusive=30),
-                _scene(
-                    id="last",
-                    start_frame=MOTION_MAX_ACTIVE_FRAMES,
-                    end_frame_exclusive=MOTION_MAX_ACTIVE_FRAMES + 1,
-                ),
+                _scene(id="first", start_frame=0, end_frame_exclusive=MOTION_MAX_ACTIVE_FRAMES),
+                _scene(id="last", start_frame=300, end_frame_exclusive=301),
             ]
         )
+
+
+def test_motion_contract_accepts_creator_text_and_media_params() -> None:
+    text = _scene(
+        preset_id="kinetic_word",
+        end_frame_exclusive=75,
+        params={"text": "MAKE IT WILD"},
+    )
+    media = _scene(
+        id="cards",
+        preset_id="card_stack",
+        end_frame_exclusive=120,
+        params={
+            "assets": [
+                {"asset_id": "a", "gcs_path": "users/u/plan/pool/a.png"},
+                {"asset_id": "b", "gcs_path": "users/u/plan/pool/b.png"},
+            ]
+        },
+    )
+    assert validate_motion_instances([text]) == [
+        text | {"palette": {"primary": "#8B5CF6", "accent": "#D9FF43"}}
+    ]
+    assert validate_motion_instances([media])
 
 
 def test_motion_contract_rejects_duplicate_ids() -> None:
@@ -136,7 +163,13 @@ def test_deno_renderer_discovers_cache_without_broad_read_permission(
         return type(
             "Result",
             (),
-            {"stdout": f'{{"runtime_hash":"{MOTION_RUNTIME_HASH}"}}\n'.encode()},
+            {
+                "stdout": (
+                    f'{{"runtime_hash":"{MOTION_RUNTIME_HASH}",'
+                    '"segments":[{"start_frame":0,"end_frame_exclusive":60}],'
+                    '"frame_count":60}\n'
+                ).encode()
+            },
         )()
 
     monkeypatch.delenv("DENO_DIR", raising=False)
@@ -151,3 +184,157 @@ def test_deno_renderer_discovers_cache_without_broad_read_permission(
     assert read_flag.startswith("--allow-read=")
     assert str(tmp_path) in read_flag
     assert "/tmp/deno-cache" in read_flag
+
+
+def test_deno_renderer_materializes_exact_media_generations(monkeypatch, tmp_path) -> None:
+    downloads: list[tuple[str, str]] = []
+    refs = [
+        {"asset_id": "image-1", "gcs_path": "users/u/plan/i/pool/one.png"},
+        {"asset_id": "image-2", "gcs_path": "users/u/plan/i/pool/two.png"},
+    ]
+    media_scene = {
+        **_scene(preset_id="card_stack"),
+        "params": {"assets": refs},
+    }
+
+    def download(path, local_path, *, generation):
+        downloads.append((path, generation))
+        Path(local_path).write_bytes(b"encoded-image")
+
+    def fake_run(cmd: list[str], *, label: str, env=None):
+        del cmd, label, env
+        return SimpleNamespace(
+            stdout=(
+                f'{{"runtime_hash":"{MOTION_RUNTIME_HASH}",'
+                '"segments":[{"start_frame":0,"end_frame_exclusive":60}],'
+                '"frame_count":60}\n'
+            ).encode()
+        )
+
+    monkeypatch.setenv("DENO_DIR", "/tmp/deno-cache")
+    monkeypatch.setattr("app.pipeline.motion_scene.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene.storage.download_generation_to_file",
+        download,
+    )
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene._normalize_motion_asset",
+        lambda path, **_kwargs: path,
+    )
+    monkeypatch.setattr("app.pipeline.motion_scene._run", fake_run)
+
+    _render_sequence(
+        [media_scene],
+        width=1080,
+        height=1920,
+        tmpdir=str(tmp_path),
+        asset_generations={"image-1": "11", "image-2": "22"},
+    )
+
+    assert downloads == [
+        ("users/u/plan/i/pool/one.png", "11"),
+        ("users/u/plan/i/pool/two.png", "22"),
+    ]
+
+
+def test_motion_image_resource_is_probed_and_normalized_before_canvaskit(
+    monkeypatch, tmp_path
+) -> None:
+    source = tmp_path / "source.jpg"
+    source.write_bytes(b"encoded-image")
+
+    def fake_run(cmd: list[str], *, label: str, env=None):
+        del env
+        if label == "Creator Block image probe":
+            return SimpleNamespace(
+                stdout=b'{"streams":[{"codec_type":"video","width":4000,"height":3000}]}'
+            )
+        assert label == "Creator Block image normalization"
+        Path(cmd[-1]).write_bytes(b"normalized-png")
+        return SimpleNamespace(stdout=b"")
+
+    monkeypatch.setattr("app.pipeline.motion_scene._run", fake_run)
+    normalized = _normalize_motion_asset(str(source), index=0, tmpdir=str(tmp_path))
+    assert Path(normalized).read_bytes() == b"normalized-png"
+
+
+def test_motion_image_resource_rejects_decompression_bomb_dimensions(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "source.jpg"
+    source.write_bytes(b"tiny-encoded-image")
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene._run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            stdout=b'{"streams":[{"codec_type":"video","width":20000,"height":20000}]}'
+        ),
+    )
+    with pytest.raises(MotionSceneError, match="dimensions are invalid"):
+        _normalize_motion_asset(str(source), index=0, tmpdir=str(tmp_path))
+
+
+def test_motion_image_resource_rejects_video_disguised_as_image(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "spoofed.jpg"
+    source.write_bytes(b"mp4-bytes-with-image-extension")
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene._run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            stdout=(
+                b'{"streams":[{"codec_type":"video","width":1080,"height":1920,'
+                b'"nb_frames":"90","duration":"3.0"}],"format":{"duration":"3.0"}}'
+            )
+        ),
+    )
+    with pytest.raises(MotionSceneError, match="not a still image"):
+        _normalize_motion_asset(str(source), index=0, tmpdir=str(tmp_path))
+
+
+def test_sparse_segments_composite_at_exact_offsets_with_final_encoder_policy(
+    monkeypatch,
+) -> None:
+    commands: list[list[str]] = []
+    uploaded: list[tuple[str, str]] = []
+    generation_downloads: list[tuple[str, str]] = []
+    monkeypatch.setattr("app.pipeline.motion_scene.storage.download_to_file", lambda *_: None)
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene.storage.download_generation_to_file",
+        lambda path, _local, *, generation: generation_downloads.append((path, generation)),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene.storage.upload_public_read",
+        lambda *args: uploaded.append(args),
+    )
+    monkeypatch.setattr("app.pipeline.motion_scene._probe_dimensions", lambda _path: (1920, 1080))
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene._render_sequence",
+        lambda *_args, **kwargs: (
+            str(Path(kwargs["tmpdir"]) / "frames"),
+            [
+                {"start_frame": 0, "end_frame_exclusive": 30},
+                {"start_frame": 300, "end_frame_exclusive": 330},
+            ],
+            60,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene._run",
+        lambda cmd, **_kwargs: commands.append(cmd),
+    )
+
+    apply_motion_scenes(
+        base_gcs_path="generative-jobs/job/base.mp4",
+        instances=[
+            _scene(id="first", start_frame=0, end_frame_exclusive=30),
+            _scene(id="last", start_frame=300, end_frame_exclusive=330),
+        ],
+        output_gcs_path="generative-jobs/job/motion.mp4",
+        job_id="job",
+        source_generation="source-generation-7",
+    )
+
+    command = commands[0]
+    filters = command[command.index("-filter_complex") + 1]
+    assert "setpts=PTS+0.000000000/TB" in filters
+    assert "setpts=PTS+10.000000000/TB" in filters
+    assert "repeatlast=0" in filters
+    assert command[command.index("-preset") + 1] == "fast"
+    assert uploaded and uploaded[0][1] == "generative-jobs/job/motion.mp4"
+    assert generation_downloads == [("generative-jobs/job/base.mp4", "source-generation-7")]

@@ -1,64 +1,66 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nova.video/schemas/motion-scene-v1.json",
-  "title": "Nova motion preset instances v1",
+  "$id": "https://nova.video/schemas/motion-scene-v2.json",
+  "title": "Nova motion preset instances v2",
   "type": "array",
-  "maxItems": 4,
+  "maxItems": 8,
   "items": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "id",
-      "preset_id",
-      "preset_version",
-      "start_frame",
-      "end_frame_exclusive",
-      "palette",
-      "intensity"
-    ],
-    "properties": {
-      "id": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80,
-        "pattern": "^[A-Za-z0-9_-]+$"
-      },
-      "preset_id": {
-        "const": "route_trace"
-      },
-      "preset_version": {
-        "const": 1
-      },
-      "start_frame": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 1799
-      },
-      "end_frame_exclusive": {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 1800
-      },
-      "palette": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["primary", "accent"],
-        "properties": {
-          "primary": {
-            "type": "string",
-            "pattern": "^#[0-9A-Fa-f]{6}$"
-          },
-          "accent": {
-            "type": "string",
-            "pattern": "^#[0-9A-Fa-f]{6}$"
-          }
-        }
-      },
-      "intensity": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 1
+    "oneOf": [
+      {"$ref":"#/$defs/route_trace"},
+      {"$ref":"#/$defs/kinetic_word"},
+      {"$ref":"#/$defs/tag_stack"},
+      {"$ref":"#/$defs/flow_field"},
+      {"$ref":"#/$defs/cloud_break"},
+      {"$ref":"#/$defs/offer_swap"},
+      {"$ref":"#/$defs/card_stack"},
+      {"$ref":"#/$defs/film_strip"},
+      {"$ref":"#/$defs/donut_text"}
+    ]
+  },
+  "$defs": {
+    "id": {"type":"string","minLength":1,"maxLength":80,"pattern":"^[A-Za-z0-9_-]+$"},
+    "frame_start": {"type":"integer","minimum":0,"maximum":1799},
+    "frame_end": {"type":"integer","minimum":1,"maximum":1800},
+    "palette": {
+      "type":"object","additionalProperties":false,"required":["primary","accent"],
+      "properties":{"primary":{"type":"string","pattern":"^#[0-9A-Fa-f]{6}$"},"accent":{"type":"string","pattern":"^#[0-9A-Fa-f]{6}$"}}
+    },
+    "intensity": {"type":"number","minimum":0,"maximum":1},
+    "asset": {
+      "type":"object","additionalProperties":false,"required":["asset_id","gcs_path"],
+      "properties":{
+        "asset_id":{"$ref":"#/$defs/id"},
+        "gcs_path":{"type":"string","minLength":1,"maxLength":900,"pattern":"^(users|dev-user|generative-jobs|slot-uploads|music-uploads)/[A-Za-z0-9_./-]+$"}
       }
+    },
+    "common": {
+      "type":"object",
+      "required":["id","preset_id","preset_version","start_frame","end_frame_exclusive","palette","intensity"],
+      "properties":{
+        "id":{"$ref":"#/$defs/id"},"preset_id":{"type":"string"},"preset_version":{"const":1},
+        "start_frame":{"$ref":"#/$defs/frame_start"},"end_frame_exclusive":{"$ref":"#/$defs/frame_end"},
+        "palette":{"$ref":"#/$defs/palette"},"intensity":{"$ref":"#/$defs/intensity"}
+      }
+    },
+    "route_trace": {
+      "allOf":[
+        {"$ref":"#/$defs/common"},
+        {"type":"object","additionalProperties":false,"properties":{"id":{},"preset_id":{"const":"route_trace"},"preset_version":{},"start_frame":{},"end_frame_exclusive":{},"palette":{},"intensity":{}}}
+      ]
+    },
+    "kinetic_word": {"$ref":"#/$defs/creator_base","unevaluatedProperties":false,"properties":{"preset_id":{"const":"kinetic_word"},"params":{"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string","minLength":1,"maxLength":32}}}}},
+    "tag_stack": {"$ref":"#/$defs/creator_base","unevaluatedProperties":false,"properties":{"preset_id":{"const":"tag_stack"},"params":{"type":"object","additionalProperties":false,"required":["labels"],"properties":{"labels":{"type":"array","minItems":2,"maxItems":6,"items":{"type":"string","minLength":1,"maxLength":24}}}}}},
+    "flow_field": {"$ref":"#/$defs/creator_base","unevaluatedProperties":false,"properties":{"preset_id":{"const":"flow_field"},"params":{"type":"object","additionalProperties":false,"required":["headline"],"properties":{"headline":{"type":"string","minLength":1,"maxLength":40},"kicker":{"type":"string","minLength":0,"maxLength":24}}}}},
+    "cloud_break": {"$ref":"#/$defs/creator_base","unevaluatedProperties":false,"properties":{"preset_id":{"const":"cloud_break"},"params":{"type":"object","additionalProperties":false,"required":["lines"],"properties":{"lines":{"type":"array","minItems":2,"maxItems":5,"items":{"type":"string","minLength":1,"maxLength":28}}}}}},
+    "offer_swap": {"$ref":"#/$defs/creator_base","unevaluatedProperties":false,"properties":{"preset_id":{"const":"offer_swap"},"params":{"type":"object","additionalProperties":false,"required":["primary_text","alternate_text"],"properties":{"primary_text":{"type":"string","minLength":1,"maxLength":24},"alternate_text":{"type":"string","minLength":1,"maxLength":24}}}}},
+    "card_stack": {"$ref":"#/$defs/creator_base","unevaluatedProperties":false,"properties":{"preset_id":{"const":"card_stack"},"params":{"type":"object","additionalProperties":false,"required":["assets"],"properties":{"assets":{"type":"array","minItems":2,"maxItems":6,"items":{"$ref":"#/$defs/asset"}}}}}},
+    "film_strip": {"$ref":"#/$defs/creator_base","unevaluatedProperties":false,"properties":{"preset_id":{"const":"film_strip"},"params":{"type":"object","additionalProperties":false,"required":["assets"],"properties":{"assets":{"type":"array","minItems":3,"maxItems":8,"items":{"$ref":"#/$defs/asset"}}}}}},
+    "donut_text": {"$ref":"#/$defs/creator_base","unevaluatedProperties":false,"properties":{"preset_id":{"const":"donut_text"},"params":{"type":"object","additionalProperties":false,"required":["left_text","right_text"],"properties":{"left_text":{"type":"string","minLength":1,"maxLength":20},"right_text":{"type":"string","minLength":1,"maxLength":20}}}}},
+    "creator_base": {
+      "allOf":[
+        {"$ref":"#/$defs/common"},
+        {"type":"object","required":["params"],"properties":{"params":{"type":"object"}}}
+      ]
     }
   }
 }

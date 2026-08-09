@@ -19,6 +19,7 @@ import { useCallback, useState } from "react";
 export type EditorSelectionKind =
   | "text"
   | "visual"
+  | "motion"
   | "clip"
   | "sfx"
   | "overlay"

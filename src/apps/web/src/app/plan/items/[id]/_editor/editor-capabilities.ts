@@ -103,6 +103,9 @@ export function editorReasonCopy(reason: string | null | undefined): string {
   if (reason === "portrait_only") return "motion presets currently support portrait edits";
   if (reason === "lyrics_variant") return "lyrics-synced edits do not support visual blocks";
   if (reason === "no_clean_base") return "this edit has no reusable clean video base";
+  if (reason === "motion_clean_base_unavailable") {
+    return "this edit has no reusable clean video base for Creator Blocks";
+  }
   if (reason === "duration_unknown") return "re-render this legacy edit before adding visual blocks";
   if (reason === "no_video") return "waiting for this edit to finish rendering";
   return reason;

@@ -28,6 +28,7 @@ import {
   deletePoolAsset,
   editPlanItemVariant,
   getLyricSeeds,
+  isBoundedCreatorImageAsset,
   LyricSeedsError,
   NotAuthenticatedError,
   confirmOverlayUploads,
@@ -221,9 +222,15 @@ import {
   useEditorOverlaySuggestions,
 } from "./useEditorOverlaySuggestions";
 import {
+  creatorBlockEntry,
+  createCreatorBlockInstance,
   MOTION_FPS,
+  MOTION_MAX_INSTANCES,
   MOTION_RUNTIME_HASH,
+  validateMotionInstances,
+  type MotionPresetId,
   type MotionPresetInstanceV1,
+  type MotionPresetPatch,
 } from "@nova/motion-runtime";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
@@ -1225,19 +1232,22 @@ export default function EditorShell({
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
 
   const motionRuntimeCompatible =
-    !capabilities?.motion_runtime_hash ||
-    capabilities.motion_runtime_hash === MOTION_RUNTIME_HASH;
-  const addRouteTraceMotion = useCallback(() => {
+    capabilities?.motion_scenes_reason !== "motion_runtime_mismatch" &&
+    (!capabilities?.motion_runtime_hash ||
+      capabilities.motion_runtime_hash === MOTION_RUNTIME_HASH);
+  const motionPreviewRuntimeHash = motionRuntimeCompatible
+    ? MOTION_RUNTIME_HASH
+    : (capabilities?.motion_required_runtime_hash ?? "unsupported-motion-runtime");
+  const addMotionScene = useCallback((presetId: MotionPresetId) => {
     if (
       readOnly ||
       !MOTION_SCENES_UI_ENABLED ||
       capabilities?.motion_scenes === false ||
       !motionRuntimeCompatible ||
-      localMotionScenes.length >= 4
+      localMotionScenes.length >= MOTION_MAX_INSTANCES
     ) {
       return;
     }
-    history.record();
     const motionDuration =
       duration > 0 ? duration : Math.max(0, Number(variant?.duration_s ?? 0));
     const durationFrames = Math.max(1, Math.round(motionDuration * MOTION_FPS));
@@ -1245,14 +1255,20 @@ export default function EditorShell({
       0,
       Math.min(durationFrames - 1, Math.floor(currentTime * MOTION_FPS)),
     );
-    let endFrame = Math.min(durationFrames, startFrame + 2 * MOTION_FPS);
+    const readyImages = poolAssets.filter(isBoundedCreatorImageAsset);
+    const entry = presetId === "route_trace" ? null : creatorBlockEntry(presetId);
+    if (entry && readyImages.length < entry.min_assets) return;
+    let endFrame = Math.min(
+      durationFrames,
+      startFrame + (entry?.default_duration_frames ?? 2 * MOTION_FPS),
+    );
     if (endFrame <= startFrame) {
       startFrame = Math.max(0, durationFrames - 2 * MOTION_FPS);
       endFrame = durationFrames;
     }
-    setLocalMotionScenes((current) => [
-      ...current,
-      {
+    let candidate: MotionPresetInstanceV1 =
+      presetId === "route_trace"
+        ? {
         id: `motion-${crypto.randomUUID()}`,
         preset_id: "route_trace",
         preset_version: 1,
@@ -1260,30 +1276,65 @@ export default function EditorShell({
         end_frame_exclusive: endFrame,
         palette: { primary: "#8B5CF6", accent: "#D9FF43" },
         intensity: 0.8,
-      },
-    ]);
+          }
+        : createCreatorBlockInstance({
+            id: `motion-${crypto.randomUUID()}`,
+            presetId,
+            startFrame,
+            endFrameExclusive: endFrame,
+            assets: readyImages.slice(0, entry!.min_assets).map((asset) => ({
+              asset_id: asset.id,
+              gcs_path: asset.gcs_path,
+            })),
+          });
+    while (
+      candidate.end_frame_exclusive > candidate.start_frame + 1 &&
+      !validateMotionInstances([...localMotionScenes, candidate], durationFrames).ok
+    ) {
+      candidate = {
+        ...candidate,
+        end_frame_exclusive: candidate.end_frame_exclusive - 1,
+      } as MotionPresetInstanceV1;
+    }
+    if (!validateMotionInstances([...localMotionScenes, candidate], durationFrames).ok) return;
+    history.record();
+    setLocalMotionScenes([...localMotionScenes, candidate]);
     setMotionScenesDirty(true);
+    select("motion", candidate.id);
+    setActiveTool("visuals");
   }, [
     capabilities?.motion_scenes,
     currentTime,
     history,
-    localMotionScenes.length,
+    localMotionScenes,
     motionRuntimeCompatible,
+    poolAssets,
     readOnly,
+    select,
     duration,
     variant?.duration_s,
   ]);
 
   const patchMotionScene = useCallback(
-    (id: string, patch: Partial<MotionPresetInstanceV1>) => {
+    (id: string, patch: MotionPresetPatch) => {
       if (readOnly || capabilities?.motion_scenes === false) return;
-      history.record(`motion:${id}`);
-      setLocalMotionScenes((current) =>
-        current.map((scene) => (scene.id === id ? { ...scene, ...patch } : scene)),
+      const candidate = localMotionScenes.map((scene) =>
+        scene.id === id ? ({ ...scene, ...patch } as MotionPresetInstanceV1) : scene,
       );
+      const durationFrames = Math.max(
+        1,
+        Math.round((duration || variant?.duration_s || 60) * MOTION_FPS),
+      );
+      const validation = validateMotionInstances(candidate, durationFrames);
+      if (!validation.ok) {
+        setToast(validation.errors[0] ?? "That Creator Block edit is outside the allowed range.");
+        return;
+      }
+      history.record(`motion:${id}`);
+      setLocalMotionScenes(candidate);
       setMotionScenesDirty(true);
     },
-    [capabilities?.motion_scenes, history, readOnly],
+    [capabilities?.motion_scenes, duration, history, localMotionScenes, readOnly, variant?.duration_s],
   );
 
   const removeMotionScene = useCallback(
@@ -2178,9 +2229,14 @@ export default function EditorShell({
         setInspectorTab("basic");
         const overlay = localOverlays.find((o) => o.id === id);
         if (overlay) seekPlaybackTo(overlay.start_s);
+      } else if (kind === "motion") {
+        setInspectorTab("basic");
+        const block = localMotionScenes.find((scene) => scene.id === id);
+        if (block) seekPlaybackTo(block.start_frame / MOTION_FPS);
+        setActiveTool("visuals");
       }
     },
-    [activeTool, clip.state.grid, duration, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
+    [activeTool, clip.state.grid, duration, layoutMode, localMotionScenes, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
   );
 
   const selectText = useCallback(
@@ -2950,6 +3006,33 @@ export default function EditorShell({
     [localVisualBlocks, readOnly, state.bars],
   );
 
+  const previewMotionTiming = useCallback(
+    (id: string, patch: { start_s: number; end_s: number }) => {
+      if (readOnly || capabilities?.motion_scenes === false) return;
+      setLocalMotionScenes((scenes) => {
+        const candidate = scenes.map((scene) =>
+          scene.id === id
+            ? ({
+                ...scene,
+                start_frame: Math.max(0, Math.round(patch.start_s * MOTION_FPS)),
+                end_frame_exclusive: Math.max(
+                  Math.round(patch.start_s * MOTION_FPS) + 1,
+                  Math.round(patch.end_s * MOTION_FPS),
+                ),
+              } as MotionPresetInstanceV1)
+            : scene,
+        );
+        const durationFrames = Math.max(
+          1,
+          Math.round((duration || variant?.duration_s || 60) * MOTION_FPS),
+        );
+        return validateMotionInstances(candidate, durationFrames).ok ? candidate : scenes;
+      });
+      setMotionScenesDirty(true);
+    },
+    [capabilities?.motion_scenes, duration, readOnly, variant?.duration_s],
+  );
+
   const previewOverlayPatch = useCallback(
     (id: string, patch: Partial<MediaOverlay>) => {
       if (readOnly) return;
@@ -3698,6 +3781,8 @@ export default function EditorShell({
       transitionsEnabled: EDIT_TRANSITIONS_UI_ENABLED,
       visualBlocksEnabled:
         VISUAL_BLOCKS_UI_ENABLED && capabilities?.visual_blocks !== false,
+      motionScenesEnabled:
+        MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes === true,
       titleEditable: !readOnly,
       openTools,
       readOnly,
@@ -3740,6 +3825,9 @@ export default function EditorShell({
       title,
       cameraEffects: localCameraEffects,
       visualBlocks: localVisualBlocks,
+      motionScenes: localMotionScenes,
+      motionScenesEnabled:
+        MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes === true,
       readOnly: readOnly || allowedFamilies.length === 0,
     });
   }, [
@@ -3755,6 +3843,7 @@ export default function EditorShell({
     localOverlays,
     localCameraEffects,
     localVisualBlocks,
+    localMotionScenes,
     localSfx,
     mixLevel,
     musicTracks,
@@ -3783,6 +3872,7 @@ export default function EditorShell({
         overlays: localOverlays,
         cameraEffects: localCameraEffects,
         visualBlocks: localVisualBlocks,
+        motionScenes: localMotionScenes,
         poolAssets,
         pendingSuggestions: overlaySuggestions.rows,
         musicTrackId: effectiveMusicTrackId,
@@ -3794,6 +3884,7 @@ export default function EditorShell({
         makeSfxPlacementId: () => crypto.randomUUID(),
         makeOverlayId: () => crypto.randomUUID(),
         makeCameraEffectId: () => crypto.randomUUID(),
+        makeMotionId: () => crypto.randomUUID(),
       }),
     [
       capabilities,
@@ -3803,6 +3894,7 @@ export default function EditorShell({
       localOverlays,
       localCameraEffects,
       localVisualBlocks,
+      localMotionScenes,
       localSfx,
       mixLevel,
       overlaySuggestions.rows,
@@ -3903,6 +3995,7 @@ export default function EditorShell({
         result.nextOverlays != null ||
         result.nextCameraEffects != null ||
         result.nextVisualBlocks != null ||
+        result.nextMotionScenes != null ||
         (result.acceptedSuggestionRefs?.length ?? 0) > 0 ||
         result.nextMusicTrackId !== undefined ||
         result.nextMixLevel !== undefined ||
@@ -3951,6 +4044,10 @@ export default function EditorShell({
       if (result.nextVisualBlocks) {
         setLocalVisualBlocks(result.nextVisualBlocks);
         setVisualBlocksDirty(true);
+      }
+      if (result.nextMotionScenes) {
+        setLocalMotionScenes(result.nextMotionScenes);
+        setMotionScenesDirty(true);
       }
       if (result.acceptedSuggestionRefs?.length) {
         setAcceptedSuggestions((cur) => {
@@ -4011,6 +4108,7 @@ export default function EditorShell({
           ...feedback.slotIds,
           ...(result.nextSfx ? result.nextSfx.map((sfx) => sfx.id) : []),
           ...changedOverlayIds,
+          ...(result.nextMotionScenes ? result.nextMotionScenes.map((scene) => scene.id) : []),
         ],
       });
 
@@ -4167,6 +4265,9 @@ export default function EditorShell({
     } else if (selection.kind === "visual") {
       deleteVisualBlock(selection.id);
       clear();
+    } else if (selection.kind === "motion") {
+      removeMotionScene(selection.id);
+      clear();
     } else if (selection.kind === "camera") {
       deleteCameraEffect(selection.id);
     }
@@ -4180,6 +4281,7 @@ export default function EditorShell({
     removeSfx,
     removeOverlay,
     deleteVisualBlock,
+    removeMotionScene,
     deleteCameraEffect,
     state.bars,
   ]);
@@ -4269,6 +4371,27 @@ export default function EditorShell({
     [history, previewDuration, readOnly, selection, selectedBar],
   );
 
+  const nudgeSelectedMotion = useCallback(
+    (deltaS: number) => {
+      if (readOnly || selection?.kind !== "motion") return;
+      const scene = localMotionScenes.find((item) => item.id === selection.id);
+      if (!scene) return;
+      const deltaFrames = Math.round(deltaS * MOTION_FPS);
+      const span = scene.end_frame_exclusive - scene.start_frame;
+      const durationFrames = Math.max(1, Math.round(previewDuration * MOTION_FPS));
+      const startFrame = Math.max(
+        0,
+        Math.min(durationFrames - span, scene.start_frame + deltaFrames),
+      );
+      if (startFrame === scene.start_frame) return;
+      patchMotionScene(scene.id, {
+        start_frame: startFrame,
+        end_frame_exclusive: startFrame + span,
+      });
+    },
+    [localMotionScenes, patchMotionScene, previewDuration, readOnly, selection],
+  );
+
   // Transport enablement (plan §6).
   const canSplit =
     (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
@@ -4289,6 +4412,7 @@ export default function EditorShell({
     selection?.kind === "sfx" ||
     selection?.kind === "overlay" ||
     selection?.kind === "visual" ||
+    selection?.kind === "motion" ||
     selection?.kind === "camera";
 
   // ── Keyboard: Escape ladder + Delete with focus guard (plan §5/§9) ──────────
@@ -4311,10 +4435,14 @@ export default function EditorShell({
       }
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         if (!deleteKeyAllowed(e.target as HTMLElement | null)) return;
-        if (selection?.kind !== "text") return;
+        if (selection?.kind !== "text" && selection?.kind !== "motion") return;
         e.preventDefault();
-        const step = e.shiftKey ? 1 : 0.1;
-        nudgeSelectedText(e.key === "ArrowLeft" ? -step : step);
+        const step = selection.kind === "motion"
+          ? e.shiftKey ? 10 / MOTION_FPS : 1 / MOTION_FPS
+          : e.shiftKey ? 1 : 0.1;
+        const delta = e.key === "ArrowLeft" ? -step : step;
+        if (selection.kind === "motion") nudgeSelectedMotion(delta);
+        else nudgeSelectedText(delta);
         return;
       }
       if (e.key === " " || e.key === "Spacebar") {
@@ -4365,6 +4493,7 @@ export default function EditorShell({
     layoutMode,
     lightSheetOpen,
     nudgeSelectedText,
+    nudgeSelectedMotion,
     togglePlay,
   ]);
 
@@ -5005,6 +5134,18 @@ export default function EditorShell({
     showVisualBlocks:
       VISUAL_BLOCKS_UI_ENABLED && capabilities?.visual_blocks !== false,
     onPreviewVisualTiming: previewVisualTiming,
+    motionBlocks: localMotionScenes.map((scene) => ({
+      id: scene.id,
+      label:
+        scene.preset_id === "route_trace"
+          ? "Route trace"
+          : creatorBlockEntry(scene.preset_id).label,
+      start_s: scene.start_frame / MOTION_FPS,
+      end_s: scene.end_frame_exclusive / MOTION_FPS,
+    })),
+    showMotionBlocks:
+      MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes !== false,
+    onPreviewMotionTiming: previewMotionTiming,
     cameraEffects:
       capabilities?.camera_effects === false
         ? []
@@ -5140,9 +5281,13 @@ export default function EditorShell({
         if (!win || win.startS == null || win.durationS <= 0) return [];
         const startS = win.startS;
         const endS = win.startS + win.durationS;
-        const hasMarks = visibleTextBars.some(
-          (b) => b.start_s < endS && b.end_s > startS,
-        );
+        const hasMarks =
+          visibleTextBars.some((b) => b.start_s < endS && b.end_s > startS) ||
+          localMotionScenes.some(
+            (scene) =>
+              scene.start_frame / MOTION_FPS < endS &&
+              scene.end_frame_exclusive / MOTION_FPS > startS,
+          );
         return [{ id: slot.key, startS, endS, hasMarks }];
       })
     : [];
@@ -5175,6 +5320,8 @@ export default function EditorShell({
             ? "Edit sound"
             : selection?.kind === "camera"
               ? "Edit effect"
+              : selection?.kind === "motion"
+                ? "Edit block"
               : "Edit";
 
   return (
@@ -5397,7 +5544,7 @@ export default function EditorShell({
             captionsEnabled={captionMeta?.enabled}
             visualBlocks={localVisualBlocks}
             motionScenes={localMotionScenes}
-            motionRuntimeHash={capabilities?.motion_runtime_hash}
+            motionRuntimeHash={motionPreviewRuntimeHash}
             cameraEffects={localCameraEffects}
             visualAssets={poolAssets}
             mediaOverlays={localOverlays}
@@ -5537,12 +5684,14 @@ export default function EditorShell({
               overlaySuggestions={overlaySuggestionsNode}
               visualBlocks={localVisualBlocks}
               motionScenes={localMotionScenes}
+              selectedMotionId={selection?.kind === "motion" ? selection.id : null}
               motionDurationS={previewDuration}
               motionAvailable={capabilities?.motion_scenes === true}
               motionRuntimeCompatible={motionRuntimeCompatible}
-              onAddMotion={addRouteTraceMotion}
+              onAddMotion={addMotionScene}
               onPatchMotion={patchMotionScene}
               onRemoveMotion={removeMotionScene}
+              onSelectMotion={(id) => select("motion", id)}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
               visualUploading={pendingPoolUploads.length > 0}
@@ -5612,12 +5761,14 @@ export default function EditorShell({
 	              overlaySuggestions={overlaySuggestionsNode}
               visualBlocks={localVisualBlocks}
               motionScenes={localMotionScenes}
+              selectedMotionId={selection?.kind === "motion" ? selection.id : null}
               motionDurationS={previewDuration}
               motionAvailable={capabilities?.motion_scenes === true}
               motionRuntimeCompatible={motionRuntimeCompatible}
-              onAddMotion={addRouteTraceMotion}
+              onAddMotion={addMotionScene}
               onPatchMotion={patchMotionScene}
               onRemoveMotion={removeMotionScene}
+              onSelectMotion={(id) => select("motion", id)}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
               visualUploading={pendingPoolUploads.length > 0}
@@ -5680,7 +5831,7 @@ export default function EditorShell({
             captionsEnabled={captionMeta?.enabled}
             visualBlocks={localVisualBlocks}
             motionScenes={localMotionScenes}
-            motionRuntimeHash={capabilities?.motion_runtime_hash}
+            motionRuntimeHash={motionPreviewRuntimeHash}
             cameraEffects={localCameraEffects}
             visualAssets={poolAssets}
             mediaOverlays={localOverlays}
@@ -5814,10 +5965,25 @@ export default function EditorShell({
                   durationS={timelineDuration || previewDuration}
                   currentTimeS={currentTime}
                   selectedClipId={selection?.kind === "clip" ? selection.id : null}
+                  marks={localMotionScenes.map((scene) => ({
+                    id: scene.id,
+                    startS: scene.start_frame / MOTION_FPS,
+                    endS: scene.end_frame_exclusive / MOTION_FPS,
+                    label: scene.preset_id === "route_trace"
+                      ? "Route trace"
+                      : creatorBlockEntry(scene.preset_id).label,
+                  }))}
+                  selectedMarkId={selection?.kind === "motion" ? selection.id : null}
                   onScrubStart={pausePlayback}
                   onScrub={seekTo}
                   onSelectClip={(id, seconds) => {
                     selectElement("clip", id);
+                    seekTo(seconds);
+                  }}
+                  onSelectMark={(id, seconds) => {
+                    setActiveTool("visuals");
+                    selectElement("motion", id);
+                    dispatchPocket({ type: "OPEN_TOOL", tool: "visuals" });
                     seekTo(seconds);
                   }}
                 />
@@ -6034,12 +6200,14 @@ export default function EditorShell({
             overlaySuggestions={overlaySuggestionsNode}
             visualBlocks={localVisualBlocks}
             motionScenes={localMotionScenes}
+            selectedMotionId={selection?.kind === "motion" ? selection.id : null}
             motionDurationS={previewDuration}
             motionAvailable={capabilities?.motion_scenes === true}
             motionRuntimeCompatible={motionRuntimeCompatible}
-            onAddMotion={addRouteTraceMotion}
+            onAddMotion={addMotionScene}
             onPatchMotion={patchMotionScene}
             onRemoveMotion={removeMotionScene}
+            onSelectMotion={(id) => select("motion", id)}
             visualAssets={poolAssets}
             visualTextElements={state.bars}
             visualUploading={pendingPoolUploads.length > 0}

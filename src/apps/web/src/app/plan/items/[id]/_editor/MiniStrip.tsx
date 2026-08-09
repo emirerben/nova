@@ -26,9 +26,12 @@ export interface MiniStripProps {
   durationS: number;
   currentTimeS: number;
   selectedClipId?: string | null;
+  marks?: Array<{ id: string; startS: number; endS: number; label: string }>;
+  selectedMarkId?: string | null;
   onScrubStart?: () => void;
   onScrub: (seconds: number) => void;
   onSelectClip: (id: string, seconds: number) => void;
+  onSelectMark?: (id: string, seconds: number) => void;
 }
 
 /** Travel (px) beyond which a pointer gesture becomes a scrub, not a tap. */
@@ -72,9 +75,12 @@ export function MiniStrip({
   durationS,
   currentTimeS,
   selectedClipId,
+  marks = [],
+  selectedMarkId,
   onScrubStart,
   onScrub,
   onSelectClip,
+  onSelectMark,
 }: MiniStripProps): JSX.Element | null {
   const dragRef = useRef<DragState | null>(null);
   /** Swallow the synthetic click that follows a pointer tap we handled. */
@@ -197,6 +203,36 @@ export function MiniStrip({
           </button>
         );
       })}
+      {marks.map((mark) => (
+        <button
+          key={mark.id}
+          type="button"
+          aria-label={`${mark.label}, ${mark.startS.toFixed(1)}–${mark.endS.toFixed(1)} seconds`}
+          aria-pressed={selectedMarkId === mark.id}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelectMark?.(mark.id, mark.startS);
+          }}
+          style={{
+            left: pct(mark.startS),
+            width: pct(Math.max(1 / 30, mark.endS - mark.startS)),
+          }}
+          className={[
+            "absolute inset-y-0 z-10 min-w-11 bg-transparent",
+            "focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-lime-600",
+          ].filter(Boolean).join(" ")}
+        >
+          <span
+            aria-hidden="true"
+            className={`absolute inset-x-0 bottom-1 h-2 min-w-2 rounded-full bg-lime-600/85 ${
+              selectedMarkId === mark.id
+                ? "ring-2 ring-white ring-offset-1 ring-offset-lime-700"
+                : ""
+            }`}
+          />
+        </button>
+      ))}
       <div
         aria-hidden="true"
         data-testid="pocket-ministrip-playhead"

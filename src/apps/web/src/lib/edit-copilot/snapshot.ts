@@ -1,5 +1,5 @@
 import { beatMarks, type DraftSlot } from "@/app/generative/timeline-math";
-import type { CameraEffect, EditorCapabilities, MediaOverlay, OverlaySuggestion, PendingSfxSuggestion, PoolAsset, SoundEffectPlacement, VariantSpeechMap, VisualBlock } from "@/lib/plan-api";
+import { isBoundedCreatorImageAsset, type CameraEffect, type EditorCapabilities, type MediaOverlay, type OverlaySuggestion, type PendingSfxSuggestion, type PoolAsset, type SoundEffectPlacement, type VariantSpeechMap, type VisualBlock } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { EditorTransition } from "@/lib/generative-api";
@@ -12,6 +12,11 @@ import {
 } from "@/lib/overlay-layout";
 import { sequentialSlotLayout } from "@/app/plan/items/[id]/_editor/editor-bar-drag";
 import type { CopilotOpFamily } from "./ops";
+import {
+  CREATOR_BLOCK_CATALOG,
+  creatorBlockEntry,
+  type MotionPresetInstance,
+} from "@nova/motion-runtime";
 
 export const COPILOT_SNAPSHOT_MAX_BYTES = 18000;
 export const COPILOT_BEAT_MARKS_MAX = 60;
@@ -91,6 +96,10 @@ export function overlayMutationFingerprint(card: MediaOverlay): string {
 
 export function cameraEffectMutationFingerprint(effect: CameraEffect): string {
   return mutationFingerprint([effect]);
+}
+
+export function motionMutationFingerprint(scene: MotionPresetInstance): string {
+  return mutationFingerprint([scene]);
 }
 
 /** Cap by even sampling, never by truncation — the FIRST and LAST marks are
@@ -177,6 +186,27 @@ export interface CopilotVisualBlockSnapshot {
   end_s: number;
   transition_in: "cut" | "fade";
   transition_out: "cut" | "fade";
+}
+
+export interface CopilotMotionBlockSnapshot {
+  id: string;
+  preset_id: MotionPresetInstance["preset_id"];
+  label: string;
+  start_s: number;
+  end_s: number;
+  palette: MotionPresetInstance["palette"];
+  intensity: number;
+  params: Record<string, unknown>;
+  mutation_fingerprint?: string;
+}
+
+export interface CopilotMotionCatalogSnapshot {
+  preset_id: string;
+  label: string;
+  kind: "text" | "media";
+  default_duration_s: number;
+  min_assets: number;
+  defaults: Record<string, unknown>;
 }
 
 export interface CopilotSfxPlacementSnapshot {
@@ -362,6 +392,12 @@ export interface CopilotSnapshot {
   title?: string;
   camera_effects?: CopilotCameraEffectSnapshot[];
   visual_blocks?: CopilotVisualBlockSnapshot[];
+  motion?: {
+    available: boolean;
+    catalog: CopilotMotionCatalogSnapshot[];
+    blocks: CopilotMotionBlockSnapshot[];
+    asset_pool: Array<{ id: string; subject: string | null }>;
+  };
   open_tools?: Array<"text" | "visuals" | "sounds" | "overlays" | "styles">;
   allowed_op_families: CopilotOpFamily[];
 }
@@ -387,6 +423,7 @@ export interface AllowedOpFamilyOptions {
   cameraEffectsEnabled?: boolean;
   transitionsEnabled?: boolean;
   visualBlocksEnabled?: boolean;
+  motionScenesEnabled?: boolean;
 }
 
 export interface CaptionCueLike {
@@ -430,6 +467,7 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
   title?: string | null;
   cameraEffects?: CameraEffect[];
   visualBlocks?: VisualBlock[];
+  motionScenes?: MotionPresetInstance[];
 }
 
 function effectiveSizePx(bar: TextElementBar): number {
@@ -447,6 +485,7 @@ function allCoreCapabilitiesFalse(capabilities: EditorCapabilities | null | unde
     capabilities.mix === false &&
     capabilities.sfx === false &&
     capabilities.overlays === false &&
+    capabilities.motion_scenes !== true &&
     capabilities.visual_blocks !== true &&
     capabilities.camera_effects !== true;
 }
@@ -476,6 +515,9 @@ export function allowedOpFamiliesFromCapabilities(
   }
   if (capabilities?.visual_blocks !== false && options.visualBlocksEnabled) {
     families.push("visual");
+  }
+  if (capabilities?.motion_scenes === true && options.motionScenesEnabled) {
+    families.push("motion");
   }
   if ((options.openTools?.length ?? 0) > 0) families.push("tool");
   return families;
@@ -758,6 +800,38 @@ export function buildCopilotSnapshot(
       transition_out: block.transition_out,
     }));
   }
+  if (allowed.has("motion")) {
+    snapshot.motion = {
+      available: true,
+      catalog: CREATOR_BLOCK_CATALOG.map((entry) => ({
+        preset_id: entry.preset_id,
+        label: entry.label,
+        kind: entry.kind,
+        default_duration_s: roundCopilotNumber(entry.default_duration_frames / 30),
+        min_assets: entry.min_assets,
+        defaults: JSON.parse(JSON.stringify(entry.defaults)) as Record<string, unknown>,
+      })),
+      blocks: (options.motionScenes ?? []).slice(0, 8).map((scene) => ({
+        id: scene.id,
+        preset_id: scene.preset_id,
+        label: scene.preset_id === "route_trace" ? "Route trace" : creatorBlockEntry(scene.preset_id).label,
+        start_s: roundCopilotNumber(scene.start_frame / 30),
+        end_s: roundCopilotNumber(scene.end_frame_exclusive / 30),
+        palette: { ...scene.palette },
+        intensity: roundCopilotNumber(scene.intensity),
+        params:
+          scene.preset_id === "card_stack" || scene.preset_id === "film_strip"
+            ? { asset_ids: scene.params.assets.map((asset) => asset.asset_id) }
+            : (JSON.parse(
+                JSON.stringify("params" in scene ? scene.params : {}),
+              ) as Record<string, unknown>),
+      })),
+      asset_pool: (options.poolAssets ?? [])
+        .filter(isBoundedCreatorImageAsset)
+        .slice(0, 20)
+        .map((asset) => ({ id: asset.id, subject: truncate(asset.subject, 60) })),
+    };
+  }
   const captionCuesEditable = options.captionCuesEditable !== false;
   if (
     allowed.has("caption") &&
@@ -864,6 +938,11 @@ export function buildCopilotSnapshot(
   for (const item of trimmed.camera_effects ?? []) {
     const effect = cameraById.get(item.id);
     if (effect) attachMutationFingerprint(item, cameraEffectMutationFingerprint(effect));
+  }
+  const motionById = new Map((options.motionScenes ?? []).map((item) => [item.id, item]));
+  for (const item of trimmed.motion?.blocks ?? []) {
+    const scene = motionById.get(item.id);
+    if (scene) attachMutationFingerprint(item, motionMutationFingerprint(scene));
   }
   return trimmed;
 }

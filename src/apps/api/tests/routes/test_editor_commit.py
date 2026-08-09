@@ -2240,6 +2240,7 @@ def _user() -> MagicMock:
 def _result(value) -> MagicMock:
     r = MagicMock()
     r.scalar_one_or_none = MagicMock(return_value=value)
+    r.scalars.return_value.all.return_value = value if isinstance(value, list) else []
     return r
 
 
@@ -2322,6 +2323,59 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
     assert item.user_edited is True
     db.commit.assert_awaited_once()  # ONE transaction for job-JSON + title
     db.get.assert_any_await(gj.Job, job.id, with_for_update=True)
+    regen.apply_async.assert_called_once()
+
+
+def test_endpoint_media_motion_loads_asset_pool_without_visual_block_edit(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    user = _user()
+    job = _job()
+    item, plan = _owned_item(user.id, job=job)
+    asset_ids = [uuid.uuid4(), uuid.uuid4()]
+    paths = [f"users/{user.id}/plan/{item.id}/pool/{asset_id}.jpg" for asset_id in asset_ids]
+    assets = [
+        types.SimpleNamespace(
+            id=asset_id,
+            status="ready",
+            kind="image",
+            gcs_path=path,
+            user_context=None,
+        )
+        for asset_id, path in zip(asset_ids, paths, strict=True)
+    ]
+    scene = {
+        **_motion_media_scene(),
+        "params": {
+            "assets": [
+                {"asset_id": str(asset_id), "gcs_path": path}
+                for asset_id, path in zip(asset_ids, paths, strict=True)
+            ]
+        },
+    }
+    db = _db([item, assets], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch(REGEN) as regen:
+        regen.apply_async = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/editor-commit",
+            json={
+                "motion_scenes": [scene],
+                "motion_runtime_hash": MOTION_RUNTIME_HASH,
+                "base_generation": "2026-07-01T00:00:00Z",
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert job.assembly_plan["variants"][0]["motion_scenes"] == [scene]
+    assert db.execute.await_count == 2
     regen.apply_async.assert_called_once()
 
 
@@ -3425,6 +3479,123 @@ def _motion_scene() -> dict:
     }
 
 
+def _motion_media_scene() -> dict:
+    return {
+        "id": "cards-1",
+        "preset_id": "card_stack",
+        "preset_version": 1,
+        "start_frame": 0,
+        "end_frame_exclusive": 90,
+        "palette": {"primary": "#0C0C0E", "accent": "#C7FF3D"},
+        "intensity": 0.72,
+        "params": {
+            "assets": [
+                {"asset_id": "a1", "gcs_path": "users/u/plan/i/pool/a1.jpg"},
+                {"asset_id": "a2", "gcs_path": "users/u/plan/i/pool/a2.jpg"},
+            ]
+        },
+    }
+
+
+def _motion_text_scene() -> dict:
+    return {
+        "id": "text-1",
+        "preset_id": "kinetic_word",
+        "preset_version": 1,
+        "start_frame": 15,
+        "end_frame_exclusive": 90,
+        "palette": {"primary": "#0C0C0E", "accent": "#C7FF3D"},
+        "intensity": 0.72,
+        "params": {"text": "MAKE IT WILD"},
+    }
+
+
+@pytest.mark.parametrize(
+    ("scene", "visual_assets", "asset_identities"),
+    [
+        (_motion_text_scene(), None, []),
+        (
+            _motion_media_scene(),
+            _visual_assets(("a1", "a2")),
+            [
+                {
+                    "asset_id": asset_id,
+                    "gcs_path": f"users/u/plan/i/pool/{asset_id}.jpg",
+                    "content_hash": f"hash-{asset_id}",
+                    "object": {
+                        "generation": f"generation-{asset_id}",
+                        "etag": f"etag-{asset_id}",
+                        "size": 1024,
+                    },
+                }
+                for asset_id in ("a1", "a2")
+            ],
+        ),
+    ],
+    ids=("text", "media"),
+)
+def test_editor_commit_creator_block_reaches_export_bridge(
+    monkeypatch,
+    scene,
+    visual_assets,
+    asset_identities,
+):
+    """Acceptance seam: editor payload persists, validates, and enters export unchanged."""
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+    from app.tasks import generative_build as gb
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[scene],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+        ),
+        visual_assets=visual_assets,
+    )
+    persisted = job.assembly_plan["variants"][0]
+
+    renders: list[dict] = []
+    monkeypatch.setattr(
+        gb,
+        "_motion_object_identity",
+        lambda path, **_kwargs: {
+            "path": path,
+            "generation": "source-generation",
+            "etag": "source-etag",
+            "size": 4096,
+            "content_type": "video/mp4",
+        },
+    )
+    monkeypatch.setattr(
+        gb,
+        "_motion_asset_identities",
+        lambda **_kwargs: asset_identities,
+    )
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene.apply_motion_scenes",
+        lambda **kwargs: renders.append(kwargs),
+    )
+
+    output_path, cache_path = gb._ensure_motion_base(
+        job_id=str(job.id),
+        variant_id="song_text",
+        variant=persisted,
+        base_gcs_path=persisted["base_video_path"],
+    )
+
+    assert output_path == cache_path
+    assert renders[0]["instances"] == [scene]
+    assert renders[0]["source_generation"] == "source-generation"
+    assert renders[0]["asset_generations"] == {
+        identity["asset_id"]: identity["object"]["generation"] for identity in asset_identities
+    }
+
+
 def test_editor_commit_motion_scene_is_atomic_and_routes_one_render(monkeypatch):
     from app.config import settings
     from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
@@ -3454,6 +3625,55 @@ def test_editor_commit_motion_scene_is_atomic_and_routes_one_render(monkeypatch)
     assert task.apply_async.call_args.kwargs.get("queue") is None
 
 
+def test_editor_commit_motion_media_requires_exact_owned_ready_images(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[_motion_media_scene()],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+        ),
+        visual_assets=_visual_assets(("a1", "a2")),
+    )
+    assert job.assembly_plan["variants"][0]["motion_scenes"] == [_motion_media_scene()]
+
+    for bad_assets in (
+        {"a1": _visual_assets()["a1"]},
+        {
+            **_visual_assets(("a1", "a2")),
+            "a2": {**_visual_assets()["a2"], "status": "analyzing"},
+        },
+        {
+            **_visual_assets(("a1", "a2")),
+            "a2": {**_visual_assets()["a2"], "kind": "video"},
+        },
+        {
+            **_visual_assets(("a1", "a2")),
+            "a2": {**_visual_assets()["a2"], "gcs_path": "users/u/plan/i/pool/other.jpg"},
+        },
+    ):
+        candidate = _job()
+        before = copy.deepcopy(candidate.assembly_plan)
+        with pytest.raises(HTTPException) as exc:
+            gj.prepare_editor_commit(
+                candidate,
+                "song_text",
+                _commit_req(
+                    motion_scenes=[_motion_media_scene()],
+                    motion_runtime_hash=MOTION_RUNTIME_HASH,
+                ),
+                visual_assets=bad_assets,
+            )
+        assert exc.value.detail == {"code": "motion_asset_unavailable"}
+        assert candidate.assembly_plan == before
+
+
 def test_editor_commit_motion_runtime_mismatch_preserves_variant(monkeypatch):
     from app.config import settings
 
@@ -3477,7 +3697,38 @@ def test_editor_commit_motion_runtime_mismatch_preserves_variant(monkeypatch):
     assert job.assembly_plan == before
 
 
-def test_editor_commit_rejects_motion_and_landscape_atomically(monkeypatch):
+def test_editor_commit_accepts_legacy_hash_only_for_persisted_route_trace(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import LEGACY_MOTION_RUNTIME_HASH, MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    legacy = _job()
+    gj.prepare_editor_commit(
+        legacy,
+        "song_text",
+        _commit_req(
+            motion_scenes=[_motion_scene()],
+            motion_runtime_hash=LEGACY_MOTION_RUNTIME_HASH,
+        ),
+    )
+    assert legacy.assembly_plan["variants"][0]["motion_runtime_hash"] == MOTION_RUNTIME_HASH
+
+    creator = _job()
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            creator,
+            "song_text",
+            _commit_req(
+                motion_scenes=[_motion_media_scene()],
+                motion_runtime_hash=LEGACY_MOTION_RUNTIME_HASH,
+            ),
+            visual_assets=_visual_assets(("a1", "a2")),
+        )
+    assert exc.value.status_code == 409
+
+
+def test_editor_commit_accepts_motion_and_landscape_atomically(monkeypatch):
     from app.config import settings
     from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
 
@@ -3485,25 +3736,22 @@ def test_editor_commit_rejects_motion_and_landscape_atomically(monkeypatch):
     monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
     monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
     job = _job()
-    before = copy.deepcopy(job.assembly_plan)
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[_motion_scene()],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+            orientation="landscape",
+        ),
+    )
 
-    with pytest.raises(HTTPException) as exc:
-        gj.prepare_editor_commit(
-            job,
-            "song_text",
-            _commit_req(
-                motion_scenes=[_motion_scene()],
-                motion_runtime_hash=MOTION_RUNTIME_HASH,
-                orientation="landscape",
-            ),
-        )
-
-    assert exc.value.status_code == 422
-    assert exc.value.detail == {"code": "motion_portrait_only"}
-    assert job.assembly_plan == before
+    variant = job.assembly_plan["variants"][0]
+    assert variant["motion_scenes"] == [_motion_scene()]
+    assert variant["orientation"] == "landscape"
 
 
-def test_editor_commit_rejects_landscape_when_motion_is_persisted(monkeypatch):
+def test_editor_commit_accepts_landscape_when_motion_is_persisted(monkeypatch):
     from app.config import settings
     from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
 
@@ -3514,18 +3762,13 @@ def test_editor_commit_rejects_landscape_when_motion_is_persisted(monkeypatch):
         motion_scenes=[_motion_scene()],
         motion_runtime_hash=MOTION_RUNTIME_HASH,
     )
-    before = copy.deepcopy(job.assembly_plan)
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(orientation="landscape"),
+    )
 
-    with pytest.raises(HTTPException) as exc:
-        gj.prepare_editor_commit(
-            job,
-            "song_text",
-            _commit_req(orientation="landscape"),
-        )
-
-    assert exc.value.status_code == 422
-    assert exc.value.detail == {"code": "motion_portrait_only"}
-    assert job.assembly_plan == before
+    assert job.assembly_plan["variants"][0]["orientation"] == "landscape"
 
 
 def test_editor_commit_can_clear_motion_and_switch_to_landscape(monkeypatch):
@@ -3598,3 +3841,42 @@ def test_editor_capabilities_advertise_motion_runtime_only_when_eligible(monkeyp
     capabilities = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
     assert capabilities["motion_scenes"] is True
     assert capabilities["motion_runtime_hash"] == MOTION_RUNTIME_HASH
+
+
+def test_editor_motion_capability_fails_closed_for_unsupported_persisted_runtime(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job(
+        motion_scenes=[_motion_scene()],
+        motion_runtime_hash="unsupported-runtime",
+    )
+    capabilities = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert capabilities["motion_scenes"] is False
+    assert capabilities["motion_scenes_reason"] == "motion_runtime_mismatch"
+    assert capabilities["motion_runtime_hash"] == MOTION_RUNTIME_HASH
+    assert capabilities["motion_required_runtime_hash"] == "unsupported-runtime"
+
+
+def test_editor_motion_capability_supports_lyrics_captions_and_landscape_with_clean_base(
+    monkeypatch,
+):
+    from app.config import settings
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    for extra in (
+        {"text_mode": "lyrics"},
+        {"resolved_archetype": "subtitled", "text_mode": "captions"},
+        {"orientation": "landscape"},
+    ):
+        job = _job(**extra)
+        capabilities = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+        assert capabilities["motion_scenes"] is True
+
+    no_base = _job(base_video_path=None)
+    capabilities = gj._editor_capabilities(no_base, no_base.assembly_plan["variants"][0])
+    assert capabilities["motion_scenes"] is False
+    assert capabilities["motion_scenes_reason"] == "motion_clean_base_unavailable"

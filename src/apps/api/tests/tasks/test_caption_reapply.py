@@ -122,6 +122,7 @@ def _assert_reapply_call(reapply: list[dict], *, variant_id: str, gen: str | Non
 
 def _patch_storage(monkeypatch, seen: dict, *, upload_hook=None):
     def _dl(_src, dst):
+        seen.setdefault("downloads", []).append((_src, dst))
         with open(dst, "wb") as f:
             f.write(b"x")
 
@@ -233,6 +234,75 @@ def _run_path(monkeypatch, path: str, variant: dict, *, render_gen_id="tok-1", u
             JOB_ID, variant["variant_id"], "tr", render_gen_id=render_gen_id
         )
     return job, seen
+
+
+@pytest.mark.parametrize("path", ["caption_reburn", "retranscribe"])
+def test_caption_terminals_burn_onto_creator_layer_base(monkeypatch, path):
+    """Captions must remain above visual blocks and Creator Blocks."""
+    variant = _lane_variant(path, render_generation_id="tok-1")
+    motion_identity = {
+        "renderer_hash": "motion-runtime-test",
+        "cache_identity": "motion-cache-test",
+    }
+    monkeypatch.setattr(
+        gb,
+        "_ensure_creator_layer_base",
+        lambda **_kw: (
+            "generative-jobs/j/motion/composited.mp4",
+            "generative-jobs/j/visual/composited.mp4",
+            "generative-jobs/j/motion/composited.mp4",
+            "generative-jobs/j/visual/composited.mp4",
+            motion_identity,
+        ),
+    )
+
+    job, seen = _run_path(monkeypatch, path, variant)
+
+    # Retranscription first downloads the immutable clean base for speech
+    # recognition; its final download, and caption burn input, is the fully
+    # composited Creator Block base. Caption Apply only needs the latter.
+    assert seen["downloads"][-1][0] == "generative-jobs/j/motion/composited.mp4"
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["visual_blocks_base_path"] == "generative-jobs/j/visual/composited.mp4"
+    assert persisted["motion_base_path"] == "generative-jobs/j/motion/composited.mp4"
+    assert persisted["motion_base_source_path"] == "generative-jobs/j/visual/composited.mp4"
+    assert persisted["motion_applied_runtime_hash"] == "motion-runtime-test"
+    assert persisted["motion_cache_identity"] == "motion-cache-test"
+
+
+def test_caption_camera_rerender_preserves_creator_layers(monkeypatch):
+    variant = _subtitled_variant(render_generation_id="tok-1", camera_effects=[])
+    job = _make_job(assembly_plan={"variants": [variant]})
+    _patch_job_session(monkeypatch, job)
+    seen: dict = {}
+    _patch_reburn_io(monkeypatch, seen)
+    monkeypatch.setattr(
+        gb,
+        "_ensure_creator_layer_base",
+        lambda **_kw: (
+            "generative-jobs/j/motion/composited.mp4",
+            "generative-jobs/j/visual/composited.mp4",
+            "generative-jobs/j/motion/composited.mp4",
+            "generative-jobs/j/visual/composited.mp4",
+            {"renderer_hash": "motion-runtime-test", "cache_identity": "motion-cache-test"},
+        ),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: types.SimpleNamespace(duration_s=2.0, has_audio=True),
+    )
+    monkeypatch.setattr(gb, "_rendered_duration_s", lambda _path: 2.0)
+
+    gb._run_rerender_caption_camera_effects(
+        JOB_ID,
+        variant["variant_id"],
+        render_gen_id="tok-1",
+    )
+
+    assert seen["downloads"][-1][0] == "generative-jobs/j/motion/composited.mp4"
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["motion_base_path"] == "generative-jobs/j/motion/composited.mp4"
+    assert persisted["motion_cache_identity"] == "motion-cache-test"
 
 
 # ── per-cue font override resolution (plan PR-A) ──────────────────────────────

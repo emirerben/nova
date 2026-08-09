@@ -3977,7 +3977,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # section.
     caption_reason = CAPTION_TAB_COPY if archetype == "subtitled" else None
     from app.config import settings  # noqa: PLC0415
-    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH  # noqa: PLC0415
+    from app.pipeline.motion_scene import (  # noqa: PLC0415
+        LEGACY_MOTION_RUNTIME_HASH,
+        MOTION_RUNTIME_HASH,
+    )
 
     # Plan 010: caption archetypes get the manual SFX/overlay lanes — the caption
     # re-render terminals reapply persisted lanes, so effects survive caption edits.
@@ -4000,18 +4003,20 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         visual_blocks_reason = effects_reason
     if not settings.motion_scenes_enabled:
         motion_scenes_reason = "motion_scenes_disabled"
-    elif variant.get("text_mode") == "lyrics":
-        motion_scenes_reason = "lyrics_variant"
-    elif archetype in CAPTION_EDIT_ARCHETYPES:
-        motion_scenes_reason = "caption_archetype"
     elif not variant.get("base_video_path"):
-        motion_scenes_reason = "no_clean_base"
-    elif _variant_orientation(variant) != "portrait":
-        motion_scenes_reason = "portrait_only"
+        motion_scenes_reason = "motion_clean_base_unavailable"
     elif visual_block_variant_duration(variant) <= 0:
         motion_scenes_reason = "duration_unknown"
     else:
         motion_scenes_reason = effects_reason
+    persisted_motion_scenes = variant.get("motion_scenes") or []
+    persisted_motion_hash = variant.get("motion_runtime_hash")
+    if persisted_motion_scenes:
+        legacy_route_only = persisted_motion_hash == LEGACY_MOTION_RUNTIME_HASH and all(
+            scene.get("preset_id") == "route_trace" for scene in persisted_motion_scenes
+        )
+        if persisted_motion_hash != MOTION_RUNTIME_HASH and not legacy_route_only:
+            motion_scenes_reason = "motion_runtime_mismatch"
     # AI overlay suggestions (plans 005-009): mirrors the suggest-overlays route's
     # eligibility EXCEPT the ready-asset count — that's a DB query and this map is
     # cheap-by-design; the editor's pool strip owns the empty-pool state locally.
@@ -4069,6 +4074,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "visual_blocks": visual_blocks_reason is None,
         "motion_scenes": motion_scenes_reason is None,
         "motion_runtime_hash": MOTION_RUNTIME_HASH if settings.motion_scenes_enabled else None,
+        **(
+            {"motion_required_runtime_hash": persisted_motion_hash}
+            if persisted_motion_hash is not None
+            else {}
+        ),
         "camera_effects": (
             effects_reason is None
             and variant.get("resolved_archetype") == "subtitled"
@@ -5303,6 +5313,7 @@ def prepare_editor_commit(
     if payload.motion_scenes is not None:
         from app.config import settings as _settings_motion  # noqa: PLC0415
         from app.pipeline.motion_scene import (  # noqa: PLC0415
+            LEGACY_MOTION_RUNTIME_HASH,
             MOTION_FPS,
             MOTION_RUNTIME_HASH,
             validate_motion_instances,
@@ -5310,18 +5321,17 @@ def prepare_editor_commit(
 
         if not _settings_motion.motion_scenes_enabled:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-        if payload.motion_runtime_hash != MOTION_RUNTIME_HASH:
+        legacy_route_only = payload.motion_runtime_hash == LEGACY_MOTION_RUNTIME_HASH and all(
+            scene.get("preset_id") == "route_trace" for scene in payload.motion_scenes
+        )
+        if payload.motion_runtime_hash != MOTION_RUNTIME_HASH and not legacy_route_only:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "motion_runtime_mismatch"},
             )
         motion_reason = None
-        if variant.get("text_mode") == "lyrics":
-            motion_reason = "lyrics_variant"
-        elif variant.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES:
-            motion_reason = "caption_archetype"
-        elif not variant.get("base_video_path"):
-            motion_reason = "no_clean_base"
+        if not variant.get("base_video_path"):
+            motion_reason = "motion_clean_base_unavailable"
         duration_s = visual_block_variant_duration(variant)
         if duration_s <= 0:
             motion_reason = motion_reason or "duration_unknown"
@@ -5349,6 +5359,22 @@ def prepare_editor_commit(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=str(exc),
                 ) from exc
+            assets = visual_assets or {}
+            for scene in validated_motion_scenes:
+                if scene.get("preset_id") not in {"card_stack", "film_strip"}:
+                    continue
+                for ref in scene.get("params", {}).get("assets", []):
+                    asset = assets.get(str(ref.get("asset_id")))
+                    if (
+                        asset is None
+                        or asset.get("status") != "ready"
+                        or asset.get("kind") != "image"
+                        or asset.get("gcs_path") != ref.get("gcs_path")
+                    ):
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={"code": "motion_asset_unavailable"},
+                        )
 
     if payload.camera_effects is not None:
         from app.pipeline.camera_effects import normalize_camera_effects  # noqa: PLC0415
@@ -5384,18 +5410,6 @@ def prepare_editor_commit(
                 payload.camera_effects,
                 duration_s=visual_block_variant_duration(variant),
             )
-
-    effective_motion_scenes = (
-        validated_motion_scenes
-        if validated_motion_scenes is not None
-        else list(variant.get("motion_scenes") or [])
-    )
-    effective_orientation = validated_orientation or _variant_orientation(variant)
-    if effective_motion_scenes and effective_orientation != "portrait":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "motion_portrait_only"},
-        )
 
     if payload.visual_blocks is not None or payload.text_elements is not None:
         from app.agents._schemas.visual_block import (  # noqa: PLC0415
@@ -5554,7 +5568,9 @@ def prepare_editor_commit(
             updated["visual_blocks_cache_stale"] = True
         if validated_motion_scenes is not None:
             updated["motion_scenes"] = validated_motion_scenes or None
-            updated["motion_runtime_hash"] = payload.motion_runtime_hash
+            # A legacy route-trace-only client may finish an in-flight save
+            # during rollout, but that save migrates desired state forward.
+            updated["motion_runtime_hash"] = MOTION_RUNTIME_HASH
             # Desired state is persisted before rendering; the last-good output
             # and applied hash are only replaced by the token-winning worker.
             updated["motion_cache_stale"] = True

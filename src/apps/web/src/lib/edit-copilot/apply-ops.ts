@@ -48,7 +48,15 @@ import {
   type CopilotSfxPlacementSnapshot,
   type CopilotOverlayCardSnapshot,
   type CopilotCaptionMetaSnapshot,
+  motionMutationFingerprint,
 } from "./snapshot";
+import {
+  createCreatorBlockInstance,
+  creatorBlockEntry,
+  validateMotionInstances,
+  type MotionAssetRef,
+  type MotionPresetInstance,
+} from "@nova/motion-runtime";
 
 export type RejectedOpReason =
   | "invalid_op"
@@ -103,6 +111,7 @@ export interface ApplyCopilotOpsResult {
   nextOverlays?: MediaOverlay[] | null;
   nextCameraEffects?: CameraEffect[] | null;
   nextVisualBlocks?: VisualBlock[] | null;
+  nextMotionScenes?: MotionPresetInstance[] | null;
   acceptedSuggestionRefs?: AcceptedSuggestionRef[];
   nextMusicTrackId?: string;
   nextMixLevel?: number;
@@ -128,6 +137,7 @@ export interface ApplyCopilotOpsContext {
   overlays?: MediaOverlay[];
   cameraEffects?: CameraEffect[];
   visualBlocks?: VisualBlock[];
+  motionScenes?: MotionPresetInstance[];
   poolAssets?: PoolAsset[];
   pendingSuggestions?: OverlaySuggestion[];
   musicTrackId?: string | null;
@@ -139,6 +149,7 @@ export interface ApplyCopilotOpsContext {
   makeSfxPlacementId?: () => string;
   makeOverlayId?: () => string;
   makeCameraEffectId?: () => string;
+  makeMotionId?: () => string;
 }
 
 let textIdCounter = 0;
@@ -146,6 +157,7 @@ let slotKeyCounter = 0;
 let sfxIdCounter = 0;
 let overlayIdCounter = 0;
 let cameraEffectIdCounter = 0;
+let motionIdCounter = 0;
 
 function defaultTextBarId(): string {
   textIdCounter += 1;
@@ -174,6 +186,11 @@ function defaultOverlayId(): string {
 function defaultCameraEffectId(): string {
   cameraEffectIdCounter += 1;
   return globalThis.crypto?.randomUUID?.() ?? `copilot-camera-${cameraEffectIdCounter}`;
+}
+
+function defaultMotionId(): string {
+  motionIdCounter += 1;
+  return globalThis.crypto?.randomUUID?.() ?? `copilot-motion-${motionIdCounter}`;
 }
 
 function fmt(value: unknown): string {
@@ -365,6 +382,9 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "remove_camera_effect") return `Remove camera effect ${op.camera_effect_index + 1}`;
   if (op.op === "set_transition") return `Transition ${op.boundary_index + 1}`;
   if (op.op === "set_visual_fade") return `Visual block ${op.visual_block_index + 1}`;
+  if (op.op === "add_motion_block") return `Add ${creatorBlockEntry(op.preset_id).label}`;
+  if (op.op === "patch_motion_block") return "Edit Creator Block";
+  if (op.op === "remove_motion_block") return "Remove Creator Block";
   if (op.op === "open_tool") return `Opened ${op.tool[0].toUpperCase()}${op.tool.slice(1)}`;
   const _exhaustive: never = op;
   return _exhaustive;
@@ -633,6 +653,8 @@ export function applyCopilotOps(
   let workingCameraEffects = ctx.cameraEffects ?? [];
   let nextVisualBlocks: VisualBlock[] | undefined;
   let workingVisualBlocks = ctx.visualBlocks ?? [];
+  let nextMotionScenes: MotionPresetInstance[] | undefined;
+  let workingMotionScenes = ctx.motionScenes ?? [];
   let acceptedSuggestionRefs: AcceptedSuggestionRef[] | undefined;
   let nextMusicTrackId: string | undefined;
   let nextMixLevel: number | undefined;
@@ -661,6 +683,7 @@ export function applyCopilotOps(
       nextOverlays !== undefined ||
       nextCameraEffects !== undefined ||
       nextVisualBlocks !== undefined ||
+      nextMotionScenes !== undefined ||
       (acceptedSuggestionRefs?.length ?? 0) > 0 ||
       nextMusicTrackId !== undefined ||
       nextMixLevel !== undefined ||
@@ -1527,6 +1550,106 @@ export function applyCopilotOps(
       }
       openTool = op.tool;
       applied.push({ label: `Opened ${op.tool[0].toUpperCase()}${op.tool.slice(1)}`, from: "closed", to: "open" });
+    } else if (op.op === "add_motion_block") {
+      const entry = creatorBlockEntry(op.preset_id);
+      const assetIds = Array.isArray(op.params.asset_ids)
+        ? op.params.asset_ids.filter((value): value is string => typeof value === "string")
+        : [];
+      const assets: MotionAssetRef[] = assetIds.flatMap((id) => {
+        const asset = (ctx.poolAssets ?? []).find(
+          (candidate) => candidate.id === id && candidate.kind === "image" && candidate.status === "ready",
+        );
+        return asset ? [{ asset_id: asset.id, gcs_path: asset.gcs_path }] : [];
+      });
+      if (assets.length !== assetIds.length || (entry.kind === "media" && assets.length < entry.min_assets)) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "eligible image assets changed after Nova read them"));
+        continue;
+      }
+      const scene = createCreatorBlockInstance({
+        id: ctx.makeMotionId?.() ?? defaultMotionId(),
+        presetId: op.preset_id,
+        startFrame: Math.round(op.start_s * 30),
+        endFrameExclusive: Math.round(op.end_s * 30),
+        palette: op.palette,
+        assets,
+      });
+      const rawParams = { ...op.params };
+      delete rawParams.asset_ids;
+      (scene as MotionPresetInstance & { params: Record<string, unknown> }).params = {
+        ...((scene as MotionPresetInstance & { params: Record<string, unknown> }).params),
+        ...rawParams,
+        ...(entry.kind === "media" ? { assets } : {}),
+      } as never;
+      scene.intensity = op.intensity ?? scene.intensity;
+      const candidate = [...workingMotionScenes, scene];
+      const validationResult = validateMotionInstances(candidate, Math.ceil(videoDurationS * 30));
+      if (!validationResult.ok) {
+        rejected.push(reject(op.op, labelForOp(op), "invalid_op", validationResult.errors.join("; ")));
+        continue;
+      }
+      workingMotionScenes = candidate;
+      nextMotionScenes = candidate;
+      applied.push({ label: entry.label, from: "not in edit", to: `${fmtSeconds(scene.start_frame / 30)}–${fmtSeconds(scene.end_frame_exclusive / 30)}` });
+    } else if (op.op === "patch_motion_block") {
+      const snap = ctx.snapshot.motion?.blocks.find((block) => block.id === op.motion_id);
+      const index = workingMotionScenes.findIndex((scene) => scene.id === op.motion_id);
+      const scene = index >= 0 ? workingMotionScenes[index] : null;
+      if (!snap || !scene) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "Creator Block no longer exists"));
+        continue;
+      }
+      if (snap.mutation_fingerprint && motionMutationFingerprint(scene) !== snap.mutation_fingerprint) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "Creator Block changed after Nova read it"));
+        continue;
+      }
+      const rawParams = op.patch.params ? { ...op.patch.params } : undefined;
+      const assetIds = Array.isArray(rawParams?.asset_ids)
+        ? rawParams.asset_ids.filter((value): value is string => typeof value === "string")
+        : null;
+      const assets = assetIds?.flatMap((id) => {
+        const asset = (ctx.poolAssets ?? []).find(
+          (candidate) => candidate.id === id && candidate.kind === "image" && candidate.status === "ready",
+        );
+        return asset ? [{ asset_id: asset.id, gcs_path: asset.gcs_path }] : [];
+      });
+      if (assetIds && assets?.length !== assetIds.length) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "eligible image assets changed after Nova read them"));
+        continue;
+      }
+      if (rawParams) delete rawParams.asset_ids;
+      const patched = {
+        ...scene,
+        start_frame: op.patch.start_s === undefined ? scene.start_frame : Math.round(op.patch.start_s * 30),
+        end_frame_exclusive: op.patch.end_s === undefined ? scene.end_frame_exclusive : Math.round(op.patch.end_s * 30),
+        palette: op.patch.palette ?? scene.palette,
+        intensity: op.patch.intensity ?? scene.intensity,
+        ...(rawParams
+          ? { params: { ...(("params" in scene ? scene.params : {}) as Record<string, unknown>), ...rawParams, ...(assets ? { assets } : {}) } }
+          : {}),
+      } as MotionPresetInstance;
+      const candidate = workingMotionScenes.map((item, itemIndex) => itemIndex === index ? patched : item);
+      const validationResult = validateMotionInstances(candidate, Math.ceil(videoDurationS * 30));
+      if (!validationResult.ok) {
+        rejected.push(reject(op.op, labelForOp(op), "invalid_op", validationResult.errors.join("; ")));
+        continue;
+      }
+      workingMotionScenes = candidate;
+      nextMotionScenes = candidate;
+      applied.push({ label: snap.label, from: `${fmtSeconds(scene.start_frame / 30)}–${fmtSeconds(scene.end_frame_exclusive / 30)}`, to: `${fmtSeconds(patched.start_frame / 30)}–${fmtSeconds(patched.end_frame_exclusive / 30)}` });
+    } else if (op.op === "remove_motion_block") {
+      const snap = ctx.snapshot.motion?.blocks.find((block) => block.id === op.motion_id);
+      const scene = workingMotionScenes.find((item) => item.id === op.motion_id);
+      if (!snap || !scene) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "Creator Block no longer exists"));
+        continue;
+      }
+      if (snap.mutation_fingerprint && motionMutationFingerprint(scene) !== snap.mutation_fingerprint) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "Creator Block changed after Nova read it"));
+        continue;
+      }
+      workingMotionScenes = workingMotionScenes.filter((item) => item.id !== op.motion_id);
+      nextMotionScenes = workingMotionScenes;
+      applied.push({ label: snap.label, from: "in edit", to: "removed" });
     }
   }
 
@@ -1537,6 +1660,7 @@ export function applyCopilotOps(
     nextOverlays,
     nextCameraEffects,
     nextVisualBlocks,
+    nextMotionScenes,
     acceptedSuggestionRefs,
     nextMusicTrackId,
     nextMixLevel,

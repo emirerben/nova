@@ -1724,6 +1724,9 @@ def check_edit_copilot(output: Any) -> list[str]:
         "remove_camera_effect",
         "set_transition",
         "set_visual_fade",
+        "add_motion_block",
+        "patch_motion_block",
+        "remove_motion_block",
     }
     failures: list[str] = []
 
