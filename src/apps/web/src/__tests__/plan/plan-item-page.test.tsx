@@ -59,6 +59,7 @@ jest.mock("@/lib/plan-api", () => ({
   expandIdea: jest.fn(),
   updatePlanItem: jest.fn(),
   setItemVoiceover: jest.fn(),
+  setVariantMediaOverlays: jest.fn(),
   swapPlanItemSong: jest.fn(),
   retextPlanItem: jest.fn(),
   changePlanItemStyle: jest.fn(),
@@ -135,6 +136,7 @@ import {
   generatePlanItem,
   requestUploadUrls,
   setItemVoiceover,
+  setVariantMediaOverlays,
   updatePlanItem,
   uploadToGcs,
   type PlanItemJobStatus,
@@ -145,6 +147,9 @@ const mockExpandIdea = expandIdea as jest.MockedFunction<typeof expandIdea>;
 const mockGeneratePlanItem = generatePlanItem as jest.MockedFunction<typeof generatePlanItem>;
 const mockRequestUploadUrls = requestUploadUrls as jest.MockedFunction<typeof requestUploadUrls>;
 const mockSetItemVoiceover = setItemVoiceover as jest.MockedFunction<typeof setItemVoiceover>;
+const mockSetVariantMediaOverlays = setVariantMediaOverlays as jest.MockedFunction<
+  typeof setVariantMediaOverlays
+>;
 const mockUpdatePlanItem = updatePlanItem as jest.MockedFunction<typeof updatePlanItem>;
 const mockUploadToGcs = uploadToGcs as jest.MockedFunction<typeof uploadToGcs>;
 
@@ -509,6 +514,85 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
 });
 
 describe("PlanItemPage — result cleanup", () => {
+  it("renders an empty overlay replacement when the last baked card was removed", async () => {
+    mockSetVariantMediaOverlays.mockReset();
+    mockSetVariantMediaOverlays.mockResolvedValue(undefined);
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-overlay-clear",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variant = {
+      ...makeVariant("v1", "ready", "https://cdn/v1.mp4"),
+      media_overlays: [],
+      media_overlays_render_dirty: true,
+      pre_media_overlay_video_path: "generative-jobs/job-overlay-clear/clean.mp4",
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item,
+        job: makeJob({ status: "variants_ready", variants: [variant] }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "More video actions" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Download video" }));
+    });
+
+    await waitFor(() => {
+      expect(mockSetVariantMediaOverlays).toHaveBeenCalledWith(
+        "test-item-id",
+        "v1",
+        [],
+        { render: true },
+      );
+    });
+  });
+
+  it("does not rerender an already-applied empty overlay state", async () => {
+    mockSetVariantMediaOverlays.mockReset();
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-overlay-clean",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variant = {
+      ...makeVariant("v1", "ready", "https://cdn/v1.mp4"),
+      media_overlays: [],
+      media_overlays_render_dirty: false,
+      // The clean snapshot is durable and must not itself imply dirty state.
+      pre_media_overlay_video_path: "generative-jobs/job-overlay-clean/clean.mp4",
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item,
+        job: makeJob({ status: "variants_ready", variants: [variant] }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "More video actions" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Download video" }));
+    });
+
+    expect(mockSetVariantMediaOverlays).not.toHaveBeenCalled();
+  });
+
   it("renders the hero video with mobile-safe metadata attributes", async () => {
     const item = makeItem({
       status: "ready",

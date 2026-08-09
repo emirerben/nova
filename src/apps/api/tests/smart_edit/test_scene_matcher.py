@@ -72,7 +72,7 @@ def test_parse_drops_unknown_assets_words_and_low_confidence() -> None:
     assert [(t.anchor_word_id, t.role) for t in out.cue_tags] == [("w000002", "cta")]
 
 
-def test_parse_caps_matches_per_asset_and_rejects_duplicate_sequences() -> None:
+def test_parse_keeps_one_match_per_asset_and_rejects_duplicate_sequences() -> None:
     words = ["one", "two", "three", "four", "five"]
     inp = _input(words, [_asset("a-1")])
     raw = json.dumps(
@@ -91,8 +91,61 @@ def test_parse_caps_matches_per_asset_and_rejects_duplicate_sequences() -> None:
 
     out = _agent().parse(raw, inp)
 
-    assert len(out.matches) == 2  # per-asset cap
+    assert len(out.matches) == 1  # one globally best generated moment per asset
+    assert out.matches[0].anchor_word_id == "w000001"
     assert [(t.anchor_word_id, t.sequence_number) for t in out.cue_tags] == [("w000002", 1)]
+
+
+def test_parse_prefers_later_high_confidence_over_earlier_medium() -> None:
+    inp = _input(["it", "might", "be", "Kria"], [_asset("brand")])
+    out = _agent().parse(
+        json.dumps(
+            {
+                "matches": [
+                    {
+                        "asset_id": "brand",
+                        "anchor_word_id": "w000002",
+                        "confidence": "medium",
+                    },
+                    {
+                        "asset_id": "brand",
+                        "anchor_word_id": "w000004",
+                        "confidence": "high",
+                    },
+                ]
+            }
+        ),
+        inp,
+    )
+
+    assert [(match.anchor_word_id, match.confidence) for match in out.matches] == [
+        ("w000004", "high")
+    ]
+
+
+def test_parse_global_cap_keeps_high_confidence_assets_before_earlier_medium() -> None:
+    assets = [_asset(f"asset-{index}") for index in range(13)]
+    inp = _input([f"word-{index}" for index in range(13)], assets)
+    matches = [
+        {
+            "asset_id": "asset-0",
+            "anchor_word_id": "w000001",
+            "confidence": "medium",
+        },
+        *[
+            {
+                "asset_id": f"asset-{index}",
+                "anchor_word_id": f"w{index + 1:06d}",
+                "confidence": "high",
+            }
+            for index in range(1, 13)
+        ],
+    ]
+
+    out = _agent().parse(json.dumps({"matches": matches}), inp)
+
+    assert len(out.matches) == 12
+    assert "asset-0" not in {match.asset_id for match in out.matches}
 
 
 # ── planner integration: the user's English scenario ─────────────────────────
@@ -393,6 +446,175 @@ def test_event_cap_truncates_chronologically_not_by_list_order() -> None:
 
     roles = [ev.role for ev in events]
     assert "list_item" in roles
+
+
+@pytest.mark.parametrize("preset_version", ["v1", "v2"])
+def test_event_cap_reserves_later_high_confidence_visual_winner(preset_version: str) -> None:
+    from app.agents.smart_edit_planner import SmartPlannerProposal
+    from app.smart_edit.planner import _events_from_proposals, _normalize_captions
+
+    preset = load_preset("cigdem", preset_version)
+    words = [f"word-{index}" for index in range(preset.density.max_events + 1)]
+    normalized, _, _ = _normalize_captions(_cues(words), language="en")
+    medium = SmartPlannerProposal(
+        role="example",
+        start_word_id=normalized[0].word_id,
+        end_word_id=normalized[0].word_id,
+        anchor_word_id=normalized[0].word_id,
+        confidence_tier="medium",
+        scene_token="single_example",
+        visual_asset_ids=["asset-a"],
+    )
+    fillers = [
+        SmartPlannerProposal(
+            role="example",
+            start_word_id=word.word_id,
+            end_word_id=word.word_id,
+            anchor_word_id=word.word_id,
+            rationale=f"filler-{index}",
+        )
+        for index, word in enumerate(normalized[1:-1], start=1)
+    ]
+    high = SmartPlannerProposal(
+        role="example",
+        start_word_id=normalized[-1].word_id,
+        end_word_id=normalized[-1].word_id,
+        anchor_word_id=normalized[-1].word_id,
+        confidence_tier="high",
+        scene_token="single_example",
+        visual_asset_ids=["asset-a"],
+    )
+    proposals = [medium, *fillers, high]
+
+    if preset_version == "v2":
+        events, _ = _compile(proposals, words, None)
+    else:
+        events, _ = _events_from_proposals(proposals, words=normalized, preset=preset)
+
+    visual_events = [
+        event for event in events if any(lane.kind == "visual" for lane in event.lanes)
+    ]
+    assert len(events) <= preset.density.max_events
+    assert len(visual_events) == 1
+    assert visual_events[0].anchor.word_id == normalized[-1].word_id
+
+
+def test_pair_losing_one_duplicate_reflows_survivor_to_single_scene() -> None:
+    from app.agents.smart_edit_planner import SmartPlannerProposal
+
+    words = ["pair", "filler", "winner"]
+    pair = SmartPlannerProposal(
+        role="example",
+        start_word_id="w000001",
+        end_word_id="w000001",
+        anchor_word_id="w000001",
+        confidence_tier="medium",
+        scene_token="example_pair",
+        visual_asset_ids=["asset-a", "asset-b"],
+    )
+    winner = SmartPlannerProposal(
+        role="example",
+        start_word_id="w000003",
+        end_word_id="w000003",
+        anchor_word_id="w000003",
+        confidence_tier="high",
+        scene_token="single_example",
+        visual_asset_ids=["asset-a"],
+    )
+
+    events, _ = _compile([pair, winner], words, None)
+    visuals = [
+        (event.anchor.word_id, lane.asset_id, lane.zone)
+        for event in events
+        for lane in event.lanes
+        if lane.kind == "visual"
+    ]
+
+    assert visuals == [
+        ("w000001", "asset-b", "single_top"),
+        ("w000003", "asset-a", "single_top"),
+    ]
+    assert not any(zone in {"pair_left", "pair_right"} for _, _, zone in visuals)
+
+
+def test_visual_loser_does_not_leave_orphan_event_effects() -> None:
+    from app.agents.smart_edit_planner import SmartPlannerProposal
+
+    words = ["loser", "winner"]
+    loser = SmartPlannerProposal(
+        role="context_shift",
+        start_word_id="w000001",
+        end_word_id="w000001",
+        anchor_word_id="w000001",
+        confidence_tier="medium",
+        scene_token="single_example",
+        visual_asset_ids=["asset-a"],
+        sfx_roles=["visual_enter_primary"],
+    )
+    winner = SmartPlannerProposal(
+        role="example",
+        start_word_id="w000002",
+        end_word_id="w000002",
+        anchor_word_id="w000002",
+        confidence_tier="high",
+        scene_token="single_example",
+        visual_asset_ids=["asset-a"],
+    )
+
+    events, _ = _compile([loser, winner], words, None)
+
+    assert [event.anchor.word_id for event in events] == ["w000002"]
+    assert all(lane.kind not in {"sfx", "camera"} for event in events for lane in event.lanes)
+
+
+def test_multicard_proposal_costs_each_rendered_event_against_cap() -> None:
+    from app.agents.smart_edit_planner import SmartPlannerProposal
+
+    preset = load_preset("cigdem", "v2")
+    words = [f"word-{index}" for index in range(preset.density.max_events)]
+    hook = SmartPlannerProposal(
+        role="hook",
+        start_word_id="w000001",
+        end_word_id="w000001",
+        anchor_word_id="w000001",
+        confidence_tier="high",
+        scene_token="hook_accumulation",
+        visual_asset_ids=[f"asset-{index}" for index in range(5)],
+    )
+    fillers = [
+        SmartPlannerProposal(
+            role="example",
+            start_word_id=f"w{index:06d}",
+            end_word_id=f"w{index:06d}",
+            anchor_word_id=f"w{index:06d}",
+        )
+        for index in range(2, preset.density.max_events + 1)
+    ]
+
+    events, _ = _compile([hook, *fillers], words, None)
+
+    assert len(events) == preset.density.max_events
+    assert sum(lane.kind == "visual" for event in events for lane in event.lanes) == 5
+
+
+def test_invalid_multicard_scene_drops_its_camera_and_sfx_bundle() -> None:
+    from app.agents.smart_edit_planner import SmartPlannerProposal
+
+    proposal = SmartPlannerProposal(
+        role="context_shift",
+        start_word_id="w000001",
+        end_word_id="w000001",
+        anchor_word_id="w000001",
+        confidence_tier="high",
+        scene_token="example_pair",
+        visual_asset_ids=["asset-a", "asset-b", "asset-c"],
+        sfx_roles=["visual_enter_soft"],
+    )
+
+    events, omissions = _compile([proposal], ["malformed"], None)
+
+    assert events == []
+    assert {item["reason"] for item in omissions} == {"invalid_scene_cardinality"}
 
 
 # ── _run_scene_matcher gating ────────────────────────────────────────────────

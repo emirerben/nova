@@ -773,6 +773,114 @@ def _event_lanes(
     return lanes
 
 
+_VISUAL_CONFIDENCE_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def _best_visual_proposal_indexes(
+    proposals: list[SmartPlannerProposal],
+    index_by_id: dict[str, int],
+    *,
+    preset: SmartEditPreset | None = None,
+    hint_anchor_ids: dict[str, set[str]] | None = None,
+) -> dict[str, int]:
+    best: dict[str, tuple[tuple[int, int, int], int]] = {}
+    for proposal_index, proposal in enumerate(proposals):
+        if any(
+            word_id not in index_by_id
+            for word_id in (proposal.start_word_id, proposal.end_word_id, proposal.anchor_word_id)
+        ):
+            continue
+        start_index = index_by_id[proposal.start_word_id]
+        end_index = index_by_id[proposal.end_word_id]
+        if end_index < start_index:
+            continue
+        if preset is not None and proposal.visual_asset_ids:
+            scene = preset.scene_layouts.get(proposal.scene_token or "")
+            if scene is None or not (
+                scene.min_assets <= len(proposal.visual_asset_ids) <= scene.max_assets
+            ):
+                continue
+        for asset_id in proposal.visual_asset_ids:
+            anchor_id = proposal.visual_anchor_word_ids.get(asset_id, proposal.anchor_word_id)
+            if anchor_id not in index_by_id:
+                continue
+            if hint_anchor_ids is not None:
+                anchor_in_span = start_index <= index_by_id[anchor_id] <= end_index
+                anchor_is_hint = anchor_id in hint_anchor_ids.get(asset_id, ())
+                if not anchor_in_span and not anchor_is_hint:
+                    continue
+            rank = (
+                _VISUAL_CONFIDENCE_RANK.get(proposal.confidence_tier, 2),
+                index_by_id[anchor_id],
+                proposal_index,
+            )
+            current = best.get(asset_id)
+            if current is None or rank < current[0]:
+                best[asset_id] = (rank, proposal_index)
+    return {asset_id: value[1] for asset_id, value in best.items()}
+
+
+def _proposal_indexes_for_event_budget(
+    proposals: list[SmartPlannerProposal],
+    index_by_id: dict[str, int],
+    best_visual_proposal: dict[str, int],
+    *,
+    max_events: int,
+    preset: SmartEditPreset | None = None,
+) -> list[int]:
+    """Keep global visual winners inside the rendered-event budget."""
+
+    winner_indexes = set(best_visual_proposal.values())
+
+    def priority(item: tuple[int, SmartPlannerProposal]) -> tuple[int, int, int, int]:
+        proposal_index, proposal = item
+        if proposal_index in winner_indexes:
+            winning_anchors = [
+                proposal.visual_anchor_word_ids.get(asset_id, proposal.anchor_word_id)
+                for asset_id in proposal.visual_asset_ids
+                if best_visual_proposal.get(asset_id) == proposal_index
+            ]
+            earliest_anchor = min(
+                (index_by_id.get(anchor, len(index_by_id)) for anchor in winning_anchors),
+                default=len(index_by_id),
+            )
+            return (
+                0,
+                _VISUAL_CONFIDENCE_RANK.get(proposal.confidence_tier, 2),
+                earliest_anchor,
+                proposal_index,
+            )
+        return (1, 0, proposal_index, proposal_index)
+
+    def event_cost(proposal_index: int, proposal: SmartPlannerProposal) -> int:
+        if not proposal.visual_asset_ids:
+            return 1
+        owned = sum(
+            best_visual_proposal.get(asset_id) in {None, proposal_index}
+            for asset_id in proposal.visual_asset_ids
+        )
+        if owned == 0:
+            return 0
+        if preset is None:
+            return owned
+        # Invalid proposals still consume a conservative budget allocation so
+        # the compiler can emit their omission receipt without exceeding the
+        # eventual event cap.
+        return owned
+
+    selected: set[int] = set()
+    consumed = 0
+    for proposal_index, proposal in sorted(enumerate(proposals), key=priority):
+        cost = event_cost(proposal_index, proposal)
+        if cost == 0 or consumed + cost > max_events:
+            continue
+        selected.add(proposal_index)
+        consumed += cost
+        if consumed == max_events:
+            break
+    return sorted(selected)
+
+
 def _events_from_proposals(
     proposals: list[SmartPlannerProposal],
     *,
@@ -786,8 +894,18 @@ def _events_from_proposals(
     events: list[SmartEditEvent] = []
     collisions: dict[tuple[str, str, str], int] = {}
     hook_composition_index = 0
+    used_visual_asset_ids: set[str] = set()
+    proposal_pool = list(proposals)
+    best_visual_proposal = _best_visual_proposal_indexes(proposal_pool, index_by_id)
+    selected_proposal_indexes = _proposal_indexes_for_event_budget(
+        proposal_pool,
+        index_by_id,
+        best_visual_proposal,
+        max_events=preset.density.max_events,
+    )
 
-    for proposal in proposals[: preset.density.max_events]:
+    for proposal_index in selected_proposal_indexes:
+        proposal = proposal_pool[proposal_index]
         if any(
             word_id not in by_id
             for word_id in (proposal.start_word_id, proposal.end_word_id, proposal.anchor_word_id)
@@ -802,6 +920,13 @@ def _events_from_proposals(
         span_ids = word_ids[start_index : end_index + 1]
         visual_ids: list[str | None] = list(proposal.visual_asset_ids) or [None]
         for visual_index, visual_id in enumerate(visual_ids):
+            best_proposal_index = best_visual_proposal.get(visual_id) if visual_id else None
+            if best_proposal_index is not None and best_proposal_index != proposal_index:
+                omissions.append({"reason": "duplicate_asset", "anchor": proposal.anchor_word_id})
+                continue
+            if visual_id and visual_id in used_visual_asset_ids:
+                omissions.append({"reason": "duplicate_asset", "anchor": proposal.anchor_word_id})
+                continue
             composition_index = visual_index
             if proposal.scene_token == "hook_accumulation" and visual_id:
                 composition_index = hook_composition_index
@@ -878,6 +1003,8 @@ def _events_from_proposals(
                         provenance=[PLANNER_VERSION, f"preset:{preset.preset_id}/{preset.version}"],
                     )
                 )
+                if visual_id:
+                    used_visual_asset_ids.add(visual_id)
             except Exception as exc:
                 omissions.append(
                     {
@@ -1648,6 +1775,7 @@ def _events_from_proposals_v2(
     hook_composition_index = 0
     audio_added = False
     last_camera_ms = -1_000_000
+    used_visual_asset_ids: set[str] = set()
     hint_anchor_ids: dict[str, set[str]] = {}
     if scene_hints is not None:
         for _, hint_asset_id, hint_anchor_word_id in scene_hints.matches:
@@ -1657,14 +1785,28 @@ def _events_from_proposals_v2(
     # deterministic fallbacks (chapter headings included) at the END, so a
     # pre-sort cut silently dropped whole chapters instead of the latest
     # low-value events.
-    ordered_proposals = sorted(
+    proposal_pool = sorted(
         proposals,
         key=lambda proposal: (
             index_by_id.get(proposal.start_word_id, len(words)),
             index_by_id.get(proposal.anchor_word_id, len(words)),
         ),
-    )[: preset.density.max_events]
-    for proposal in ordered_proposals:
+    )
+    best_visual_proposal = _best_visual_proposal_indexes(
+        proposal_pool,
+        index_by_id,
+        preset=preset,
+        hint_anchor_ids=hint_anchor_ids,
+    )
+    selected_proposal_indexes = _proposal_indexes_for_event_budget(
+        proposal_pool,
+        index_by_id,
+        best_visual_proposal,
+        max_events=preset.density.max_events,
+        preset=preset,
+    )
+    for proposal_index in selected_proposal_indexes:
+        proposal = proposal_pool[proposal_index]
         if any(
             word_id not in by_id
             for word_id in (proposal.start_word_id, proposal.end_word_id, proposal.anchor_word_id)
@@ -1677,18 +1819,45 @@ def _events_from_proposals_v2(
             omissions.append({"reason": "inverted_span", "anchor": proposal.anchor_word_id})
             continue
         span_ids = word_ids[start_index : end_index + 1]
-        visual_ids = list(proposal.visual_asset_ids)
+        visual_ids: list[str] = []
+        for visual_id in proposal.visual_asset_ids:
+            winner_index = best_visual_proposal.get(visual_id)
+            if winner_index is not None and winner_index != proposal_index:
+                omissions.append({"reason": "duplicate_asset", "anchor": proposal.anchor_word_id})
+                continue
+            visual_ids.append(visual_id)
+        if proposal.visual_asset_ids and not visual_ids:
+            # This proposal lost every generated card to a stronger moment.
+            # Do not leave behind its visual-enter SFX/camera treatment.
+            continue
+        materialized_proposal = proposal
         if visual_ids:
             scene = preset.scene_layouts.get(proposal.scene_token or "")
             if scene is None or not scene.min_assets <= len(visual_ids) <= scene.max_assets:
-                omissions.append(
-                    {"reason": "invalid_scene_cardinality", "anchor": proposal.anchor_word_id}
-                )
-                visual_ids = []
+                single_scene = preset.scene_layouts.get("single_example")
+                if (
+                    len(visual_ids) == 1
+                    and single_scene is not None
+                    and single_scene.min_assets <= 1 <= single_scene.max_assets
+                ):
+                    materialized_proposal = proposal.model_copy(
+                        update={"scene_token": "single_example"}
+                    )
+                else:
+                    omissions.append(
+                        {"reason": "invalid_scene_cardinality", "anchor": proposal.anchor_word_id}
+                    )
+                    # The original treatment's camera/SFX belongs to its
+                    # visuals. Drop the whole malformed proposal rather than
+                    # emitting an orphan accent with no card.
+                    continue
         expanded_visual_ids: list[str | None] = visual_ids or [None]
         for visual_index, visual_id in enumerate(expanded_visual_ids):
+            if visual_id and visual_id in used_visual_asset_ids:
+                omissions.append({"reason": "duplicate_asset", "anchor": proposal.anchor_word_id})
+                continue
             composition_index = visual_index
-            if proposal.scene_token == "hook_accumulation" and visual_id:
+            if materialized_proposal.scene_token == "hook_accumulation" and visual_id:
                 composition_index = hook_composition_index
                 hook_composition_index += 1
             key = (proposal.role, proposal.start_word_id, proposal.end_word_id)
@@ -1735,7 +1904,7 @@ def _events_from_proposals_v2(
                     else proposal.start_word_id
                 )
             active_start_ms = by_id[visual_anchor_word_id].start_ms
-            if proposal.scene_token == "hook_accumulation":
+            if materialized_proposal.scene_token == "hook_accumulation":
                 active_end_ms = min(
                     words[-1].end_ms,
                     hook_end_ms + round(preset.density.hook_group_hold_s * 1000),
@@ -1763,12 +1932,12 @@ def _events_from_proposals_v2(
                 visual_index == 0
                 and not audio_added
                 and proposal.role == "hook"
-                and proposal.scene_token != "persistent_badge"
+                and materialized_proposal.scene_token != "persistent_badge"
                 and preset.audio_treatment is not None
             )
             audio_added = audio_added or include_audio
             lanes = _event_lanes_v2(
-                proposal,
+                materialized_proposal,
                 event_id=event_id,
                 word_ids=span_ids,
                 visual_asset_id=visual_id,
@@ -1789,7 +1958,7 @@ def _events_from_proposals_v2(
                         active_start_ms=active_start_ms,
                         active_end_ms=max(active_start_ms + 1, active_end_ms),
                         confidence_tier=proposal.confidence_tier,
-                        spatial_owner=proposal.scene_token
+                        spatial_owner=materialized_proposal.scene_token
                         or ("smart_title" if proposal.text_token else None),
                         enabled=True,
                         lanes=lanes,
@@ -1799,6 +1968,8 @@ def _events_from_proposals_v2(
                         ],
                     )
                 )
+                if visual_id:
+                    used_visual_asset_ids.add(visual_id)
             except Exception as exc:
                 omissions.append(
                     {

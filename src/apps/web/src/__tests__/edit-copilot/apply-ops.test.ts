@@ -82,6 +82,13 @@ function extendedCtx(over: Partial<Parameters<typeof applyCopilotOps>[1]> = {}) 
   const poolAssets = [asset()];
   const pendingSuggestions = [suggestion()];
   const sfxCatalog = [effect()];
+  const capabilities = over.capabilities ?? {
+    text_elements: true,
+    timeline: true,
+    split_clips: true,
+    sfx: true,
+    overlays: true,
+  };
   const extras: Parameters<typeof buildCopilotSnapshot>[5] = {
     sfxEnabled: true,
     sfxPlacements,
@@ -105,8 +112,8 @@ function extendedCtx(over: Partial<Parameters<typeof applyCopilotOps>[1]> = {}) 
   return {
     bars,
     slots,
-    snapshot: buildCopilotSnapshot(bars, slots, clips, { text_elements: true, timeline: true, sfx: true, overlays: true }, [], extras),
-    capabilities: { text_elements: true, timeline: true, split_clips: true, sfx: true, overlays: true },
+    snapshot: buildCopilotSnapshot(bars, slots, clips, capabilities, [], extras),
+    capabilities,
     sfx: sfxPlacements,
     sfxCatalog,
     overlays,
@@ -331,6 +338,213 @@ describe("applyCopilotOps", () => {
 
     const stale = applyCopilotOps([{ op: "remove_overlay", overlay_index: 0 }], extendedCtx({ overlays: [] }));
     expect(stale.rejected).toMatchObject([{ reason: "target_missing" }]);
+  });
+
+  it("cascades explicitly grouped generated effects when Copilot removes an overlay", () => {
+    const group = "smart-event-1";
+    const groupedOverlays = [
+      overlay({ source: "smart_captions", effect_group_id: group }),
+      overlay({ id: "manual-overlay", source: "manual" }),
+    ];
+    const groupedSfx = [
+      sfx({ id: "linked-sfx", source: "smart_captions", effect_group_id: group }),
+      sfx({ id: "manual-sfx", source: "manual", effect_group_id: group }),
+    ];
+    const groupedCamera = [
+      {
+        id: "linked-camera",
+        start_s: 1,
+        end_s: 2,
+        intensity: 0.04,
+        easing: "sine_pulse" as const,
+        source: "smart_captions",
+        effect_group_id: group,
+      },
+    ];
+    const context = extendedCtx({
+      overlays: groupedOverlays,
+      sfx: groupedSfx,
+      cameraEffects: groupedCamera,
+    });
+    context.snapshot = buildCopilotSnapshot(
+      context.bars,
+      context.slots,
+      clips,
+      { text_elements: true, timeline: true, sfx: true, overlays: true, camera_effects: true },
+      [],
+      {
+        sfxEnabled: true,
+        sfxPlacements: groupedSfx,
+        overlaysEnabled: true,
+        overlayCards: groupedOverlays,
+        cameraEffectsEnabled: true,
+        cameraEffects: groupedCamera,
+      },
+    );
+    const result = applyCopilotOps(
+      [{ op: "remove_overlay", overlay_index: 0 }],
+      context,
+    );
+
+    expect(result.nextOverlays?.map((item) => item.id)).toEqual(["manual-overlay"]);
+    expect(result.nextSfx?.map((item) => item.id)).toEqual(["manual-sfx"]);
+    expect(result.nextCameraEffects).toEqual([]);
+  });
+
+  it("groups a Director/Copilot overlay plus newly-created accents", () => {
+    const context = extendedCtx({
+      capabilities: {
+        text_elements: true,
+        timeline: true,
+        split_clips: true,
+        sfx: true,
+        overlays: true,
+        camera_effects: true,
+      },
+      makeCameraEffectId: () => "new-camera",
+    });
+    context.snapshot = buildCopilotSnapshot(
+      context.bars,
+      context.slots,
+      clips,
+      context.capabilities ?? {},
+      [],
+      {
+        sfxEnabled: true,
+        sfxPlacements: context.sfx,
+        sfxCatalog: context.sfxCatalog,
+        overlaysEnabled: true,
+        overlayCards: context.overlays,
+        poolAssets: context.poolAssets,
+        cameraEffectsEnabled: true,
+        cameraEffects: [],
+      },
+    );
+    const result = applyCopilotOps(
+      [
+        {
+          op: "add_overlay",
+          asset_id: "asset-1",
+          start_s: 2,
+          end_s: 5,
+          effect_bundle_id: "reveal-1",
+        },
+        {
+          op: "add_sfx",
+          effect_id: "effect-1",
+          at_s: 2,
+          effect_bundle_id: "reveal-1",
+        },
+        {
+          op: "add_camera_effect",
+          start_s: 2,
+          end_s: 3,
+          effect_bundle_id: "reveal-1",
+        },
+      ],
+      context,
+    );
+
+    const group = result.nextOverlays?.at(-1)?.effect_group_id;
+    expect(group).toBeTruthy();
+    expect(result.nextOverlays?.at(-1)?.source).toBe("edit_ai");
+    expect(result.nextSfx?.at(-1)).toMatchObject({ source: "edit_ai", effect_group_id: group });
+    expect(result.nextCameraEffects?.at(-1)).toMatchObject({
+      id: "new-camera",
+      source: "edit_ai",
+      effect_group_id: group,
+    });
+
+    const unrelated = applyCopilotOps(
+      [
+        { op: "add_overlay", asset_id: "asset-1", start_s: 2, end_s: 5 },
+        { op: "add_sfx", effect_id: "effect-1", at_s: 18 },
+        { op: "add_camera_effect", start_s: 18, end_s: 19 },
+      ],
+      context,
+    );
+    expect(unrelated.nextOverlays?.at(-1)?.effect_group_id).toBeUndefined();
+    expect(unrelated.nextSfx?.at(-1)?.effect_group_id).toBeUndefined();
+    expect(unrelated.nextCameraEffects?.at(-1)?.effect_group_id).toBeUndefined();
+
+    const twoBundles = applyCopilotOps(
+      [
+        {
+          op: "add_overlay",
+          asset_id: "asset-1",
+          start_s: 2,
+          end_s: 5,
+          effect_bundle_id: "bundle-a",
+        },
+        {
+          op: "add_sfx",
+          effect_id: "effect-1",
+          at_s: 2,
+          effect_bundle_id: "bundle-a",
+        },
+        {
+          op: "add_overlay",
+          asset_id: "asset-1",
+          start_s: 10,
+          end_s: 13,
+          effect_bundle_id: "bundle-b",
+        },
+        {
+          op: "add_sfx",
+          effect_id: "effect-1",
+          at_s: 10,
+          effect_bundle_id: "bundle-b",
+        },
+      ],
+      context,
+    );
+    const addedOverlays = twoBundles.nextOverlays?.slice(-2) ?? [];
+    expect(addedOverlays[0].effect_group_id).toBeTruthy();
+    expect(addedOverlays[1].effect_group_id).toBeTruthy();
+    expect(addedOverlays[0].effect_group_id).not.toBe(addedOverlays[1].effect_group_id);
+
+    const ambiguous = applyCopilotOps(
+      [
+        {
+          op: "add_overlay",
+          asset_id: "asset-1",
+          start_s: 2,
+          end_s: 5,
+          effect_bundle_id: "ambiguous",
+        },
+        {
+          op: "add_overlay",
+          asset_id: "asset-1",
+          start_s: 6,
+          end_s: 9,
+          effect_bundle_id: "ambiguous",
+        },
+        {
+          op: "add_sfx",
+          effect_id: "effect-1",
+          at_s: 2,
+          effect_bundle_id: "ambiguous",
+        },
+      ],
+      context,
+    );
+    expect(ambiguous.nextOverlays?.slice(-2).every((item) => !item.effect_group_id)).toBe(true);
+    expect(ambiguous.nextSfx?.at(-1)?.effect_group_id).toBeUndefined();
+
+    const rejectedSibling = applyCopilotOps(
+      [
+        {
+          op: "add_overlay",
+          asset_id: "asset-1",
+          start_s: 2,
+          end_s: 5,
+          effect_bundle_id: "partial",
+        },
+        { op: "add_sfx", effect_id: "missing", at_s: 2, effect_bundle_id: "partial" },
+      ],
+      context,
+    );
+    expect(rejectedSibling.nextOverlays?.at(-1)?.effect_group_id).toBeUndefined();
   });
 
   it("applies caption cue and caption meta ops", () => {

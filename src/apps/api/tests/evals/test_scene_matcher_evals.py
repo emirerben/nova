@@ -6,11 +6,27 @@ from pathlib import Path
 
 import pytest
 
+from app.agents.scene_matcher import SceneMatcherInput, SceneMatcherOutput
+
 from .runners.eval_runner import discover_fixtures, load_fixture, run_eval
+from .runners.structural import check_scene_matcher
 
 AGENT_DIR = "scene_matcher"
 AGENT_NAME = "nova.compose.scene_matcher"
 FIXTURE_PATHS = discover_fixtures(AGENT_DIR)
+
+
+def test_scene_matcher_structural_rejects_repeated_asset_placements() -> None:
+    """The eval floor must catch the repeated-overlay failure this prompt fixes."""
+    fixture = load_fixture(FIXTURE_PATHS[0])
+    input_data = SceneMatcherInput.model_validate(fixture.input)
+    output = SceneMatcherOutput.model_validate(fixture.output)
+    repeated = output.matches[0].model_copy(update={"anchor_word_id": "w000012"})
+    duplicate_output = output.model_copy(update={"matches": [*output.matches, repeated]})
+
+    assert check_scene_matcher(duplicate_output, input_data) == [
+        "asset a-spain: 2 anchors exceeds the one-placement cap"
+    ]
 
 
 @pytest.mark.skipif(not FIXTURE_PATHS, reason="no scene matcher fixtures")
@@ -41,6 +57,10 @@ def test_scene_matcher_eval(
     )
     if fixture.meta.get("source") == "hand_authored_golden" and result.output:
         matches = result.output.get("matches") or []
+        asset_ids = [match["asset_id"] for match in matches]
+        assert len(asset_ids) == len(set(asset_ids)), (
+            "generated scene matches must contain at most one placement per asset"
+        )
         by_asset = {match["asset_id"]: match["anchor_word_id"] for match in matches}
         words_by_id = {word["word_id"]: word["text"] for word in fixture.input["words"]}
         # The contract of the brain: the country flag anchors ON the spoken

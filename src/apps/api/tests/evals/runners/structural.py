@@ -2060,8 +2060,8 @@ def check_scene_matcher(
             failures.append(f"match {index}: confidence {match.confidence!r} not allowed")
         per_asset[match.asset_id] = per_asset.get(match.asset_id, 0) + 1
     for asset_id, count in per_asset.items():
-        if count > 2:
-            failures.append(f"asset {asset_id}: {count} anchors exceeds the per-asset cap")
+        if count > 1:
+            failures.append(f"asset {asset_id}: {count} anchors exceeds the one-placement cap")
 
     seen_sequences: set[int] = set()
     for index, tag in enumerate(output.cue_tags):

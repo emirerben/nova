@@ -171,6 +171,7 @@ export interface CopilotCameraEffectSnapshot {
   start_s: number;
   end_s: number;
   intensity: number;
+  effect_group_id?: string | null;
   mutation_fingerprint?: string;
 }
 
@@ -191,6 +192,7 @@ export interface CopilotSfxPlacementSnapshot {
   at_s: number;
   gain: number;
   duration_s: number | null;
+  effect_group_id?: string | null;
   mutation_fingerprint?: string;
 }
 
@@ -239,6 +241,8 @@ export interface CopilotOverlayCardSnapshot {
   y_frac: number;
   scale: number;
   display_mode: "pip" | "fullscreen";
+  source?: string | null;
+  effect_group_id?: string | null;
   mutation_fingerprint?: string;
 }
 
@@ -703,6 +707,7 @@ export function buildCopilotSnapshot(
         at_s: roundCopilotNumber(placement.at_s),
         gain: roundCopilotNumber(placement.gain),
         duration_s: placement.duration_s == null ? null : roundCopilotNumber(placement.duration_s),
+        effect_group_id: placement.effect_group_id ?? null,
       })),
       catalog: (options.sfxCatalog ?? []).slice(0, 20).map((effect) => ({
         id: effect.id,
@@ -736,6 +741,8 @@ export function buildCopilotSnapshot(
         y_frac: roundCopilotNumber(card.y_frac),
         scale: roundCopilotNumber(card.scale),
         display_mode: card.display_mode ?? "pip",
+        source: card.source ?? null,
+        effect_group_id: card.effect_group_id ?? null,
       })),
       asset_pool: (options.poolAssets ?? [])
         .filter((asset) => asset.status === "ready")
@@ -841,6 +848,7 @@ export function buildCopilotSnapshot(
       start_s: roundCopilotNumber(effect.start_s),
       end_s: roundCopilotNumber(effect.end_s),
       intensity: roundCopilotNumber(effect.intensity),
+      effect_group_id: effect.effect_group_id ?? null,
     }));
   }
   if (allowed.has("tool") && options.openTools) {

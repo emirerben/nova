@@ -74,6 +74,16 @@ def _arm_reburn(monkeypatch) -> list[dict]:
     return calls
 
 
+def _arm_camera_rerender(monkeypatch) -> list[dict]:
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.rerender_caption_camera_effects",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    return calls
+
+
 def _overlay(id_: str = "ov-1") -> dict:
     return {
         "id": id_,
@@ -86,6 +96,14 @@ def _overlay(id_: str = "ov-1") -> dict:
         "start_s": 0.4,
         "end_s": 2.4,
         "z": 0,
+    }
+
+
+def _generated_overlay(group: str = "event-1") -> dict:
+    return {
+        **_overlay("generated-overlay"),
+        "source": "smart_captions",
+        "effect_group_id": group,
     }
 
 
@@ -216,6 +234,218 @@ def test_media_overlay_dispatch_subtitled_without_base_keeps_fast_pass(monkeypat
     assert regen_calls[0]["queue"] == "overlay-jobs"
     assert regen_calls[0]["kwargs"]["render_gen_id"] == v["render_generation_id"]
     assert regen_calls[0]["kwargs"]["media_overlays_override"][0]["id"] == "ov-1"
+
+
+def test_media_overlay_dispatch_cascades_grouped_sfx_after_commit(monkeypatch):
+    regen_calls = _arm(monkeypatch)
+    group = "event-1"
+    job = _job(
+        media_overlays=[_generated_overlay(group)],
+        sound_effects=[
+            {
+                "id": "linked-sfx",
+                "src_gcs_path": "sound-effects/pop.mp3",
+                "at_s": 1.0,
+                "source": "smart_captions",
+                "effect_group_id": group,
+            }
+        ],
+    )
+
+    enqueue = gj.dispatch_set_media_overlays(
+        job,
+        "song_text",
+        overlays_raw=[],
+        user_id=USER_ID,
+    )
+
+    assert job.assembly_plan["variants"][0]["sound_effects"] is None
+    assert regen_calls == []
+    assert enqueue is not None
+    enqueue()
+    assert len(regen_calls) == 1
+    assert regen_calls[0]["kwargs"]["media_overlays_override"] == []
+
+
+def test_media_overlay_dispatch_cascades_caption_effect_bundle(monkeypatch):
+    regen_calls = _arm(monkeypatch)
+    reburn_calls = _arm_reburn(monkeypatch)
+    camera_calls = _arm_camera_rerender(monkeypatch)
+    group = "event-1"
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        music_track_id=None,
+        media_overlays=[_generated_overlay(group)],
+        sound_effects=[
+            {
+                "id": "linked-sfx",
+                "src_gcs_path": "sound-effects/pop.mp3",
+                "at_s": 1.0,
+                "source": "smart_captions",
+                "effect_group_id": group,
+            }
+        ],
+        camera_effects=[
+            {
+                "id": "linked-camera",
+                "token": "semantic_crop_pulse",
+                "start_s": 1.0,
+                "end_s": 2.0,
+                "intensity": 0.04,
+                "easing": "sine_pulse",
+                "source": "smart_captions",
+                "effect_group_id": group,
+            }
+        ],
+    )
+
+    enqueue = gj.dispatch_set_media_overlays(
+        job,
+        "subtitled",
+        overlays_raw=[],
+        user_id=USER_ID,
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["media_overlays"] is None
+    assert variant["sound_effects"] is None
+    assert variant["camera_effects"] is None
+    assert regen_calls == []
+    assert reburn_calls == []
+    assert camera_calls == []
+    assert enqueue is not None
+    enqueue()
+    assert reburn_calls == []
+    assert len(camera_calls) == 1
+
+
+def test_media_overlay_dispatch_camera_cascade_forces_montage_rebuild(monkeypatch):
+    regen_calls = _arm(monkeypatch)
+    group = "event-camera"
+    job = _job(
+        media_overlays=[_generated_overlay(group)],
+        camera_effects=[
+            {
+                "id": "linked-camera",
+                "token": "semantic_crop_pulse",
+                "start_s": 1.0,
+                "end_s": 2.0,
+                "intensity": 0.04,
+                "easing": "sine_pulse",
+                "source": "smart_captions",
+                "effect_group_id": group,
+            }
+        ],
+    )
+
+    enqueue = gj.dispatch_set_media_overlays(
+        job,
+        "song_text",
+        overlays_raw=[],
+        user_id=USER_ID,
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["media_overlays"] is None
+    assert variant["camera_effects"] is None
+    assert regen_calls == []
+    assert enqueue is not None
+    enqueue()
+    assert regen_calls[0]["kwargs"] == {
+        "render_gen_id": variant["render_generation_id"],
+        "force_full_render": True,
+    }
+
+
+def test_metadata_only_overlay_save_cascades_grouped_effects(monkeypatch):
+    import app.routes.plan_items as plan_items
+
+    regen_calls = _arm(monkeypatch)
+    group = "event-1"
+    job = _job(
+        media_overlays=[_generated_overlay(group)],
+        sound_effects=[
+            {
+                "id": "linked-sfx",
+                "src_gcs_path": "sound-effects/pop.mp3",
+                "at_s": 1.0,
+                "source": "smart_captions",
+                "effect_group_id": group,
+            }
+        ],
+        camera_effects=[
+            {
+                "id": "linked-camera",
+                "token": "semantic_crop_pulse",
+                "start_s": 1.0,
+                "end_s": 2.0,
+                "intensity": 0.04,
+                "easing": "sine_pulse",
+                "source": "smart_captions",
+                "effect_group_id": group,
+            }
+        ],
+    )
+
+    plan_items._persist_overlay_metadata_only(
+        job,
+        "song_text",
+        overlays_raw=[],
+        user_id=USER_ID,
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["media_overlays"] is None
+    assert variant["sound_effects"] is None
+    assert variant["camera_effects"] is None
+    assert variant["overlay_camera_rebuild_pending"] is True
+
+    enqueue = gj.dispatch_set_media_overlays(
+        job,
+        "song_text",
+        overlays_raw=[],
+        user_id=USER_ID,
+    )
+
+    assert enqueue is not None
+    assert regen_calls == []
+    # Sticky until the token-winning full-render terminal; dispatch failure or
+    # supersession must leave the retry signal intact.
+    assert variant["overlay_camera_rebuild_pending"] is True
+    enqueue()
+    assert len(regen_calls) == 1
+    assert regen_calls[0]["kwargs"] == {
+        "render_gen_id": variant["render_generation_id"],
+        "force_full_render": True,
+    }
+
+
+def test_editor_commit_honors_pending_overlay_camera_rebuild(monkeypatch):
+    calls = _arm(monkeypatch)
+    job = _job(
+        media_overlays=None,
+        camera_effects=None,
+        overlay_camera_rebuild_pending=True,
+    )
+    variant = job.assembly_plan["variants"][0]
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        gj.EditorCommitRequest(
+            media_overlays=[],
+            base_generation=gj.variant_render_baseline(variant),
+        ),
+        user_id=USER_ID,
+    )
+
+    assert prep["pending_overlay_camera_rebuild"] is True
+    assert prep["sections"]["camera_effects"] is True
+    assert variant["overlay_camera_rebuild_pending"] is True
+    gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    assert len(calls) == 1
+    assert calls[0]["kwargs"]["force_full_render"] is True
 
 
 def test_editor_commit_after_overlay_apply_409s_instead_of_silent_clobber(monkeypatch):

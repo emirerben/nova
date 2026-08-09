@@ -29,7 +29,11 @@ canary section. Guard: `tests/smart_edit/test_capability.py`.
 - `app/smart_edit/planner.py` (`PLANNER_VERSION_V2`; legacy v1 path keeps
   `PLANNER_VERSION`) — transcript-anchored semantic planner. Event lanes: text,
   visual, camera, sfx, caption-emphasis, boundary-effect, audio-treatment; every
-  event anchors to word ids (`w000123`).
+  event anchors to word ids (`w000123`). Generated visuals are unique per asset:
+  the planner ranks all structurally valid proposals by confidence, then earliest
+  clear anchor, before applying the event budget. A partially deduplicated pair
+  reflows to a single-card scene; a proposal that loses every visual is dropped
+  with its entrance SFX/camera lanes so no orphan accent survives.
 - `app/smart_edit/compiler.py` (`COMPILER_VERSION_V2`) — compiles a validated
   plan into existing renderer lanes: caption cues + policy, text elements
   (numbered chapter titles render via Skia independently of subtitles), media

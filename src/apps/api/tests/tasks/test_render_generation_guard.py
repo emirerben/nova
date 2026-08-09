@@ -728,7 +728,16 @@ def test_rejected_failed_full_render_cleans_generation_objects(monkeypatch):
 
 def test_accepted_failed_full_render_retires_old_base_and_unpublished_video(monkeypatch):
     old_base = f"generative-jobs/{JOB_ID}/base_previous.mp4"
-    job = _FakeJob([_variant("tok-current", base_video_path=old_base)])
+    job = _FakeJob(
+        [
+            _variant(
+                "tok-current",
+                base_video_path=old_base,
+                overlay_camera_rebuild_pending=True,
+                media_overlays_render_dirty=True,
+            )
+        ]
+    )
     render_result = {
         "ok": False,
         "render_status": "failed",
@@ -750,6 +759,7 @@ def test_accepted_failed_full_render_retires_old_base_and_unpublished_video(monk
         None,
         False,
         render_gen_id="tok-current",
+        force_full_render=True,
     )
 
     persisted = job.assembly_plan["variants"][0]
@@ -757,6 +767,8 @@ def test_accepted_failed_full_render_retires_old_base_and_unpublished_video(monk
     assert old_base in deleted
     assert render_result["video_path"] in deleted
     assert render_result["base_video_path"] not in deleted
+    assert persisted["overlay_camera_rebuild_pending"] is True
+    assert persisted["media_overlays_render_dirty"] is True
 
 
 def _fake_ingest() -> dict:
@@ -851,6 +863,8 @@ def test_full_render_superseded_does_not_delete_snapshot_blobs(monkeypatch):
                 media_overlays=overlays,
                 pre_media_overlay_video_path=f"generative-jobs/{JOB_ID}/pre_overlay.mp4",
                 pre_sfx_video_path=f"generative-jobs/{JOB_ID}/pre_sfx.mp4",
+                overlay_camera_rebuild_pending=True,
+                media_overlays_render_dirty=True,
             )
         ]
     )
@@ -868,9 +882,20 @@ def test_full_render_superseded_does_not_delete_snapshot_blobs(monkeypatch):
     monkeypatch.setattr(gb, "_resolve_narrative_order", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(gb, "_run_text_agents", lambda *a, **k: (None, None), raising=False)
 
-    gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id="tok-old")
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "original_text",
+        None,
+        None,
+        False,
+        render_gen_id="tok-old",
+        force_full_render=True,
+    )
 
     assert deleted == []
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["overlay_camera_rebuild_pending"] is True
+    assert persisted["media_overlays_render_dirty"] is True
 
 
 def test_full_render_accepted_frees_retired_snapshot_blobs(monkeypatch):
@@ -884,6 +909,8 @@ def test_full_render_accepted_frees_retired_snapshot_blobs(monkeypatch):
                 media_overlays=overlays,
                 pre_media_overlay_video_path=f"generative-jobs/{JOB_ID}/pre_overlay.mp4",
                 pre_sfx_video_path=f"generative-jobs/{JOB_ID}/pre_sfx.mp4",
+                overlay_camera_rebuild_pending=True,
+                media_overlays_render_dirty=True,
             )
         ]
     )
@@ -905,12 +932,128 @@ def test_full_render_accepted_frees_retired_snapshot_blobs(monkeypatch):
     monkeypatch.setattr(gb, "_resolve_narrative_order", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(gb, "_run_text_agents", lambda *a, **k: (None, None), raising=False)
 
-    gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id="tok-cur")
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "original_text",
+        None,
+        None,
+        False,
+        render_gen_id="tok-cur",
+        force_full_render=True,
+    )
 
     assert sorted(deleted) == [
         f"generative-jobs/{JOB_ID}/pre_overlay.mp4",
         f"generative-jobs/{JOB_ID}/pre_sfx.mp4",
     ]
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["overlay_camera_rebuild_pending"] is False
+
+
+def _arm_caption_camera_render(monkeypatch, job, *, upload):
+    _patch_sessions(monkeypatch, job)
+    _capture_updates(monkeypatch, job)
+    monkeypatch.setattr("app.storage.download_to_file", lambda *a, **k: None)
+    monkeypatch.setattr("app.storage.upload_public_read", upload)
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: types.SimpleNamespace(duration_s=5.0, has_audio=True),
+    )
+    monkeypatch.setattr(gb, "_should_compose_subtitled_final", lambda _v: False)
+    monkeypatch.setattr(gb, "_burn_persisted_captions_onto_base", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_rendered_duration_s", lambda _path: 5.0)
+    monkeypatch.setattr(gb, "_will_reapply_media_layers", lambda _v: False)
+    monkeypatch.setattr(gb, "_free_retired_visual_blocks_base", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_free_retired_media_snapshots", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for",
+        lambda _job_id: contextlib.nullcontext(),
+    )
+
+
+def _caption_camera_variant(token: str) -> dict:
+    return _variant(
+        token,
+        variant_id="subtitled",
+        rank=1,
+        resolved_archetype="subtitled",
+        camera_effects=None,
+        overlay_camera_rebuild_pending=True,
+        media_overlays_render_dirty=True,
+    )
+
+
+def test_caption_camera_winning_terminal_clears_pending_markers(monkeypatch):
+    job = _FakeJob([_caption_camera_variant("tok-cur")])
+    _arm_caption_camera_render(
+        monkeypatch,
+        job,
+        upload=lambda _local, _gcs: "https://signed/camera",
+    )
+    terminal = {"accepted": False}
+
+    gb._run_rerender_caption_camera_effects(
+        JOB_ID,
+        "subtitled",
+        render_gen_id="tok-cur",
+        terminal_state=terminal,
+    )
+
+    persisted = job.assembly_plan["variants"][0]
+    assert terminal["accepted"] is True
+    assert persisted["overlay_camera_rebuild_pending"] is False
+    assert persisted["media_overlays_render_dirty"] is False
+    assert persisted["render_status"] == "ready"
+    assert "_camera_" in persisted["video_path"]
+
+
+def test_caption_camera_failure_before_swap_preserves_pending_markers(monkeypatch):
+    job = _FakeJob([_caption_camera_variant("tok-cur")])
+
+    def _fail_upload(_local, _gcs):
+        raise RuntimeError("upload failed")
+
+    _arm_caption_camera_render(monkeypatch, job, upload=_fail_upload)
+
+    gb.rerender_caption_camera_effects.run(JOB_ID, "subtitled", "tok-cur")
+
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["overlay_camera_rebuild_pending"] is True
+    assert persisted["media_overlays_render_dirty"] is True
+    assert persisted["render_status"] == "ready"
+    assert persisted["render_error"] == "upload failed"
+
+
+def test_caption_camera_stale_terminal_preserves_pending_markers(monkeypatch):
+    job = _FakeJob([_caption_camera_variant("tok-old")])
+    old_video_path = job.assembly_plan["variants"][0]["video_path"]
+    deleted: list[str] = []
+
+    def _supersede_during_upload(_local, _gcs):
+        job.assembly_plan["variants"][0]["render_generation_id"] = "tok-new"
+        return "https://signed/stale-camera"
+
+    _arm_caption_camera_render(monkeypatch, job, upload=_supersede_during_upload)
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+    terminal = {"accepted": False}
+
+    gb._run_rerender_caption_camera_effects(
+        JOB_ID,
+        "subtitled",
+        render_gen_id="tok-old",
+        terminal_state=terminal,
+    )
+
+    persisted = job.assembly_plan["variants"][0]
+    assert terminal["accepted"] is False
+    assert persisted["overlay_camera_rebuild_pending"] is True
+    assert persisted["media_overlays_render_dirty"] is True
+    assert persisted["video_path"] == old_video_path
+    assert len(deleted) == 1
+    assert "_camera_" in deleted[0]
 
 
 def test_full_render_success_reburns_persisted_text_elements_after_new_base(monkeypatch):

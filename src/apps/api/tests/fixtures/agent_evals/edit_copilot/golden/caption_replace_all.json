@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-08-08-v15",
+  "prompt_version": "2026-08-09-v16",
   "input": {
     "utterance": "replace every Kriya in the captions with Kria",
     "prior_turns": [],
