@@ -428,8 +428,10 @@ export interface AllowedOpFamilyOptions {
   readOnly?: boolean;
   renderLayoutSwitchable?: boolean;
   /** Carousel-as-a-moment (Blossom carousel) is eligible for THIS variant right
-   * now (mirrors capabilities.carousel === true, not read-only). Unlocks the
-   * "render" family alongside (or independently of) renderLayoutSwitchable. */
+   * now (mirrors capabilities.carousel === true, not read-only). Unlocks its
+   * own "carousel" family (Lane D) — independent of renderLayoutSwitchable's
+   * "render" family, since a staged draft mutation and a full re-render have
+   * different availability rules. */
   carouselMomentAvailable?: boolean;
   cameraEffectsEnabled?: boolean;
   transitionsEnabled?: boolean;
@@ -507,7 +509,10 @@ export function allowedOpFamiliesFromCapabilities(
 ): CopilotOpFamily[] {
   if (options.readOnly) return [];
   if (allCoreCapabilitiesFalse(capabilities)) {
-    return options.renderLayoutSwitchable || options.carouselMomentAvailable ? ["render"] : [];
+    const gated: CopilotOpFamily[] = [];
+    if (options.renderLayoutSwitchable) gated.push("render");
+    if (options.carouselMomentAvailable) gated.push("carousel");
+    return gated;
   }
   const families: CopilotOpFamily[] = [];
   if (capabilities?.text_elements !== false) families.push("text");
@@ -516,7 +521,11 @@ export function allowedOpFamiliesFromCapabilities(
   if (capabilities?.overlays !== false && options.overlaysEnabled) families.push("overlay");
   if (options.captionsPresent) families.push("caption");
   if (options.musicSwappable || options.mixAllowed) families.push("music");
-  if (options.renderLayoutSwitchable || options.carouselMomentAvailable) families.push("render");
+  if (options.renderLayoutSwitchable) families.push("render");
+  // Carousel-as-a-moment is its own family (Lane D) — independent of
+  // renderLayoutSwitchable, since a variant can have one available without
+  // the other (unlike set_intro_layout, it's a staged draft mutation now).
+  if (options.carouselMomentAvailable) families.push("carousel");
   if (options.titleEditable !== false) families.push("title");
   if (capabilities?.camera_effects !== false && options.cameraEffectsEnabled) {
     families.push("effect");

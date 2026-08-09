@@ -10,6 +10,16 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Creator Block visual QA now combines Node/Deno pixel parity with independent safe-frame, row-spacing, headline-visibility, inspector-ownership, pocket-control, and scroll-ownership tests. The test suite can emit the exact reviewed portrait and landscape PNGs, and saved scenes from the previous runtime are upgraded safely instead of becoming unavailable.
+## [0.24.1.0] — 2026-08-09
+
+### Changed
+- **Carousel moments are now true editor blocks — no more render-on-add.** Adding a carousel stages a draggable block on the timeline (intro/middle/outro), the canvas previews it live with real clip footage in physics-driven 3D tiles (bit-exact TS port of the render engine, golden-trace verified), scrubbing shifts downstream clips honestly, and everything is undoable. The render happens once, when you Save, batched with your other edits.
+- **Nova chat stages carousel edits as drafts too** — instant, previewable, combinable with other edits in one message, one undo per bundle (prompt v18; combined live eval with Creator Blocks 68/68).
+- Focus-mode length is honest: the panel defaults to the choreography's natural arc length and warns when a shorter length would cut the zoom off.
+
+### Fixed
+- Live-preview integration: preview scaling in the editor canvas, a virtual-timeline rebuild thrash during playback, the transport clock now advances through carousel windows (wall-clock driven), seamless deck handoff at block boundaries, and a stale-event race that could rewind the block animation.
+- Saving a carousel-only edit now correctly reports that a render started.
 
 ## [0.24.0.1] — 2026-08-09
 

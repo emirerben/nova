@@ -562,6 +562,260 @@ def test_visual_block_commit_rejects_unowned_asset(monkeypatch):
     assert "owned" in str(exc.value.detail)
 
 
+# ── carousel-moment section: tri-state staging (Lane C) ────────────────────────
+# The carousel editor no longer dispatches its own render (dispatch_edit_variant's
+# per-field path stays intact for the instant-edit surface, but the CarouselPanel
+# now stages through the batched Save). These pin prepare_editor_commit's
+# tri-state read (model_fields_set), the shared `_validate_carousel_moment_patch`
+# validation, the synchronous `_merge_carousel_moment_override` staging, the
+# carousel_moment_cache_stale bit, and enqueue_editor_commit_render forcing a
+# full (non-reburn-only) render with NO carousel_moment_override kwarg (the
+# worker reads the already-staged variant field).
+
+
+def test_carousel_moment_absent_leaves_variant_unchanged(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    job = _job(carousel_moment={"position": "intro", "effect": "scale_sweep"})
+
+    prep = gj.prepare_editor_commit(job, "song_text", _commit_req(title="New title"))
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["carousel_moment"] == {"position": "intro", "effect": "scale_sweep"}
+    assert "carousel_moment_cache_stale" not in variant
+    assert prep["sections"]["carousel_moment"] is False
+
+
+def test_carousel_moment_alone_satisfies_at_least_one_section_gate(monkeypatch):
+    """Explicit `carousel_moment: null` alone is a valid commit — the 422
+    "provide at least one section" gate must read `model_fields_set`, not
+    `payload.carousel_moment is None` (which can't tell "absent" from
+    "explicit removal")."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+
+    prep = gj.prepare_editor_commit(_job(), "song_text", _commit_req(carousel_moment=None))
+
+    assert prep["has_render_section"] is True
+    assert prep["sections"]["carousel_moment"] is True
+
+
+def test_carousel_moment_explicit_null_removes_persisted_moment(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    job = _job(carousel_moment={"position": "intro", "effect": "scale_sweep", "auto": False})
+
+    prep = gj.prepare_editor_commit(job, "song_text", _commit_req(carousel_moment=None))
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["carousel_moment"] is None
+    assert variant["carousel_moment_cache_stale"] is True
+    assert prep["sections"]["carousel_moment"] is True
+    assert prep["has_render_section"] is True
+
+
+def test_carousel_moment_partial_dict_merges_over_persisted_config(monkeypatch):
+    """Present keys win, absent keys keep — same partial-merge contract as
+    dispatch_edit_variant's instant-edit path (_merge_carousel_moment_override),
+    now reused verbatim by the staged commit path."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    job = _job(
+        carousel_moment={
+            "position": "intro",
+            "effect": "scale_sweep",
+            "mode": "rolling",
+            "auto": True,
+        }
+    )
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(carousel_moment=gj.CarouselMomentEditRequest(position="outro")),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["carousel_moment"]["position"] == "outro"
+    # Untouched keys survive the partial merge.
+    assert variant["carousel_moment"]["effect"] == "scale_sweep"
+    assert variant["carousel_moment"]["mode"] == "rolling"
+    # Any touched key flips auto off — the user has now taken the wheel.
+    assert variant["carousel_moment"]["auto"] is False
+    assert variant["carousel_moment_cache_stale"] is True
+    assert prep["sections"]["carousel_moment"] is True
+
+
+def test_carousel_moment_duration_clamped_not_rejected(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    job = _job()
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            carousel_moment=gj.CarouselMomentEditRequest(position="outro", duration_s=99.0)
+        ),
+    )
+
+    assert job.assembly_plan["variants"][0]["carousel_moment"]["duration_s"] == 15.0
+
+
+def test_carousel_moment_invalid_position_422_nothing_persisted(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    job = _job()
+    baseline = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(carousel_moment=gj.CarouselMomentEditRequest(position="sideways")),
+        )
+
+    assert exc.value.status_code == 422
+    assert job.assembly_plan == baseline
+
+
+def test_carousel_moment_null_duration_422(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            _job(),
+            "song_text",
+            _commit_req(carousel_moment=gj.CarouselMomentEditRequest(duration_s=None)),
+        )
+    assert exc.value.status_code == 422
+
+
+def test_carousel_moment_ineligible_variant_422(monkeypatch):
+    """Fewer than 2 clips -> `_carousel_capability_reason` rejects the add/edit
+    (removal is exempt — see the next test)."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    prefix = ""
+    job = _job(ai_timeline={"beat_grid": [], "slots": _ai_slots(prefix)[:1]})
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(carousel_moment=gj.CarouselMomentEditRequest(position="intro")),
+        )
+
+    assert exc.value.status_code == 422
+    assert "2 clips" in str(exc.value.detail)
+
+
+def test_carousel_moment_removal_bypasses_eligibility_check(monkeypatch):
+    """Explicit removal is always allowed, even on a now-ineligible/flag-off
+    variant — mirrors `dispatch_edit_variant`'s same carve-out."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", False, raising=False)
+    job = _job(carousel_moment={"position": "intro", "effect": "scale_sweep"})
+
+    prep = gj.prepare_editor_commit(job, "song_text", _commit_req(carousel_moment=None))
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["carousel_moment"] is None
+    assert prep["sections"]["carousel_moment"] is True
+
+
+def test_carousel_moment_marks_base_video_stale(monkeypatch):
+    """A carousel splice invalidates the cached fast-reburn base, same as a
+    timeline/track/mix edit — otherwise a later text-only Save could reburn
+    onto footage that never got the carousel segment spliced in."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    job = _job()
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(carousel_moment=gj.CarouselMomentEditRequest(position="intro")),
+    )
+
+    assert job.assembly_plan["variants"][0]["base_video_stale"] is True
+
+
+def test_carousel_moment_only_commit_forces_full_render_off_lane_queue(monkeypatch):
+    """Carousel always full-renders — even alone, it must not ride the
+    lightweight overlay-jobs reburn-only queue, and it must NOT pass a
+    carousel_moment_override kwarg (the worker reads the already-staged
+    variant field, not a per-call override)."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    prep = gj.prepare_editor_commit(
+        _job(),
+        "song_text",
+        _commit_req(carousel_moment=gj.CarouselMomentEditRequest(position="middle")),
+    )
+    assert prep["sections"]["carousel_moment"] is True
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **kwargs: calls.append(kwargs)),
+        raising=False,
+    )
+
+    gj.enqueue_editor_commit_render("job-1", "song_text", prep)
+
+    assert len(calls) == 1
+    assert "queue" not in calls[0]  # not routed to the overlay-jobs reburn-only lane
+    assert "carousel_moment_override" not in calls[0]["kwargs"]
+
+
+def test_carousel_moment_and_title_commit_stage_both_sections(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    job = _job()
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            title="New title",
+            carousel_moment=gj.CarouselMomentEditRequest(position="outro", effect="flipbook"),
+        ),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert prep["sections"]["carousel_moment"] is True
+    assert variant["carousel_moment"] == {
+        "position": "outro",
+        "effect": "flipbook",
+        "auto": False,
+    }
+
+
 # ── happy path: all sections stage atomically + exactly one render kick ────────
 
 
@@ -603,6 +857,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "visual_blocks": False,
         "motion_scenes": False,
         "camera_effects": False,
+        "carousel_moment": False,
     }
 
     # Exactly ONE render kick, carrying the new token + the timeline override.
@@ -702,6 +957,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "visual_blocks": False,
         "motion_scenes": False,
         "camera_effects": False,
+        "carousel_moment": False,
     }
 
     calls: list[dict] = []
@@ -2435,6 +2691,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "visual_blocks": False,
         "motion_scenes": False,
         "camera_effects": False,
+        "carousel_moment": False,
         "title": True,
     }
     v = job.assembly_plan["variants"][0]

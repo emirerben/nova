@@ -4,11 +4,20 @@ import {
   buildVirtualTimeline,
   mapVirtualTimeToMusicTime,
   mapVirtualTime,
+  nextVirtualEntry,
   slotsDifferFromBaseline,
   transitionPreviewAtTime,
   virtualDeckLookAdjustmentsAtTime,
   virtualDeckLookPresetsAtTime,
+  type VirtualTimelineEntry,
 } from "@/app/plan/items/[id]/_editor/virtual-timeline";
+
+/** These fixtures never splice a carousel block in, so every entry is always
+ * `kind: "clip"` at runtime — this narrows the type for tests written before
+ * the carousel-block union existed. */
+function clipEntry(entry: unknown): VirtualTimelineEntry {
+  return entry as VirtualTimelineEntry;
+}
 
 function slot(over: Partial<DraftSlot> = {}): DraftSlot {
   return {
@@ -84,7 +93,7 @@ describe("virtual timeline", () => {
       clips,
     );
 
-    expect(timeline.entries.map((entry) => entry.slotKey)).toEqual(["a", "c"]);
+    expect(timeline.entries.map((entry) => clipEntry(entry).slotKey)).toEqual(["a", "c"]);
     expect(timeline.totalDurationS).toBe(5);
     expect(mapVirtualTime(timeline, 2.5)).toMatchObject({
       entry: { slotIndex: 2, slotKey: "c", startS: 2 },
@@ -151,7 +160,7 @@ describe("virtual timeline", () => {
     );
 
     expect(timeline.hasMissingSource).toBe(true);
-    expect(timeline.entries[0].sourceUrl).toBeNull();
+    expect(clipEntry(timeline.entries[0]).sourceUrl).toBeNull();
   });
 
   it("detects clip-dirty state against the rendered baseline", () => {
@@ -219,7 +228,9 @@ describe("virtual timeline", () => {
     );
 
     expect(timeline.entries.map((entry) => entry.startS)).toEqual([0, 1.8, 4.5]);
-    expect(timeline.entries.map((entry) => entry.overlapBeforeS)).toEqual([0, 0.2, 0.3]);
+    expect(timeline.entries.map((entry) => clipEntry(entry).overlapBeforeS)).toEqual([
+      0, 0.2, 0.3,
+    ]);
     expect(timeline.totalDurationS).toBe(8.5);
     expect(transitionPreviewAtTime(timeline, 1.9)).toMatchObject({
       kind: "crossfade",
@@ -303,5 +314,136 @@ describe("virtual timeline", () => {
       a: olive,
       b: smoky,
     });
+  });
+});
+
+describe("carousel-moment splice (Lane C staged block)", () => {
+  function fourClipSlots(): DraftSlot[] {
+    return [
+      slot({ key: "a", clipIndex: 0, durationS: 2 }),
+      slot({ key: "b", clipIndex: 1, durationS: 2 }),
+      slot({ key: "c", clipIndex: 2, durationS: 2 }),
+      slot({ key: "d", clipIndex: 0, durationS: 2 }),
+    ];
+  }
+
+  it("splices at the intro: index 0, before every clip", () => {
+    const timeline = buildVirtualTimeline(fourClipSlots(), clips, [], {
+      position: "intro",
+      durationS: 3,
+    });
+    expect(timeline.entries.map((e) => e.kind)).toEqual([
+      "carousel",
+      "clip",
+      "clip",
+      "clip",
+      "clip",
+    ]);
+    expect(timeline.entries[0]).toMatchObject({ kind: "carousel", startS: 0, durationS: 3 });
+    // Every clip shifted later by the block's duration.
+    expect(timeline.entries.map((e) => e.startS)).toEqual([0, 3, 5, 7, 9]);
+    expect(timeline.totalDurationS).toBe(11);
+  });
+
+  it("splices at the outro: appended after every clip, clips untouched", () => {
+    const timeline = buildVirtualTimeline(fourClipSlots(), clips, [], {
+      position: "outro",
+      durationS: 3,
+    });
+    expect(timeline.entries.map((e) => e.kind)).toEqual([
+      "clip",
+      "clip",
+      "clip",
+      "clip",
+      "carousel",
+    ]);
+    expect(timeline.entries.slice(0, 4).map((e) => e.startS)).toEqual([0, 2, 4, 6]);
+    expect(timeline.entries[4]).toMatchObject({ kind: "carousel", startS: 8, durationS: 3 });
+    expect(timeline.totalDurationS).toBe(11);
+  });
+
+  it("splices at the middle: floor(n/2) splits an even clip count evenly", () => {
+    const timeline = buildVirtualTimeline(fourClipSlots(), clips, [], {
+      position: "middle",
+      durationS: 3,
+    });
+    // n=4 -> insertion index 2: 2 clips before, 2 after.
+    expect(timeline.entries.map((e) => e.kind)).toEqual([
+      "clip",
+      "clip",
+      "carousel",
+      "clip",
+      "clip",
+    ]);
+    expect(timeline.entries.map((e) => e.startS)).toEqual([0, 2, 4, 7, 9]);
+    expect(timeline.totalDurationS).toBe(11);
+  });
+
+  it("splices at the middle: floor(n/2) leaves an odd remainder AFTER the block", () => {
+    const fiveSlots = [...fourClipSlots(), slot({ key: "e", clipIndex: 1, durationS: 2 })];
+    const timeline = buildVirtualTimeline(fiveSlots, clips, [], {
+      position: "middle",
+      durationS: 3,
+    });
+    // n=5 -> insertion index floor(5/2)=2: 2 clips before, 3 after — the
+    // Python `len(steps) // 2` never leaves the extra clip before the block.
+    expect(timeline.entries.map((e) => e.kind)).toEqual([
+      "clip",
+      "clip",
+      "carousel",
+      "clip",
+      "clip",
+      "clip",
+    ]);
+  });
+
+  it("maps time inside the carousel window to a kind-tagged, source-less mapping", () => {
+    const timeline = buildVirtualTimeline(fourClipSlots(), clips, [], {
+      position: "middle",
+      durationS: 3,
+    });
+    const mapping = mapVirtualTime(timeline, 5); // inside the block's [4, 7) window
+    expect(mapping?.entry.kind).toBe("carousel");
+    expect(mapping?.sourceTimeS).toBeNull();
+  });
+
+  it("maps time outside the carousel window to the correct (shifted) clip entry", () => {
+    const timeline = buildVirtualTimeline(fourClipSlots(), clips, [], {
+      position: "middle",
+      durationS: 3,
+    });
+    const before = mapVirtualTime(timeline, 1);
+    expect(before?.entry.kind).toBe("clip");
+    expect(clipEntry(before!.entry).slotKey).toBe("a");
+    const after = mapVirtualTime(timeline, 8);
+    expect(after?.entry.kind).toBe("clip");
+    expect(clipEntry(after!.entry).slotKey).toBe("c");
+  });
+
+  it("nextVirtualEntry past the last clip before the block returns the carousel entry", () => {
+    const timeline = buildVirtualTimeline(fourClipSlots(), clips, [], {
+      position: "middle",
+      durationS: 3,
+    });
+    const next = nextVirtualEntry(timeline, 1); // index of the 2nd clip ("b")
+    expect(next?.kind).toBe("carousel");
+  });
+
+  it("passes through byte-identical with no carousel param (undefined or null)", () => {
+    const withoutParam = buildVirtualTimeline(fourClipSlots(), clips);
+    const withUndefined = buildVirtualTimeline(fourClipSlots(), clips, [], undefined);
+    const withNull = buildVirtualTimeline(fourClipSlots(), clips, [], null);
+    expect(withoutParam.entries.every((e) => e.kind === "clip")).toBe(true);
+    expect(withoutParam).toEqual(withUndefined);
+    expect(withoutParam).toEqual(withNull);
+  });
+
+  it("passes through unchanged with a zero-duration carousel", () => {
+    const timeline = buildVirtualTimeline(fourClipSlots(), clips, [], {
+      position: "intro",
+      durationS: 0,
+    });
+    expect(timeline.entries.every((e) => e.kind === "clip")).toBe(true);
+    expect(timeline.totalDurationS).toBe(8);
   });
 });

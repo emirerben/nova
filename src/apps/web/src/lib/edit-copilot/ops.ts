@@ -19,7 +19,8 @@ export type CopilotOpFamily =
   | "effect"
   | "transition"
   | "visual"
-  | "motion";
+  | "motion"
+  | "carousel";
 
 export const TEXT_STYLE_PATCH_KEYS = [
   "font_family",
@@ -585,7 +586,12 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
     return "caption";
   }
   if (op.op === "swap_music" || op.op === "set_mix") return "music";
-  if (op.op === "set_intro_layout" || op.op === "set_carousel_moment") return "render";
+  if (op.op === "set_intro_layout") return "render";
+  // Carousel-as-a-moment is its own family (Lane D, carousel-blocks train):
+  // unlike set_intro_layout, it's now a staged/undoable local draft mutation
+  // (not a render dispatch), so it must not share the "render" gate — a
+  // variant can have one available without the other.
+  if (op.op === "set_carousel_moment") return "carousel";
   if (op.op === "set_title") return "title";
   if (op.op === "open_tool") return "tool";
   if (

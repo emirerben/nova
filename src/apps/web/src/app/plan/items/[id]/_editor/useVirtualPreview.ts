@@ -9,6 +9,7 @@ import {
   mapVirtualTime,
   nextVirtualEntry,
   transitionPreviewAtTime,
+  type VirtualCarouselSplice,
   type VirtualTimeline,
   type VirtualTimelineEntry,
   type VirtualTransitionPreview,
@@ -39,6 +40,9 @@ export interface UseVirtualPreviewOptions {
   slots: DraftSlot[];
   clips: Pick<TimelineClip, "clip_index" | "signed_url">[];
   grid: number[];
+  /** Staged carousel-moment block to splice into the virtual timeline
+   * (undefined/null = no block this session). See `VirtualCarouselSplice`. */
+  carousel?: VirtualCarouselSplice | null;
   currentTime: number;
   muted: boolean;
   musicAudioUrl?: string | null;
@@ -141,6 +145,7 @@ export function useVirtualPreview({
   slots,
   clips,
   grid,
+  carousel,
   currentTime,
   muted,
   musicAudioUrl,
@@ -155,8 +160,8 @@ export function useVirtualPreview({
 }: UseVirtualPreviewOptions): VirtualPreviewController {
   const deckMuted = muted || musicTrackActive;
   const timeline = useMemo(
-    () => buildVirtualTimeline(slots, clips, grid),
-    [clips, grid, slots],
+    () => buildVirtualTimeline(slots, clips, grid, carousel),
+    [carousel, clips, grid, slots],
   );
   const transitionPreview = useMemo(
     () => transitionPreviewAtTime(timeline, currentTime),
@@ -182,6 +187,24 @@ export function useVirtualPreview({
   const deckSlotRef = useRef<Record<Deck, string | null>>({ a: null, b: null });
   const pendingSeekRef = useRef<Record<Deck, PendingSeek | null>>({ a: null, b: null });
   const playingRef = useRef(false);
+  // Carousel-window transport clock (bug fix: the block has no video deck to
+  // source `timeupdate` from — a paused deck never fires it, so without this
+  // the transport froze at the block's start the instant play carried the
+  // playhead in). While playing inside a spliced carousel entry, this drives
+  // `currentTime` from a rAF/wall-clock delta instead, then hands back to
+  // `finishEntry` (the same clip-to-clip boundary path) once the window ends.
+  const carouselClockRef = useRef<{
+    raf: number;
+    entryIndex: number;
+    startWallMs: number;
+    startVirtualS: number;
+  } | null>(null);
+  // `finishEntry`/`swapToNext` are declared further down (they close over
+  // `showMapping`, which itself needs to start this clock) — a real mutual
+  // reference. Routed through a ref, refreshed every render below their
+  // definitions, so the clock always calls the latest closure without
+  // forcing a declaration-order cycle or stale-closure bugs.
+  const finishEntryRef = useRef<(entryIndex: number) => void>(() => {});
 
   currentTimeRef.current = currentTime;
   timelineRef.current = timeline;
@@ -210,8 +233,17 @@ export function useVirtualPreview({
     return deck === "a" ? videoARef : videoBRef;
   }, []);
 
+  const stopCarouselClock = useCallback(() => {
+    const running = carouselClockRef.current;
+    if (running) {
+      cancelAnimationFrame(running.raf);
+      carouselClockRef.current = null;
+    }
+  }, []);
+
   const pauseAll = useCallback(() => {
     playingRef.current = false;
+    stopCarouselClock();
     pendingSeekRef.current.a = null;
     pendingSeekRef.current.b = null;
     videoARef.current?.pause();
@@ -220,7 +252,7 @@ export function useVirtualPreview({
       audio.pause();
     }
     onPlayingChange(false);
-  }, [onPlayingChange]);
+  }, [onPlayingChange, stopCarouselClock]);
 
   const loadDeck = useCallback(
     (deck: Deck, entry: VirtualTimelineEntry, timeS: number | null, play: boolean) => {
@@ -253,7 +285,9 @@ export function useVirtualPreview({
   const preloadNext = useCallback(
     (deck: Deck, afterEntryIndex: number) => {
       const next = nextVirtualEntry(timelineRef.current, afterEntryIndex);
-      if (!next || !next.sourceUrl) return;
+      // A carousel block has no video source to preload — the mounted
+      // preview component owns rendering that window.
+      if (!next || next.kind !== "clip" || !next.sourceUrl) return;
       loadDeck(deck, next, next.inS, false);
     },
     [loadDeck],
@@ -266,6 +300,7 @@ export function useVirtualPreview({
       if (
         !entry ||
         !next ||
+        next.kind !== "clip" ||
         !next.sourceUrl ||
         next.overlapBeforeS <= 0 ||
         virtualTimeS < next.startS ||
@@ -305,10 +340,97 @@ export function useVirtualPreview({
     [pauseAll],
   );
 
+  // Carousel-window transport clock: while playing inside a spliced carousel
+  // entry, no deck fires `timeupdate` (both are paused by design — see the
+  // `showMapping` carousel branch below), so without a clock of its own the
+  // transport froze the instant the playhead entered the block. Drives
+  // `currentTime` from a rAF/wall-clock delta instead, and hands off to the
+  // exact same clip-to-clip boundary path (`finishEntry` → `swapToNext`) once
+  // the window ends — the next deck gets seeked to its correct start and
+  // resumed exactly as it would at any other cut.
+  const tickCarouselClock = useCallback(() => {
+    const running = carouselClockRef.current;
+    if (!running) return;
+    const entry = timelineRef.current.entries[running.entryIndex];
+    if (!entry || entry.kind === "clip" || !playingRef.current) {
+      // Timeline changed shape (edit) or playback stopped out-of-band —
+      // don't keep driving a clock nothing asked for anymore.
+      carouselClockRef.current = null;
+      return;
+    }
+    const endS = entry.startS + entry.durationS;
+    const elapsedS = (performance.now() - running.startWallMs) / 1000;
+    const virtualTimeS = Math.min(endS, running.startVirtualS + elapsedS);
+    onTimeUpdate(virtualTimeS);
+    // Music is the master clock (see the sync-policy note at the top of this
+    // file): "soft" mode only forward-catches a stall, never rewinds a
+    // running track, same as the clip-to-clip boundary swap below.
+    syncMusicToVirtualTime(virtualTimeS, true, "soft");
+    if (virtualTimeS >= endS - 0.05) {
+      carouselClockRef.current = null;
+      finishEntryRef.current(running.entryIndex);
+      return;
+    }
+    running.raf = requestAnimationFrame(tickCarouselClock);
+  }, [onTimeUpdate, syncMusicToVirtualTime]);
+
+  const startCarouselClock = useCallback(
+    (entryIndex: number, virtualTimeS: number) => {
+      stopCarouselClock();
+      carouselClockRef.current = {
+        raf: requestAnimationFrame(tickCarouselClock),
+        entryIndex,
+        startWallMs: performance.now(),
+        startVirtualS: virtualTimeS,
+      };
+    },
+    [stopCarouselClock, tickCarouselClock],
+  );
+
   const showMapping = useCallback(
     (timeS: number, play: boolean) => {
       const mapping = mapVirtualTime(timelineRef.current, timeS);
-      if (!mapping || !mapping.entry.sourceUrl) {
+      if (!mapping) {
+        onSourceError();
+        return;
+      }
+
+      if (mapping.entry.kind !== "clip") {
+        // Carousel-block window: no video deck to load/seek — the mounted
+        // preview component (CarouselBlockPreview) owns rendering this
+        // window. Pause both decks and gate deck-driven playback, but keep
+        // the music track (if any) in sync — the final render's audio bed
+        // continues under whatever visual is on screen.
+        videoARef.current?.pause();
+        videoBRef.current?.pause();
+        // Neither deck is "active" for the duration of the window — null out
+        // both slot bindings so a stale/queued `timeupdate`/`ended` event from
+        // the deck that was just paused (browsers can still dispatch one
+        // already-enqueued event after a synchronous pause()) fails the
+        // `slotKey == null` guard in handleTimeUpdate/handleEnded instead of
+        // being matched back to the clip entry we just left — which would
+        // re-trigger finishEntry and restart this carousel clock from
+        // startS. preloadNext (below) re-populates the deck it loads.
+        deckSlotRef.current.a = null;
+        deckSlotRef.current.b = null;
+        // Preload whatever plays AFTER the block onto the currently-inactive
+        // deck now, not at the boundary — otherwise the handoff out of the
+        // block (a fresh `loadDeck` src+load()) would defer its `play()` to
+        // `onLoadedMetadata`, a beat of black/frozen frame exactly where the
+        // clip-to-clip crossfade path never has one. Mirrors the clip
+        // branch's own preload of its neighboring deck below.
+        preloadNext(otherDeck(activeDeckRef.current), mapping.entryIndex);
+        syncMusicToVirtualTime(mapping.virtualTimeS, play);
+        onTimeUpdate(mapping.virtualTimeS);
+        if (play) {
+          startCarouselClock(mapping.entryIndex, mapping.virtualTimeS);
+        } else {
+          stopCarouselClock();
+        }
+        return;
+      }
+      stopCarouselClock();
+      if (!mapping.entry.sourceUrl) {
         onSourceError();
         return;
       }
@@ -326,6 +448,8 @@ export function useVirtualPreview({
       onSourceError,
       onTimeUpdate,
       preloadNext,
+      startCarouselClock,
+      stopCarouselClock,
       syncIncomingDeck,
       syncMusicToVirtualTime,
     ],
@@ -360,7 +484,20 @@ export function useVirtualPreview({
 
   const swapToNext = useCallback(
     (entryIndex: number) => {
+      // Defensive: `tickCarouselClock` already clears this before calling
+      // `finishEntry` -> `swapToNext` on a normal block-end handoff, but any
+      // other caller transitioning away from the current entry shouldn't
+      // leave a stale clock racing the deck it's about to hand off to.
+      stopCarouselClock();
       const next = nextVirtualEntry(timelineRef.current, entryIndex);
+      if (next && next.kind !== "clip") {
+        // Advancing INTO a carousel block: no deck to swap onto. Re-route
+        // through showMapping's carousel gate (pauses both decks, keeps the
+        // music/time moving) rather than duplicating that logic here.
+        refForDeck(activeDeckRef.current).current?.pause();
+        showMapping(next.startS, playingRef.current);
+        return;
+      }
       if (!next || !next.sourceUrl) {
         pause();
         onTimeUpdate(timelineRef.current.totalDurationS);
@@ -388,7 +525,16 @@ export function useVirtualPreview({
       syncMusicToVirtualTime(boundaryTimeS, true, "soft");
       onTimeUpdate(boundaryTimeS);
     },
-    [loadDeck, onTimeUpdate, pause, preloadNext, refForDeck, syncMusicToVirtualTime],
+    [
+      loadDeck,
+      onTimeUpdate,
+      pause,
+      preloadNext,
+      refForDeck,
+      showMapping,
+      stopCarouselClock,
+      syncMusicToVirtualTime,
+    ],
   );
 
   const finishEntry = useCallback(
@@ -407,6 +553,10 @@ export function useVirtualPreview({
     },
     [onTimeUpdate, pause, swapToNext],
   );
+  // Kept fresh every render so `tickCarouselClock` (declared earlier — a real
+  // mutual reference with `finishEntry`/`swapToNext`/`showMapping`) always
+  // calls the latest closure without an initialization-order cycle.
+  finishEntryRef.current = finishEntry;
 
   const handleLoadedMetadata = useCallback(
     (deck: Deck) => {
@@ -430,10 +580,13 @@ export function useVirtualPreview({
       if (slotKey == null || !video) return;
 
       const entryIndex = timelineRef.current.entries.findIndex(
-        (entry) => entry.slotKey === slotKey,
+        (entry) => entry.kind === "clip" && entry.slotKey === slotKey,
       );
       const entry = timelineRef.current.entries[entryIndex];
-      if (!entry) return;
+      // A deck only ever binds to a clip entry (loadDeck's param type), so a
+      // match here is always "clip" — this guard is a type-narrow, not a
+      // real runtime branch.
+      if (!entry || entry.kind !== "clip") return;
 
       const localOffsetS = video.currentTime - entry.inS;
       const virtualTimeS = Math.max(
@@ -476,7 +629,7 @@ export function useVirtualPreview({
       const slotKey = deckSlotRef.current[deck];
       if (slotKey == null) return;
       const entryIndex = timelineRef.current.entries.findIndex(
-        (entry) => entry.slotKey === slotKey,
+        (entry) => entry.kind === "clip" && entry.slotKey === slotKey,
       );
       finishEntry(entryIndex);
     },
@@ -510,6 +663,11 @@ export function useVirtualPreview({
     if (!enabledRef.current || !musicAudioUrl) return;
     syncMusicToVirtualTime(currentTimeRef.current, playingRef.current);
   }, [musicAudioUrl, syncMusicToVirtualTime]);
+
+  // Cancel any in-flight carousel-window clock on unmount — otherwise the
+  // rAF loop keeps calling onTimeUpdate/onPlayingChange against a torn-down
+  // editor.
+  useEffect(() => stopCarouselClock, [stopCarouselClock]);
 
   const musicAudioProps: VirtualPreviewAudioProps | null = musicAudioUrl
     ? {
