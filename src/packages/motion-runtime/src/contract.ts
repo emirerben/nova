@@ -12,8 +12,10 @@ export const CANVASKIT_WASM_SHA256 =
 
 export const LEGACY_MOTION_RUNTIME_HASH =
   "motion-v1:ck0.40.0:b2556106:2abfa191:route-trace-v1";
-export const MOTION_RUNTIME_HASH =
+export const PREVIOUS_MOTION_RUNTIME_HASH =
   "motion-v2:ck0.40.0:b2556106:2abfa191:creator-blocks-v1";
+export const MOTION_RUNTIME_HASH =
+  "motion-v3:ck0.40.0:b2556106:2abfa191:creator-blocks-v2";
 
 export type CreatorBlockPresetId =
   | "kinetic_word"

@@ -29,6 +29,12 @@ export type StripSelection =
       onDelete: () => void;
     }
   | {
+      type: "motion";
+      onEdit: () => void;
+      onTiming: () => void;
+      onDelete: () => void;
+    }
+  | {
       type: "clip";
       onAdjust: () => void;
       onSplit: () => void;
@@ -67,6 +73,12 @@ function pillsForSelection(selection: StripSelection): Pill[] {
         { label: "All captions", onPress: selection.onAllCaptions },
       ];
     case "overlay":
+      return [
+        { label: "Edit", onPress: selection.onEdit, primary: true },
+        { label: "Timing", onPress: selection.onTiming },
+        { label: "Delete", onPress: selection.onDelete, destructive: true },
+      ];
+    case "motion":
       return [
         { label: "Edit", onPress: selection.onEdit, primary: true },
         { label: "Timing", onPress: selection.onTiming },

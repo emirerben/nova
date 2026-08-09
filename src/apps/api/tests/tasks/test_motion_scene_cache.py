@@ -8,7 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.config import settings
-from app.pipeline.motion_scene import LEGACY_MOTION_RUNTIME_HASH, MOTION_RUNTIME_HASH
+from app.pipeline.motion_scene import (
+    LEGACY_MOTION_RUNTIME_HASH,
+    MOTION_RUNTIME_HASH,
+    PREVIOUS_MOTION_RUNTIME_HASH,
+)
 from app.tasks import generative_build as gb
 
 
@@ -225,6 +229,36 @@ def test_legacy_route_trace_cache_records_the_actual_current_renderer(monkeypatc
         "legacy-input-current-renderer.mp4",
         "legacy-input-current-renderer.mp4",
     )
+
+
+def test_previous_creator_runtime_is_rebuilt_with_current_renderer(monkeypatch) -> None:
+    calls: list[dict] = []
+    identity: dict = {}
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True)
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene.apply_motion_scenes",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    render_base, cache = gb._ensure_motion_base(
+        job_id="job-1",
+        variant_id="variant-1",
+        variant={
+            "motion_scenes": [_scene()],
+            "motion_runtime_hash": PREVIOUS_MOTION_RUNTIME_HASH,
+            "motion_base_path": "previous-cache.mp4",
+            "motion_base_source_path": "clean-base.mp4",
+            "motion_applied_runtime_hash": PREVIOUS_MOTION_RUNTIME_HASH,
+            "motion_cache_stale": False,
+        },
+        base_gcs_path="clean-base.mp4",
+        identity_out=identity,
+    )
+
+    assert render_base == cache
+    assert render_base != "previous-cache.mp4"
+    assert calls
+    assert identity["renderer_hash"] == MOTION_RUNTIME_HASH
 
 
 def test_motion_cache_is_rebuilt_when_clean_base_changes(monkeypatch) -> None:

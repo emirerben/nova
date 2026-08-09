@@ -40,7 +40,7 @@ def test_motion_contract_accepts_bounded_preset_and_normalizes_colors() -> None:
             "palette": {"primary": "#8B5CF6", "accent": "#D9FF43"},
         }
     ]
-    assert MOTION_RUNTIME_HASH.startswith("motion-v2:ck0.40.0:")
+    assert MOTION_RUNTIME_HASH.startswith("motion-v3:ck0.40.0:")
 
 
 @pytest.mark.parametrize(

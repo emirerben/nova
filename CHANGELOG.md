@@ -16,6 +16,15 @@ All notable changes to this project will be documented in this file.
 - Speech-cut rebuilds are transactional across duplicate workers, retries, stale finalizers, publication failures, and broker failures, so a late worker cannot overwrite the accepted video and rollback restores every sibling variant exactly.
 - Timing-only rebuilds no longer re-run first-generation visual or sound suggestion chains after publishing the cut receipt.
 
+## [0.24.2.0] — 2026-08-09
+
+### Fixed
+- **Creator Blocks now keep deliberate spacing, readable copy, and safe margins in portrait and landscape.** Signal Stack rows no longer crowd each other, Flow Field renders its complete headline, long copy fits the frame, Offer Flip stays on-canvas through its directional swap, Film Strip respects vertical safe space, and Cloud Break and Donut Type have clearer color and arc separation.
+- **Creator Block controls now open in the editor's right inspector instead of accumulating under the Visuals catalog.** The left drawer remains focused on discovery and insertion, while desktop and pocket inspectors own content, motion, timing, color, image ordering, and removal. Catalog placeholders also disappear once the real CanvasKit preview is ready instead of showing two designs at once.
+
+### Changed
+- Creator Block visual QA now combines Node/Deno pixel parity with independent safe-frame, row-spacing, headline-visibility, inspector-ownership, pocket-control, and scroll-ownership tests. The test suite can emit the exact reviewed portrait and landscape PNGs, and saved scenes from the previous runtime are upgraded safely instead of becoming unavailable.
+
 ## [0.24.1.0] — 2026-08-09
 
 ### Changed
