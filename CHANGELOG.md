@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.0.0] — 2026-08-09
+
+### Added
+- **Creators can now drop eight animated, ready-made blocks directly into a video.** Wild Type, Signal Stack, Flow Field, Cloud Break, Offer Flip, Card Stack, Film Strip, and Donut Type appear in the Visuals drawer with live previews, portrait/landscape layouts, editable copy, two-color palettes, intensity, timing, and image ordering. Blocks can be moved and trimmed on their own timeline lane, edited in pocket mode, undone/redone, saved, and reloaded.
+- **Nova can add, update, and remove Creator Blocks on request.** Nova sees the same immutable catalog and only eligible image IDs, applies changes through the editor's normal history/save flow, rejects stale or over-budget edits, and never accepts arbitrary code, URLs, or storage paths.
+
+### Changed
+- Creator Blocks now render through the same deterministic CanvasKit evaluator in the editor and final export, including caption, lyric, text-reburn, and retranscription paths. Sparse and overlapping blocks retain exact timing, media assets are revalidated at save and render time, and runtime/cache mismatches fail closed. The existing Route Trace preset remains available separately.
+
 ## [0.23.9.1] — 2026-08-08
 
 ### Fixed
