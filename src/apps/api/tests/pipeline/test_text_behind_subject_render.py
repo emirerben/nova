@@ -389,6 +389,7 @@ def test_behind_subject_45s_window_not_clamped_at_long_running_ceiling(tmp_workd
         assert call.args[0] != "skia_long_running_text_duration_clamped"
 
 
+@pytest.mark.timeout(180)
 def test_behind_subject_150s_window_clamps_at_behind_subject_ceiling_with_warning(
     tmp_workdir, monkeypatch
 ):
