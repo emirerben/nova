@@ -382,7 +382,7 @@ def _cut_plan_6_5() -> CutPlan:
     )
 
 
-def _entry(plan, *, failed=False, retakes=0) -> dict:
+def _entry(plan, *, failed=False, retakes=0, review_candidates=None) -> dict:
     """A `_silence_cut_analysis`-shaped cache entry."""
     return {
         "failed": failed,
@@ -390,6 +390,7 @@ def _entry(plan, *, failed=False, retakes=0) -> dict:
         "language": "en",
         "plan": plan,
         "retake_span_count": retakes,
+        "review_candidates": list(review_candidates or []),
         "cut_video_path": None,
     }
 
@@ -520,6 +521,30 @@ def test_assemble_spine_cut_happy_path():
         "cut_reused": False,
         "broll_anchors": 2,  # 0.88 and 1.96 (cut timeline)
     }
+
+
+def test_assemble_spine_persists_review_candidates_with_stable_source_identity():
+    candidate = {
+        "candidate_id": "speech-cut-v1:abc123",
+        "start_s": 2.5,
+        "end_s": 4.4,
+        "reason": "retake",
+        "confidence": 0.71,
+        "status": "pending",
+    }
+    seen: dict = {}
+
+    def _fn(path, dur, *, cache_key=None, source_fingerprint=None):
+        seen["source_fingerprint"] = source_fingerprint
+        return _entry(_cut_plan_6_5(), review_candidates=[candidate])
+
+    _calls, _cmds, _events, out_ctx = _run_assemble_with_cut(
+        silence_cut_fn=_fn,
+        probe_map=_probe_map("a", "b", dur=6.5),
+    )
+
+    assert seen["source_fingerprint"] == "a"
+    assert out_ctx["review_candidates"] == [candidate]
 
 
 def test_assemble_spine_cut_no_audio_gate_short_circuits():

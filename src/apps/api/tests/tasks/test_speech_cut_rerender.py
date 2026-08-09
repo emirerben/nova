@@ -160,6 +160,38 @@ def test_worker_failure_restores_prior_video_state_and_emits_no_receipt(monkeypa
     }
 
 
+def test_worker_failure_restores_all_sibling_variants_byte_for_byte(monkeypatch) -> None:
+    job = _inflight_job()
+    sibling = {
+        "variant_id": "sibling",
+        "render_status": "ready",
+        "video_path": "generative-jobs/job/sibling.mp4",
+        "motion_scenes": [{"id": "creator-block-1"}],
+    }
+    prior_variants = [deepcopy(job.assembly_plan["speech_cut_previous_variant"]), sibling]
+    job.assembly_plan["speech_cut_previous_variants"] = deepcopy(prior_variants)
+    session = _Session(job)
+    monkeypatch.setattr(gb, "_sync_session", lambda: session)
+
+    with patch("sqlalchemy.orm.attributes.flag_modified"):
+        gb._restore_failed_speech_cut_rerender(
+            str(uuid.uuid4()),
+            "compose failed",
+            expected_operation_id="operation-a",
+            expected_attempt_id="attempt-a",
+        )
+
+    restored = job.assembly_plan["variants"]
+    assert restored[1] == sibling
+    assert restored[0] == {
+        **prior_variants[0],
+        "speech_cut_last_error": {
+            "operation_id": "operation-a",
+            "message": "compose failed",
+        },
+    }
+
+
 def test_winning_publish_is_the_only_completed_receipt_boundary(monkeypatch) -> None:
     job = _inflight_job()
     session = _Session(job)
@@ -362,6 +394,76 @@ def test_restore_publication_rejects_residual_rendered_cuts(monkeypatch) -> None
             raise AssertionError("residual cuts published as restored")
 
     assert job.assembly_plan["speech_cut_control"] is not None
+
+
+def test_speech_cut_rerender_never_redispatches_first_generation_suggestions() -> None:
+    with (
+        patch.object(gb, "_maybe_autoplace_after_finalize") as overlay,
+        patch.object(gb, "_maybe_visual_blocks_after_finalize") as visual,
+        patch.object(gb, "_maybe_sfx_autoplace_after_finalize") as sfx,
+    ):
+        gb._dispatch_post_finalize_suggestion_chains("job-a", speech_cut_rerender=True)
+
+    overlay.assert_not_called()
+    visual.assert_not_called()
+    sfx.assert_not_called()
+
+
+def test_subtitled_compose_reburns_captions_before_publication(monkeypatch) -> None:
+    job = _inflight_job(attempt_id="winner")
+    session = _Session(job)
+    monkeypatch.setattr(gb, "_sync_session", lambda: session)
+
+    def _accept_caption_reburn(*_args, terminal_state, **_kwargs) -> None:
+        terminal_state["accepted"] = True
+
+    with (
+        patch.object(gb, "_update_variant_entry", return_value=True) as update,
+        patch.object(
+            gb, "_run_reburn_narrated_captions", side_effect=_accept_caption_reburn
+        ) as reburn,
+        patch.object(gb, "_assert_speech_cut_finalize_claim") as claim,
+    ):
+        gb._compose_speech_cut_rerender(
+            str(uuid.uuid4()),
+            expected_operation_id="operation-a",
+            expected_attempt_id="winner",
+        )
+
+    update.assert_called_once()
+    reburn.assert_called_once()
+    claim.assert_called_once_with(str(update.call_args.args[0]), "operation-a", "winner")
+
+
+def test_talking_head_compose_reburns_text_before_publication(monkeypatch) -> None:
+    job = _inflight_job(attempt_id="winner")
+    variant = job.assembly_plan["variants"][0]
+    variant.update(
+        {
+            "resolved_archetype": "talking_head",
+            "intro_text": "Pinned hook",
+            "text_mode": "agent_text",
+            "style_set_id": "default",
+        }
+    )
+    session = _Session(job)
+    monkeypatch.setattr(gb, "_sync_session", lambda: session)
+
+    with (
+        patch.object(gb, "_update_variant_entry", return_value=True) as update,
+        patch.object(gb, "_reburn_text_on_base", return_value={"video_path": "new.mp4"}) as reburn,
+        patch.object(gb, "_will_reapply_media_layers", return_value=False),
+        patch.object(gb, "_assert_speech_cut_finalize_claim") as claim,
+    ):
+        gb._compose_speech_cut_rerender(
+            str(uuid.uuid4()),
+            expected_operation_id="operation-a",
+            expected_attempt_id="winner",
+        )
+
+    assert update.call_count == 2
+    assert reburn.call_args.kwargs["agent_text"] == "Pinned hook"
+    claim.assert_called_once()
 
 
 def test_timing_rerender_pins_existing_creator_hook_and_style(monkeypatch) -> None:

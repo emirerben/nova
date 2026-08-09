@@ -707,6 +707,90 @@ def test_restore_original_timing_queues_full_rerender(client: TestClient) -> Non
     enqueue.assert_called_once()
 
 
+def test_restore_original_timing_rejects_stale_revision_without_enqueue(
+    client: TestClient,
+) -> None:
+    user = _user()
+    variant = {
+        **_speech_variant(),
+        "silence_cut": {"removed": [{"start_s": 1.0, "end_s": 2.0}]},
+    }
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+
+    with patch("app.tasks.generative_build.rerender_speech_timing.apply_async") as enqueue:
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/restore",
+            json={"expected_revision": "stale-revision"},
+        )
+
+    assert response.status_code == 409
+    db.commit.assert_not_awaited()
+    enqueue.assert_not_called()
+
+
+def test_restore_original_timing_rejects_foreign_owner_without_enqueue(
+    client: TestClient,
+) -> None:
+    user = _user()
+    variant = {
+        **_speech_variant(),
+        "silence_cut": {"removed": [{"start_s": 1.0, "end_s": 2.0}]},
+    }
+    job = _job([variant])
+    item, plan = _owned_item(uuid.uuid4(), job=job)
+    db = _db([item], plan)
+    _override(user, db)
+
+    with patch("app.tasks.generative_build.rerender_speech_timing.apply_async") as enqueue:
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/restore",
+            json={"expected_revision": cut_revision(variant)},
+        )
+
+    assert response.status_code == 404
+    db.commit.assert_not_awaited()
+    enqueue.assert_not_called()
+
+
+def test_restore_original_timing_enqueue_failure_restores_every_variant(
+    client: TestClient,
+) -> None:
+    user = _user()
+    variant = {
+        **_speech_variant(),
+        "silence_cut": {"removed": [{"start_s": 1.0, "end_s": 2.0}]},
+    }
+    sibling = {**SONG_VARIANT, "intro_text": "unchanged sibling"}
+    original_variants = [dict(variant), dict(sibling)]
+    original_variants[0]["speech_cut_candidates"] = [dict(variant["speech_cut_candidates"][0])]
+    original_variants[0]["silence_cut"] = {"removed": [dict(variant["silence_cut"]["removed"][0])]}
+    job = _job([variant, sibling])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job, job], plan)
+    _override(user, db)
+
+    with (
+        patch("sqlalchemy.orm.attributes.flag_modified"),
+        patch(
+            "app.tasks.generative_build.rerender_speech_timing.apply_async",
+            side_effect=RuntimeError("broker down"),
+        ),
+    ):
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/restore",
+            json={"expected_revision": cut_revision(variant)},
+        )
+
+    assert response.status_code == 503
+    assert db.commit.await_count == 2
+    assert job.status == "variants_ready"
+    assert job.assembly_plan["variants"] == original_variants
+    assert job.assembly_plan["speech_cut_control"] is None
+
+
 # ── shared-helper unit guards (single-sourced validation) ─────────────────────
 
 

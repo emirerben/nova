@@ -1422,6 +1422,22 @@ def _run_generative_job(
                 expected_attempt_id=speech_cut_attempt_id,
             )
     record_phase(job_id, "finalize", elapsed_ms=_elapsed_ms(finalize_t0))
+    _dispatch_post_finalize_suggestion_chains(
+        job_id,
+        speech_cut_rerender=bool(speech_cut_operation_id),
+    )
+
+
+def _dispatch_post_finalize_suggestion_chains(job_id: str, *, speech_cut_rerender: bool) -> None:
+    """Run first-generation suggestion chains, never timing-only rebuilds.
+
+    Speech-cut rerenders already reproject the creator's existing media/SFX
+    lanes and invalidate stale Director state. Re-running first-generation
+    placement after the exact cut receipt would mutate the accepted output
+    behind that receipt and could add duplicate treatments.
+    """
+    if speech_cut_rerender:
+        return
     # Overlay autoplace chain (plan 007, D2-B). MUST run AFTER _finalize_job —
     # finalize rebuilds every variant entry from the in-memory results whitelist,
     # so anything the match/apply tasks wrote mid-render would be stripped
