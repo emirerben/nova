@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.0.0] — 2026-08-09
+
+### Added
+- **Speech-first edits can now remove safe silences, filler sounds, and abandoned takes automatically.** Subtitled, talking-head, and self-narrated videos rebuild from the durable source with captions, Smart text, overlays, sound effects, and timing remapped to the shorter cut; music-led edits remain isolated.
+- **Creators can review uncertain speech cuts in Nova before applying them, then restore the original timing at any point.** Every accepted change produces an exact server-backed receipt only after the rebuilt video is published.
+
+### Changed
+- Nova only recommends automatic cuts when the current editor supports them, may honestly recommend no changes, and derives its “Will change” summary from executable operations rather than model prose.
+- Silence and retake detection keep independent kill switches and remain disabled by default until both English and Turkish production-image launch checks are approved.
+
+### Fixed
+- Speech-cut rebuilds are transactional across duplicate workers, retries, stale finalizers, publication failures, and broker failures, so a late worker cannot overwrite the accepted video and rollback restores every sibling variant exactly.
+- Timing-only rebuilds no longer re-run first-generation visual or sound suggestion chains after publishing the cut receipt.
+
 ## [0.24.1.0] — 2026-08-09
 
 ### Changed
