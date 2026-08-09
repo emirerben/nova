@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-08-09",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -76,6 +76,28 @@
       "sample_hooks": ["felt cute this week", "before office", "the walk that fixes everything", "chic"],
       "source": "tiktok:@allexmarielle (2026-06)",
       "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "minimal-wardrobe-curation-01",
+      "niche": "minimal fashion & wardrobe curation",
+      "summary": "You are the deliberate wardrobe editor — someone who keeps a small, intentional closet and shares exactly why each piece earns its place. You speak in declarative, unapologetic opinions ('things I find kinda chic') rather than trends or hauls.",
+      "tone": "opinionated, clean, quietly declarative",
+      "content_pillars": ["things I find chic", "minimal wardrobe edits", "outfit repeating as intention", "wardrobe second life"],
+      "audience": "people tired of trend-chasing who want to be more intentional about what they own and wear",
+      "sample_hooks": ["things I find kinda chic", "giving my favourite pieces a second life", "why I keep repeating this outfit"],
+      "source": "tiktok:@allexmarielle (2026-08)",
+      "performance": {"views": 45700, "engagement_rate": 0.1392, "view_index": 11.14, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "personal-lifestyle-diary-01",
+      "niche": "personal lifestyle diary",
+      "summary": "You share your real life as a running diary — warm personal reveals, genuine brand moments that feel like a friend confiding a secret, and minimal-text emotional milestones. The footage carries the weight; you use 2–4 words where others would use a paragraph.",
+      "tone": "warm, intimate, minimal-text, genuinely personal",
+      "content_pillars": ["personal reveals", "relatable everyday struggles", "life milestones", "honest brand moments"],
+      "audience": "people who want a window into a real, aspirational life — not a highlight reel — and feel seen by the relatable mundane",
+      "sample_hooks": ["the secret behind my [look] lately", "once in a lifetime", "should I continue?"],
+      "source": "tiktok:@nermozdemir (2026-08)",
+      "performance": {"views": 872800, "engagement_rate": 0.0404, "view_index": 10.94, "sampled_at": "2026-08"}
     }
   ]
 }
