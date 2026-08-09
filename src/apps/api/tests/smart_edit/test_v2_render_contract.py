@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -22,7 +24,7 @@ from app.pipeline.sound_effects import (
     apply_smart_audio_treatment,
     build_sound_effects_command,
 )
-from app.pipeline.text_overlay_skia import measure_text_overlay_box
+from app.pipeline.text_overlay_skia import _typewriter_visible_text_at, measure_text_overlay_box
 from app.smart_edit.compiler import compile_smart_plan
 from app.smart_edit.planner import plan_smart_captions
 from app.smart_edit.presets import load_preset
@@ -449,6 +451,61 @@ def test_v2_typewriter_visual_and_keyboard_ticks_share_schedule() -> None:
     )
     rendered_keyword = next(overlay for overlay in burn if overlay.get("effect") == "typewriter")
     assert rendered_keyword["reveal_schedule_s"] == schedule
+    assert schedule[-1] == pytest.approx(keyword["start_s"] + 0.68, abs=0.001)
+
+
+def test_v3_generated_text_style_and_fast_schedule_are_preset_owned() -> None:
+    preset = load_preset("cigdem", "v3")
+    for role in ("context_title", "section_keyword"):
+        style = preset.text_styles[role]
+        assert style.color == "#FFF3A6"
+        assert style.stroke_width == 0
+        assert style.typewriter_reveal_duration_s == 0.25
+    # The existing subtle shadow is compiler-owned and remains enabled.
+    planned = plan_smart_captions(
+        [
+            _cue("Dört başlıkta anlatayım: 1.", 0.0, 2.0),
+            _cue("Somutlaştırma markayı unutulmaz yapar.", 2.1, 4.5),
+        ],
+        preset_version="v3",
+        language="tr",
+        use_agent=False,
+    )
+    assert planned is not None
+    compiled = compile_smart_plan(planned.document, planned.caption_cues)
+    keyword = next(element for element in compiled.text_elements if not element["text"].isdigit())
+    schedule = keyword["source_params"]["reveal_schedule_s"]
+    ticks = [
+        intent for intent in compiled.sfx_intents if intent["role"] == "keyword_typewriter_tick"
+    ]
+    assert keyword["color"] == "#FFF3A6"
+    assert keyword["stroke_width"] == 0
+    assert keyword["shadow_enabled"] is True
+    assert keyword["reveal_s"] == pytest.approx(keyword["start_s"] + 0.25)
+    assert schedule[-1] == pytest.approx(keyword["start_s"] + 0.25, abs=0.001)
+    assert [tick["at_s"] for tick in ticks] == schedule
+
+
+def test_renderer_matches_shared_absolute_typewriter_schedule_fixture() -> None:
+    fixture_path = (
+        Path(__file__).parents[5]
+        / "tests"
+        / "fixtures"
+        / "overlay-animation"
+        / "typewriter_schedule.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    for sample in fixture["samples"]:
+        assert (
+            _typewriter_visible_text_at(
+                fixture["text"],
+                t_local=sample["t_local"],
+                raw_schedule=fixture["reveal_schedule_s"],
+                start_s=fixture["start_s"],
+            )
+            == sample["visible_text"]
+        )
 
 
 def test_music_and_sfx_share_one_voice_safe_stream_copy_graph() -> None:

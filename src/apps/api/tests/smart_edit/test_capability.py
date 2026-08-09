@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.config import settings
+from app.config import Settings, settings
 from app.models import CreatorStyleAssignment
 from app.services.smart_captions import (
     resolve_smart_captions_capability,
@@ -32,6 +32,8 @@ async def test_capability_fails_closed_before_query_when_flag_is_off(monkeypatch
 async def test_capability_requires_supported_format_and_assignment(monkeypatch) -> None:
     monkeypatch.setattr(settings, "smart_captions_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "smart_captions_default_preset_id", "")
+    monkeypatch.setattr(settings, "smart_captions_default_preset_version", "")
     db = AsyncMock()
 
     unsupported = await resolve_smart_captions_capability(
@@ -205,7 +207,7 @@ def test_valid_shadow_is_pinned_but_partial_or_unknown_shadow_is_ignored(monkeyp
 # ── Fleet-wide default preset (open-to-all rollout) ──────────────────────────
 
 
-def _enable_default(monkeypatch, preset_id: str = "cigdem", version: str = "v2") -> None:
+def _enable_default(monkeypatch, preset_id: str = "cigdem", version: str = "v3") -> None:
     monkeypatch.setattr(settings, "smart_captions_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     monkeypatch.setattr(settings, "smart_captions_default_preset_id", preset_id, raising=False)
@@ -223,7 +225,7 @@ async def test_default_preset_applies_to_users_without_a_row(monkeypatch) -> Non
     )
 
     assert result.available is True
-    assert (result.preset_id, result.preset_version) == ("cigdem", "v2")
+    assert (result.preset_id, result.preset_version) == ("cigdem", "v3")
     # The default never carries a shadow — shadow stays an assigned-canary tool.
     assert result.shadow_preset_id is None
     # The row was still consulted (an override or opt-out must win).
@@ -300,7 +302,7 @@ def test_default_preset_pins_into_dispatch_context_sync(monkeypatch) -> None:
 
     assert context == {
         "preset_id": "cigdem",
-        "preset_version": "v2",
+        "preset_version": "v3",
         "sound_design": "auto",
     }
     # Byte-identity when the default is unset: no context, exactly as before.
@@ -311,3 +313,8 @@ def test_default_preset_pins_into_dispatch_context_sync(monkeypatch) -> None:
         )
         is None
     )
+
+
+def test_new_smart_captions_default_to_v3_without_rewriting_explicit_assignments() -> None:
+    assert Settings.model_fields["smart_captions_default_preset_id"].default == "cigdem"
+    assert Settings.model_fields["smart_captions_default_preset_version"].default == "v3"

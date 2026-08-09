@@ -129,6 +129,7 @@ import {
   barsToPreviewTextElements,
   barsToTextElements,
   buildLyricLineOverrides,
+  buildCaptionTextReplacement,
   captionBarPatchFromMetaPatch,
   captionMetaPatchFromCaptionBarPatch,
   isCaptionBar,
@@ -477,9 +478,12 @@ export function resolveCopilotApplyFeedback({
     | { kind: "clip"; id: string; seekS: number }
     | null;
 } {
-  const textIds = result.textActions
-    .map((action) => ("id" in action ? action.id : action.type === "ADD_TEXT" ? action.bar.id : null))
-    .filter((id): id is string => !!id);
+  const textIds = result.textActions.flatMap((action) => {
+    if ("id" in action) return [action.id];
+    if (action.type === "ADD_TEXT") return [action.bar.id];
+    if (action.type === "PATCH_BARS") return action.patches.map((patch) => patch.id);
+    return [];
+  });
   const slotIds = result.nextSlots
     ? result.nextSlots
         .filter((slot) => {
@@ -500,6 +504,8 @@ export function resolveCopilotApplyFeedback({
         ? firstTextAction.id
         : firstTextAction.type === "ADD_TEXT"
           ? firstTextAction.bar.id
+          : firstTextAction.type === "PATCH_BARS"
+            ? firstTextAction.patches[0]?.id ?? null
           : null;
     const bar =
       firstTextAction.type === "ADD_TEXT"
@@ -2365,26 +2371,7 @@ export default function EditorShell({
   const replaceInCaptions = useCallback(
     (find: string, replace: string): number => {
       if (readOnly) return 0;
-      const needle = find.trim();
-      if (!needle) return 0;
-      const pattern = new RegExp(
-        needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-        "gi",
-      );
-      // The REPLACEMENT needs escaping too, not just the needle: String.replace
-      // treats `$&`, `` $` ``, `$'` and `$1` in the replacement as substitution
-      // patterns, so a caption containing those characters would be silently
-      // mangled ("$`" splices in everything before the match). Doubling `$`
-      // makes the user's text literal — this is a bulk edit across every cue,
-      // so a silent corruption here is expensive to notice and undo.
-      const literalReplacement = replace.replace(/\$/g, "$$$$");
-      const patches = state.bars
-        .filter(isCaptionBar)
-        .reduce<Array<{ id: string; patch: { text: string } }>>((acc, bar) => {
-          const next = bar.text.replace(pattern, literalReplacement);
-          if (next !== bar.text) acc.push({ id: bar.id, patch: { text: next } });
-          return acc;
-        }, []);
+      const { patches } = buildCaptionTextReplacement(state.bars, find, replace);
       if (patches.length === 0) return 0;
       history.record();
       setCaptionDirty(true);
@@ -4011,13 +3998,27 @@ export default function EditorShell({
       const beforeSfxIds = new Set(localSfx.map((sfx) => sfx.id));
       const beforeOverlayById = new Map(localOverlays.map((overlay) => [overlay.id, overlay]));
       result.textActions.forEach((action) => dispatch(action));
-      if (result.textActions.some((action) => "id" in action && isCaptionBar(state.bars.find((bar) => bar.id === action.id)))) {
+      if (result.textActions.some((action) => {
+        if ("id" in action) return isCaptionBar(state.bars.find((bar) => bar.id === action.id));
+        if (action.type === "PATCH_BARS") {
+          return action.patches.some((patch) =>
+            isCaptionBar(state.bars.find((bar) => bar.id === patch.id)),
+          );
+        }
+        return false;
+      })) {
         setCaptionDirty(true);
       }
       if (
         lyricsOptionalActive ||
         result.textActions.some((action) => {
           if (action.type === "ADD_TEXT") return true;
+          if (action.type === "PATCH_BARS") {
+            return action.patches.some((patch) => {
+              const bar = state.bars.find((candidate) => candidate.id === patch.id);
+              return !isCaptionBar(bar) && !isLyricBar(bar);
+            });
+          }
           if (!("id" in action)) return false;
           const bar = state.bars.find((candidate) => candidate.id === action.id);
           return !isCaptionBar(bar) && !isLyricBar(bar);

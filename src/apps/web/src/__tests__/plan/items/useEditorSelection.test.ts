@@ -155,6 +155,21 @@ describe("resolveCopilotApplyFeedback — seek-on-apply target", () => {
     expect(resolveCopilotApplyFeedback({ result, bars, beforeSlots: slots, grid: [] }).first)
       .toEqual({ kind: "clip", id: "slot-2", seekS: 3 });
   });
+
+  it("targets the first caption changed by an atomic bulk patch", () => {
+    const result: ApplyCopilotOpsResult = {
+      textActions: [{
+        type: "PATCH_BARS",
+        patches: [{ id: "bar-1", patch: { text: "Kria" } }],
+      }],
+      nextSlots: null,
+      applied: [],
+      rejected: [],
+    };
+
+    expect(resolveCopilotApplyFeedback({ result, bars, beforeSlots: slots, grid: [] }))
+      .toMatchObject({ textIds: ["bar-1"], first: { kind: "text", id: "bar-1", seekS: 5 } });
+  });
 });
 
 describe("nudgeBarStart — arrow-key timeline nudging", () => {

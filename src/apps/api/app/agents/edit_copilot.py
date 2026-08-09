@@ -54,7 +54,13 @@ _OVERLAY_OPS = {
     "remove_overlay",
     "accept_overlay_suggestion",
 }
-_CAPTION_OPS = {"edit_caption", "set_caption_timing", "set_caption_meta", "set_caption_emphasis"}
+_CAPTION_OPS = {
+    "edit_caption",
+    "replace_caption_text",
+    "set_caption_timing",
+    "set_caption_meta",
+    "set_caption_emphasis",
+}
 _MUSIC_OPS = {"swap_music", "set_mix"}
 _RENDER_OPS = frozenset({"set_intro_layout", "set_carousel_moment"})
 _TITLE_OPS = {"set_title"}
@@ -99,6 +105,7 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "remove_overlay": frozenset({"overlay_index"}),
     "accept_overlay_suggestion": frozenset({"suggestion_id"}),
     "edit_caption": frozenset({"cue_index", "text"}),
+    "replace_caption_text": frozenset({"find", "replace"}),
     "set_caption_timing": frozenset({"cue_index"}),
     "set_caption_meta": frozenset({"patch"}),
     "set_caption_emphasis": frozenset({"cue_index", "emphasis"}),
@@ -148,6 +155,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "remove_overlay": frozenset({"overlay_index"}),
     "accept_overlay_suggestion": frozenset({"suggestion_id"}),
     "edit_caption": frozenset({"cue_index", "text"}),
+    "replace_caption_text": frozenset({"find", "replace"}),
     "set_caption_timing": frozenset({"cue_index", "start_s", "end_s"}),
     "set_caption_meta": frozenset({"patch"}),
     "set_caption_emphasis": frozenset({"cue_index", "emphasis"}),
@@ -224,6 +232,10 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
     (
         "edit_caption",
         '{"op":"edit_caption","cue_index":0,"text":"corrected caption text"}',
+    ),
+    (
+        "replace_caption_text",
+        '{"op":"replace_caption_text","find":"Kriya","replace":"Kria"}',
     ),
     (
         "set_caption_timing",
@@ -1051,12 +1063,31 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             raw_ops = []
 
         ops: list[dict] = []
+        ordinary_op_count = 0
+        bulk_caption_op_count = 0
         for raw_op in raw_ops:
-            if len(ops) >= _MAX_OPS:
-                break
+            # A bulk caption replacement is one atomic client operation no
+            # matter how many cues it changes. Keep it outside the ordinary
+            # per-operation cap so a model that emits it after 12 unrelated
+            # ops cannot silently turn "replace every occurrence" into a
+            # false success receipt.
+            raw_name = (
+                str(raw_op.get("op") or raw_op.get("type") or "").strip()
+                if isinstance(raw_op, dict)
+                else ""
+            )
+            if raw_name == "replace_caption_text":
+                if bulk_caption_op_count >= 1:
+                    continue
+            elif ordinary_op_count >= _MAX_OPS:
+                continue
             parsed = _parse_op(raw_op, input.variant_snapshot, state)
             if parsed is not None:
                 ops.append(parsed)
+                if raw_name == "replace_caption_text":
+                    bulk_caption_op_count += 1
+                else:
+                    ordinary_op_count += 1
 
         reply = str(data.get("reply") or "").strip()
         if not reply:
@@ -1328,6 +1359,19 @@ def _coerce_payload(
             state.invalid_value()
             return None
         out["text"] = text
+
+    if name == "replace_caption_text":
+        captions = snapshot.get("captions")
+        if isinstance(captions, dict) and captions.get("cues_editable") is False:
+            state.invalid_value()
+            return None
+        find = _clean_user_text(out.get("find"))
+        replace = _clean_caption_replacement(out.get("replace"))
+        if find is None or replace is None:
+            state.invalid_value()
+            return None
+        out["find"] = find
+        out["replace"] = replace
 
     if name == "set_title":
         title = _clean_user_text(out.get("title"), max_chars=300)
@@ -1865,6 +1909,19 @@ def _clean_user_text(value: object, *, max_chars: int = 500) -> str | None:
     clean = re.sub(r"\s+", " ", clean)
     if not clean:
         return None
+    return clean[:max_chars]
+
+
+def _clean_caption_replacement(value: object, *, max_chars: int = 500) -> str | None:
+    """Sanitize replacement text while preserving the valid empty string.
+
+    Empty replacement means delete every literal match. It is distinct from a
+    missing/non-string field, which remains invalid.
+    """
+    if not isinstance(value, str):
+        return None
+    clean = re.sub(r"[\x00-\x1f\x7f]+", " ", value).strip()
+    clean = re.sub(r"\s+", " ", clean)
     return clean[:max_chars]
 
 

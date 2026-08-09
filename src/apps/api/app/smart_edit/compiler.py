@@ -186,7 +186,11 @@ def _text_element(
         shadow_enabled=True,
         alignment=style.alignment,
         effect=style.effect,
-        reveal_s=(min(end_s, start_s + 0.68) if style.effect == "typewriter" else None),
+        reveal_s=(
+            min(end_s, start_s + style.typewriter_reveal_duration_s)
+            if style.effect == "typewriter"
+            else None
+        ),
         max_width_frac=style.max_width_frac,
         line_spacing=1.02,
         z=z,

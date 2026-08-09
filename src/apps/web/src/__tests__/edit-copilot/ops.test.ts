@@ -161,6 +161,12 @@ describe("edit-copilot extended op validation", () => {
       .toMatchObject({ ok: true, op: { text: "hi there" } });
     expect(validateCopilotOp({ op: "edit_caption", cue_index: 0, text: "   " }, validationSnapshot))
       .toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+    expect(validateCopilotOp({ op: "replace_caption_text", find: "  Kriya  ", replace: "$& $1" }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { find: "Kriya", replace: "$& $1" } });
+    expect(validateCopilotOp({ op: "replace_caption_text", find: " ", replace: "Kria" }, validationSnapshot))
+      .toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+    expect(validateCopilotOp({ op: "replace_caption_text", find: "Kriya", replace: "" }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { replace: "" } });
     expect(validateCopilotOp({ op: "set_caption_timing", cue_index: 0, start_s: 3, end_s: 2 }, validationSnapshot))
       .toMatchObject({ ok: false, rejection: { reason: "invalid_time" } });
     expect(
@@ -180,6 +186,12 @@ describe("edit-copilot extended op validation", () => {
       validateCopilotOp(
         { op: "set_caption_emphasis", cue_index: 0, emphasis: true },
         { ...validationSnapshot, captions: { cues: [{ id: "caption-1" }], cues_editable: false } },
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_index" } });
+    expect(
+      validateCopilotOp(
+        { op: "replace_caption_text", find: "Kriya", replace: "Kria" },
+        { ...validationSnapshot, captions: { cues: [], cues_editable: false } },
       ),
     ).toMatchObject({ ok: false, rejection: { reason: "invalid_index" } });
     expect(validateCopilotOp({ op: "swap_music", track_id: "track-1" }, validationSnapshot)).toMatchObject({ ok: true });

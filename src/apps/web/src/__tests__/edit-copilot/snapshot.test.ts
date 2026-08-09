@@ -208,6 +208,25 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.captions?.total_cues).toBe(60);
     expect(snapshot.captions?.truncated).toBe(true);
     expect(snapshot.captions?.cues).toHaveLength(40);
+    expect(snapshot.captions?.mutation_fingerprint).toMatch(/^m1-[0-9a-f]{16}$/);
+    expect(JSON.stringify(snapshot)).not.toContain("mutation_fingerprint");
+
+    const changedOutsidePrompt = captions.map((caption, index) =>
+      index === 59 ? { ...caption, text: "changed outside the first 40 cues" } : caption,
+    );
+    const changedSnapshot = buildCopilotSnapshot(
+      changedOutsidePrompt,
+      [slot()],
+      [{ source_duration_s: 8 }],
+      {},
+      [],
+      {
+        captionsPresent: true,
+        captionMeta: { enabled: true, style: "word", font: "Inter", y_frac: 0.7 },
+      },
+    );
+    expect(changedSnapshot.captions?.mutation_fingerprint)
+      .not.toBe(snapshot.captions?.mutation_fingerprint);
   });
 
   it("trims oversized snapshots under the byte budget in the fixed order", () => {

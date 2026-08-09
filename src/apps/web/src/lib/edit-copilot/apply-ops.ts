@@ -19,7 +19,10 @@ import {
   applyTextTimingInput,
   sequentialSlotLayout,
 } from "@/app/plan/items/[id]/_editor/editor-bar-drag";
-import { smartStyleForRole } from "@/app/plan/items/[id]/_editor/editor-bars";
+import {
+  buildCaptionTextReplacement,
+  smartStyleForRole,
+} from "@/app/plan/items/[id]/_editor/editor-bars";
 import {
   deleteSlotEnforceFloor,
   splitSlotAt,
@@ -35,6 +38,7 @@ import {
 } from "./ops";
 import {
   cameraEffectMutationFingerprint,
+  captionMutationFingerprint,
   overlayMutationFingerprint,
   roundCopilotNumber,
   sfxMutationFingerprint,
@@ -369,6 +373,7 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "add_overlay") return "Add overlay";
   if (op.op === "accept_overlay_suggestion") return "Accept overlay suggestion";
   if (op.op === "edit_caption") return `Caption ${op.cue_index + 1} edited`;
+  if (op.op === "replace_caption_text") return "Replace caption text";
   if (op.op === "set_caption_timing") return `Caption ${op.cue_index + 1} timing`;
   if (op.op === "set_caption_meta") return "Captions";
   if (op.op === "set_caption_emphasis") return `Caption ${op.cue_index + 1} emphasis`;
@@ -1113,6 +1118,37 @@ export function applyCopilotOps(
       }
       textActions.push({ type: "EDIT_TEXT", id: bar.id, text: op.text });
       applied.push({ label: `Caption ${op.cue_index + 1} edited`, from: bar.text, to: op.text });
+    } else if (op.op === "replace_caption_text") {
+      if (ctx.snapshot.captions?.cues_editable === false) {
+        rejected.push(reject(op.op, labelForOp(op), "unsupported_field", "This draft has caption settings but no editable cue list."));
+        continue;
+      }
+      if (!ctx.snapshot.captions) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "caption cues are no longer available"));
+        continue;
+      }
+      const expectedFingerprint = ctx.snapshot.captions.mutation_fingerprint;
+      if (
+        expectedFingerprint &&
+        captionMutationFingerprint(ctx.bars) !== expectedFingerprint
+      ) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "captions were changed after Nova read them"));
+        continue;
+      }
+      const replacement = buildCaptionTextReplacement(ctx.bars, op.find, op.replace);
+      if (replacement.patches.length === 0) {
+        const detail = replacement.foundMatchCount > 0
+          ? `Every “${op.find}” match already reads “${op.replace}”.`
+          : `No captions contain “${op.find}”.`;
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", detail));
+        continue;
+      }
+      textActions.push({ type: "PATCH_BARS", patches: replacement.patches });
+      applied.push({
+        label: "Caption text replaced",
+        from: op.find,
+        to: `${op.replace || "(removed)"} · ${replacement.matchCount} ${replacement.matchCount === 1 ? "match" : "matches"} in ${replacement.lineCount} ${replacement.lineCount === 1 ? "line" : "lines"}`,
+      });
     } else if (op.op === "set_caption_timing") {
       if (ctx.snapshot.captions?.cues_editable === false) {
         rejected.push(reject(op.op, labelForOp(op), "unsupported_field", "This draft has caption settings but no editable cue list."));

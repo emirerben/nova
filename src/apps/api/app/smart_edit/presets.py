@@ -53,6 +53,16 @@ class TextStylePolicy(_Strict):
     alignment: Literal["left", "center", "right"]
     effect: Literal["static", "pop-in", "typewriter", "fade-in"]
     duration_s: float = Field(gt=0.1, le=8.0)
+    # Local reveal window for Smart-authored typewriter elements. v1/v2 omit
+    # this field and retain their reviewed 680ms behavior.
+    typewriter_reveal_duration_s: float = Field(
+        default=0.68,
+        gt=0.0,
+        le=2.0,
+        # Timing is materialized into TextElement.reveal_s + the saved schedule;
+        # excluding this policy-only knob keeps v1/v2 serialized goldens stable.
+        exclude=True,
+    )
 
 
 class VisualZonePolicy(_Strict):

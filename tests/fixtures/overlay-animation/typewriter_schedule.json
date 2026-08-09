@@ -1,0 +1,12 @@
+{
+  "text": "Kria",
+  "start_s": 4.0,
+  "reveal_schedule_s": [4.0, 4.083, 4.167, 4.25],
+  "samples": [
+    {"t_local": 0.0, "visible_text": "K"},
+    {"t_local": 0.082, "visible_text": "K"},
+    {"t_local": 0.083, "visible_text": "Kr"},
+    {"t_local": 0.167, "visible_text": "Kri"},
+    {"t_local": 0.25, "visible_text": "Kria"}
+  ]
+}
