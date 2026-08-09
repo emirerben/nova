@@ -490,15 +490,16 @@ Lane 2. Launch: 6 parallel → merge → T5 → T6 → T8/T10.
 
 1. Land behind `SILENCE_CUT_ENABLED=false` + `RETAKE_CUT_ENABLED=false`
    (CI micro-e2e + drift e2e green on every PR; retake evals green).
-2. REQUIRED before silence flag flip (6A): prod-image parity renders on TR +
+2. **PASSED 2026-08-09.** Required before the flag flip (6A): prod-image parity renders on TR +
    EN talk clips (`make local-render MODE=generative`, on a Docker-capable
    machine, or a one-off render on Fly) — listen for clipped word tails and
    clicks at cut boundaries; verify captions show no filler tokens and TR/EN
    language detection is stable with the verbatim prompt (15A).
-3. After both prompt evals and TR/EN production-image parity pass, flip
-   `SILENCE_CUT_ENABLED` and `RETAKE_CUT_ENABLED` together on Fly (api +
-   worker restart). Watch admin job-debug `silence_cut_plan` events,
-   `time_saved_s`, and bail-out/rule2-disabled rates for a day.
+3. With prompt evals and TR/EN production-image parity passed, wait for
+   production activation approval, then flip `SILENCE_CUT_ENABLED` and
+   `RETAKE_CUT_ENABLED` together on Fly (api + worker restart). Watch admin
+   job-debug `silence_cut_plan` events, `time_saved_s`, and
+   bail-out/rule2-disabled rates for a day.
 4. Keep the flags independent after launch so silence/filler or retake cutting
    can be rolled back separately without a deploy.
 5. Bail-out rate > ~10% or complaints ⇒ flip off (no deploy needed);
@@ -516,8 +517,9 @@ boundary:
 - Uncertain-but-actionable removals persist as optional per-variant JSON
   candidates. No schema migration is needed.
 - Candidate apply and Restore original timing are public, ownership-checked,
-  revision-guarded, full-rerender actions. Receipts are derived from the exact
-  persisted removal, never model prose.
+  revision-guarded, full-rerender actions. Receipts preserve the requested
+  persisted candidate and publish only after the final cut is validated to cover
+  it, never from model prose.
 - A cut render rebuilds the speech timeline, captions, Smart text, speech map,
   overlays/SFX and Director freshness from the new timing. Any analysis/remap
   failure fails open to the last-good timing.
@@ -538,8 +540,10 @@ boundary:
   transcript/map inputs, text, media overlays, camera/boundary effects and SFX.
 - [x] Add `automatic_cut` capability, Director operation/schema/prompt/evals,
   empty-success response, operation-derived `Will change`, and editor restore UI.
-- [x] Add TR/EN production-image parity, focused/full test gates, env/docs,
-  version/changelog, and stop at the Phase 5 PR approval gate.
+- [x] Add parity-harness support and run the TR/EN production-image parity gate
+  successfully; production flag activation/rollout approval remains pending.
+  Also complete focused/full test gates, env/docs, version/changelog, and stop
+  at the Phase 5 PR approval gate.
 
 ## GSTACK REVIEW REPORT
 

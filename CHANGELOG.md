@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Speech-first edits can now remove safe silences, filler sounds, and abandoned takes automatically.** Subtitled, talking-head, and self-narrated videos rebuild from the durable source with captions, Smart text, overlays, sound effects, and timing remapped to the shorter cut; music-led edits remain isolated.
-- **Creators can review uncertain speech cuts in Nova before applying them, then restore the original timing at any point.** Every accepted change produces an exact server-backed receipt only after the rebuilt video is published.
+- **Creators can review uncertain speech cuts in Nova before applying them, then restore the original timing at any point.** Every accepted change produces a server-backed receipt for the requested range only after the rebuilt video is published and validated to include it.
 
 ### Changed
 - Nova only recommends automatic cuts when the current editor supports them, may honestly recommend no changes, and derives its “Will change” summary from executable operations rather than model prose.
