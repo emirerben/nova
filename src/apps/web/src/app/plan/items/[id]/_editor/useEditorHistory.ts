@@ -33,6 +33,7 @@ import type {
 import type { CaptionMetaPatch } from "@/lib/edit-copilot/ops";
 import type { CopilotCaptionMetaSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
+import type { CarouselMoment } from "@/lib/generative-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
@@ -66,6 +67,12 @@ export interface EditorDocument {
   musicDirty?: boolean;
   backgroundMusic?: EditorCommitBackgroundMusic | null;
   backgroundMusicDirty?: boolean;
+  /** Staged carousel-moment edit (Blossom carousel). `undefined` = not yet
+   * touched this session (prefill falls back to the persisted
+   * `variant.carousel_moment`); `null` = staged removal; an object = staged
+   * add/edit. Mirrors the `musicTrackId`/`musicDirty` pattern. */
+  carouselMoment?: CarouselMoment | null;
+  carouselMomentDirty?: boolean;
   lyricsEnabled?: boolean;
   orientation?: EditorOrientation;
   title: string;
@@ -271,6 +278,12 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
               }
             : null,
         backgroundMusicDirty: Boolean(doc.backgroundMusicDirty),
+        ...(doc.carouselMoment && typeof doc.carouselMoment === "object"
+          ? { carouselMoment: doc.carouselMoment as CarouselMoment }
+          : doc.carouselMoment === null
+            ? { carouselMoment: null }
+            : {}),
+        carouselMomentDirty: Boolean(doc.carouselMomentDirty),
         lyricsEnabled:
           typeof doc.lyricsEnabled === "boolean" ? doc.lyricsEnabled : undefined,
         orientation: doc.orientation === "landscape" ? "landscape" : "portrait",

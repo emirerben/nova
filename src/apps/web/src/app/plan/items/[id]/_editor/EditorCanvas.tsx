@@ -27,7 +27,14 @@ import type {
   TextElement,
   VisualBlock,
 } from "@/lib/plan-api";
-import type { LookAdjustments, LookPreset } from "@/lib/generative-api";
+import type {
+  CarouselMoment,
+  LookAdjustments,
+  LookPreset,
+  TimelineClip,
+} from "@/lib/generative-api";
+import CarouselBlockPreview from "./CarouselBlockPreview";
+import { mapVirtualTime } from "./virtual-timeline";
 import { lookPreviewStyles } from "@/lib/look-presets";
 import { cameraScaleAt } from "@/lib/camera-effects";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -229,6 +236,8 @@ export default function EditorCanvas({
   onPlayingChange,
   onReloadSource,
   virtualPreview,
+  carouselMoment,
+  carouselClips = [],
   allowManipulation = true,
   stageHeightCss,
   captionsEnabled,
@@ -287,6 +296,15 @@ export default function EditorCanvas({
    * Retry — the shell re-runs getPlanItem (plan §9 canvas error state). */
   onReloadSource?: () => void;
   virtualPreview?: VirtualPreviewController | null;
+  /** Staged/persisted carousel-moment config — drives the placeholder block
+   *  preview (CarouselBlockPreview) mounted when the playhead is inside its
+   *  spliced window on `virtualPreview.timeline`. */
+  carouselMoment?: CarouselMoment | null;
+  /** The variant's clips, in timeline order — SAME shape and array the
+   *  virtual-preview transport uses (`useVirtualPreview`'s `clips` option),
+   *  forwarded straight through to the carousel block renderer. Array order
+   *  is card order (index i -> card i). */
+  carouselClips?: Pick<TimelineClip, "clip_index" | "signed_url">[];
   /** Light-edit mode keeps the canvas tap-only: no drag, scale, or handles. */
   allowManipulation?: boolean;
   /** Shell-specific chrome height for sizing the 9:16 stage. */
@@ -444,6 +462,15 @@ export default function EditorCanvas({
   const virtualMusicAudioProps = virtualPreview?.musicAudioProps
     ? { ...virtualPreview.musicAudioProps, ref: undefined }
     : null;
+  // Carousel-block placeholder (Lane C): the playhead is inside a spliced
+  // carousel entry on the virtual timeline — both decks are already paused
+  // by useVirtualPreview's own gate (showMapping's `entry.kind !== "clip"`
+  // branch), this just decides whether to paint the placeholder OVER them.
+  const carouselMapping = virtualPreview
+    ? mapVirtualTime(virtualPreview.timeline, currentTime)
+    : null;
+  const activeCarouselEntry =
+    carouselMapping?.entry.kind === "carousel" ? carouselMapping.entry : null;
   const virtualTransition = virtualPreview?.transitionPreview ?? null;
   const transitionProgress = virtualTransition?.progress ?? 0;
   const transitionOverlayOpacity =
@@ -1094,6 +1121,41 @@ export default function EditorCanvas({
                     ref={virtualMusicAudioRef}
                     className="hidden"
                   />
+                )}
+                {activeCarouselEntry && carouselMoment && (
+                  <div
+                    className="absolute inset-0 overflow-hidden"
+                    style={{ zIndex: EDITOR_STAGE_Z.video + 3 }}
+                  >
+                    {/* CarouselBlockPreviewImpl renders at its native
+                        1080x1920 canvas space (see that component's
+                        docblock) and expects the mount point to apply the
+                        stage's fit-to-viewport scale — same
+                        cssPixelsPerCanvasPixel ratio used elsewhere in this
+                        file to convert canvas-native px to on-screen CSS px
+                        (e.g. caption font-size below). Without this wrapper
+                        the 1080x1920 box renders at native size inside the
+                        much smaller on-screen stage, showing only its
+                        top-left sliver. */}
+                    <div
+                      data-testid="carousel-block-scale-wrapper"
+                      style={{
+                        width: canvas.w,
+                        height: canvas.h,
+                        transform: `scale(${cssPixelsPerCanvasPixel})`,
+                        transformOrigin: "0 0",
+                      }}
+                    >
+                      <CarouselBlockPreview
+                        config={carouselMoment}
+                        clips={carouselClips}
+                        currentTimeS={currentTime}
+                        blockStartS={activeCarouselEntry.startS}
+                        durationS={activeCarouselEntry.durationS}
+                        isPlaying={playing}
+                      />
+                    </div>
+                  </div>
                 )}
               </>
             ) : src ? (

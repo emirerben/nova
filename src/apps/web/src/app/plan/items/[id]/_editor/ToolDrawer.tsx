@@ -9,7 +9,7 @@
  * selected) above the 4-column preset grid.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GenerativeStyleSet } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
@@ -109,6 +109,7 @@ export default function ToolDrawer({
   onDeleteVisualBlock,
   onRetimeVisualBlock,
   carousel,
+  carouselOpenRequestKey,
   layoutMode = "full",
   presentation = "panel",
   captions,
@@ -184,6 +185,11 @@ export default function ToolDrawer({
    *  or `capable: false` shows the entry point disabled with an honest reason
    *  via the focusable-disabled pattern (aria-disabled + onDisabledTap). */
   carousel?: CarouselPanelControl & { onDisabledTap: (reason: string) => void };
+  /** Bumped by EditorShell to force the carousel panel open from OUTSIDE the
+   *  "Add a block" grid — e.g. clicking the timeline chip. Any change to
+   *  this value (including its first non-undefined value) opens the panel;
+   *  the grid's own "Carousel" tile still works independently. */
+  carouselOpenRequestKey?: number;
   layoutMode?: EditorLayoutMode;
   /** "sheet" when hosted inside the mobile bottom-sheet primitive, which owns
    *  the chrome (width, entrance animation, title row, close button). Default
@@ -464,6 +470,7 @@ export default function ToolDrawer({
             onDeleteBlock={onDeleteVisualBlock}
             onRetimeBlock={onRetimeVisualBlock}
             carousel={carousel}
+            carouselOpenRequestKey={carouselOpenRequestKey}
           />
         </div>
       )}
@@ -886,6 +893,7 @@ function VisualsDrawer({
   onDeleteBlock,
   onRetimeBlock,
   carousel,
+  carouselOpenRequestKey,
 }: {
   blocks: VisualBlock[];
   assets: PoolAsset[];
@@ -909,11 +917,25 @@ function VisualsDrawer({
   onDeleteBlock?: (id: string) => void;
   onRetimeBlock?: (id: string) => void;
   carousel?: CarouselPanelControl & { onDisabledTap: (reason: string) => void };
+  carouselOpenRequestKey?: number;
 }) {
   const ready = assets.filter((asset) => asset.status === "ready");
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [draggedShot, setDraggedShot] = useState<{ blockId: string; shotId: string } | null>(null);
   const [carouselOpen, setCarouselOpen] = useState(false);
+  // Opened remotely (e.g. clicking the timeline chip) — any change (incl.
+  // the first non-undefined value) force-opens the panel, independent of
+  // the "Add a block" grid tile.
+  const lastCarouselOpenRequestKeyRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (
+      carouselOpenRequestKey !== undefined &&
+      carouselOpenRequestKey !== lastCarouselOpenRequestKeyRef.current
+    ) {
+      lastCarouselOpenRequestKeyRef.current = carouselOpenRequestKey;
+      if (carousel) setCarouselOpen(true);
+    }
+  }, [carousel, carouselOpenRequestKey]);
 
   function contrastRatio(foreground: string, background: string): number | null {
     const parse = (value: string) => {

@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import { useVirtualPreview } from "@/app/plan/items/[id]/_editor/useVirtualPreview";
+import type { VirtualCarouselSplice } from "@/app/plan/items/[id]/_editor/virtual-timeline";
 
 const SLOT: DraftSlot = {
   key: "slot-1",
@@ -49,6 +50,12 @@ const NOOP_TIME_UPDATE = () => {};
 const NOOP_DURATION = () => {};
 const NOOP_SOURCE_ERROR = () => {};
 
+// Stable "no carousel" default — same rationale as the stable slot arrays
+// above: a fresh `{...}` literal per render would (pre-fix) rebuild the
+// timeline every render, which is exactly the EditorShell bug this file's
+// carousel-clock tests sit next to. `null` was always stable.
+const NO_CAROUSEL = null;
+
 function Harness({
   onPlayingChange,
   soundMuted = false,
@@ -58,6 +65,7 @@ function Harness({
   onMusicError,
   onTimeUpdate = NOOP_TIME_UPDATE,
   slots = ONE_SLOT,
+  carousel = NO_CAROUSEL,
 }: {
   onPlayingChange: (playing: boolean) => void;
   soundMuted?: boolean;
@@ -67,12 +75,14 @@ function Harness({
   onMusicError?: () => void;
   onTimeUpdate?: (timeS: number) => void;
   slots?: DraftSlot[];
+  carousel?: VirtualCarouselSplice | null;
 }) {
   const preview = useVirtualPreview({
     enabled: true,
     slots,
     clips: DEFAULT_CLIPS,
     grid: EMPTY_GRID,
+    carousel,
     currentTime: 0,
     muted: videoMuted,
     musicAudioUrl,
@@ -101,6 +111,9 @@ function Harness({
       ) : null}
       <button type="button" onClick={preview.play}>
         play
+      </button>
+      <button type="button" onClick={preview.pause}>
+        pause
       </button>
     </>
   );
@@ -497,5 +510,159 @@ describe("useVirtualPreview transport", () => {
 
     expect(deckB.currentTime).toBeCloseTo(0.5 + 0.3, 2);
     expect(onTimeUpdate).toHaveBeenLastCalledWith(2);
+  });
+});
+
+describe("useVirtualPreview carousel-window clock (bug fix: frozen transport)", () => {
+  // Both decks are paused for the whole carousel window by design (the
+  // mounted CarouselBlockPreview owns rendering it, not a video source) —
+  // so the ONLY way `currentTime` used to move while the playhead was inside
+  // it was a deck's `timeupdate` event, which a paused deck never fires.
+  // Playing into the block therefore froze the transport at the block's
+  // start forever. The fix drives `currentTime` from a rAF/wall-clock delta
+  // instead while inside the window, then hands off to the next deck via
+  // the same boundary path (`finishEntry` -> `swapToNext`) once it ends.
+  const CAROUSEL: VirtualCarouselSplice = { position: "intro", durationS: 4 };
+
+  let playSpy: ReturnType<typeof jest.spyOn>;
+  let pauseSpy: ReturnType<typeof jest.spyOn>;
+  const playsOn = (el: HTMLMediaElement) =>
+    playSpy.mock.instances.filter((inst: unknown) => inst === el).length;
+
+  beforeEach(() => {
+    jest.spyOn(window.HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    playSpy = jest
+      .spyOn(window.HTMLMediaElement.prototype, "play")
+      .mockImplementation(() => Promise.resolve());
+    pauseSpy = jest
+      .spyOn(window.HTMLMediaElement.prototype, "pause")
+      .mockImplementation(() => {});
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it("advances currentTime while playing inside the block instead of freezing at its start", () => {
+    const onTimeUpdate = jest.fn();
+    render(
+      <Harness onPlayingChange={jest.fn()} onTimeUpdate={onTimeUpdate} slots={TWO_SLOTS} carousel={CAROUSEL} />,
+    );
+
+    // "intro" splices the block at the very start: [0, 4), both clips shift
+    // later. Pressing play at t=0 lands directly inside it.
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    expect(onTimeUpdate).toHaveBeenLastCalledWith(0);
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const deckB = screen.getByTestId("deck-b") as HTMLVideoElement;
+
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+
+    // The clock ticked forward on its own — no deck ever fired `timeupdate`.
+    const lastReported = onTimeUpdate.mock.calls.at(-1)?.[0] as number;
+    expect(lastReported).toBeGreaterThan(0.5);
+    expect(lastReported).toBeLessThan(4);
+    // Neither deck was ever asked to play while still inside the block — the
+    // preview component owns the visual, not a video source.
+    expect(playsOn(deckA)).toBe(0);
+    expect(playsOn(deckB)).toBe(0);
+  });
+
+  it("hands off to the next deck at the correct boundary once the block ends, and stops advancing on its own after that", () => {
+    const onTimeUpdate = jest.fn();
+    render(
+      <Harness onPlayingChange={jest.fn()} onTimeUpdate={onTimeUpdate} slots={TWO_SLOTS} carousel={CAROUSEL} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const deckB = screen.getByTestId("deck-b") as HTMLVideoElement;
+
+    act(() => {
+      // Past the 4s window.
+      jest.advanceTimersByTime(4200);
+    });
+
+    // finishEntry -> swapToNext handed off exactly like a clip-to-clip cut:
+    // the next entry (shifted clip 0, inS 1.4) is seeked and played on the
+    // OTHER deck (deck was "a"; the block itself never touched a deck).
+    expect(playsOn(deckB)).toBeGreaterThan(0);
+    expect(deckB.currentTime).toBeCloseTo(1.4, 1);
+    expect(onTimeUpdate).toHaveBeenCalledWith(4); // exact block-end boundary
+
+    const callsAtHandoff = onTimeUpdate.mock.calls.length;
+    act(() => {
+      // The rAF clock must not still be running post-handoff (it would keep
+      // calling onTimeUpdate against an entry that's no longer "carousel").
+      jest.advanceTimersByTime(500);
+    });
+    expect(onTimeUpdate.mock.calls.length).toBe(callsAtHandoff);
+  });
+
+  it("stops the clock on pause and does not resume advancing on its own", () => {
+    const onTimeUpdate = jest.fn();
+    const onPlayingChange = jest.fn();
+    render(
+      <Harness onPlayingChange={onPlayingChange} onTimeUpdate={onTimeUpdate} slots={TWO_SLOTS} carousel={CAROUSEL} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
+    const midPlayCalls = onTimeUpdate.mock.calls.length;
+    expect(midPlayCalls).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "pause" }));
+    expect(onPlayingChange).toHaveBeenLastCalledWith(false);
+
+    const callsAtPause = onTimeUpdate.mock.calls.length;
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+    expect(onTimeUpdate.mock.calls.length).toBe(callsAtPause);
+  });
+
+  // Bug #2 (visual E2E): "with a staged carousel block, scrubbing OUTSIDE its
+  // window shows a light-gray placeholder instead of normal clips." The
+  // correct contract (this suite's own docblock intent) is that outside the
+  // block window playback is byte-for-byte the SAME as without one — decks
+  // load/play the real clips, nothing about the spliced-in block leaks into
+  // ordinary clip-to-clip handoff. "outro" places the block AFTER both
+  // clips, so playing from t=0 through their shared boundary stays entirely
+  // outside it for this whole test.
+  it("plays clips normally outside the block window even though one is staged later in the timeline", () => {
+    const onTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        onTimeUpdate={onTimeUpdate}
+        slots={TWO_SLOTS}
+        carousel={{ position: "outro", durationS: 4 }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const deckB = screen.getByTestId("deck-b") as HTMLVideoElement;
+
+    // Clip 0 plays normally from its in-point — no gray/blank gap.
+    expect(deckA.src).toBe(DEFAULT_CLIPS[0].signed_url);
+    expect(playsOn(deckA)).toBeGreaterThan(0);
+    expect(deckA.currentTime).toBeCloseTo(1.4, 1);
+
+    // The clip-to-clip boundary at virtual t=2 hands off to clip 1 exactly
+    // as it would with no carousel staged at all.
+    deckA.currentTime = 1.4 + 2; // native end of entry 0
+    fireEvent.ended(deckA);
+
+    expect(deckB.src).toBe(DEFAULT_CLIPS[1].signed_url);
+    expect(playsOn(deckB)).toBeGreaterThan(0);
+    expect(deckB.currentTime).toBeCloseTo(0.5, 1);
+    expect(onTimeUpdate).toHaveBeenCalledWith(2);
   });
 });

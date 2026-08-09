@@ -168,8 +168,7 @@ describe("ToolDrawer visual blocks", () => {
       reason: null,
       current: null,
       clips: [],
-      busy: false,
-      onApply: jest.fn(),
+      onChange: jest.fn(),
       onRemove: jest.fn(),
       onDisabledTap: jest.fn(),
       ...overrides,
@@ -188,7 +187,7 @@ describe("ToolDrawer visual blocks", () => {
 
     expect(onDisabledTap).toHaveBeenCalledWith("song-synced edits don't support carousels");
     // Gated tap never opens the panel.
-    expect(screen.queryByText("Add carousel")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "Carousel effect" })).not.toBeInTheDocument();
   });
 
   it("capable carousel entry opens the panel; Back returns to the block grid", () => {
@@ -198,7 +197,7 @@ describe("ToolDrawer visual blocks", () => {
     expect(entry).not.toHaveAttribute("aria-disabled");
     fireEvent.click(entry);
 
-    expect(screen.getByRole("button", { name: "Add carousel" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "Carousel effect" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Add a block/ }));
     expect(screen.getByRole("button", { name: "Carousel" })).toBeInTheDocument();
   });

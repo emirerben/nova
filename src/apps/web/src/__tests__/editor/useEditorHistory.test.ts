@@ -187,6 +187,8 @@ describe("serializeDraft / deserializeDraft", () => {
       musicStartS: null,
       backgroundMusic: null,
       backgroundMusicDirty: false,
+      carouselMoment: undefined,
+      carouselMomentDirty: false,
       lyricsEnabled: undefined,
       orientation: "landscape",
     });
@@ -255,6 +257,8 @@ describe("serializeDraft / deserializeDraft", () => {
       musicStartS: null,
       backgroundMusic: null,
       backgroundMusicDirty: false,
+      carouselMoment: undefined,
+      carouselMomentDirty: false,
       lyricsEnabled: undefined,
       orientation: "portrait",
       title: "",

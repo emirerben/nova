@@ -449,7 +449,7 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.allowed_op_families).not.toContain("render");
   });
 
-  it("emits the carousel section and render family when the moment is eligible", () => {
+  it("emits the carousel section and carousel family when the moment is eligible", () => {
     const snapshot = buildCopilotSnapshot(
       [bar()],
       [slot()],
@@ -487,10 +487,10 @@ describe("buildCopilotSnapshot", () => {
       },
       n_clips: 4,
     });
-    expect(snapshot.allowed_op_families).toContain("render");
+    expect(snapshot.allowed_op_families).toContain("carousel");
   });
 
-  it("withholds the render family but keeps the carousel section when ineligible", () => {
+  it("withholds the carousel family but keeps the carousel section when ineligible", () => {
     const snapshot = buildCopilotSnapshot(
       [bar()],
       [slot()],
@@ -505,10 +505,10 @@ describe("buildCopilotSnapshot", () => {
 
     expect(snapshot.carousel?.eligible).toBe(false);
     expect(snapshot.carousel?.reason).toBe("Needs at least 2 clips");
-    expect(snapshot.allowed_op_families).not.toContain("render");
+    expect(snapshot.allowed_op_families).not.toContain("carousel");
   });
 
-  it("unlocks the render family from carouselMomentAvailable independent of the intro switch", () => {
+  it("unlocks the carousel family from carouselMomentAvailable independent of the intro switch — and never the render family", () => {
     const snapshot = buildCopilotSnapshot(
       [bar()],
       [slot()],
@@ -522,7 +522,9 @@ describe("buildCopilotSnapshot", () => {
       },
     );
 
-    expect(snapshot.allowed_op_families).toContain("render");
+    // Lane D: carousel is its own family, independent of renderLayoutSwitchable.
+    expect(snapshot.allowed_op_families).toContain("carousel");
+    expect(snapshot.allowed_op_families).not.toContain("render");
   });
 
   it("derives allowed families from server capabilities and client flags", () => {
