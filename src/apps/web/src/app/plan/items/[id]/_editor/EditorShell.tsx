@@ -449,6 +449,8 @@ export function spaceShortcutAllowed(target: HTMLElement | null): boolean {
   return (target?.tagName ?? "").toUpperCase() !== "BUTTON";
 }
 
+const CAROUSEL_SELECTION_ID = "carousel-block";
+
 export function shouldCloseToolOnSelection({
   layoutMode,
   activeTool,
@@ -2302,18 +2304,39 @@ export default function EditorShell({
       } else if (kind === "carousel") {
         setInspectorTab("basic");
         setActiveTool("visuals");
+        const carouselEntry = virtualPreview.timeline.entries.find(
+          (entry) => entry.kind === "carousel",
+        );
+        if (carouselEntry) seekPlaybackTo(carouselEntry.startS);
         if (layoutMode === "light" && POCKET_UI) {
           dispatchPocket({ type: "OPEN_INSPECTOR" });
         }
       }
     },
-    [activeTool, clip.state.grid, duration, layoutMode, localMotionScenes, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
+    [activeTool, clip.state.grid, duration, layoutMode, localMotionScenes, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreview.timeline.entries, virtualPreviewActive],
   );
 
   const selectText = useCallback(
     (id: string) => selectElement("text", id),
     [selectElement],
   );
+
+  const selectCarousel = useCallback(
+    () => selectElement("carousel", CAROUSEL_SELECTION_ID),
+    [selectElement],
+  );
+
+  // Adding a brand-new Carousel stages its default and selects it in the same
+  // click. The virtual splice appears on the following render, so seek again
+  // once that entry exists; otherwise the inspector opens over unrelated
+  // footage and the user cannot see the effect they are configuring.
+  useEffect(() => {
+    if (selection?.kind !== "carousel" || carouselMoment === null) return;
+    const entry = virtualPreview.timeline.entries.find(
+      (candidate) => candidate.kind === "carousel",
+    );
+    if (entry) seekPlaybackTo(entry.startS);
+  }, [carouselMoment, seekPlaybackTo, selection?.kind, virtualPreview.timeline.entries]);
 
   const revealCopilotFocus = useCallback((focus: DirectorPreviewFocus) => {
     setPendingCopilotFocus({ ...focus });
@@ -4168,6 +4191,9 @@ export default function EditorShell({
       }
       if (result.nextCarouselMoment !== undefined) {
         applyCarouselMoment(result.nextCarouselMoment);
+        if (result.nextCarouselMoment === null && selection?.kind === "carousel") {
+          clear();
+        }
       }
       if (result.acceptedSuggestionRefs?.length) {
         setAcceptedSuggestions((cur) => {
@@ -4244,6 +4270,7 @@ export default function EditorShell({
     [
       applyCarouselMoment,
       clip.state.grid,
+      clear,
       flashCopilotTargets,
       history,
       localOverlays,
@@ -4252,6 +4279,7 @@ export default function EditorShell({
       readOnly,
       revealCopilotFocus,
       router,
+      selection,
       slots,
       state.bars,
       itemId,
@@ -4285,8 +4313,20 @@ export default function EditorShell({
       reason: carouselReason,
       current: carouselMoment,
       clips: carouselClips,
-      onChange: (config: CarouselMoment) => stageCarouselMoment(config),
-      onRemove: () => stageCarouselMoment(null),
+      onChange: (config: CarouselMoment) => {
+        if (!carouselCapable) {
+          setToast(carouselReason ?? "Carousel isn't available for this edit.");
+          return;
+        }
+        stageCarouselMoment(config);
+      },
+      onRemove: () => {
+        if (!carouselCapable) {
+          setToast(carouselReason ?? "Carousel isn't available for this edit.");
+          return;
+        }
+        stageCarouselMoment(null);
+      },
       onDisabledTap: setToast,
     }),
     [carouselCapable, carouselReason, carouselMoment, carouselClips, stageCarouselMoment],
@@ -4369,7 +4409,16 @@ export default function EditorShell({
       removeMotionScene(selection.id);
       clear();
     } else if (selection.kind === "carousel") {
-      stageCarouselMoment(null);
+      if (!carouselCapable || carouselMoment === null) {
+        setToast(
+          carouselReason ??
+            (carouselMoment === null
+              ? "Add a Carousel before removing it."
+              : "Carousel isn't available for this edit."),
+        );
+        return;
+      }
+      carouselControl.onRemove();
       clear();
     } else if (selection.kind === "camera") {
       deleteCameraEffect(selection.id);
@@ -4385,7 +4434,10 @@ export default function EditorShell({
     removeOverlay,
     deleteVisualBlock,
     removeMotionScene,
-    stageCarouselMoment,
+    carouselCapable,
+    carouselControl,
+    carouselMoment,
+    carouselReason,
     deleteCameraEffect,
     state.bars,
   ]);
@@ -4517,6 +4569,7 @@ export default function EditorShell({
     selection?.kind === "overlay" ||
     selection?.kind === "visual" ||
     selection?.kind === "motion" ||
+    (selection?.kind === "carousel" && carouselCapable && carouselMoment !== null) ||
     selection?.kind === "camera";
 
   // ── Keyboard: Escape ladder + Delete with focus guard (plan §5/§9) ──────────
@@ -5272,18 +5325,22 @@ export default function EditorShell({
     filmstripClips: clip.clips,
     carouselBlock: carouselMoment
       ? {
-          id: "carousel-block",
+          id: CAROUSEL_SELECTION_ID,
           effectLabel: (carouselMoment.effect ?? "scale_sweep").replace(/_/g, " "),
           durationS: carouselMoment.duration_s ?? 6,
           position: carouselMoment.position ?? "middle",
         }
       : null,
-    onSelectCarousel: () => {
-      setActiveTool("visuals");
-      selectElement("carousel", "carousel-block");
-    },
+    carouselReadOnly: !carouselCapable,
+    carouselDisabledReason: carouselReason,
+    onSelectCarousel: selectCarousel,
     onSetCarouselPosition: (position) => {
-      if (!carouselMoment) return;
+      if (!carouselMoment || !carouselCapable) {
+        if (!carouselCapable) {
+          setToast(carouselReason ?? "Carousel isn't available for this edit.");
+        }
+        return;
+      }
       stageCarouselMoment({ ...carouselMoment, position });
     },
     sfx: localSfx.map((p) => {
@@ -5390,6 +5447,10 @@ export default function EditorShell({
               type: "carousel" as const,
               onEdit: () => dispatchPocket({ type: "OPEN_INSPECTOR" }),
               onDelete: deleteSelected,
+              deleteDisabledReason:
+                carouselCapable && carouselMoment !== null
+                  ? null
+                  : (carouselReason ?? "Add a Carousel before removing it."),
             };
           }
           if (selection?.kind === "clip") {
@@ -5416,11 +5477,10 @@ export default function EditorShell({
   const pocketStripOnTop =
     pocketStripSelection?.type === "caption" || pocketStripSelection?.type === "clip";
   const miniStripSegments: MiniStripSegment[] = pocketActive
-    ? slots.flatMap((slot, idx) => {
-        const win = slotLayout.windows[idx];
-        if (!win || win.startS == null || win.durationS <= 0) return [];
-        const startS = win.startS;
-        const endS = win.startS + win.durationS;
+    ? virtualPreview.timeline.entries.flatMap((entry) => {
+        if (entry.kind !== "clip") return [];
+        const startS = entry.startS;
+        const endS = entry.startS + entry.durationS;
         const hasMarks =
           visibleTextBars.some((b) => b.start_s < endS && b.end_s > startS) ||
           localMotionScenes.some(
@@ -5428,9 +5488,12 @@ export default function EditorShell({
               scene.start_frame / MOTION_FPS < endS &&
               scene.end_frame_exclusive / MOTION_FPS > startS,
           );
-        return [{ id: slot.key, startS, endS, hasMarks }];
+        return [{ id: entry.slotKey, startS, endS, hasMarks }];
       })
     : [];
+  const carouselMiniStripEntry = virtualPreview.timeline.entries.find(
+    (entry) => entry.kind === "carousel",
+  );
   const pocketTransportSlot = pocketActive ? (
     <div className="flex items-center gap-2">
       <button
@@ -5848,7 +5911,7 @@ export default function EditorShell({
               onRetimeVisualBlock={retimeBlock}
               carousel={carouselControl}
               carouselSelected={selection?.kind === "carousel"}
-              onSelectCarousel={() => selectElement("carousel", "carousel-block")}
+              onSelectCarousel={selectCarousel}
               layoutMode={layoutMode}
               copilot={{
                 messages: copilot.messages,
@@ -5924,7 +5987,7 @@ export default function EditorShell({
               onRetimeVisualBlock={retimeBlock}
               carousel={carouselControl}
               carouselSelected={selection?.kind === "carousel"}
-              onSelectCarousel={() => selectElement("carousel", "carousel-block")}
+              onSelectCarousel={selectCarousel}
               layoutMode={layoutMode}
               onClose={() => setActiveTool(null)}
             />
@@ -6112,18 +6175,37 @@ export default function EditorShell({
               <div className="bg-white px-4 pb-2">
                 <MiniStrip
                   segments={miniStripSegments}
-                  durationS={timelineDuration || previewDuration}
+                  durationS={virtualPreview.timeline.totalDurationS || timelineDuration || previewDuration}
                   currentTimeS={currentTime}
                   selectedClipId={selection?.kind === "clip" ? selection.id : null}
-                  marks={localMotionScenes.map((scene) => ({
-                    id: scene.id,
-                    startS: scene.start_frame / MOTION_FPS,
-                    endS: scene.end_frame_exclusive / MOTION_FPS,
-                    label: scene.preset_id === "route_trace"
-                      ? "Route trace"
-                      : creatorBlockEntry(scene.preset_id).label,
-                  }))}
-                  selectedMarkId={selection?.kind === "motion" ? selection.id : null}
+                  marks={[
+                    ...localMotionScenes.map((scene) => ({
+                      id: scene.id,
+                      startS: scene.start_frame / MOTION_FPS,
+                      endS: scene.end_frame_exclusive / MOTION_FPS,
+                      label:
+                        scene.preset_id === "route_trace"
+                          ? "Route trace"
+                          : creatorBlockEntry(scene.preset_id).label,
+                    })),
+                    ...(carouselMiniStripEntry?.kind === "carousel"
+                      ? [
+                          {
+                            id: CAROUSEL_SELECTION_ID,
+                            startS: carouselMiniStripEntry.startS,
+                            endS:
+                              carouselMiniStripEntry.startS +
+                              carouselMiniStripEntry.durationS,
+                            label: "Carousel",
+                          },
+                        ]
+                      : []),
+                  ]}
+                  selectedMarkId={
+                    selection?.kind === "motion" || selection?.kind === "carousel"
+                      ? selection.id
+                      : null
+                  }
                   onScrubStart={pausePlayback}
                   onScrub={seekTo}
                   onSelectClip={(id, seconds) => {
@@ -6131,9 +6213,8 @@ export default function EditorShell({
                     seekTo(seconds);
                   }}
                   onSelectMark={(id, seconds) => {
-                    setActiveTool("visuals");
-                    selectElement("motion", id);
-                    dispatchPocket({ type: "OPEN_TOOL", tool: "visuals" });
+                    if (id === CAROUSEL_SELECTION_ID) selectCarousel();
+                    else selectElement("motion", id);
                     seekTo(seconds);
                   }}
                 />
@@ -6370,7 +6451,7 @@ export default function EditorShell({
             onRetimeVisualBlock={retimeBlock}
             carousel={carouselControl}
             carouselSelected={selection?.kind === "carousel"}
-            onSelectCarousel={() => selectElement("carousel", "carousel-block")}
+            onSelectCarousel={selectCarousel}
             layoutMode={layoutMode}
             onClose={() => dispatchPocket({ type: "CLOSE_SHEET" })}
           />

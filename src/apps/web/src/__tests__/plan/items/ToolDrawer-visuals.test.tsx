@@ -192,8 +192,9 @@ describe("ToolDrawer visual blocks", () => {
 
   it("selects Carousel for the shared inspector without nesting Effect controls in Visuals", () => {
     const onSelectCarousel = jest.fn();
+    const onChange = jest.fn();
     const { rerender } = renderVisuals({
-      carousel: carouselControl(),
+      carousel: carouselControl({ onChange }),
       onSelectCarousel,
     });
 
@@ -201,6 +202,14 @@ describe("ToolDrawer visual blocks", () => {
     expect(entry).not.toHaveAttribute("aria-disabled");
     fireEvent.click(entry);
 
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        effect: "scale_sweep",
+        mode: "focus",
+        position: "middle",
+        transition: "crossfade",
+      }),
+    );
     expect(onSelectCarousel).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("radiogroup", { name: "Carousel effect" })).not.toBeInTheDocument();
 

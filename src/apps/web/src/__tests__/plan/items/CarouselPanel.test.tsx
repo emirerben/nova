@@ -54,16 +54,22 @@ function makeControl(overrides: Partial<CarouselPanelControl> = {}): CarouselPan
 
 describe("CarouselPanel", () => {
   it("a brand-new moment defaults to scale_sweep / focus / Let Nova pick / middle / crossfade, and Length defaults to the focus arc's natural length (not the flat 6s)", () => {
-    render(<CarouselPanel control={makeControl()} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl()} />);
 
     expect(screen.getByRole("radio", { name: "Scale sweep effect" })).toHaveAttribute(
       "aria-checked",
       "true",
     );
+    expect(screen.getByRole("radio", { name: "Scale sweep effect" })).toHaveClass(
+      "focus-visible:outline-lime-500",
+    );
     expect(screen.getByRole("button", { name: "Focus" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("radio", { name: "Let Nova pick" })).toHaveAttribute(
       "aria-checked",
       "true",
+    );
+    expect(screen.getByRole("radio", { name: "Let Nova pick" })).toHaveClass(
+      "focus-visible:outline-lime-500",
     );
     expect(screen.getByRole("button", { name: "Middle" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("Carousel length in seconds")).toHaveValue(
@@ -79,7 +85,7 @@ describe("CarouselPanel", () => {
 
   it("picking an effect stages the FULL config immediately (no submit button)", () => {
     const onChange = jest.fn();
-    render(<CarouselPanel control={makeControl({ onChange })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ onChange })} />);
 
     fireEvent.click(screen.getByRole("radio", { name: "Cover flow effect" }));
 
@@ -103,7 +109,7 @@ describe("CarouselPanel", () => {
       duration_s: 9,
       transition: "none",
     };
-    render(<CarouselPanel control={makeControl({ current })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ current })} />);
 
     expect(screen.getByRole("radio", { name: "Cover flow effect" })).toHaveAttribute(
       "aria-checked",
@@ -133,7 +139,7 @@ describe("CarouselPanel", () => {
       mode: "focus",
       focus: [{ card_index: 2 }],
     } as unknown as CarouselMoment;
-    render(<CarouselPanel control={makeControl({ current })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ current })} />);
 
     expect(screen.getByRole("radio", { name: "Clip 3" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: "Let Nova pick" })).toHaveAttribute(
@@ -144,7 +150,7 @@ describe("CarouselPanel", () => {
 
   it("selecting a focus tile stages focus_clip_index", () => {
     const onChange = jest.fn();
-    render(<CarouselPanel control={makeControl({ onChange })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ onChange })} />);
 
     fireEvent.click(screen.getByRole("radio", { name: "Clip 2" }));
 
@@ -156,7 +162,7 @@ describe("CarouselPanel", () => {
   it('"Let Nova pick" stages a null focus_clip_index', () => {
     const onChange = jest.fn();
     const current: CarouselMoment = { mode: "focus", focus_clip_index: 2 };
-    render(<CarouselPanel control={makeControl({ current, onChange })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ current, onChange })} />);
 
     expect(screen.getByRole("radio", { name: "Clip 3" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByRole("radio", { name: "Let Nova pick" }));
@@ -169,7 +175,7 @@ describe("CarouselPanel", () => {
   it("switching to Rolling stages a null focus_clip_index regardless of prior selection", () => {
     const onChange = jest.fn();
     const current: CarouselMoment = { mode: "focus", focus_clip_index: 0 };
-    render(<CarouselPanel control={makeControl({ current, onChange })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ current, onChange })} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Rolling" }));
 
@@ -180,7 +186,7 @@ describe("CarouselPanel", () => {
 
   it("position, length, and transition controls each stage the merged config immediately", () => {
     const onChange = jest.fn();
-    render(<CarouselPanel control={makeControl({ onChange })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ onChange })} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Intro" }));
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ position: "intro" }));
@@ -201,7 +207,7 @@ describe("CarouselPanel", () => {
     // A rolling duration deliberately customized away from the 6s default —
     // proves the reset isn't just "duration_s happened to be unset".
     const current: CarouselMoment = { mode: "rolling", duration_s: 10 };
-    render(<CarouselPanel control={makeControl({ current, onChange })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ current, onChange })} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Focus" }));
 
@@ -221,7 +227,6 @@ describe("CarouselPanel", () => {
       return (
         <CarouselPanel
           control={makeControl({ current: c, onChange: (next) => (onChange(next), setC(next)) })}
-          onBack={jest.fn()}
         />
       );
     };
@@ -243,7 +248,6 @@ describe("CarouselPanel", () => {
     const { rerender } = render(
       <CarouselPanel
         control={makeControl({ current: { mode: "focus", duration_s: longEnough } })}
-        onBack={jest.fn()}
       />,
     );
     expect(screen.queryByText(/Focus zoom needs/)).not.toBeInTheDocument();
@@ -251,7 +255,6 @@ describe("CarouselPanel", () => {
     rerender(
       <CarouselPanel
         control={makeControl({ current: { mode: "focus", duration_s: shortEnough } })}
-        onBack={jest.fn()}
       />,
     );
     expect(
@@ -263,7 +266,6 @@ describe("CarouselPanel", () => {
     render(
       <CarouselPanel
         control={makeControl({ current: { mode: "rolling", duration_s: 2 } })}
-        onBack={jest.fn()}
       />,
     );
     expect(screen.queryByText(/Focus zoom needs/)).not.toBeInTheDocument();
@@ -281,7 +283,7 @@ describe("CarouselPanel", () => {
       // values. Cast narrowly to simulate the real prefill shape.
       mode: "stills" as unknown as CarouselMoment["mode"],
     };
-    render(<CarouselPanel control={makeControl({ current, onChange })} onBack={jest.fn()} />);
+    render(<CarouselPanel control={makeControl({ current, onChange })} />);
 
     expect(screen.getByRole("button", { name: "Focus" })).toHaveAttribute(
       "aria-pressed",
@@ -326,12 +328,7 @@ describe("CarouselPanel", () => {
         duration_s: 5,
         mode: "stills" as unknown as CarouselMoment["mode"],
       });
-      return (
-        <CarouselPanel
-          control={makeControl({ current, onChange: setCurrent })}
-          onBack={jest.fn()}
-        />
-      );
+      return <CarouselPanel control={makeControl({ current, onChange: setCurrent })} />;
     };
     render(<Controlled />);
 
@@ -348,24 +345,14 @@ describe("CarouselPanel", () => {
   it("Remove only appears when a moment already exists, fires once, with no confirm dialog", () => {
     const onRemove = jest.fn();
     const { rerender } = render(
-      <CarouselPanel control={makeControl({ onRemove })} onBack={jest.fn()} />,
+      <CarouselPanel control={makeControl({ onRemove })} />,
     );
     expect(screen.queryByRole("button", { name: "Remove carousel" })).not.toBeInTheDocument();
 
     rerender(
-      <CarouselPanel
-        control={makeControl({ current: { effect: "flipbook" }, onRemove })}
-        onBack={jest.fn()}
-      />,
+      <CarouselPanel control={makeControl({ current: { effect: "flipbook" }, onRemove })} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Remove carousel" }));
     expect(onRemove).toHaveBeenCalledTimes(1);
-  });
-
-  it("onBack returns to the Add-a-block grid", () => {
-    const onBack = jest.fn();
-    render(<CarouselPanel control={makeControl()} onBack={onBack} />);
-    fireEvent.click(screen.getByRole("button", { name: /Add a block/ }));
-    expect(onBack).toHaveBeenCalledTimes(1);
   });
 });

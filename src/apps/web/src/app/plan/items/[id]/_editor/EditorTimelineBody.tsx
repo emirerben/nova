@@ -210,6 +210,10 @@ export interface EditorTimelineBodyProps {
 
   /** Staged carousel-moment block, or null/undefined when none is staged. */
   carouselBlock?: EditorCarouselBlockBar | null;
+  /** A persisted block remains selectable for explanation, but cannot be
+   *  dragged when this variant's Carousel capability is unavailable. */
+  carouselReadOnly?: boolean;
+  carouselDisabledReason?: string | null;
   /** Chip click — opens the panel as inspector (mirrors the "Add a block"
    *  entry point; the caller decides how to surface the panel). */
   onSelectCarousel?: () => void;
@@ -349,6 +353,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     clipsLoading,
     filmstripClips,
     carouselBlock = null,
+    carouselReadOnly = false,
+    carouselDisabledReason,
     onSelectCarousel,
     onSetCarouselPosition,
     sfx,
@@ -637,11 +643,11 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   // landed in. `onDragOver` must call preventDefault() or the browser never
   // fires `drop` at all (HTML5 DnD spec default is "reject").
   function handleCarouselDragOver(e: React.DragEvent<HTMLDivElement>) {
-    if (!carouselBlock) return;
+    if (!carouselBlock || carouselReadOnly) return;
     e.preventDefault();
   }
   function handleCarouselDrop(e: React.DragEvent<HTMLDivElement>) {
-    if (!carouselBlock || !onSetCarouselPosition) return;
+    if (!carouselBlock || carouselReadOnly || !onSetCarouselPosition) return;
     e.preventDefault();
     const x = pointerTimelineX(e.clientX);
     const totalPx = Math.max(1, secondsToPx(effectiveDurationS, pps));
@@ -1530,10 +1536,15 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     role="button"
                     tabIndex={0}
                     aria-label={`Carousel block, ${carouselBlock.effectLabel}, ${carouselWindow.durationS.toFixed(1)}s, ${carouselBlock.position}`}
+                    aria-pressed={isSel("carousel", carouselBlock.id)}
                     data-editor-bar-kind="carousel"
                     data-editor-bar-id={carouselBlock.id}
-                    draggable
+                    draggable={!carouselReadOnly}
                     onDragStart={(e) => {
+                      if (carouselReadOnly) {
+                        e.preventDefault();
+                        return;
+                      }
                       e.dataTransfer.effectAllowed = "move";
                       e.dataTransfer.setData("text/plain", carouselBlock.id);
                     }}
@@ -1547,14 +1558,22 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                         onSelectCarousel?.();
                       }
                     }}
-                    className="absolute inset-y-0.5 flex min-w-11 cursor-grab items-center overflow-hidden rounded border border-violet-300 px-2 text-[10px] font-semibold text-white shadow-sm transition-colors hover:border-violet-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 active:cursor-grabbing"
+                    className={`absolute inset-y-0.5 flex min-w-11 items-center overflow-hidden rounded border border-zinc-600 bg-[#0c0c0e] px-2 text-[10px] font-semibold text-white shadow-sm transition-colors hover:border-zinc-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                      carouselReadOnly
+                        ? "cursor-default opacity-70"
+                        : "cursor-grab active:cursor-grabbing"
+                    } ${
+                      isSel("carousel", carouselBlock.id) ? ringCls : ""
+                    }`}
                     style={{
                       left: secondsToPx(carouselWindow.startS, pps),
                       width: Math.max(8, secondsToPx(carouselWindow.durationS, pps)),
-                      backgroundImage:
-                        "repeating-linear-gradient(135deg, #4c1d95, #4c1d95 6px, #5b21b6 6px, #5b21b6 12px)",
                     }}
-                    title="Drag onto the video lane (left/middle/right third) to move it"
+                    title={
+                      carouselReadOnly
+                        ? (carouselDisabledReason ?? "Carousel timing is unavailable for this edit")
+                        : "Drag onto the video lane (left/middle/right third) to move it"
+                    }
                   >
                     <span className="truncate drop-shadow">
                       Carousel · {carouselBlock.effectLabel}

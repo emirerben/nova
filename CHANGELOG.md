@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Carousel Effect controls now open in the editor's right inspector.** The Visuals drawer remains a compact block picker, timeline and drawer selection share the same highlighted Carousel state, and pocket mode switches to the same inspector controls instead of nesting configuration under Visuals.
-- Regression coverage now rejects Carousel controls inside the left drawer and verifies right-inspector ownership, timeline selection, and pocket edit/delete actions.
+- Regression coverage now rejects Carousel controls inside the left drawer and verifies right-inspector ownership, incapable edits failing closed, desktop delete/undo, and the complete pocket edit/remove/undo/save flow. Carousel controls also use the light editor's neutral notices, lime focus treatment, and shared selection state.
 
 ## [0.24.2.0] — 2026-08-09
 

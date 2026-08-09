@@ -30,7 +30,10 @@ import {
 } from "@/lib/text-presets";
 import PresetGrid from "./PresetGrid";
 import StylesDrawer from "./StylesDrawer";
-import type { CarouselPanelControl } from "./CarouselPanel";
+import {
+  createDefaultCarouselMoment,
+  type CarouselPanelControl,
+} from "./CarouselPanel";
 import CaptionsDrawer, { type CaptionsDrawerControl } from "./CaptionsDrawer";
 import CopilotDrawer from "./CopilotDrawer";
 import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
@@ -768,6 +771,9 @@ function VisualsDrawer({
                     carousel.reason ?? "Carousel isn't available for this edit",
                   );
                   return;
+                }
+                if (carousel.current === null) {
+                  carousel.onChange(createDefaultCarouselMoment(carousel.clips.length));
                 }
                 onSelectCarousel?.();
               }}

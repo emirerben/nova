@@ -402,7 +402,16 @@ export default function InspectorPanel({
             </div>
             <CloseX onClose={onClose} />
           </div>
-          <CarouselPanel control={carousel} />
+          {carousel.capable ? (
+            <CarouselPanel control={carousel} />
+          ) : (
+            <div
+              className="mx-5 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-[13px] leading-5 text-[#3f3f46]"
+              role="status"
+            >
+              {carousel.reason ?? "Carousel isn't available for this edit."}
+            </div>
+          )}
         </div>
       ) : selection.kind === "camera" && cameraEffect ? (
         <CameraInspector

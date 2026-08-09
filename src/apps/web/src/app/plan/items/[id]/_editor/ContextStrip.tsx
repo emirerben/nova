@@ -38,6 +38,7 @@ export type StripSelection =
       type: "carousel";
       onEdit: () => void;
       onDelete: () => void;
+      deleteDisabledReason?: string | null;
     }
   | {
       type: "clip";
@@ -92,7 +93,12 @@ function pillsForSelection(selection: StripSelection): Pill[] {
     case "carousel":
       return [
         { label: "Edit", onPress: selection.onEdit, primary: true },
-        { label: "Delete", onPress: selection.onDelete, destructive: true },
+        {
+          label: "Delete",
+          onPress: selection.onDelete,
+          destructive: true,
+          disabledReason: selection.deleteDisabledReason ?? undefined,
+        },
       ];
     case "clip":
       return [

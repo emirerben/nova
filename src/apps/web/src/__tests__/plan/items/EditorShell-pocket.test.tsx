@@ -33,7 +33,7 @@ delete process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED;
 
 import "@testing-library/jest-dom";
 import React from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { EditorCapabilities, PlanItem, PlanItemVariant } from "@/lib/plan-api";
 
 // jsdom lacks ResizeObserver (EditorCanvas / EditorTimelineBody measure loops).
@@ -140,6 +140,7 @@ const EDITABLE_CAPABILITIES: EditorCapabilities = {
   mix: true,
   sfx: true,
   overlays: true,
+  carousel: true,
   suggestions: true,
 };
 
@@ -233,6 +234,94 @@ describe("EditorShell — pocket editor flag ON (light mode)", () => {
     // Nothing is open/selected yet: no sheet, no context strip.
     expect(screen.queryByTestId("pocket-sheet")).toBeNull();
     expect(screen.queryByTestId("pocket-context-strip")).toBeNull();
+  });
+
+  it("moves Carousel from the Visuals discovery sheet into the shared inspector", async () => {
+    await renderShell(
+      makeVariant({
+        carousel_moment: {
+          effect: "scale_sweep",
+          mode: "focus",
+          focus_clip_index: null,
+          position: "middle",
+          duration_s: 6,
+          transition: "crossfade",
+        },
+      }),
+    );
+
+    fireEvent.click(screen.getByTestId("pocket-dock-visuals"));
+    await settle();
+    const visualsSheet = screen.getByTestId("pocket-sheet");
+    expect(within(visualsSheet).getByRole("heading", { name: "Visuals" })).toBeInTheDocument();
+
+    fireEvent.click(within(visualsSheet).getByRole("button", { name: "Carousel" }));
+    await settle();
+
+    const inspectorSheet = screen.getByTestId("pocket-sheet");
+    expect(within(inspectorSheet).getByRole("heading", { name: "Edit carousel" })).toBeInTheDocument();
+    expect(within(inspectorSheet).getByTestId("carousel-inspector")).toBeInTheDocument();
+    expect(
+      within(inspectorSheet).getByRole("radiogroup", { name: "Carousel effect" }),
+    ).toBeInTheDocument();
+    expect(within(inspectorSheet).queryByText("Add a block")).not.toBeInTheDocument();
+
+    fireEvent.click(within(inspectorSheet).getByRole("radio", { name: "Cover flow effect" }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+
+    fireEvent.click(within(inspectorSheet).getByRole("button", { name: "Remove carousel" }));
+    expect(screen.queryByTestId("carousel-inspector")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+    await settle();
+    fireEvent.click(screen.getByTestId("pocket-dock-visuals"));
+    await settle();
+    fireEvent.click(
+      within(screen.getByTestId("pocket-sheet")).getByRole("button", { name: "Carousel" }),
+    );
+    await settle();
+    expect(screen.getByRole("radio", { name: "Cover flow effect" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    mockCommitEditorSession.mockResolvedValue({
+      ok: true,
+      generation: "gen-next",
+      sections: {},
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalled());
+    expect(mockCommitEditorSession.mock.calls[0][2].carousel_moment).toEqual(
+      expect.objectContaining({ effect: "cover_flow" }),
+    );
+  });
+
+  it("opens a persisted Carousel from its pocket mini-strip region", async () => {
+    await renderShell(
+      makeVariant({
+        carousel_moment: {
+          effect: "scale_sweep",
+          mode: "focus",
+          focus_clip_index: null,
+          position: "intro",
+          duration_s: 4,
+          transition: "crossfade",
+        },
+      }),
+    );
+
+    const carouselMark = within(screen.getByTestId("pocket-ministrip")).getByRole("button", {
+      name: /Carousel, 0\.0–4\.0 seconds/,
+    });
+    fireEvent.click(carouselMark);
+    await settle();
+
+    expect(screen.getByRole("heading", { name: "Edit carousel" })).toBeInTheDocument();
+    expect(screen.getByTestId("carousel-inspector")).toBeInTheDocument();
   });
 
   it("dock text tool opens the Text sheet; the bottom cluster hides; Escape closes", async () => {

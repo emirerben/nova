@@ -72,6 +72,21 @@ const DURATION_MIN = 2;
 const DURATION_MAX = 15;
 const DEFAULT_DURATION_S = 6;
 
+export function createDefaultCarouselMoment(clipCount: number): CarouselMoment {
+  const naturalDurationS = naturalFocusTimelineLengthS(
+    Math.min(Math.max(0, clipCount), MAX_CARDS),
+    null,
+  );
+  return {
+    effect: "scale_sweep",
+    mode: "focus",
+    focus_clip_index: null,
+    position: "middle",
+    duration_s: Math.max(DURATION_MIN, Math.min(Math.ceil(naturalDurationS), DURATION_MAX)),
+    transition: "crossfade",
+  };
+}
+
 const MODE_DESCRIPTION: Record<NonNullable<CarouselMoment["mode"]>, string> = {
   focus: "One tile plays fullscreen while the rest swipe past behind it.",
   rolling: "Every tile plays through the carousel in sequence.",
@@ -97,11 +112,8 @@ const segmentedBtnClass = (active: boolean) =>
 
 export default function CarouselPanel({
   control,
-  onBack,
 }: {
   control: CarouselPanelControl;
-  /** Legacy/standalone host affordance. The editor inspector omits it. */
-  onBack?: () => void;
 }) {
   const { current, clips, onChange, onRemove } = control;
 
@@ -164,16 +176,6 @@ export default function CarouselPanel({
 
   return (
     <div className="space-y-5 px-5 pb-5">
-      {onBack && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex min-h-11 items-center gap-1 text-[12px] font-semibold text-[#3f3f46] hover:text-[#0c0c0e]"
-        >
-          <span aria-hidden>←</span> Add a block
-        </button>
-      )}
-
       <section>
         <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Effect</p>
         <div role="radiogroup" aria-label="Carousel effect" className="grid grid-cols-2 gap-2">
@@ -228,7 +230,7 @@ export default function CarouselPanel({
           ))}
         </div>
         {mode === null ? (
-          <p className="mt-1.5 text-[11px] text-amber-700">{LEGACY_MODE_HINT}</p>
+          <p className="mt-1.5 text-[11px] text-[#3f3f46]">{LEGACY_MODE_HINT}</p>
         ) : (
           <p className="mt-1.5 text-[11px] text-[#71717a]">{MODE_DESCRIPTION[mode]}</p>
         )}
@@ -301,7 +303,7 @@ export default function CarouselPanel({
           className="w-full accent-lime-600 disabled:opacity-40"
         />
         {focusDurationTooShort && (
-          <p className="mt-1.5 text-[11px] text-amber-700">
+          <p className="mt-1.5 text-[11px] text-[#3f3f46]">
             Focus zoom needs ~{Math.ceil(naturalFocusDurationS)}s — shorter lengths cut it off
           </p>
         )}
@@ -329,7 +331,7 @@ export default function CarouselPanel({
         <button
           type="button"
           onClick={onRemove}
-          className="min-h-11 w-full rounded-lg border border-red-200 text-[13px] font-semibold text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500"
+          className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white text-[13px] font-semibold text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
         >
           Remove carousel
         </button>
@@ -363,7 +365,7 @@ function EffectChip({
       disabled={disabled}
       onClick={onSelect}
       className={[
-        "flex min-h-[44px] flex-col gap-1.5 rounded-lg border bg-white p-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        "flex min-h-[44px] flex-col gap-1.5 rounded-lg border bg-white p-2 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50",
         selected ? "border-lime-600 ring-1 ring-lime-600" : "border-zinc-200 hover:border-zinc-400",
       ].join(" ")}
     >
@@ -457,7 +459,7 @@ function FocusTile({
       disabled={disabled}
       onClick={onSelect}
       className={[
-        "flex min-h-11 min-w-11 shrink-0 flex-col items-center gap-1 rounded-lg border p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        "flex min-h-11 min-w-11 shrink-0 flex-col items-center gap-1 rounded-lg border p-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50",
         selected ? "border-lime-600 ring-1 ring-lime-600" : "border-zinc-200 hover:border-zinc-400",
       ].join(" ")}
     >
