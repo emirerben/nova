@@ -246,16 +246,11 @@ describe("ToolDrawer Creator Blocks", () => {
     expect(screen.getByRole("button", { name: "Card Stack" })).toBeEnabled();
   });
 
-  it("edits copy, timing, intensity, palette, and removal through the shared inspector", () => {
-    const onPatchMotion = jest.fn();
-    const onRemoveMotion = jest.fn();
+  it("keeps the left Visuals drawer focused on discovery instead of nesting block details", () => {
     renderVisuals({
       motionAvailable: true,
       motionRuntimeCompatible: true,
       onAddMotion: jest.fn(),
-      onPatchMotion,
-      onRemoveMotion,
-      motionDurationS: 10,
       motionScenes: [{
         id: "motion-1",
         preset_id: "kinetic_word",
@@ -268,55 +263,15 @@ describe("ToolDrawer Creator Blocks", () => {
       }],
     });
 
-    fireEvent.change(screen.getByLabelText("Text"), { target: { value: "NEW" } });
-    fireEvent.change(screen.getByLabelText("Intensity"), { target: { value: "0.5" } });
-    fireEvent.change(screen.getByLabelText("Start (seconds)"), { target: { value: "0.5" } });
-    fireEvent.change(screen.getByLabelText("primary"), { target: { value: "#112233" } });
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-
-    expect(onPatchMotion).toHaveBeenCalledWith("motion-1", { params: { text: "NEW" } });
-    expect(onPatchMotion).toHaveBeenCalledWith("motion-1", { intensity: 0.5 });
-    expect(onPatchMotion).toHaveBeenCalledWith("motion-1", { start_frame: 15 });
-    expect(onPatchMotion).toHaveBeenCalledWith("motion-1", {
-      palette: { primary: "#112233", accent: "#c7ff3d" },
-    });
-    expect(onRemoveMotion).toHaveBeenCalledWith("motion-1");
+    expect(screen.getByTestId("creator-block-grid")).toBeInTheDocument();
+    expect(screen.queryByTestId("selected-motion-inspector")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Text")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Intensity")).not.toBeInTheDocument();
+    expect(screen.getByTestId("visuals-scroll-container")).toHaveClass("overflow-y-auto");
+    expect(screen.getByTestId("visual-blocks-panel")).not.toHaveClass("overflow-y-auto");
   });
 
-  it("reorders media assets and prevents dropping below the preset minimum", () => {
-    const onPatchMotion = jest.fn();
-    renderVisuals({
-      motionAvailable: true,
-      motionRuntimeCompatible: true,
-      onAddMotion: jest.fn(),
-      onPatchMotion,
-      motionScenes: [{
-        id: "motion-media",
-        preset_id: "card_stack",
-        preset_version: 1,
-        start_frame: 0,
-        end_frame_exclusive: 120,
-        palette: { primary: "#0c0c0e", accent: "#c7ff3d" },
-        intensity: 0.72,
-        params: {
-          assets: assets.map((asset) => ({ asset_id: asset.id, gcs_path: asset.gcs_path })),
-        },
-      }],
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Move image 3 up" }));
-    expect(onPatchMotion).toHaveBeenCalledWith("motion-media", {
-      params: {
-        assets: [
-          { asset_id: "asset-0", gcs_path: assets[0].gcs_path },
-          { asset_id: "asset-2", gcs_path: assets[2].gcs_path },
-          { asset_id: "asset-1", gcs_path: assets[1].gcs_path },
-        ],
-      },
-    });
-  });
-
-  it("links timeline selection to one focused block inspector", () => {
+  it("links an existing block chip to the shared editor selection", () => {
     const onSelectMotion = jest.fn();
     const scenes: ComponentProps<typeof ToolDrawer>["motionScenes"] = [
       {
@@ -346,13 +301,9 @@ describe("ToolDrawer Creator Blocks", () => {
       motionScenes: scenes,
       selectedMotionId: "motion-second",
       onSelectMotion,
-      onPatchMotion: jest.fn(),
     });
 
-    const inspector = screen.getByTestId("selected-motion-inspector");
-    expect(inspector).toHaveTextContent("Offer Flip");
-    expect(screen.queryByLabelText("Text")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("First phrase")).toHaveValue("SECOND");
+    expect(screen.getAllByRole("button", { name: "Offer Flip" }).at(-1)).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getAllByRole("button", { name: "Wild Type" }).at(-1)!);
     expect(onSelectMotion).toHaveBeenCalledWith("motion-first");
   });

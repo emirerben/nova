@@ -110,11 +110,18 @@ jobs:
         run: |
           docker run --rm --entrypoint sh nova-build-test:ci -c '
             deno run --cached-only --no-config --node-modules-dir=none \
-              --allow-read=/app/motion-runtime,/app/.deno,/tmp \
+              --allow-read=/app/motion-runtime,/app/assets,/app/.deno,/tmp \
               --allow-write=/tmp \
               /app/motion-runtime/server/render-frame.ts \
               /app/motion-runtime/fixtures/route-trace-midpoint.json &&
+            deno run --cached-only --no-config --node-modules-dir=none \
+              --allow-read=/app/motion-runtime,/app/assets,/app/.deno,/tmp \
+              --allow-write=/tmp \
+              /app/motion-runtime/server/render-frame.ts \
+              /app/motion-runtime/fixtures/creator-block-text-midpoint.json &&
             echo "d287ae2bc0d86899b47210e73596d0e979dbf583e8559d069a841b53aa662cbc  /tmp/nova-motion-route-trace.png" |
+              sha256sum -c - &&
+            echo "8f4e7badd7530312fa8733a8bf75e004c704647486e4a498d298bdeb0eeb7bc7  /tmp/nova-motion-creator-text.png" |
               sha256sum -c -
           '
 
