@@ -118,6 +118,13 @@ export interface EditorVisualBlockBar {
   end_s: number;
 }
 
+export interface EditorMotionBar {
+  id: string;
+  label: string;
+  start_s: number;
+  end_s: number;
+}
+
 export interface EditorTimelineBodyProps {
   durationS: number;
   /** Real rendered player duration, used to calibrate transition overlap. */
@@ -156,6 +163,12 @@ export interface EditorTimelineBodyProps {
   onPreviewVisualTiming?: (
     id: string,
     patch: Pick<EditorVisualBlockBar, "start_s" | "end_s">,
+  ) => void;
+  motionBlocks?: EditorMotionBar[];
+  showMotionBlocks?: boolean;
+  onPreviewMotionTiming?: (
+    id: string,
+    patch: Pick<EditorMotionBar, "start_s" | "end_s">,
   ) => void;
 
   cameraEffects?: CameraEffect[];
@@ -257,6 +270,15 @@ type ActiveDrag =
       active: boolean;
     }
   | {
+      kind: "motion";
+      id: string;
+      handle: "left" | "right" | "body";
+      startTimelineX: number;
+      pxPerSecond: number;
+      origin: Pick<EditorMotionBar, "start_s" | "end_s">;
+      active: boolean;
+    }
+  | {
       kind: "camera";
       id: string;
       handle: "left" | "right" | "body";
@@ -288,6 +310,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     visualBlocks,
     showVisualBlocks = true,
     onPreviewVisualTiming,
+    motionBlocks = [],
+    showMotionBlocks = false,
+    onPreviewMotionTiming,
     cameraEffects = [],
     onPreviewCameraTiming,
     slots,
@@ -484,6 +509,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const visualLane = deriveLaneRows(visualBlocks, {
     baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX,
   });
+  const motionLane = deriveLaneRows(motionBlocks, {
+    baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
+  });
   const cameraLane = deriveLaneRows(cameraEffects, {
     baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
   });
@@ -499,6 +527,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     ...(hasCaptionLane ? [{ label: "Captions", heightPx: captionsLaneHeight }] : []),
     ...(showVisualBlocks
       ? [{ label: "Visuals", heightPx: visualLane.totalHeightPx }]
+      : []),
+    ...(showMotionBlocks
+      ? [{ label: "Blocks", heightPx: motionLane.totalHeightPx }]
       : []),
     ...(cameraEffects.length > 0
       ? [{ label: "Camera", heightPx: cameraLane.totalHeightPx }]
@@ -623,30 +654,34 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       });
     } else {
       const duration = active.origin.end_s - active.origin.start_s;
-      const minDuration = 0.3;
+      const minDuration = active.kind === "motion" ? 1 / 30 : 0.3;
+      const snapTiming = (value: number) =>
+        active.kind === "motion" ? Math.round(value * 30) / 30 : Math.round(value * 10) / 10;
       let next = active.origin;
       if (active.handle === "body") {
         const maxStart = Math.max(0, effectiveDurationS - duration);
         const start_s = Math.max(0, Math.min(maxStart, active.origin.start_s + deltaS));
         next = {
-          start_s: Math.round(start_s * 10) / 10,
-          end_s: Math.round((start_s + duration) * 10) / 10,
+          start_s: snapTiming(start_s),
+          end_s: snapTiming(start_s + duration),
         };
       } else if (active.handle === "left") {
         const start_s = Math.max(0, Math.min(active.origin.end_s - minDuration, active.origin.start_s + deltaS));
         next = {
-          start_s: Math.round(start_s * 10) / 10,
+          start_s: snapTiming(start_s),
           end_s: active.origin.end_s,
         };
       } else {
         const end_s = Math.min(effectiveDurationS, Math.max(active.origin.start_s + minDuration, active.origin.end_s + deltaS));
         next = {
           start_s: active.origin.start_s,
-          end_s: Math.round(end_s * 10) / 10,
+          end_s: snapTiming(end_s),
         };
       }
       if (active.kind === "visual") {
         onPreviewVisualTiming?.(active.id, next);
+      } else if (active.kind === "motion") {
+        onPreviewMotionTiming?.(active.id, next);
       } else if (active.kind === "camera") {
         onPreviewCameraTiming?.(active.id, next);
       } else {
@@ -778,6 +813,29 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     };
   }
 
+  function startMotionDrag(
+    e: React.PointerEvent<HTMLElement>,
+    block: EditorMotionBar,
+  ) {
+    if (readOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    dragRef.current = {
+      kind: "motion",
+      id: block.id,
+      handle: resolveBarDragHandle({
+        localX: e.clientX - rect.left,
+        width: rect.width,
+      }),
+      startTimelineX: pointerTimelineX(e.clientX),
+      pxPerSecond: pps,
+      origin: { start_s: block.start_s, end_s: block.end_s },
+      active: false,
+    };
+  }
+
   function startCameraDrag(e: React.PointerEvent<HTMLElement>, effect: CameraEffect) {
     if (readOnly) return;
     e.preventDefault();
@@ -891,6 +949,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               )}
               {showVisualBlocks && (
                 <GutterRow label="Visuals" heightPx={visualLane.totalHeightPx} />
+              )}
+              {showMotionBlocks && (
+                <GutterRow label="Blocks" heightPx={motionLane.totalHeightPx} />
               )}
               <GutterRow
                 label="Video"
@@ -1204,6 +1265,49 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   )
                 )}
               </LaneTrack>}
+
+              {showMotionBlocks && (
+                <LaneTrack
+                  trackW={trackW}
+                  heightPx={motionLane.totalHeightPx}
+                  testId="editor-motion-lane"
+                >
+                  <Playline px={playheadPx} />
+                  {motionBlocks.length === 0 ? (
+                    <GhostRow text="Creator Blocks appear here" />
+                  ) : (
+                    motionLane.rows.map(({ item: block, rowIndex, topPx, heightPx }) => {
+                      const left = secondsToPx(block.start_s, pps);
+                      const width = Math.max(8, secondsToPx(block.end_s - block.start_s, pps));
+                      return (
+                        <BarButton
+                          key={block.id}
+                          left={left}
+                          width={width}
+                          top={topPx}
+                          height={heightPx}
+                          selected={isSel("motion", block.id)}
+                          ringCls={ringCls}
+                          ariaLabel={`${block.label}, ${formatTimecode(block.start_s)}–${formatTimecode(block.end_s)}`}
+                          onSelect={() => onSelect("motion", block.id)}
+                          dataKind="motion"
+                          dataId={block.id}
+                          dataRowIndex={rowIndex}
+                          onPointerDown={(event) => startMotionDrag(event, block)}
+                          onPointerMove={(event) => updateDrag(event.clientX)}
+                          onPointerUp={(event) => finishDrag(event, "motion", block.id)}
+                          onPointerCancel={cancelDrag}
+                          suppressClickRef={suppressClickRef}
+                          showTrimHandles
+                          className="border border-lime-300 bg-lime-50 text-[#3f3f46]"
+                        >
+                          <span className="pointer-events-none truncate px-2 text-[10px] font-semibold">{block.label}</span>
+                        </BarButton>
+                      );
+                    })
+                  )}
+                </LaneTrack>
+              )}
 
               {cameraEffects.length > 0 && (
                 <LaneTrack

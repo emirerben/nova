@@ -13,6 +13,7 @@ import json
 import math
 import re
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 import structlog
@@ -26,7 +27,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-09-v16"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-09-v17"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -67,6 +68,7 @@ _TOOL_OPS = {"open_tool"}
 _EFFECT_OPS = {"add_camera_effect", "patch_camera_effect", "remove_camera_effect"}
 _TRANSITION_OPS = {"set_transition"}
 _VISUAL_OPS = {"set_visual_fade"}
+_MOTION_OPS = {"add_motion_block", "patch_motion_block", "remove_motion_block"}
 _VALID_OPS = (
     _TEXT_OPS
     | _STYLE_OPS
@@ -81,6 +83,7 @@ _VALID_OPS = (
     | _EFFECT_OPS
     | _TRANSITION_OPS
     | _VISUAL_OPS
+    | _MOTION_OPS
 )
 
 _OP_REQUIRED: dict[str, frozenset[str]] = {
@@ -117,6 +120,9 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "remove_camera_effect": frozenset({"camera_effect_index"}),
     "set_transition": frozenset({"boundary_index", "transition"}),
     "set_visual_fade": frozenset({"visual_block_index"}),
+    "add_motion_block": frozenset({"preset_id", "start_s", "end_s", "params"}),
+    "patch_motion_block": frozenset({"motion_id", "patch"}),
+    "remove_motion_block": frozenset({"motion_id"}),
 }
 
 _OP_FIELDS: dict[str, frozenset[str]] = {
@@ -165,6 +171,11 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "remove_camera_effect": frozenset({"camera_effect_index"}),
     "set_transition": frozenset({"boundary_index", "transition", "duration_s"}),
     "set_visual_fade": frozenset({"visual_block_index", "transition_in", "transition_out"}),
+    "add_motion_block": frozenset(
+        {"preset_id", "start_s", "end_s", "params", "palette", "intensity"}
+    ),
+    "patch_motion_block": frozenset({"motion_id", "patch"}),
+    "remove_motion_block": frozenset({"motion_id"}),
 }
 
 # Field-exact examples for proactive Director prompts. Keep these next to the
@@ -267,6 +278,16 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
         '{"op":"set_visual_fade","visual_block_index":0,'
         '"transition_in":"fade","transition_out":"cut"}',
     ),
+    (
+        "add_motion_block",
+        '{"op":"add_motion_block","preset_id":"kinetic_word",'
+        '"start_s":0.0,"end_s":2.5,"params":{"text":"GO WILD"}}',
+    ),
+    (
+        "patch_motion_block",
+        '{"op":"patch_motion_block","motion_id":"motion_1","patch":{"params":{"text":"NEW HOOK"}}}',
+    ),
+    ("remove_motion_block", '{"op":"remove_motion_block","motion_id":"motion_1"}'),
 )
 
 _STYLE_PATCH_FIELDS = frozenset(
@@ -294,7 +315,50 @@ _VALID_POSITION = {"top", "middle", "bottom", "custom"}
 _VALID_OVERLAY_POSITION = {"top", "center", "bottom", "custom"}
 _VALID_OVERLAY_DISPLAY_MODE = {"pip", "fullscreen"}
 _VALID_CAPTION_STYLE = {"sentence", "word"}
-_VALID_OPEN_TOOLS = {"text", "sounds", "overlays", "styles"}
+_VALID_OPEN_TOOLS = {"text", "visuals", "sounds", "overlays", "styles"}
+
+
+def _load_motion_preset_params() -> dict[str, dict[str, tuple[str, int, int, int]]]:
+    """Project the immutable Creator Block catalog into the Copilot contract."""
+    source = Path(__file__).resolve()
+    candidates = (
+        Path("/app/motion-runtime/creator-blocks.catalog.json"),
+        *(
+            parent / "packages" / "motion-runtime" / "creator-blocks.catalog.json"
+            for parent in source.parents
+        ),
+    )
+    catalog_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if catalog_path is None:
+        raise RuntimeError("Creator Block catalog is missing")
+    catalog = json.loads(catalog_path.read_text())
+    rules: dict[str, dict[str, tuple[str, int, int, int]]] = {}
+    for preset in catalog["presets"]:
+        if not preset.get("ai_exposed"):
+            continue
+        preset_rules: dict[str, tuple[str, int, int, int]] = {}
+        for parameter in preset["parameters"]:
+            parameter_type = parameter["type"]
+            key = "asset_ids" if parameter_type == "asset_list" else parameter["key"]
+            kind = {
+                "string": "text" if parameter["required"] else "optional_text",
+                "string_list": "list",
+                "asset_list": "assets",
+            }[parameter_type]
+            if parameter_type == "string":
+                minimum = parameter.get("min_length", 0)
+                maximum = parameter["max_length"]
+                item_maximum = 0
+            else:
+                minimum = parameter["min_items"]
+                maximum = parameter["max_items"]
+                item_maximum = parameter.get("max_length", 0)
+            preset_rules[key] = (kind, minimum, maximum, item_maximum)
+        rules[preset["preset_id"]] = preset_rules
+    return rules
+
+
+_MOTION_PRESET_PARAMS = _load_motion_preset_params()
 _OVERLAY_PATCH_FIELDS = frozenset(
     {
         "start_s",
@@ -586,6 +650,57 @@ def _format_snapshot(snapshot: dict) -> str:
                 f"transition_in={_clean_prompt_data(block.get('transition_in'), max_chars=20)!r} "
                 f"transition_out={_clean_prompt_data(block.get('transition_out'), max_chars=20)!r}"
             )
+
+    motion = snapshot.get("motion")
+    if isinstance(motion, dict):
+        catalog = motion.get("catalog") if isinstance(motion.get("catalog"), list) else []
+        blocks = motion.get("blocks") if isinstance(motion.get("blocks"), list) else []
+        assets = motion.get("asset_pool") if isinstance(motion.get("asset_pool"), list) else []
+        lines.append("\nCREATOR BLOCK CATALOG (immutable IDs; copy preset_id exactly):")
+        for entry in catalog[:8]:
+            if not isinstance(entry, dict):
+                continue
+            default_params = _clean_prompt_data(
+                json.dumps(entry.get("defaults") or {}, ensure_ascii=False),
+                max_chars=240,
+            )
+            lines.append(
+                f"- preset_id={_clean_prompt_data(entry.get('preset_id'), max_chars=40)!r} "
+                f"label={_clean_prompt_data(entry.get('label'), max_chars=40)!r} "
+                f"kind={_clean_prompt_data(entry.get('kind'), max_chars=20)!r} "
+                f"default_duration_s={_fmt_round3(_first_number(entry, ('default_duration_s',)))} "
+                f"min_assets={_clean_prompt_data(entry.get('min_assets'), max_chars=8)!r} "
+                f"default_params={default_params!r}"
+            )
+        lines.append("EXISTING CREATOR BLOCKS (copy motion_id exactly for patch/remove):")
+        if not blocks:
+            lines.append("(none)")
+        for block in blocks[:8]:
+            if not isinstance(block, dict):
+                continue
+            params = _clean_prompt_data(
+                json.dumps(block.get("params") or {}, ensure_ascii=False),
+                max_chars=300,
+            )
+            lines.append(
+                f"- motion_id={_clean_prompt_data(block.get('id'), max_chars=80)!r} "
+                f"preset_id={_clean_prompt_data(block.get('preset_id'), max_chars=40)!r} "
+                f"label={_clean_prompt_data(block.get('label'), max_chars=40)!r} "
+                f"timing={_fmt_round3(_first_number(block, ('start_s',)))}-"
+                f"{_fmt_round3(_first_number(block, ('end_s',)))}s "
+                f"params={params!r}"
+            )
+        lines.append(
+            "ELIGIBLE CREATOR BLOCK IMAGES (copy asset_ids exactly; never emit paths/URLs):"
+        )
+        if not assets:
+            lines.append("(none)")
+        for asset in assets[:20]:
+            if isinstance(asset, dict):
+                lines.append(
+                    f"- id={_clean_prompt_data(asset.get('id'), max_chars=80)!r} "
+                    f"subject={_clean_prompt_data(asset.get('subject'), max_chars=60)!r}"
+                )
 
     beat_marks = snapshot.get("beat_marks")
     if isinstance(beat_marks, list):
@@ -1104,6 +1219,8 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         aliases = {"transition", "transitions", "timeline"}
     elif name in _VISUAL_OPS:
         aliases = {"visual", "visuals", "visual_blocks"}
+    elif name in _MOTION_OPS:
+        aliases = {"motion", "creator_blocks", "blocks"}
     else:
         aliases = {"clip", "clips", "timeline"}
     return bool(allowed & aliases)
@@ -1349,7 +1466,11 @@ def _coerce_payload(
     if "music_level" in out:
         out["music_level"] = max(0.0, min(1.0, out["music_level"]))
     if "intensity" in out:
-        out["intensity"] = max(0.01, min(0.08, out["intensity"]))
+        out["intensity"] = (
+            max(0.0, min(1.0, out["intensity"]))
+            if name in _MOTION_OPS
+            else max(0.01, min(0.08, out["intensity"]))
+        )
 
     if name in _SFX_OPS and "at_s" in out:
         total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
@@ -1508,6 +1629,94 @@ def _coerce_payload(
                 state.invalid_value()
                 return None
 
+    if name in _MOTION_OPS:
+        motion = snapshot.get("motion") if isinstance(snapshot, dict) else None
+        if not isinstance(motion, dict) or motion.get("available") is not True:
+            state.invalid_value()
+            return None
+        blocks = motion.get("blocks") if isinstance(motion.get("blocks"), list) else []
+        current = None
+        if name != "add_motion_block":
+            motion_id = out.get("motion_id")
+            current = next(
+                (
+                    block
+                    for block in blocks
+                    if isinstance(block, dict) and block.get("id") == motion_id
+                ),
+                None,
+            )
+            if current is None:
+                state.invalid_value()
+                return None
+        preset_id = out.get("preset_id") if name == "add_motion_block" else current.get("preset_id")
+        catalog_ids = {
+            entry.get("preset_id") for entry in motion.get("catalog", []) if isinstance(entry, dict)
+        }
+        if name == "add_motion_block" and preset_id not in catalog_ids:
+            state.invalid_value()
+            return None
+        if name == "patch_motion_block":
+            patch = out.get("patch")
+            if not isinstance(patch, dict) or not patch:
+                state.invalid_value()
+                return None
+            allowed_patch = {"start_s", "end_s", "palette", "intensity", "params"}
+            if any(key not in allowed_patch for key in patch):
+                state.invalid_value()
+                return None
+            clean_patch: dict[str, Any] = {}
+            for key in ("start_s", "end_s", "intensity"):
+                if key in patch:
+                    value = _as_float(patch[key])
+                    if value is None:
+                        state.invalid_value()
+                        return None
+                    clean_patch[key] = (
+                        max(0.0, min(1.0, value)) if key == "intensity" else max(0.0, value)
+                    )
+            if "palette" in patch:
+                palette = _clean_motion_palette(patch["palette"])
+                if palette is None:
+                    state.invalid_value()
+                    return None
+                clean_patch["palette"] = palette
+            if "params" in patch:
+                params = _clean_motion_params(
+                    str(preset_id), patch["params"], snapshot, partial=True
+                )
+                if params is None:
+                    state.invalid_value()
+                    return None
+                clean_patch["params"] = params
+            start_s = clean_patch.get("start_s", _as_float(current.get("start_s")))
+            end_s = clean_patch.get("end_s", _as_float(current.get("end_s")))
+            if not _valid_motion_timing(start_s, end_s, snapshot):
+                state.invalid_value()
+                return None
+            out["patch"] = clean_patch
+        elif name == "add_motion_block":
+            params = _clean_motion_params(
+                str(preset_id), out.get("params"), snapshot, partial=False
+            )
+            if params is None or not _valid_motion_timing(
+                out.get("start_s"), out.get("end_s"), snapshot
+            ):
+                state.invalid_value()
+                return None
+            out["params"] = params
+            if "palette" in out:
+                palette = _clean_motion_palette(out["palette"])
+                if palette is None:
+                    state.invalid_value()
+                    return None
+                out["palette"] = palette
+            if "intensity" not in out:
+                out["intensity"] = 0.72
+        if not _motion_active_union_valid(name, out, blocks):
+            state.invalid_value()
+            return None
+
     if name == "set_carousel_moment":
         carousel = snapshot.get("carousel") if isinstance(snapshot, dict) else None
         if not isinstance(carousel, dict):
@@ -1593,6 +1802,115 @@ def _id_in_section(value: object, snapshot: dict, section: str, list_key: str, i
         for item in _section_list(snapshot, section, list_key)
         if isinstance(item, dict) and item.get(id_key) is not None
     }
+
+
+def _clean_motion_palette(value: object) -> dict[str, str] | None:
+    if not isinstance(value, dict) or set(value) != {"primary", "accent"}:
+        return None
+    primary = value.get("primary")
+    accent = value.get("accent")
+    if not isinstance(primary, str) or not isinstance(accent, str):
+        return None
+    if not _HEX_COLOR_RE.fullmatch(primary) or not _HEX_COLOR_RE.fullmatch(accent):
+        return None
+    return {"primary": primary.upper(), "accent": accent.upper()}
+
+
+def _clean_motion_params(
+    preset_id: str,
+    value: object,
+    snapshot: dict,
+    *,
+    partial: bool,
+) -> dict[str, Any] | None:
+    rules = _MOTION_PRESET_PARAMS.get(preset_id)
+    if rules is None or not isinstance(value, dict) or any(key not in rules for key in value):
+        return None
+    required = {key for key, (kind, _, _, _) in rules.items() if kind != "optional_text"}
+    if not partial and not required.issubset(value):
+        return None
+    if partial and not value:
+        return None
+    eligible_assets = {
+        str(item.get("id"))
+        for item in _section_list(snapshot, "motion", "asset_pool")
+        if isinstance(item, dict) and item.get("id") is not None
+    }
+    cleaned: dict[str, Any] = {}
+    for key, raw in value.items():
+        kind, minimum, maximum, item_maximum = rules[key]
+        if kind in {"text", "optional_text"}:
+            text = _clean_user_text(raw, max_chars=maximum)
+            if text is None or len(text) < minimum:
+                return None
+            cleaned[key] = text
+        elif kind == "list":
+            if not isinstance(raw, list) or not minimum <= len(raw) <= maximum:
+                return None
+            items = [_clean_user_text(item, max_chars=item_maximum) for item in raw]
+            if any(item is None for item in items):
+                return None
+            cleaned[key] = items
+        elif kind == "assets":
+            if not isinstance(raw, list) or not minimum <= len(raw) <= maximum:
+                return None
+            if any(not isinstance(item, str) or item not in eligible_assets for item in raw):
+                return None
+            if len(set(raw)) != len(raw):
+                return None
+            cleaned[key] = list(raw)
+    return cleaned
+
+
+def _valid_motion_timing(start: object, end: object, snapshot: dict) -> bool:
+    start_s = _as_float(start)
+    end_s = _as_float(end)
+    if start_s is None or end_s is None or start_s < 0 or end_s <= start_s:
+        return False
+    if end_s - start_s > 8.0 + 1e-6:
+        return False
+    total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
+    return total_s is None or total_s <= 0 or end_s <= total_s + 1e-6
+
+
+def _motion_active_union_valid(name: str, payload: dict, blocks: list) -> bool:
+    intervals: list[tuple[float, float]] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if name == "remove_motion_block" and block.get("id") == payload.get("motion_id"):
+            continue
+        start = _as_float(block.get("start_s"))
+        end = _as_float(block.get("end_s"))
+        if name == "patch_motion_block" and block.get("id") == payload.get("motion_id"):
+            patch = payload.get("patch") if isinstance(payload.get("patch"), dict) else {}
+            start = _as_float(patch.get("start_s")) if "start_s" in patch else start
+            end = _as_float(patch.get("end_s")) if "end_s" in patch else end
+        if start is not None and end is not None and end > start:
+            intervals.append((start, end))
+    if name == "add_motion_block":
+        if len(intervals) >= 8:
+            return False
+        start = _as_float(payload.get("start_s"))
+        end = _as_float(payload.get("end_s"))
+        if start is None or end is None:
+            return False
+        intervals.append((start, end))
+    intervals.sort()
+    total = 0.0
+    current_start: float | None = None
+    current_end: float | None = None
+    for start, end in intervals:
+        if current_start is None:
+            current_start, current_end = start, end
+        elif start <= (current_end or start):
+            current_end = max(current_end or end, end)
+        else:
+            total += (current_end or current_start) - current_start
+            current_start, current_end = start, end
+    if current_start is not None:
+        total += (current_end or current_start) - current_start
+    return total <= 8.0 + 1e-6
 
 
 def _clean_user_text(value: object, *, max_chars: int = 500) -> str | None:

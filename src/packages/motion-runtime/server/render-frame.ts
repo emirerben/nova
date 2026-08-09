@@ -5,8 +5,9 @@ import {
 } from "../src/contract.ts";
 import { drawMotionFrame } from "../src/canvaskit.ts";
 import { loadServerCanvasKit } from "./canvaskit-init.ts";
+import { loadMotionResources, type ResourceRequest } from "./resources.ts";
 
-interface Request {
+interface Request extends ResourceRequest {
   width: number;
   height: number;
   frame: number;
@@ -41,6 +42,7 @@ if (!validation.ok) fail(validation.errors.join("; "));
 const CanvasKit = await loadServerCanvasKit();
 const surface = CanvasKit.MakeSurface(request.width, request.height);
 if (!surface) fail("canvaskit_surface_failed");
+const resources = await loadMotionResources(CanvasKit, request, request.instances).catch((error) => fail(String(error)));
 try {
   drawMotionFrame(
     CanvasKit,
@@ -49,6 +51,7 @@ try {
     request.frame,
     request.width,
     request.height,
+    resources,
   );
   surface.flush();
   const image = surface.makeImageSnapshot();
@@ -60,5 +63,6 @@ try {
     image.delete();
   }
 } finally {
+  resources?.delete();
   surface.delete();
 }

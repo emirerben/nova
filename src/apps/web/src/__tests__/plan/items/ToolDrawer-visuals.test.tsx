@@ -17,6 +17,8 @@ const assets: PoolAsset[] = [0, 1, 2].map((index) => ({
   source_filename: `frame-${index}.jpg`,
   duration_s: null,
   aspect: 0.5625,
+  width: 1080,
+  height: 1920,
   subject: `Frame ${index}`,
   user_context: "",
   nova_description: `Nova frame ${index}`,
@@ -199,5 +201,160 @@ describe("ToolDrawer visual blocks", () => {
     expect(screen.getByRole("button", { name: "Add carousel" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Add a block/ }));
     expect(screen.getByRole("button", { name: "Carousel" })).toBeInTheDocument();
+  });
+});
+
+describe("ToolDrawer Creator Blocks", () => {
+  const previousFlag = process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED;
+
+  beforeAll(() => {
+    process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED = "true";
+  });
+
+  afterAll(() => {
+    process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED = previousFlag;
+  });
+
+  it("shows the eight-item catalog separately from route trace and inserts at the chosen preset", () => {
+    const onAddMotion = jest.fn();
+    renderVisuals({
+      motionAvailable: true,
+      motionRuntimeCompatible: true,
+      onAddMotion,
+    });
+
+    expect(screen.getByTestId("creator-block-grid").querySelectorAll("button")).toHaveLength(8);
+    fireEvent.click(screen.getAllByRole("button", { name: "Wild Type" }).at(-1)!);
+    expect(onAddMotion).toHaveBeenCalledWith("kinetic_word");
+    expect(screen.getByText("Existing effect")).toBeInTheDocument();
+    expect(screen.getByText("Route trace")).toBeInTheDocument();
+  });
+
+  it("keeps media cards visible with an honest minimum-image requirement", () => {
+    renderVisuals({
+      motionAvailable: true,
+      motionRuntimeCompatible: true,
+      onAddMotion: jest.fn(),
+      visualAssets: assets.slice(0, 2),
+    });
+
+    const filmStrip = screen.getByRole("button", { name: /Film Strip/ });
+    expect(filmStrip).toBeDisabled();
+    expect(filmStrip).toHaveAttribute(
+      "title",
+      "Needs 3 ready images",
+    );
+    expect(screen.getByRole("button", { name: "Card Stack" })).toBeEnabled();
+  });
+
+  it("edits copy, timing, intensity, palette, and removal through the shared inspector", () => {
+    const onPatchMotion = jest.fn();
+    const onRemoveMotion = jest.fn();
+    renderVisuals({
+      motionAvailable: true,
+      motionRuntimeCompatible: true,
+      onAddMotion: jest.fn(),
+      onPatchMotion,
+      onRemoveMotion,
+      motionDurationS: 10,
+      motionScenes: [{
+        id: "motion-1",
+        preset_id: "kinetic_word",
+        preset_version: 1,
+        start_frame: 0,
+        end_frame_exclusive: 75,
+        palette: { primary: "#0c0c0e", accent: "#c7ff3d" },
+        intensity: 0.72,
+        params: { text: "OLD" },
+      }],
+    });
+
+    fireEvent.change(screen.getByLabelText("Text"), { target: { value: "NEW" } });
+    fireEvent.change(screen.getByLabelText("Intensity"), { target: { value: "0.5" } });
+    fireEvent.change(screen.getByLabelText("Start (seconds)"), { target: { value: "0.5" } });
+    fireEvent.change(screen.getByLabelText("primary"), { target: { value: "#112233" } });
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(onPatchMotion).toHaveBeenCalledWith("motion-1", { params: { text: "NEW" } });
+    expect(onPatchMotion).toHaveBeenCalledWith("motion-1", { intensity: 0.5 });
+    expect(onPatchMotion).toHaveBeenCalledWith("motion-1", { start_frame: 15 });
+    expect(onPatchMotion).toHaveBeenCalledWith("motion-1", {
+      palette: { primary: "#112233", accent: "#c7ff3d" },
+    });
+    expect(onRemoveMotion).toHaveBeenCalledWith("motion-1");
+  });
+
+  it("reorders media assets and prevents dropping below the preset minimum", () => {
+    const onPatchMotion = jest.fn();
+    renderVisuals({
+      motionAvailable: true,
+      motionRuntimeCompatible: true,
+      onAddMotion: jest.fn(),
+      onPatchMotion,
+      motionScenes: [{
+        id: "motion-media",
+        preset_id: "card_stack",
+        preset_version: 1,
+        start_frame: 0,
+        end_frame_exclusive: 120,
+        palette: { primary: "#0c0c0e", accent: "#c7ff3d" },
+        intensity: 0.72,
+        params: {
+          assets: assets.map((asset) => ({ asset_id: asset.id, gcs_path: asset.gcs_path })),
+        },
+      }],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Move image 3 up" }));
+    expect(onPatchMotion).toHaveBeenCalledWith("motion-media", {
+      params: {
+        assets: [
+          { asset_id: "asset-0", gcs_path: assets[0].gcs_path },
+          { asset_id: "asset-2", gcs_path: assets[2].gcs_path },
+          { asset_id: "asset-1", gcs_path: assets[1].gcs_path },
+        ],
+      },
+    });
+  });
+
+  it("links timeline selection to one focused block inspector", () => {
+    const onSelectMotion = jest.fn();
+    const scenes: ComponentProps<typeof ToolDrawer>["motionScenes"] = [
+      {
+        id: "motion-first",
+        preset_id: "kinetic_word",
+        preset_version: 1,
+        start_frame: 0,
+        end_frame_exclusive: 75,
+        palette: { primary: "#0c0c0e", accent: "#c7ff3d" },
+        intensity: 0.72,
+        params: { text: "FIRST" },
+      },
+      {
+        id: "motion-second",
+        preset_id: "offer_swap",
+        preset_version: 1,
+        start_frame: 90,
+        end_frame_exclusive: 180,
+        palette: { primary: "#0c0c0e", accent: "#c7ff3d" },
+        intensity: 0.72,
+        params: { primary_text: "SECOND", alternate_text: "NOW" },
+      },
+    ];
+    renderVisuals({
+      motionAvailable: true,
+      motionRuntimeCompatible: true,
+      motionScenes: scenes,
+      selectedMotionId: "motion-second",
+      onSelectMotion,
+      onPatchMotion: jest.fn(),
+    });
+
+    const inspector = screen.getByTestId("selected-motion-inspector");
+    expect(inspector).toHaveTextContent("Offer Flip");
+    expect(screen.queryByLabelText("Text")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("First phrase")).toHaveValue("SECOND");
+    fireEvent.click(screen.getAllByRole("button", { name: "Wild Type" }).at(-1)!);
+    expect(onSelectMotion).toHaveBeenCalledWith("motion-first");
   });
 });

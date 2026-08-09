@@ -1337,6 +1337,7 @@ export interface EditorCapabilities {
   visual_blocks?: boolean;
   motion_scenes?: boolean;
   motion_runtime_hash?: string | null;
+  motion_required_runtime_hash?: string | null;
   camera_effects?: boolean;
   background_music?: boolean;
   /** AI overlay suggestions inside the editor's Overlays drawer (plans/005-010).
@@ -2449,6 +2450,21 @@ export interface PoolAsset {
   source_type?: string | null;
   source_clip_index?: number | null;
   source_timestamp_s?: number | null;
+}
+
+/** Creator Blocks only decode images whose server analysis established a safe bound. */
+export function isBoundedCreatorImageAsset(asset: PoolAsset): boolean {
+  return (
+    asset.kind === "image" &&
+    asset.status === "ready" &&
+    typeof asset.width === "number" &&
+    typeof asset.height === "number" &&
+    asset.width > 0 &&
+    asset.height > 0 &&
+    asset.width <= 12_000 &&
+    asset.height <= 12_000 &&
+    asset.width * asset.height <= 25_000_000
+  );
 }
 
 /** Signed PUT URLs for pool assets (users/{uid}/plan/{itemId}/pool/, persistent). */

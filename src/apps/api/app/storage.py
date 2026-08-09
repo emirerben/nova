@@ -332,6 +332,18 @@ def download_to_file(object_path: str, local_path: str) -> None:
     blob.download_to_filename(local_path)
 
 
+def download_generation_to_file(
+    object_path: str,
+    local_path: str,
+    *,
+    generation: str,
+) -> None:
+    """Download exactly the storage generation previously validated by a worker."""
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path, generation=int(generation))
+    blob.download_to_filename(local_path)
+
+
 def delete_object_best_effort(object_path: str) -> bool:
     """Delete a GCS object, swallowing every failure (returns False on any error).
 

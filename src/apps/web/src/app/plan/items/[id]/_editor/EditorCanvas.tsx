@@ -1150,6 +1150,7 @@ export default function EditorCanvas({
             />
             <MotionCanvasLayer
               instances={motionScenes}
+              assets={visualAssets}
               currentTime={currentTime}
               playing={playing}
               width={canvas.w}
