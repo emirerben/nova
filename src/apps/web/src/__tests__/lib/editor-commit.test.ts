@@ -1,6 +1,8 @@
 import {
   buildEditorCommitRequest,
+  commitEditorSession,
   editorCommitBaseGeneration,
+  EditorCommitConflictError,
   formatEditorCommitError,
   type EditorCommitResponse,
 } from "@/lib/editor-commit";
@@ -348,12 +350,18 @@ describe("buildEditorCommitRequest", () => {
   it("sends motion scenes with the exact runtime compatibility token", () => {
     const scene: MotionPresetInstanceV1 = {
       id: "motion-1",
-      preset_id: "route_trace",
+      preset_id: "card_stack",
       preset_version: 1,
       start_frame: 15,
       end_frame_exclusive: 75,
       palette: { primary: "#F5F5F4", accent: "#A3E635" },
       intensity: 0.8,
+      params: {
+        assets: [
+          { asset_id: "image-1", gcs_path: "users/u/plan/i/pool/image-1.png" },
+          { asset_id: "image-2", gcs_path: "users/u/plan/i/pool/image-2.png" },
+        ],
+      },
     };
     const body = buildEditorCommitRequest({
       elements: [element],
@@ -864,12 +872,42 @@ describe("formatEditorCommitError", () => {
         { detail: { code: "linear_timeline_unavailable" } },
         "This older edit cannot preserve its cuts. Choose Re-sync to beats instead.",
       ],
+      [
+        "motion asset unavailable",
+        { detail: { code: "motion_asset_unavailable" } },
+        "One of this Creator Block's images is no longer available. Choose another ready image.",
+      ],
+      [
+        "motion clean base unavailable",
+        { detail: { code: "motion_clean_base_unavailable" } },
+        "Creator Blocks need a clean video base, which is unavailable for this edit.",
+      ],
     ];
 
     for (const [name, payload, expected] of cases) {
       expect(formatEditorCommitError(payload, 422)).toBe(expected);
       expect(formatEditorCommitError(payload, 422)).not.toBe("[object Object]");
       expect(name).toBeTruthy();
+    }
+  });
+
+  it("formats structured motion runtime conflicts instead of stringifying the object", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 409,
+      ok: false,
+      json: async () => ({ detail: { code: "motion_runtime_mismatch" } }),
+    });
+    try {
+      await expect(
+        commitEditorSession("item", "variant", { base_generation: "generation" }),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<EditorCommitConflictError>>({
+          message: "Kria's motion renderer changed. Refresh before saving Creator Blocks.",
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
     }
   });
 });

@@ -1269,6 +1269,8 @@ function asset(over: Partial<PoolAsset> = {}): PoolAsset {
     source_filename: "asset.png",
     duration_s: null,
     aspect: null,
+    width: 1080,
+    height: 1920,
     subject: "coffee pour",
     user_context: "",
     nova_description: null,
@@ -1715,5 +1717,88 @@ describe("slot-less variants (zero layout duration)", () => {
       },
     );
     expect(res.nextSfx?.at(-1)).toMatchObject({ at_s: 79.9 });
+  });
+});
+
+describe("Creator Block operations", () => {
+  const motionScene = {
+    id: "motion-1",
+    preset_id: "kinetic_word" as const,
+    preset_version: 1 as const,
+    start_frame: 0,
+    end_frame_exclusive: 75,
+    palette: { primary: "#0C0C0E", accent: "#C7FF3D" },
+    intensity: 0.72,
+    params: { text: "OLD" },
+  };
+  const imageAssets = [
+    asset({ id: "image-1", gcs_path: "users/user/plan/item/pool/image-1.png" }),
+    asset({ id: "image-2", gcs_path: "users/user/plan/item/pool/image-2.png" }),
+  ];
+
+  function motionCtx() {
+    const bars = [bar()];
+    const slots = [slot({ durationS: 9 })];
+    const capabilities = { text_elements: true, timeline: true, motion_scenes: true };
+    const snapshot = buildCopilotSnapshot(bars, slots, clips, capabilities, [], {
+      motionScenesEnabled: true,
+      motionScenes: [motionScene],
+      poolAssets: imageAssets,
+    });
+    return {
+      bars,
+      slots,
+      snapshot,
+      capabilities,
+      motionScenes: [motionScene],
+      poolAssets: imageAssets,
+      videoDurationS: 9,
+      makeMotionId: () => "motion-2",
+    };
+  }
+
+  it("adds media blocks with validated asset references and readable chips", () => {
+    const result = applyCopilotOps([{
+      op: "add_motion_block",
+      preset_id: "card_stack",
+      start_s: 2.5,
+      end_s: 6.5,
+      params: { asset_ids: ["image-1", "image-2"] },
+    }], motionCtx());
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextMotionScenes?.[1]).toMatchObject({
+      id: "motion-2",
+      preset_id: "card_stack",
+      params: {
+        assets: [
+          { asset_id: "image-1", gcs_path: "users/user/plan/item/pool/image-1.png" },
+          { asset_id: "image-2", gcs_path: "users/user/plan/item/pool/image-2.png" },
+        ],
+      },
+    });
+    expect(result.applied[0].label).toBe("Card Stack");
+  });
+
+  it("patches and removes by immutable ID while rejecting stale targets", () => {
+    const context = motionCtx();
+    const patched = applyCopilotOps([{
+      op: "patch_motion_block",
+      motion_id: "motion-1",
+      patch: { params: { text: "NEW" }, intensity: 0.5 },
+    }], context);
+    expect(patched.nextMotionScenes?.[0]).toMatchObject({ params: { text: "NEW" }, intensity: 0.5 });
+
+    const staleContext = motionCtx();
+    staleContext.motionScenes = [{ ...motionScene, intensity: 0.2 }];
+    expect(applyCopilotOps([{
+      op: "remove_motion_block",
+      motion_id: "motion-1",
+    }], staleContext).rejected).toMatchObject([{ reason: "user_changed" }]);
+
+    expect(applyCopilotOps([{
+      op: "remove_motion_block",
+      motion_id: "motion-1",
+    }], motionCtx()).nextMotionScenes).toEqual([]);
   });
 });

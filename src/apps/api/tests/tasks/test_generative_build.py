@@ -3063,6 +3063,90 @@ def test_change_style_takes_fast_path(monkeypatch, tmp_path):
     assert result["intro_text"] == "My hook"
 
 
+def test_fast_reburn_layers_visuals_then_motion_then_authored_text(monkeypatch):
+    """The clean-base compositor order is stable across every text reburn."""
+    existing = {
+        "variant_id": "song_text",
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/clean-base.mp4",
+        "video_path": "generative-jobs/x/previous.mp4",
+        "intro_text": "My hook",
+        "motion_scenes": [
+            {
+                "id": "route-1",
+                "preset_id": "route_trace",
+                "preset_version": 1,
+                "start_frame": 0,
+                "end_frame_exclusive": 60,
+                "palette": {"primary": "#8B5CF6", "accent": "#D9FF43"},
+                "intensity": 0.8,
+            }
+        ],
+        "rank": 1,
+    }
+    burn_calls = _patch_reburn_helpers(monkeypatch)
+    order: list[tuple[str, str]] = []
+    downloads: list[str] = []
+    burned_inputs: list[bytes] = []
+
+    import app.pipeline.text_overlay_skia as skia
+    import app.storage as storage
+
+    def _download(path, local_path):
+        downloads.append(path)
+        with open(local_path, "wb") as handle:
+            handle.write(b"motion-base" if path.endswith("motion-base.mp4") else b"clean-base")
+
+    def _burn(input_path, _overlays, output_path, _tmpdir, **_kwargs):
+        with open(input_path, "rb") as handle:
+            burned_inputs.append(handle.read())
+        with open(output_path, "wb") as handle:
+            handle.write(b"authored-text-over-motion-base")
+
+    monkeypatch.setattr(storage, "download_to_file", _download)
+    monkeypatch.setattr(skia, "burn_text_overlays_skia", _burn)
+
+    def _visuals(**kwargs):
+        order.append(("visuals", kwargs["base_gcs_path"]))
+        return "generative-jobs/x/visual-base.mp4", "generative-jobs/x/visual-base.mp4"
+
+    def _motion(**kwargs):
+        order.append(("motion", kwargs["base_gcs_path"]))
+        return "generative-jobs/x/motion-base.mp4", "generative-jobs/x/motion-base.mp4"
+
+    monkeypatch.setattr(gb, "_ensure_visual_blocks_base", _visuals)
+    monkeypatch.setattr(gb, "_ensure_motion_base", _motion)
+    monkeypatch.setattr(gb, "_motion_asset_identities", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        gb,
+        "_motion_object_identity",
+        lambda path, **_kwargs: {"path": path, "generation": "1"},
+    )
+
+    gb._reburn_text_on_base(
+        job_id="test-job",
+        variant_id="song_text",
+        existing=existing,
+        agent_text=types.SimpleNamespace(text="My hook", highlight_word=None),
+        agent_form={"effect": "karaoke-line"},
+        text_mode="agent_text",
+        resolved_style_set_id=None,
+        size_override_px=None,
+        settings=gb.settings,
+    )
+
+    assert order == [
+        ("visuals", "generative-jobs/x/clean-base.mp4"),
+        ("motion", "generative-jobs/x/visual-base.mp4"),
+    ]
+    assert downloads == [
+        "generative-jobs/x/clean-base.mp4",
+        "generative-jobs/x/motion-base.mp4",
+    ]
+    assert burned_inputs == [b"motion-base"]
+    assert burn_calls == []
+
+
 def test_fast_reburn_output_key_is_generation_scoped(monkeypatch):
     existing = {
         "variant_id": "song_text",
@@ -5203,6 +5287,32 @@ def test_finalize_job_preserves_sound_effects(monkeypatch):
     assert v["sound_effects"] == placements
     assert v["pre_sfx_video_path"] == "generative-jobs/j/v.mp4_pre_sfx"
     assert job.status == "variants_ready"
+
+
+def test_finalize_job_preserves_motion_cache_identity(monkeypatch):
+    import uuid
+
+    job = _FakeJob(assembly_plan={})
+    _patch_job_session(monkeypatch, job)
+    result = {
+        "variant_id": "song_text",
+        "rank": 1,
+        "text_mode": "song_text",
+        "ok": True,
+        "render_status": "ready",
+        "output_url": "u",
+        "video_path": "generative-jobs/j/v.mp4",
+        "motion_scenes": [{"id": "motion-1", "preset_id": "route_trace"}],
+        "motion_runtime_hash": "required-runtime",
+        "motion_base_path": "generative-jobs/j/motion.mp4",
+        "motion_base_source_path": "generative-jobs/j/base.mp4",
+        "motion_applied_runtime_hash": "renderer-runtime",
+        "motion_cache_identity": "sha256-cache-identity",
+    }
+    gb._finalize_job(str(uuid.uuid4()), [result])
+    variant = job.assembly_plan["variants"][0]
+    assert variant["motion_cache_identity"] == "sha256-cache-identity"
+    assert variant["motion_base_path"] == "generative-jobs/j/motion.mp4"
 
 
 def test_finalize_job_preserves_lyric_fields(monkeypatch):

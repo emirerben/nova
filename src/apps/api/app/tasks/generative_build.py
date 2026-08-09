@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import math
 import os
 import shutil
@@ -4000,12 +4001,121 @@ def _free_retired_visual_blocks_base(previous: dict, replacement: str | None) ->
         delete_object_best_effort(old_path)
 
 
+def _motion_cache_identity(
+    *,
+    source_path: str,
+    runtime_hash: str | None,
+    scenes: list[dict],
+    asset_identities: list[dict] | None = None,
+    source_identity: dict | None = None,
+) -> str:
+    """Content address a trusted motion cache, including its media references."""
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "source": source_identity or {"path": source_path},
+                "runtime_hash": runtime_hash,
+                "scenes": scenes,
+                "assets": asset_identities or [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _motion_object_identity(object_path: str, *, image: bool = False) -> dict:
+    """Resolve the live storage generation used by a motion render."""
+    from app.storage import object_metadata  # noqa: PLC0415
+
+    try:
+        metadata = object_metadata(object_path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise RuntimeError("motion source resource is missing") from exc
+    max_bytes = 25 * 1024 * 1024 if image else 4 * 1024 * 1024 * 1024
+    if metadata.size <= 0 or metadata.size > max_bytes:
+        raise RuntimeError("motion source resource has an invalid size")
+    if image and not metadata.content_type.startswith("image/"):
+        raise RuntimeError("motion asset object is not an image")
+    return {
+        "path": metadata.path,
+        "generation": metadata.generation,
+        "etag": metadata.etag,
+        "size": metadata.size,
+        "content_type": metadata.content_type,
+    }
+
+
+def _motion_asset_identities(*, job_id: str, scenes: list[dict]) -> list[dict]:
+    """Revalidate persisted media refs against the live plan-item asset pool."""
+    refs = {
+        str(ref["asset_id"]): ref
+        for scene in scenes
+        if scene.get("preset_id") in {"card_stack", "film_strip"}
+        for ref in scene.get("params", {}).get("assets", [])
+    }
+    if not refs:
+        return []
+
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    from app.models import PlanItemAsset  # noqa: PLC0415
+
+    try:
+        asset_uuids = [uuid.UUID(asset_id) for asset_id in refs]
+        job_uuid = uuid.UUID(job_id)
+    except ValueError as exc:
+        raise RuntimeError("motion asset reference is not a valid pool id") from exc
+
+    with _sync_session() as db:
+        job = db.get(Job, job_uuid)
+        if job is None or job.content_plan_item_id is None:
+            raise RuntimeError("motion media requires a plan-item asset pool")
+        rows = (
+            db.execute(
+                _select(PlanItemAsset).where(
+                    PlanItemAsset.plan_item_id == job.content_plan_item_id,
+                    PlanItemAsset.id.in_(asset_uuids),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_id = {str(row.id): row for row in rows}
+        identities: list[dict] = []
+        allowed_prefix = f"users/{job.user_id}/plan/{job.content_plan_item_id}/pool/"
+        for asset_id, ref in sorted(refs.items()):
+            row = by_id.get(asset_id)
+            if (
+                row is None
+                or row.user_id != job.user_id
+                or row.status != "ready"
+                or row.kind != "image"
+                or row.gcs_path != ref.get("gcs_path")
+                or not row.gcs_path.startswith(allowed_prefix)
+            ):
+                raise RuntimeError("motion asset is no longer an owned ready image")
+            identities.append(
+                {
+                    "asset_id": asset_id,
+                    "gcs_path": row.gcs_path,
+                    "content_hash": row.content_hash,
+                }
+            )
+    return [
+        {**identity, "object": _motion_object_identity(identity["gcs_path"], image=True)}
+        for identity in identities
+    ]
+
+
 def _ensure_motion_base(
     *,
     job_id: str,
     variant_id: str,
     variant: dict,
     base_gcs_path: str,
+    identity_out: dict | None = None,
 ) -> tuple[str, str | None]:
     """Return the picture base with the shared motion layer below authored text."""
     raw_scenes = variant.get("motion_scenes")
@@ -4014,23 +4124,46 @@ def _ensure_motion_base(
 
     from app.config import settings as _motion_settings  # noqa: PLC0415
     from app.pipeline.motion_scene import (  # noqa: PLC0415
+        LEGACY_MOTION_RUNTIME_HASH,
         MOTION_RUNTIME_HASH,
         apply_motion_scenes,
         validate_motion_instances,
     )
 
     scenes = validate_motion_instances(raw_scenes)
-    if _resolve_variant_orientation(variant) != "portrait":
-        raise RuntimeError("motion scenes require portrait orientation")
     required_hash = variant.get("motion_runtime_hash")
-    if required_hash != MOTION_RUNTIME_HASH:
+    legacy_route_only = required_hash == LEGACY_MOTION_RUNTIME_HASH and all(
+        scene.get("preset_id") == "route_trace" for scene in scenes
+    )
+    if required_hash != MOTION_RUNTIME_HASH and not legacy_route_only:
         raise RuntimeError(
             f"motion runtime mismatch: variant requires {required_hash!r}, "
             f"worker has {MOTION_RUNTIME_HASH!r}"
         )
     cached = variant.get("motion_base_path")
+    asset_identities = _motion_asset_identities(job_id=job_id, scenes=scenes)
+    source_identity = _motion_object_identity(base_gcs_path)
+    renderer_hash = MOTION_RUNTIME_HASH
+    cache_identity = _motion_cache_identity(
+        source_path=base_gcs_path,
+        runtime_hash=renderer_hash,
+        scenes=scenes,
+        asset_identities=asset_identities,
+        source_identity=source_identity,
+    )
+    if identity_out is not None:
+        identity_out["cache_identity"] = cache_identity
+        identity_out["renderer_hash"] = renderer_hash
     cache_matches_source = variant.get("motion_base_source_path") == base_gcs_path
-    cache_is_fresh = bool(cached and not variant.get("motion_cache_stale") and cache_matches_source)
+    applied_hash = variant.get("motion_applied_runtime_hash")
+    cache_matches_runtime = applied_hash == renderer_hash
+    cache_is_fresh = bool(
+        cached
+        and not variant.get("motion_cache_stale")
+        and cache_matches_source
+        and cache_matches_runtime
+        and variant.get("motion_cache_identity") == cache_identity
+    )
     if not _motion_settings.motion_scenes_enabled:
         if cache_is_fresh:
             return str(cached), str(cached)
@@ -4053,6 +4186,10 @@ def _ensure_motion_base(
         instances=scenes,
         output_gcs_path=cache_path,
         job_id=job_id,
+        source_generation=source_identity["generation"],
+        asset_generations={
+            identity["asset_id"]: identity["object"]["generation"] for identity in asset_identities
+        },
     )
     return cache_path, cache_path
 
@@ -4063,6 +4200,80 @@ def _free_retired_motion_base(previous: dict, replacement: str | None) -> None:
         from app.storage import delete_object_best_effort  # noqa: PLC0415
 
         delete_object_best_effort(old_path)
+
+
+def _ensure_creator_layer_base(
+    *,
+    job_id: str,
+    variant_id: str,
+    variant: dict,
+    base_gcs_path: str,
+) -> tuple[str, str | None, str | None, str | None, dict]:
+    """Compose visual blocks then Creator Blocks on a caption/text-free base.
+
+    Caption reburn and retranscription paths use this shared ordering so neither
+    lane can accidentally bypass motion. Newly-created partial caches are
+    removed if a later layer fails before the caller can persist them.
+    """
+    visual_blocks_cache_path: str | None = None
+    motion_cache_path: str | None = None
+    motion_base_source_path: str | None = None
+    motion_identity: dict = {}
+    try:
+        render_base_path, visual_blocks_cache_path = _ensure_visual_blocks_base(
+            job_id=job_id,
+            variant_id=variant_id,
+            variant=variant,
+            base_gcs_path=base_gcs_path,
+        )
+        motion_base_source_path = render_base_path
+        render_base_path, motion_cache_path = _ensure_motion_base(
+            job_id=job_id,
+            variant_id=variant_id,
+            variant=variant,
+            base_gcs_path=render_base_path,
+            identity_out=motion_identity,
+        )
+        return (
+            render_base_path,
+            visual_blocks_cache_path,
+            motion_cache_path,
+            motion_base_source_path,
+            motion_identity,
+        )
+    except Exception:
+        from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+        for new_path, old_path in (
+            (visual_blocks_cache_path, variant.get("visual_blocks_base_path")),
+            (motion_cache_path, variant.get("motion_base_path")),
+        ):
+            if new_path and new_path != old_path:
+                delete_object_best_effort(new_path)
+        raise
+
+
+def _creator_layer_cache_patch(
+    *,
+    visual_blocks_cache_path: str | None,
+    motion_cache_path: str | None,
+    motion_base_source_path: str | None,
+    motion_identity: dict,
+) -> dict[str, Any]:
+    """Build the persisted cache metadata shared by all terminal render paths."""
+    return {
+        "visual_blocks_base_path": visual_blocks_cache_path,
+        "visual_blocks_cache_stale": False,
+        "motion_base_path": motion_cache_path,
+        "motion_base_source_path": motion_base_source_path if motion_cache_path else None,
+        "motion_cache_stale": False,
+        "motion_applied_runtime_hash": (
+            motion_identity.get("renderer_hash") if motion_cache_path else None
+        ),
+        "motion_cache_identity": (
+            motion_identity.get("cache_identity") if motion_cache_path else None
+        ),
+    }
 
 
 def _reburn_text_on_base(
@@ -4196,6 +4407,7 @@ def _reburn_text_on_base(
 
         visual_blocks_cache_path = None
         motion_cache_path = None
+        motion_identity: dict = {}
         try:
             render_base_gcs_path, visual_blocks_cache_path = _ensure_visual_blocks_base(
                 job_id=job_id,
@@ -4215,6 +4427,7 @@ def _reburn_text_on_base(
                 variant_id=variant_id,
                 variant=existing,
                 base_gcs_path=render_base_gcs_path,
+                identity_out=motion_identity,
             )
             if (
                 created_storage_paths is not None
@@ -4241,7 +4454,10 @@ def _reburn_text_on_base(
             "motion_base_source_path": (motion_base_source_path if motion_cache_path else None),
             "motion_cache_stale": False,
             "motion_applied_runtime_hash": (
-                existing.get("motion_runtime_hash") if motion_cache_path else None
+                motion_identity.get("renderer_hash") if motion_cache_path else None
+            ),
+            "motion_cache_identity": (
+                motion_identity.get("cache_identity") if motion_cache_path else None
             ),
         }
         base_duration_s = float(base_probe.duration_s)
@@ -6703,6 +6919,7 @@ def _run_regenerate_variant(
             result["motion_base_source_path"] = None
             result["motion_cache_stale"] = False
             result["motion_applied_runtime_hash"] = None
+            result["motion_cache_identity"] = None
         full_reburn_created_storage: list[str] = []
         if (
             (_TEXT_ELEMENTS_ENABLED and latest_variant.get("text_elements_user_edited"))
@@ -12864,9 +13081,22 @@ def _run_rerender_caption_camera_effects(
     ):
         return
 
+    (
+        creator_base_path,
+        visual_blocks_cache_path,
+        motion_cache_path,
+        motion_base_source_path,
+        motion_identity,
+    ) = _ensure_creator_layer_base(
+        job_id=job_id,
+        variant_id=variant_id,
+        variant=variant,
+        base_gcs_path=str(old_base_path),
+    )
+
     with tempfile.TemporaryDirectory(prefix="nova_caption_camera_") as tmpdir:
         new_base_local = os.path.join(tmpdir, "clean_base.mp4")
-        download_to_file(str(old_base_path), new_base_local)
+        download_to_file(creator_base_path, new_base_local)
         probe = probe_video(new_base_local)
         aspect = "16:9" if variant.get("orientation") == "landscape" else "9:16"
         effects = normalize_camera_effects(
@@ -12936,8 +13166,12 @@ def _run_rerender_caption_camera_effects(
         "camera_effects": effects or None,
         "pre_media_overlay_video_path": None,
         "pre_sfx_video_path": None,
-        "visual_blocks_base_path": None,
-        "visual_blocks_cache_stale": False,
+        **_creator_layer_cache_patch(
+            visual_blocks_cache_path=visual_blocks_cache_path,
+            motion_cache_path=motion_cache_path,
+            motion_base_source_path=motion_base_source_path,
+            motion_identity=motion_identity,
+        ),
         "overlay_camera_rebuild_pending": False,
         **({"subject_matte_path": camera_matte_path} if camera_matte_persist else {}),
     }
@@ -12958,10 +13192,17 @@ def _run_rerender_caption_camera_effects(
         outcome="caption_camera_rerender",
     ):
         delete_object_best_effort(new_video_gcs)
+        for new_path, old_path in (
+            (visual_blocks_cache_path, variant.get("visual_blocks_base_path")),
+            (motion_cache_path, variant.get("motion_base_path")),
+        ):
+            if new_path and new_path != old_path:
+                delete_object_best_effort(new_path)
         return
     if terminal_state is not None:
         terminal_state["accepted"] = True
-    _free_retired_visual_blocks_base(variant, None)
+    _free_retired_visual_blocks_base(variant, visual_blocks_cache_path)
+    _free_retired_motion_base(variant, motion_cache_path)
     _free_retired_media_snapshots(variant, (patch.get("video_path"), patch.get("base_video_path")))
     if old_video_path and old_video_path != new_video_gcs:
         delete_object_best_effort(old_video_path)
@@ -13022,13 +13263,6 @@ def _run_reburn_narrated_captions(
     rank = variant.get("rank")
     if not base_path:
         raise ValueError("variant has no caption-free base — cannot reburn captions")
-    render_base_path, visual_blocks_cache_path = _ensure_visual_blocks_base(
-        job_id=job_id,
-        variant_id=variant_id,
-        variant=variant,
-        base_gcs_path=base_path,
-    )
-
     if not _update_variant_entry(
         job_id,
         variant_id,
@@ -13037,6 +13271,18 @@ def _run_reburn_narrated_captions(
         outcome="caption_reburn_start",
     ):
         return
+    (
+        render_base_path,
+        visual_blocks_cache_path,
+        motion_cache_path,
+        motion_base_source_path,
+        motion_identity,
+    ) = _ensure_creator_layer_base(
+        job_id=job_id,
+        variant_id=variant_id,
+        variant=variant,
+        base_gcs_path=base_path,
+    )
     with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(render_base_path, base_local)
@@ -13079,8 +13325,12 @@ def _run_reburn_narrated_captions(
         # the pre-reburn video (deleted below), so a stale key is a download-404.
         "pre_media_overlay_video_path": None,
         "pre_sfx_video_path": None,
-        "visual_blocks_base_path": visual_blocks_cache_path,
-        "visual_blocks_cache_stale": False,
+        **_creator_layer_cache_patch(
+            visual_blocks_cache_path=visual_blocks_cache_path,
+            motion_cache_path=motion_cache_path,
+            motion_base_source_path=motion_base_source_path,
+            motion_identity=motion_identity,
+        ),
         **({"subject_matte_path": reburn_matte_path} if reburn_matte_persist else {}),
     }
     if will_reapply:
@@ -13104,10 +13354,17 @@ def _run_reburn_narrated_captions(
     ):
         # F3: superseded — the just-uploaded burn was never referenced; free it.
         delete_object_best_effort(new_gcs)
+        for new_path, old_path in (
+            (visual_blocks_cache_path, variant.get("visual_blocks_base_path")),
+            (motion_cache_path, variant.get("motion_base_path")),
+        ):
+            if new_path and new_path != old_path:
+                delete_object_best_effort(new_path)
         return
     if terminal_state is not None:
         terminal_state["accepted"] = True  # F5: video swap landed
     _free_retired_visual_blocks_base(variant, visual_blocks_cache_path)
+    _free_retired_motion_base(variant, motion_cache_path)
     # OV-4: deletes run only after the accepted terminal write above — a
     # discarded stale task must never delete the winning task's live blobs.
     _free_retired_media_snapshots(variant, (patch.get("video_path"), patch.get("base_video_path")))
@@ -13612,6 +13869,22 @@ def _run_retranscribe_subtitled(
                 outcome="subtitled_retranscribe_empty",
             )
             return
+        (
+            render_base_path,
+            visual_blocks_cache_path,
+            motion_cache_path,
+            motion_base_source_path,
+            motion_identity,
+        ) = _ensure_creator_layer_base(
+            job_id=job_id,
+            variant_id=variant_id,
+            variant=variant,
+            base_gcs_path=base_path,
+        )
+        caption_base_local = base_local
+        if render_base_path != base_path:
+            caption_base_local = os.path.join(tmpdir, "caption_base.mp4")
+            download_to_file(render_base_path, caption_base_local)
         retx_matte_path: str | None = None
         retx_matte_persist = False
         if getattr(settings, "subtitled_text_lane_enabled", False):
@@ -13621,7 +13894,7 @@ def _run_retranscribe_subtitled(
                 "caption_language": lang,
             }
             out_local, retx_matte_path = _compose_subtitled_final(
-                base_local,
+                caption_base_local,
                 variant,
                 tmpdir,
                 job_id=job_id,
@@ -13653,7 +13926,7 @@ def _run_retranscribe_subtitled(
                     pop_in=True,
                     **caption_appearance_kwargs,
                 )
-            burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
+            burn_captions_on_video(caption_base_local, ass_path, FONTS_DIR, out_local)
         new_gcs = (
             f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_lang_{uuid.uuid4().hex[:8]}.mp4"
         )
@@ -13677,6 +13950,12 @@ def _run_retranscribe_subtitled(
         # the pre-reburn video (deleted below), so a stale key is a download-404.
         "pre_media_overlay_video_path": None,
         "pre_sfx_video_path": None,
+        **_creator_layer_cache_patch(
+            visual_blocks_cache_path=visual_blocks_cache_path,
+            motion_cache_path=motion_cache_path,
+            motion_base_source_path=motion_base_source_path,
+            motion_identity=motion_identity,
+        ),
         **({"subject_matte_path": retx_matte_path} if retx_matte_persist else {}),
     }
     if will_reapply:
@@ -13694,9 +13973,17 @@ def _run_retranscribe_subtitled(
     ):
         # F3: superseded — the just-uploaded burn was never referenced; free it.
         delete_object_best_effort(new_gcs)
+        for new_path, old_path in (
+            (visual_blocks_cache_path, variant.get("visual_blocks_base_path")),
+            (motion_cache_path, variant.get("motion_base_path")),
+        ):
+            if new_path and new_path != old_path:
+                delete_object_best_effort(new_path)
         return
     if terminal_state is not None:
         terminal_state["accepted"] = True  # F5: video swap landed
+    _free_retired_visual_blocks_base(variant, visual_blocks_cache_path)
+    _free_retired_motion_base(variant, motion_cache_path)
     # OV-4: deletes run only after the accepted terminal write above.
     _free_retired_media_snapshots(variant, (patch.get("video_path"), patch.get("base_video_path")))
     # The old burn is unreachable now — free it (generative-jobs/* never expires).
@@ -14904,6 +15191,7 @@ def _finalize_job(
                     "motion_base_source_path": r.get("motion_base_source_path"),
                     "motion_cache_stale": r.get("motion_cache_stale", False),
                     "motion_applied_runtime_hash": r.get("motion_applied_runtime_hash"),
+                    "motion_cache_identity": r.get("motion_cache_identity"),
                     # media-overlay cards (slice 1) — MUST survive finalization
                     # or "clear all" loses the pre-overlay clean copy reference.
                     "media_overlays": r.get("media_overlays"),

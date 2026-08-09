@@ -823,3 +823,55 @@ describe("slot-less duration fallback", () => {
     expect(snapshot.total_duration_s).toBe(0);
   });
 });
+
+describe("Creator Block snapshot", () => {
+  it("exposes the immutable catalog, eligible image IDs, and local-only stale fingerprint", () => {
+    const motionScene = {
+      id: "motion-1",
+      preset_id: "kinetic_word" as const,
+      preset_version: 1 as const,
+      start_frame: 0,
+      end_frame_exclusive: 75,
+      palette: { primary: "#0C0C0E", accent: "#C7FF3D" },
+      intensity: 0.72,
+      params: { text: "HELLO" },
+    };
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true, motion_scenes: true },
+      [],
+      {
+        motionScenesEnabled: true,
+        motionScenes: [motionScene],
+        poolAssets: [
+          asset({
+            id: "ready-image",
+            kind: "image",
+            status: "ready",
+            width: 1080,
+            height: 1920,
+          }),
+          asset({ id: "ready-video", kind: "video", status: "ready" }),
+          asset({ id: "legacy-unbounded", kind: "image", status: "ready" }),
+          asset({ id: "pending-image", kind: "image", status: "analyzing" }),
+        ],
+      },
+    );
+
+    expect(snapshot.allowed_op_families).toContain("motion");
+    expect(snapshot.motion?.catalog).toHaveLength(8);
+    expect(snapshot.motion?.blocks[0]).toMatchObject({
+      id: "motion-1",
+      preset_id: "kinetic_word",
+      label: "Wild Type",
+      start_s: 0,
+      end_s: 2.5,
+    });
+    expect(snapshot.motion?.asset_pool).toEqual([{ id: "ready-image", subject: "coffee pour" }]);
+    expect(snapshot.motion?.blocks[0].mutation_fingerprint).toMatch(/^m1-/);
+    expect(JSON.stringify(snapshot)).not.toContain("mutation_fingerprint");
+    expect(JSON.stringify(snapshot.motion)).not.toContain("gcs_path");
+  });
+});

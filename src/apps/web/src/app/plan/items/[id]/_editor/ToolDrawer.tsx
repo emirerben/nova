@@ -13,7 +13,11 @@ import { useEffect, useMemo, useState } from "react";
 import type { GenerativeStyleSet } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
-import type { PoolAsset, VisualBlock } from "@/lib/plan-api";
+import {
+  isBoundedCreatorImageAsset,
+  type PoolAsset,
+  type VisualBlock,
+} from "@/lib/plan-api";
 import {
   filterTextPresetsByCategory,
   PRESET_CATEGORIES,
@@ -38,9 +42,16 @@ import type {
 } from "@/lib/edit-copilot/useEditCopilot";
 import type { UseEditDirectorResult } from "@/lib/edit-copilot/useEditDirector";
 import {
+  CREATOR_BLOCK_CATALOG,
+  creatorBlockEntry,
+  createCreatorBlockInstance,
   MOTION_FPS,
+  MOTION_MAX_INSTANCES,
+  type MotionPresetId,
   type MotionPresetInstanceV1,
+  type MotionPresetPatch,
 } from "@nova/motion-runtime";
+import { CreatorBlockCatalogPreview } from "./MotionCanvasLayer";
 
 const CATEGORY_LABEL: Record<TextPresetCategory, string> = {
   favorite: "Favorite",
@@ -76,12 +87,14 @@ export default function ToolDrawer({
   overlaySuggestions = null,
   visualBlocks = [],
   motionScenes = [],
+  selectedMotionId = null,
   motionDurationS = 0,
   motionAvailable = false,
   motionRuntimeCompatible = true,
   onAddMotion,
   onPatchMotion,
   onRemoveMotion,
+  onSelectMotion,
   visualAssets = [],
   visualTextElements = [],
   visualUploading = false,
@@ -139,12 +152,14 @@ export default function ToolDrawer({
   overlaySuggestions?: React.ReactNode;
   visualBlocks?: VisualBlock[];
   motionScenes?: MotionPresetInstanceV1[];
+  selectedMotionId?: string | null;
   motionDurationS?: number;
   motionAvailable?: boolean;
   motionRuntimeCompatible?: boolean;
-  onAddMotion?: () => void;
-  onPatchMotion?: (id: string, patch: Partial<MotionPresetInstanceV1>) => void;
+  onAddMotion?: (presetId: MotionPresetId) => void;
+  onPatchMotion?: (id: string, patch: MotionPresetPatch) => void;
   onRemoveMotion?: (id: string) => void;
+  onSelectMotion?: (id: string) => void;
   visualAssets?: PoolAsset[];
   visualTextElements?: Array<{
     id?: string;
@@ -423,12 +438,15 @@ export default function ToolDrawer({
         <div className="min-h-0 flex-1 overflow-y-auto">
           <MotionPresetsPanel
             scenes={motionScenes}
+            selectedSceneId={selectedMotionId}
             durationS={motionDurationS}
             available={motionAvailable}
             runtimeCompatible={motionRuntimeCompatible}
+            assets={visualAssets}
             onAdd={onAddMotion}
             onPatch={onPatchMotion}
             onRemove={onRemoveMotion}
+            onSelect={onSelectMotion}
           />
           <VisualsDrawer
             blocks={visualBlocks}
@@ -478,20 +496,26 @@ export default function ToolDrawer({
 
 function MotionPresetsPanel({
   scenes,
+  selectedSceneId,
   durationS,
   available,
   runtimeCompatible,
+  assets,
   onAdd,
   onPatch,
   onRemove,
+  onSelect,
 }: {
   scenes: MotionPresetInstanceV1[];
+  selectedSceneId: string | null;
   durationS: number;
   available: boolean;
   runtimeCompatible: boolean;
-  onAdd?: () => void;
-  onPatch?: (id: string, patch: Partial<MotionPresetInstanceV1>) => void;
+  assets: PoolAsset[];
+  onAdd?: (presetId: MotionPresetId) => void;
+  onPatch?: (id: string, patch: MotionPresetPatch) => void;
   onRemove?: (id: string) => void;
+  onSelect?: (id: string) => void;
 }) {
   if (process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED !== "true") return null;
   const reason = !runtimeCompatible
@@ -499,37 +523,102 @@ function MotionPresetsPanel({
     : !available
       ? "Motion is unavailable for this version."
       : null;
+  const selectedScene = scenes.find((scene) => scene.id === selectedSceneId) ?? scenes[0] ?? null;
   return (
     <section className="border-b border-zinc-100 px-5 pb-5">
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-3">
+        <p className="text-[12px] font-semibold text-[#3f3f46]">Creator Blocks</p>
+        <p className="mt-0.5 text-[11px] text-[#71717a]">Animated building blocks, matched in export</p>
+      </div>
+      {reason && <p className="text-[11px] text-[#71717a]">{reason}</p>}
+      <div className="grid grid-cols-2 gap-2" data-testid="creator-block-grid">
+        {CREATOR_BLOCK_CATALOG.map((entry) => {
+          const readyImages = assets.filter(isBoundedCreatorImageAsset);
+          const assetShortage = entry.min_assets > readyImages.length;
+          const disabled = !!reason || !onAdd || scenes.length >= MOTION_MAX_INSTANCES || assetShortage;
+          const hint = assetShortage ? `Needs ${entry.min_assets} ready images` : reason;
+          return (
+            <button
+              key={entry.preset_id}
+              type="button"
+              disabled={disabled}
+              title={hint ?? undefined}
+              onClick={() => onAdd?.(entry.preset_id)}
+              className="group min-h-11 overflow-hidden rounded-xl border border-zinc-200 bg-white text-left transition-colors hover:border-zinc-400 active:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <CreatorBlockThumbnail
+                presetId={entry.preset_id}
+                durationFrames={entry.default_duration_frames}
+                minAssets={entry.min_assets}
+                assets={assets}
+              />
+              <span className="block px-2.5 py-2 text-[11px] font-semibold text-[#0c0c0e]">
+                {entry.label}
+                {assetShortage && (
+                  <span className="mt-0.5 block text-[9px] font-normal text-[#71717a]">
+                    Needs {entry.min_assets} ready images
+                  </span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex items-center justify-between rounded-xl border border-zinc-200 px-3 py-2">
         <div>
-          <p className="text-[12px] font-semibold text-[#3f3f46]">Motion</p>
-          <p className="mt-0.5 text-[11px] text-[#71717a]">Export-matched SVG presets</p>
+          <p className="text-[11px] font-semibold text-[#3f3f46]">Existing effect</p>
+          <p className="text-[10px] text-[#71717a]">Route trace</p>
         </div>
         <button
           type="button"
-          onClick={onAdd}
-          disabled={!!reason || !onAdd || scenes.length >= 4}
-          title={reason ?? undefined}
-          className="min-h-10 rounded-lg bg-[#0c0c0e] px-3 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-[#a1a1aa]"
+          onClick={() => onAdd?.("route_trace")}
+          disabled={!!reason || !onAdd || scenes.length >= MOTION_MAX_INSTANCES}
+          className="min-h-11 rounded-lg bg-[#0c0c0e] px-3 text-[11px] font-semibold text-white active:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:bg-zinc-100 disabled:text-[#a1a1aa]"
         >
-          Add route trace
+          Add
         </button>
       </div>
-      {reason && <p className="text-[11px] text-amber-700">{reason}</p>}
-      <div className="space-y-2">
-        {scenes.map((scene) => (
-          <div key={scene.id} className="rounded-xl border border-zinc-200 p-3">
+      {scenes.length > 0 && (
+        <div className="mt-4 flex gap-1.5 overflow-x-auto pb-1" aria-label="Creator Block selection">
+          {scenes.map((scene) => (
+            <button
+              key={scene.id}
+              type="button"
+              aria-pressed={selectedScene?.id === scene.id}
+              onClick={() => onSelect?.(scene.id)}
+              className={`min-h-11 shrink-0 rounded-full border px-3 text-[11px] font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                selectedScene?.id === scene.id
+                  ? "border-lime-600 bg-lime-50 text-[#0c0c0e]"
+                  : "border-zinc-200 bg-white text-[#71717a]"
+              }`}
+            >
+              {scene.preset_id === "route_trace"
+                ? "Route trace"
+                : CREATOR_BLOCK_CATALOG.find((entry) => entry.preset_id === scene.preset_id)?.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="mt-2 space-y-2">
+        {selectedScene && (
+          <div key={selectedScene.id} data-testid="selected-motion-inspector" className="rounded-xl border border-zinc-200 p-3">
             <div className="flex items-center justify-between">
-              <span className="text-[12px] font-semibold text-[#0c0c0e]">Route trace</span>
+              <span className="text-[12px] font-semibold text-[#0c0c0e]">
+                {selectedScene.preset_id === "route_trace"
+                  ? "Route trace"
+                  : CREATOR_BLOCK_CATALOG.find((entry) => entry.preset_id === selectedScene.preset_id)?.label}
+              </span>
               <button
                 type="button"
-                onClick={() => onRemove?.(scene.id)}
-                className="min-h-9 px-2 text-[11px] text-red-600"
+                onClick={() => onRemove?.(selectedScene.id)}
+                className="min-h-11 px-2 text-[11px] text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 Remove
               </button>
             </div>
+            {selectedScene.preset_id !== "route_trace" && (
+              <CreatorBlockFields scene={selectedScene} assets={assets} onPatch={onPatch} />
+            )}
             <label className="mt-2 block text-[11px] text-[#71717a]">
               Intensity
               <input
@@ -537,9 +626,9 @@ function MotionPresetsPanel({
                 min={0}
                 max={1}
                 step={0.05}
-                value={scene.intensity}
+                value={selectedScene.intensity}
                 onChange={(event) =>
-                  onPatch?.(scene.id, { intensity: Number(event.target.value) })
+                  onPatch?.(selectedScene.id, { intensity: Number(event.target.value) })
                 }
                 className="mt-1 w-full accent-lime-500"
               />
@@ -552,31 +641,31 @@ function MotionPresetsPanel({
                   min={0}
                   max={Math.max(
                     0,
-                    (scene.end_frame_exclusive - 1) / MOTION_FPS,
+                    (selectedScene.end_frame_exclusive - 1) / MOTION_FPS,
                   )}
                   step={1 / MOTION_FPS}
-                  value={(scene.start_frame / MOTION_FPS).toFixed(2)}
+                  value={(selectedScene.start_frame / MOTION_FPS).toFixed(2)}
                   onChange={(event) => {
                     const next = Math.max(
                       0,
                       Math.min(
-                        scene.end_frame_exclusive - 1,
+                        selectedScene.end_frame_exclusive - 1,
                         Math.round(Number(event.target.value) * MOTION_FPS),
                       ),
                     );
-                    onPatch?.(scene.id, { start_frame: next });
+                    onPatch?.(selectedScene.id, { start_frame: next });
                   }}
-                  className="mt-1 h-9 w-full rounded-lg border border-zinc-200 px-2 text-[11px] text-[#0c0c0e]"
+                  className="mt-1 h-11 w-full rounded-lg border border-zinc-200 px-2 text-[16px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[11px]"
                 />
               </label>
               <label className="text-[10px] text-[#71717a]">
                 End (seconds)
                 <input
                   type="number"
-                  min={(scene.start_frame + 1) / MOTION_FPS}
+                  min={(selectedScene.start_frame + 1) / MOTION_FPS}
                   max={durationS > 0 ? durationS : undefined}
                   step={1 / MOTION_FPS}
-                  value={(scene.end_frame_exclusive / MOTION_FPS).toFixed(2)}
+                  value={(selectedScene.end_frame_exclusive / MOTION_FPS).toFixed(2)}
                   onChange={(event) => {
                     const requested = Math.round(
                       Number(event.target.value) * MOTION_FPS,
@@ -586,12 +675,12 @@ function MotionPresetsPanel({
                         ? Math.max(1, Math.round(durationS * MOTION_FPS))
                         : requested;
                     const next = Math.max(
-                      scene.start_frame + 1,
+                      selectedScene.start_frame + 1,
                       Math.min(durationFrames, requested),
                     );
-                    onPatch?.(scene.id, { end_frame_exclusive: next });
+                    onPatch?.(selectedScene.id, { end_frame_exclusive: next });
                   }}
-                  className="mt-1 h-9 w-full rounded-lg border border-zinc-200 px-2 text-[11px] text-[#0c0c0e]"
+                  className="mt-1 h-11 w-full rounded-lg border border-zinc-200 px-2 text-[16px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[11px]"
                 />
               </label>
             </div>
@@ -601,21 +690,183 @@ function MotionPresetsPanel({
                   {slot}
                   <input
                     type="color"
-                    value={scene.palette[slot]}
+                    value={selectedScene.palette[slot]}
                     onChange={(event) =>
-                      onPatch?.(scene.id, {
-                        palette: { ...scene.palette, [slot]: event.target.value },
+                      onPatch?.(selectedScene.id, {
+                        palette: { ...selectedScene.palette, [slot]: event.target.value },
                       })
                     }
-                    className="ml-1 h-8 w-8 cursor-pointer rounded border-0 bg-transparent align-middle"
+                    className="ml-1 h-11 w-11 cursor-pointer rounded border-0 bg-transparent align-middle focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
                   />
                 </label>
               ))}
             </div>
           </div>
-        ))}
+        )}
       </div>
     </section>
+  );
+}
+
+function CreatorBlockThumbnail({
+  presetId,
+  durationFrames,
+  minAssets,
+  assets,
+}: {
+  presetId: Exclude<MotionPresetId, "route_trace">;
+  durationFrames: number;
+  minAssets: number;
+  assets: PoolAsset[];
+}) {
+  const words: Record<Exclude<MotionPresetId, "route_trace">, string> = {
+    kinetic_word: "WILD",
+    tag_stack: "SIGNAL\nSTACK",
+    flow_field: "FLOW",
+    cloud_break: "BREAK\nOPEN",
+    offer_swap: "50%\nOFF",
+    card_stack: "▧ ▧",
+    film_strip: "▥",
+    donut_text: "CREATE · REPEAT",
+  };
+  const assetIdentity = assets.map((asset) => `${asset.id}:${asset.status}:${asset.gcs_path}`).join("|");
+  const instance = useMemo(() => {
+    const readyImages = assets
+      .filter(isBoundedCreatorImageAsset)
+      .slice(0, Math.max(minAssets, 3));
+    return createCreatorBlockInstance({
+      id: `catalog-${presetId}`,
+      presetId,
+      startFrame: 0,
+      endFrameExclusive: durationFrames,
+      assets: readyImages.map((asset) => ({ asset_id: asset.id, gcs_path: asset.gcs_path })),
+    });
+    // Asset identity deliberately excludes rotating signed display URLs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetIdentity, durationFrames, minAssets, presetId]);
+  return (
+    <span
+      aria-hidden="true"
+      data-preset={presetId}
+      className="relative flex aspect-[16/10] items-center justify-center overflow-hidden whitespace-pre-line bg-[#0c0c0e] px-2 text-center font-black leading-[0.9] tracking-[-0.04em] text-[#c7ff3d] motion-safe:group-hover:scale-[1.04] motion-safe:transition-transform"
+    >
+      {words[presetId]}
+      <CreatorBlockCatalogPreview instance={instance} assets={assets} />
+    </span>
+  );
+}
+
+function CreatorBlockFields({
+  scene,
+  assets,
+  onPatch,
+}: {
+  scene: Exclude<MotionPresetInstanceV1, { preset_id: "route_trace" }>;
+  assets: PoolAsset[];
+  onPatch?: (id: string, patch: MotionPresetPatch) => void;
+}) {
+  const parameters = creatorBlockEntry(scene.preset_id).parameters;
+  const parameter = (key: string) => {
+    const value = parameters.find((candidate) => candidate.key === key);
+    if (!value) throw new Error(`Missing Creator Block parameter metadata: ${key}`);
+    return value;
+  };
+  const patchParams = (patch: Record<string, unknown>) =>
+    onPatch?.(scene.id, { params: { ...scene.params, ...patch } as MotionPresetPatch["params"] });
+  const textField = (label: string, key: string, value: string, maxLength: number) => (
+    <label className="mt-2 block text-[10px] text-[#71717a]">
+      {label}
+      <input
+        value={value}
+        maxLength={maxLength}
+        onChange={(event) => patchParams({ [key]: event.target.value })}
+        className="mt-1 h-11 w-full rounded-lg border border-zinc-200 px-2 text-[16px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[11px]"
+      />
+    </label>
+  );
+  if (scene.preset_id === "kinetic_word") return textField("Text", "text", scene.params.text, parameter("text").max_length!);
+  if (scene.preset_id === "flow_field") return (
+    <>{textField("Headline", "headline", scene.params.headline, parameter("headline").max_length!)}{textField("Kicker", "kicker", scene.params.kicker ?? "", parameter("kicker").max_length!)}</>
+  );
+  if (scene.preset_id === "offer_swap") return (
+    <>{textField("First phrase", "primary_text", scene.params.primary_text, parameter("primary_text").max_length!)}{textField("Second phrase", "alternate_text", scene.params.alternate_text, parameter("alternate_text").max_length!)}</>
+  );
+  if (scene.preset_id === "donut_text") return (
+    <>{textField("Left arc", "left_text", scene.params.left_text, parameter("left_text").max_length!)}{textField("Right arc", "right_text", scene.params.right_text, parameter("right_text").max_length!)}</>
+  );
+  if (scene.preset_id === "tag_stack" || scene.preset_id === "cloud_break") {
+    const key = scene.preset_id === "tag_stack" ? "labels" : "lines";
+    const values = scene.preset_id === "tag_stack" ? scene.params.labels : scene.params.lines;
+    const maxItems = parameter(key).max_items!;
+    return (
+      <label className="mt-2 block text-[10px] text-[#71717a]">
+        One line per item
+        <textarea
+          value={values.join("\n")}
+          onChange={(event) => patchParams({ [key]: event.target.value.split("\n").slice(0, maxItems) })}
+          rows={Math.min(5, values.length + 1)}
+          className="mt-1 min-h-11 w-full resize-none rounded-lg border border-zinc-200 px-2 py-2 text-[16px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[11px]"
+        />
+      </label>
+    );
+  }
+  const ready = assets.filter(isBoundedCreatorImageAsset);
+  const selected = scene.params.assets;
+  const max = parameter("assets").max_items!;
+  const min = parameter("assets").min_items!;
+  return (
+    <div className="mt-2">
+      <p className="text-[10px] text-[#71717a]">Images ({selected.length}/{max})</p>
+      <div className="mt-1 grid grid-cols-4 gap-1.5">
+        {ready.map((asset) => {
+          const active = selected.some((item) => item.asset_id === asset.id);
+          return (
+            <button
+              key={asset.id}
+              type="button"
+              aria-pressed={active}
+              aria-label={`${active ? "Remove" : "Add"} ${asset.source_filename ?? asset.subject ?? "image"}`}
+              title={active && selected.length <= min ? `Keep at least ${min} images` : undefined}
+              disabled={active && selected.length <= min}
+              onClick={() => patchParams({
+                assets: active
+                  ? selected.length > min
+                    ? selected.filter((item) => item.asset_id !== asset.id)
+                    : selected
+                  : selected.length < max
+                    ? [...selected, { asset_id: asset.id, gcs_path: asset.gcs_path }]
+                    : selected,
+              })}
+              className={`min-h-11 min-w-11 aspect-square overflow-hidden rounded-md border-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${active ? "border-lime-500" : "border-transparent"}`}
+            >
+              {asset.display_url ? <img src={asset.display_url} alt="" className="h-full w-full object-cover" /> : null}
+            </button>
+          );
+        })}
+      </div>
+      {selected.length > 1 && (
+        <div className="mt-2 space-y-1">
+          {selected.map((item, index) => (
+            <div key={item.asset_id} className="flex items-center justify-between text-[10px] text-[#71717a]">
+              <span>Image {index + 1}</span>
+              <button
+                type="button"
+                aria-label={`Move image ${index + 1} up`}
+                disabled={index === 0}
+                onClick={() => {
+                  const next = [...selected];
+                  [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                  patchParams({ assets: next });
+                }}
+                className="min-h-11 px-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:opacity-30"
+              >
+                Move up
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

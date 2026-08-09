@@ -9,13 +9,33 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.agents._runtime import ModelClient
-from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+from app.agents.edit_copilot import (
+    _MOTION_PRESET_PARAMS,
+    EditCopilotAgent,
+    EditCopilotInput,
+)
 from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.main import app
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "copilot-ops"
+
+
+def test_motion_copilot_rules_are_projected_from_shared_catalog() -> None:
+    catalog_path = (
+        Path(__file__).parents[3] / "packages" / "motion-runtime" / "creator-blocks.catalog.json"
+    )
+    catalog = json.loads(catalog_path.read_text())
+    expected = {
+        preset["preset_id"]: {
+            "asset_ids" if parameter["type"] == "asset_list" else parameter["key"]
+            for parameter in preset["parameters"]
+        }
+        for preset in catalog["presets"]
+        if preset["ai_exposed"]
+    }
+    assert {preset: set(rules) for preset, rules in _MOTION_PRESET_PARAMS.items()} == expected
 
 
 def _snapshot(*, allowed=None) -> dict:
@@ -1278,12 +1298,116 @@ def test_format_snapshot_renders_sfx_roles_and_suggestions() -> None:
 def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # Numbered follow-up resolution changes model behavior and must retain a
     # unique prompt version for trace and eval attribution. Bumped again for
-    # bulk caption replacement and explicit overlay-effect bundle linkage now
-    # share the integrated 2026-08-09-v16 prompt — update this pin whenever
+    # bulk caption replacement, Creator Blocks, and explicit overlay-effect
+    # bundle linkage now share the integrated 2026-08-09-v17 prompt — update
+    # this pin whenever
     # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-09-v16"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-09-v17"
+
+
+def _motion_snapshot() -> dict:
+    return {
+        "total_duration_s": 12,
+        "allowed_op_families": ["motion"],
+        "motion": {
+            "available": True,
+            "catalog": [
+                {"preset_id": "kinetic_word", "label": "Wild Type"},
+                {"preset_id": "card_stack", "label": "Card Stack"},
+            ],
+            "blocks": [
+                {
+                    "id": "motion_1",
+                    "preset_id": "kinetic_word",
+                    "start_s": 0,
+                    "end_s": 2.5,
+                    "params": {"text": "OLD"},
+                }
+            ],
+            "asset_pool": [{"id": "image_1"}, {"id": "image_2"}],
+        },
+    }
+
+
+def test_creator_block_ops_validate_catalog_assets_patch_and_remove() -> None:
+    from app.agents.edit_copilot import _parse_op, _ParseState
+
+    snapshot = _motion_snapshot()
+    state = _ParseState(0.9)
+    assert _parse_op(
+        {
+            "op": "add_motion_block",
+            "preset_id": "card_stack",
+            "start_s": 2.5,
+            "end_s": 6.5,
+            "params": {"asset_ids": ["image_1", "image_2"]},
+        },
+        snapshot,
+        state,
+    ) == {
+        "op": "add_motion_block",
+        "preset_id": "card_stack",
+        "start_s": 2.5,
+        "end_s": 6.5,
+        "params": {"asset_ids": ["image_1", "image_2"]},
+        "intensity": 0.72,
+    }
+    assert _parse_op(
+        {"op": "patch_motion_block", "motion_id": "motion_1", "patch": {"params": {"text": "NEW"}}},
+        snapshot,
+        _ParseState(0.9),
+    ) == {
+        "op": "patch_motion_block",
+        "motion_id": "motion_1",
+        "patch": {"params": {"text": "NEW"}},
+    }
+    assert _parse_op(
+        {"op": "remove_motion_block", "motion_id": "motion_1"},
+        snapshot,
+        _ParseState(0.9),
+    ) == {"op": "remove_motion_block", "motion_id": "motion_1"}
+
+
+def test_creator_block_ops_reject_unknown_assets_params_and_active_budget() -> None:
+    from app.agents.edit_copilot import _parse_op, _ParseState
+
+    snapshot = _motion_snapshot()
+    invalid = [
+        {
+            "op": "add_motion_block",
+            "preset_id": "card_stack",
+            "start_s": 2.5,
+            "end_s": 6.5,
+            "params": {"asset_ids": ["image_1", "unknown"]},
+        },
+        {
+            "op": "add_motion_block",
+            "preset_id": "kinetic_word",
+            "start_s": 2.5,
+            "end_s": 4,
+            "params": {"text": "SAFE", "url": "https://invalid.example"},
+        },
+        {
+            "op": "add_motion_block",
+            "preset_id": "kinetic_word",
+            "start_s": 4,
+            "end_s": 11,
+            "params": {"text": "TOO MUCH"},
+        },
+    ]
+    assert all(_parse_op(op, snapshot, _ParseState(0.9)) is None for op in invalid)
+
+
+def test_creator_block_catalog_is_rendered_without_paths() -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    rendered = _format_snapshot(_motion_snapshot())
+    assert "CREATOR BLOCK CATALOG" in rendered
+    assert "kinetic_word" in rendered
+    assert "image_1" in rendered
+    assert "gcs_path" not in rendered
 
 
 def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:

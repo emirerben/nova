@@ -427,6 +427,12 @@ const TIMELINE_ERROR_MESSAGES: Record<string, string> = {
     "Beat timing is unavailable for this song, so its section cannot be changed.",
   linear_timeline_unavailable:
     "This older edit cannot preserve its cuts. Choose Re-sync to beats instead.",
+  motion_asset_unavailable:
+    "One of this Creator Block's images is no longer available. Choose another ready image.",
+  motion_clean_base_unavailable:
+    "Creator Blocks need a clean video base, which is unavailable for this edit.",
+  motion_runtime_mismatch:
+    "Kria's motion renderer changed. Refresh before saving Creator Blocks.",
 };
 
 type TimelineOutOfBoundsDetail = {
@@ -585,7 +591,7 @@ export async function commitEditorSession(
   if (res.status === 409) {
     let detail: string | undefined;
     try {
-      detail = ((await res.json()) as { detail?: string })?.detail;
+      detail = formatEditorCommitError(await res.json(), res.status);
     } catch {
       /* non-JSON body */
     }

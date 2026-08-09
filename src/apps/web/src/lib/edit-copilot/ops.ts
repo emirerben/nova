@@ -1,5 +1,10 @@
 import fontRegistryJson from "@/data/font-registry.json";
 import type { CarouselMoment, EditorTransition } from "@/lib/generative-api";
+import {
+  CREATOR_BLOCK_IDS,
+  type CreatorBlockPresetId,
+  type MotionPalette,
+} from "@nova/motion-runtime";
 
 export type CopilotOpFamily =
   | "text"
@@ -13,7 +18,8 @@ export type CopilotOpFamily =
   | "tool"
   | "effect"
   | "transition"
-  | "visual";
+  | "visual"
+  | "motion";
 
 export const TEXT_STYLE_PATCH_KEYS = [
   "font_family",
@@ -99,6 +105,15 @@ export type CaptionMetaPatch = Partial<{
   shadow_enabled: boolean;
 }>;
 
+export type MotionCopilotParams = Record<string, unknown>;
+export type MotionCopilotPatch = Partial<{
+  start_s: number;
+  end_s: number;
+  palette: MotionPalette;
+  intensity: number;
+  params: MotionCopilotParams;
+}>;
+
 export type CopilotOp =
   | { op: "edit_text"; bar_index: number; text: string }
   | { op: "patch_text_style"; bar_index: number; patch: TextStylePatch }
@@ -165,6 +180,17 @@ export type CopilotOp =
       transition_in?: "cut" | "fade";
       transition_out?: "cut" | "fade";
     }
+  | {
+      op: "add_motion_block";
+      preset_id: CreatorBlockPresetId;
+      start_s: number;
+      end_s: number;
+      params: MotionCopilotParams;
+      palette?: MotionPalette;
+      intensity?: number;
+    }
+  | { op: "patch_motion_block"; motion_id: string; patch: MotionCopilotPatch }
+  | { op: "remove_motion_block"; motion_id: string }
   | {
       op: "set_transition";
       boundary_index: number;
@@ -241,6 +267,10 @@ export interface CopilotValidationSnapshot {
   }>;
   camera_effects?: unknown[];
   visual_blocks?: unknown[];
+  motion?: {
+    blocks?: Array<{ id?: string }>;
+    asset_pool?: Array<{ id?: string }>;
+  };
   sfx?: {
     placements?: unknown[];
   };
@@ -292,7 +322,7 @@ const ALLOWED_POSITIONS = new Set(["top", "middle", "bottom", "custom"]);
 const ALLOWED_OVERLAY_POSITIONS = new Set(["top", "center", "bottom", "custom"]);
 const ALLOWED_DISPLAY_MODES = new Set(["pip", "fullscreen"]);
 const ALLOWED_CAPTION_STYLES = new Set(["sentence", "word"]);
-const ALLOWED_TOOLS = new Set(["text", "sounds", "overlays", "styles"]);
+const ALLOWED_TOOLS = new Set(["text", "visuals", "sounds", "overlays", "styles"]);
 // Carousel-as-a-moment (Blossom carousel). Mode intentionally excludes "stills" —
 // the API legally accepts it (auto-authored moments), but the copilot must never
 // emit it (see CarouselMoment in generative-api.ts, which carries the same
@@ -565,6 +595,11 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
   ) return "effect";
   if (op.op === "set_transition") return "transition";
   if (op.op === "set_visual_fade") return "visual";
+  if (
+    op.op === "add_motion_block" ||
+    op.op === "patch_motion_block" ||
+    op.op === "remove_motion_block"
+  ) return "motion";
   return null;
 }
 
@@ -578,6 +613,90 @@ export function validateCopilotOp(
 
   const opName = raw.op;
   switch (opName) {
+    case "add_motion_block": {
+      if (
+        typeof raw.preset_id !== "string" ||
+        !CREATOR_BLOCK_IDS.includes(raw.preset_id as CreatorBlockPresetId) ||
+        !nonNegativeNumber(raw.start_s) ||
+        !nonNegativeNumber(raw.end_s) ||
+        !isRecord(raw.params)
+      ) {
+        return reject("missing_required", "add_motion_block requires a catalog preset, timing, and params", opName);
+      }
+      if (raw.end_s <= raw.start_s || raw.end_s - raw.start_s > 8) {
+        return reject("invalid_time", "motion block timing must be positive and no longer than 8 seconds", opName);
+      }
+      const intensity = raw.intensity === undefined ? 0.72 : raw.intensity;
+      if (!finiteNumber(intensity) || intensity < 0 || intensity > 1) {
+        return reject("invalid_value", "motion intensity must be between 0 and 1", opName);
+      }
+      const palette = raw.palette;
+      if (
+        palette !== undefined &&
+        (!isRecord(palette) || !/^#[0-9A-Fa-f]{6}$/.test(String(palette.primary)) || !/^#[0-9A-Fa-f]{6}$/.test(String(palette.accent)))
+      ) {
+        return reject("invalid_value", "motion palette requires primary and accent #RRGGBB colors", opName);
+      }
+      const assetIds = Array.isArray(raw.params.asset_ids) ? raw.params.asset_ids : [];
+      if (assetIds.some((id) => typeof id !== "string" || !snapshot?.motion?.asset_pool?.some((asset) => asset.id === id))) {
+        return reject("invalid_value", "motion asset_ids must copy eligible snapshot asset IDs", opName);
+      }
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          preset_id: raw.preset_id as CreatorBlockPresetId,
+          start_s: raw.start_s,
+          end_s: raw.end_s,
+          params: { ...raw.params },
+          ...(palette ? { palette: { primary: String(palette.primary), accent: String(palette.accent) } } : {}),
+          intensity,
+        },
+      };
+    }
+    case "patch_motion_block": {
+      if (typeof raw.motion_id !== "string" || !isRecord(raw.patch)) {
+        return reject("missing_required", "patch_motion_block requires motion_id and patch", opName);
+      }
+      if (!snapshot?.motion?.blocks?.some((block) => block.id === raw.motion_id)) {
+        return reject("invalid_index", "motion_id must copy an existing snapshot block ID", opName);
+      }
+      const allowed = new Set(["start_s", "end_s", "palette", "intensity", "params"]);
+      if (Object.keys(raw.patch).length === 0 || Object.keys(raw.patch).some((key) => !allowed.has(key))) {
+        return reject("empty_patch", "motion patch is empty or contains unsupported fields", opName);
+      }
+      if ((raw.patch.start_s !== undefined && !nonNegativeNumber(raw.patch.start_s)) || (raw.patch.end_s !== undefined && !nonNegativeNumber(raw.patch.end_s))) {
+        return reject("invalid_time", "motion timing values must be non-negative seconds", opName);
+      }
+      if (raw.patch.intensity !== undefined && (!finiteNumber(raw.patch.intensity) || raw.patch.intensity < 0 || raw.patch.intensity > 1)) {
+        return reject("invalid_value", "motion intensity must be between 0 and 1", opName);
+      }
+      if (raw.patch.params !== undefined && !isRecord(raw.patch.params)) {
+        return reject("invalid_type", "motion params must be an object", opName);
+      }
+      if (
+        raw.patch.palette !== undefined &&
+        (!isRecord(raw.patch.palette) ||
+          !HEX_COLOR.test(String(raw.patch.palette.primary)) ||
+          !HEX_COLOR.test(String(raw.patch.palette.accent)))
+      ) {
+        return reject("invalid_value", "motion palette requires primary and accent #RRGGBB colors", opName);
+      }
+      const assetIds = isRecord(raw.patch.params) && Array.isArray(raw.patch.params.asset_ids)
+        ? raw.patch.params.asset_ids
+        : [];
+      if (assetIds.some((id) => typeof id !== "string" || !snapshot?.motion?.asset_pool?.some((asset) => asset.id === id))) {
+        return reject("invalid_value", "motion asset_ids must copy eligible snapshot asset IDs", opName);
+      }
+      return { ok: true, op: { op: opName, motion_id: raw.motion_id, patch: { ...raw.patch } as MotionCopilotPatch } };
+    }
+    case "remove_motion_block": {
+      if (typeof raw.motion_id !== "string") return reject("missing_required", "remove_motion_block requires motion_id", opName);
+      if (!snapshot?.motion?.blocks?.some((block) => block.id === raw.motion_id)) {
+        return reject("invalid_index", "motion_id must copy an existing snapshot block ID", opName);
+      }
+      return { ok: true, op: { op: opName, motion_id: raw.motion_id } };
+    }
     case "edit_text": {
       if (!integerIndex(raw.bar_index) || typeof raw.text !== "string") {
         return reject("missing_required", "edit_text requires bar_index and text", opName);

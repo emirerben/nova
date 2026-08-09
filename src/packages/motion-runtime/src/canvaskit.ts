@@ -1,19 +1,29 @@
 import {
   activeMotionInstances,
-  type MotionPresetInstanceV1,
+  type CardStackInstanceV1,
+  type CloudBreakInstanceV1,
+  type DonutTextInstanceV1,
+  type FilmStripInstanceV1,
+  type FlowFieldInstanceV1,
+  type KineticWordInstanceV1,
+  type MotionPresetInstance,
+  type OfferSwapInstanceV1,
+  type RouteTraceInstanceV1,
+  type TagStackInstanceV1,
 } from "./contract.ts";
 import {
   ROUTE_TRACE_PATH,
   ROUTE_TRACE_VIEWBOX,
+  creatorBlockFrame,
+  easeInOutCubic,
   routeTraceFrame,
 } from "./presets.ts";
 
-interface Disposable {
-  delete(): void;
-}
-
+interface Disposable { delete(): void }
 interface MotionPath extends Disposable {}
-
+interface MotionTypeface extends Disposable {}
+interface MotionFont extends Disposable {}
+interface MotionImage extends Disposable { width(): number; height(): number }
 interface MotionPaint extends Disposable {
   setStyle(value: unknown): void;
   setStrokeCap(value: unknown): void;
@@ -24,36 +34,129 @@ interface MotionPaint extends Disposable {
   setPathEffect(value: Disposable | null): void;
 }
 
+type Rect = Float32Array;
+type RRect = Float32Array;
+
 export interface MotionCanvas {
   clear(color: Float32Array): void;
   save(): number;
   restore(): void;
   translate(x: number, y: number): void;
   scale(x: number, y: number): void;
+  rotate(degrees: number, px?: number, py?: number): void;
+  skew(sx: number, sy: number): void;
+  clipRect(rect: Rect, op?: unknown, antiAlias?: boolean): void;
   drawPath(path: MotionPath, paint: MotionPaint): void;
+  drawRect(rect: Rect, paint: MotionPaint): void;
+  drawRRect(rect: RRect, paint: MotionPaint): void;
+  drawCircle(cx: number, cy: number, radius: number, paint: MotionPaint): void;
+  drawText(text: string, x: number, y: number, paint: MotionPaint, font: MotionFont): void;
+  drawImageRect(image: MotionImage, source: Rect, dest: Rect, paint?: MotionPaint): void;
 }
 
 export interface MotionCanvasKit {
   TRANSPARENT: Float32Array;
   parseColorString(value: string): Float32Array;
   multiplyByAlpha(color: Float32Array, alpha: number): Float32Array;
-  PaintStyle: { Stroke: unknown };
+  PaintStyle: { Stroke: unknown; Fill: unknown };
   StrokeCap: { Round: unknown };
   StrokeJoin: { Round: unknown };
+  ClipOp?: { Intersect: unknown };
   Path: { MakeFromSVGString(value: string): MotionPath | null };
   Paint: new () => MotionPaint;
-  PathEffect: {
-    MakeDash(intervals: number[], phase?: number): Disposable;
+  Font: new (typeface: MotionTypeface | null, size: number) => MotionFont;
+  Typeface: { MakeFreeTypeFaceFromData(value: Uint8Array): MotionTypeface | null };
+  MakeImageFromEncoded(value: Uint8Array): MotionImage | null;
+  XYWHRect(x: number, y: number, width: number, height: number): Rect;
+  RRectXY(rect: Rect, rx: number, ry: number): RRect;
+  PathEffect: { MakeDash(intervals: number[], phase?: number): Disposable };
+}
+
+export interface MotionResourceBytes {
+  font: Uint8Array;
+  images?: Readonly<Record<string, Uint8Array>>;
+}
+
+export interface MotionResources extends Disposable {
+  typeface: MotionTypeface;
+  images: ReadonlyMap<string, MotionImage>;
+  font(size: number): MotionFont;
+}
+
+export function createMotionResources(CanvasKitInput: unknown, input: MotionResourceBytes): MotionResources {
+  const CanvasKit = CanvasKitInput as MotionCanvasKit;
+  const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(input.font);
+  if (!typeface) throw new Error("Creator Block font bytes could not be decoded");
+  const images = new Map<string, MotionImage>();
+  const fonts = new Map<number, MotionFont>();
+  try {
+    for (const [assetId, bytes] of Object.entries(input.images ?? {})) {
+      const image = CanvasKit.MakeImageFromEncoded(bytes);
+      if (!image) throw new Error(`Creator Block image ${assetId} could not be decoded`);
+      images.set(assetId, image);
+    }
+  } catch (error) {
+    images.forEach((image) => image.delete());
+    typeface.delete();
+    throw error;
+  }
+  return {
+    typeface,
+    images,
+    font(size: number) {
+      let font = fonts.get(size);
+      if (!font) {
+        font = new CanvasKit.Font(typeface, size);
+        fonts.set(size, font);
+      }
+      return font;
+    },
+    delete() {
+      fonts.forEach((font) => font.delete());
+      images.forEach((image) => image.delete());
+      typeface.delete();
+    },
   };
 }
 
-function colorWithAlpha(
+function colorWithAlpha(CanvasKit: MotionCanvasKit, hex: string, alpha: number): Float32Array {
+  return CanvasKit.multiplyByAlpha(CanvasKit.parseColorString(hex), Math.max(0, Math.min(1, alpha)));
+}
+
+function localLayout(width: number, height: number): { unit: number; cx: number; cy: number } {
+  return { unit: Math.min(width, height), cx: width / 2, cy: height / 2 };
+}
+
+function withFill(CanvasKit: MotionCanvasKit, paint: MotionPaint, color: string, alpha: number): void {
+  paint.setStyle(CanvasKit.PaintStyle.Fill);
+  paint.setAntiAlias(true);
+  paint.setColor(colorWithAlpha(CanvasKit, color, alpha));
+}
+
+function approximateTextWidth(text: string, size: number): number {
+  return Array.from(text).length * size * 0.58;
+}
+
+function drawCenteredText(
   CanvasKit: MotionCanvasKit,
-  hex: string,
+  canvas: MotionCanvas,
+  resources: MotionResources,
+  paint: MotionPaint,
+  text: string,
+  x: number,
+  baseline: number,
+  size: number,
+  color: string,
   alpha: number,
-): Float32Array {
-  const color = CanvasKit.parseColorString(hex);
-  return CanvasKit.multiplyByAlpha(color, Math.max(0, Math.min(1, alpha)));
+): void {
+  withFill(CanvasKit, paint, color, alpha);
+  canvas.drawText(
+    text,
+    x - approximateTextWidth(text, size) / 2,
+    baseline,
+    paint,
+    resources.font(size),
+  );
 }
 
 function drawRouteTrace(
@@ -61,7 +164,7 @@ function drawRouteTrace(
   canvas: MotionCanvas,
   path: MotionPath,
   paint: MotionPaint,
-  instance: MotionPresetInstanceV1,
+  instance: RouteTraceInstanceV1,
   frame: number,
   width: number,
   height: number,
@@ -71,33 +174,24 @@ function drawRouteTrace(
   const sy = height / ROUTE_TRACE_VIEWBOX.height;
   const centerX = width / 2;
   const centerY = height / 2;
-
   canvas.save();
   canvas.translate(centerX, centerY);
   canvas.scale(state.scale, state.scale);
   canvas.translate(-centerX, -centerY);
   canvas.scale(sx, sy);
-
   paint.setStyle(CanvasKit.PaintStyle.Stroke);
   paint.setStrokeCap(CanvasKit.StrokeCap.Round);
   paint.setStrokeJoin(CanvasKit.StrokeJoin.Round);
   paint.setAntiAlias(true);
   paint.setStrokeWidth(state.strokeWidth);
   paint.setColor(colorWithAlpha(CanvasKit, state.primary, state.opacity * 0.32));
-  const glowEffect = CanvasKit.PathEffect.MakeDash(
-    [Math.max(1, 1900 * state.progress), 1900],
-    0,
-  );
+  const glowEffect = CanvasKit.PathEffect.MakeDash([Math.max(1, 1900 * state.progress), 1900], 0);
   paint.setPathEffect(glowEffect);
   canvas.drawPath(path, paint);
   glowEffect.delete();
-
   paint.setStrokeWidth(Math.max(3, state.strokeWidth * 0.38));
   paint.setColor(colorWithAlpha(CanvasKit, state.accent, state.opacity));
-  const traceEffect = CanvasKit.PathEffect.MakeDash(
-    [Math.max(1, 1900 * state.progress), 1900],
-    0,
-  );
+  const traceEffect = CanvasKit.PathEffect.MakeDash([Math.max(1, 1900 * state.progress), 1900], 0);
   paint.setPathEffect(traceEffect);
   canvas.drawPath(path, paint);
   traceEffect.delete();
@@ -105,31 +199,236 @@ function drawRouteTrace(
   canvas.restore();
 }
 
-/**
- * Canonical draw entrypoint used by browser and export runtimes. The caller
- * owns the surface; this function owns and deletes all temporary Skia objects.
- */
+function drawKineticWord(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, instance: KineticWordInstanceV1, frame: number, width: number, height: number): void {
+  const state = creatorBlockFrame(instance, frame);
+  const { unit, cx, cy } = localLayout(width, height);
+  const size = unit * 0.145;
+  const overshoot = state.local < 0.18 ? 2.4 - state.enter * 1.4 : state.scale;
+  const collapseSkew = state.exit * (-0.18 - instance.intensity * 0.18);
+  canvas.save();
+  canvas.translate(cx, cy);
+  canvas.rotate(state.rotation * 1.7, 0, 0);
+  canvas.skew((1 - state.enter) * 0.22 + collapseSkew, 0);
+  canvas.scale(overshoot, overshoot);
+  drawCenteredText(CanvasKit, canvas, resources, paint, instance.params.text.toUpperCase(), size * 0.055, size * 0.395, size, instance.palette.primary, state.opacity * 0.92);
+  drawCenteredText(CanvasKit, canvas, resources, paint, instance.params.text.toUpperCase(), 0, size * 0.34, size, instance.palette.accent, state.opacity);
+  canvas.restore();
+}
+
+function drawTagStack(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, instance: TagStackInstanceV1, frame: number, width: number, height: number): void {
+  const state = creatorBlockFrame(instance, frame);
+  const { unit, cx, cy } = localLayout(width, height);
+  const size = unit * 0.055;
+  const gap = size * 1.55;
+  instance.params.labels.forEach((label, index) => {
+    const stagger = ((state.cycle + index / instance.params.labels.length) % 1) - 0.5;
+    const y = cy + stagger * gap * instance.params.labels.length;
+    const w = Math.min(width * 0.82, approximateTextWidth(label, size) + size * 1.5);
+    withFill(CanvasKit, paint, index % 2 ? instance.palette.primary : instance.palette.accent, state.opacity * (1 - Math.abs(stagger) * 0.65));
+    canvas.drawRRect(CanvasKit.RRectXY(CanvasKit.XYWHRect(cx - w / 2, y - size, w, size * 1.45), size * 0.65, size * 0.65), paint);
+    drawCenteredText(CanvasKit, canvas, resources, paint, label.toUpperCase(), cx, y + size * 0.12, size, index % 2 ? instance.palette.accent : instance.palette.primary, state.opacity);
+  });
+}
+
+function drawFlowField(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, instance: FlowFieldInstanceV1, frame: number, width: number, height: number): void {
+  const state = creatorBlockFrame(instance, frame);
+  const { unit, cx, cy } = localLayout(width, height);
+  const size = unit * 0.105;
+  for (let slice = -3; slice <= 3; slice += 1) {
+    const offset = Math.sin(state.local * Math.PI * 4 + slice * 0.8) * unit * 0.018 * instance.intensity;
+    canvas.save();
+    const top = cy + slice * size * 0.18 - size;
+    canvas.clipRect(CanvasKit.XYWHRect(0, top, width, size * 0.23), CanvasKit.ClipOp?.Intersect, true);
+    drawCenteredText(CanvasKit, canvas, resources, paint, instance.params.headline.toUpperCase(), cx + offset, cy + size * 0.32, size, instance.palette.accent, state.opacity);
+    canvas.restore();
+  }
+  if (instance.params.kicker) drawCenteredText(CanvasKit, canvas, resources, paint, instance.params.kicker.toUpperCase(), cx, cy + size * 1.25, size * 0.28, instance.palette.primary, state.opacity * 0.9);
+}
+
+function drawCloudBreak(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, instance: CloudBreakInstanceV1, frame: number, width: number, height: number): void {
+  const state = creatorBlockFrame(instance, frame);
+  const { unit, cx, cy } = localLayout(width, height);
+  const motionAmount = 0.45 + instance.intensity * 0.75;
+  const blob = easeInOutCubic(Math.min(1, state.local / 0.45)) * motionAmount;
+  for (let i = 0; i < 5; i += 1) {
+    const angle = i * 2.17 + state.local * (0.7 + instance.intensity * 1.4);
+    const radius = unit * (0.10 + (i % 2) * 0.035) * blob;
+    withFill(CanvasKit, paint, i % 2 ? instance.palette.primary : instance.palette.accent, state.opacity * 0.78);
+    canvas.drawCircle(cx + Math.cos(angle) * unit * 0.12, cy + Math.sin(angle) * unit * 0.1, radius, paint);
+  }
+  const lineSize = unit * Math.min(0.08, 0.27 / instance.params.lines.length);
+  instance.params.lines.forEach((line, index) => {
+    const y = cy + (index - (instance.params.lines.length - 1) / 2) * lineSize * 1.02;
+    drawCenteredText(CanvasKit, canvas, resources, paint, line.toUpperCase(), cx, y + lineSize * 0.34, lineSize, index % 2 ? instance.palette.accent : "#FFFFFF", state.opacity);
+  });
+}
+
+function drawOfferSwap(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, instance: OfferSwapInstanceV1, frame: number, width: number, height: number): void {
+  const state = creatorBlockFrame(instance, frame);
+  const { unit, cx, cy } = localLayout(width, height);
+  const alternate = state.local >= 0.48;
+  const phase = alternate ? (state.local - 0.48) / 0.52 : state.local / 0.48;
+  const swapScale = 0.78 + easeInOutCubic(Math.min(1, phase / 0.28)) * 0.22;
+  const slideIn = 1 - easeInOutCubic(Math.min(1, phase / 0.3));
+  const slideOut = easeInOutCubic(Math.max(0, (phase - 0.72) / 0.28));
+  const direction = alternate ? 1 : -1;
+  const slideX = direction * (slideIn - slideOut) * unit * (0.16 + instance.intensity * 0.22);
+  canvas.save();
+  canvas.translate(cx + slideX, cy);
+  canvas.scale(swapScale, swapScale);
+  withFill(CanvasKit, paint, alternate ? instance.palette.primary : instance.palette.accent, state.opacity);
+  canvas.drawRRect(CanvasKit.RRectXY(CanvasKit.XYWHRect(-unit * 0.34, -unit * 0.1, unit * 0.68, unit * 0.2), unit * 0.035, unit * 0.035), paint);
+  drawCenteredText(CanvasKit, canvas, resources, paint, (alternate ? instance.params.alternate_text : instance.params.primary_text).toUpperCase(), 0, unit * 0.035, unit * 0.09, alternate ? instance.palette.accent : instance.palette.primary, state.opacity);
+  canvas.restore();
+}
+
+function coverSource(CanvasKit: MotionCanvasKit, image: MotionImage, destWidth: number, destHeight: number): Rect {
+  const iw = image.width();
+  const ih = image.height();
+  const targetRatio = destWidth / destHeight;
+  const sourceRatio = iw / ih;
+  if (sourceRatio > targetRatio) {
+    const width = ih * targetRatio;
+    return CanvasKit.XYWHRect((iw - width) / 2, 0, width, ih);
+  }
+  const height = iw / targetRatio;
+  return CanvasKit.XYWHRect(0, (ih - height) / 2, iw, height);
+}
+
+function requireImage(resources: MotionResources, assetId: string): MotionImage {
+  const image = resources.images.get(assetId);
+  if (!image) throw new Error(`Creator Block resource ${assetId} is missing`);
+  return image;
+}
+
+function drawCardStack(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, instance: CardStackInstanceV1, frame: number, width: number, height: number): void {
+  const state = creatorBlockFrame(instance, frame);
+  const { unit, cx, cy } = localLayout(width, height);
+  const cardW = unit * 0.46;
+  const cardH = unit * 0.58;
+  const activeIndex = Math.floor(state.cycle * instance.params.assets.length) % instance.params.assets.length;
+  [...instance.params.assets].reverse().forEach((asset, reverseIndex) => {
+    const index = instance.params.assets.length - 1 - reverseIndex;
+    const relative = (index - activeIndex + instance.params.assets.length) % instance.params.assets.length;
+    const image = requireImage(resources, asset.asset_id);
+    const depth = Math.min(relative, 3);
+    const slideX = (1 - state.enter) * -unit * (0.28 + instance.intensity * 0.24)
+      + state.exit * unit * (0.3 + instance.intensity * 0.32);
+    canvas.save();
+    canvas.translate(cx + slideX + depth * unit * 0.025, cy - depth * unit * 0.02);
+    canvas.rotate((depth - 1) * 4 + (index === activeIndex ? state.rotation * 0.3 : 0), 0, 0);
+    canvas.scale(state.scale * (1 - depth * 0.045), state.scale * (1 - depth * 0.045));
+    withFill(CanvasKit, paint, instance.palette.primary, state.opacity);
+    canvas.drawRRect(CanvasKit.RRectXY(CanvasKit.XYWHRect(-cardW / 2 - unit * 0.012, -cardH / 2 - unit * 0.012, cardW + unit * 0.024, cardH + unit * 0.024), unit * 0.025, unit * 0.025), paint);
+    withFill(CanvasKit, paint, instance.palette.accent, state.opacity);
+    canvas.drawRRect(CanvasKit.RRectXY(CanvasKit.XYWHRect(-cardW / 2 - unit * 0.004, -cardH / 2 - unit * 0.004, cardW + unit * 0.008, cardH + unit * 0.008), unit * 0.02, unit * 0.02), paint);
+    const imageInset = unit * 0.006;
+    const imageW = cardW - imageInset * 2;
+    const imageH = cardH - imageInset * 2;
+    canvas.clipRect(CanvasKit.XYWHRect(-imageW / 2, -imageH / 2, imageW, imageH), CanvasKit.ClipOp?.Intersect, true);
+    canvas.drawImageRect(image, coverSource(CanvasKit, image, imageW, imageH), CanvasKit.XYWHRect(-imageW / 2, -imageH / 2, imageW, imageH), paint);
+    canvas.restore();
+  });
+}
+
+function drawFilmStrip(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, instance: FilmStripInstanceV1, frame: number, width: number, height: number): void {
+  const state = creatorBlockFrame(instance, frame);
+  const { unit, cx, cy } = localLayout(width, height);
+  const stripW = unit * 0.28;
+  const cellH = unit * 0.32;
+  const travel = state.cycle * cellH * instance.params.assets.length;
+  canvas.save();
+  canvas.clipRect(CanvasKit.XYWHRect(cx - stripW / 2, cy - unit * 0.55, stripW, unit * 1.1), CanvasKit.ClipOp?.Intersect, true);
+  for (let loop = -1; loop <= 1; loop += 1) {
+    instance.params.assets.forEach((asset, index) => {
+      const image = requireImage(resources, asset.asset_id);
+      const y = cy - unit * 0.55 + index * cellH + loop * instance.params.assets.length * cellH - travel;
+      canvas.drawImageRect(image, coverSource(CanvasKit, image, stripW, cellH - unit * 0.012), CanvasKit.XYWHRect(cx - stripW / 2, y, stripW, cellH - unit * 0.012), paint);
+    });
+  }
+  canvas.restore();
+  withFill(CanvasKit, paint, instance.palette.accent, state.opacity);
+  canvas.drawRect(CanvasKit.XYWHRect(cx - stripW / 2 - unit * 0.012, cy - unit * 0.55, unit * 0.008, unit * 1.1), paint);
+  canvas.drawRect(CanvasKit.XYWHRect(cx + stripW / 2 + unit * 0.004, cy - unit * 0.55, unit * 0.008, unit * 1.1), paint);
+  withFill(CanvasKit, paint, instance.palette.primary, state.opacity);
+  canvas.drawRect(CanvasKit.XYWHRect(cx - stripW / 2 - unit * 0.012, cy - unit * 0.55, stripW + unit * 0.024, unit * 0.008), paint);
+  canvas.drawRect(CanvasKit.XYWHRect(cx - stripW / 2 - unit * 0.012, cy + unit * 0.542, stripW + unit * 0.024, unit * 0.008), paint);
+}
+
+function drawArcText(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, text: string, cx: number, cy: number, radius: number, startDegrees: number, size: number, color: string, alpha: number): void {
+  const chars = Array.from(text.toUpperCase());
+  const step = Math.min(15, 150 / Math.max(1, chars.length - 1));
+  const font = resources.font(size);
+  withFill(CanvasKit, paint, color, alpha);
+  chars.forEach((char, index) => {
+    const angle = startDegrees + (index - (chars.length - 1) / 2) * step;
+    canvas.save();
+    canvas.translate(cx, cy);
+    canvas.rotate(angle, 0, 0);
+    canvas.translate(0, -radius);
+    canvas.drawText(char, -size * 0.29, size * 0.32, paint, font);
+    canvas.restore();
+  });
+}
+
+function drawDonutText(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, instance: DonutTextInstanceV1, frame: number, width: number, height: number): void {
+  const state = creatorBlockFrame(instance, frame);
+  const { unit, cx, cy } = localLayout(width, height);
+  const radius = unit * (0.22 + state.pulse * 0.015 * instance.intensity);
+  paint.setStyle(CanvasKit.PaintStyle.Stroke);
+  paint.setAntiAlias(true);
+  paint.setStrokeWidth(unit * 0.045);
+  paint.setColor(colorWithAlpha(CanvasKit, instance.palette.accent, state.opacity));
+  canvas.drawCircle(cx, cy, radius, paint);
+  const rotation = state.local * 130 * (0.5 + instance.intensity * 0.5);
+  const counterRotation = -state.local * 92 * (0.55 + instance.intensity * 0.45)
+    + state.pulse * 12 * instance.intensity;
+  drawArcText(CanvasKit, canvas, resources, paint, instance.params.left_text, cx, cy, radius * 1.23, rotation - 90, unit * 0.045, instance.palette.primary, state.opacity);
+  drawArcText(CanvasKit, canvas, resources, paint, instance.params.right_text, cx, cy, radius * 1.23, counterRotation + 90, unit * 0.045, instance.palette.accent, state.opacity);
+}
+
+function drawCreatorBlock(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, instance: Exclude<MotionPresetInstance, RouteTraceInstanceV1>, frame: number, width: number, height: number): void {
+  switch (instance.preset_id) {
+    case "kinetic_word": return drawKineticWord(CanvasKit, canvas, resources, paint, instance, frame, width, height);
+    case "tag_stack": return drawTagStack(CanvasKit, canvas, resources, paint, instance, frame, width, height);
+    case "flow_field": return drawFlowField(CanvasKit, canvas, resources, paint, instance, frame, width, height);
+    case "cloud_break": return drawCloudBreak(CanvasKit, canvas, resources, paint, instance, frame, width, height);
+    case "offer_swap": return drawOfferSwap(CanvasKit, canvas, resources, paint, instance, frame, width, height);
+    case "card_stack": return drawCardStack(CanvasKit, canvas, resources, paint, instance, frame, width, height);
+    case "film_strip": return drawFilmStrip(CanvasKit, canvas, resources, paint, instance, frame, width, height);
+    case "donut_text": return drawDonutText(CanvasKit, canvas, resources, paint, instance, frame, width, height);
+  }
+}
+
+/** Canonical browser/export draw entrypoint. */
 export function drawMotionFrame(
-  CanvasKit: MotionCanvasKit,
+  CanvasKitInput: unknown,
   canvas: MotionCanvas,
-  instances: readonly MotionPresetInstanceV1[],
+  instances: readonly MotionPresetInstance[],
   frame: number,
   width: number,
   height: number,
+  resources?: MotionResources,
 ): void {
+  const CanvasKit = CanvasKitInput as MotionCanvasKit;
   canvas.clear(CanvasKit.TRANSPARENT);
   const active = activeMotionInstances(instances, frame);
   if (active.length === 0) return;
-
-  const path = CanvasKit.Path.MakeFromSVGString(ROUTE_TRACE_PATH);
-  if (!path) throw new Error("Built-in route_trace SVG path is invalid");
   const paint = new CanvasKit.Paint();
+  let routePath: MotionPath | null = null;
   try {
     for (const instance of active) {
-      drawRouteTrace(CanvasKit, canvas, path, paint, instance, frame, width, height);
+      if (instance.preset_id === "route_trace") {
+        routePath ??= CanvasKit.Path.MakeFromSVGString(ROUTE_TRACE_PATH);
+        if (!routePath) throw new Error("Built-in route_trace SVG path is invalid");
+        drawRouteTrace(CanvasKit, canvas, routePath, paint, instance, frame, width, height);
+      } else {
+        if (!resources) throw new Error(`Creator Block ${instance.preset_id} requires trusted resources`);
+        drawCreatorBlock(CanvasKit, canvas, resources, paint, instance, frame, width, height);
+      }
     }
   } finally {
     paint.delete();
-    path.delete();
+    routePath?.delete();
   }
 }
