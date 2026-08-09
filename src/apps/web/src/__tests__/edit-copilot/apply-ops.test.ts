@@ -8,6 +8,7 @@ import { buildCopilotSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement, VisualBlock } from "@/lib/plan-api";
+import { barsToCaptionCues } from "@/app/plan/items/[id]/_editor/editor-bars";
 
 function bar(over: Partial<TextElementBar> = {}): TextElementBar {
   return {
@@ -627,6 +628,110 @@ describe("applyCopilotOps", () => {
     const stale = applyCopilotOps([{ op: "set_caption_meta", patch: { style: "word" } }], extendedCtx({
       captionMeta: { enabled: true, style: "word", font: null, y_frac: 0.7 },
     }));
+    expect(stale.rejected).toMatchObject([{ reason: "user_changed" }]);
+  });
+
+  it("atomically replaces every literal caption match beyond snapshot caps and persists it", () => {
+    const captions = Array.from({ length: 55 }, (_, index) => bar({
+      id: `caption-${index}`,
+      role: "narrated_caption",
+      text:
+        index === 2
+          ? "Kriya KRIYA kriya"
+          : index >= 40 && index < 50
+            ? "Say Kriya here"
+            : index === 54
+              ? `${"x".repeat(90)} Kriya`
+              : `caption ${index}`,
+      start_s: index,
+      end_s: index + 0.5,
+    }));
+    const slots = [slot({ key: "caption-slot", slotId: "caption-slot", durationS: 60 })];
+    const extras: Parameters<typeof buildCopilotSnapshot>[5] = {
+      captionsPresent: true,
+      captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.7 },
+    };
+    const snapshot = buildCopilotSnapshot(captions, slots, clips, {}, [], extras);
+    expect(snapshot.captions?.cues).toHaveLength(40);
+    expect(snapshot.captions?.cues.some((cue) => cue.id === "caption-54")).toBe(false);
+
+    const result = applyCopilotOps(
+      [{ op: "replace_caption_text", find: "Kriya", replace: "Kria" }],
+      { bars: captions, slots, snapshot },
+    );
+
+    expect(result.rejected).toEqual([]);
+    expect(result.textActions).toHaveLength(1);
+    expect(result.textActions[0]).toMatchObject({ type: "PATCH_BARS" });
+    const action = result.textActions[0];
+    if (action.type !== "PATCH_BARS") throw new Error("expected PATCH_BARS");
+    expect(action.patches).toHaveLength(12);
+    expect(result.applied).toEqual([{
+      label: "Caption text replaced",
+      from: "Kriya",
+      to: "Kria · 14 matches in 12 lines",
+    }]);
+
+    const patchById = new Map(action.patches.map((patch) => [patch.id, patch.patch]));
+    const updated = captions.map((caption) => ({
+      ...caption,
+      ...(patchById.get(caption.id) ?? {}),
+    }));
+    expect(updated[2].text).toBe("Kria Kria Kria");
+    expect(updated[54].text.endsWith(" Kria")).toBe(true);
+    expect(barsToCaptionCues(updated)[54].text.endsWith(" Kria")).toBe(true);
+
+    const secondSnapshot = buildCopilotSnapshot(updated, slots, clips, {}, [], extras);
+    const second = applyCopilotOps(
+      [{ op: "replace_caption_text", find: "Kriya", replace: "Kria" }],
+      { bars: updated, slots, snapshot: secondSnapshot },
+    );
+    expect(second.textActions).toEqual([]);
+    expect(second.rejected).toMatchObject([{ reason: "no_effect" }]);
+  });
+
+  it("treats replacement dollars literally and rejects a stale full-caption snapshot", () => {
+    const captions = [
+      bar({ id: "caption-1", role: "narrated_caption", text: "Kriya", start_s: 0, end_s: 1 }),
+      bar({ id: "caption-2", role: "narrated_caption", text: "untouched", start_s: 1, end_s: 2 }),
+    ];
+    const slots = [slot()];
+    const extras: Parameters<typeof buildCopilotSnapshot>[5] = {
+      captionsPresent: true,
+      captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.7 },
+    };
+    const snapshot = buildCopilotSnapshot(captions, slots, clips, {}, [], extras);
+    const literal = applyCopilotOps(
+      [{ op: "replace_caption_text", find: "Kriya", replace: "$& $1" }],
+      { bars: captions, slots, snapshot },
+    );
+    expect(literal.textActions).toEqual([{
+      type: "PATCH_BARS",
+      patches: [{ id: "caption-1", patch: { text: "$& $1" } }],
+    }]);
+
+    const caseOnlyBars = captions.map((caption) =>
+      caption.id === "caption-2" ? { ...caption, text: "KRIYA" } : caption,
+    );
+    const caseOnlySnapshot = buildCopilotSnapshot(caseOnlyBars, slots, clips, {}, [], extras);
+    const caseOnly = applyCopilotOps(
+      [{ op: "replace_caption_text", find: "Kriya", replace: "Kriya" }],
+      { bars: caseOnlyBars, slots, snapshot: caseOnlySnapshot },
+    );
+    expect(caseOnly.textActions).toEqual([{
+      type: "PATCH_BARS",
+      patches: [{ id: "caption-2", patch: { text: "Kriya" } }],
+    }]);
+    expect(caseOnly.applied[0].to).toBe("Kriya · 1 match in 1 line");
+
+    const drifted = captions.map((caption) =>
+      caption.id === "caption-2" ? { ...caption, text: "changed after request" } : caption,
+    );
+    const stale = applyCopilotOps(
+      [{ op: "replace_caption_text", find: "Kriya", replace: "Kria" }],
+      { bars: drifted, slots, snapshot },
+    );
+    expect(stale.textActions).toEqual([]);
     expect(stale.rejected).toMatchObject([{ reason: "user_changed" }]);
   });
 

@@ -54,6 +54,43 @@ export function isCaptionBar(bar: TextElementBar | null | undefined): boolean {
   return bar?.role === "narrated_caption";
 }
 
+export interface CaptionTextReplacement {
+  patches: Array<{ id: string; patch: { text: string } }>;
+  foundMatchCount: number;
+  matchCount: number;
+  lineCount: number;
+}
+
+/** Case-insensitive, literal replacement over every narrated caption bar.
+ * The callback replacement is intentional: `$&`, `$1`, and friends in user
+ * text stay literal instead of being interpreted by String.replace. */
+export function buildCaptionTextReplacement(
+  bars: readonly TextElementBar[],
+  find: string,
+  replace: string,
+): CaptionTextReplacement {
+  const needle = find.trim();
+  if (!needle) return { patches: [], foundMatchCount: 0, matchCount: 0, lineCount: 0 };
+  const pattern = new RegExp(
+    needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "gi",
+  );
+  let foundMatchCount = 0;
+  let matchCount = 0;
+  const patches = bars
+    .filter(isCaptionBar)
+    .reduce<Array<{ id: string; patch: { text: string } }>>((acc, bar) => {
+      const next = bar.text.replace(pattern, (match) => {
+        foundMatchCount += 1;
+        if (match !== replace) matchCount += 1;
+        return replace;
+      });
+      if (next !== bar.text) acc.push({ id: bar.id, patch: { text: next } });
+      return acc;
+    }, []);
+  return { patches, foundMatchCount, matchCount, lineCount: patches.length };
+}
+
 /**
  * True only for the AI-authored editorial sequence text (the transcript-synced
  * typographic sequence, or its rhythm-mode quote fallback — EDITORIAL_SEQUENCE_ENABLED;
@@ -256,6 +293,7 @@ export function convertApiTextElements(
     effect: el.effect ?? undefined,
     theme_transition: el.theme_transition ?? undefined,
     fade_out_ms: el.fade_out_ms ?? undefined,
+    reveal_s: el.reveal_s ?? undefined,
     alignment: el.alignment ?? undefined,
     text_case: el.text_case ?? undefined,
     letter_spacing: el.letter_spacing ?? undefined,
@@ -562,6 +600,7 @@ function barsToTextElementsInternal(
         effect: (bar.effect as TextElement["effect"]) ?? null,
         theme_transition: bar.theme_transition ?? null,
         fade_out_ms: bar.fade_out_ms ?? original?.fade_out_ms ?? null,
+        reveal_s: bar.reveal_s ?? original?.reveal_s ?? null,
         alignment: (bar.alignment as TextElement["alignment"]) ?? null,
         text_case: (bar.text_case as TextElement["text_case"]) ?? null,
         letter_spacing: bar.letter_spacing ?? null,

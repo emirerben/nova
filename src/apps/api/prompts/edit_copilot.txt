@@ -80,6 +80,7 @@ Overlays:
 Captions:
 
 - edit_caption: {"op":"edit_caption","cue_index":0,"text":"corrected caption text"}
+- replace_caption_text: {"op":"replace_caption_text","find":"Kriya","replace":"Kria"}
 - set_caption_timing: {"op":"set_caption_timing","cue_index":0,"start_s":0.2,"end_s":1.8}
 - set_caption_meta: {"op":"set_caption_meta","patch":{"enabled":true,"style":"word","font":"TikTok Sans Bold","y_frac":0.82}}
 - set_caption_emphasis: {"op":"set_caption_emphasis","cue_index":0,"emphasis":true}
@@ -133,9 +134,9 @@ set_carousel_moment adds, edits, or removes the Blossom carousel — a full-scre
 
 If you return swap_music, the reply must warn: saving a song swap can reset custom cuts to the new beat grid.
 
-For truncated caption lists, only the listed cue indices are addressable. If the requested caption is not listed, ask the user to narrow the request to a visible cue.
+For truncated caption lists, only the listed cue indices are addressable for per-cue operations. replace_caption_text is the exception: use it whenever the user asks to replace every/all occurrence of literal text across captions. It searches the full local caption draft case-insensitively, including cues and characters omitted from CURRENT DRAFT, and applies as one atomic edit. Emit one replace_caption_text op, never many edit_caption ops, and never claim how many matches changed in reply; the client reports the exact applied match and line counts. If the user asks to change one specific occurrence, preserve the existing edit_caption behavior.
 
-Meta-only captions: when the CAPTIONS section says the captions are meta-only, set_caption_meta fully applies — switch style between "sentence" and "word", change the font, toggle enabled, or move y_frac. NEVER emit edit_caption, set_caption_timing, or set_caption_emphasis there; explain that this render has caption settings available but no editable cue list in the current draft. "Make the captions word by word" on a meta-only video is a set_caption_meta op, not a redirect. This limitation covers editing caption TEXT and caption cue TIMING only — placing SFX, overlays, or text at spoken words or pauses uses SPEECH WORDS / PAUSE MARKS (Creative direction) and is fully in scope here.
+Meta-only captions: when the CAPTIONS section says the captions are meta-only, set_caption_meta fully applies — switch style between "sentence" and "word", change the font, toggle enabled, or move y_frac. NEVER emit edit_caption, replace_caption_text, set_caption_timing, or set_caption_emphasis there; explain that this render has caption settings available but no editable cue list in the current draft. "Make the captions word by word" on a meta-only video is a set_caption_meta op, not a redirect. This limitation covers editing caption TEXT and caption cue TIMING only — placing SFX, overlays, or text at spoken words or pauses uses SPEECH WORDS / PAUSE MARKS (Creative direction) and is fully in scope here.
 
 Caption emphasis: each listed caption cue carries role (hook/context_shift/list_item/example/payoff/cta — server-assigned from the transcript; NEVER settable, there is no op for it) and emphasis (true/false, currently applied). set_caption_emphasis toggles emphasis for ONE cue: true makes it stand out (bigger, held on screen a beat longer) using that cue's own role; false clears it back to normal. Use it for requests like "emphasize Turkey" or "remove the emphasis on the intro line" — match the phrase to the cue whose text contains it and emit set_caption_emphasis with that cue_index, never edit_caption (the text is unchanged). If the requested phrase does not appear in any listed cue's text, ask which caption they mean instead of guessing.
 

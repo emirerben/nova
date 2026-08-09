@@ -347,8 +347,10 @@ class SmartEditPlanDocument(StrictModel):
         )
         if self.schema_version == SMART_EDIT_SCHEMA_VERSION and uses_v2_lane:
             raise ValueError("schema v1 cannot contain camera or audio-treatment lanes")
-        if self.preset_version == "v2" and self.schema_version != SMART_EDIT_SCHEMA_VERSION_V2:
-            raise ValueError("cigdem/v2 plans require Smart Edit schema v2")
+        if self.preset_version in {"v2", "v3"} and (
+            self.schema_version != SMART_EDIT_SCHEMA_VERSION_V2
+        ):
+            raise ValueError("cigdem/v2+ plans require Smart Edit schema v2")
         if self.preset_version == "v1" and self.schema_version != SMART_EDIT_SCHEMA_VERSION:
             raise ValueError("cigdem/v1 plans must remain on Smart Edit schema v1")
 

@@ -13,6 +13,23 @@ All notable changes to this project will be documented in this file.
 - Overlay clears and camera rebuilds can no longer be lost to background autosaves, stale render workers, failed renders, or deletion of the final card. The next export rebuilds from the clean base exactly once, then returns to the normal instant-download path.
 - Smart visual selection now keeps later high-confidence matches through density limits, safely reflows partially deduplicated pair layouts, and never leaves orphaned entrance sounds or camera moves when a visual proposal is rejected.
 
+## [0.23.10.0] — 2026-08-08
+
+### Added
+- **New Smart Captions videos use a cleaner, quicker highlighted-text style.** Context titles and section keywords are now light yellow with no outline, keep the existing subtle shadow, and finish their typewriter reveal in 250ms so the motion fits short spoken moments.
+
+### Changed
+- Newly eligible creators without a saved style assignment now start on the reviewed `cigdem/v3` preset. Existing v1/v2 assignments, creator opt-outs, saved edits, and user-authored typewriter text keep their current styling and timing.
+
+### Fixed
+- The editor preview and final Skia render now follow the same persisted reveal schedule, including matching keyboard-tick sound effects. Moving, trimming the start, splitting, undoing, redoing, saving, and reloading generated text keep that timing attached to the text instead of drifting on the timeline.
+
+## [0.23.9.1] — 2026-08-08
+
+### Fixed
+- **"Replace every Kriya with Kria" now changes every caption, not only the cues Nova could see.** Bulk caption replacement searches the complete local caption draft case-insensitively, works past prompt cue/character limits, applies as one undoable edit, and reports the exact number of changed matches and lines.
+- **Nova can no longer say a caption edit succeeded when nothing or only part of the request applied.** Editor chat receipts now come from the client's actual apply result, with a full-caption stale guard that rejects queued edits if any caption changed after Nova read the draft.
+
 ## [0.23.9.0] — 2026-08-07
 
 ### Added

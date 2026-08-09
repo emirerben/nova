@@ -93,6 +93,11 @@ export function cameraEffectMutationFingerprint(effect: CameraEffect): string {
   return mutationFingerprint([effect]);
 }
 
+/** Full local caption state, not the prompt's capped/80-character cue view. */
+export function captionMutationFingerprint(bars: readonly TextElementBar[]): string {
+  return mutationFingerprint(bars.filter((bar) => bar.role === "narrated_caption"));
+}
+
 /** Cap by even sampling, never by truncation — the FIRST and LAST marks are
  * always retained so late-video beats stay addressable for accents near the
  * end of the cut. Mirrored by `_BEAT_MARKS_SHOWN_MAX` in the server renderer
@@ -351,6 +356,8 @@ export interface CopilotSnapshot {
     cues_editable: boolean;
     cues: CopilotCaptionCueSnapshot[];
     meta: CopilotCaptionMetaSnapshot;
+    /** Opaque full-caption stale guard; never serialized to the model. */
+    mutation_fingerprint?: string;
   };
   music?: {
     swappable: boolean;
@@ -872,6 +879,9 @@ export function buildCopilotSnapshot(
   for (const item of trimmed.camera_effects ?? []) {
     const effect = cameraById.get(item.id);
     if (effect) attachMutationFingerprint(item, cameraEffectMutationFingerprint(effect));
+  }
+  if (trimmed.captions) {
+    attachMutationFingerprint(trimmed.captions, captionMutationFingerprint(captionBars));
   }
   return trimmed;
 }

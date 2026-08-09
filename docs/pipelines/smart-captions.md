@@ -1,8 +1,9 @@
-# Smart Captions v2 — internals
+# Smart Captions v2/v3 — internals
 
 Reference doc for deep pipeline internals. CLAUDE.md carries the env-flag contract;
 `docs/pipelines/generative.md` carries the rollout runbook. This file carries the v2
-mechanics (v0.11.0.0).
+semantic mechanics (v0.11.0.0) and the backward-compatible v3 presentation preset
+(v0.23.10.0).
 
 ## Eligibility and capability
 
@@ -42,14 +43,19 @@ canary section. Guard: `tests/smart_edit/test_capability.py`.
 - Camera lane: semantic crop pulses compile into the EXISTING reframe filter
   chain (`reframe.py`) — no extra encode. Guard:
   `test_semantic_crop_is_inside_existing_reframe_filter_only`.
-- Typewriter title reveals and their keyboard-tick SFX share one schedule
-  (`text_overlay_skia.py` reveal + tick placements). Guard:
-  `test_v2_typewriter_visual_and_keyboard_ticks_share_schedule`.
+- Typewriter title reveals and their keyboard-tick SFX share one persisted absolute
+  schedule (`text_overlay_skia.py` reveal + tick placements). The web preview
+  normalizes that schedule against the element start, so moving/saving an element
+  cannot make preview and render drift. V1/v2 retain their reviewed 680ms reveal;
+  v3-generated context titles and section keywords reveal in 250ms. Guards:
+  `test_v2_typewriter_visual_and_keyboard_ticks_share_schedule`,
+  `test_v3_generated_text_style_and_fast_schedule_are_preset_owned`, and the shared
+  `tests/fixtures/overlay-animation/typewriter_schedule.json` fixture.
 
 ## Presets
 
 `app/smart_edit/presets.py` loads `app/smart_edit/presets/<id>/<version>.json`
-(e.g. `cigdem/v2.json`). The planner emits closed tokens; the preset is the ONLY
+(e.g. `cigdem/v2.json` or `cigdem/v3.json`). The planner emits closed tokens; the preset is the ONLY
 place tokens become typography, geometry, density, transition, and audio policy.
 Preset JSON is strict pydantic, repo-reviewed, and covered by golden tests. Key
 blocks: `caption` (word ranges, font, `y_frac`), `scene_layouts`
@@ -57,6 +63,12 @@ blocks: `caption` (word ranges, font, `y_frac`), `scene_layouts`
 `persistent_badge`), `density` (hook window / max visuals /
 `hook_caption_suppress_min_visuals`), `text_styles`, `visual_aliases`,
 `sfx_roles`, `camera`, `audio_treatment`, `boundary_effects`.
+
+`cigdem/v3` is the default for newly eligible creators without an explicit style
+assignment. It changes only generated context-title/section-keyword presentation:
+light yellow (`#FFF3A6`), zero stroke, the existing subtle shadow, and a 250ms
+typewriter reveal. Explicit v1/v2 assignments and disabled assignment rows still win;
+already persisted or tombstoned text elements remain authoritative and are not restyled.
 
 ## Hook accumulation and caption suppression (deferred)
 

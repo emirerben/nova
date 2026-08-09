@@ -1995,7 +1995,7 @@ def plan_smart_captions(
     """Build a complete Smart event plan from corrected word-timed captions."""
 
     preset = load_preset(preset_id, preset_version)
-    if preset.version == "v2":
+    if preset.version in {"v2", "v3"}:
         normalized_words, source_baseline, _ = _normalize_captions(cues, language=language)
         if not normalized_words or not source_baseline:
             return None

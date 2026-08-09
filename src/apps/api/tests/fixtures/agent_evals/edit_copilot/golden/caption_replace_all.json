@@ -1,0 +1,38 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-09-v16",
+  "input": {
+    "utterance": "replace every Kriya in the captions with Kria",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["caption"],
+      "has_narrated_captions": true,
+      "text_bars": [],
+      "slots": [],
+      "total_duration_s": 45,
+      "captions": {
+        "total_cues": 52,
+        "truncated": true,
+        "cues_editable": true,
+        "cues": [
+          {"index": 0, "id": "cue-1", "text": "Kriya makes editing easier", "start_s": 0, "end_s": 1.5},
+          {"index": 1, "id": "cue-2", "text": "try Kriya today", "start_s": 1.5, "end_s": 3}
+        ],
+        "meta": {"enabled": true, "style": "sentence", "font": null, "y_frac": 0.82}
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"replace_caption_text\",\"find\":\"Kriya\",\"replace\":\"Kria\"}],\"confidence\":0.96,\"reply\":\"I’ll replace that caption text across the draft.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [{"op": "replace_caption_text", "find": "Kriya", "replace": "Kria"}],
+    "confidence": 0.96,
+    "reply": "I’ll replace that caption text across the draft.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "bulk caption replacement stays atomic across a truncated cue list"
+  }
+}

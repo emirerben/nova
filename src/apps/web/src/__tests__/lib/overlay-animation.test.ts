@@ -12,6 +12,7 @@ import {
   handwritingSettleS,
   motionCubicBezier,
   normalizeAnimatedRevealText,
+  normalizeTypewriterRevealSchedule,
   popInScaleAt,
   sequenceFadeOutAlphaAt,
   sequenceOverlayFadeOutAlphaAt,
@@ -22,6 +23,7 @@ import {
   themeTransitionStateAt,
 } from "@/lib/overlay-animation";
 import handwritingTiming from "../../../../api/tests/fixtures/handwriting_timing.json";
+import typewriterSchedule from "../../../../../../tests/fixtures/overlay-animation/typewriter_schedule.json";
 
 describe("easeOutCubic", () => {
   it("t=0 → 0", () => {
@@ -230,6 +232,42 @@ describe("animationStateAt — typewriter", () => {
     expect(s.scale).toBeCloseTo(1.0);
     expect(s.alpha).toBeCloseTo(1.0);
     expect(s.yTranslate).toBeCloseTo(0.0);
+  });
+
+  it.each(typewriterSchedule.samples)(
+    "matches the shared renderer schedule at $t_local seconds",
+    ({ t_local: tLocal, visible_text: visibleText }) => {
+      const state = animationStateAt("typewriter", tLocal, DUR, typewriterSchedule.text, {
+        revealScheduleS: typewriterSchedule.reveal_schedule_s,
+        absoluteStartS: typewriterSchedule.start_s,
+      });
+      expect(state.visibleText).toBe(visibleText);
+    },
+  );
+
+  it("normalizes the persisted absolute schedule against the element start", () => {
+    expect(
+      normalizeTypewriterRevealSchedule(
+        typewriterSchedule.reveal_schedule_s,
+        typewriterSchedule.start_s,
+      ),
+    ).toEqual([0, 0.083, 0.167, 0.25]);
+  });
+
+  it("fails safely for missing schedules and clamps malformed entries to the start", () => {
+    expect(normalizeTypewriterRevealSchedule(null, 4)).toBeNull();
+    expect(normalizeTypewriterRevealSchedule([], 4)).toBeNull();
+    expect(normalizeTypewriterRevealSchedule(["4.083", "bad", 3.5], 4)).toEqual([
+      0,
+      0,
+      0.083,
+    ]);
+  });
+
+  it("reveals Unicode code points without splitting a surrogate pair", () => {
+    const timing = { revealScheduleS: [1, 1.25], absoluteStartS: 1 };
+    expect(animationStateAt("typewriter", 0, DUR, "A✨", timing).visibleText).toBe("A");
+    expect(animationStateAt("typewriter", 0.25, DUR, "A✨", timing).visibleText).toBe("A✨");
   });
 });
 

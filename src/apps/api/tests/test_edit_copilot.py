@@ -956,6 +956,50 @@ def test_copilot_caption_edit_and_title_sanitize() -> None:
     ]
 
 
+def test_copilot_bulk_caption_replace_parses_without_cue_addressability() -> None:
+    snap = _full_snapshot()
+    snap["captions"].update({"total_cues": 52, "truncated": True})
+    out = _parse(
+        [{"op": "replace_caption_text", "find": "  Kriya  ", "replace": "Kria"}],
+        snapshot=snap,
+    )
+    assert out.ops == [{"op": "replace_caption_text", "find": "Kriya", "replace": "Kria"}]
+
+
+def test_copilot_bulk_caption_replace_allows_empty_literal_replacement() -> None:
+    out = _parse(
+        [{"op": "replace_caption_text", "find": "Kriya", "replace": ""}],
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == [{"op": "replace_caption_text", "find": "Kriya", "replace": ""}]
+
+
+def test_copilot_bulk_caption_replace_is_independent_of_ordinary_op_cap() -> None:
+    ordinary = [{"op": "set_title", "title": f"title {index}"} for index in range(12)]
+    out = _parse(
+        [*ordinary, {"op": "replace_caption_text", "find": "Kriya", "replace": "Kria"}],
+        snapshot=_full_snapshot(),
+    )
+    assert len(out.ops) == 13
+    assert out.ops[-1] == {"op": "replace_caption_text", "find": "Kriya", "replace": "Kria"}
+
+
+def test_copilot_bulk_caption_replace_rejects_empty_find_and_meta_only_captions() -> None:
+    empty = _parse(
+        [{"op": "replace_caption_text", "find": "   ", "replace": "Kria"}],
+        snapshot=_full_snapshot(),
+    )
+    assert empty.ops == []
+
+    snap = _full_snapshot()
+    snap["captions"]["cues_editable"] = False
+    meta_only = _parse(
+        [{"op": "replace_caption_text", "find": "Kriya", "replace": "Kria"}],
+        snapshot=snap,
+    )
+    assert meta_only.ops == []
+
+
 @pytest.fixture()
 def client() -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
@@ -1234,11 +1278,12 @@ def test_format_snapshot_renders_sfx_roles_and_suggestions() -> None:
 def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # Numbered follow-up resolution changes model behavior and must retain a
     # unique prompt version for trace and eval attribution. Bumped again for
-    # explicit overlay-effect bundle linkage (2026-08-08-v15) — update this pin whenever
+    # bulk caption replacement and explicit overlay-effect bundle linkage now
+    # share the integrated 2026-08-09-v16 prompt — update this pin whenever
     # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-08-v15"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-09-v16"
 
 
 def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:

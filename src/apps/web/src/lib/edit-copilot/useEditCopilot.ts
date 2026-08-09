@@ -170,9 +170,32 @@ function summaries(result: ApplyCopilotOpsResult): {
   };
 }
 
-function appendRejectionSuffix(reply: string, rejected: string[]): string {
-  if (rejected.length === 0) return reply;
-  return `${reply}\n\nCouldn't apply: ${rejected.join("; ")}`;
+export function outcomeAuthoritativeReply({
+  modelReply,
+  intent,
+  needsClarification,
+  applied,
+  rejected,
+}: {
+  modelReply: string;
+  intent: string;
+  needsClarification: boolean;
+  applied: string[];
+  rejected: string[];
+}): string {
+  if (intent !== "edit" || needsClarification) {
+    if (rejected.length === 0) return modelReply;
+    return `${modelReply}\n\nCouldn't apply: ${rejected.join("; ")}`;
+  }
+  if (applied.length === 0) {
+    return rejected.length > 0
+      ? `I didn't change the draft. ${rejected.join("; ")}`
+      : "I didn't change the draft.";
+  }
+  const appliedReceipt = `Applied: ${applied.join("; ")}.`;
+  return rejected.length > 0
+    ? `${appliedReceipt}\n\nCouldn't apply: ${rejected.join("; ")}`
+    : appliedReceipt;
 }
 
 export function messagesToCopilotTurns(
@@ -303,10 +326,13 @@ export function useEditCopilot(
         snapshot,
       );
       const outcome = summaries(applyResult);
-      const assistantText = appendRejectionSuffix(
-        response.reply,
-        outcome.rejected,
-      );
+      const assistantText = outcomeAuthoritativeReply({
+        modelReply: response.reply,
+        intent: response.intent,
+        needsClarification: response.needs_clarification,
+        applied: outcome.applied,
+        rejected: outcome.rejected,
+      });
       const nextMessages: CopilotMessage[] = [
         ...messagesRef.current.map((message) => {
           if (message.id !== userMessageId) return message;

@@ -117,6 +117,14 @@ canary (migration 0066) that compiles and fingerprints a shadow plan without
 changing output. Rollout stays gated by `SMART_CAPTIONS_ENABLED` exactly as
 above; v2 failures fail open to a standard subtitled render with receipts.
 
+**Smart Captions v3 presentation (v0.23.10.0):** newly eligible creators without a
+saved assignment default to `cigdem/v3`; explicit v1/v2 pins and opt-outs still win.
+Generated context titles and section keywords use light yellow, no stroke, the existing
+subtle shadow, and a 250ms persisted typewriter schedule shared by preview, Skia, and
+keyboard-tick SFX. Existing saved/tombstoned text and user-authored typewriter elements
+are not migrated or retimed. Roll back open-to-all v3 selection by setting both default
+preset secrets empty; stored assignments remain pinned.
+
 ## Key files
 
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery
