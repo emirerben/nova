@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.24.0.2] — 2026-08-09
+## [0.24.2.0] — 2026-08-09
 
 ### Fixed
 - **Creator Blocks now keep deliberate spacing, readable copy, and safe margins in portrait and landscape.** Signal Stack rows no longer crowd each other, Flow Field renders its complete headline, long copy fits the frame, Offer Flip stays on-canvas through its directional swap, Film Strip respects vertical safe space, and Cloud Break and Donut Type have clearer color and arc separation.
