@@ -206,7 +206,9 @@ def test_director_prompt_includes_exact_operation_field_contract() -> None:
 
     assert '{"op":"set_text_timing","bar_index":0,"start_s":0.2,"end_s":2.8}' in prompt
     assert '{"op":"set_clip_duration","slot_index":1,"duration_s":3.0}' in prompt
-    assert '{"op":"add_sfx","effect_id":"sfx_pop","at_s":1.2,"gain":1.0}' in prompt
+    assert (
+        '{"op":"add_sfx","effect_id":"sfx_pop","at_s":1.2,"gain":1.0,"effect_bundle_id":"reveal_1"}'
+    ) in prompt
     assert (
         '{"op":"set_transition","boundary_index":0,'
         '"transition":"crossfade","duration_s":0.3}' in prompt

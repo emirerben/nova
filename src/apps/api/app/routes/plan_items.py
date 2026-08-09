@@ -74,6 +74,7 @@ from app.routes.generative_jobs import (
     TextElementsRequest,
     TimelineEditRequest,
     TimelineResponse,
+    cascade_removed_overlay_effect_groups,
     dispatch_apply_captions,
     dispatch_change_style,
     dispatch_edit_timeline,
@@ -2441,9 +2442,23 @@ def _persist_overlay_metadata_only(
         user_id=user_id,
         variant_context=variant_for_check,
     )
+    cascaded_sfx, cascaded_camera_effects = cascade_removed_overlay_effect_groups(
+        variant_for_check,
+        validated,
+    )
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["media_overlays"] = validated or None
+            v["media_overlays_render_dirty"] = True
+            if cascaded_sfx is not None:
+                v["sound_effects"] = cascaded_sfx or None
+            if cascaded_camera_effects is not None:
+                v["camera_effects"] = cascaded_camera_effects or None
+                # render=false updates desired metadata only. Remember that the
+                # current base still contains the removed crop/pulse so the next
+                # render=true request rebuilds instead of taking the outer-card
+                # fast path after the old overlay linkage has disappeared.
+                v["overlay_camera_rebuild_pending"] = True
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")

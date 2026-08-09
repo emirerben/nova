@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.24.0.0] — 2026-08-09
+## [0.24.0.1] — 2026-08-09
 
 ### Added
 - **Creators can now drop eight animated, ready-made blocks directly into a video.** Wild Type, Signal Stack, Flow Field, Cloud Break, Offer Flip, Card Stack, Film Strip, and Donut Type appear in the Visuals drawer with live previews, portrait/landscape layouts, editable copy, two-color palettes, intensity, timing, and image ordering. Blocks can be moved and trimmed on their own timeline lane, edited in pocket mode, undone/redone, saved, and reloaded.
@@ -11,11 +11,17 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Creator Blocks now render through the same deterministic CanvasKit evaluator in the editor and final export, including caption, lyric, text-reburn, and retranscription paths. Sparse and overlapping blocks retain exact timing, media assets are revalidated at save and render time, and runtime/cache mismatches fail closed. The existing Route Trace preset remains available separately.
 
-## [0.23.9.1] — 2026-08-08
+## [0.24.0.0] — 2026-08-08
+
+### Changed
+- **Kria now places each generated visual once, at its strongest contextual moment.** Scene matching, Smart editing, and automatic overlay placement rank the full video before choosing a placement, so repeated words no longer produce the same overlay over and over. Ties resolve deterministically to the earliest clear mention, while creator-added repeats remain untouched.
+- **Nova now treats a generated visual and its entrance accents as one edit.** Copilot and Director can explicitly bundle an overlay with its sound and camera treatment without accidentally linking unrelated effects from the same request.
 
 ### Fixed
-- **"Replace every Kriya with Kria" now changes every caption, not only the cues Nova could see.** Bulk caption replacement searches the complete local caption draft case-insensitively, works past prompt cue/character limits, applies as one undoable edit, and reports the exact number of changed matches and lines.
-- **Nova can no longer say a caption edit succeeded when nothing or only part of the request applied.** Editor chat receipts now come from the client's actual apply result, with a full-caption stale guard that rejects queued edits if any caption changed after Nova read the draft.
+- **Removing a generated overlay now removes the sound and camera effects that belong to it.** This works from the full editor, timeline, failed-media recovery tile, Copilot, and Director; Undo restores the whole bundle in one step. Older clients receive the same protection server-side, and legacy unlinked effects are never guessed or deleted.
+- Overlay clears and camera rebuilds can no longer be lost to background autosaves, stale render workers, failed renders, or deletion of the final card. The next export rebuilds from the clean base exactly once, then returns to the normal instant-download path.
+- Smart visual selection now keeps later high-confidence matches through density limits, safely reflows partially deduplicated pair layouts, and never leaves orphaned entrance sounds or camera moves when a visual proposal is rejected.
+
 ## [0.23.10.0] — 2026-08-08
 
 ### Added
@@ -26,6 +32,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - The editor preview and final Skia render now follow the same persisted reveal schedule, including matching keyboard-tick sound effects. Moving, trimming the start, splitting, undoing, redoing, saving, and reloading generated text keep that timing attached to the text instead of drifting on the timeline.
+
+## [0.23.9.1] — 2026-08-08
+
+### Fixed
+- **"Replace every Kriya with Kria" now changes every caption, not only the cues Nova could see.** Bulk caption replacement searches the complete local caption draft case-insensitively, works past prompt cue/character limits, applies as one undoable edit, and reports the exact number of changed matches and lines.
+- **Nova can no longer say a caption edit succeeded when nothing or only part of the request applied.** Editor chat receipts now come from the client's actual apply result, with a full-caption stale guard that rejects queued edits if any caption changed after Nova read the draft.
 
 ## [0.23.9.0] — 2026-08-07
 

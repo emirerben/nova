@@ -103,7 +103,7 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
         # assets_payload gains aspect + pixel dims.
         # 1.2.0: asset payload gains creator-authored user_context, which takes
         # semantic priority over Nova-generated description fields.
-        prompt_version="1.2.0",
+        prompt_version="1.3.0",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

@@ -75,6 +75,10 @@ import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
 import { downloadVideo } from "@/lib/download-video";
 import { sfxNeedsBake, sfxPersistDirty } from "@/lib/sfx-dirty";
+import {
+  removeOverlayEffectGroup,
+  type OverlayEffectState,
+} from "@/lib/overlay-effect-groups";
 import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
@@ -2718,11 +2722,29 @@ function FocusedResults({
     });
   }, []);
   const handleRemoveFailedCard = useCallback((cardId: string) => {
-    // Mirrors the timeline lane's remove path at the page level (the lane's
-    // handler lives in FocusedVariantControls, which only mounts with the
-    // Timeline tab open). The removal persists on the next Download bake,
-    // which always sends the CURRENT overlayCards list.
-    setOverlayCards((prev) => prev.filter((c) => c.id !== cardId));
+    if (!variant) return;
+    const next = removeOverlayEffectGroup(
+      { overlays: overlayCards, soundEffects: sfxPlacements, cameraEffects: [] },
+      cardId,
+    );
+    setOverlayCards(next.overlays);
+    setSfxPlacements(next.soundEffects);
+    // Failed cards live above PlanVariantEditor's timeline state, so they do
+    // not pass through its overlaysDirtyRef. Persist the desired empty/list
+    // state here; the server marks it render-dirty and cascades grouped camera
+    // effects as well. Without this, deleting the last failed card could leave
+    // the old overlay baked forever because Download saw a clean local state.
+    void setVariantMediaOverlays(itemId, variant.variant_id, next.overlays, {
+      render: false,
+    })
+      .then(() => refetch())
+      .catch((err) => {
+        onError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't remove that overlay. Try again.",
+        );
+      });
     setLocalPreviewUrls((prev) => {
       if (!prev[cardId]) return prev;
       URL.revokeObjectURL(prev[cardId]);
@@ -2736,7 +2758,7 @@ function FocusedResults({
       next.delete(cardId);
       return next;
     });
-  }, []);
+  }, [itemId, onError, overlayCards, refetch, sfxPlacements, variant]);
   const handleRequestEditCard = useCallback((cardId: string) => {
     // The popover lives in the timeline lanes — make sure they are mounted.
     setActiveTab("timeline");
@@ -3023,6 +3045,18 @@ function FocusedResults({
   // Plan 009 T4: failed cards still in the working set — derived as an
   // intersection so removing a card (tile Remove or lane) unblocks instantly.
   const failedOverlayCount = overlayCards.filter((c) => failedCardIds.has(c.id)).length;
+  // render=false autosave only updates desired metadata. Keep the overlay
+  // branch active after the last card is removed until a token-winning render
+  // clears this persisted dirty bit. The local-vs-persisted comparison closes
+  // the window before the render:false autosave/refetch lands (especially a
+  // deletion-to-zero, where card-count alone cannot express pending work).
+  const overlaysDifferFromPersisted =
+    JSON.stringify(overlayCards) !==
+    JSON.stringify(variant?.media_overlays ?? []);
+  const needsOverlayBake =
+    overlayCards.length > 0 ||
+    overlaysDifferFromPersisted ||
+    Boolean(variant?.media_overlays_render_dirty);
 
   const prepareExactExport = useCallback(async (action: "download" | "publish") => {
     if (!variant) return;
@@ -3046,7 +3080,7 @@ function FocusedResults({
     // composing BOTH lanes in one pass, and stays "rendering" until the SFX
     // remix finishes (two-pass observability). Must run before the SFX-only
     // branch so a co-edit isn't split across two Download clicks.
-    if (overlayCards.length > 0) {
+    if (needsOverlayBake) {
       // Plan 009 T4: a card whose media failed to load would bake a broken /
       // blank visual — block the overlay-bake path until it's refreshed or
       // removed (inline copy under the button explains why).
@@ -3105,7 +3139,7 @@ function FocusedResults({
         );
       else setPublishOpen(true);
     }
-  }, [variant, editSession, instantEligible, sfxPlacements, needsSfxBake, sfxIsPersistDirty, overlayCards, failedOverlayCount, itemId, downloadName, markVariantRendering, onError]);
+  }, [variant, editSession, instantEligible, sfxPlacements, needsSfxBake, sfxIsPersistDirty, overlayCards, needsOverlayBake, failedOverlayCount, itemId, downloadName, markVariantRendering, onError]);
 
   const handleDownload = useCallback(() => {
     void prepareExactExport("download");
@@ -3581,7 +3615,16 @@ function FocusedVariantControls({
       Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
       return {};
     });
+    const next = overlayCards.reduce<OverlayEffectState>(
+      (state, overlay) => removeOverlayEffectGroup(state, overlay.id),
+      {
+        overlays: overlayCards,
+        soundEffects: sfxPlacements,
+        cameraEffects: [],
+      } satisfies OverlayEffectState,
+    );
     setOverlayCards([]);
+    setSfxPlacements(next.soundEffects);
     try {
       await setVariantMediaOverlays(itemId, variant.variant_id, [], { render: false });
       refetch();
@@ -3604,7 +3647,12 @@ function FocusedVariantControls({
 
   function handleRemoveCard(id: string) {
     overlaysDirtyRef.current = true;
-    setOverlayCards((prev) => prev.filter((c) => c.id !== id));
+    const next = removeOverlayEffectGroup(
+      { overlays: overlayCards, soundEffects: sfxPlacements, cameraEffects: [] },
+      id,
+    );
+    setOverlayCards(next.overlays);
+    setSfxPlacements(next.soundEffects);
     setLocalPreviewUrls((prev) => {
       if (!prev[id]) return prev;
       URL.revokeObjectURL(prev[id]);

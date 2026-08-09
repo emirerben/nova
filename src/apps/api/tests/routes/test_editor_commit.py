@@ -1190,6 +1190,126 @@ def test_sfx_only_commit_persists_and_kicks_sfx_pass(monkeypatch):
     )
 
 
+def test_overlay_only_commit_cascades_explicit_generated_effect_group(monkeypatch):
+    _arm(monkeypatch)
+    generated_group = "smart-event-1"
+    job = _job(
+        media_overlays=[
+            {
+                "id": "overlay-generated",
+                "kind": "image",
+                "src_gcs_path": "users/u123/plan/item/overlays/card.png",
+                "position": "center",
+                "start_s": 1.0,
+                "end_s": 3.0,
+                "z": 0,
+                "source": "smart_captions",
+                "effect_group_id": generated_group,
+            },
+            {
+                "id": "overlay-manual",
+                "kind": "image",
+                "src_gcs_path": "users/u123/plan/item/overlays/manual.png",
+                "position": "center",
+                "start_s": 4.0,
+                "end_s": 6.0,
+                "z": 1,
+            },
+        ],
+        sound_effects=[
+            {
+                "id": "sfx-linked",
+                "src_gcs_path": "users/u123/plan/item/sfx/pop.mp3",
+                "at_s": 1.0,
+                "gain": 1.0,
+                "source": "smart_captions",
+                "effect_group_id": generated_group,
+            },
+            {
+                "id": "sfx-manual",
+                "src_gcs_path": "users/u123/plan/item/sfx/manual.mp3",
+                "at_s": 5.0,
+                "gain": 1.0,
+                "source": "manual",
+                "effect_group_id": generated_group,
+            },
+            {
+                "id": "sfx-imported",
+                "src_gcs_path": "users/u123/plan/item/sfx/imported.mp3",
+                "at_s": 5.5,
+                "gain": 1.0,
+                "source": "uploaded",
+                "effect_group_id": generated_group,
+            },
+        ],
+        camera_effects=[
+            {
+                "id": "camera-linked",
+                "token": "semantic_crop_pulse",
+                "start_s": 1.0,
+                "end_s": 2.0,
+                "intensity": 0.04,
+                "easing": "sine_pulse",
+                "source": "smart_captions",
+                "effect_group_id": generated_group,
+            }
+        ],
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=[job.assembly_plan["variants"][0]["media_overlays"][1]]),
+        user_id="u123",
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert [item["id"] for item in variant["media_overlays"]] == ["overlay-manual"]
+    assert [item["id"] for item in variant["sound_effects"]] == ["sfx-manual", "sfx-imported"]
+    assert variant["camera_effects"] is None
+
+
+def test_overlay_cascade_does_not_materialize_absent_effect_lanes(monkeypatch):
+    _arm(monkeypatch)
+    generated_group = "suggestion-1"
+    job = _job(
+        media_overlays=[
+            {
+                "id": "overlay-generated",
+                "kind": "image",
+                "src_gcs_path": "users/u123/plan/item/overlays/card.png",
+                "position": "center",
+                "start_s": 1.0,
+                "end_s": 3.0,
+                "z": 0,
+                "source": "overlay_suggestion",
+                "effect_group_id": generated_group,
+            }
+        ],
+        sound_effects=[
+            {
+                "id": "sfx-linked",
+                "src_gcs_path": "users/u123/plan/item/sfx/pop.mp3",
+                "at_s": 1.0,
+                "gain": 1.0,
+                "source": "overlay_suggestion",
+                "effect_group_id": generated_group,
+            }
+        ],
+    )
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=[]),
+        user_id="u123",
+    )
+
+    assert prep["sections"]["sound_effects"] is True
+    assert prep["sections"]["camera_effects"] is False
+    assert "base_video_stale" not in job.assembly_plan["variants"][0]
+
+
 def test_background_music_only_commit_persists_and_kicks_audio_pass(monkeypatch):
     _arm(monkeypatch)
     job = _job(music_track_id=None, mix=None)

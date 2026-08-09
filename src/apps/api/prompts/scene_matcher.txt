@@ -42,9 +42,10 @@ Return STRICT JSON (no markdown fences, no commentary):
 4. Each match must be defensible from (asset metadata + world knowledge +
    the spoken word). If you are guessing, omit it — a missing visual is
    fine, a wrong visual destroys trust.
-5. If the same thing is named twice far apart, you may match the same asset
-   at both moments (maximum 2 anchors per asset). Prefer the FIRST clear
-   mention when limiting.
+5. Use each asset AT MOST ONCE in the whole video. If the same thing is named
+   more than once, choose the single strongest contextual moment: direct/high
+   confidence beats inferred/medium confidence; on a tie choose the earliest
+   clear mention. Repeating the same visual weakens the edit.
 6. confidence:
    - "high": the word names the asset directly (name, country, brand).
    - "medium": strong contextual inference (nickname, epithet, "the dictator"

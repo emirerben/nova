@@ -12,6 +12,7 @@ import type {
   VisualBlock,
 } from "@/lib/plan-api";
 import { normalizeCameraEffect } from "@/lib/camera-effects";
+import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
 import type { AcceptedSuggestionRef } from "@/lib/editor-commit";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import {
@@ -667,6 +668,56 @@ export function applyCopilotOps(
   let nextTitle: string | undefined;
   let captionMetaPatch: CaptionMetaPatch | undefined;
   let openTool: ApplyCopilotOpsResult["openTool"];
+  // Director suggestions and Copilot edits share this applier. Only explicit
+  // model-authored bundle IDs establish ownership; response co-membership is
+  // not linkage because independent requests may legitimately add one overlay
+  // and unrelated effects together.
+  const validBundleOps: CopilotOp[] = [];
+  for (const raw of rawOps) {
+    const result = validateCopilotOp(raw, ctx.snapshot);
+    if (result.ok) validBundleOps.push(result.op);
+  }
+  const bundleEffectGroupIds = new Map<string, string>();
+  const bundleIds = new Set(
+    validBundleOps.flatMap((op) =>
+      "effect_bundle_id" in op && op.effect_bundle_id ? [op.effect_bundle_id] : [],
+    ),
+  );
+  for (const bundleId of Array.from(bundleIds)) {
+    const members = validBundleOps.filter(
+      (op) => "effect_bundle_id" in op && op.effect_bundle_id === bundleId,
+    );
+    const allMembersCanApply = members.every((op) => {
+      const family = copilotOpFamily(op);
+      if (family && !allowedFamilies.has(family)) return false;
+      if (op.op === "add_overlay") {
+        const snapAsset = ctx.snapshot.overlays?.asset_pool.some(
+          (asset) => asset.id === op.asset_id,
+        );
+        const currentAsset = ctx.poolAssets?.some(
+          (asset) => asset.id === op.asset_id && asset.status === "ready",
+        );
+        return Boolean(snapAsset && currentAsset);
+      }
+      if (op.op === "add_sfx") {
+        const snapEffect = ctx.snapshot.sfx?.catalog.some(
+          (effect) => effect.id === op.effect_id,
+        );
+        const currentEffect = (ctx.sfxCatalog ?? ctx.snapshot.sfx?.catalog ?? []).some(
+          (effect) => effect.id === op.effect_id,
+        );
+        return Boolean(snapEffect && currentEffect);
+      }
+      return op.op === "add_camera_effect";
+    });
+    if (
+      allMembersCanApply &&
+      members.filter((op) => op.op === "add_overlay").length === 1 &&
+      members.some((op) => op.op === "add_sfx" || op.op === "add_camera_effect")
+    ) {
+      bundleEffectGroupIds.set(bundleId, `ai-bundle-${defaultOverlayId()}`);
+    }
+  }
 
   function currentSlots(): DraftSlot[] {
     return nextSlots ?? workingSlots;
@@ -706,6 +757,10 @@ export function applyCopilotOps(
     }
 
     const op = validation.op;
+    const bundleEffectGroupId =
+      "effect_bundle_id" in op && op.effect_bundle_id
+        ? bundleEffectGroupIds.get(op.effect_bundle_id)
+        : undefined;
     const family = copilotOpFamily(op);
     if (family && !allowedFamilies.has(family)) {
       rejected.push(reject(op.op, labelForOp(op), "capability_disabled", `${family} edits are disabled for this variant`));
@@ -965,6 +1020,9 @@ export function applyCopilotOps(
         gain: op.gain,
         duration_s: duration,
         label,
+        ...(bundleEffectGroupId
+          ? { source: "edit_ai", effect_group_id: bundleEffectGroupId }
+          : {}),
       };
       workingSfx = [...currentSfx(), placement];
       nextSfx = workingSfx;
@@ -1052,8 +1110,24 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "overlay changed after Nova read it"));
         continue;
       }
-      workingOverlays = overlays.filter((overlay) => overlay.id !== card.id);
+      const removed = removeOverlayEffectGroup(
+        {
+          overlays,
+          soundEffects: currentSfx(),
+          cameraEffects: workingCameraEffects,
+        },
+        card.id,
+      );
+      const previousSfxCount = currentSfx().length;
+      const previousCameraCount = workingCameraEffects.length;
+      workingOverlays = removed.overlays;
+      workingSfx = removed.soundEffects;
+      workingCameraEffects = removed.cameraEffects;
       nextOverlays = workingOverlays;
+      if (removed.soundEffects.length !== previousSfxCount) nextSfx = workingSfx;
+      if (removed.cameraEffects.length !== previousCameraCount) {
+        nextCameraEffects = workingCameraEffects;
+      }
       applied.push({ label: "Removed overlay", from: "present", to: "removed" });
     } else if (op.op === "add_overlay") {
       const snapAsset = ctx.snapshot.overlays?.asset_pool.find((asset) => asset.id === op.asset_id) ?? null;
@@ -1078,6 +1152,9 @@ export function applyCopilotOps(
         start_s: addOverlaySpan.startS ?? op.start_s,
         end_s: addOverlaySpan.endS ?? op.end_s,
         z: overlays.length,
+        ...(bundleEffectGroupId
+          ? { source: "edit_ai", effect_group_id: bundleEffectGroupId }
+          : {}),
       };
       workingOverlays = [...overlays, card];
       nextOverlays = workingOverlays;
@@ -1090,14 +1167,29 @@ export function applyCopilotOps(
         continue;
       }
       const overlays = currentOverlays();
-      workingOverlays = [...overlays, { ...suggestion.overlay }];
+      const effectGroupId = suggestion.overlay.effect_group_id ?? suggestion.id;
+      workingOverlays = [
+        ...overlays,
+        {
+          ...suggestion.overlay,
+          source: suggestion.overlay.source ?? "overlay_suggestion",
+          effect_group_id: effectGroupId,
+        },
+      ];
       nextOverlays = workingOverlays;
       acceptedSuggestionRefs = acceptedSuggestionRefs ?? [];
       if (!acceptedSuggestionRefs.some((ref) => ref.id === suggestion.id)) {
         acceptedSuggestionRefs.push({ id: suggestion.id, overlayId: suggestion.overlay.id });
       }
       if (suggestion.sfx && allowedFamilies.has("sfx")) {
-        workingSfx = [...currentSfx(), { ...suggestion.sfx }];
+        workingSfx = [
+          ...currentSfx(),
+          {
+            ...suggestion.sfx,
+            source: suggestion.sfx.source ?? "overlay_suggestion",
+            effect_group_id: suggestion.sfx.effect_group_id ?? effectGroupId,
+          },
+        ];
         nextSfx = workingSfx;
       }
       applied.push({ label: "Accepted overlay suggestion", from: "pending", to: snapSuggestion.reason || "accepted" });
@@ -1363,7 +1455,8 @@ export function applyCopilotOps(
         end_s: op.end_s,
         intensity: op.intensity ?? 0.04,
         easing: "sine_pulse",
-        source: "user",
+        source: bundleEffectGroupId ? "edit_ai" : "user",
+        ...(bundleEffectGroupId ? { effect_group_id: bundleEffectGroupId } : {}),
       });
       workingCameraEffects = [...workingCameraEffects, effect];
       nextCameraEffects = workingCameraEffects;
