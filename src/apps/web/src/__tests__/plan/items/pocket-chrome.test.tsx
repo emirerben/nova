@@ -324,6 +324,21 @@ describe("ContextStrip", () => {
     expect(pills[0].className).toContain("bg-[#0c0c0e]");
   });
 
+  it("carousel selection: Edit (primary) / Delete", () => {
+    const onEdit = jest.fn();
+    const onDelete = jest.fn();
+    renderStrip({ type: "carousel", onEdit, onDelete });
+
+    const pills = screen.getAllByRole("button");
+    expect(pills.map((pill) => pill.textContent)).toEqual(["Edit", "Delete"]);
+    expect(pills[0].className).toContain("bg-[#0c0c0e]");
+
+    fireEvent.click(pills[0]);
+    fireEvent.click(pills[1]);
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+
   it("clip selection: Adjust (primary) / Split / Mute / Delete, Unmute when muted", () => {
     const onToggleMute = jest.fn();
     const clip = {

@@ -5,9 +5,9 @@
  * form (collect fields locally, submit on click, no undo) into an inspector:
  * every control patches the FULL config immediately via `onChange` — no
  * submit button, no confirm dialog. Gating (capable/reason) is exercised
- * through ToolDrawer's entry-point button, not this file — CarouselPanel
- * itself is only ever mounted once the caller has already decided the
- * feature is usable. This suite covers: effect/mode/position/duration/
+ * through ToolDrawer's entry-point button, not this file — CarouselPanel is
+ * mounted by the shared right inspector only after the caller has decided
+ * the feature is usable. This suite covers: effect/mode/position/duration/
  * transition controls firing an immediate onChange with the merged config,
  * prefill from an existing `current` moment, focus-tile selection (including
  * "Let Nova pick"), Remove (one click, no confirm), the legacy "stills"

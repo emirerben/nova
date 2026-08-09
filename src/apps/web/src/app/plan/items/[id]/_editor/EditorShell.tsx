@@ -951,10 +951,6 @@ export default function EditorShell({
     variant?.carousel_moment ?? null,
   );
   const [carouselMomentDirty, setCarouselMomentDirty] = useState(false);
-  // Bumped to force the ToolDrawer's carousel panel open from OUTSIDE the
-  // "Add a block" grid (the timeline chip's click handler) — see
-  // ToolDrawer's carouselOpenRequestKey prop.
-  const [carouselOpenRequestKey, setCarouselOpenRequestKey] = useState(0);
   const musicHydratedVariantIdRef = useRef<string | null>(null);
   const [overlayUploading, setOverlayUploading] = useState(false);
   const [poolAssets, setPoolAssets] = useState<PoolAsset[]>([]);
@@ -2299,6 +2295,12 @@ export default function EditorShell({
         setInspectorTab("basic");
         const block = localMotionScenes.find((scene) => scene.id === id);
         if (block) seekPlaybackTo(block.start_frame / MOTION_FPS);
+        setActiveTool("visuals");
+        if (layoutMode === "light" && POCKET_UI) {
+          dispatchPocket({ type: "OPEN_INSPECTOR" });
+        }
+      } else if (kind === "carousel") {
+        setInspectorTab("basic");
         setActiveTool("visuals");
         if (layoutMode === "light" && POCKET_UI) {
           dispatchPocket({ type: "OPEN_INSPECTOR" });
@@ -4289,6 +4291,16 @@ export default function EditorShell({
     }),
     [carouselCapable, carouselReason, carouselMoment, carouselClips, stageCarouselMoment],
   );
+  const carouselInspectorControl = useMemo(
+    () => ({
+      ...carouselControl,
+      onRemove: () => {
+        carouselControl.onRemove();
+        clear();
+      },
+    }),
+    [carouselControl, clear],
+  );
 
   const copilot = useEditCopilot({
     itemId,
@@ -4356,6 +4368,9 @@ export default function EditorShell({
     } else if (selection.kind === "motion") {
       removeMotionScene(selection.id);
       clear();
+    } else if (selection.kind === "carousel") {
+      stageCarouselMoment(null);
+      clear();
     } else if (selection.kind === "camera") {
       deleteCameraEffect(selection.id);
     }
@@ -4370,6 +4385,7 @@ export default function EditorShell({
     removeOverlay,
     deleteVisualBlock,
     removeMotionScene,
+    stageCarouselMoment,
     deleteCameraEffect,
     state.bars,
   ]);
@@ -5264,7 +5280,7 @@ export default function EditorShell({
       : null,
     onSelectCarousel: () => {
       setActiveTool("visuals");
-      setCarouselOpenRequestKey((k) => k + 1);
+      selectElement("carousel", "carousel-block");
     },
     onSetCarouselPosition: (position) => {
       if (!carouselMoment) return;
@@ -5369,6 +5385,13 @@ export default function EditorShell({
               onDelete: deleteSelected,
             };
           }
+          if (selection?.kind === "carousel") {
+            return {
+              type: "carousel" as const,
+              onEdit: () => dispatchPocket({ type: "OPEN_INSPECTOR" }),
+              onDelete: deleteSelected,
+            };
+          }
           if (selection?.kind === "clip") {
             return {
               type: "clip" as const,
@@ -5437,6 +5460,8 @@ export default function EditorShell({
             ? "Edit sound"
             : selection?.kind === "camera"
               ? "Edit effect"
+              : selection?.kind === "carousel"
+                ? "Edit carousel"
               : selection?.kind === "motion"
                 ? "Edit block"
               : "Edit";
@@ -5822,7 +5847,8 @@ export default function EditorShell({
               onDeleteVisualBlock={deleteVisualBlock}
               onRetimeVisualBlock={retimeBlock}
               carousel={carouselControl}
-              carouselOpenRequestKey={carouselOpenRequestKey}
+              carouselSelected={selection?.kind === "carousel"}
+              onSelectCarousel={() => selectElement("carousel", "carousel-block")}
               layoutMode={layoutMode}
               copilot={{
                 messages: copilot.messages,
@@ -5897,10 +5923,11 @@ export default function EditorShell({
               onDeleteVisualBlock={deleteVisualBlock}
               onRetimeVisualBlock={retimeBlock}
               carousel={carouselControl}
-              carouselOpenRequestKey={carouselOpenRequestKey}
+              carouselSelected={selection?.kind === "carousel"}
+              onSelectCarousel={() => selectElement("carousel", "carousel-block")}
               layoutMode={layoutMode}
-	              onClose={() => setActiveTool(null)}
-	            />
+              onClose={() => setActiveTool(null)}
+            />
           </div>
         )}
         {layoutMode === "overlay" && activeTool === "nova" && (
@@ -5993,6 +6020,7 @@ export default function EditorShell({
           motionDurationS={previewDuration}
           motionAssets={poolAssets}
           cameraEffect={selectedCameraEffect}
+          carousel={carouselInspectorControl}
           tab={inspectorTab}
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
@@ -6341,7 +6369,8 @@ export default function EditorShell({
             onDeleteVisualBlock={deleteVisualBlock}
             onRetimeVisualBlock={retimeBlock}
             carousel={carouselControl}
-            carouselOpenRequestKey={carouselOpenRequestKey}
+            carouselSelected={selection?.kind === "carousel"}
+            onSelectCarousel={() => selectElement("carousel", "carousel-block")}
             layoutMode={layoutMode}
             onClose={() => dispatchPocket({ type: "CLOSE_SHEET" })}
           />
@@ -6371,6 +6400,7 @@ export default function EditorShell({
             motionDurationS={previewDuration}
             motionAssets={poolAssets}
             cameraEffect={selectedCameraEffect}
+            carousel={carouselInspectorControl}
             tab={inspectorTab}
             sampleWord={sampleWord}
             appliedPresetId={appliedPresetId}

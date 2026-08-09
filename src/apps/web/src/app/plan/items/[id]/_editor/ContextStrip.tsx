@@ -35,6 +35,11 @@ export type StripSelection =
       onDelete: () => void;
     }
   | {
+      type: "carousel";
+      onEdit: () => void;
+      onDelete: () => void;
+    }
+  | {
       type: "clip";
       onAdjust: () => void;
       onSplit: () => void;
@@ -82,6 +87,11 @@ function pillsForSelection(selection: StripSelection): Pill[] {
       return [
         { label: "Edit", onPress: selection.onEdit, primary: true },
         { label: "Timing", onPress: selection.onTiming },
+        { label: "Delete", onPress: selection.onDelete, destructive: true },
+      ];
+    case "carousel":
+      return [
+        { label: "Edit", onPress: selection.onEdit, primary: true },
         { label: "Delete", onPress: selection.onDelete, destructive: true },
       ];
     case "clip":

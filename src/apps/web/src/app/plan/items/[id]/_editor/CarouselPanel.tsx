@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * CarouselPanel — "carousel as a staged, undoable editor block" (Visuals drawer).
+ * CarouselPanel — controls for the staged, undoable Carousel block.
  *
  * Configures `carousel_moment` on the current variant: a full-screen
  * multi-clip carousel burned in at a position in the edit. Lane C
@@ -100,8 +100,8 @@ export default function CarouselPanel({
   onBack,
 }: {
   control: CarouselPanelControl;
-  /** Return to the "Add a block" grid. */
-  onBack: () => void;
+  /** Legacy/standalone host affordance. The editor inspector omits it. */
+  onBack?: () => void;
 }) {
   const { current, clips, onChange, onRemove } = control;
 
@@ -164,13 +164,15 @@ export default function CarouselPanel({
 
   return (
     <div className="space-y-5 px-5 pb-5">
-      <button
-        type="button"
-        onClick={onBack}
-        className="flex min-h-11 items-center gap-1 text-[12px] font-semibold text-[#3f3f46] hover:text-[#0c0c0e]"
-      >
-        <span aria-hidden>←</span> Add a block
-      </button>
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex min-h-11 items-center gap-1 text-[12px] font-semibold text-[#3f3f46] hover:text-[#0c0c0e]"
+        >
+          <span aria-hidden>←</span> Add a block
+        </button>
+      )}
 
       <section>
         <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Effect</p>
