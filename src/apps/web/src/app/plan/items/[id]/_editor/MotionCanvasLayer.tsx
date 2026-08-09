@@ -135,12 +135,19 @@ function loadCreatorFont(): Promise<Uint8Array> {
 export function CreatorBlockCatalogPreview({
   instance,
   assets,
+  onReady,
 }: {
   instance: MotionPresetInstanceV1;
   assets: PoolAsset[];
+  onReady?: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const onReadyRef = useRef(onReady);
   const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -183,6 +190,7 @@ export function CreatorBlockCatalogPreview({
         if (!surface) return;
         drawMotionFrame(kit, surface.getCanvas(), [instance], frame, 240, 150, resources ?? undefined);
         surface.flush();
+        onReadyRef.current?.();
       };
       if (reduced) {
         draw(creatorBlockPreviewFrame(

@@ -3848,6 +3848,26 @@ def test_editor_commit_accepts_legacy_hash_only_for_persisted_route_trace(monkey
     assert exc.value.status_code == 409
 
 
+def test_editor_commit_upgrades_previous_creator_runtime_hash(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH, PREVIOUS_MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job()
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[_motion_media_scene()],
+            motion_runtime_hash=PREVIOUS_MOTION_RUNTIME_HASH,
+        ),
+        visual_assets=_visual_assets(("a1", "a2")),
+    )
+
+    assert job.assembly_plan["variants"][0]["motion_runtime_hash"] == MOTION_RUNTIME_HASH
+
+
 def test_editor_commit_accepts_motion_and_landscape_atomically(monkeypatch):
     from app.config import settings
     from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
@@ -3978,6 +3998,21 @@ def test_editor_motion_capability_fails_closed_for_unsupported_persisted_runtime
     assert capabilities["motion_scenes_reason"] == "motion_runtime_mismatch"
     assert capabilities["motion_runtime_hash"] == MOTION_RUNTIME_HASH
     assert capabilities["motion_required_runtime_hash"] == "unsupported-runtime"
+
+
+def test_editor_motion_capability_accepts_previous_creator_runtime(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import PREVIOUS_MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    job = _job(
+        motion_scenes=[_motion_media_scene()],
+        motion_runtime_hash=PREVIOUS_MOTION_RUNTIME_HASH,
+    )
+    capabilities = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert capabilities["motion_scenes"] is True
+    assert capabilities["motion_scenes_reason"] is None
 
 
 def test_editor_motion_capability_supports_lyrics_captions_and_landscape_with_clean_base(

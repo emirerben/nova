@@ -1309,6 +1309,7 @@ export default function EditorShell({
     setMotionScenesDirty(true);
     select("motion", candidate.id);
     setActiveTool("visuals");
+    if (pocketActive) dispatchPocket({ type: "OPEN_INSPECTOR" });
   }, [
     capabilities?.motion_scenes,
     currentTime,
@@ -1316,6 +1317,7 @@ export default function EditorShell({
     localMotionScenes,
     motionRuntimeCompatible,
     poolAssets,
+    pocketActive,
     readOnly,
     select,
     duration,
@@ -1350,8 +1352,9 @@ export default function EditorShell({
       history.record();
       setLocalMotionScenes((current) => current.filter((scene) => scene.id !== id));
       setMotionScenesDirty(true);
+      if (selection?.kind === "motion" && selection.id === id) clear();
     },
-    [capabilities?.motion_scenes, history, readOnly],
+    [capabilities?.motion_scenes, clear, history, readOnly, selection],
   );
 
   const visibleTextBars = useMemo(() => {
@@ -1490,6 +1493,14 @@ export default function EditorShell({
         ? (localOverlays.find((o) => o.id === selection.id) ?? null)
         : null,
     [localOverlays, selection],
+  );
+
+  const selectedMotionScene = useMemo(
+    () =>
+      selection?.kind === "motion"
+        ? (localMotionScenes.find((scene) => scene.id === selection.id) ?? null)
+        : null,
+    [localMotionScenes, selection],
   );
 
   const selectedCameraEffect = useMemo(
@@ -2241,6 +2252,9 @@ export default function EditorShell({
         const block = localMotionScenes.find((scene) => scene.id === id);
         if (block) seekPlaybackTo(block.start_frame / MOTION_FPS);
         setActiveTool("visuals");
+        if (layoutMode === "light" && POCKET_UI) {
+          dispatchPocket({ type: "OPEN_INSPECTOR" });
+        }
       }
     },
     [activeTool, clip.state.grid, duration, layoutMode, localMotionScenes, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
@@ -5290,6 +5304,14 @@ export default function EditorShell({
               onDelete: deleteSelected,
             };
           }
+          if (selection?.kind === "motion") {
+            return {
+              type: "motion" as const,
+              onEdit: () => dispatchPocket({ type: "OPEN_INSPECTOR" }),
+              onTiming: () => dispatchPocket({ type: "OPEN_INSPECTOR" }),
+              onDelete: deleteSelected,
+            };
+          }
           if (selection?.kind === "clip") {
             return {
               type: "clip" as const,
@@ -5723,13 +5745,10 @@ export default function EditorShell({
               visualBlocks={localVisualBlocks}
               motionScenes={localMotionScenes}
               selectedMotionId={selection?.kind === "motion" ? selection.id : null}
-              motionDurationS={previewDuration}
               motionAvailable={capabilities?.motion_scenes === true}
               motionRuntimeCompatible={motionRuntimeCompatible}
               onAddMotion={addMotionScene}
-              onPatchMotion={patchMotionScene}
-              onRemoveMotion={removeMotionScene}
-              onSelectMotion={(id) => select("motion", id)}
+              onSelectMotion={(id) => selectElement("motion", id)}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
               visualUploading={pendingPoolUploads.length > 0}
@@ -5800,13 +5819,10 @@ export default function EditorShell({
               visualBlocks={localVisualBlocks}
               motionScenes={localMotionScenes}
               selectedMotionId={selection?.kind === "motion" ? selection.id : null}
-              motionDurationS={previewDuration}
               motionAvailable={capabilities?.motion_scenes === true}
               motionRuntimeCompatible={motionRuntimeCompatible}
               onAddMotion={addMotionScene}
-              onPatchMotion={patchMotionScene}
-              onRemoveMotion={removeMotionScene}
-              onSelectMotion={(id) => select("motion", id)}
+              onSelectMotion={(id) => selectElement("motion", id)}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
               visualUploading={pendingPoolUploads.length > 0}
@@ -5910,6 +5926,9 @@ export default function EditorShell({
           clipTiming={selectedClip}
           sfx={selectedSfx}
           overlay={selectedOverlay}
+          motionScene={selectedMotionScene}
+          motionDurationS={previewDuration}
+          motionAssets={poolAssets}
           cameraEffect={selectedCameraEffect}
           tab={inspectorTab}
           sampleWord={sampleWord}
@@ -5945,6 +5964,8 @@ export default function EditorShell({
           onPreviewOverlay={previewOverlayPatch}
           onRecordOverlay={recordTimelineDrag}
           onDeleteOverlay={removeOverlay}
+          onPatchMotion={patchMotionScene}
+          onRemoveMotion={removeMotionScene}
           onPatchCameraEffect={patchCameraEffect}
           onDeleteCameraEffect={deleteCameraEffect}
           mixLevel={mixLevel}
@@ -6239,13 +6260,10 @@ export default function EditorShell({
             visualBlocks={localVisualBlocks}
             motionScenes={localMotionScenes}
             selectedMotionId={selection?.kind === "motion" ? selection.id : null}
-            motionDurationS={previewDuration}
             motionAvailable={capabilities?.motion_scenes === true}
             motionRuntimeCompatible={motionRuntimeCompatible}
             onAddMotion={addMotionScene}
-            onPatchMotion={patchMotionScene}
-            onRemoveMotion={removeMotionScene}
-            onSelectMotion={(id) => select("motion", id)}
+            onSelectMotion={(id) => selectElement("motion", id)}
             visualAssets={poolAssets}
             visualTextElements={state.bars}
             visualUploading={pendingPoolUploads.length > 0}
@@ -6285,6 +6303,9 @@ export default function EditorShell({
             clipTiming={selectedClip}
             sfx={selectedSfx}
             overlay={selectedOverlay}
+            motionScene={selectedMotionScene}
+            motionDurationS={previewDuration}
+            motionAssets={poolAssets}
             cameraEffect={selectedCameraEffect}
             tab={inspectorTab}
             sampleWord={sampleWord}
@@ -6319,6 +6340,8 @@ export default function EditorShell({
             onPreviewOverlay={previewOverlayPatch}
             onRecordOverlay={recordTimelineDrag}
             onDeleteOverlay={removeOverlay}
+            onPatchMotion={patchMotionScene}
+            onRemoveMotion={removeMotionScene}
             onPatchCameraEffect={patchCameraEffect}
             onDeleteCameraEffect={deleteCameraEffect}
             mixLevel={mixLevel}

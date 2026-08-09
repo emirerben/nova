@@ -1,0 +1,25 @@
+{
+  "width": 540,
+  "height": 960,
+  "frame": 37,
+  "runtime_hash": "motion-v3:ck0.40.0:b2556106:2abfa191:creator-blocks-v2",
+  "instances": [
+    {
+      "id": "wild-type-smoke",
+      "preset_id": "kinetic_word",
+      "preset_version": 1,
+      "start_frame": 0,
+      "end_frame_exclusive": 75,
+      "palette": {
+        "primary": "#0C0C0E",
+        "accent": "#C7FF3D"
+      },
+      "intensity": 0.72,
+      "params": {
+        "text": "MAKE IT WILD"
+      }
+    }
+  ],
+  "output_path": "/tmp/nova-motion-creator-text.png",
+  "font_path": "/app/assets/fonts/Inter-Bold.ttf"
+}

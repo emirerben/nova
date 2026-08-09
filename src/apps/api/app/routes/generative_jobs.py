@@ -4121,6 +4121,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     from app.pipeline.motion_scene import (  # noqa: PLC0415
         LEGACY_MOTION_RUNTIME_HASH,
         MOTION_RUNTIME_HASH,
+        PREVIOUS_MOTION_RUNTIME_HASH,
     )
 
     # Plan 010: caption archetypes get the manual SFX/overlay lanes — the caption
@@ -4156,7 +4157,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         legacy_route_only = persisted_motion_hash == LEGACY_MOTION_RUNTIME_HASH and all(
             scene.get("preset_id") == "route_trace" for scene in persisted_motion_scenes
         )
-        if persisted_motion_hash != MOTION_RUNTIME_HASH and not legacy_route_only:
+        compatible_hash = persisted_motion_hash in {
+            MOTION_RUNTIME_HASH,
+            PREVIOUS_MOTION_RUNTIME_HASH,
+        }
+        if not compatible_hash and not legacy_route_only:
             motion_scenes_reason = "motion_runtime_mismatch"
     # AI overlay suggestions (plans 005-009): mirrors the suggest-overlays route's
     # eligibility EXCEPT the ready-asset count — that's a DB query and this map is
@@ -5457,6 +5462,7 @@ def prepare_editor_commit(
             LEGACY_MOTION_RUNTIME_HASH,
             MOTION_FPS,
             MOTION_RUNTIME_HASH,
+            PREVIOUS_MOTION_RUNTIME_HASH,
             validate_motion_instances,
         )
 
@@ -5465,7 +5471,11 @@ def prepare_editor_commit(
         legacy_route_only = payload.motion_runtime_hash == LEGACY_MOTION_RUNTIME_HASH and all(
             scene.get("preset_id") == "route_trace" for scene in payload.motion_scenes
         )
-        if payload.motion_runtime_hash != MOTION_RUNTIME_HASH and not legacy_route_only:
+        compatible_hash = payload.motion_runtime_hash in {
+            MOTION_RUNTIME_HASH,
+            PREVIOUS_MOTION_RUNTIME_HASH,
+        }
+        if not compatible_hash and not legacy_route_only:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "motion_runtime_mismatch"},

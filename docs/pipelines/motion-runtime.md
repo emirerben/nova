@@ -34,16 +34,19 @@ base and reapply motion before their text layer.
 - `MOTION_RUNTIME_HASH` binds the evaluator, preset version, CanvasKit version,
   and CanvasKit payload hashes. The editor sends it with every dirty motion
   section. The API rejects a mismatched runtime before changing variant state.
-  The previous hash is accepted only when loading an unedited, persisted
-  `route_trace` v1 scene; the next save upgrades it to the current hash.
+  The legacy v1 hash is accepted only for persisted `route_trace` scenes. The
+  immediately previous Creator Block runtime is also accepted so a visual fix
+  does not strand saved edits; it is rendered with the current runtime and the
+  next save upgrades its hash. Older or unknown hashes fail closed.
 - Browser and worker parity covers the RGBA motion layer for an identical
   output size, integer frame, scene list, and runtime hash. Browser video
   decoding and the final H.264 encode are outside the byte-identical contract.
 
 The Creator Block catalog contains Wild Type, Signal Stack, Flow Field, Cloud
-Break, Offer Flip, Card Stack, Film Strip, and Donut Type. Adding or changing a
-preset requires a new immutable preset version, shared runtime hash change,
-cross-runtime golden fixtures, and a Docker offline-render smoke test.
+Break, Offer Flip, Card Stack, Film Strip, and Donut Type. A contract or timing
+change requires a new immutable preset version. Any renderer change requires a
+shared runtime hash change, cross-runtime golden fixtures, and a Docker
+offline-render smoke test.
 
 ## Runtime paths
 
@@ -94,3 +97,28 @@ The golden test renders entrance, hold, and exit frames for every Creator Block
 in portrait and landscape through Node CanvasKit and Deno CanvasKit, then pins
 the aggregate PNG SHA-256. Media presets use fixed image fixtures. CI repeats
 the Deno render inside the production image with network access disabled.
+
+Pixel hashes are parity/change detectors, not design approval. The same suite
+therefore applies independent visual-quality invariants: maximum catalog copy
+must stay inside an aspect-relative safe frame in both orientations, Signal
+Stack rows must retain visible inter-row space, and Flow Field must render the
+full headline rather than only clipped scanlines. Editor tests separately pin
+panel ownership: the left Visuals drawer owns discovery and insertion; the
+right inspector (or pocket inspector sheet) owns the selected block's content,
+motion, timing, palette, asset ordering, and removal.
+
+For a human review sheet, keep the same tested frames and write their PNGs:
+
+```bash
+cd src/apps/web
+CREATOR_BLOCK_AUDIT_DIR=/tmp/creator-block-audit \
+  npm test -- --runInBand src/__tests__/lib/motion-runtime.test.ts \
+  -t "pins all eight"
+```
+
+Review the middle frame for all eight blocks in both orientations before
+updating the aggregate hash. A hash update without the semantic quality tests
+and this visual review is not sufficient approval. Docker CI additionally
+renders and pins a real text Creator Block with the production font bundle, so
+the worker smoke exercises glyph measurement and fitting rather than only the
+font-free Route Trace path.
