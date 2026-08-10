@@ -22,6 +22,7 @@ export default defineConfig({
   projects: [
     {
       name: "iphone13",
+      testMatch: /mobile-.*\.spec\.ts/,
       use: {
         ...mobileChromium,
         viewport: { width: 375, height: 812 },
@@ -31,6 +32,7 @@ export default defineConfig({
     },
     {
       name: "iphone14",
+      testMatch: /mobile-.*\.spec\.ts/,
       use: {
         ...mobileChromium,
         viewport: { width: 390, height: 844 },
@@ -40,11 +42,20 @@ export default defineConfig({
     },
     {
       name: "iphone15max",
+      testMatch: /mobile-.*\.spec\.ts/,
       use: {
         ...mobileChromium,
         viewport: { width: 430, height: 932 },
         isMobile: true,
         hasTouch: true,
+      },
+    },
+    {
+      name: "desktop-editor",
+      testMatch: /editor-timeline\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1440, height: 900 },
       },
     },
   ],

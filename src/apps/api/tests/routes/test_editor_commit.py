@@ -672,6 +672,137 @@ def test_carousel_moment_duration_clamped_not_rejected(monkeypatch):
     assert job.assembly_plan["variants"][0]["carousel_moment"]["duration_s"] == 15.0
 
 
+def test_carousel_manual_timing_partial_merge_and_validation(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    job = _job(carousel_moment={"position": "middle", "effect": "scale_sweep"})
+    request = gj.CarouselMomentEditRequest(
+        sequence=[{"clip_index": 1, "hold_s": 1.2}, {"clip_index": 0, "hold_s": 0.8}],
+        move_duration_s=0.5,
+        zoom_duration_s=0.4,
+        transition_in="none",
+        transition_out="crossfade",
+        transition_out_duration_s=0.6,
+        timing_model="ripple_v1",
+    )
+
+    gj.prepare_editor_commit(job, "song_text", _commit_req(carousel_moment=request))
+    moment = job.assembly_plan["variants"][0]["carousel_moment"]
+    assert moment["position"] == "middle"
+    assert [item["clip_index"] for item in moment["sequence"]] == [1, 0]
+    assert moment["transition_in"] == "none"
+    assert moment["transition_out_duration_s"] == 0.6
+    assert moment["duration_s"] == 4.6
+
+
+def test_carousel_manual_timing_rejects_phases_that_cannot_fit_block(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            _job(),
+            "song_text",
+            _commit_req(
+                carousel_moment=gj.CarouselMomentEditRequest(
+                    mode="focus",
+                    sequence=[
+                        {"clip_index": 0, "hold_s": 5.0},
+                        {"clip_index": 1, "hold_s": 5.0},
+                    ],
+                    move_duration_s=4.0,
+                    zoom_duration_s=2.0,
+                    timing_model="ripple_v1",
+                )
+            ),
+        )
+    assert exc.value.status_code == 422
+    assert "phases" in str(exc.value.detail)
+
+
+def test_carousel_request_forbids_unknown_fields_and_non_finite_phases():
+    with pytest.raises(ValidationError):
+        gj.CarouselMomentEditRequest.model_validate(
+            {"timing_model": "ripple_v1", "unknown_phase": 0.4}
+        )
+    with pytest.raises(ValidationError):
+        gj.CarouselMomentEditRequest(move_duration_s=float("nan"))
+
+
+def test_carousel_ripple_merge_normalizes_legacy_boundaries_with_new_field_precedence():
+    from app.tasks.generative_build import _merge_carousel_moment_override
+
+    merged = _merge_carousel_moment_override(
+        {"transition": "crossfade"},
+        {
+            "timing_model": "ripple_v1",
+            "transition_in": "none",
+            "transition_out_duration_s": 0.7,
+        },
+    )
+
+    assert merged is not None
+    assert merged["transition_in"] == "none"
+    assert merged["transition_in_duration_s"] == 0.4
+    assert merged["transition_out"] == "crossfade"
+    assert merged["transition_out_duration_s"] == 0.7
+
+
+def test_carousel_sequence_validates_sparse_active_source_identities(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    slots = _ai_slots("")
+    slots[0]["clip_index"] = 2
+    slots[1]["clip_index"] = 5
+    job = _job(ai_timeline={"beat_grid": list(GRID), "slots": slots})
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            carousel_moment=gj.CarouselMomentEditRequest(
+                sequence=[
+                    {"clip_index": 5, "hold_s": 0.8},
+                    {"clip_index": 2, "hold_s": 0.7},
+                ],
+                timing_model="ripple_v1",
+            )
+        ),
+    )
+
+    assert [
+        item["clip_index"]
+        for item in job.assembly_plan["variants"][0]["carousel_moment"]["sequence"]
+    ] == [5, 2]
+
+
+@pytest.mark.parametrize(
+    "sequence",
+    [
+        [{"clip_index": 0, "hold_s": 1.0}, {"clip_index": 0, "hold_s": 1.0}],
+        [{"clip_index": 99, "hold_s": 1.0}],
+        [{"clip_index": 0, "hold_s": 0.1}],
+    ],
+)
+def test_carousel_manual_timing_rejects_invalid_sequence(monkeypatch, sequence):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "carousel_effects_enabled", True, raising=False)
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            _job(),
+            "song_text",
+            _commit_req(carousel_moment=gj.CarouselMomentEditRequest(sequence=sequence)),
+        )
+    assert exc.value.status_code == 422
+
+
 def test_carousel_moment_invalid_position_422_nothing_persisted(monkeypatch):
     _arm(monkeypatch)
     from app.config import settings

@@ -588,6 +588,16 @@ class CarouselMomentEditRequest(BaseModel):
     focus_clip_index: int | None = None
     duration_s: float | None = None  # clamped to [2.0, 15.0] in dispatch, not rejected
     transition: str | None = None  # "crossfade" | "none"
+    sequence: list[dict[str, Any]] | None = None
+    move_duration_s: float | None = None
+    zoom_duration_s: float | None = None
+    transition_in: str | None = None
+    transition_in_duration_s: float | None = None
+    transition_out: str | None = None
+    transition_out_duration_s: float | None = None
+    timing_model: str | None = None
+
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
 
 
 class EditVariantRequest(BaseModel):
@@ -3857,6 +3867,25 @@ def _is_synthetic_carousel_slot(slot: dict) -> bool:
     return isinstance(path, str) and path.startswith("/")
 
 
+def _variant_carousel_clip_indices(variant: dict) -> list[int]:
+    """Distinct active source identities in render-card order (max five)."""
+    ai_slots, user_slots, _beat_grid = _timeline_parts(variant)
+    effective = user_slots if user_slots else ai_slots
+    ordered: list[int] = []
+    for slot in effective:
+        index = slot.get("clip_index")
+        if (
+            isinstance(index, int)
+            and not isinstance(index, bool)
+            and not _is_synthetic_carousel_slot(slot)
+            and index not in ordered
+        ):
+            ordered.append(index)
+        if len(ordered) == 5:
+            break
+    return ordered
+
+
 def _variant_clip_count(variant: dict) -> int:
     """Best-effort count of distinct source clips a variant's montage uses.
 
@@ -3877,14 +3906,7 @@ def _variant_clip_count(variant: dict) -> int:
     creeps up by one on every render (4 real clips -> 5 counted), corrupting
     `focus_clip_index` bounds validation on the next edit.
     """
-    ai_slots, user_slots, _beat_grid = _timeline_parts(variant)
-    effective = user_slots if user_slots else ai_slots
-    indices = {
-        s.get("clip_index")
-        for s in effective
-        if isinstance(s.get("clip_index"), int) and not _is_synthetic_carousel_slot(s)
-    }
-    return len(indices)
+    return len(_variant_carousel_clip_indices(variant))
 
 
 _MUSIC_WINDOW_VARIANTS = frozenset({"song_text", "song_lyrics"})
@@ -4207,6 +4229,30 @@ _CAROUSEL_EFFECTS = frozenset({"scale_sweep", "cover_flow", "cards_stack", "flip
 _CAROUSEL_TRANSITIONS = frozenset({"crossfade", "none"})
 _CAROUSEL_DURATION_MIN_S = 2.0
 _CAROUSEL_DURATION_MAX_S = 15.0
+_CAROUSEL_HOLD_RANGE_S = (0.5, 5.0)
+_CAROUSEL_MOVE_RANGE_S = (0.2, 4.0)
+_CAROUSEL_ZOOM_RANGE_S = (0.2, 2.0)
+_CAROUSEL_BOUNDARY_RANGE_S = (0.1, 1.0)
+
+
+def _manual_carousel_duration_s(moment: dict, active_indices: list[int]) -> float | None:
+    sequence = moment.get("sequence")
+    if moment.get("timing_model") != "ripple_v1" or not isinstance(sequence, list) or not sequence:
+        return None
+    previous = active_indices[0] if active_indices else sequence[0].get("clip_index")
+    moves = 0
+    holds = 0.0
+    for item in sequence:
+        clip_index = item.get("clip_index")
+        if clip_index != previous:
+            moves += 1
+        previous = clip_index
+        holds += float(item.get("hold_s") or 0.0)
+    move_s = float(moment.get("move_duration_s") or 0.6)
+    zoom_s = 0.0
+    if moment.get("mode") != "rolling":
+        zoom_s = len(sequence) * float(moment.get("zoom_duration_s") or 0.6) * 2
+    return round(holds + moves * move_s + zoom_s, 1)
 
 
 def _carousel_capability_reason(variant: dict) -> str | None:
@@ -4287,13 +4333,13 @@ def _validate_carousel_moment_patch(raw: dict, variant: dict) -> dict:
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="`carousel_moment.focus_clip_index` must be an integer.",
                 )
-            clip_count = _variant_clip_count(variant)
-            if not (0 <= focus_idx < clip_count):
+            available_indices = _variant_carousel_clip_indices(variant)
+            if focus_idx not in available_indices:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=(
-                        "`carousel_moment.focus_clip_index` must be between 0 and "
-                        f"{clip_count - 1}."
+                        "`carousel_moment.focus_clip_index` must identify an active Carousel "
+                        f"video: {available_indices}."
                     ),
                 )
         cleaned_moment["focus_clip_index"] = focus_idx
@@ -4318,6 +4364,122 @@ def _validate_carousel_moment_patch(raw: dict, variant: dict) -> dict:
                 ),
             )
         cleaned_moment["transition"] = transition_val
+    if "sequence" in raw:
+        sequence_val = raw["sequence"]
+        if sequence_val is None:
+            cleaned_moment["sequence"] = None
+        else:
+            if not isinstance(sequence_val, list) or not sequence_val:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="`carousel_moment.sequence` must contain at least one video.",
+                )
+            available_indices = _variant_carousel_clip_indices(variant)
+            seen: set[int] = set()
+            cleaned_sequence: list[dict[str, float | int]] = []
+            for item in sequence_val:
+                if not isinstance(item, dict) or set(item) != {"clip_index", "hold_s"}:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            "Each `carousel_moment.sequence` item must contain only "
+                            "`clip_index` and `hold_s`."
+                        ),
+                    )
+                clip_index = item["clip_index"]
+                if (
+                    not isinstance(clip_index, int)
+                    or isinstance(clip_index, bool)
+                    or clip_index not in available_indices
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            "Sequence clip indices must be active Carousel videos: "
+                            f"{available_indices}."
+                        ),
+                    )
+                if clip_index in seen:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="`carousel_moment.sequence` clip indices must be unique.",
+                    )
+                try:
+                    hold_s = float(item["hold_s"])
+                except (TypeError, ValueError):
+                    hold_s = float("nan")
+                if not _CAROUSEL_HOLD_RANGE_S[0] <= hold_s <= _CAROUSEL_HOLD_RANGE_S[1]:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Sequence `hold_s` must be between 0.5 and 5 seconds.",
+                    )
+                seen.add(clip_index)
+                cleaned_sequence.append({"clip_index": clip_index, "hold_s": hold_s})
+            cleaned_moment["sequence"] = cleaned_sequence
+
+    for field_name, valid_range in (
+        ("move_duration_s", _CAROUSEL_MOVE_RANGE_S),
+        ("zoom_duration_s", _CAROUSEL_ZOOM_RANGE_S),
+        ("transition_in_duration_s", _CAROUSEL_BOUNDARY_RANGE_S),
+        ("transition_out_duration_s", _CAROUSEL_BOUNDARY_RANGE_S),
+    ):
+        if field_name not in raw:
+            continue
+        value = raw[field_name]
+        try:
+            numeric_value = float(value) if value is not None else float("nan")
+        except (TypeError, ValueError):
+            numeric_value = float("nan")
+        if not valid_range[0] <= numeric_value <= valid_range[1]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"`carousel_moment.{field_name}` must be between "
+                    f"{valid_range[0]} and {valid_range[1]} seconds."
+                ),
+            )
+        cleaned_moment[field_name] = numeric_value
+
+    for field_name in ("transition_in", "transition_out"):
+        if field_name in raw:
+            value = raw[field_name]
+            if value not in _CAROUSEL_TRANSITIONS:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"`carousel_moment.{field_name}` must be one of "
+                        f"{sorted(_CAROUSEL_TRANSITIONS)}."
+                    ),
+                )
+            cleaned_moment[field_name] = value
+    if "timing_model" in raw:
+        if raw["timing_model"] != "ripple_v1":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="`carousel_moment.timing_model` must be `ripple_v1`.",
+            )
+        cleaned_moment["timing_model"] = "ripple_v1"
+    prospective = {**(variant.get("carousel_moment") or {}), **cleaned_moment}
+    if prospective.get("timing_model") == "ripple_v1":
+        natural_duration_s = _manual_carousel_duration_s(
+            prospective, _variant_carousel_clip_indices(variant)
+        )
+        if natural_duration_s is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="`ripple_v1` Carousel timing requires a non-empty sequence.",
+            )
+        if not _CAROUSEL_DURATION_MIN_S <= natural_duration_s <= _CAROUSEL_DURATION_MAX_S:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Manual Carousel phases must total between 2 and 15 seconds; "
+                    f"received {natural_duration_s:.1f} seconds."
+                ),
+            )
+        # New timing fields own the complete choreography; never retain an
+        # outer duration that would pad or truncate an exact per-video hold.
+        cleaned_moment["duration_s"] = natural_duration_s
     return cleaned_moment
 
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify Editor Timeline"
+  short_description: "Guard insert, ripple, scrub, resize, and render parity"
+  default_prompt: "Use $verify-editor-timeline to verify this editor timing change before implementation or shipping."

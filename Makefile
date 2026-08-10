@@ -1,7 +1,7 @@
 .PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint verify \
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays \
-        carousel-capture carousel-verify \
+        carousel-capture carousel-verify verify-editor-timeline \
         workspace-pull workspace-push workspace-status
 
 PYTHON ?= python3
@@ -153,6 +153,24 @@ carousel-verify: api-install-dev
 		--reference "$(CURDIR)/$(CAROUSEL_OUT_DIR)" \
 		--ssim-min $(SSIM_MIN) \
 		--trace-tol-px $(TRACE_TOL_PX))
+
+# Deterministic editor insert/ripple/resize contract. Keep this targeted so it
+# is cheap enough to run for every future timing feature.
+verify-editor-timeline:
+	(cd src/apps/web && npm test -- --runInBand \
+		src/__tests__/plan/items/CarouselPanel.test.tsx \
+		src/__tests__/plan/items/virtual-timeline.test.ts \
+		src/__tests__/plan/items/EditorTimelineBody-carousel.test.tsx \
+		src/__tests__/plan/items/carousel-preview-impl/CarouselBlockPreviewImpl.test.tsx \
+		src/__tests__/plan/items/carousel-preview-impl/geometry.test.ts \
+		src/lib/__tests__/carousel-timing.test.ts \
+		src/lib/timeline/__tests__/timeline-scale.test.ts && \
+		npx playwright test --project=desktop-editor)
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m pytest -q \
+		tests/pipeline/carousel/test_choreography.py \
+		tests/pipeline/carousel/test_segment_kill_switch.py \
+		tests/routes/test_editor_commit.py \
+		tests/tasks/test_carousel_timed_lane_projection.py)
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 

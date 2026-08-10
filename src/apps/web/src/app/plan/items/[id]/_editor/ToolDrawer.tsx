@@ -773,7 +773,11 @@ function VisualsDrawer({
                   return;
                 }
                 if (carousel.current === null) {
-                  carousel.onChange(createDefaultCarouselMoment(carousel.clips.length));
+                  carousel.onChange(
+                    createDefaultCarouselMoment(
+                      carousel.clips.map((clip) => clip.clipIndex),
+                    ),
+                  );
                 }
                 onSelectCarousel?.();
               }}

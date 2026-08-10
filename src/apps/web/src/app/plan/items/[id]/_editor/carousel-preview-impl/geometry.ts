@@ -83,6 +83,10 @@ export function resolveFocusMoments(
 export interface MomentTimelineConfig {
   mode?: "focus" | "rolling";
   focus_clip_index?: number | null;
+  sequence?: Array<{ clip_index: number; hold_s: number }> | null;
+  move_duration_s?: number;
+  zoom_duration_s?: number;
+  timing_model?: "ripple_v1";
 }
 
 /**
@@ -111,13 +115,35 @@ export function buildMomentTimeline(
   if (nCards <= 0) return [];
   const safeDurationS = Number.isFinite(durationS) && durationS > 0 ? durationS : 0.1;
   const mode = resolveEffectiveMode(config.mode);
+  const manualTiming = config.timing_model === "ripple_v1" && !!config.sequence?.length;
+  const sequence = manualTiming
+    ? config.sequence!.map((item) =>
+        createFocusMoment(item.clip_index, {
+          holdS: item.hold_s,
+          zoomS: config.zoom_duration_s ?? 0.6,
+        }),
+      )
+    : resolveFocusMoments(config.focus_clip_index, nCards);
 
   if (mode === "rolling") {
-    return rollingTimeline(nCards, geo, viewportW, safeDurationS, { fps: FPS, seed });
+    return rollingTimeline(nCards, geo, viewportW, safeDurationS, {
+      fps: FPS,
+      seed,
+      sequence,
+      moveDurationS: config.move_duration_s,
+      manualTiming,
+    });
   }
 
-  const focusMoments = resolveFocusMoments(config.focus_clip_index, nCards);
-  const frames = buildTimeline(nCards, geo, viewportW, { focusMoments, fps: FPS, seed });
+  const frames = buildTimeline(nCards, geo, viewportW, {
+    focusMoments: sequence,
+    fps: FPS,
+    seed,
+    leadInS: manualTiming ? 0 : 0.4,
+    settlePadS: manualTiming ? 0 : 0.3,
+    manualTiming,
+    moveDurationS: config.move_duration_s,
+  });
   const targetN = Math.max(1, Math.round(Math.min(safeDurationS, MAX_FOCUS_TOTAL_S) * FPS));
   return fitDuration(frames, targetN);
 }
