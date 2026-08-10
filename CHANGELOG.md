@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.0.1] — 2026-08-10
+
+### Added
+- Carousel blocks now support ordered videos, per-video dwell, movement and Focus zoom timing, independent entry/exit transitions, and proportional resizing from either timeline edge.
+- A repo-local editor-timeline verification skill and deterministic desktop fixture guard duration ownership, ripple policy, scrub bounds, undo, and preview/render parity for future timing features.
+
+### Fixed
+- Playback, ruler ticks, clip geometry, playhead bounds, pointer scrubbing, and timed lanes now share one canonical projected timeline, so footage after a middle Carousel remains visible and seekable.
+- Text, visual, motion/camera, sound-effect, and media-overlay timing ripples at preview and render boundaries without mutating stored base timestamps; music remains continuous.
+- Manual Carousel choreography preserves sequence order and exact phase frame counts while legacy choreography stays unchanged until the editor upgrades it.
+
 ## [0.25.0.0] — 2026-08-09
 
 ### Added
