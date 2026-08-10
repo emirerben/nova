@@ -85,6 +85,7 @@ import {
 import PresetGrid from "./PresetGrid";
 import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
 import MotionInspector from "./MotionInspector";
+import CarouselPanel, { type CarouselPanelControl } from "./CarouselPanel";
 
 /** Fields with dedicated (potentially editable) rows in this panel. */
 const EDITABLE_ROW_FIELDS = new Set([
@@ -152,6 +153,7 @@ export default function InspectorPanel({
   motionDurationS = 0,
   motionAssets = [],
   cameraEffect = null,
+  carousel = null,
   tab,
   presentation = "panel",
   onTab,
@@ -214,6 +216,7 @@ export default function InspectorPanel({
   motionDurationS?: number;
   motionAssets?: PoolAsset[];
   cameraEffect?: CameraEffect | null;
+  carousel?: CarouselPanelControl | null;
   tab: InspectorTab;
   /** "sheet" when hosted inside the mobile bottom-sheet primitive, which owns
    *  the chrome (width, close). Default "panel" renders the docked desktop
@@ -390,6 +393,26 @@ export default function InspectorPanel({
           onRemove={onRemoveMotion}
           onClose={onClose}
         />
+      ) : selection.kind === "carousel" && carousel ? (
+        <div data-testid="carousel-inspector" className="min-h-0 flex-1 overflow-y-auto">
+          <div className="flex items-center justify-between px-5 pb-4 pt-5">
+            <div>
+              <h2 className="font-display text-[18px] text-[#0c0c0e]">Carousel</h2>
+              <p className="mt-0.5 text-[11px] text-[#71717a]">Visual effect and playback</p>
+            </div>
+            <CloseX onClose={onClose} />
+          </div>
+          {carousel.capable ? (
+            <CarouselPanel control={carousel} />
+          ) : (
+            <div
+              className="mx-5 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-[13px] leading-5 text-[#3f3f46]"
+              role="status"
+            >
+              {carousel.reason ?? "Carousel isn't available for this edit."}
+            </div>
+          )}
+        </div>
       ) : selection.kind === "camera" && cameraEffect ? (
         <CameraInspector
           effect={cameraEffect}
