@@ -4562,9 +4562,10 @@ def _reburn_text_on_base(
             # the projected authored text and persisted captions back on top,
             # even when those are the only downstream lanes that exist.
             persisted_snapshot = _fresh_variant_snapshot(job_id, variant_id) or existing
+            render_snapshot = _project_carousel_timed_lanes(persisted_snapshot)
             final_path, subtitled_matte_path = _compose_subtitled_final(
                 local_base,
-                existing,
+                render_snapshot,
                 tmpdir,
                 job_id=job_id,
                 variant_id=variant_id,
