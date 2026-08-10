@@ -27,10 +27,10 @@ from app.agents.edit_copilot import (
 from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
 
-EDIT_DIRECTOR_PROMPT_VERSION = "2026-08-08-v4"
+EDIT_DIRECTOR_PROMPT_VERSION = "2026-08-09-v5"
 
 SuggestionCategory = Literal["hook_pacing", "text", "audio", "effect", "transition"]
-SuggestionApplyMode = Literal["instant", "omni_async"]
+SuggestionApplyMode = Literal["instant", "omni_async", "server_async"]
 
 
 class OmniSuggestion(BaseModel):
@@ -66,7 +66,7 @@ class EditDirectorInput(BaseModel):
 
 
 class EditDirectorOutput(BaseModel):
-    suggestions: list[EditorSuggestion] = Field(min_length=1, max_length=5)
+    suggestions: list[EditorSuggestion] = Field(default_factory=list, max_length=5)
 
 
 def _clean_text(value: object, *, max_chars: int) -> str:
@@ -139,6 +139,8 @@ def _operation_targets(op: dict) -> set[str]:
         return {f"{name}:new"}
     if name == "accept_overlay_suggestion":
         return {f"overlay-suggestion:{op.get('suggestion_id')}"}
+    if name == "apply_speech_cut_candidate":
+        return {"speech-cut:any"}
     if name in {"swap_music", "set_mix"}:
         return {"audio:mix"}
     if name in {"set_intro_layout", "set_title"}:
@@ -287,6 +289,14 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
             elif apply_mode == "instant":
                 if invalid_op or not ops:
                     continue
+            elif apply_mode == "server_async":
+                if (
+                    invalid_op
+                    or omni_raw is not None
+                    or len(ops) != 1
+                    or ops[0].get("op") != "apply_speech_cut_candidate"
+                ):
+                    continue
             else:
                 continue
 
@@ -297,7 +307,7 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
             # card shown can be accepted from the same review.
             if selected_apply_mode is not None and apply_mode != selected_apply_mode:
                 continue
-            if apply_mode == "omni_async" and selected_apply_mode == "omni_async":
+            if apply_mode in {"omni_async", "server_async"} and selected_apply_mode == apply_mode:
                 continue
 
             try:
@@ -352,13 +362,11 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
         # cannot be response-wide validity gates after per-card filtering:
         # discarding two useful, independently applicable cards turns a
         # partial model miss into an empty rail and a 502 for the creator.
-        if not parsed:
-            raise SchemaError("edit_director: expected at least 1 valid suggestion, got 0")
         return EditDirectorOutput(suggestions=parsed)
 
     def schema_clarification(self) -> str:
         return (
-            "\nReturn only JSON with a suggestions array containing 3-5 complete, "
+            "\nReturn only JSON with a suggestions array containing 0-5 complete, "
             "non-overlapping suggestions. Every instant suggestion needs at least "
             "one valid operation copied field-for-field from AVAILABLE OPERATIONS. "
             'The discriminator is "op", never "name" or "action"; use the exact '

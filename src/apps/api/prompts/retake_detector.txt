@@ -31,7 +31,11 @@ Flag a span ONLY when BOTH are true:
 1. The flagged words are clearly abandoned — the speaker restarts and re-delivers substantially the same content, and the retake and its re-delivery sit close together (usually immediately adjacent).
 2. Cutting the flagged words loses NO information that the kept take does not already contain.
 
-If you are not sure, DO NOT flag it. An empty list is a perfectly good answer — most clips have no retakes.
+If you are certain, put it in `retakes`; these spans auto-apply. If the earlier
+delivery is plausible but not certain, put it in `review_candidates` instead so
+the creator can decide. Never put rhetorical repetition, lists, emphasis, or a
+final kept take in either list. Both lists may be empty; include at most three
+review candidates.
 
 $language_hint
 
@@ -43,9 +47,9 @@ $word_lines
 
 Return ONLY this JSON object (no markdown, no prose):
 
-{"retakes": [{"start_word": <int>, "end_word": <int>, "reason": "<one short line: why this is an abandoned take>"}]}
+{"retakes": [{"start_word": <int>, "end_word": <int>, "reason": "<why this is certainly abandoned>"}], "review_candidates": [{"start_word": <int>, "end_word": <int>, "reason": "<why this may be an abandoned take and needs review>"}]}
 
 - `start_word` and `end_word` are INCLUSIVE indices into the numbered word list above.
 - Each span covers the abandoned delivery plus its restart-marker words, nothing more.
 - Spans must not overlap, and every span must end strictly before the final word's index.
-- No retakes found, or unsure → {"retakes": []}
+- No retakes or review candidates found → {"retakes": [], "review_candidates": []}

@@ -1,6 +1,6 @@
 # 010 — Automatic silence + filler-sound cutting for speech edits
 
-**Status:** PLANNED
+**Status:** IMPLEMENTED — engine + review/apply UX shipped behind default-off flags; production activation pending
 **Owner:** silence-cut stage
 **Flag:** `SILENCE_CUT_ENABLED` (default `false`)
 
@@ -252,9 +252,9 @@ so it is separately gated and eval-backed:
   silence/filler cuts proceed (event `retake_detector_failed`). Retakes can
   never block or degrade the base feature.
 - **Own kill switch:** `RETAKE_CUT_ENABLED` (default `false`),
-  independent of `SILENCE_CUT_ENABLED` — silence cutting ships and
-  validates first; retakes flip only after its own eval pass + parity
-  render.
+  independent of `SILENCE_CUT_ENABLED`. The switches launch together only
+  after both agents pass evals and TR/EN production-image parity; either may
+  still roll back independently.
 - **Prompt-change rule applies:** `prompt_version` bump + live evals against
   fixtures before merge (repo agent-eval policy). Eval fixtures must include
   TR + EN restart patterns and near-miss negatives (repeated rhetorical
@@ -448,35 +448,35 @@ the video shorter, never fail the job.
 Synthesized from the eng review's findings. Each task derives from a specific
 finding. Run with Claude Code or Codex; checkbox as you ship.
 
-- [ ] **T1 (P1, human: ~2d / CC: ~30min)** — pipeline — Build `silence_cut.py`: CutPlan detection (lexicon + acoustic + pause intersection), remap_words, safety rails, module diagram
+- [x] **T1 (P1, human: ~2d / CC: ~30min)** — pipeline — Build `silence_cut.py`: CutPlan detection (lexicon + acoustic + pause intersection), remap_words, safety rails, module diagram
   - Surfaced by: plan core + reviews 2A/3A/5A/8A/9A
   - Files: `app/pipeline/silence_cut.py`, `tests/pipeline/test_silence_cut.py`
   - Verify: `cd src/apps/api && pytest tests/pipeline/test_silence_cut.py`
-- [ ] **T2 (P1, human: ~2h / CC: ~10min)** — services — Parameterize `detect_silences(noise_db, min_silence_s)`; speech_coverage regression pin
+- [x] **T2 (P1, human: ~2h / CC: ~10min)** — services — Parameterize `detect_silences(noise_db, min_silence_s)`; speech_coverage regression pin
   - Surfaced by: review 9A + IRON RULE
   - Files: `app/services/clip_speech.py`
-- [ ] **T3 (P1, human: ~3h / CC: ~15min)** — pipeline — `verbatim_prompt` param + segment `avg_logprob`/`no_speech_prob` onto words; byte-identical default pin
+- [x] **T3 (P1, human: ~3h / CC: ~15min)** — pipeline — `verbatim_prompt` param + segment `avg_logprob`/`no_speech_prob` onto words; byte-identical default pin
   - Surfaced by: outside voice #1 (8A) + IRON RULE
   - Files: `app/pipeline/transcribe.py`
-- [ ] **T4 (P1, human: ~1d / CC: ~25min)** — pipeline — reframe `keep_segments`: per-segment trim/atrim+concat + 5ms afade declick; micro-e2e + 30-cut drift e2e (<40ms)
+- [x] **T4 (P1, human: ~1d / CC: ~25min)** — pipeline — reframe `keep_segments`: per-segment trim/atrim+concat + 5ms afade declick; micro-e2e + 30-cut drift e2e (<40ms)
   - Surfaced by: reviews 1A/13A/11A + T3=C
   - Files: `app/pipeline/reframe.py`
-- [ ] **T5 (P1, human: ~1d / CC: ~30min)** — tasks — Subtitled integration: per-job cache, persistence + finalize whitelist + preserve pin, caption hygiene, per-item disable
+- [x] **T5 (P1, human: ~1d / CC: ~30min)** — tasks — Subtitled integration: per-job cache, persistence + finalize whitelist + preserve pin, caption hygiene, per-item disable
   - Surfaced by: outside voice #3/#5/#6 (10A/15A) + review 7A
   - Files: `app/tasks/generative_build.py`
-- [ ] **T6 (P1, human: ~1d / CC: ~20min)** — pipeline — talking_head: spine pre-cap, cut via keep_segments, b-roll cut-point anchors, header diagram update
+- [x] **T6 (P1, human: ~1d / CC: ~20min)** — pipeline — talking_head: spine pre-cap, cut via keep_segments, b-roll cut-point anchors, header diagram update
   - Surfaced by: outside voice #7/#9 (12A/14A)
   - Files: `app/pipeline/talking_head_assembler.py`
-- [ ] **T7 (P1, human: ~2d / CC: ~40min)** — agents — `retake_detector` agent + prompt + TR/EN eval fixtures (incl. near-miss negatives); merge into CutPlan; `RETAKE_CUT_ENABLED` isolation
+- [x] **T7 (P1, human: ~2d / CC: ~40min)** — agents — `retake_detector` agent + prompt + TR/EN eval fixtures (incl. near-miss negatives); merge into CutPlan; `RETAKE_CUT_ENABLED` isolation
   - Surfaced by: user decision T1=C
   - Files: `app/agents/retake_detector.py`, `prompts/`, `tests/evals/`
-- [ ] **T8 (P1, human: ~1h / CC: ~5min)** — config — Both flags + kill-switch byte-identical pins + CLAUDE.md env entries
+- [x] **T8 (P1, human: ~1h / CC: ~5min)** — config — Both flags + kill-switch byte-identical pins + CLAUDE.md env entries
   - Surfaced by: kill-switch pattern
   - Files: `app/config.py`, `CLAUDE.md`
-- [ ] **T9 (P2, human: ~1d / CC: ~20min)** — web-admin — Cut-plan timeline strip (reason-colored bands) + Jest layout test
+- [x] **T9 (P2, human: ~1d / CC: ~20min)** — web-admin — Cut-plan timeline strip (reason-colored bands) + Jest layout test
   - Surfaced by: user decision T2=C
   - Files: `src/apps/web/src/app/admin/jobs/[id]/`
-- [ ] **T10 (P2, human: ~2h / CC: ~10min)** — tests — Guard: music/template/montage orchestrators never invoke the stage
+- [x] **T10 (P2, human: ~2h / CC: ~10min)** — tests — Guard: music/template/montage orchestrators never invoke the stage
   - Surfaced by: scope decision D2
   - Files: `tests/tasks/`
 
@@ -490,19 +490,60 @@ Lane 2. Launch: 6 parallel → merge → T5 → T6 → T8/T10.
 
 1. Land behind `SILENCE_CUT_ENABLED=false` + `RETAKE_CUT_ENABLED=false`
    (CI micro-e2e + drift e2e green on every PR; retake evals green).
-2. REQUIRED before silence flag flip (6A): prod-image parity renders on TR +
+2. **PASSED 2026-08-09.** Required before the flag flip (6A): prod-image parity renders on TR +
    EN talk clips (`make local-render MODE=generative`, on a Docker-capable
    machine, or a one-off render on Fly) — listen for clipped word tails and
    clicks at cut boundaries; verify captions show no filler tokens and TR/EN
    language detection is stable with the verbatim prompt (15A).
-3. Flip `SILENCE_CUT_ENABLED` on Fly (api + worker restart), watch admin
-   job-debug `silence_cut_plan` events + `time_saved_s` distribution +
+3. With prompt evals and TR/EN production-image parity passed, wait for
+   production activation approval, then flip `SILENCE_CUT_ENABLED` and
+   `RETAKE_CUT_ENABLED` together on Fly (api + worker restart). Watch admin
+   job-debug `silence_cut_plan` events, `time_saved_s`, and
    bail-out/rule2-disabled rates for a day.
-4. Only after silence cutting is validated in prod: flip
-   `RETAKE_CUT_ENABLED` separately, after its own eval pass + parity render.
+4. Keep the flags independent after launch so silence/filler or retake cutting
+   can be rolled back separately without a deploy.
 5. Bail-out rate > ~10% or complaints ⇒ flip off (no deploy needed);
    per-item complaints ⇒ set `silence_cut_disabled` on that item and
    re-render (no global impact).
+
+## Round 3 — reviewable cuts + Director operations (approved 2026-08-09)
+
+The engine described above shipped in #605 behind independent default-off kill
+switches. This round operationalizes it without widening the speech-only
+boundary:
+
+- Safe detector output auto-applies during initial `subtitled` and
+  `talking_head` generation (self-narration inherits those paths).
+- Uncertain-but-actionable removals persist as optional per-variant JSON
+  candidates. No schema migration is needed.
+- Candidate apply and Restore original timing are public, ownership-checked,
+  revision-guarded, full-rerender actions. Receipts preserve the requested
+  persisted candidate and publish only after the final cut is validated to cover
+  it, never from model prose.
+- A cut render rebuilds the speech timeline, captions, Smart text, speech map,
+  overlays/SFX and Director freshness from the new timing. Any analysis/remap
+  failure fails open to the last-good timing.
+- Director may return zero suggestions, proposes candidate cuts only when the
+  server advertises `automatic_cut`, and explains executable operations rather
+  than inventing changes. The browser never auto-applies server-rerender ops.
+- `SILENCE_CUT_ENABLED` and `RETAKE_CUT_ENABLED` remain independent kill
+  switches but launch together only after Turkish and English production-image
+  parity passes. This PR does not change production flags.
+
+### Round 3 implementation tasks
+
+- [x] Persist deterministic candidate IDs, revision, source timing, preview text,
+  reason and status in the variant; preserve through finalization.
+- [x] Add ownership/revision-guarded apply and restore routes plus a full-rerender
+  worker with exact receipts and last-good fail-open behavior.
+- [x] Centralize CutPlan time remapping for captions, Smart schedules, speech
+  transcript/map inputs, text, media overlays, camera/boundary effects and SFX.
+- [x] Add `automatic_cut` capability, Director operation/schema/prompt/evals,
+  empty-success response, operation-derived `Will change`, and editor restore UI.
+- [x] Add parity-harness support and run the TR/EN production-image parity gate
+  successfully; production flag activation/rollout approval remains pending.
+  Also complete focused/full test gates, env/docs, version/changelog, and stop
+  at the Phase 5 PR approval gate.
 
 ## GSTACK REVIEW REPORT
 
@@ -517,5 +558,12 @@ Lane 2. Launch: 6 parallel → merge → T5 → T6 → T8/T10.
 - **CODEX:** Codex CLI not installed — outside voice ran as an independent Claude subagent; all 10 findings user-adjudicated (8 accepted via D8–D15, finalize-whitelist + spec-formula folded as factual fixes).
 - **CROSS-MODEL:** 8 tension points between the review's locked decisions and the outside voice; every one resolved toward the hardened option (segment signals, noisy-clip calibration gate, per-item disable, drift e2e, b-roll anchors, cut-inside-reframe, spine cap, caption hygiene).
 - **VERDICT:** ENG CLEARED — ready to implement. Scope locked to speech render paths (D2); user expanded PR scope with retakes, admin viewer, declick (T1/T2/T3 = build now).
+- **ROUND 3 ENG REVIEW:** Existing JSONB state and editor revision guards are
+  sufficient; no migration. The implementation must keep one authoritative cut
+  revision, reject stale candidate actions, invalidate Director snapshots on any
+  cut-state transition, and never expose `automatic_cut` outside speech paths.
+  Cross-layer scope is intentional because an API-only candidate would be a
+  non-executable suggestion and a browser-only cut would bypass ownership and
+  full-rerender safety. No unresolved User Challenge.
 
 NO UNRESOLVED DECISIONS

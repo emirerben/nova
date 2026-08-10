@@ -1,11 +1,13 @@
 import { act, renderHook } from "@testing-library/react";
 import { useState } from "react";
 import {
+  applySpeechCutCandidate,
   cancelOmniAsset,
   claimOmniAsset,
   editDirectorFeedback,
   editDirectorSuggestions,
   getOmniAsset,
+  restoreOriginalSpeechTiming,
   startOmniAsset,
   type EditorSuggestion,
 } from "@/lib/plan-api";
@@ -18,20 +20,28 @@ import type { ApplyCopilotOpsResult } from "@/lib/edit-copilot/apply-ops";
 import type { CopilotSnapshot } from "@/lib/edit-copilot/snapshot";
 
 jest.mock("@/lib/plan-api", () => ({
+  applySpeechCutCandidate: jest.fn(),
   editDirectorSuggestions: jest.fn(),
   editDirectorFeedback: jest.fn(),
   startOmniAsset: jest.fn(),
   getOmniAsset: jest.fn(),
   cancelOmniAsset: jest.fn(),
   claimOmniAsset: jest.fn(),
+  restoreOriginalSpeechTiming: jest.fn(),
 }));
 
+const applySpeechCutMock = applySpeechCutCandidate as jest.MockedFunction<
+  typeof applySpeechCutCandidate
+>;
 const suggestionsMock = editDirectorSuggestions as jest.MockedFunction<typeof editDirectorSuggestions>;
 const feedbackMock = editDirectorFeedback as jest.MockedFunction<typeof editDirectorFeedback>;
 const startMock = startOmniAsset as jest.MockedFunction<typeof startOmniAsset>;
 const getMock = getOmniAsset as jest.MockedFunction<typeof getOmniAsset>;
 const cancelMock = cancelOmniAsset as jest.MockedFunction<typeof cancelOmniAsset>;
 const claimMock = claimOmniAsset as jest.MockedFunction<typeof claimOmniAsset>;
+const restoreSpeechTimingMock = restoreOriginalSpeechTiming as jest.MockedFunction<
+  typeof restoreOriginalSpeechTiming
+>;
 
 function snapshot(text = "old hook"): CopilotSnapshot {
   return {
@@ -105,6 +115,23 @@ describe("useEditDirector", () => {
     jest.clearAllMocks();
     window.sessionStorage.clear();
     feedbackMock.mockResolvedValue(undefined);
+    applySpeechCutMock.mockResolvedValue({
+      status: "rendering",
+      request: {
+        operation: "apply_speech_cut_candidate",
+        operation_id: "operation-1",
+        candidate_id: "candidate-1",
+        revision: "cut-revision-2",
+      },
+    });
+    restoreSpeechTimingMock.mockResolvedValue({
+      status: "rendering",
+      request: {
+        operation: "restore_original_timing",
+        operation_id: "restore-operation-1",
+        revision: "cut-revision-3",
+      },
+    });
     cancelMock.mockResolvedValue({
       asset_id: "asset-1",
       status: "cancelled",
@@ -170,6 +197,304 @@ describe("useEditDirector", () => {
       await Promise.resolve();
     });
     expect(suggestionsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats an empty review as settled until an explicit refresh", async () => {
+    const current = snapshot();
+    suggestionsMock.mockImplementation(async (_itemId, _variantId, body) => ({
+      suggestions: [],
+      snapshot_revision: body.snapshot_revision,
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    }));
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: jest.fn(() => appliedResult()),
+        onApplied: jest.fn(),
+      }),
+    );
+
+    await loadInitialReview();
+    await loadInitialReview();
+    expect(result.current.suggestions).toEqual([]);
+    expect(suggestionsMock).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.refresh());
+    await loadInitialReview();
+    expect(suggestionsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends server speech-cut operations to the API without applying them locally", async () => {
+    const current = snapshot();
+    const cut = suggestion({
+      id: "director-cut",
+      category: "hook_pacing",
+      apply_mode: "server_async",
+      ops: [{ op: "apply_speech_cut_candidate", candidate_id: "candidate-1" }],
+    });
+    suggestionsMock.mockResolvedValue({
+      suggestions: [cut],
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    });
+    const applyOpsAtomic = jest.fn(() => appliedResult());
+    const onServerRenderStarted = jest.fn();
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic,
+        onApplied: jest.fn(),
+        speechCutRevision: "cut-revision-1",
+        serverOperationsEnabled: true,
+        onServerRenderStarted,
+      }),
+    );
+
+    await loadInitialReview();
+    act(() => result.current.accept(cut));
+    expect(result.current.serverRendering).toBe(true);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(applySpeechCutMock).toHaveBeenCalledWith(
+      "item-1",
+      "variant-1",
+      "candidate-1",
+      "cut-revision-1",
+    );
+    expect(applyOpsAtomic).not.toHaveBeenCalled();
+    expect(onServerRenderStarted).toHaveBeenCalledTimes(1);
+    expect(result.current.suggestions).toEqual([]);
+    expect(result.current.serverRendering).toBe(true);
+  });
+
+  it("requires a clean saved draft for apply and restore server operations", async () => {
+    const current = snapshot();
+    const cut = suggestion({
+      id: "director-cut",
+      apply_mode: "server_async",
+      ops: [{ op: "apply_speech_cut_candidate", candidate_id: "candidate-1" }],
+    });
+    suggestionsMock.mockResolvedValue({
+      suggestions: [cut],
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    });
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: jest.fn(() => appliedResult()),
+        onApplied: jest.fn(),
+        speechCutRevision: "cut-revision-1",
+        serverOperationsEnabled: false,
+        canRestoreOriginalTiming: true,
+      }),
+    );
+
+    await loadInitialReview();
+    act(() => result.current.accept(cut));
+    expect(result.current.error).toContain("Save your draft");
+    expect(applySpeechCutMock).not.toHaveBeenCalled();
+
+    act(() => result.current.restoreOriginalTiming());
+    expect(result.current.error).toContain("Save your draft");
+    expect(restoreSpeechTimingMock).not.toHaveBeenCalled();
+  });
+
+  it("restores original speech timing through the server rerender", async () => {
+    const current = snapshot();
+    suggestionsMock.mockResolvedValue({
+      suggestions: [],
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    });
+    const onServerRenderStarted = jest.fn();
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: jest.fn(() => appliedResult()),
+        onApplied: jest.fn(),
+        speechCutRevision: "cut-revision-2",
+        serverOperationsEnabled: true,
+        canRestoreOriginalTiming: true,
+        onServerRenderStarted,
+      }),
+    );
+
+    await loadInitialReview();
+    act(() => result.current.restoreOriginalTiming());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(restoreSpeechTimingMock).toHaveBeenCalledWith(
+      "item-1",
+      "variant-1",
+      "cut-revision-2",
+    );
+    expect(onServerRenderStarted).toHaveBeenCalledTimes(1);
+    expect(result.current.serverRendering).toBe(true);
+  });
+
+  it("keeps the rebuild locked until the polled winning receipt arrives", async () => {
+    const current = snapshot();
+    const cut = suggestion({
+      id: "director-cut",
+      apply_mode: "server_async",
+      ops: [{ op: "apply_speech_cut_candidate", candidate_id: "candidate-1" }],
+    });
+    suggestionsMock.mockResolvedValue({
+      suggestions: [cut],
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    });
+    let renderPending = false;
+    let lastReceipt: Parameters<typeof useEditDirector>[0]["speechCutLastReceipt"] = null;
+    const { result, rerender } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: jest.fn(() => appliedResult()),
+        onApplied: jest.fn(),
+        speechCutRevision: "cut-revision-1",
+        serverOperationsEnabled: true,
+        serverRenderPending: renderPending,
+        speechCutLastReceipt: lastReceipt,
+      }),
+    );
+
+    await loadInitialReview();
+    act(() => result.current.accept(cut));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.serverRendering).toBe(true);
+    expect(result.current.appliedReceipts).toEqual([]);
+
+    renderPending = true;
+    rerender();
+    expect(result.current.serverRendering).toBe(true);
+
+    renderPending = false;
+    lastReceipt = {
+      operation: "apply_speech_cut_candidate",
+      operation_id: "operation-1",
+      revision: "cut-revision-2",
+      status: "applied",
+      render_generation_id: "generation-1",
+      removed: { start_s: 2, end_s: 2.8, reason: "retake_review" },
+      time_saved_s: 0.8,
+    };
+    rerender();
+
+    expect(result.current.serverRendering).toBe(false);
+    expect(result.current.appliedReceipts).toEqual([
+      expect.objectContaining({
+        title: "Reviewed speech cut applied",
+        startS: 2,
+        endS: 2.8,
+        changes: [
+          expect.objectContaining({
+            from: "2.000-2.800s",
+            to: "0.800s removed and downstream timing rebuilt",
+          }),
+        ],
+      }),
+    ]);
+    expect(feedbackMock).toHaveBeenCalledWith(
+      "item-1",
+      "variant-1",
+      expect.objectContaining({ suggestion_id: "director-cut", action: "accepted" }),
+    );
+  });
+
+  it("surfaces an operation-matched worker failure after polling unlocks", async () => {
+    const current = snapshot();
+    const cut = suggestion({
+      id: "director-cut",
+      apply_mode: "server_async",
+      ops: [{ op: "apply_speech_cut_candidate", candidate_id: "candidate-1" }],
+    });
+    suggestionsMock.mockResolvedValue({
+      suggestions: [cut],
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    });
+    let renderPending = false;
+    let lastError: Parameters<typeof useEditDirector>[0]["speechCutLastError"] = null;
+    const { result, rerender } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: jest.fn(() => appliedResult()),
+        onApplied: jest.fn(),
+        speechCutRevision: "cut-revision-1",
+        serverOperationsEnabled: true,
+        serverRenderPending: renderPending,
+        speechCutLastError: lastError,
+      }),
+    );
+
+    await loadInitialReview();
+    act(() => result.current.accept(cut));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    renderPending = true;
+    rerender();
+    expect(result.current.serverRendering).toBe(true);
+
+    renderPending = false;
+    lastError = { operation_id: "operation-1", message: "render exploded" };
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+
+    expect(result.current.serverRendering).toBe(false);
+    expect(result.current.error).toBe(
+      "Nova couldn't complete that timing change. The current video is unchanged.",
+    );
+    expect(result.current.appliedReceipts).toEqual([]);
   });
 
   it("surfaces an old-server Omni-only response instead of silently showing an empty rail", async () => {

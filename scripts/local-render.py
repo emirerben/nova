@@ -210,9 +210,9 @@ def _submit_generative_job(
     # (and the matched song's beat structure). The edit can never run longer than
     # the clips uploaded here — that's exactly what this render verifies.
     payload: dict = {"clip_gcs_paths": gcs_paths}
-    # Exercise a format-aware archetype (talking_head). The API still gates on
-    # EDIT_FORMAT_TALKING_HEAD_ENABLED + footage speech, so set the flag for the
-    # worker container too. Omitted → montage (the public default).
+    # Exercise any public format-aware archetype. The API still applies the
+    # format's feature gates and footage eligibility checks. Omitted → montage
+    # (the public default).
     if edit_format:
         payload["edit_format"] = edit_format
     # A user-supplied voiceover forces the "voiceover" archetype: footage montage
@@ -305,6 +305,10 @@ def _print_settings_snapshot(api_url: str) -> None:
         "ORIENTATION_NORMALIZE_ENABLED",
         "SINGLE_PASS_ENCODE_ENABLED",
         "TEXT_RENDERER_SKIA_ENABLED",
+        "SUBTITLED_ARCHETYPE_ENABLED",
+        "NARRATED_SELF_NARRATION_ENABLED",
+        "SILENCE_CUT_ENABLED",
+        "RETAKE_CUT_ENABLED",
         "ENABLE_AUTO_MUSIC_MODE",
         "GEMINI_MODEL",
     ]
@@ -367,9 +371,18 @@ def main() -> int:
         "--edit-format",
         dest="edit_format",
         default=None,
-        choices=["montage", "talking_head", "day_vlog", "single_hero"],
-        help="Generative mode only: declared edit_format. talking_head also needs "
-        "EDIT_FORMAT_TALKING_HEAD_ENABLED=true on the worker. Default: montage.",
+        choices=[
+            "montage",
+            "talking_head",
+            "day_vlog",
+            "single_hero",
+            "subtitled",
+            "narrated",
+            "narrated_planned",
+            "narrated_ready",
+        ],
+        help="Generative mode only: declared edit_format. The API still applies "
+        "the format's feature gates and footage eligibility checks. Default: montage.",
     )
     p.add_argument(
         "--voiceover",

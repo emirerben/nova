@@ -132,6 +132,8 @@ preset secrets empty; stored assignments remain pinned.
 - `src/apps/api/app/pipeline/look_presets.py` — canonical validation and shared
   FFmpeg graph for source-media looks; `none` is an exact bypass.
 - `src/apps/api/app/pipeline/generative_overlays.py` — intro overlay builder
+- `src/apps/api/app/pipeline/speech_cut_state.py` — authoritative review-candidate,
+  optimistic-revision, receipt, and cross-lane timing-remap contract for speech cuts.
 - `src/apps/web/src/app/generative/` + `admin/generative/` — public result UI + admin
   dashboard
 - `src/apps/api/app/routes/generative_jobs.py` — job submission + status: `swap-song` /
@@ -325,6 +327,16 @@ AI's assembly decisions, not pixels.
   Internal cut boundaries remain beat-quantized. When the final active clip extends
   beyond the grid's last natural beat, its terminal endpoint stays at the exact
   user-requested second; the re-render sizes the song window to that timeline total.
+- **Automatic speech cuts:** only `subtitled` and `talking_head` variants can expose
+  `editor_capabilities.automatic_cut`; review candidates are server-authored source-
+  timeline ranges, and Director receives the server-authoritative, revisioned candidate
+  list rather than trusting browser snapshot ids. Apply with `POST /plan-items/{item}/variants/{vid}/speech-cuts/{candidate}/apply`
+  and restore with `POST /plan-items/{item}/variants/{vid}/speech-cuts/restore`, passing
+  the current `expected_revision`; both return 202 and dispatch a full source rebuild.
+  Publication remaps captions, Smart text, speech maps, overlays, SFX, camera/boundary
+  effects, and Director freshness. Publication validates that the final cut covers the
+  requested candidate before writing its server-backed receipt. Stale revisions return
+  409; enqueue/render/publication failures restore the last-good video and timing state.
 - **Kill switch:** `GENERATIVE_TIMELINE_EDITOR_ENABLED=false` (Fly secret + restart) —
   GET returns `editable:false reason:"disabled"`, POST 403.
 - **Guards:** window-parity test (`tests/pipeline/test_exact_window_steps.py`) pins that

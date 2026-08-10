@@ -382,7 +382,7 @@ def _cut_plan_6_5() -> CutPlan:
     )
 
 
-def _entry(plan, *, failed=False, retakes=0) -> dict:
+def _entry(plan, *, failed=False, retakes=0, review_candidates=None) -> dict:
     """A `_silence_cut_analysis`-shaped cache entry."""
     return {
         "failed": failed,
@@ -390,6 +390,7 @@ def _entry(plan, *, failed=False, retakes=0) -> dict:
         "language": "en",
         "plan": plan,
         "retake_span_count": retakes,
+        "review_candidates": list(review_candidates or []),
         "cut_video_path": None,
     }
 
@@ -465,8 +466,9 @@ def test_assemble_spine_cut_happy_path():
     plan = _cut_plan_6_5()
     seen: dict = {}
 
-    def _fn(path, dur, *, cache_key=None):
+    def _fn(path, dur, *, cache_key=None, source_fingerprint=None):
         seen["analysis"] = (path, dur, cache_key)
+        seen["source_fingerprint"] = source_fingerprint
         return _entry(plan)
 
     reframe_calls, cmds, events, out_ctx = _run_assemble_with_cut(
@@ -478,6 +480,7 @@ def test_assemble_spine_cut_happy_path():
 
     # Uncapped analysis keys the per-job cache by the spine path itself (P1).
     assert seen["analysis"] == ("a.mp4", 6.5, "a.mp4")
+    assert seen["source_fingerprint"] == "a"
     # The cut executes inside the spine reframe with the plan's exact segments
     # and the punch-in CONSTANT (never a literal).
     spine = reframe_calls[0]
@@ -505,6 +508,7 @@ def test_assemble_spine_cut_happy_path():
         "version": 1,
         "original_duration_s": 6.5,
     }
+    assert out_ctx["spine_clip_id"] == "a"
     plan_events = [e for e in events if e[1] == "silence_cut_plan"]
     assert len(plan_events) == 1
     assert plan_events[0][2] == {
@@ -517,6 +521,30 @@ def test_assemble_spine_cut_happy_path():
         "cut_reused": False,
         "broll_anchors": 2,  # 0.88 and 1.96 (cut timeline)
     }
+
+
+def test_assemble_spine_persists_review_candidates_with_stable_source_identity():
+    candidate = {
+        "candidate_id": "speech-cut-v1:abc123",
+        "start_s": 2.5,
+        "end_s": 4.4,
+        "reason": "retake",
+        "confidence": 0.71,
+        "status": "pending",
+    }
+    seen: dict = {}
+
+    def _fn(path, dur, *, cache_key=None, source_fingerprint=None):
+        seen["source_fingerprint"] = source_fingerprint
+        return _entry(_cut_plan_6_5(), review_candidates=[candidate])
+
+    _calls, _cmds, _events, out_ctx = _run_assemble_with_cut(
+        silence_cut_fn=_fn,
+        probe_map=_probe_map("a", "b", dur=6.5),
+    )
+
+    assert seen["source_fingerprint"] == "a"
+    assert out_ctx["review_candidates"] == [candidate]
 
 
 def test_assemble_spine_cut_no_audio_gate_short_circuits():
@@ -630,8 +658,9 @@ def test_assemble_spine_precap_bounds_detection_and_cut(tmp_path):
     )
     seen: dict = {}
 
-    def _fn(path, dur, *, cache_key=None):
+    def _fn(path, dur, *, cache_key=None, source_fingerprint=None):
         seen["analysis"] = (path, dur, cache_key)
+        seen["source_fingerprint"] = source_fingerprint
         return _entry(plan)
 
     reframe_calls, cmds, events, out_ctx = _run_assemble_with_cut(
@@ -678,7 +707,7 @@ def test_assemble_spine_cut_capped_cache_key_shared_across_variants(tmp_path):
     cache: dict[str, dict] = {}
     computed_paths: list[str] = []
 
-    def _fn(path, dur, *, cache_key=None):
+    def _fn(path, dur, *, cache_key=None, source_fingerprint=None):
         keys_seen.append(cache_key)
         if cache_key not in cache:
             computed_paths.append(path)  # the expensive whisper+LLM compute

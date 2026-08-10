@@ -639,7 +639,7 @@ def _build_keep_segments_cmd(
     single_pass.py and agents/DECISIONS.md 2026-05-18).
 
     Chain: [0:v] -> vf filters -> [base] -> split -> per-segment
-    trim + setpts=PTS-STARTPTS; audio -> asplit -> per-segment
+    trim + setpts=PTS-STARTPTS + setsar=1; audio -> asplit -> per-segment
     atrim + asetpts=PTS-STARTPTS + _DECLICK_FADE_S afade declick at
     CUT-ADJACENT edges only (a segment starting at the clip's true start gets
     no fade-in; one ending at the clip's true end gets no fade-out) -> concat.
@@ -667,8 +667,12 @@ def _build_keep_segments_cmd(
     # Alternating punch-in (plans/010 local-test round 2): odd segments get a
     # subtle zoom so each cut reads as an intentional framing change (the
     # standard talking-head jump-cut idiom) instead of a positional stutter.
-    # Scale up by the factor, then crop back to the chain's EXACT output dims
-    # so all segments share geometry (concat aborts on mixed dims).
+    # Scale up by the factor, then crop back to the chain's EXACT output dims.
+    # FFmpeg may preserve display aspect by assigning the rounded zoom branch a
+    # fractional SAR (for 1080x1920 at 1.08 it produced 9333:9328). Normalize
+    # every segment to square pixels after its optional zoom so concat sees
+    # identical geometry *and* identical SAR. Production-image parity caught
+    # this: the prior graph failed open and silently rendered the uncut video.
     punch_chain = ""
     if punch_in is not None and punch_in > 1.0 and punch_dims is not None:
         base_w, base_h = punch_dims
@@ -682,7 +686,7 @@ def _build_keep_segments_cmd(
         seg_punch = punch_chain if i % 2 == 1 else ""
         fc_parts.append(
             f"[vs{i}]trim=start={seg_start:.6f}:end={seg_end:.6f},"
-            f"setpts=PTS-STARTPTS{seg_punch}[v{i}]"
+            f"setpts=PTS-STARTPTS{seg_punch},setsar=1[v{i}]"
         )
 
     if has_audio:

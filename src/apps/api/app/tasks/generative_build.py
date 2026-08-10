@@ -545,10 +545,85 @@ def orchestrate_generative_job(self, job_id: str) -> None:
             _fail_job(job_id, str(exc))
 
 
+@celery_app.task(
+    name="rerender_speech_timing",
+    bind=True,
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,
+    max_retries=7,
+    soft_time_limit=1740,
+    time_limit=1800,
+)
+def rerender_speech_timing(self, job_id: str, operation_id: str) -> None:
+    """Dedicated full speech rebuild with last-good transactional semantics."""
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    with pipeline_trace_for(job_id), job_heartbeat(job_id):
+        task_id = str(self.request.id or operation_id)
+        retry_number = int(self.request.retries or 0)
+        attempt_id = f"{task_id}:{retry_number}:{uuid.uuid4().hex}"
+        if not _claim_speech_cut_finalize(
+            job_id,
+            operation_id,
+            attempt_id,
+            task_id=task_id,
+            retry_number=retry_number,
+        ):
+            log.info(
+                "speech_timing_rerender_duplicate_skipped",
+                job_id=job_id,
+                operation_id=operation_id,
+            )
+            return
+        mark_started(job_id)
+        try:
+            _run_generative_job(
+                job_id,
+                speech_cut_operation_id=operation_id,
+                speech_cut_attempt_id=attempt_id,
+            )
+            mark_finished(job_id)
+        except OperationalError as exc:
+            # Preserve the normal transient retry path, but do not leave the
+            # accepted request stuck forever when the final retry is exhausted.
+            if self.request.retries >= self.max_retries:
+                _restore_failed_speech_cut_rerender(
+                    job_id,
+                    str(exc),
+                    expected_operation_id=operation_id,
+                    expected_attempt_id=attempt_id,
+                )
+                mark_finished(job_id)
+                return
+            _release_speech_cut_finalize_claim(job_id, operation_id, attempt_id)
+            raise
+        except Exception as exc:  # noqa: BLE001 — restore the exact last-good variant
+            log.error(
+                "speech_timing_rerender_failed",
+                job_id=job_id,
+                error=str(exc)[:MAX_ERROR_DETAIL_LEN],
+                exc_info=True,
+            )
+            _restore_failed_speech_cut_rerender(
+                job_id,
+                str(exc),
+                expected_operation_id=operation_id,
+                expected_attempt_id=attempt_id,
+            )
+            mark_finished(job_id)
+
+
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
 
-def _run_generative_job(job_id: str) -> None:
+def _run_generative_job(
+    job_id: str,
+    *,
+    speech_cut_operation_id: str | None = None,
+    speech_cut_attempt_id: str | None = None,
+) -> None:
     from app.services.pipeline_trace import (  # noqa: PLC0415
         record_pipeline_event,
         record_render_stage,
@@ -559,6 +634,8 @@ def _run_generative_job(job_id: str) -> None:
     # if the renderer falls back to Pillow+libass the overlays render wrong or drop.
     # Fail loudly rather than ship garbage. (See CLAUDE.md TEXT_RENDERER_SKIA_ENABLED.)
     if not settings.text_renderer_skia_enabled:
+        if speech_cut_operation_id:
+            raise RuntimeError("speech timing rerender requires TEXT_RENDERER_SKIA_ENABLED")
         _fail_job(
             job_id,
             "Generative edits require the Skia text renderer (TEXT_RENDERER_SKIA_ENABLED). "
@@ -581,7 +658,15 @@ def _run_generative_job(job_id: str) -> None:
         # a redelivered message must not re-run the whole pipeline (it would repeat
         # the expensive pre-tonemap and clobber a finished result). Mid-render jobs
         # are left at "rendering" — not terminal — so the resume path still works.
-        if job.status in _NO_RERUN_STATUSES:
+        control = (job.assembly_plan or {}).get("speech_cut_control") or {}
+        matching_speech_cut = bool(
+            speech_cut_operation_id
+            and control.get("operation_id") == speech_cut_operation_id
+            and (control.get("finalizer_claim") or {}).get("attempt_id") == speech_cut_attempt_id
+        )
+        if speech_cut_operation_id and not matching_speech_cut:
+            raise RuntimeError("speech cut operation was superseded before render")
+        if job.status in _NO_RERUN_STATUSES and not matching_speech_cut:
             log.info("generative_job_skip_terminal", job_id=job_id, status=job.status)
             return
         job.status = "processing"
@@ -694,6 +779,12 @@ def _run_generative_job(job_id: str) -> None:
         # keys survive every variant upsert/finalize merge (_set_status merges,
         # _finalize_job only replaces "variants").
         silence_cut_disabled: bool = (job.assembly_plan or {}).get("silence_cut_disabled") is True
+        _speech_cut_prior = (job.assembly_plan or {}).get("speech_cut_previous_variant")
+        speech_cut_pinned_spine = (
+            str(_speech_cut_prior.get("spine_clip_id"))
+            if isinstance(_speech_cut_prior, dict) and _speech_cut_prior.get("spine_clip_id")
+            else None
+        )
         # Montage visual preset. Absent means classic so public/legacy jobs keep
         # byte-identical render behavior.
         montage_preset = coerce_montage_preset((all_candidates or {}).get("montage_preset"))
@@ -970,6 +1061,12 @@ def _run_generative_job(job_id: str) -> None:
             footage_type_bias=_footage_type_bias,
             clip_durations_s=clip_durations_s,
         )
+        if (
+            archetype == "talking_head"
+            and speech_cut_pinned_spine
+            and speech_cut_pinned_spine in clip_id_to_local
+        ):
+            spine_clip_id = speech_cut_pinned_spine
         _set_status(job_id, "rendering")
         # Persist the style-downgrade reason so the item page can explain a montage
         # fallback to the user (trace events are admin-only). A retry that now
@@ -1115,6 +1212,12 @@ def _run_generative_job(job_id: str) -> None:
                     variant_id=variant_id,
                     render_generation_id=spec.get("storage_generation"),
                     counts={"archetype": archetype_for_trace, "rank": rank},
+                )
+                result = _merge_speech_cut_prior_state(
+                    job_id,
+                    result,
+                    expected_operation_id=speech_cut_operation_id,
+                    expected_attempt_id=speech_cut_attempt_id,
                 )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
@@ -1301,8 +1404,40 @@ def _run_generative_job(job_id: str) -> None:
         trace_id=render_trace_id,
         counts={"variant_count": len(results)},
     ):
-        _finalize_job(job_id, results)
+        _finalize_job(
+            job_id,
+            results,
+            expected_operation_id=speech_cut_operation_id,
+            expected_attempt_id=speech_cut_attempt_id,
+        )
+        if speech_cut_operation_id and speech_cut_attempt_id:
+            _compose_speech_cut_rerender(
+                job_id,
+                expected_operation_id=speech_cut_operation_id,
+                expected_attempt_id=speech_cut_attempt_id,
+            )
+            _publish_speech_cut_rerender(
+                job_id,
+                expected_operation_id=speech_cut_operation_id,
+                expected_attempt_id=speech_cut_attempt_id,
+            )
     record_phase(job_id, "finalize", elapsed_ms=_elapsed_ms(finalize_t0))
+    _dispatch_post_finalize_suggestion_chains(
+        job_id,
+        speech_cut_rerender=bool(speech_cut_operation_id),
+    )
+
+
+def _dispatch_post_finalize_suggestion_chains(job_id: str, *, speech_cut_rerender: bool) -> None:
+    """Run first-generation suggestion chains, never timing-only rebuilds.
+
+    Speech-cut rerenders already reproject the creator's existing media/SFX
+    lanes and invalidate stale Director state. Re-running first-generation
+    placement after the exact cut receipt would mutate the accepted output
+    behind that receipt and could add duplicate treatments.
+    """
+    if speech_cut_rerender:
+        return
     # Overlay autoplace chain (plan 007, D2-B). MUST run AFTER _finalize_job —
     # finalize rebuilds every variant entry from the in-memory results whitelist,
     # so anything the match/apply tasks wrote mid-render would be stripped
@@ -9683,6 +9818,9 @@ def _render_talking_head_variant(
         # Silence-cut summary {removed, time_saved_s, version} (plans/010 T6) — set
         # only when the stage ran to a plan; drives the admin cut-plan viewer.
         "silence_cut": None,
+        "speech_cut_candidates": None,
+        "speech_cut_forced_removals": None,
+        "speech_cuts_disabled": False,
     }
 
     try:
@@ -9698,7 +9836,7 @@ def _render_talking_head_variant(
         # needs the SPINE probe, so it lives inside the assembler (same event).
         silence_cut_fn = None
         silence_cut_out: dict[str, Any] = {}
-        if settings.silence_cut_enabled:
+        if settings.silence_cut_enabled or settings.retake_cut_enabled:
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
             if silence_cut_disabled:
@@ -9709,7 +9847,11 @@ def _render_talking_head_variant(
             else:
 
                 def silence_cut_fn(
-                    analysis_path: str, duration_s: float, *, cache_key: str | None = None
+                    analysis_path: str,
+                    duration_s: float,
+                    *,
+                    cache_key: str | None = None,
+                    source_fingerprint: str | None = None,
                 ) -> dict[str, Any]:
                     # Shared analysis (7A): per-job cache ⇒ a clip analyzed for
                     # one variant is never re-analyzed for another. `cache_key`
@@ -9721,6 +9863,7 @@ def _render_talking_head_variant(
                         job_id=job_id,
                         cache=silence_cut_cache,
                         cache_key=cache_key,
+                        source_fingerprint=source_fingerprint,
                     )
 
         assemble_talking_head(
@@ -9737,6 +9880,8 @@ def _render_talking_head_variant(
             silence_cut_out=silence_cut_out,
         )
         base["silence_cut"] = silence_cut_out.get("summary")
+        base["speech_cut_candidates"] = silence_cut_out.get("review_candidates") or None
+        base["spine_clip_id"] = silence_cut_out.get("spine_clip_id")
 
         # Cache the text-free composite BEFORE the intro burn. The editor plays
         # this base and draws its text elements as a DOM layer on top; with no
@@ -10183,7 +10328,9 @@ class _SilenceCutCache:
         self.pending: dict[str, threading.Event] = {}
 
 
-def _silence_cut_retake_spans(transcript, *, job_id: str) -> list[tuple[int, int]]:  # noqa: ANN001
+def _silence_cut_retake_spans(  # noqa: ANN001
+    transcript, *, job_id: str, source_fingerprint: str
+) -> tuple[list[tuple[int, int]], list[dict[str, Any]]]:
     """Retake spans for the CutPlan (plans/010 T7 wiring), failure-isolated.
 
     Behind RETAKE_CUT_ENABLED (own kill switch, independent of
@@ -10195,7 +10342,7 @@ def _silence_cut_retake_spans(transcript, *, job_id: str) -> list[tuple[int, int
     (plans/010 failure isolation).
     """
     if not settings.retake_cut_enabled:
-        return []
+        return [], []
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     try:
@@ -10217,11 +10364,42 @@ def _silence_cut_retake_spans(transcript, *, job_id: str) -> list[tuple[int, int
             ),
             ctx=RunContext(job_id=job_id),
         )
-        return [(span.start_word, span.end_word) for span in out.retakes]
+        from app.pipeline.speech_cut_state import make_candidate  # noqa: PLC0415
+        from app.services.transcript_source import compute_transcript_hash  # noqa: PLC0415
+
+        transcript_words = [
+            {
+                "word": str(word.text),
+                "start_s": float(word.start_s),
+                "end_s": float(word.end_s),
+            }
+            for word in transcript.words
+        ]
+        transcript_hash = compute_transcript_hash(transcript_words, None)
+
+        candidates = []
+        for span in getattr(out, "review_candidates", []) or []:
+            words = transcript.words[span.start_word : span.end_word + 1]
+            if not words:
+                continue
+            candidates.append(
+                make_candidate(
+                    start_s=float(words[0].start_s),
+                    end_s=float(words[-1].end_s),
+                    reason=span.reason,
+                    source="retake_review",
+                    preview=" ".join(str(word.text) for word in words),
+                    source_fingerprint=hashlib.sha256(
+                        source_fingerprint.encode("utf-8")
+                    ).hexdigest()[:24],
+                    transcript_hash=transcript_hash,
+                )
+            )
+        return [(span.start_word, span.end_word) for span in out.retakes], candidates
     except Exception as exc:  # noqa: BLE001 — retakes can never block the base feature
         log.warning("retake_detector_failed", job_id=job_id, error=str(exc)[:200])
         record_pipeline_event("silence_cut", "retake_detector_failed", {"error": str(exc)[:200]})
-        return []
+        return [], []
 
 
 def _silence_cut_analysis(
@@ -10231,6 +10409,7 @@ def _silence_cut_analysis(
     job_id: str,
     cache: _SilenceCutCache | None,
     cache_key: str | None = None,
+    source_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Detection inputs + CutPlan for one clip, computed once per job (7A).
 
@@ -10258,6 +10437,19 @@ def _silence_cut_analysis(
     """
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
+    forced_removals: list[dict[str, Any]] = []
+    try:
+        with _sync_session() as db:
+            cut_job = db.get(Job, uuid.UUID(job_id))
+            forced_removals = list(
+                ((cut_job.assembly_plan or {}).get("speech_cut_control") or {}).get(
+                    "forced_removals"
+                )
+                or []
+            )
+    except Exception as exc:  # noqa: BLE001 — optional review state fails open
+        log.warning("speech_cut_control_read_failed", job_id=job_id, error=str(exc)[:160])
+
     def _compute() -> dict[str, Any]:
         entry: dict[str, Any] = {
             "failed": False,
@@ -10265,6 +10457,7 @@ def _silence_cut_analysis(
             "language": "",
             "plan": None,
             "retake_span_count": 0,
+            "review_candidates": [],
             "cut_video_path": None,
         }
         try:
@@ -10298,7 +10491,11 @@ def _silence_cut_analysis(
             )
             # d=0.1 (NOT speech_coverage's 0.3 default): the cut path needs short
             # real silences visible to the intersection rule (round 2 / 9A).
-            silences = detect_silences(clip_path, min_silence_s=0.1)
+            silences = (
+                detect_silences(clip_path, min_silence_s=0.1)
+                if settings.silence_cut_enabled
+                else []
+            )
             if not silences:
                 # Calibration gate visibility: zero silencedetect ranges means
                 # rule 2 self-disables inside build_cut_plan (noisy footage —
@@ -10308,8 +10505,28 @@ def _silence_cut_analysis(
                     "silence_cut_rule2_disabled",
                     {"clip": os.path.basename(clip_path)},
                 )
-            retake_spans = _silence_cut_retake_spans(transcript, job_id=job_id)
-            plan = build_cut_plan(transcript.words, silences, duration_s, retake_spans=retake_spans)
+            retake_spans, review_candidates = _silence_cut_retake_spans(
+                transcript,
+                job_id=job_id,
+                source_fingerprint=source_fingerprint or cache_key or clip_path,
+            )
+            plan = build_cut_plan(
+                transcript.words,
+                silences,
+                duration_s,
+                retake_spans=retake_spans,
+                forced_removals=forced_removals,
+                include_silence_and_fillers=settings.silence_cut_enabled,
+            )
+            review_candidates = [
+                candidate
+                for candidate in review_candidates
+                if not any(
+                    min(float(candidate["end_s"]), removal.end_s)
+                    > max(float(candidate["start_s"]), removal.start_s)
+                    for removal in plan.removed
+                )
+            ]
             if plan.bailout_reason:
                 # Safety rail tripped → the plan is a no-op; callers render uncut.
                 record_pipeline_event(
@@ -10320,6 +10537,7 @@ def _silence_cut_analysis(
                 language=transcript.language or "",
                 plan=plan,
                 retake_span_count=len(retake_spans),
+                review_candidates=review_candidates,
             )
         except Exception as exc:  # noqa: BLE001 — fail-open: worst case is today's uncut render
             log.warning(
@@ -10373,6 +10591,7 @@ def _silence_cut_analysis(
                 "language": "",
                 "plan": None,
                 "retake_span_count": 0,
+                "review_candidates": [],
                 "cut_video_path": None,
             }
         with cache.lock:
@@ -11246,6 +11465,9 @@ def _render_subtitled_variant(
         # Silence-cut summary {removed, time_saved_s, version} (plans/010) — set
         # only when the stage ran to a plan; drives the admin cut-plan viewer.
         "silence_cut": None,
+        "speech_cut_candidates": None,
+        "speech_cut_forced_removals": None,
+        "speech_cuts_disabled": False,
     }
     if base.get("smart_caption_policy") is not None:
         base["smart_caption_policy"] = _effective_smart_caption_policy(
@@ -11314,7 +11536,7 @@ def _render_subtitled_variant(
         sc_plan = None  # CutPlan captions remap against (no-op when nothing cut)
         sc_apply = False  # True ⇒ pass keep_segments into the reframe
         sc_apply_failed = False
-        if settings.silence_cut_enabled:
+        if settings.silence_cut_enabled or settings.retake_cut_enabled:
             from app.pipeline.silence_cut import (  # noqa: PLC0415
                 KEEP_SEGMENTS_PUNCH_IN,
                 is_filler_token,
@@ -11339,7 +11561,11 @@ def _render_subtitled_variant(
             else:
                 with _stage_timer("silence_cut_analysis"):
                     sc_entry = _silence_cut_analysis(
-                        clip_path, float(probe.duration_s), job_id=job_id, cache=silence_cut_cache
+                        clip_path,
+                        float(probe.duration_s),
+                        job_id=job_id,
+                        cache=silence_cut_cache,
+                        source_fingerprint=next(iter(clip_id_to_local)),
                     )
                 # `words` must be non-empty to adopt the verbatim transcript:
                 # an empty-words bailout (e.g. clip_too_short — P3 returns
@@ -12269,6 +12495,8 @@ def _render_subtitled_variant(
                     cut_reused=cut_reused,
                 ),
             )
+        if sc_entry is not None:
+            base["speech_cut_candidates"] = sc_entry.get("review_candidates") or None
         if smart_v2 and base.get("smart_validation_receipts") is not None:
             try:
                 import resource  # noqa: PLC0415
@@ -12318,6 +12546,9 @@ def _render_subtitled_variant(
             "text_elements_user_edited": base.get("text_elements_user_edited"),
             "text_elements_materialized_from": base.get("text_elements_materialized_from"),
             "silence_cut": silence_cut_summary,
+            "speech_cut_candidates": base.get("speech_cut_candidates"),
+            "speech_cut_forced_removals": base.get("speech_cut_forced_removals"),
+            "speech_cuts_disabled": base.get("speech_cuts_disabled", False),
         }
     except Exception as exc:
         err = str(exc)[:MAX_ERROR_DETAIL_LEN]
@@ -14461,10 +14692,466 @@ def _clip_set_summary(clip_metas: list) -> str:
     return f"n_clips={n} | avg_hook_score={avg_hook:.1f}"
 
 
+# ── Speech-cut rerender publication ─────────────────────────────────────────────
+
+
+_SPEECH_CUT_FINALIZER_CLAIM_TTL_S = 1810.0
+
+
+def _speech_cut_claim_matches(control: dict[str, Any], operation_id: str, attempt_id: str) -> bool:
+    claim = control.get("finalizer_claim") or {}
+    return bool(
+        control.get("operation_id") == operation_id
+        and claim.get("operation_id") == operation_id
+        and claim.get("attempt_id") == attempt_id
+    )
+
+
+def _claim_speech_cut_finalize(
+    job_id: str,
+    operation_id: str,
+    attempt_id: str,
+    *,
+    task_id: str | None = None,
+    retry_number: int = 0,
+) -> bool:
+    """Claim one operation attempt; fresh duplicate deliveries become no-ops.
+
+    The lease is slightly longer than this task's hard time limit. A worker that
+    is still alive cannot be stolen from, while a broker redelivery after a
+    hard-killed worker can recover instead of stranding the request.
+    """
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    now_s = time.time()
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return False
+        plan = job.assembly_plan or {}
+        control = dict(plan.get("speech_cut_control") or {})
+        if control.get("operation_id") != operation_id:
+            return False
+        claim = control.get("finalizer_claim") or {}
+        try:
+            claim_age_s = now_s - float(claim.get("claimed_at_epoch_s"))
+        except (TypeError, ValueError):
+            claim_age_s = _SPEECH_CUT_FINALIZER_CLAIM_TTL_S
+        try:
+            claimed_retry_number = int(claim.get("retry_number") or 0)
+        except (TypeError, ValueError):
+            claimed_retry_number = 0
+        same_task_newer_retry = bool(
+            task_id and claim.get("task_id") == task_id and retry_number > claimed_retry_number
+        )
+        if (
+            claim.get("attempt_id")
+            and not same_task_newer_retry
+            and claim_age_s < _SPEECH_CUT_FINALIZER_CLAIM_TTL_S
+        ):
+            return False
+        control["finalizer_claim"] = {
+            "operation_id": operation_id,
+            "attempt_id": attempt_id,
+            "task_id": task_id,
+            "retry_number": retry_number,
+            "claimed_at_epoch_s": now_s,
+        }
+        job.assembly_plan = {**plan, "speech_cut_control": control}
+        flag_modified(job, "assembly_plan")
+        db.commit()
+        return True
+
+
+def _assert_speech_cut_finalize_claim(job_id: str, operation_id: str, attempt_id: str) -> None:
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        control = ((job.assembly_plan or {}).get("speech_cut_control") or {}) if job else {}
+    if not _speech_cut_claim_matches(control, operation_id, attempt_id):
+        raise RuntimeError("speech cut operation was superseded")
+
+
+def _release_speech_cut_finalize_claim(job_id: str, operation_id: str, attempt_id: str) -> bool:
+    """Release only this attempt's claim so an OperationalError retry can run."""
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return False
+        plan = job.assembly_plan or {}
+        control = dict(plan.get("speech_cut_control") or {})
+        if not _speech_cut_claim_matches(control, operation_id, attempt_id):
+            return False
+        control["finalizer_claim"] = None
+        job.assembly_plan = {**plan, "speech_cut_control": control}
+        flag_modified(job, "assembly_plan")
+        db.commit()
+        return True
+
+
+def _removals_from_summary(summary: dict | None) -> list[Any]:
+    from app.pipeline.silence_cut import Removal  # noqa: PLC0415
+
+    out = []
+    for raw in (summary or {}).get("removed") or []:
+        try:
+            out.append(
+                Removal(
+                    start_s=float(raw["start_s"]),
+                    end_s=float(raw["end_s"]),
+                    reason=str(raw.get("reason") or "speech_cut"),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _merge_speech_cut_prior_state(
+    job_id: str,
+    result: dict[str, Any],
+    *,
+    expected_operation_id: str | None = None,
+    expected_attempt_id: str | None = None,
+) -> dict[str, Any]:
+    """Carry creator-authored lanes through old-output → source → new-output."""
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return result
+        plan = job.assembly_plan or {}
+        control = plan.get("speech_cut_control") or {}
+        prior = plan.get("speech_cut_previous_variant")
+    if (
+        expected_operation_id
+        and expected_attempt_id
+        and not _speech_cut_claim_matches(control, expected_operation_id, expected_attempt_id)
+    ):
+        raise RuntimeError("speech cut operation was superseded during render")
+    if not isinstance(prior, dict) or control.get("variant_id") != result.get("variant_id"):
+        return result
+
+    from app.pipeline.speech_cut_state import reproject_variant_timing  # noqa: PLC0415
+
+    projected = reproject_variant_timing(
+        prior,
+        old_removals=_removals_from_summary(prior.get("silence_cut")),
+        new_removals=_removals_from_summary(result.get("silence_cut")),
+    )
+    merged = dict(result)
+    # New speech/caption/Smart analysis stays authoritative. Creator-authored
+    # timing lanes are projected exactly; appearance toggles are timing-free.
+    for field in (
+        "media_overlays",
+        "sound_effects",
+        "camera_effects",
+        "boundary_effects",
+        "motion_scenes",
+        "visual_blocks",
+    ):
+        if isinstance(prior.get(field), list):
+            merged[field] = projected.get(field) or []
+    if prior.get("text_elements_user_edited"):
+        merged["text_elements"] = projected.get("text_elements") or []
+        merged["text_elements_user_edited"] = True
+        merged["text_elements_materialized_from"] = prior.get("text_elements_materialized_from")
+    for field in (
+        "text_mode",
+        "style_set_id",
+        "intro_text",
+        "intro_highlight_word",
+        "intro_text_color",
+        "intro_behind_subject",
+        "intro_text_size_px",
+        "intro_size_source",
+        "intro_layout",
+        "intro_word_roles",
+        "intro_mode",
+        "intro_placement",
+        "intro_cluster_style",
+        "intro_cluster_hero_font",
+        "intro_cluster_body_font",
+        "intro_cluster_accent_font",
+        "intro_cluster_hero_size_px",
+        "intro_cluster_body_size_px",
+        "intro_cluster_accent_size_px",
+        "sequence_base_size_px",
+        "sequence_mode",
+        "sequence_quote",
+        "user_style_knobs",
+        "captions_enabled",
+        "voiceover_caption_style",
+        "voiceover_caption_font",
+        "caption_margin_v",
+        "caption_size_px",
+        "caption_text_color",
+        "caption_highlight_color",
+        "caption_stroke_width",
+        "caption_shadow_enabled",
+        "caption_font_user_edited",
+        "caption_position_user_edited",
+    ):
+        if field in prior:
+            merged[field] = prior.get(field)
+    merged["speech_cut_candidates"] = prior.get("speech_cut_candidates") or result.get(
+        "speech_cut_candidates"
+    )
+    merged["spine_clip_id"] = prior.get("spine_clip_id") or result.get("spine_clip_id")
+    merged["speech_cut_forced_removals"] = list(control.get("forced_removals") or [])
+    merged["speech_cuts_disabled"] = bool(control.get("desired_disabled"))
+    merged["speech_cut_in_flight"] = control.get("in_flight")
+    return merged
+
+
+def _speech_cut_intervals(raw_items: Any) -> list[tuple[float, float]]:
+    intervals: list[tuple[float, float]] = []
+    for raw in raw_items or []:
+        if not isinstance(raw, dict):
+            raise RuntimeError("speech cut receipt contained an invalid removal")
+        try:
+            start_s = float(raw["start_s"])
+            end_s = float(raw["end_s"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("speech cut receipt contained an invalid removal") from exc
+        if not (math.isfinite(start_s) and math.isfinite(end_s) and end_s > start_s):
+            raise RuntimeError("speech cut receipt contained an invalid removal")
+        intervals.append((start_s, end_s))
+    return intervals
+
+
+def _speech_cut_interval_is_covered(
+    requested: tuple[float, float], actual: list[tuple[float, float]]
+) -> bool:
+    epsilon_s = 0.04  # slightly over one 30fps frame
+    cursor = requested[0]
+    for start_s, end_s in sorted(actual):
+        if end_s < cursor - epsilon_s:
+            continue
+        if start_s > cursor + epsilon_s:
+            return False
+        cursor = max(cursor, end_s)
+        if cursor >= requested[1] - epsilon_s:
+            return True
+    return False
+
+
+def _validate_speech_cut_publication(control: dict[str, Any], variant: dict[str, Any]) -> None:
+    """Prove the persisted render matches the server-owned requested cut."""
+    actual = _speech_cut_intervals((variant.get("silence_cut") or {}).get("removed") or [])
+    if control.get("desired_disabled") is True:
+        if actual:
+            raise RuntimeError("speech timing restore rendered residual cuts")
+        return
+    forced = _speech_cut_intervals(control.get("forced_removals") or [])
+    if not forced or not all(_speech_cut_interval_is_covered(item, actual) for item in forced):
+        raise RuntimeError("speech cut render did not apply every requested removal")
+
+
+def _restore_failed_speech_cut_rerender(
+    job_id: str,
+    error: str,
+    *,
+    expected_operation_id: str | None = None,
+    expected_attempt_id: str | None = None,
+) -> bool:
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return False
+        plan = job.assembly_plan or {}
+        prior = plan.get("speech_cut_previous_variant")
+        control = plan.get("speech_cut_control") or {}
+        if (
+            expected_operation_id
+            and expected_attempt_id
+            and not _speech_cut_claim_matches(control, expected_operation_id, expected_attempt_id)
+        ):
+            return False
+        if not isinstance(prior, dict):
+            return False
+        previous_variants = plan.get("speech_cut_previous_variants")
+        variants = (
+            list(previous_variants)
+            if isinstance(previous_variants, list)
+            else [
+                prior if v.get("variant_id") == control.get("variant_id") else v
+                for v in plan.get("variants") or []
+            ]
+        )
+        failure = {
+            "operation_id": control.get("operation_id"),
+            "message": str(error)[:300],
+        }
+        variants = [
+            {**variant, "speech_cut_last_error": failure}
+            if variant.get("variant_id") == control.get("variant_id")
+            else variant
+            for variant in variants
+        ]
+        job.assembly_plan = {
+            **plan,
+            "silence_cut_disabled": bool(control.get("prior_disabled")),
+            "speech_cut_control": None,
+            "speech_cut_previous_variant": None,
+            "speech_cut_previous_variants": None,
+            "speech_cut_last_error": str(error)[:300],
+            "variants": variants,
+        }
+        job.status = "variants_ready"
+        flag_modified(job, "assembly_plan")
+        db.commit()
+        return True
+
+
+def _publish_speech_cut_rerender(
+    job_id: str, *, expected_operation_id: str, expected_attempt_id: str
+) -> None:
+    """Token-winning publication after the full render and lane composition."""
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    from app.pipeline.speech_cut_state import cut_revision  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return
+        plan = job.assembly_plan or {}
+        control = plan.get("speech_cut_control") or {}
+        if not _speech_cut_claim_matches(control, expected_operation_id, expected_attempt_id):
+            raise RuntimeError("speech cut publication was superseded")
+        variant_id = control.get("variant_id")
+        if not variant_id:
+            raise RuntimeError("speech cut publication target disappeared")
+        variants = list(plan.get("variants") or [])
+        published = False
+        for variant in variants:
+            if variant.get("variant_id") != variant_id:
+                continue
+            _validate_speech_cut_publication(control, variant)
+            operation = dict(control.get("operation") or {})
+            if operation.get("operation") == "apply_speech_cut_candidate":
+                for candidate in variant.get("speech_cut_candidates") or []:
+                    if candidate.get("candidate_id") == operation.get("candidate_id"):
+                        candidate["status"] = "accepted"
+            variant["speech_cut_forced_removals"] = list(control.get("forced_removals") or [])
+            variant["speech_cuts_disabled"] = bool(control.get("desired_disabled"))
+            variant["speech_cut_in_flight"] = None
+            operation["render_generation_id"] = variant.get("render_generation_id")
+            operation["status"] = "applied"
+            variant["speech_cut_revision"] = cut_revision(variant)
+            operation["revision"] = variant["speech_cut_revision"]
+            variant["speech_cut_last_receipt"] = operation
+            variant["speech_cut_last_error"] = None
+            published = True
+            break
+        if not published:
+            raise RuntimeError("speech cut publication variant disappeared")
+        job.assembly_plan = {
+            **plan,
+            "silence_cut_disabled": bool(control.get("desired_disabled")),
+            "speech_cut_control": None,
+            "speech_cut_previous_variant": None,
+            "speech_cut_previous_variants": None,
+            "speech_cut_last_error": None,
+            "variants": variants,
+        }
+        flag_modified(job, "assembly_plan")
+        db.commit()
+
+
+def _compose_speech_cut_rerender(
+    job_id: str, *, expected_operation_id: str, expected_attempt_id: str
+) -> None:
+    """Burn projected creator text/captions and reapply media before publish."""
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return
+        control = (job.assembly_plan or {}).get("speech_cut_control") or {}
+        if not _speech_cut_claim_matches(control, expected_operation_id, expected_attempt_id):
+            raise RuntimeError("speech cut composition was superseded")
+        variant_id = control.get("variant_id")
+        variant = next(
+            (
+                v
+                for v in (job.assembly_plan or {}).get("variants") or []
+                if v.get("variant_id") == variant_id
+            ),
+            None,
+        )
+    if not isinstance(variant, dict):
+        raise RuntimeError("speech cut target variant disappeared")
+    render_gen_id = uuid.uuid4().hex
+    if not _update_variant_entry(
+        job_id,
+        str(variant_id),
+        {"render_generation_id": render_gen_id, "render_status": "rendering"},
+        outcome="speech_cut_recompose_start",
+    ):
+        raise RuntimeError("speech cut recomposition was superseded")
+
+    archetype = variant.get("resolved_archetype")
+    if archetype == "subtitled":
+        terminal = {"accepted": False}
+        _run_reburn_narrated_captions(
+            job_id,
+            str(variant_id),
+            render_gen_id=render_gen_id,
+            terminal_state=terminal,
+        )
+        if not terminal["accepted"]:
+            raise RuntimeError("speech cut caption recomposition did not publish")
+        _assert_speech_cut_finalize_claim(job_id, expected_operation_id, expected_attempt_id)
+        return
+    if archetype != "talking_head":
+        raise RuntimeError(f"unsupported speech cut archetype: {archetype}")
+
+    patch = _reburn_text_on_base(
+        job_id=job_id,
+        variant_id=str(variant_id),
+        existing=variant,
+        agent_text=variant.get("intro_text"),
+        agent_form=None,
+        text_mode=str(variant.get("text_mode") or "none"),
+        resolved_style_set_id=variant.get("style_set_id"),
+        size_override_px=None,
+        settings=settings,
+        language="en",
+        storage_generation=render_gen_id,
+    )
+    patch.pop("_old_video_path_for_delete", None)
+    will_reapply = _will_reapply_media_layers({**variant, **patch})
+    patch["render_status"] = "rendering" if will_reapply else "ready"
+    if not _update_variant_entry(
+        job_id,
+        str(variant_id),
+        patch,
+        expected_render_gen_id=render_gen_id,
+        outcome="speech_cut_recompose_talking_head",
+    ):
+        raise RuntimeError("speech cut text recomposition was superseded")
+    if will_reapply and not _reapply_user_media_layers(
+        job_id=job_id,
+        variant_id=str(variant_id),
+        expected_render_gen_id=render_gen_id,
+    ):
+        raise RuntimeError("speech cut media reapply did not publish")
+    _assert_speech_cut_finalize_claim(job_id, expected_operation_id, expected_attempt_id)
+
+
 # ── Status helpers ──────────────────────────────────────────────────────────────
 
 
-def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
+def _finalize_job(
+    job_id: str,
+    results: list[dict[str, Any]],
+    *,
+    expected_operation_id: str | None = None,
+    expected_attempt_id: str | None = None,
+) -> None:
     successes = [r for r in results if r.get("ok")]
     failures = [r for r in results if not r.get("ok")]
     if successes and failures:
@@ -14473,6 +15160,14 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
         terminal = "variants_ready"
     else:
         terminal = "variants_failed"
+    speech_cut_status_kwargs = (
+        {
+            "expected_speech_cut_operation_id": expected_operation_id,
+            "expected_speech_cut_attempt_id": expected_attempt_id,
+        }
+        if expected_operation_id and expected_attempt_id
+        else {}
+    )
 
     _set_status(
         job_id,
@@ -14498,6 +15193,8 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # base is permanently unreachable after the first completed render
                     "intro_text": r.get("intro_text"),
                     "intro_highlight_word": r.get("intro_highlight_word"),
+                    "intro_text_color": r.get("intro_text_color"),
+                    "intro_behind_subject": r.get("intro_behind_subject"),
                     "base_video_path": r.get("base_video_path"),
                     # Visual replacement blocks render below text/captions. The
                     # original clean base remains immutable; the derived cache
@@ -14657,10 +15354,18 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # moment the job completes. Pinned by
                     # test_finalize_job_preserves_silence_cut.
                     "silence_cut": r.get("silence_cut"),
+                    "spine_clip_id": r.get("spine_clip_id"),
+                    "speech_cut_candidates": r.get("speech_cut_candidates"),
+                    "speech_cut_forced_removals": r.get("speech_cut_forced_removals"),
+                    "speech_cuts_disabled": r.get("speech_cuts_disabled", False),
+                    "speech_cut_in_flight": r.get("speech_cut_in_flight"),
+                    "speech_cut_last_receipt": r.get("speech_cut_last_receipt"),
+                    "speech_cut_last_error": r.get("speech_cut_last_error"),
                 }
                 for r in results
             ],
         },
+        **speech_cut_status_kwargs,
     )
     log.info(
         "generative_job_done",
@@ -14697,7 +15402,14 @@ def _persist_archetype_fallback(job_id: str, declared: str, reason: str | None) 
         db.commit()
 
 
-def _set_status(job_id: str, status: str, extra_plan: dict[str, Any] | None = None) -> None:
+def _set_status(
+    job_id: str,
+    status: str,
+    extra_plan: dict[str, Any] | None = None,
+    *,
+    expected_speech_cut_operation_id: str | None = None,
+    expected_speech_cut_attempt_id: str | None = None,
+) -> None:
     # Row-locked RMW (mirrors _upsert_variant_entry / _update_variant_entry).
     # `extra_plan` merges into assembly_plan — _finalize_job writes the WHOLE
     # variants list here. Sibling regenerate/reapply tasks and the status route's
@@ -14707,6 +15419,14 @@ def _set_status(job_id: str, status: str, extra_plan: dict[str, Any] | None = No
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return
+        if expected_speech_cut_operation_id and expected_speech_cut_attempt_id:
+            control = (job.assembly_plan or {}).get("speech_cut_control") or {}
+            if not _speech_cut_claim_matches(
+                control,
+                expected_speech_cut_operation_id,
+                expected_speech_cut_attempt_id,
+            ):
+                raise RuntimeError("speech cut finalization was superseded")
         job.status = status
         if extra_plan is not None:
             existing = job.assembly_plan or {}

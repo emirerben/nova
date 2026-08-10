@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.0.0] — 2026-08-09
+
+### Added
+- **Speech-first edits can now remove safe silences, filler sounds, and abandoned takes automatically.** Subtitled, talking-head, and self-narrated videos rebuild from the durable source with captions, Smart text, overlays, sound effects, and timing remapped to the shorter cut; music-led edits remain isolated.
+- **Creators can review uncertain speech cuts in Nova before applying them, then restore the original timing at any point.** Every accepted change produces a server-backed receipt for the requested range only after the rebuilt video is published and validated to include it.
+
+### Changed
+- Nova only recommends automatic cuts when the current editor supports them, may honestly recommend no changes, and derives its “Will change” summary from executable operations rather than model prose.
+- Silence and retake detection keep independent kill switches and remain disabled by default until both English and Turkish production-image launch checks are approved.
+
+### Fixed
+- Speech-cut rebuilds are transactional across duplicate workers, retries, stale finalizers, publication failures, and broker failures, so a late worker cannot overwrite the accepted video and rollback restores every sibling variant exactly.
+- Timing-only rebuilds no longer re-run first-generation visual or sound suggestion chains after publishing the cut receipt.
+
 ## [0.24.2.1] — 2026-08-09
 
 ### Fixed
@@ -16,6 +30,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Creator Block visual QA now combines Node/Deno pixel parity with independent safe-frame, row-spacing, headline-visibility, inspector-ownership, pocket-control, and scroll-ownership tests. The test suite can emit the exact reviewed portrait and landscape PNGs, and saved scenes from the previous runtime are upgraded safely instead of becoming unavailable.
+
 ## [0.24.1.0] — 2026-08-09
 
 ### Changed

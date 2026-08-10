@@ -12,6 +12,7 @@ from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.main import app
+from app.pipeline.speech_cut_state import make_candidate
 from app.routes import plan_items
 from app.routes._director import DirectorSuggestionsResponse
 from app.routes._omni import OmniAssetResponse
@@ -26,6 +27,7 @@ def teardown_function() -> None:
     app.dependency_overrides.clear()
     settings.edit_director_enabled = False
     settings.omni_generated_video_enabled = False
+    settings.retake_cut_enabled = False
 
 
 def _result(value) -> MagicMock:  # noqa: ANN001
@@ -113,7 +115,7 @@ def _director_response() -> DirectorSuggestionsResponse:
     )
 
 
-def test_director_response_enforces_one_to_five_suggestions() -> None:
+def test_director_response_enforces_zero_to_five_suggestions() -> None:
     one = _director_response()
     five_suggestions = [
         one.suggestions[0].model_copy(update={"id": f"director-{index}"}) for index in range(5)
@@ -122,11 +124,14 @@ def test_director_response_enforces_one_to_five_suggestions() -> None:
     five = one.model_copy(update={"suggestions": five_suggestions})
     assert len(DirectorSuggestionsResponse.model_validate(five.model_dump()).suggestions) == 5
 
-    for invalid_suggestions in ([], [*five_suggestions, five_suggestions[0]]):
-        payload = one.model_dump()
-        payload["suggestions"] = invalid_suggestions
-        with pytest.raises(ValidationError):
-            DirectorSuggestionsResponse.model_validate(payload)
+    empty = one.model_dump()
+    empty["suggestions"] = []
+    assert DirectorSuggestionsResponse.model_validate(empty).suggestions == []
+
+    overflow = one.model_dump()
+    overflow["suggestions"] = [*five_suggestions, five_suggestions[0]]
+    with pytest.raises(ValidationError):
+        DirectorSuggestionsResponse.model_validate(overflow)
 
 
 def test_director_routes_require_authentication(client: TestClient) -> None:
@@ -181,6 +186,55 @@ def test_director_oversized_snapshot_and_invalid_variant_reject(client: TestClie
         json=_director_body(),
     )
     assert missing.status_code == 404
+
+
+def test_director_replaces_spoofed_cut_context_with_server_candidate(
+    client: TestClient, monkeypatch
+) -> None:
+    settings.edit_director_enabled = True
+    settings.retake_cut_enabled = True
+    user, item, plan, job = _owned(uuid.uuid4())
+    candidate = make_candidate(
+        start_s=1.0,
+        end_s=1.8,
+        reason="possible restart",
+        source="retake_review",
+        preview="let me try that again",
+        source_fingerprint="stable-source",
+        transcript_hash="transcript-v1",
+    )
+    job.assembly_plan["variants"][0].update(
+        {
+            "resolved_archetype": "subtitled",
+            "base_video_path": "generative-jobs/job/base.mp4",
+            "speech_cut_candidates": [candidate],
+        }
+    )
+    _install(user, item, plan)
+    run = AsyncMock(return_value=_director_response())
+    monkeypatch.setattr(plan_items, "run_director", run)
+    body = _director_body()
+    body["snapshot"].update(
+        {
+            "automatic_cut": True,
+            "speech_cut_candidates": [
+                {"candidate_id": "cut_forged", "status": "pending"},
+            ],
+        }
+    )
+
+    response = client.post(
+        f"/plan-items/{item.id}/variants/v1/director/suggestions",
+        json=body,
+    )
+
+    assert response.status_code == 200
+    authoritative = run.await_args.kwargs["authoritative_speech_cut"]
+    assert authoritative["automatic_cut"] is True
+    assert [c["candidate_id"] for c in authoritative["speech_cut_candidates"]] == [
+        candidate["candidate_id"]
+    ]
+    assert "cut_forged" not in str(authoritative)
 
 
 def test_director_suggestion_rate_limit(client: TestClient, monkeypatch) -> None:

@@ -2,15 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  applySpeechCutCandidate,
   cancelOmniAsset,
   claimOmniAsset,
   editDirectorFeedback,
   editDirectorSuggestions,
   getOmniAsset,
+  restoreOriginalSpeechTiming,
   startOmniAsset,
   type EditorSuggestion,
   type OmniAssetResponse,
+  type SpeechCutOperation,
 } from "@/lib/plan-api";
+import type { CopilotOp } from "./ops";
 import type { ApplyCopilotOpsResult, ChangeChip } from "./apply-ops";
 import type { CopilotSnapshot } from "./snapshot";
 import { isFeatureUnavailable } from "./availability";
@@ -22,12 +26,19 @@ export interface UseEditDirectorOptions {
   variantId: string;
   buildSnapshot: () => CopilotSnapshot;
   applyOpsAtomic: (
-    ops: EditorSuggestion["ops"],
+    ops: CopilotOp[],
     snapshot: CopilotSnapshot,
   ) => ApplyCopilotOpsResult;
   onApplied: (result: ApplyCopilotOpsResult) => DirectorApplyPresentation | void;
   onRevealApplied?: (focus: DirectorPreviewFocus) => void;
   onGeneratedAssetReady?: () => void | Promise<void>;
+  speechCutRevision?: string | null;
+  speechCutLastReceipt?: SpeechCutOperation | null;
+  speechCutLastError?: { operation_id?: string | null; message: string } | null;
+  serverRenderPending?: boolean;
+  serverOperationsEnabled?: boolean;
+  onServerRenderStarted?: () => void | Promise<void>;
+  canRestoreOriginalTiming?: boolean;
 }
 
 export interface DirectorGenerationState {
@@ -69,11 +80,14 @@ export interface UseEditDirectorResult {
   modelUsed: string;
   fallbackReason: string | null;
   generation: DirectorGenerationState | null;
+  serverRendering: boolean;
   refresh: () => void;
   accept: (suggestion: EditorSuggestion) => void;
   dismiss: (suggestion: EditorSuggestion) => void;
   revealApplied: (receipt: DirectorAppliedReceipt) => void;
   cancelGeneration: () => void;
+  restoreOriginalTiming: () => void;
+  canRestoreOriginalTiming: boolean;
 }
 
 function dismissedKey(itemId: string, variantId: string): string {
@@ -147,6 +161,7 @@ export function useEditDirector(
   const [modelUsed, setModelUsed] = useState("");
   const [fallbackReason, setFallbackReason] = useState<string | null>(null);
   const [generation, setGeneration] = useState<DirectorGenerationState | null>(null);
+  const [serverDispatchPending, setServerDispatchPending] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const requestIdRef = useRef(0);
   const sourceSnapshotRef = useRef<CopilotSnapshot | null>(null);
@@ -154,6 +169,10 @@ export function useEditDirector(
   const optsRef = useRef(opts);
   const generationTokenRef = useRef(0);
   const receiptSequenceRef = useRef(0);
+  const lastServerReceiptIdRef = useRef("");
+  const lastServerFailureIdRef = useRef("");
+  const pendingServerOperationIdRef = useRef("");
+  const pendingServerSuggestionRef = useRef<EditorSuggestion | null>(null);
   // Stays armed across abort/restart cycles until a replacement review either
   // lands or fails. A one-render latch loses refreshes during async hydration.
   const forceRefreshRef = useRef(false);
@@ -162,6 +181,7 @@ export function useEditDirector(
   // captions, capabilities, overlays). A review started against a partial
   // snapshot is cancelled and restarted once that real input settles.
   const directorEnabled = opts.enabled;
+  const canRestoreOriginalTiming = opts.canRestoreOriginalTiming === true;
   const buildSnapshot = opts.buildSnapshot;
   const currentSnapshotRevision = useMemo(
     () => directorEnabled ? directorSnapshotRevision(buildSnapshot()) : "",
@@ -176,10 +196,65 @@ export function useEditDirector(
     setUnavailable(false);
     setModelUsed("");
     setFallbackReason(null);
+    sourceRevisionRef.current = "";
     forceRefreshRef.current = false;
     generationTokenRef.current += 1;
     setGeneration(null);
+    setServerDispatchPending(false);
+    lastServerReceiptIdRef.current = "";
+    lastServerFailureIdRef.current = "";
+    pendingServerOperationIdRef.current = "";
+    pendingServerSuggestionRef.current = null;
   }, [opts.itemId, opts.variantId]);
+
+  useEffect(() => {
+    if (opts.serverRenderPending) {
+      setServerDispatchPending(false);
+    }
+  }, [opts.serverRenderPending]);
+
+  useEffect(() => {
+    const receipt = opts.speechCutLastReceipt;
+    if (!receipt || receipt.status !== "applied") return;
+    const receiptId = receipt.render_generation_id || receipt.revision;
+    if (!receiptId || lastServerReceiptIdRef.current === receiptId) return;
+    lastServerReceiptIdRef.current = receiptId;
+    pendingServerOperationIdRef.current = "";
+    setServerDispatchPending(false);
+    const removed = receipt.removed;
+    const saved = Number(receipt.time_saved_s || 0);
+    const restored = Number(receipt.restored_s || 0);
+    const serverReceipt: DirectorAppliedReceipt = {
+      id: `speech-cut-${receiptId}`,
+      suggestionId: pendingServerSuggestionRef.current?.id || receipt.operation,
+      title:
+        receipt.operation === "restore_original_timing"
+          ? "Original timing restored"
+          : "Reviewed speech cut applied",
+      startS: Number(removed?.start_s || 0),
+      endS: Number(removed?.end_s || removed?.start_s || 0),
+      changes: [
+        receipt.operation === "restore_original_timing"
+          ? {
+              label: "Speech timing",
+              from: `${restored.toFixed(3)}s removed`,
+              to: "Original timing restored",
+            }
+          : {
+              label: "Speech timing",
+              from: `${Number(removed?.start_s || 0).toFixed(3)}-${Number(removed?.end_s || 0).toFixed(3)}s`,
+              to: `${saved.toFixed(3)}s removed and downstream timing rebuilt`,
+            },
+      ],
+    };
+    setAppliedReceipts((current) =>
+      [...current.filter((item) => item.id !== serverReceipt.id), serverReceipt].slice(
+        -MAX_APPLIED_RECEIPTS,
+      ),
+    );
+  }, [opts.speechCutLastReceipt]);
+
+  const serverRendering = serverDispatchPending || opts.serverRenderPending === true;
 
   useEffect(() => () => {
     generationTokenRef.current += 1;
@@ -197,6 +272,7 @@ export function useEditDirector(
     // suggestions are server-validated into sequentially compatible edit
     // domains, and applyOpsAtomic rejects a card if its own target changed.
     if (suggestionsRef.current.length > 0 && !forceRefresh) return;
+    if (sourceRevisionRef.current === currentSnapshotRevision && !forceRefresh) return;
     const controller = new AbortController();
     let activeRequestId = 0;
     const timer = window.setTimeout(() => {
@@ -282,6 +358,14 @@ export function useEditDirector(
     [modelUsed],
   );
 
+  useEffect(() => {
+    const receipt = opts.speechCutLastReceipt;
+    const pending = pendingServerSuggestionRef.current;
+    if (!pending || !receipt || receipt.status !== "applied") return;
+    feedback(pending, "accepted");
+    pendingServerSuggestionRef.current = null;
+  }, [feedback, opts.speechCutLastReceipt]);
+
   const removeSuggestion = useCallback((suggestionId: string) => {
     const remaining = suggestionsRef.current.filter((item) => item.id !== suggestionId);
     suggestionsRef.current = remaining;
@@ -293,6 +377,25 @@ export function useEditDirector(
     setUnavailable(false);
     setRefreshKey((value) => value + 1);
   }, []);
+
+  useEffect(() => {
+    const failure = opts.speechCutLastError;
+    const operationId = String(failure?.operation_id || "");
+    if (
+      !operationId ||
+      operationId !== pendingServerOperationIdRef.current ||
+      operationId === lastServerFailureIdRef.current ||
+      opts.serverRenderPending
+    ) {
+      return;
+    }
+    lastServerFailureIdRef.current = operationId;
+    pendingServerOperationIdRef.current = "";
+    pendingServerSuggestionRef.current = null;
+    setServerDispatchPending(false);
+    setError("Nova couldn't complete that timing change. The current video is unchanged.");
+    refreshReview();
+  }, [opts.serverRenderPending, opts.speechCutLastError, refreshReview]);
 
   const dismiss = useCallback(
     (suggestion: EditorSuggestion) => {
@@ -345,6 +448,46 @@ export function useEditDirector(
 
   const accept = useCallback(
     (suggestion: EditorSuggestion) => {
+      if (suggestion.apply_mode === "server_async") {
+        const op = suggestion.ops.find(
+          (candidate) => candidate.op === "apply_speech_cut_candidate",
+        );
+        if (!op || op.op !== "apply_speech_cut_candidate") return;
+        if (optsRef.current.serverOperationsEnabled === false) {
+          setError("Save your draft before applying a timing change.");
+          return;
+        }
+        const revision = optsRef.current.speechCutRevision;
+        if (!revision || serverRendering) {
+          setError("This cut is stale. Nova is refreshing the review.");
+          refreshReview();
+          return;
+        }
+        pendingServerSuggestionRef.current = suggestion;
+        setServerDispatchPending(true);
+        setError(null);
+        void applySpeechCutCandidate(
+          optsRef.current.itemId,
+          optsRef.current.variantId,
+          op.candidate_id,
+          revision,
+        )
+          .then(async (response) => {
+            pendingServerOperationIdRef.current = String(
+              response.request.operation_id || "",
+            );
+            removeSuggestion(suggestion.id);
+            await optsRef.current.onServerRenderStarted?.();
+          })
+          .catch(() => {
+            pendingServerSuggestionRef.current = null;
+            pendingServerOperationIdRef.current = "";
+            setServerDispatchPending(false);
+            setError("Nova couldn't apply that cut. The current video is unchanged.");
+            refreshReview();
+          });
+        return;
+      }
       if (suggestion.apply_mode === "omni_async") {
         if (!suggestion.omni || generation) return;
         const source = sourceSnapshotRef.current;
@@ -489,7 +632,10 @@ export function useEditDirector(
         refreshReview();
         return;
       }
-      const result = optsRef.current.applyOpsAtomic(suggestion.ops, source);
+      const localOps = suggestion.ops.filter(
+        (op): op is CopilotOp => op.op !== "apply_speech_cut_candidate",
+      );
+      const result = optsRef.current.applyOpsAtomic(localOps, source);
       if (result.rejected.length > 0 || result.applied.length === 0) {
         setError(
           result.rejected[0]?.detail ??
@@ -500,7 +646,7 @@ export function useEditDirector(
       }
       completeAcceptance(suggestion, result);
     },
-    [completeAcceptance, generation, refreshReview],
+    [completeAcceptance, generation, refreshReview, removeSuggestion, serverRendering],
   );
 
   const revealApplied = useCallback((receipt: DirectorAppliedReceipt) => {
@@ -532,6 +678,35 @@ export function useEditDirector(
       });
   }, [generation]);
 
+  const restoreOriginalTiming = useCallback(() => {
+    if (!optsRef.current.canRestoreOriginalTiming || serverRendering) return;
+    if (optsRef.current.serverOperationsEnabled === false) {
+      setError("Save your draft before restoring the original timing.");
+      return;
+    }
+    const revision = optsRef.current.speechCutRevision;
+    if (!revision) return;
+    setServerDispatchPending(true);
+    setError(null);
+    void restoreOriginalSpeechTiming(
+      optsRef.current.itemId,
+      optsRef.current.variantId,
+      revision,
+    )
+      .then(async (response) => {
+        pendingServerOperationIdRef.current = String(
+          response.request.operation_id || "",
+        );
+        await optsRef.current.onServerRenderStarted?.();
+      })
+      .catch(() => {
+        pendingServerOperationIdRef.current = "";
+        setServerDispatchPending(false);
+        setError("Nova couldn't restore the original timing. The current video is unchanged.");
+        refreshReview();
+      });
+  }, [refreshReview, serverRendering]);
+
   return useMemo(
     () => ({
       suggestions,
@@ -542,6 +717,7 @@ export function useEditDirector(
       modelUsed,
       fallbackReason,
       generation,
+      serverRendering,
       // Explicit refresh stays armed through snapshot-hydration aborts, so the
       // visible button always produces a replacement review.
       refresh: refreshReview,
@@ -549,6 +725,8 @@ export function useEditDirector(
       dismiss,
       revealApplied,
       cancelGeneration,
+      restoreOriginalTiming,
+      canRestoreOriginalTiming,
     }),
     [
       suggestions,
@@ -559,11 +737,14 @@ export function useEditDirector(
       modelUsed,
       fallbackReason,
       generation,
+      serverRendering,
       refreshReview,
       accept,
       dismiss,
       revealApplied,
       cancelGeneration,
+      restoreOriginalTiming,
+      canRestoreOriginalTiming,
     ],
   );
 }

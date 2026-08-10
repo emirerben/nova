@@ -387,6 +387,11 @@ class GenerativeVariant(BaseModel):
     music_preview_start_s: float | None = None
     background_music: BackgroundMusicOut | None = None
     editor_capabilities: EditorCapabilitiesOut | None = None
+    speech_cut_candidates: list[dict] | None = None
+    speech_cut_revision: str | None = None
+    speech_cut_in_flight: dict | None = None
+    speech_cut_last_receipt: dict | None = None
+    speech_cut_last_error: dict | None = None
     text_mode: str | None = None
     style_set_id: str | None = None
     rank: int | None = None
@@ -1450,7 +1455,17 @@ def _variants_for_response(job: Job) -> list[dict]:
         v = {**v, "orientation": _variant_orientation(v)}
         # E4: per-variant editor capabilities — one server-side truth source for
         # which editor surfaces the FE may enable (no endpoint probing).
-        v = {**v, "editor_capabilities": _editor_capabilities(job, v)}
+        from app.pipeline.speech_cut_state import (  # noqa: PLC0415
+            cut_revision,
+            public_candidates,
+        )
+
+        v = {
+            **v,
+            "speech_cut_candidates": public_candidates(v),
+            "speech_cut_revision": cut_revision(v),
+            "editor_capabilities": _editor_capabilities(job, v),
+        }
         out.append(v)
     return out
 
@@ -1474,7 +1489,7 @@ def require_editable_variant(job: Job, variant_id: str) -> dict:
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
-    if variant.get("render_status") == "rendering":
+    if variant.get("render_status") == "rendering" or variant.get("speech_cut_in_flight"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
         )
@@ -2159,6 +2174,176 @@ async def dispatch_retranscribe_captions(
         kwargs={"render_gen_id": render_gen_id},
         queue="overlay-jobs",
     )
+
+
+def _speech_timing_rerender_thunk(job_id: str, operation_id: str) -> Callable[[], None]:
+    def _enqueue() -> None:
+        from app.tasks.generative_build import rerender_speech_timing  # noqa: PLC0415
+
+        rerender_speech_timing.apply_async(args=[job_id, operation_id], queue="plan-jobs")
+
+    return _enqueue
+
+
+def dispatch_apply_speech_cut_candidate(
+    job: Job,
+    variant_id: str,
+    *,
+    candidate_id: str,
+    expected_revision: str,
+) -> tuple[dict, Callable[[], None]]:
+    """Accept one persisted source-timeline cut and force a complete rebuild."""
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    from app.pipeline.speech_cut_state import accept_candidate  # noqa: PLC0415
+
+    variant = require_editable_variant(job, variant_id)
+    if not settings.retake_cut_enabled:
+        raise _timeline_error(404, "automatic_cut_disabled")
+    if variant.get("resolved_archetype") not in {"subtitled", "talking_head"}:
+        raise _timeline_error(422, "automatic_cut_unavailable")
+    try:
+        updated, request = accept_candidate(
+            variant,
+            candidate_id_value=candidate_id,
+            expected_revision=expected_revision,
+        )
+    except ValueError as exc:
+        raise _timeline_error(409, str(exc)) from exc
+    except LookupError as exc:
+        raise _timeline_error(404, str(exc)) from exc
+
+    render_gen_id = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    request["operation_id"] = operation_id
+    updated.update(
+        {
+            "ok": False,
+            "render_status": "rendering",
+            "render_generation_id": render_gen_id,
+            "speech_cut_last_error": None,
+        }
+    )
+    variants = [
+        updated if v.get("variant_id") == variant_id else v
+        for v in (job.assembly_plan or {}).get("variants") or []
+    ]
+    control = {
+        "variant_id": variant_id,
+        "forced_removals": updated["speech_cut_in_flight"]["desired_forced_removals"],
+        "desired_disabled": False,
+        "prior_disabled": (job.assembly_plan or {}).get("silence_cut_disabled") is True,
+        "operation": request,
+        "operation_id": operation_id,
+        "finalizer_claim": None,
+        "revision": request["revision"],
+        "in_flight": updated["speech_cut_in_flight"],
+    }
+    job.assembly_plan = {
+        **(job.assembly_plan or {}),
+        "silence_cut_disabled": False,
+        "speech_cut_control": control,
+        "speech_cut_previous_variant": variant,
+        "speech_cut_previous_variants": list((job.assembly_plan or {}).get("variants") or []),
+        "speech_cut_last_error": None,
+        "variants": variants,
+    }
+    job.status = "processing"
+    flag_modified(job, "assembly_plan")
+    mark_reattempt(job)
+    return request, _speech_timing_rerender_thunk(str(job.id), operation_id)
+
+
+def dispatch_restore_original_timing(
+    job: Job,
+    variant_id: str,
+    *,
+    expected_revision: str,
+) -> tuple[dict, Callable[[], None]]:
+    """Disable all speech cuts and rebuild from the durable original source."""
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    from app.pipeline.speech_cut_state import restore_original_timing  # noqa: PLC0415
+
+    variant = require_editable_variant(job, variant_id)
+    if variant.get("resolved_archetype") not in {"subtitled", "talking_head"}:
+        raise _timeline_error(422, "automatic_cut_unavailable")
+    try:
+        updated, request = restore_original_timing(variant, expected_revision=expected_revision)
+    except ValueError as exc:
+        raise _timeline_error(409, str(exc)) from exc
+    operation_id = uuid.uuid4().hex
+    request["operation_id"] = operation_id
+    updated.update(
+        {
+            "ok": False,
+            "render_status": "rendering",
+            "render_generation_id": uuid.uuid4().hex,
+            "speech_cut_last_error": None,
+        }
+    )
+    variants = [
+        updated if v.get("variant_id") == variant_id else v
+        for v in (job.assembly_plan or {}).get("variants") or []
+    ]
+    job.assembly_plan = {
+        **(job.assembly_plan or {}),
+        "silence_cut_disabled": True,
+        "speech_cut_control": {
+            "variant_id": variant_id,
+            "forced_removals": [],
+            "desired_disabled": True,
+            "prior_disabled": (job.assembly_plan or {}).get("silence_cut_disabled") is True,
+            "operation": request,
+            "operation_id": operation_id,
+            "finalizer_claim": None,
+            "revision": request["revision"],
+            "in_flight": updated["speech_cut_in_flight"],
+        },
+        "speech_cut_previous_variant": variant,
+        "speech_cut_previous_variants": list((job.assembly_plan or {}).get("variants") or []),
+        "speech_cut_last_error": None,
+        "variants": variants,
+    }
+    job.status = "processing"
+    flag_modified(job, "assembly_plan")
+    mark_reattempt(job)
+    return request, _speech_timing_rerender_thunk(str(job.id), operation_id)
+
+
+def rollback_speech_cut_dispatch(
+    job: Job, error: str, *, expected_operation_id: str | None = None
+) -> None:
+    """Restore the exact last-good state when queue publication fails."""
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    plan = job.assembly_plan or {}
+    prior = plan.get("speech_cut_previous_variant")
+    control = plan.get("speech_cut_control") or {}
+    if expected_operation_id and control.get("operation_id") != expected_operation_id:
+        return
+    if not isinstance(prior, dict):
+        return
+    previous_variants = plan.get("speech_cut_previous_variants")
+    variants = (
+        list(previous_variants)
+        if isinstance(previous_variants, list)
+        else [
+            prior if v.get("variant_id") == control.get("variant_id") else v
+            for v in plan.get("variants") or []
+        ]
+    )
+    job.assembly_plan = {
+        **plan,
+        "silence_cut_disabled": bool(control.get("prior_disabled")),
+        "speech_cut_control": None,
+        "speech_cut_previous_variant": None,
+        "speech_cut_previous_variants": None,
+        "speech_cut_last_error": str(error)[:300],
+        "variants": variants,
+    }
+    job.status = "variants_ready"
+    flag_modified(job, "assembly_plan")
 
 
 def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> None:
@@ -4224,6 +4409,14 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     else:
         background_music_reason = effects_reason
     carousel_reason = _carousel_capability_reason(variant)
+    automatic_cut = (
+        settings.retake_cut_enabled
+        and archetype in {"subtitled", "talking_head"}
+        and bool(variant.get("base_video_path"))
+        and variant.get("render_status") != "rendering"
+        and not variant.get("speech_cut_in_flight")
+        and bool(variant.get("speech_cut_candidates"))
+    )
     return {
         # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
         "text_elements": (
@@ -4237,6 +4430,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "timeline": timeline_ok,
         # Splitting a clip is a timeline-override operation — same eligibility.
         "split_clips": timeline_ok,
+        "automatic_cut": automatic_cut,
+        "automatic_cut_reason": None if automatic_cut else "no_reviewable_speech_timing",
         # Mirrors dispatch_set_mix: only variants carrying a voice bed can rebalance.
         # R1-4: caption archetypes hard-code mix=1.0 at render time but have no
         # montage mix lane — narrated's real knob is the bed-level dispatch on the
@@ -4296,6 +4491,18 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         },
         "carousel": carousel_reason is None,
         "carousel_reason": carousel_reason,
+    }
+
+
+def speech_cut_director_context(job: Job, variant: dict) -> dict:
+    """Authoritative prompt context; never trust the browser for candidate IDs."""
+    from app.pipeline.speech_cut_state import cut_revision, public_candidates  # noqa: PLC0415
+
+    capability = _editor_capabilities(job, variant).get("automatic_cut") is True
+    return {
+        "automatic_cut": capability,
+        "speech_cut_revision": cut_revision(variant),
+        "speech_cut_candidates": public_candidates(variant) if capability else [],
     }
 
 

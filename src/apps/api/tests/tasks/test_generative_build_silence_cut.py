@@ -266,7 +266,7 @@ def _render(monkeypatch, tmp_path, *, disabled=False, cache=None, subdir="varian
 
 def test_flag_off_is_byte_identical_dispatch(monkeypatch, tmp_path):
     monkeypatch.setattr(gb.settings, "silence_cut_enabled", False, raising=False)
-    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
     calls = _patch_pipeline(monkeypatch)
     _bomb_retake_detector(monkeypatch)
 
@@ -663,6 +663,62 @@ def test_retake_spans_merge_into_plan(monkeypatch, tmp_path):
     assert not _events_named(calls, "retake_detector_failed")
 
 
+def test_retake_only_flag_executes_without_silence_detection(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    calls = _patch_pipeline(monkeypatch, words=RETAKE_WORDS, silences=[], duration=12.0)
+
+    import app.agents.retake_detector as rd
+
+    monkeypatch.setattr(
+        rd,
+        "run_retake_detector",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            retakes=[types.SimpleNamespace(start_word=0, end_word=1, reason="restarted")],
+            review_candidates=[],
+        ),
+        raising=False,
+    )
+
+    res = _render(monkeypatch, tmp_path)
+
+    assert res["silence_cut"]["removed"] == [{"start_s": 0.0, "end_s": 1.88, "reason": "retake"}]
+    assert calls["detect"] == []
+    assert calls["reframe"][0]["keep_segments"] == pytest.approx([(1.88, 12.0)])
+
+
+def test_review_candidate_id_is_stable_across_temporary_render_roots(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    _patch_pipeline(monkeypatch, words=RETAKE_WORDS, silences=[], duration=12.0)
+
+    import app.agents.retake_detector as rd
+
+    monkeypatch.setattr(
+        rd,
+        "run_retake_detector",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            retakes=[],
+            review_candidates=[
+                types.SimpleNamespace(start_word=0, end_word=1, reason="possible restart")
+            ],
+        ),
+        raising=False,
+    )
+    first_root = tmp_path / "attempt-a"
+    second_root = tmp_path / "attempt-b"
+    first_root.mkdir()
+    second_root.mkdir()
+
+    first = _render(monkeypatch, first_root)
+    second = _render(monkeypatch, second_root)
+
+    assert (
+        first["speech_cut_candidates"][0]["candidate_id"]
+        == second["speech_cut_candidates"][0]["candidate_id"]
+    )
+
+
 # ── Per-job cache (7A) ───────────────────────────────────────────────────────────
 
 
@@ -840,6 +896,7 @@ def test_finalize_job_preserves_silence_cut(monkeypatch):
             "render_status": "ready",
             "ok": True,
             "silence_cut": silence_cut,
+            "spine_clip_id": "clip-spine",
         }
     ]
 
@@ -848,6 +905,7 @@ def test_finalize_job_preserves_silence_cut(monkeypatch):
     assert captured["plan"]["variants"][0]["silence_cut"] == silence_cut, (
         "finalize stripped silence_cut"
     )
+    assert captured["plan"]["variants"][0]["spine_clip_id"] == "clip-spine"
 
 
 # ══ talking_head wiring (plans/010 T6) ═══════════════════════════════════════════
@@ -910,7 +968,7 @@ def test_talking_head_flag_off_passes_no_cut_fn(monkeypatch, tmp_path):
     # Kill switch: the assembler gets silence_cut_fn=None → its pre-T6 flow is
     # byte-identical (pinned assembler-side by test_assemble_without_cut_fn…).
     monkeypatch.setattr(gb.settings, "silence_cut_enabled", False, raising=False)
-    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
     calls = _patch_th_stub(monkeypatch)
     _bomb_retake_detector(monkeypatch)
 
@@ -947,9 +1005,14 @@ def test_talking_head_cut_fn_routes_shared_analysis_with_cache(monkeypatch, tmp_
 
     seen: dict = {}
 
-    def _fake_analysis(path, duration_s, *, job_id, cache, cache_key=None):
+    def _fake_analysis(path, duration_s, *, job_id, cache, cache_key=None, source_fingerprint=None):
         seen.update(
-            path=path, duration_s=duration_s, job_id=job_id, cache=cache, cache_key=cache_key
+            path=path,
+            duration_s=duration_s,
+            job_id=job_id,
+            cache=cache,
+            cache_key=cache_key,
+            source_fingerprint=source_fingerprint,
         )
         return {"failed": True, "plan": None, "retake_span_count": 0}
 
@@ -962,17 +1025,24 @@ def test_talking_head_cut_fn_routes_shared_analysis_with_cache(monkeypatch, tmp_
     assert callable(fn)
     # The assembler keys a pre-capped analysis WAV by its SOURCE spine (+cap) —
     # the closure must forward cache_key through to the shared analysis.
-    fn("spine_cut_analysis.wav", 42.0, cache_key="spine.mp4::cap=120.0")
+    fn(
+        "spine_cut_analysis.wav",
+        42.0,
+        cache_key="spine.mp4::cap=120.0",
+        source_fingerprint="spine-clip-id",
+    )
     assert seen == {
         "path": "spine_cut_analysis.wav",
         "duration_s": 42.0,
         "job_id": JOB_ID,
         "cache": cache,
         "cache_key": "spine.mp4::cap=120.0",
+        "source_fingerprint": "spine-clip-id",
     }
     # cache_key is optional — omitted ⇒ None (analysis keys by the path itself).
     fn("spine.mp4", 42.0)
     assert seen["cache_key"] is None
+    assert seen["source_fingerprint"] is None
 
 
 def test_talking_head_summary_from_assembler_is_persisted(monkeypatch, tmp_path):

@@ -4359,6 +4359,14 @@ export default function EditorShell({
     onApplied: handleCopilotOps,
     onRevealApplied: revealCopilotFocus,
     onGeneratedAssetReady: reloadClipTimeline,
+    speechCutRevision: variant?.speech_cut_revision,
+    speechCutLastReceipt: variant?.speech_cut_last_receipt,
+    speechCutLastError: variant?.speech_cut_last_error,
+    serverRenderPending:
+      variant?.render_status === "rendering" || Boolean(variant?.speech_cut_in_flight),
+    serverOperationsEnabled: !dirty && !saving,
+    onServerRenderStarted: () => router.refresh(),
+    canRestoreOriginalTiming: Boolean(variant?.silence_cut?.removed?.length),
   });
 
   // Derived after the hook, not folded into toolDisabledReasons: that memo

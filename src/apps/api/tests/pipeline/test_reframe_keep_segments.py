@@ -196,9 +196,9 @@ class TestKeepSegmentsCommand:
         expected_fc = (
             f"[0:v]{EXPECTED_VF}[base]"
             ";[base]split=3[vs0][vs1][vs2]"
-            ";[vs0]trim=start=0.000000:end=4.000000,setpts=PTS-STARTPTS[v0]"
-            ";[vs1]trim=start=5.500000:end=8.500000,setpts=PTS-STARTPTS[v1]"
-            ";[vs2]trim=start=10.000000:end=12.000000,setpts=PTS-STARTPTS[v2]"
+            ";[vs0]trim=start=0.000000:end=4.000000,setpts=PTS-STARTPTS,setsar=1[v0]"
+            ";[vs1]trim=start=5.500000:end=8.500000,setpts=PTS-STARTPTS,setsar=1[v1]"
+            ";[vs2]trim=start=10.000000:end=12.000000,setpts=PTS-STARTPTS,setsar=1[v2]"
             ";[0:a]asplit=3[as0][as1][as2]"
             ";[as0]atrim=start=0.000000:end=4.000000,asetpts=PTS-STARTPTS"
             ",afade=t=out:st=3.988000:d=0.012[a0]"
@@ -253,8 +253,9 @@ class TestKeepSegmentsCommand:
         expected_h = int(round(settings.output_height * 1.08 / 2)) * 2
         assert (
             f",scale={expected_w}:{expected_h}"
-            f",crop={settings.output_width}:{settings.output_height}[v1]"
+            f",crop={settings.output_width}:{settings.output_height},setsar=1[v1]"
         ) in chains["vs1"]
+        assert all(",setsar=1[v" in chains[f"vs{i}"] for i in range(3))
 
     def test_punch_in_16x9_uses_portrait_output_dims(self) -> None:
         # T4s geometry pin (review 2026-07-11): aspect_ratio describes the
@@ -289,7 +290,7 @@ class TestKeepSegmentsCommand:
         expected_h = int(round(settings.output_height * 1.08 / 2)) * 2
         assert (
             f",scale={expected_w}:{expected_h}"
-            f",crop={settings.output_width}:{settings.output_height}[v1]"
+            f",crop={settings.output_width}:{settings.output_height},setsar=1[v1]"
         ) in chains["vs1"]
 
     def test_punch_in_default_none_leaves_segment_chains_plain(self) -> None:
@@ -313,9 +314,9 @@ class TestKeepSegmentsCommand:
         expected_fc = (
             f"[0:v]{EXPECTED_VF}[base]"
             ";[base]split=3[vs0][vs1][vs2]"
-            ";[vs0]trim=start=0.000000:end=4.000000,setpts=PTS-STARTPTS[v0]"
-            ";[vs1]trim=start=5.500000:end=8.500000,setpts=PTS-STARTPTS[v1]"
-            ";[vs2]trim=start=10.000000:end=12.000000,setpts=PTS-STARTPTS[v2]"
+            ";[vs0]trim=start=0.000000:end=4.000000,setpts=PTS-STARTPTS,setsar=1[v0]"
+            ";[vs1]trim=start=5.500000:end=8.500000,setpts=PTS-STARTPTS,setsar=1[v1]"
+            ";[vs2]trim=start=10.000000:end=12.000000,setpts=PTS-STARTPTS,setsar=1[v2]"
             ";[v0][v1][v2]concat=n=3:v=1:a=0[vout]"
         )
         assert cmd == [
@@ -488,6 +489,34 @@ def test_micro_e2e_three_segments(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     data = _probe(out)
     assert {s["codec_type"] for s in data["streams"]} == {"video", "audio"}
     expected = sum(b - a for a, b in segments)  # 9.0s
+    assert abs(float(data["format"]["duration"]) - expected) <= 0.05
+
+
+@needs_ffmpeg
+def test_micro_e2e_punch_segments_keep_square_pixels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prod parity: rounded punch dimensions must not make concat reject SAR."""
+    _small_output(monkeypatch)
+    fixture = _make_fixture(tmp_path / "src-punch.mp4", 12)
+    out = tmp_path / "cut-punch.mp4"
+    segments = [(0.0, 4.0), (5.5, 8.5), (10.0, 12.0)]
+
+    reframe_and_export(
+        input_path=str(fixture),
+        start_s=0.0,
+        end_s=12.0,
+        aspect_ratio="9:16",
+        ass_subtitle_path=None,
+        output_path=str(out),
+        keep_segments=segments,
+        keep_segments_punch_in=1.08,
+    )
+
+    data = _probe(out)
+    video = next(stream for stream in data["streams"] if stream["codec_type"] == "video")
+    assert video["sample_aspect_ratio"] == "1:1"
+    expected = sum(b - a for a, b in segments)
     assert abs(float(data["format"]["duration"]) - expected) <= 0.05
 
 

@@ -79,6 +79,25 @@ def assert_no_cuts(plan: CutPlan, duration: float = DUR):
     assert plan.time_saved_s == pytest.approx(0.0, abs=1e-9)
 
 
+def test_retake_only_plan_does_not_apply_silence_or_filler_rules() -> None:
+    plan = build_cut_plan(
+        [
+            w("uh", 0.5, 0.8),
+            w("restart", 0.9, 1.5),
+            w("clean", 3.0, 3.5),
+            w("ending", 3.6, 4.2),
+        ],
+        [(1.5, 3.0)],
+        8.0,
+        retake_spans=[(0, 1)],
+        include_silence_and_fillers=False,
+    )
+
+    assert plan.bailout_reason is None
+    assert plan.removed
+    assert all(removal.reason == REASON_RETAKE for removal in plan.removed)
+
+
 # ---------------------------------------------------------------------------------
 # Filler lexicon (is_filler_token)
 # ---------------------------------------------------------------------------------
@@ -445,6 +464,16 @@ class TestSafetyRails:
     def test_retake_spans_share_max_removal_frac(self):
         words = [w("a", 0.5, 1.0), w("b", 2.0, 2.5), w("c", 3.0, 3.5), w("d", 9.0, 9.5)]
         plan = build_cut_plan(words, [], 10.0, retake_spans=[(1, 2)])
+        assert_noop_bailout(plan, BAILOUT_MAX_REMOVAL, 10.0)
+
+    def test_reviewed_forced_removals_share_max_removal_frac(self):
+        words = [w("a", 0.5, 1.0), w("b", 9.0, 9.5)]
+        plan = build_cut_plan(
+            words,
+            [],
+            10.0,
+            forced_removals=[{"start_s": 1.0, "end_s": 9.0, "reason": "retake_review"}],
+        )
         assert_noop_bailout(plan, BAILOUT_MAX_REMOVAL, 10.0)
 
     def test_output_too_short_bailout_defense_in_depth(self, monkeypatch):

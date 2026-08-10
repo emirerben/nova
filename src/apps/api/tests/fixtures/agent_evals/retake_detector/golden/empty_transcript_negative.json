@@ -1,6 +1,6 @@
 {
   "agent": "nova.audio.retake_detector",
-  "prompt_version": "1",
+  "prompt_version": "2",
   "input": {
     "words": [],
     "language": ""

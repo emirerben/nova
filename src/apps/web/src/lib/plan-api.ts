@@ -170,7 +170,12 @@ export type SuggestionCategory =
   | "effect"
   | "transition";
 
-export type SuggestionApplyMode = "instant" | "omni_async";
+export type SuggestionApplyMode = "instant" | "omni_async" | "server_async";
+
+export interface SpeechCutDirectorOp {
+  op: "apply_speech_cut_candidate";
+  candidate_id: string;
+}
 
 export interface OmniEditorSuggestion {
   action: "generate_insert" | "restyle_segment";
@@ -194,7 +199,7 @@ export interface EditorSuggestion {
   start_s: number;
   end_s: number;
   apply_mode: SuggestionApplyMode;
-  ops: CopilotOp[];
+  ops: Array<CopilotOp | SpeechCutDirectorOp>;
   omni?: OmniEditorSuggestion | null;
 }
 
@@ -236,6 +241,46 @@ export async function editDirectorFeedback(
   await request<unknown>(
     `/plan-items/${itemId}/variants/${variantId}/director/feedback`,
     { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export interface SpeechCutDispatchResponse {
+  status: "rendering";
+  request: SpeechCutOperation;
+}
+
+export interface SpeechCutOperation {
+  operation: "apply_speech_cut_candidate" | "restore_original_timing";
+  operation_id?: string;
+  revision: string;
+  candidate_id?: string;
+  removed?: { start_s: number; end_s: number; reason: string };
+  time_saved_s?: number;
+  restored_s?: number;
+  render_generation_id?: string;
+  status?: "applied";
+}
+
+export function applySpeechCutCandidate(
+  itemId: string,
+  variantId: string,
+  candidateId: string,
+  expectedRevision: string,
+): Promise<SpeechCutDispatchResponse> {
+  return request<SpeechCutDispatchResponse>(
+    `/plan-items/${itemId}/variants/${variantId}/speech-cuts/${candidateId}/apply`,
+    { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) },
+  );
+}
+
+export function restoreOriginalSpeechTiming(
+  itemId: string,
+  variantId: string,
+  expectedRevision: string,
+): Promise<SpeechCutDispatchResponse> {
+  return request<SpeechCutDispatchResponse>(
+    `/plan-items/${itemId}/variants/${variantId}/speech-cuts/restore`,
+    { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) },
   );
 }
 
@@ -1331,6 +1376,8 @@ export interface EditorCapabilities {
   text_elements?: boolean;
   timeline?: boolean;
   split_clips?: boolean;
+  automatic_cut?: boolean;
+  automatic_cut_reason?: string | null;
   mix?: boolean;
   sfx?: boolean;
   overlays?: boolean;
@@ -1475,6 +1522,33 @@ export interface PlanItemVariant {
   // Spoken-word + pause timing map for copilot speech-synced placement.
   // Absent when the variant has no persisted word-level speech source.
   speech_map?: VariantSpeechMap | null;
+  speech_cut_candidates?: Array<{
+    candidate_id: string;
+    start_s: number;
+    end_s: number;
+    reason: string;
+    preview: string;
+    status: "pending";
+    revision: string;
+  }> | null;
+  speech_cut_revision?: string | null;
+  speech_cut_in_flight?: {
+    operation: "apply_speech_cut_candidate" | "restore_original_timing";
+    candidate_id?: string;
+    desired_forced_removals: Array<{
+      start_s: number;
+      end_s: number;
+      reason: string;
+      candidate_id?: string;
+    }>;
+    desired_disabled: boolean;
+  } | null;
+  speech_cut_last_receipt?: SpeechCutOperation | null;
+  speech_cut_last_error?: {
+    operation_id?: string | null;
+    message: string;
+  } | null;
+  silence_cut?: { removed?: Array<{ start_s: number; end_s: number; reason: string }> } | null;
   // Advisory SFX placements from the auto sound-design pass (dark-flagged).
   // null = freshness unverifiable right now (hold prior state); [] = verified,
   // none fresh. Distinct on purpose.

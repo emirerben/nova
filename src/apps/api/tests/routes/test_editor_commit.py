@@ -3320,6 +3320,8 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "motion_runtime_hash": None,
         "camera_effects": False,
         "background_music": False,
+        "automatic_cut": False,
+        "automatic_cut_reason": "no_reviewable_speech_timing",
         # _arm leaves overlay_autoplace_enabled at its default (False).
         "suggestions": False,
         "reason": None,

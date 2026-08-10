@@ -101,6 +101,7 @@ class RetakeSpan(BaseModel):
 
 class RetakeDetectorOutput(BaseModel):
     retakes: list[RetakeSpan] = Field(default_factory=list)
+    review_candidates: list[RetakeSpan] = Field(default_factory=list, max_length=3)
 
 
 # ── Pure span helpers (unit-tested; no LLM, no I/O) ───────────────────────────
@@ -220,7 +221,7 @@ class RetakeDetectorAgent(Agent[RetakeDetectorInput, RetakeDetectorOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.audio.retake_detector",
         prompt_id="retake_detector",
-        prompt_version="1",
+        prompt_version="2",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -235,6 +236,8 @@ class RetakeDetectorAgent(Agent[RetakeDetectorInput, RetakeDetectorOutput]):
     def required_fields(self) -> list[str]:
         # Key must be PRESENT; an empty list is a legitimate zero-result answer
         # (the refusal check in _runtime treats [] as valid).
+        # `review_candidates` is additive so replay fixtures and in-flight
+        # responses from prompt v1 remain valid.
         return ["retakes"]
 
     def render_prompt(self, input: RetakeDetectorInput) -> str:  # noqa: A002
@@ -265,8 +268,20 @@ class RetakeDetectorAgent(Agent[RetakeDetectorInput, RetakeDetectorOutput]):
         retakes_raw = data.get("retakes")
         if not isinstance(retakes_raw, list):
             raise SchemaError("retake_detector: 'retakes' is missing or not a list")
+        review_raw = data.get("review_candidates", [])
+        if not isinstance(review_raw, list):
+            raise SchemaError("retake_detector: 'review_candidates' is missing or not a list")
 
         spans = normalize_retake_spans(retakes_raw, len(input.words))
+        review_candidates = normalize_retake_spans(review_raw, len(input.words))[:3]
+        review_candidates = [
+            span
+            for span in review_candidates
+            if not any(
+                span.start_word <= automatic.end_word and automatic.start_word <= span.end_word
+                for automatic in spans
+            )
+        ]
         dropped = len(retakes_raw) - len(spans)
         if dropped > 0:
             # Dropping is the designed conservative behavior, not an error —
@@ -279,18 +294,21 @@ class RetakeDetectorAgent(Agent[RetakeDetectorInput, RetakeDetectorOutput]):
             )
 
         try:
-            return RetakeDetectorOutput(retakes=spans)
+            return RetakeDetectorOutput(retakes=spans, review_candidates=review_candidates)
         except ValidationError as exc:  # pragma: no cover — spans are pre-validated
             raise SchemaError(f"retake_detector: output validation — {exc}") from exc
 
     def schema_clarification(self) -> str:
         return (
-            '\n\nIMPORTANT: Return ONLY the JSON object {"retakes": [...]} — no '
+            "\n\nIMPORTANT: Return ONLY the JSON object "
+            '{"retakes": [...], "review_candidates": [...]} — no '
             "markdown, no prose. Every entry MUST have integer `start_word` and "
             "`end_word` (inclusive indices into the numbered word list), "
             "`start_word` <= `end_word`, `end_word` strictly before the final "
             "word's index, and a non-empty one-line `reason`. If there are no "
-            'abandoned takes, or you are unsure, return {"retakes": []}.'
+            'certain abandoned takes, return "retakes": []. Put at most three '
+            'plausible but uncertain earlier-take spans in "review_candidates"; '
+            "use [] when there are none."
         )
 
     def refusal_clarification(self) -> str:
@@ -316,7 +334,7 @@ def run_retake_detector(
     Raises ``TerminalError`` on agent failure — callers degrade to zero
     retake cuts."""
     if len(inp.words) < _MIN_WORDS_FOR_DETECTION:
-        return RetakeDetectorOutput(retakes=[])
+        return RetakeDetectorOutput(retakes=[], review_candidates=[])
 
     from app.agents._model_client import default_client  # noqa: PLC0415
 

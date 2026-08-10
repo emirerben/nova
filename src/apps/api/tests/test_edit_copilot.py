@@ -13,6 +13,8 @@ from app.agents.edit_copilot import (
     _MOTION_PRESET_PARAMS,
     EditCopilotAgent,
     EditCopilotInput,
+    EditorOperationParseState,
+    parse_editor_operation,
 )
 from app.auth import get_current_user
 from app.config import settings
@@ -20,6 +22,42 @@ from app.database import get_db
 from app.main import app
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "copilot-ops"
+
+
+def test_speech_cut_operation_requires_authoritative_pending_candidate() -> None:
+    snapshot = {
+        "allowed_op_families": ["automatic_cut"],
+        "automatic_cut": True,
+        "speech_cut_candidates": [
+            {"candidate_id": "cut_server", "status": "pending"},
+        ],
+    }
+    state = EditorOperationParseState(0.9)
+
+    assert parse_editor_operation(
+        {"op": "apply_speech_cut_candidate", "candidate_id": "cut_server"},
+        snapshot,
+        state,
+    ) == {"op": "apply_speech_cut_candidate", "candidate_id": "cut_server"}
+    assert (
+        parse_editor_operation(
+            {"op": "apply_speech_cut_candidate", "candidate_id": "cut_forged"},
+            snapshot,
+            state,
+        )
+        is None
+    )
+    assert state.invalid_value_seen is True
+
+    disabled = {**snapshot, "automatic_cut": False}
+    assert (
+        parse_editor_operation(
+            {"op": "apply_speech_cut_candidate", "candidate_id": "cut_server"},
+            disabled,
+            EditorOperationParseState(0.9),
+        )
+        is None
+    )
 
 
 def test_motion_copilot_rules_are_projected_from_shared_catalog() -> None:
