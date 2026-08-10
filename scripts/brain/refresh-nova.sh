@@ -92,8 +92,20 @@ fi
 # --- Stage 2: Todos concept page ---
 echo "--- [2/7] todos page ---"
 if [ -f "$REPO/TODOS.md" ]; then
+  # gbrain 0.40.2.0 writes ingestion frontmatter back into the file bound to
+  # the `todos` page record — $REPO/TODOS.md — on EVERY put, even a no-op one
+  # ("status": "skipped") and even when fed from stdin on another path. That
+  # dirtied the tracked file twice daily via launchd, which then made
+  # `git pull --ff-only` refuse. Snapshot first and restore byte-for-byte
+  # after, so the put still happens but the working tree never moves. Restores
+  # from the snapshot (not git) so uncommitted TODOS edits survive too.
+  # Verified 2026-08-10; drop this once gbrain stops the write-back.
+  TODOS_TMP="$(mktemp -t nova-todos)"
+  cp "$REPO/TODOS.md" "$TODOS_TMP"
   # Run from ~ to target the default source (not the worktree-pinned code source)
-  (cd ~ && gbrain put todos < "$REPO/TODOS.md" 2>&1 | head -3) || echo "todos put failed (non-fatal)"
+  (cd ~ && gbrain put todos < "$TODOS_TMP" 2>&1 | head -3) || echo "todos put failed (non-fatal)"
+  cmp -s "$TODOS_TMP" "$REPO/TODOS.md" || cp "$TODOS_TMP" "$REPO/TODOS.md"
+  rm -f "$TODOS_TMP"
 else
   echo "TODOS.md absent"
 fi
