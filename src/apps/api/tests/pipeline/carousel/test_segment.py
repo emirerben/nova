@@ -155,6 +155,7 @@ def test_render_carousel_moment_rolling_mode_returns_valid_mp4(tmp_path, two_cli
     assert probe.duration_s == pytest.approx(1.0, abs=0.15)
 
 
+@pytest.mark.timeout(180)
 def test_render_carousel_moment_focus_mode_returns_valid_mp4(tmp_path, two_clips):
     a, b = two_clips
     spec = CarouselMomentSpec(

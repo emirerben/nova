@@ -126,6 +126,26 @@ describe("EditorTimelineBody — carousel-moment block chip", () => {
     expect(onSelectCarousel).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the selected Carousel with the shared lime timeline treatment", () => {
+    render(
+      <EditorTimelineBody
+        {...baseProps({
+          carouselBlock: {
+            id: "carousel-block",
+            effectLabel: "scale sweep",
+            durationS: 3,
+            position: "middle",
+          },
+          selection: { kind: "carousel", id: "carousel-block" },
+        })}
+      />,
+    );
+
+    const chip = screen.getByRole("button", { name: /Carousel block/i });
+    expect(chip).toHaveAttribute("aria-pressed", "true");
+    expect(chip.className).toContain("outline-lime-500");
+  });
+
   it("Enter/Space on the chip also opens the panel (keyboard access, not just drag)", () => {
     const onSelectCarousel = jest.fn();
     render(
@@ -179,6 +199,38 @@ describe("EditorTimelineBody — carousel-moment block chip", () => {
     );
     const lane = container.querySelector('[data-editor-bar-kind="clip"]')
       ?.parentElement as HTMLElement;
+    dispatchDragEventAt(lane, "dragover", 16);
+    dispatchDragEventAt(lane, "drop", 16);
+    expect(onSetCarouselPosition).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unavailable Carousel selectable but prevents repositioning", () => {
+    const onSelectCarousel = jest.fn();
+    const onSetCarouselPosition = jest.fn();
+    render(
+      <EditorTimelineBody
+        {...baseProps({
+          carouselBlock: {
+            id: "carousel-block",
+            effectLabel: "scale sweep",
+            durationS: 3,
+            position: "middle",
+          },
+          carouselReadOnly: true,
+          carouselDisabledReason: "Carousel is unavailable for this video.",
+          onSelectCarousel,
+          onSetCarouselPosition,
+        })}
+      />,
+    );
+
+    const chip = screen.getByRole("button", { name: /Carousel block/i });
+    expect(chip).toHaveAttribute("draggable", "false");
+    expect(chip).toHaveAttribute("title", "Carousel is unavailable for this video.");
+    fireEvent.click(chip);
+    expect(onSelectCarousel).toHaveBeenCalledTimes(1);
+
+    const lane = chip.parentElement as HTMLElement;
     dispatchDragEventAt(lane, "dragover", 16);
     dispatchDragEventAt(lane, "drop", 16);
     expect(onSetCarouselPosition).not.toHaveBeenCalled();

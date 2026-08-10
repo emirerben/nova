@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.2.1] — 2026-08-09
+
+### Fixed
+- **Carousel Effect controls now open in the editor's right inspector.** The Visuals drawer remains a compact block picker, timeline and drawer selection share the same highlighted Carousel state, and pocket mode switches to the same inspector controls instead of nesting configuration under Visuals.
+- Regression coverage now rejects Carousel controls inside the left drawer and verifies right-inspector ownership, incapable edits failing closed, desktop delete/undo, and the complete pocket edit/remove/undo/save flow. Carousel controls also use the light editor's neutral notices, lime focus treatment, and shared selection state. Real MP4/Skia render integration tests carry explicit heavyweight budgets so parallel CI load cannot misclassify slow renders as product failures.
+
 ## [0.24.2.0] — 2026-08-09
 
 ### Fixed

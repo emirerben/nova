@@ -190,16 +190,47 @@ describe("ToolDrawer visual blocks", () => {
     expect(screen.queryByRole("radiogroup", { name: "Carousel effect" })).not.toBeInTheDocument();
   });
 
-  it("capable carousel entry opens the panel; Back returns to the block grid", () => {
-    renderVisuals({ carousel: carouselControl() });
+  it("selects Carousel for the shared inspector without nesting Effect controls in Visuals", () => {
+    const onSelectCarousel = jest.fn();
+    const onChange = jest.fn();
+    const { rerender } = renderVisuals({
+      carousel: carouselControl({ onChange }),
+      onSelectCarousel,
+    });
 
     const entry = screen.getByRole("button", { name: "Carousel" });
     expect(entry).not.toHaveAttribute("aria-disabled");
     fireEvent.click(entry);
 
-    expect(screen.getByRole("radiogroup", { name: "Carousel effect" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Add a block/ }));
-    expect(screen.getByRole("button", { name: "Carousel" })).toBeInTheDocument();
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        effect: "scale_sweep",
+        mode: "focus",
+        position: "middle",
+        transition: "crossfade",
+      }),
+    );
+    expect(onSelectCarousel).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("radiogroup", { name: "Carousel effect" })).not.toBeInTheDocument();
+
+    rerender(
+      <ToolDrawer
+        tool="visuals"
+        sampleWord={null}
+        appliedPresetId={null}
+        onAddText={jest.fn()}
+        onPickPreset={jest.fn()}
+        onClose={jest.fn()}
+        visualAssets={assets}
+        carousel={carouselControl()}
+        carouselSelected
+        onSelectCarousel={onSelectCarousel}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Carousel" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 });
 

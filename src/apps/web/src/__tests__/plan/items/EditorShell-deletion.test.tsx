@@ -106,6 +106,7 @@ const CAPABILITIES: EditorCapabilities = {
   sfx: true,
   overlays: true,
   visual_blocks: true,
+  carousel: true,
   suggestions: true,
 };
 
@@ -242,6 +243,58 @@ describe("EditorShell linked text-card deletion", () => {
     expect(screen.queryByRole("button", { name: /^Text card,/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Primary title/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Supporting title/ })).toBeNull();
+  });
+});
+
+describe("EditorShell Carousel deletion", () => {
+  it("enables desktop Delete for a selected Carousel and Undo restores it", async () => {
+    await renderShell(
+      makeVariant([], [], {
+        duration_s: 12,
+        carousel_moment: {
+          effect: "scale_sweep",
+          mode: "focus",
+          focus_clip_index: null,
+          position: "middle",
+          duration_s: 6,
+          transition: "crossfade",
+        },
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Carousel block/i }));
+    const deleteButton = screen.getByRole("button", { name: "Delete selected" });
+    expect(deleteButton).toBeEnabled();
+
+    fireEvent.click(deleteButton);
+    expect(screen.queryByRole("button", { name: /Carousel block/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("button", { name: /Carousel block/i })).toBeInTheDocument();
+  });
+
+  it("disables desktop Delete for an incapable persisted Carousel", async () => {
+    await renderShell(
+      makeVariant([], [], {
+        duration_s: 12,
+        carousel_moment: {
+          effect: "scale_sweep",
+          mode: "focus",
+          focus_clip_index: null,
+          position: "middle",
+          duration_s: 6,
+          transition: "crossfade",
+        },
+        editor_capabilities: {
+          ...CAPABILITIES,
+          carousel: false,
+          carousel_reason: "Carousel is unavailable for this video.",
+        },
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Carousel block/i }));
+    expect(screen.getByRole("button", { name: "Delete selected" })).toBeDisabled();
   });
 });
 

@@ -9,7 +9,7 @@
  * selected) above the 4-column preset grid.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { GenerativeStyleSet } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
@@ -30,7 +30,10 @@ import {
 } from "@/lib/text-presets";
 import PresetGrid from "./PresetGrid";
 import StylesDrawer from "./StylesDrawer";
-import CarouselPanel, { type CarouselPanelControl } from "./CarouselPanel";
+import {
+  createDefaultCarouselMoment,
+  type CarouselPanelControl,
+} from "./CarouselPanel";
 import CaptionsDrawer, { type CaptionsDrawerControl } from "./CaptionsDrawer";
 import CopilotDrawer from "./CopilotDrawer";
 import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
@@ -103,7 +106,8 @@ export default function ToolDrawer({
   onDeleteVisualBlock,
   onRetimeVisualBlock,
   carousel,
-  carouselOpenRequestKey,
+  carouselSelected = false,
+  onSelectCarousel,
   layoutMode = "full",
   presentation = "panel",
   captions,
@@ -176,11 +180,10 @@ export default function ToolDrawer({
    *  or `capable: false` shows the entry point disabled with an honest reason
    *  via the focusable-disabled pattern (aria-disabled + onDisabledTap). */
   carousel?: CarouselPanelControl & { onDisabledTap: (reason: string) => void };
-  /** Bumped by EditorShell to force the carousel panel open from OUTSIDE the
-   *  "Add a block" grid — e.g. clicking the timeline chip. Any change to
-   *  this value (including its first non-undefined value) opens the panel;
-   *  the grid's own "Carousel" tile still works independently. */
-  carouselOpenRequestKey?: number;
+  carouselSelected?: boolean;
+  /** Selects the Carousel block so its controls open in the shared right
+   *  inspector. The Visuals drawer remains a discovery surface. */
+  onSelectCarousel?: () => void;
   layoutMode?: EditorLayoutMode;
   /** "sheet" when hosted inside the mobile bottom-sheet primitive, which owns
    *  the chrome (width, entrance animation, title row, close button). Default
@@ -461,7 +464,8 @@ export default function ToolDrawer({
             onDeleteBlock={onDeleteVisualBlock}
             onRetimeBlock={onRetimeVisualBlock}
             carousel={carousel}
-            carouselOpenRequestKey={carouselOpenRequestKey}
+            carouselSelected={carouselSelected}
+            onSelectCarousel={onSelectCarousel}
           />
         </div>
       )}
@@ -664,7 +668,8 @@ function VisualsDrawer({
   onDeleteBlock,
   onRetimeBlock,
   carousel,
-  carouselOpenRequestKey,
+  carouselSelected,
+  onSelectCarousel,
 }: {
   blocks: VisualBlock[];
   assets: PoolAsset[];
@@ -688,25 +693,12 @@ function VisualsDrawer({
   onDeleteBlock?: (id: string) => void;
   onRetimeBlock?: (id: string) => void;
   carousel?: CarouselPanelControl & { onDisabledTap: (reason: string) => void };
-  carouselOpenRequestKey?: number;
+  carouselSelected: boolean;
+  onSelectCarousel?: () => void;
 }) {
   const ready = assets.filter((asset) => asset.status === "ready");
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [draggedShot, setDraggedShot] = useState<{ blockId: string; shotId: string } | null>(null);
-  const [carouselOpen, setCarouselOpen] = useState(false);
-  // Opened remotely (e.g. clicking the timeline chip) — any change (incl.
-  // the first non-undefined value) force-opens the panel, independent of
-  // the "Add a block" grid tile.
-  const lastCarouselOpenRequestKeyRef = useRef<number | undefined>(undefined);
-  useEffect(() => {
-    if (
-      carouselOpenRequestKey !== undefined &&
-      carouselOpenRequestKey !== lastCarouselOpenRequestKeyRef.current
-    ) {
-      lastCarouselOpenRequestKeyRef.current = carouselOpenRequestKey;
-      if (carousel) setCarouselOpen(true);
-    }
-  }, [carousel, carouselOpenRequestKey]);
 
   function contrastRatio(foreground: string, background: string): number | null {
     const parse = (value: string) => {
@@ -750,10 +742,6 @@ function VisualsDrawer({
     } as Partial<VisualBlock>);
   }
 
-  if (carouselOpen && carousel) {
-    return <CarouselPanel control={carousel} onBack={() => setCarouselOpen(false)} />;
-  }
-
   return (
     <div data-testid="visual-blocks-panel" className="space-y-6 px-5 py-5">
       <section>
@@ -784,11 +772,17 @@ function VisualsDrawer({
                   );
                   return;
                 }
-                setCarouselOpen(true);
+                if (carousel.current === null) {
+                  carousel.onChange(createDefaultCarouselMoment(carousel.clips.length));
+                }
+                onSelectCarousel?.();
               }}
+              aria-pressed={carouselSelected}
               className={`col-span-2 min-h-11 rounded-lg border px-2 text-[12px] font-semibold text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
                 carousel.capable
-                  ? "border-zinc-200 bg-white hover:border-zinc-400"
+                  ? carouselSelected
+                    ? "border-lime-600 bg-lime-50 ring-1 ring-lime-600"
+                    : "border-zinc-200 bg-white hover:border-zinc-400"
                   : "cursor-not-allowed border-zinc-200 bg-white opacity-40"
               }`}
             >

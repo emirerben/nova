@@ -20,6 +20,7 @@ export type EditorSelectionKind =
   | "text"
   | "visual"
   | "motion"
+  | "carousel"
   | "clip"
   | "sfx"
   | "overlay"
