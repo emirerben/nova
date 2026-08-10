@@ -58,6 +58,10 @@ class CarouselMomentSpec:
     # never sets it, so an auto-authored focus moment's length is unaffected
     # by this field existing.
     focus_duration_cap_s: float | None = None
+    # Present only for upgraded/manual editor configurations. Absence keeps
+    # every legacy auto choreography branch byte-identical.
+    manual_timing: bool = False
+    move_duration_s: float | None = None
 
 
 def _fit_duration(frames: list[SpringFrame], target_n: int) -> list[SpringFrame]:
@@ -200,7 +204,15 @@ def _render_rolling_mode(
         for index, clip_path in enumerate(clip_paths)
     ]
     frame_states = rolling_timeline(
-        n_cards, geo, _VIEWPORT_W, duration_s=spec.duration_s, fps=FPS, seed=spec.seed
+        n_cards,
+        geo,
+        _VIEWPORT_W,
+        duration_s=spec.duration_s,
+        fps=FPS,
+        seed=spec.seed,
+        sequence=spec.focus_moments,
+        move_duration_s=spec.move_duration_s,
+        manual_timing=spec.manual_timing,
     )
     return render_choreography_frames(
         spec.effect, frame_states, video_cards, geo, out_dir=frames_dir
@@ -225,7 +237,16 @@ def _render_focus_mode(
     )
 
     frame_states = build_timeline(
-        n_cards, geo, _VIEWPORT_W, focus_moments=focus_moments, fps=FPS, seed=spec.seed
+        n_cards,
+        geo,
+        _VIEWPORT_W,
+        focus_moments=focus_moments,
+        fps=FPS,
+        seed=spec.seed,
+        lead_in_s=0.0 if spec.manual_timing else 0.4,
+        settle_pad_s=0.0 if spec.manual_timing else 0.3,
+        manual_timing=spec.manual_timing,
+        move_duration_s=spec.move_duration_s,
     )
 
     if spec.focus_duration_cap_s is not None:

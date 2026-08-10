@@ -3170,7 +3170,7 @@ def _reapply_persisted_media_overlays_if_any(
                     actual_gen_id=existing.get("render_generation_id"),
                 )
                 return True  # the newer generation owns the terminal status
-            overlays_raw = existing.get("media_overlays")
+            overlays_raw = _project_carousel_timed_lanes(existing).get("media_overlays")
             if not overlays_raw:
                 return False
             retired_keys: list[str] = []
@@ -3263,7 +3263,9 @@ def _reapply_persisted_sfx_if_any(
                 )
                 return True  # the newer generation owns the terminal status
             sfx_raw = (
-                existing.get("sound_effects") or [] if _settings_sfx.sound_effects_enabled else []
+                _project_carousel_timed_lanes(existing).get("sound_effects") or []
+                if _settings_sfx.sound_effects_enabled
+                else []
             )
             music_active = (
                 bool(existing.get("background_music_treatment"))
@@ -4233,6 +4235,7 @@ def _ensure_creator_layer_base(
     lane can accidentally bypass motion. Newly-created partial caches are
     removed if a later layer fails before the caller can persist them.
     """
+    variant = _project_carousel_timed_lanes(variant)
     visual_blocks_cache_path: str | None = None
     motion_cache_path: str | None = None
     motion_base_source_path: str | None = None
@@ -4359,6 +4362,10 @@ def _reburn_text_on_base(
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
     from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
 
+    # All timed lanes persist in pre-insertion time. Every reburn consumes an
+    # idempotent render-only projection so a later text/style edit cannot move
+    # downstream content back across an already-rendered Carousel.
+    existing = _project_carousel_timed_lanes(existing)
     base_gcs_path = existing["base_video_path"]
     reburn_generation = storage_generation or uuid.uuid4().hex
     rank = int(existing.get("rank") or 1)
@@ -4480,6 +4487,35 @@ def _reburn_text_on_base(
         }
         base_duration_s = float(base_probe.duration_s)
 
+        # Camera effects are authored in pre-insertion time just like captions
+        # and creator lanes. Apply the render-only projected copy to the fresh
+        # base before text/captions, while leaving persisted timestamps alone.
+        if existing.get("resolved_archetype") == "subtitled" and existing.get("camera_effects"):
+            from app.pipeline.camera_effects import normalize_camera_effects  # noqa: PLC0415
+            from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
+
+            projected_camera_effects = normalize_camera_effects(
+                existing.get("camera_effects") or [], duration_s=base_duration_s
+            )
+            if projected_camera_effects:
+                camera_base = os.path.join(tmpdir, "projected_camera_base.mp4")
+                reframe_and_export(
+                    local_base,
+                    0.0,
+                    base_duration_s,
+                    "16:9" if orientation == "landscape" else "9:16",
+                    None,
+                    camera_base,
+                    output_fit="crop",
+                    has_audio=base_probe.has_audio,
+                    semantic_crop_pulses=projected_camera_effects,
+                    **_canvas_kwargs(canvas),
+                )
+                local_base = camera_base
+                base_probe = probe_video(local_base)
+                base_duration_s = float(base_probe.duration_s)
+                existing = {**existing, "camera_effects": projected_camera_effects}
+
         def _burn_text_for_variant(
             input_path: str,
             overlay_dicts: list[dict],
@@ -4520,6 +4556,40 @@ def _reburn_text_on_base(
                 input_probe=base_probe,
                 **_canvas_kwargs(canvas),
             )
+
+        if existing.get("resolved_archetype") == "subtitled":
+            # A Carousel full rebuild creates a fresh caption-free base. Burn
+            # the projected authored text and persisted captions back on top,
+            # even when those are the only downstream lanes that exist.
+            persisted_snapshot = _fresh_variant_snapshot(job_id, variant_id) or existing
+            final_path, subtitled_matte_path = _compose_subtitled_final(
+                local_base,
+                existing,
+                tmpdir,
+                job_id=job_id,
+                variant_id=variant_id,
+                upload_key_base=base_gcs_path,
+            )
+            output_url = upload_public_read(final_path, reburn_output_key)
+            return {
+                **visual_blocks_patch,
+                "render_status": "ready",
+                "ok": True,
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+                "video_path": reburn_output_key,
+                "output_url": output_url,
+                "text_mode": text_mode,
+                "style_set_id": resolved_style_set_id,
+                "orientation": orientation,
+                # Persist the original base-time lane, never the projected
+                # render copy used above.
+                "text_elements": persisted_snapshot.get("text_elements") or [],
+                "text_elements_user_edited": bool(
+                    persisted_snapshot.get("text_elements_user_edited")
+                ),
+                "subject_matte_path": subtitled_matte_path,
+                "_old_video_path_for_delete": previous_video_path,
+            }
 
         if text_mode == "lyrics":
             _lyrics_burn_dicts = _text_element_burn_dicts(existing)
@@ -5059,6 +5129,127 @@ _CAROUSEL_POSITION_WEIGHTS: dict[str, float] = {"intro": 0.5, "middle": 0.3, "ou
 _CAROUSEL_MOMENT_TRANSITION_DURATION_S = 0.4
 
 
+def _project_carousel_timed_lanes(variant: dict[str, Any]) -> dict[str, Any]:
+    """Build a render-only ripple projection; persisted base times stay stable."""
+    if variant.get("_carousel_lanes_projected"):
+        return variant
+    cfg = variant.get("carousel_moment") or {}
+    insertion_s = variant.get("carousel_insertion_base_s")
+    ripple_s = variant.get(
+        "carousel_ripple_duration_s", variant.get("carousel_inserted_duration_s")
+    )
+    if cfg.get("timing_model") != "ripple_v1" or insertion_s is None or not ripple_s:
+        return variant
+    insertion_s = float(insertion_s)
+    ripple_s = float(ripple_s)
+
+    def point(value: Any) -> float:
+        seconds = float(value or 0.0)
+        return seconds + ripple_s if seconds >= insertion_s - 1e-6 else seconds
+
+    projected = {**variant, "_carousel_lanes_projected": True}
+    for field in (
+        "caption_cues",
+        "text_elements",
+        "visual_blocks",
+        "media_overlays",
+        "camera_effects",
+    ):
+        if not isinstance(variant.get(field), list):
+            continue
+        projected[field] = [
+            {
+                **item,
+                **({"start_s": point(item["start_s"])} if "start_s" in item else {}),
+                **({"end_s": point(item["end_s"])} if "end_s" in item else {}),
+            }
+            for item in variant[field]
+            if isinstance(item, dict)
+        ]
+    if isinstance(variant.get("sound_effects"), list):
+        projected["sound_effects"] = [
+            {
+                **item,
+                **({"at_s": point(item["at_s"])} if "at_s" in item else {}),
+                **({"end_s": point(item["end_s"])} if item.get("end_s") is not None else {}),
+            }
+            for item in variant["sound_effects"]
+            if isinstance(item, dict)
+        ]
+    if isinstance(variant.get("motion_scenes"), list):
+        insertion_frame = round(insertion_s * 30)
+        duration_frames = round(ripple_s * 30)
+        projected["motion_scenes"] = [
+            {
+                **item,
+                "start_frame": int(item.get("start_frame", 0))
+                + (duration_frames if int(item.get("start_frame", 0)) >= insertion_frame else 0),
+                "end_frame_exclusive": int(item.get("end_frame_exclusive", 0))
+                + (
+                    duration_frames
+                    if int(item.get("end_frame_exclusive", 0)) >= insertion_frame
+                    else 0
+                ),
+            }
+            for item in variant["motion_scenes"]
+            if isinstance(item, dict)
+        ]
+    return projected
+
+
+def _carousel_boundary_duration(
+    requested_s: Any,
+    before_duration_s: float,
+    after_duration_s: float,
+) -> float:
+    """Render-safe boundary overlap: 0.1..1s, capped to 30% of both sides."""
+    requested = (
+        _CAROUSEL_MOMENT_TRANSITION_DURATION_S if requested_s is None else float(requested_s)
+    )
+    return round(
+        max(
+            0.0,
+            min(1.0, max(0.1, requested), before_duration_s * 0.3, after_duration_s * 0.3),
+        ),
+        3,
+    )
+
+
+def _carousel_step_duration_s(step: Any) -> float:
+    moment = getattr(step, "moment", None) or {}
+    return max(0.0, float(moment.get("end_s", 0.0)) - float(moment.get("start_s", 0.0)))
+
+
+def _carousel_step_overlap_s(previous_step: Any, step: Any) -> float:
+    """Actual output overlap into `step`, using the renderer's 30% cap."""
+    slot = getattr(step, "slot", None) or {}
+    transition = str(slot.get("transition_in") or "none")
+    if transition in {"none", "hard-cut", "cut"}:
+        return 0.0
+    requested = slot.get("transition_duration_s")
+    requested_s = 0.3 if requested is None else float(requested)
+    return max(
+        0.0,
+        min(
+            requested_s,
+            _carousel_step_duration_s(previous_step) * 0.3,
+            _carousel_step_duration_s(step) * 0.3,
+        ),
+    )
+
+
+def _carousel_base_insertion_s(steps: list[Any], insertion_index: int) -> float:
+    """Output-clock start of the replaced base boundary, overlaps included."""
+    cursor_s = 0.0
+    for index, step in enumerate(steps):
+        overlap_s = _carousel_step_overlap_s(steps[index - 1], step) if index > 0 else 0.0
+        start_s = cursor_s - overlap_s
+        if index == insertion_index:
+            return max(0.0, start_s)
+        cursor_s = start_s + _carousel_step_duration_s(step)
+    return max(0.0, cursor_s)
+
+
 def _merge_carousel_moment_override(
     existing_cfg: dict[str, Any] | None,
     override: Any,
@@ -5109,9 +5300,32 @@ def _merge_carousel_moment_override(
             else:
                 merged["focus"] = [{"card_index": int(idx)}]
                 merged["focus_clip_index"] = int(idx)
-        for key in ("position", "mode", "effect", "duration_s", "transition"):
+        for key in (
+            "position",
+            "mode",
+            "effect",
+            "duration_s",
+            "transition",
+            "sequence",
+            "move_duration_s",
+            "zoom_duration_s",
+            "transition_in",
+            "transition_in_duration_s",
+            "transition_out",
+            "transition_out_duration_s",
+            "timing_model",
+        ):
             if key in override:
                 merged[key] = override[key]
+        if merged.get("timing_model") == "ripple_v1":
+            # Upgrade sparse legacy boundaries exactly once at the API merge
+            # boundary. Explicit new fields above win; the old single
+            # transition remains a supported read/write input.
+            legacy_transition = merged.get("transition", "crossfade")
+            merged.setdefault("transition_in", legacy_transition)
+            merged.setdefault("transition_in_duration_s", 0.4)
+            merged.setdefault("transition_out", legacy_transition)
+            merged.setdefault("transition_out_duration_s", 0.4)
     return merged or None
 
 
@@ -5225,7 +5439,17 @@ def _apply_moment_overrides(spec: Any, moment_cfg: dict[str, Any]) -> Any:
     an override for a field that doesn't exist is a logged no-op, never a
     crash. Factored out so override precedence is independently unit
     testable without going through a full render."""
-    override_keys = {"effect", "duration_s", "mode", "focus", "seed"}
+    override_keys = {
+        "effect",
+        "duration_s",
+        "mode",
+        "focus",
+        "sequence",
+        "seed",
+        "move_duration_s",
+        "zoom_duration_s",
+        "timing_model",
+    }
     if not override_keys & moment_cfg.keys():
         return spec  # nothing to override; skip the dataclass introspection below
 
@@ -5256,6 +5480,25 @@ def _apply_moment_overrides(spec: Any, moment_cfg: dict[str, Any]) -> Any:
                 overrides["focus_moments"] = focus_moments
         else:
             log.warning("carousel_moment_focus_override_unsupported_schema")
+    if moment_cfg.get("timing_model") == "ripple_v1" and "manual_timing" in field_names:
+        overrides["manual_timing"] = True
+    if "move_duration_s" in moment_cfg and "move_duration_s" in field_names:
+        overrides["move_duration_s"] = float(moment_cfg["move_duration_s"])
+    if "sequence" in moment_cfg and moment_cfg["sequence"] is not None:
+        if "focus_moments" in field_names:
+            zoom_s = float(moment_cfg.get("zoom_duration_s", 0.6))
+            focus_moments = _parse_focus_override(
+                [
+                    {
+                        "card_index": item["clip_index"],
+                        "hold_s": item["hold_s"],
+                        "zoom_s": zoom_s,
+                    }
+                    for item in moment_cfg["sequence"]
+                ]
+            )
+            if focus_moments is not None:
+                overrides["focus_moments"] = focus_moments
     if "seed" in moment_cfg and "seed" in field_names:
         overrides["seed"] = moment_cfg["seed"]
 
@@ -5424,6 +5667,7 @@ def _maybe_render_carousel_moment(
         )
 
         clip_paths: list[str] = []
+        card_index_by_clip_index: dict[int, int] = {}
         for step in steps:
             step_clip_id = getattr(step, "clip_id", None)
             # Belt-and-braces (carousel-inside-carousel guard): a rendered
@@ -5440,15 +5684,37 @@ def _maybe_render_carousel_moment(
                 continue
             local_path = clip_id_to_local.get(step_clip_id)
             if local_path and local_path not in clip_paths:
+                card_index = len(clip_paths)
                 clip_paths.append(local_path)
+                if isinstance(step_clip_id, str) and step_clip_id.startswith("clip_"):
+                    try:
+                        card_index_by_clip_index[int(step_clip_id.removeprefix("clip_"))] = (
+                            card_index
+                        )
+                    except ValueError:
+                        pass
             if len(clip_paths) >= 5:
                 break
         if not clip_paths:
             return None
 
-        if moment_cfg.get("auto"):
+        render_moment_cfg = moment_cfg
+        if moment_cfg.get("timing_model") == "ripple_v1" and moment_cfg.get("sequence"):
+            mapped_sequence: list[dict[str, Any]] = []
+            for item in moment_cfg["sequence"]:
+                card_index = card_index_by_clip_index.get(int(item["clip_index"]))
+                if card_index is None:
+                    log.warning(
+                        "carousel_manual_sequence_clip_unavailable",
+                        clip_index=item["clip_index"],
+                    )
+                    return None
+                mapped_sequence.append({**item, "clip_index": card_index})
+            render_moment_cfg = {**moment_cfg, "sequence": mapped_sequence}
+
+        if render_moment_cfg.get("auto"):
             spec = _direct_auto_carousel_spec(
-                moment_cfg,
+                render_moment_cfg,
                 clip_paths=clip_paths,
                 probe_map=probe_map,
                 variant_id=variant_id,
@@ -5456,11 +5722,11 @@ def _maybe_render_carousel_moment(
             )
         else:
             spec = CarouselMomentSpec(
-                effect=moment_cfg.get("effect", "scale_sweep"),
+                effect=render_moment_cfg.get("effect", "scale_sweep"),
                 clip_paths=tuple(clip_paths),
-                duration_s=float(moment_cfg.get("duration_s", 4.0)),
+                duration_s=float(render_moment_cfg.get("duration_s", 4.0)),
             )
-            spec = _apply_moment_overrides(spec, moment_cfg)
+            spec = _apply_moment_overrides(spec, render_moment_cfg)
 
         if render_meta is not None:
             render_meta["effect"] = getattr(spec, "effect", None)
@@ -5596,9 +5862,6 @@ def _insert_carousel_moment_step(
     clip_id_to_gcs[synthetic_id] = moment_path
     probe_map[moment_path] = probe
 
-    if inserted_duration_out is not None:
-        inserted_duration_out["duration_s"] = duration_s
-
     moment_step = AssemblyStep(
         slot={"exact_window": True},
         clip_id=synthetic_id,
@@ -5617,20 +5880,72 @@ def _insert_carousel_moment_step(
         insertion_index = 0
         new_steps.insert(0, moment_step)
 
-    if moment_cfg.get("transition") == "crossfade":
+    transition_in = moment_cfg.get("transition_in", moment_cfg.get("transition", "none"))
+    transition_out = moment_cfg.get("transition_out", moment_cfg.get("transition", "none"))
+    explicit_boundary_model = (
+        moment_cfg.get("timing_model") == "ripple_v1"
+        or "transition_in" in moment_cfg
+        or "transition_out" in moment_cfg
+    )
+    previous_step = new_steps[insertion_index - 1] if insertion_index > 0 else None
+    next_index = insertion_index + 1
+    next_step = new_steps[next_index] if next_index < len(new_steps) else None
+    old_boundary_overlap_s = (
+        _carousel_step_overlap_s(steps[insertion_index - 1], steps[insertion_index])
+        if 0 < insertion_index < len(steps)
+        else 0.0
+    )
+    insertion_base_s = _carousel_base_insertion_s(steps, insertion_index)
+    incoming_overlap_s = 0.0
+    outgoing_overlap_s = 0.0
+    legacy_boundary_model = not explicit_boundary_model
+    if transition_in == "crossfade" and (previous_step is not None or legacy_boundary_model):
         # Incoming edge: transition INTO the moment step, from whatever
-        # precedes it. A no-op when the moment is the very first step in the
-        # whole assembly (nothing precedes it) — the renderer never reads the
-        # first step's own transition_in — but harmless to set regardless.
+        # precedes it.
         moment_step.slot["transition_in"] = "crossfade"
-        moment_step.slot["transition_duration_s"] = _CAROUSEL_MOMENT_TRANSITION_DURATION_S
-        # Outgoing edge: transition INTO the step immediately after the
-        # moment, from the moment. Absent for "outro" (nothing follows it).
-        next_index = insertion_index + 1
-        if next_index < len(new_steps):
-            next_step = new_steps[next_index]
-            next_step.slot["transition_in"] = "crossfade"
-            next_step.slot["transition_duration_s"] = _CAROUSEL_MOMENT_TRANSITION_DURATION_S
+        if legacy_boundary_model:
+            moment_step.slot["transition_duration_s"] = _CAROUSEL_MOMENT_TRANSITION_DURATION_S
+            incoming_overlap_s = (
+                _CAROUSEL_MOMENT_TRANSITION_DURATION_S if previous_step is not None else 0.0
+            )
+        else:
+            incoming_overlap_s = _carousel_boundary_duration(
+                moment_cfg.get("transition_in_duration_s"),
+                _carousel_step_duration_s(previous_step),
+                duration_s,
+            )
+            moment_step.slot["transition_duration_s"] = incoming_overlap_s
+    elif explicit_boundary_model:
+        moment_step.slot["transition_in"] = "none"
+        moment_step.slot.pop("transition_duration_s", None)
+    # Outgoing edge: transition INTO the step immediately after the moment,
+    # from the moment. Absent for "outro" (nothing follows it).
+    if transition_out == "crossfade" and next_step is not None:
+        next_step.slot["transition_in"] = "crossfade"
+        outgoing_overlap_s = (
+            _CAROUSEL_MOMENT_TRANSITION_DURATION_S
+            if legacy_boundary_model
+            else _carousel_boundary_duration(
+                moment_cfg.get("transition_out_duration_s"),
+                duration_s,
+                _carousel_step_duration_s(next_step),
+            )
+        )
+        next_step.slot["transition_duration_s"] = outgoing_overlap_s
+    elif next_step is not None and explicit_boundary_model:
+        # The Carousel replaced this boundary. Do not leak the old clip-to-clip
+        # transition into an explicitly hard-cut Carousel exit.
+        next_step.slot["transition_in"] = "none"
+        next_step.slot.pop("transition_duration_s", None)
+
+    if inserted_duration_out is not None:
+        inserted_duration_out["duration_s"] = duration_s
+        if moment_cfg.get("timing_model") == "ripple_v1":
+            inserted_duration_out["insertion_base_s"] = insertion_base_s
+            inserted_duration_out["ripple_duration_s"] = max(
+                0.0,
+                duration_s + old_boundary_overlap_s - incoming_overlap_s - outgoing_overlap_s,
+            )
 
     record_pipeline_event(
         "assembly",
@@ -6918,14 +7233,15 @@ def _run_regenerate_variant(
     if result.get("ok"):
         reburn_intermediate_path: str | None = None
         latest_variant = _fresh_variant_snapshot(job_id, variant_id) or existing
+        render_variant = _project_carousel_timed_lanes({**latest_variant, **result})
         has_visual_blocks = settings.visual_blocks_enabled and bool(
-            latest_variant.get("visual_blocks")
+            render_variant.get("visual_blocks")
         )
         # Persisted desired state, not the live flag, decides whether the
         # result must pass through the motion base. With the flag off,
         # _ensure_motion_base may reuse a source-bound cache but otherwise
         # fails closed; it must never publish a silently motionless rebuild.
-        has_motion_scenes = bool(latest_variant.get("motion_scenes"))
+        has_motion_scenes = bool(render_variant.get("motion_scenes"))
         if settings.visual_blocks_enabled and not has_visual_blocks:
             # Removing every block must publish the newly assembled clean base
             # and retire any previous block composite rather than preserving it
@@ -6939,10 +7255,18 @@ def _run_regenerate_variant(
             result["motion_applied_runtime_hash"] = None
             result["motion_cache_identity"] = None
         full_reburn_created_storage: list[str] = []
+        has_projected_subtitled_lanes = render_variant.get(
+            "resolved_archetype"
+        ) == "subtitled" and bool(
+            render_variant.get("caption_cues")
+            or render_variant.get("camera_effects")
+            or render_variant.get("text_elements")
+        )
         if (
-            (_TEXT_ELEMENTS_ENABLED and latest_variant.get("text_elements_user_edited"))
+            (_TEXT_ELEMENTS_ENABLED and render_variant.get("text_elements_user_edited"))
             or has_visual_blocks
             or has_motion_scenes
+            or has_projected_subtitled_lanes
         ) and result.get("base_video_path"):
             try:
                 result = {
@@ -6951,11 +7275,11 @@ def _run_regenerate_variant(
                         job_id=job_id,
                         variant_id=variant_id,
                         existing={
-                            **latest_variant,
+                            **render_variant,
                             **result,
-                            "text_elements": latest_variant.get("text_elements") or [],
+                            "text_elements": render_variant.get("text_elements") or [],
                             "text_elements_user_edited": bool(
-                                latest_variant.get("text_elements_user_edited")
+                                render_variant.get("text_elements_user_edited")
                             ),
                             # A full assembly minted a new clean base; never reuse a
                             # block composite whose audio/picture came from the old one.
@@ -8739,6 +9063,10 @@ def _render_generative_variant(
         # drop an authored moment the same way a renderer failure cannot drop
         # music_start_s above.
         "carousel_moment": spec.get("carousel_moment"),
+        # Render receipt for projecting stable pre-insertion creator lanes.
+        "carousel_insertion_base_s": None,
+        "carousel_inserted_duration_s": None,
+        "carousel_ripple_duration_s": None,
         "track_title": track_title,
         "style_set_id": style_set_id,
         # Agent-decided (or user-pinned) intro size. None for non-text variants.
@@ -9110,6 +9438,7 @@ def _render_generative_variant(
         # carousel imports, `steps` unchanged — unless the flag is on AND the
         # spec requests a moment. See `_insert_carousel_moment_step`.
         _carousel_insert_sink: dict[str, float] = {}
+        moment_cfg = spec.get("carousel_moment") or {}
         steps = _insert_carousel_moment_step(
             steps,
             spec,
@@ -9120,6 +9449,17 @@ def _render_generative_variant(
             clip_metas=clip_metas,
             inserted_duration_out=_carousel_insert_sink,
         )
+        if "duration_s" in _carousel_insert_sink:
+            base["carousel_inserted_duration_s"] = _carousel_insert_sink["duration_s"]
+        if moment_cfg.get("timing_model") == "ripple_v1":
+            if "insertion_base_s" in _carousel_insert_sink:
+                base["carousel_insertion_base_s"] = round(
+                    _carousel_insert_sink["insertion_base_s"], 3
+                )
+            if "ripple_duration_s" in _carousel_insert_sink:
+                base["carousel_ripple_duration_s"] = round(
+                    _carousel_insert_sink["ripple_duration_s"], 3
+                )
         if voiceover_gcs_path and "duration_s" in _carousel_insert_sink:
             # `voiceover_target_s` was sized to the voice BEFORE this splice
             # (min(footage, voice, cap), above) — extend it by the spliced
@@ -12903,6 +13243,7 @@ def _compose_subtitled_final(
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
 
+    variant = _project_carousel_timed_lanes(variant)
     text_overlays = _text_element_burn_dicts(variant)
     matte_gcs_path = variant.get("subject_matte_path")
     captions_input = base_local
@@ -12977,6 +13318,7 @@ def _burn_persisted_captions_onto_base(
     caption-free copy regardless of stored cue count, so toggling back on needs no
     re-transcription) AND the presence of cues.
     """
+    variant = _project_carousel_timed_lanes(variant)
     from app.pipeline.captions import generate_ass_from_cues, generate_word_pop_ass  # noqa: PLC0415
     from app.pipeline.narrated_assembler import (  # noqa: PLC0415
         burn_captions_on_video,
@@ -13084,6 +13426,7 @@ def _run_rerender_caption_camera_effects(
         raise ValueError(f"variant {variant_id} not found on job {job_id}")
     if variant.get("resolved_archetype") != "subtitled":
         raise ValueError(f"variant {variant_id} is not a subtitled variant")
+    render_variant = _project_carousel_timed_lanes(variant)
     rank = variant.get("rank") or 1
     old_video_path = variant.get("video_path")
     old_base_path = variant.get("base_video_path")
@@ -13108,7 +13451,7 @@ def _run_rerender_caption_camera_effects(
     ) = _ensure_creator_layer_base(
         job_id=job_id,
         variant_id=variant_id,
-        variant=variant,
+        variant=render_variant,
         base_gcs_path=str(old_base_path),
     )
 
@@ -13118,7 +13461,7 @@ def _run_rerender_caption_camera_effects(
         probe = probe_video(new_base_local)
         aspect = "16:9" if variant.get("orientation") == "landscape" else "9:16"
         effects = normalize_camera_effects(
-            variant.get("camera_effects") or [],
+            render_variant.get("camera_effects") or [],
             duration_s=float(probe.duration_s),
         )
 
@@ -13138,11 +13481,11 @@ def _run_rerender_caption_camera_effects(
                 **_canvas_kwargs(canvas_for_orientation(variant.get("orientation"))),
             )
         fresh_variant = {
-            **variant,
+            **render_variant,
             "camera_effects": effects or None,
             "base_video_path": None,
-            "media_overlays": variant.get("media_overlays"),
-            "pre_media_overlay_video_path": variant.get("pre_media_overlay_video_path"),
+            "media_overlays": render_variant.get("media_overlays"),
+            "pre_media_overlay_video_path": render_variant.get("pre_media_overlay_video_path"),
         }
         suffix = uuid.uuid4().hex[:8]
         camera_matte_path: str | None = None
@@ -13181,7 +13524,8 @@ def _run_rerender_caption_camera_effects(
         "video_path": new_video_gcs,
         "output_url": output_url,
         "base_video_path": old_base_path,
-        "camera_effects": effects or None,
+        # Store the authored pre-insertion lane, never the projected render copy.
+        "camera_effects": variant.get("camera_effects") or None,
         "pre_media_overlay_video_path": None,
         "pre_sfx_video_path": None,
         **_creator_layer_cache_patch(

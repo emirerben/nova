@@ -8,6 +8,9 @@ renderer later paints it.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.pipeline.carousel.choreography import (
@@ -176,6 +179,120 @@ def test_build_timeline_moments_processed_in_ascending_card_index_order():
         if f.focus_card is not None and (not seen_order or seen_order[-1] != f.focus_card):
             seen_order.append(f.focus_card)
     assert seen_order == [1, 4]
+
+
+def test_manual_timing_preserves_sequence_order_and_exact_phase_frames():
+    fixture = json.loads(
+        (
+            Path(__file__).resolve().parents[6]
+            / "tests"
+            / "fixtures"
+            / "carousel-timing"
+            / "manual-v1.json"
+        ).read_text()
+    )
+    frames = build_timeline(
+        fixture["n_cards"],
+        GEO,
+        VIEWPORT_W,
+        focus_moments=tuple(
+            FocusMoment(
+                card_index=item["clip_index"],
+                hold_s=item["hold_s"],
+                zoom_s=fixture["zoom_duration_s"],
+            )
+            for item in fixture["sequence"]
+        ),
+        lead_in_s=0,
+        settle_pad_s=0,
+        manual_timing=True,
+        move_duration_s=fixture["move_duration_s"],
+        seed=99,
+    )
+    seen_order = []
+    for frame in frames:
+        if frame.focus_card is not None and (not seen_order or seen_order[-1] != frame.focus_card):
+            seen_order.append(frame.focus_card)
+    assert seen_order == fixture["expected_focus_order"]
+    # Subtract the zoom-in ramp's final frame, which is exactly focus_t=1.
+    for card_index, expected_frames in zip(
+        fixture["expected_focus_order"], fixture["expected_hold_frames"]
+    ):
+        assert (
+            sum(f.focus_card == card_index and f.focus_t == 1.0 for f in frames) - 1
+            == expected_frames
+        )
+    assert sum(frame.focus_card is None for frame in frames) == (
+        fixture["expected_move_frames"] * len(fixture["sequence"])
+    )
+    # Same manual inputs ignore seed because timing jitter is disabled.
+    again = build_timeline(
+        5,
+        GEO,
+        VIEWPORT_W,
+        focus_moments=(
+            FocusMoment(card_index=3, hold_s=0.5, zoom_s=0.2),
+            FocusMoment(card_index=1, hold_s=0.7, zoom_s=0.2),
+        ),
+        lead_in_s=0,
+        settle_pad_s=0,
+        manual_timing=True,
+        move_duration_s=fixture["move_duration_s"],
+        seed=1,
+    )
+    assert frames == again
+
+
+def test_manual_rolling_preserves_sequence_order_and_exact_holds():
+    fixture = json.loads(
+        (
+            Path(__file__).resolve().parents[6]
+            / "tests"
+            / "fixtures"
+            / "carousel-timing"
+            / "manual-v1.json"
+        ).read_text()
+    )
+    frames = rolling_timeline(
+        fixture["n_cards"],
+        GEO,
+        VIEWPORT_W,
+        duration_s=fixture["rolling_duration_s"],
+        sequence=tuple(
+            FocusMoment(card_index=item["clip_index"], hold_s=item["hold_s"])
+            for item in fixture["sequence"]
+        ),
+        move_duration_s=fixture["move_duration_s"],
+        manual_timing=True,
+        seed=99,
+    )
+    runs: list[tuple[int, int]] = []
+    for item, expected_hold in zip(fixture["sequence"], fixture["expected_hold_frames"]):
+        snap = _snap(item["clip_index"])
+        longest = 0
+        current = 0
+        for frame in frames:
+            if frame.scroll_x == pytest.approx(snap):
+                current += 1
+                longest = max(longest, current)
+            else:
+                current = 0
+        runs.append((item["clip_index"], longest))
+        assert longest >= expected_hold
+    assert [clip_index for clip_index, _ in runs] == fixture["expected_focus_order"]
+    observed_order: list[int] = []
+    for index, frame in enumerate(frames):
+        for clip_index in fixture["expected_focus_order"]:
+            snap = _snap(clip_index)
+            previous_at_same_snap = index > 0 and frames[index - 1].scroll_x == pytest.approx(snap)
+            if frame.scroll_x == pytest.approx(snap) and not previous_at_same_snap:
+                observed_order.append(clip_index)
+    assert observed_order == fixture["expected_focus_order"]
+    assert (
+        len(frames)
+        == sum(fixture["expected_hold_frames"])
+        + len(fixture["expected_focus_order"]) * fixture["expected_move_frames"]
+    )
 
 
 def test_build_timeline_ends_in_motion_rest_not_frozen_on_focus():
