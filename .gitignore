@@ -66,3 +66,6 @@ supabase/.temp/
 
 # Local Claude settings backups
 .claude/settings.local.json.bak*
+
+# Vercel CLI local cache
+.vercel
