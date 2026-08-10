@@ -6,8 +6,10 @@ import type {
 } from "@/lib/generative-api";
 import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
 import { lookAdjustmentsEqual } from "@/lib/look-presets";
+import { effectiveBoundaryDuration } from "@/lib/carousel-timing";
 
 const EPSILON = 1e-6;
+const roundMillis = (value: number) => Math.round(value * 1000) / 1000;
 
 export interface VirtualTimelineEntry {
   kind: "clip";
@@ -37,6 +39,7 @@ export interface VirtualCarouselEntry {
   kind: "carousel";
   startS: number;
   durationS: number;
+  overlapBeforeS: number;
 }
 
 export type VirtualEntry = VirtualTimelineEntry | VirtualCarouselEntry;
@@ -45,6 +48,11 @@ export interface VirtualTimeline {
   entries: VirtualEntry[];
   totalDurationS: number;
   hasMissingSource: boolean;
+  /** Base/output mapping receipt for the one ripple-inserted Carousel. */
+  carouselProjection: {
+    baseInsertionS: number;
+    downstreamShiftS: number;
+  } | null;
 }
 
 export interface VirtualTimeMapping {
@@ -58,10 +66,17 @@ export interface VirtualTimeMapping {
   sourceTimeS: number | null;
 }
 
+export interface ProjectedTimeRange {
+  startS: number;
+  endS: number;
+}
+
 export interface VirtualTransitionPreview {
   kind: Exclude<EditorTransition, "cut">;
   durationS: number;
   progress: number;
+  carouselEntry?: VirtualCarouselEntry;
+  carouselRole?: "incoming" | "outgoing";
 }
 
 export function virtualDeckLookPresetsAtTime(
@@ -121,6 +136,10 @@ export function mapVirtualTimeToMusicTime(
 export interface VirtualCarouselSplice {
   position: "intro" | "middle" | "outro";
   durationS: number;
+  transitionIn?: "crossfade" | "none";
+  transitionInDurationS?: number;
+  transitionOut?: "crossfade" | "none";
+  transitionOutDurationS?: number;
 }
 
 export function buildVirtualTimeline(
@@ -160,6 +179,7 @@ export function buildVirtualTimeline(
   });
 
   let entries: VirtualEntry[] = clipEntries;
+  let carouselProjection: VirtualTimeline["carouselProjection"] = null;
 
   if (carousel && carousel.durationS > 0) {
     // Mirror `_insert_carousel_moment_step`'s position resolution
@@ -195,30 +215,139 @@ export function buildVirtualTimeline(
           ? n
           : 0; // "intro" (default) and any unrecognized value
     const before = insertionIndex > 0 ? clipEntries[insertionIndex - 1] : null;
-    const carouselStartS = before ? before.startS + before.durationS : 0;
+    const after = insertionIndex < n ? clipEntries[insertionIndex] : null;
+    const oldBoundaryOverlapS = after?.overlapBeforeS ?? 0;
+    const incomingOverlapS =
+      before && carousel.transitionIn === "crossfade"
+        ? effectiveBoundaryDuration(
+            carousel.transitionInDurationS,
+            before.durationS,
+            carousel.durationS,
+          )
+        : 0;
+    const outgoingOverlapS =
+      after && carousel.transitionOut === "crossfade"
+        ? effectiveBoundaryDuration(
+            carousel.transitionOutDurationS,
+            carousel.durationS,
+            after.durationS,
+          )
+        : 0;
+    const carouselStartS = roundMillis(
+      before ? before.startS + before.durationS - incomingOverlapS : 0,
+    );
+    const baseInsertionS = roundMillis(
+      after?.startS ?? (before ? before.startS + before.durationS : 0),
+    );
+    const downstreamShiftS = roundMillis(
+      after
+        ? carouselStartS + carousel.durationS - outgoingOverlapS - after.startS
+        : carousel.durationS - incomingOverlapS,
+    );
     const carouselEntry: VirtualCarouselEntry = {
       kind: "carousel",
       startS: carouselStartS,
       durationS: carousel.durationS,
+      overlapBeforeS: incomingOverlapS,
     };
-    // Post-pass: every clip at/after the insertion point shifts later by the
-    // block's duration — it now plays AFTER the spliced-in carousel window.
+    // Re-home the replaced clip-to-clip overlap onto the configured Carousel
+    // boundaries. Downstream clips shift by the net inserted output duration,
+    // including both boundary overlaps.
     const shifted: VirtualEntry[] = clipEntries.map((entry, index) =>
       index >= insertionIndex
-        ? { ...entry, startS: entry.startS + carousel.durationS }
+        ? {
+            ...entry,
+            startS: roundMillis(entry.startS + downstreamShiftS),
+            ...(index === insertionIndex ? { overlapBeforeS: outgoingOverlapS } : {}),
+          }
         : entry,
     );
     shifted.splice(insertionIndex, 0, carouselEntry);
     entries = shifted;
+    carouselProjection = { baseInsertionS, downstreamShiftS };
   }
 
   const last = entries.at(-1);
 
   return {
     entries,
-    totalDurationS: last ? last.startS + last.durationS : 0,
+    totalDurationS: last ? roundMillis(last.startS + last.durationS) : 0,
     hasMissingSource: clipEntries.some((entry) => !entry.sourceUrl),
+    carouselProjection,
   };
+}
+
+/**
+ * Map a timestamp authored on the clip-only/base timeline onto the assembled
+ * output timeline. Carousel is an inserted sequence block, so everything at
+ * or after its insertion boundary ripples later. Music deliberately does not
+ * use this mapping; it remains an output-clock bed and plays continuously.
+ */
+export function projectBaseTime(
+  timeline: VirtualTimeline,
+  baseTimeS: number,
+  boundary: "before" | "after" = "after",
+): number {
+  const projection = timeline.carouselProjection;
+  const safe = Math.max(0, baseTimeS);
+  if (!projection) return safe;
+  const shouldRipple =
+    boundary === "after"
+      ? safe >= projection.baseInsertionS - EPSILON
+      : safe > projection.baseInsertionS + EPSILON;
+  return roundMillis(safe + (shouldRipple ? projection.downstreamShiftS : 0));
+}
+
+/** Map an authored interval. A range crossing the insertion point stretches
+ * across the Carousel, matching ripple-insert behavior on regular tracks. */
+export function projectBaseRange(
+  timeline: VirtualTimeline,
+  range: ProjectedTimeRange,
+): ProjectedTimeRange {
+  return {
+    startS: projectBaseTime(timeline, range.startS, "after"),
+    endS: projectBaseTime(timeline, range.endS, "after"),
+  };
+}
+
+/** Inverse used by editor gestures: output time inside the inserted block
+ * resolves to the base insertion boundary; later output times subtract it. */
+export function unprojectOutputTime(timeline: VirtualTimeline, outputTimeS: number): number {
+  const carousel = timeline.entries.find((entry) => entry.kind === "carousel");
+  const projection = timeline.carouselProjection;
+  const safe = Math.max(0, outputTimeS);
+  if (!carousel || !projection) return safe;
+  const downstreamStartS = projection.baseInsertionS + projection.downstreamShiftS;
+  if (safe < carousel.startS - EPSILON) return safe;
+  if (safe < downstreamStartS - EPSILON) return projection.baseInsertionS;
+  return roundMillis(Math.max(0, safe - projection.downstreamShiftS));
+}
+
+/** Invert an editor range without allowing a drag wholly inside the inserted
+ * Carousel window to collapse to zero length. Such ranges snap to the nearer
+ * side of the insertion boundary and preserve their output duration. */
+export function unprojectOutputRange(
+  timeline: VirtualTimeline,
+  range: ProjectedTimeRange,
+): ProjectedTimeRange {
+  const startS = unprojectOutputTime(timeline, range.startS);
+  const endS = unprojectOutputTime(timeline, range.endS);
+  if (endS > startS + EPSILON) return { startS, endS };
+  const carousel = timeline.entries.find((entry) => entry.kind === "carousel");
+  const projection = timeline.carouselProjection;
+  const durationS = Math.max(0, range.endS - range.startS);
+  if (!carousel || !projection || durationS <= EPSILON) return { startS, endS };
+  const midpointS = (range.startS + range.endS) / 2;
+  const carouselMidpointS = carousel.startS + carousel.durationS / 2;
+  return midpointS < carouselMidpointS
+    ? {
+        startS: roundMillis(Math.max(0, projection.baseInsertionS - durationS)),
+        endS: projection.baseInsertionS,
+      }
+    : {
+        startS: projection.baseInsertionS,
+        endS: roundMillis(projection.baseInsertionS + durationS),
+      };
 }
 
 /**
@@ -233,24 +362,33 @@ export function transitionPreviewAtTime(
   for (let index = 0; index < timeline.entries.length - 1; index += 1) {
     const entry = timeline.entries[index];
     const next = timeline.entries[index + 1];
-    // No transition preview across a carousel-block boundary (v1) — the
-    // block has no video deck to crossfade with.
-    if (entry.kind !== "clip" || next.kind !== "clip") continue;
-    if (entry.transitionAfter === "cut") continue;
-    const durationS = Math.min(
-      0.3,
-      entry.transitionDurationS ?? 0.3,
-      entry.durationS * 0.3,
-      next.durationS * 0.3,
-    );
+    const carouselEntry = entry.kind === "carousel" ? entry : next.kind === "carousel" ? next : null;
+    const durationS = carouselEntry
+      ? next.overlapBeforeS
+      : Math.min(
+          0.3,
+          entry.kind === "clip" ? (entry.transitionDurationS ?? 0.3) : 0.3,
+          entry.durationS * 0.3,
+          next.durationS * 0.3,
+        );
+    if (!carouselEntry && entry.kind === "clip" && entry.transitionAfter === "cut") continue;
     if (durationS < 0.1) continue;
     const boundaryS = entry.startS + entry.durationS;
     const startS = next.startS;
     if (timeS < startS || timeS >= boundaryS) continue;
     return {
-      kind: entry.transitionAfter,
+      kind:
+        carouselEntry || entry.kind !== "clip" || entry.transitionAfter === "cut"
+          ? "crossfade"
+          : entry.transitionAfter,
       durationS,
       progress: Math.max(0, Math.min(1, (timeS - startS) / durationS)),
+      ...(carouselEntry
+        ? {
+            carouselEntry,
+            carouselRole: next.kind === "carousel" ? ("incoming" as const) : ("outgoing" as const),
+          }
+        : {}),
     };
   }
   return null;

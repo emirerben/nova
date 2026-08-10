@@ -78,7 +78,12 @@ function virtualPreview(): VirtualPreviewController {
   });
 
   return {
-    timeline: { entries: [], totalDurationS: 0, hasMissingSource: false },
+    timeline: {
+      entries: [],
+      totalDurationS: 0,
+      hasMissingSource: false,
+      carouselProjection: null,
+    },
     activeDeck: "a",
     buffering: false,
     videoAProps: videoProps("a", videoARef),

@@ -115,10 +115,11 @@ const TIMELINE_WITH_CAROUSEL: VirtualTimeline = {
       transitionDurationS: null,
       overlapBeforeS: 0,
     },
-    { kind: "carousel", startS: 5, durationS: 10 },
+    { kind: "carousel", startS: 5, durationS: 10, overlapBeforeS: 0 },
   ],
   totalDurationS: 15,
   hasMissingSource: false,
+  carouselProjection: { baseInsertionS: 5, downstreamShiftS: 10 },
 };
 
 function renderCanvas(currentTime: number) {

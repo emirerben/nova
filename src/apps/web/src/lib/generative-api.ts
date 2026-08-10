@@ -40,6 +40,18 @@ export interface CarouselMoment {
   /** 2..15 seconds. */
   duration_s?: number;
   transition?: "crossfade" | "none";
+  /** Ordered manual choreography. `null` keeps Nova's legacy auto timing. */
+  sequence?: Array<{ clip_index: number; hold_s: number }> | null;
+  /** Seconds spent moving between cards (manual/ripple timing only). */
+  move_duration_s?: number;
+  /** Seconds for each focus zoom direction (ignored by Rolling mode). */
+  zoom_duration_s?: number;
+  transition_in?: "crossfade" | "none";
+  transition_in_duration_s?: number;
+  transition_out?: "crossfade" | "none";
+  transition_out_duration_s?: number;
+  /** Marks the deterministic, ripple-inserted timing contract. */
+  timing_model?: "ripple_v1";
 }
 
 /**

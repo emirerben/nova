@@ -21,6 +21,19 @@
 import { useMemo } from "react";
 import type { CarouselMoment } from "@/lib/plan-api";
 import { resolveCarouselFocusClipIndex } from "@/lib/generative-api";
+import {
+  CAROUSEL_BOUNDARY_MAX_S,
+  CAROUSEL_BOUNDARY_MIN_S,
+  CAROUSEL_HOLD_MAX_S,
+  CAROUSEL_HOLD_MIN_S,
+  CAROUSEL_MOVE_MAX_S,
+  CAROUSEL_MOVE_MIN_S,
+  CAROUSEL_ZOOM_MAX_S,
+  CAROUSEL_ZOOM_MIN_S,
+  carouselChoreographyDuration,
+  resizeCarouselTiming,
+  upgradeCarouselTiming,
+} from "@/lib/carousel-timing";
 import { MAX_CARDS, naturalFocusTimelineLengthS } from "./carousel-preview-impl/geometry";
 
 export interface CarouselClipThumb {
@@ -72,19 +85,20 @@ const DURATION_MIN = 2;
 const DURATION_MAX = 15;
 const DEFAULT_DURATION_S = 6;
 
-export function createDefaultCarouselMoment(clipCount: number): CarouselMoment {
+export function createDefaultCarouselMoment(clipIndices: readonly number[]): CarouselMoment {
+  const clipCount = clipIndices.length;
   const naturalDurationS = naturalFocusTimelineLengthS(
     Math.min(Math.max(0, clipCount), MAX_CARDS),
     null,
   );
-  return {
+  return upgradeCarouselTiming({
     effect: "scale_sweep",
     mode: "focus",
     focus_clip_index: null,
     position: "middle",
     duration_s: Math.max(DURATION_MIN, Math.min(Math.ceil(naturalDurationS), DURATION_MAX)),
     transition: "crossfade",
-  };
+  }, clipIndices);
 }
 
 const MODE_DESCRIPTION: Record<NonNullable<CarouselMoment["mode"]>, string> = {
@@ -127,6 +141,14 @@ export default function CarouselPanel({
   const focusClipIndex = resolveCarouselFocusClipIndex(current);
   const position: NonNullable<CarouselMoment["position"]> = current?.position ?? "middle";
   const transition: NonNullable<CarouselMoment["transition"]> = current?.transition ?? "crossfade";
+  const upgraded = useMemo(
+    () => upgradeCarouselTiming(
+      current ?? createDefaultCarouselMoment(clips.map((clip) => clip.clipIndex)),
+      clips.map((clip) => clip.clipIndex),
+    ),
+    [clips, current],
+  );
+  const sequence = upgraded.sequence ?? [];
 
   // Natural (unfitted) length of the focus choreography for this clip pool —
   // the SAME engine the preview renders through (buildTimeline via
@@ -161,9 +183,10 @@ export default function CarouselPanel({
 
   /** Merge a partial change over the current effective config and stage the
    *  whole thing immediately — every control below is "instant apply". */
-  function patch(partial: Partial<CarouselMoment>) {
+  function patch(partial: Partial<CarouselMoment>, scaleToDuration = true) {
     const resolvedMode = partial.mode ?? mode ?? "focus";
-    onChange({
+    const next = {
+      ...upgraded,
       effect,
       mode: resolvedMode,
       focus_clip_index: resolvedMode === "focus" ? focusClipIndex : null,
@@ -171,7 +194,40 @@ export default function CarouselPanel({
       duration_s: durationS,
       transition,
       ...partial,
-    });
+    };
+    onChange(
+      scaleToDuration && partial.duration_s != null
+        ? resizeCarouselTiming(
+            { ...next, duration_s: durationS },
+            partial.duration_s,
+            clips.map((clip) => clip.clipIndex),
+          )
+        : next,
+    );
+  }
+
+  function patchSequence(next: NonNullable<CarouselMoment["sequence"]>) {
+    const withSequence = { ...upgraded, sequence: next, timing_model: "ripple_v1" as const };
+    const activeClipIndices = clips.map((clip) => clip.clipIndex);
+    const normalized = resizeCarouselTiming(
+      withSequence,
+      carouselChoreographyDuration(withSequence, activeClipIndices),
+      activeClipIndices,
+    );
+    patch(normalized, false);
+  }
+
+  function patchPhase(partial: Partial<CarouselMoment>) {
+    const activeClipIndices = clips.map((clip) => clip.clipIndex);
+    const candidate = { ...upgraded, ...partial };
+    patch(
+      resizeCarouselTiming(
+        candidate,
+        carouselChoreographyDuration(candidate, activeClipIndices),
+        activeClipIndices,
+      ),
+      false,
+    );
   }
 
   return (
@@ -236,30 +292,43 @@ export default function CarouselPanel({
         )}
       </section>
 
-      {mode === "focus" && (
+      {mode !== null && (
         <section>
-          <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Focus tile</p>
-          <div
-            role="radiogroup"
-            aria-label="Focus clip"
-            className="flex gap-2 overflow-x-auto pb-1"
-          >
-            <FocusTile
-              selected={focusClipIndex === null}
-              disabled={stillsGated}
-              onSelect={() => patch({ focus_clip_index: null })}
-              label="Let Nova pick"
-              autoPick
-            />
-            {clips.map((clipThumb) => (
-              <FocusTile
-                key={clipThumb.clipIndex}
-                selected={focusClipIndex === clipThumb.clipIndex}
-                disabled={stillsGated}
-                onSelect={() => patch({ focus_clip_index: clipThumb.clipIndex })}
-                label={clipThumb.label}
-                signedUrl={clipThumb.signedUrl}
-              />
+          <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Video sequence</p>
+          <div className="space-y-2" aria-label="Carousel video sequence">
+            {sequence.map((item, index) => {
+              const clipThumb = clips.find((clip) => clip.clipIndex === item.clip_index);
+              return (
+                <div key={item.clip_index} className="flex min-h-11 items-center gap-2 rounded-lg border border-zinc-200 bg-white p-2">
+                  <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#3f3f46]">
+                    {index + 1}. {clipThumb?.label ?? `Clip ${item.clip_index + 1}`}
+                  </span>
+                  <button type="button" aria-label={`Move ${clipThumb?.label ?? "video"} earlier`} disabled={index === 0} onClick={() => {
+                    const next = sequence.slice();
+                    [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                    patchSequence(next);
+                  }} className="h-8 w-8 rounded border border-zinc-200 disabled:opacity-30">↑</button>
+                  <button type="button" aria-label={`Move ${clipThumb?.label ?? "video"} later`} disabled={index === sequence.length - 1} onClick={() => {
+                    const next = sequence.slice();
+                    [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                    patchSequence(next);
+                  }} className="h-8 w-8 rounded border border-zinc-200 disabled:opacity-30">↓</button>
+                  <label className="flex items-center gap-1 text-[11px] text-[#71717a]">
+                    Hold
+                    <input type="number" min={CAROUSEL_HOLD_MIN_S} max={CAROUSEL_HOLD_MAX_S} step={0.1} value={item.hold_s} aria-label={`${clipThumb?.label ?? "Video"} hold seconds`} onChange={(event) => {
+                      const holdS = Number(event.target.value);
+                      if (!Number.isFinite(holdS) || holdS < CAROUSEL_HOLD_MIN_S || holdS > CAROUSEL_HOLD_MAX_S) return;
+                      patchSequence(sequence.map((entry, entryIndex) => entryIndex === index ? { ...entry, hold_s: holdS } : entry));
+                    }} className="w-14 rounded border border-zinc-200 px-1 py-1 text-right tabular-nums" />
+                  </label>
+                  <button type="button" aria-label={`Remove ${clipThumb?.label ?? "video"} from sequence`} disabled={sequence.length <= 1} onClick={() => patchSequence(sequence.filter((_, entryIndex) => entryIndex !== index))} className="h-8 w-8 rounded border border-zinc-200 text-zinc-500 disabled:opacity-30">×</button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {clips.filter((clip) => !sequence.some((item) => item.clip_index === clip.clipIndex)).map((clip) => (
+              <button key={clip.clipIndex} type="button" onClick={() => patchSequence([...sequence, { clip_index: clip.clipIndex, hold_s: 2 }])} className="min-h-9 rounded-full border border-zinc-200 px-3 text-[11px] text-[#3f3f46] hover:border-zinc-400">+ {clip.label}</button>
             ))}
           </div>
         </section>
@@ -295,7 +364,7 @@ export default function CarouselPanel({
           type="range"
           min={DURATION_MIN}
           max={DURATION_MAX}
-          step={1}
+          step={0.1}
           value={durationS}
           disabled={stillsGated}
           aria-label="Carousel length in seconds"
@@ -309,23 +378,26 @@ export default function CarouselPanel({
         )}
       </section>
 
-      <section>
-        <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Transition</p>
-        <div role="group" aria-label="Carousel transition" className="flex gap-1">
-          {(["crossfade", "none"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              disabled={stillsGated}
-              aria-pressed={transition === t}
-              onClick={() => patch({ transition: t })}
-              className={segmentedBtnClass(transition === t)}
-            >
-              {t === "crossfade" ? "Crossfade" : "Hard cut"}
-            </button>
-          ))}
-        </div>
-      </section>
+      {mode !== null && (
+        <section className="space-y-3">
+          <TimingSlider label="Movement" value={upgraded.move_duration_s ?? 0.6} min={CAROUSEL_MOVE_MIN_S} max={CAROUSEL_MOVE_MAX_S} onChange={(move_duration_s) => patchPhase({ move_duration_s })} />
+          {mode === "focus" && <TimingSlider label="Zoom in / out" value={upgraded.zoom_duration_s ?? 0.6} min={CAROUSEL_ZOOM_MIN_S} max={CAROUSEL_ZOOM_MAX_S} onChange={(zoom_duration_s) => patchPhase({ zoom_duration_s })} />}
+        </section>
+      )}
+
+      {(["in", "out"] as const).map((edge) => {
+        const kind = edge === "in" ? (upgraded.transition_in ?? transition) : (upgraded.transition_out ?? transition);
+        const seconds = edge === "in" ? (upgraded.transition_in_duration_s ?? 0.4) : (upgraded.transition_out_duration_s ?? 0.4);
+        return (
+          <section key={edge}>
+            <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">{edge === "in" ? "Entry" : "Exit"} transition</p>
+            <div role="group" aria-label={`${edge === "in" ? "Entry" : "Exit"} transition`} className="flex gap-1">
+              {(["crossfade", "none"] as const).map((choice) => <button key={choice} type="button" disabled={stillsGated} aria-pressed={kind === choice} onClick={() => patch(edge === "in" ? { transition_in: choice } : { transition_out: choice })} className={segmentedBtnClass(kind === choice)}>{choice === "crossfade" ? "Crossfade" : "Hard cut"}</button>)}
+            </div>
+            {kind === "crossfade" && <TimingSlider label="Duration" value={seconds} min={CAROUSEL_BOUNDARY_MIN_S} max={CAROUSEL_BOUNDARY_MAX_S} disabled={stillsGated} onChange={(value) => patch(edge === "in" ? { transition_in_duration_s: value } : { transition_out_duration_s: value })} />}
+          </section>
+        );
+      })}
 
       {isUpdate && (
         <button
@@ -432,61 +504,38 @@ function EffectMock({ kind }: { kind: NonNullable<CarouselMoment["effect"]> }) {
   );
 }
 
-/** One clip tile in the focus-tile strip. Min 44px touch target even though
- *  the visible thumbnail is narrower (portrait 9:16), via padding inside the
- *  button rather than shrinking the hit area. */
-function FocusTile({
+function TimingSlider({
   label,
-  signedUrl,
-  selected,
-  disabled,
-  autoPick,
-  onSelect,
+  value,
+  min,
+  max,
+  disabled = false,
+  onChange,
 }: {
   label: string;
-  signedUrl?: string | null;
-  selected: boolean;
+  value: number;
+  min: number;
+  max: number;
   disabled?: boolean;
-  autoPick?: boolean;
-  onSelect: () => void;
+  onChange: (value: number) => void;
 }) {
   return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      aria-label={label}
-      disabled={disabled}
-      onClick={onSelect}
-      className={[
-        "flex min-h-11 min-w-11 shrink-0 flex-col items-center gap-1 rounded-lg border p-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50",
-        selected ? "border-lime-600 ring-1 ring-lime-600" : "border-zinc-200 hover:border-zinc-400",
-      ].join(" ")}
-    >
-      <span className="flex h-16 w-9 items-center justify-center overflow-hidden rounded bg-[#0c0c0e]">
-        {autoPick ? (
-          <span aria-hidden className="text-[16px] text-white">
-            ✧
-          </span>
-        ) : signedUrl ? (
-          <video
-            src={signedUrl}
-            muted
-            playsInline
-            preload="metadata"
-            className="h-full w-full object-cover"
-            onLoadedMetadata={(e) => {
-              const video = e.currentTarget;
-              video.currentTime = Math.min(0.1, video.duration || 0.1);
-            }}
-          />
-        ) : (
-          <span aria-hidden className="text-[10px] text-white/40">
-            —
-          </span>
-        )}
+    <label className="mt-2 block">
+      <span className="mb-1 flex items-center justify-between text-[11px] text-[#71717a]">
+        <span>{label}</span>
+        <span className="tabular-nums">{value.toFixed(1)}s</span>
       </span>
-      <span className="max-w-[44px] truncate text-[10px] text-[#71717a]">{label}</span>
-    </button>
+      <input
+        type="range"
+        aria-label={`${label} seconds`}
+        min={min}
+        max={max}
+        disabled={disabled}
+        step={0.1}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="w-full accent-lime-600"
+      />
+    </label>
   );
 }

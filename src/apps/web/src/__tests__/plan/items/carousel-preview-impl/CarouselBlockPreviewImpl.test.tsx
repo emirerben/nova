@@ -201,6 +201,54 @@ describe("CarouselBlockPreviewImpl", () => {
     expect(focusedVideo.currentTime).toBeLessThan(0.2);
   });
 
+  it("maps authored source clip indices onto the active preview card order", () => {
+    const clips = [makeClips(3)[2], makeClips(3)[0]];
+    const config: CarouselMoment = {
+      mode: "focus",
+      timing_model: "ripple_v1",
+      duration_s: 2.2,
+      sequence: [
+        { clip_index: 0, hold_s: 0.5 },
+        { clip_index: 2, hold_s: 0.5 },
+      ],
+      move_duration_s: 0.2,
+      zoom_duration_s: 0.2,
+    };
+    const { container, rerender } = render(
+      <CarouselBlockPreviewImpl
+        config={config}
+        clips={clips}
+        currentTimeS={0}
+        blockStartS={0}
+        durationS={2.2}
+        isPlaying={false}
+      />,
+    );
+
+    let firstFocused: HTMLElement | null = null;
+    for (let t = 0; t <= 2.2; t += 1 / 30) {
+      rerender(
+        <CarouselBlockPreviewImpl
+          config={config}
+          clips={clips}
+          currentTimeS={t}
+          blockStartS={0}
+          durationS={2.2}
+          isPlaying={false}
+        />,
+      );
+      firstFocused = container.querySelector('[data-carousel-card-focused="true"]');
+      if (firstFocused) break;
+    }
+
+    expect(firstFocused).not.toBeNull();
+    expect(firstFocused).toHaveAttribute("data-carousel-card-index", "1");
+    expect(firstFocused?.querySelector("video")).toHaveAttribute(
+      "src",
+      "https://signed/clip-0.mp4",
+    );
+  });
+
   it("clamps currentTimeS outside [blockStartS, blockStartS + durationS] to the block's own [0, durationS] range", () => {
     const config: CarouselMoment = { mode: "rolling", duration_s: 3 };
     const { container: before } = render(

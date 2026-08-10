@@ -1,5 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { FrameState } from "@/lib/carousel-preview";
 import {
+  DEFAULT_GEOMETRY,
   FPS,
   MAX_FOCUS_TOTAL_S,
   buildMomentTimeline,
@@ -95,6 +98,107 @@ describe("resolveFrameIndex", () => {
 });
 
 describe("buildMomentTimeline", () => {
+  it("preserves manual sequence order and exact 30fps holds", () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(
+        path.resolve(process.cwd(), "../../../tests/fixtures/carousel-timing/manual-v1.json"),
+        "utf8",
+      ),
+    ) as {
+      n_cards: number;
+      focus_duration_s: number;
+      move_duration_s: number;
+      zoom_duration_s: number;
+      sequence: Array<{ clip_index: number; hold_s: number }>;
+      expected_focus_order: number[];
+      expected_hold_frames: number[];
+      expected_move_frames: number;
+    };
+    const frames = buildMomentTimeline(
+      {
+        mode: "focus",
+        timing_model: "ripple_v1",
+        sequence: fixture.sequence,
+        move_duration_s: fixture.move_duration_s,
+        zoom_duration_s: fixture.zoom_duration_s,
+      },
+      fixture.n_cards,
+      fixture.focus_duration_s,
+    );
+    const seen: number[] = [];
+    for (const frame of frames) {
+      if (frame.focusCard != null && seen.at(-1) !== frame.focusCard) seen.push(frame.focusCard);
+    }
+    expect(seen).toEqual(fixture.expected_focus_order);
+    // Subtract the zoom-in ramp's final frame, which is exactly focusT=1.
+    fixture.expected_focus_order.forEach((cardIndex, index) => {
+      expect(
+        frames.filter((frame) => frame.focusCard === cardIndex && frame.focusT === 1).length - 1,
+      ).toBe(fixture.expected_hold_frames[index]);
+    });
+    expect(frames.filter((frame) => frame.focusCard == null).length).toBe(
+      fixture.expected_move_frames * fixture.sequence.length,
+    );
+  });
+
+  it("preserves manual Rolling order and completes every configured hold", () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(
+        path.resolve(process.cwd(), "../../../tests/fixtures/carousel-timing/manual-v1.json"),
+        "utf8",
+      ),
+    ) as {
+      n_cards: number;
+      rolling_duration_s: number;
+      move_duration_s: number;
+      sequence: Array<{ clip_index: number; hold_s: number }>;
+      expected_focus_order: number[];
+      expected_hold_frames: number[];
+      expected_move_frames: number;
+    };
+    const frames = buildMomentTimeline(
+      {
+        mode: "rolling",
+        timing_model: "ripple_v1",
+        sequence: fixture.sequence,
+        move_duration_s: fixture.move_duration_s,
+      },
+      fixture.n_cards,
+      fixture.rolling_duration_s,
+    );
+    const pitch = DEFAULT_GEOMETRY.cardW + DEFAULT_GEOMETRY.gap;
+    fixture.expected_focus_order.forEach((cardIndex, index) => {
+      const snap = cardIndex * pitch;
+      let longest = 0;
+      let current = 0;
+      frames.forEach((frame) => {
+        if (Math.abs(frame.scrollX - snap) < 1e-6) {
+          current += 1;
+          longest = Math.max(longest, current);
+        } else {
+          current = 0;
+        }
+      });
+      expect(longest).toBeGreaterThanOrEqual(fixture.expected_hold_frames[index]);
+    });
+    const enteredSnaps = frames.reduce<number[]>((order, frame, index) => {
+      const cardIndex = fixture.expected_focus_order.find(
+        (candidate) => Math.abs(frame.scrollX - candidate * pitch) < 1e-6,
+      );
+      const previousAtSameSnap =
+        index > 0 &&
+        cardIndex != null &&
+        Math.abs(frames[index - 1].scrollX - cardIndex * pitch) < 1e-6;
+      if (cardIndex != null && !previousAtSameSnap) order.push(cardIndex);
+      return order;
+    }, []);
+    expect(enteredSnaps).toEqual(fixture.expected_focus_order);
+    expect(frames).toHaveLength(
+      fixture.expected_hold_frames.reduce((sum, count) => sum + count, 0) +
+        fixture.expected_focus_order.length * fixture.expected_move_frames,
+    );
+  });
+
   it("empty clip pool -> empty timeline", () => {
     expect(buildMomentTimeline({ mode: "rolling" }, 0, 4)).toEqual([]);
   });

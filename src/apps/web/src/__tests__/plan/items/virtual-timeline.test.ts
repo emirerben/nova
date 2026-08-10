@@ -4,9 +4,13 @@ import {
   buildVirtualTimeline,
   mapVirtualTimeToMusicTime,
   mapVirtualTime,
+  projectBaseRange,
+  projectBaseTime,
   nextVirtualEntry,
   slotsDifferFromBaseline,
   transitionPreviewAtTime,
+  unprojectOutputRange,
+  unprojectOutputTime,
   virtualDeckLookAdjustmentsAtTime,
   virtualDeckLookPresetsAtTime,
   type VirtualTimelineEntry,
@@ -40,6 +44,95 @@ const clips = [
 ];
 
 describe("virtual timeline", () => {
+  it.each(["intro", "middle", "outro"] as const)(
+    "ripple-projects base timestamps for a %s insertion",
+    (position) => {
+      const timeline = buildVirtualTimeline(
+        [
+          slot({ key: "a", clipIndex: 0, durationS: 2 }),
+          slot({ key: "b", clipIndex: 1, durationS: 2 }),
+          slot({ key: "c", clipIndex: 2, durationS: 2 }),
+        ],
+        clips,
+        [],
+        { position, durationS: 3 },
+      );
+      const insertion = timeline.entries.find((entry) => entry.kind === "carousel")!;
+
+      expect(projectBaseTime(timeline, insertion.startS)).toBe(insertion.startS + 3);
+      if (insertion.startS > 0) {
+        expect(projectBaseTime(timeline, insertion.startS - 0.1)).toBe(
+          insertion.startS - 0.1,
+        );
+      }
+      expect(unprojectOutputTime(timeline, insertion.startS + 1)).toBe(insertion.startS);
+      expect(unprojectOutputTime(timeline, insertion.startS + 3.5)).toBe(
+        insertion.startS + 0.5,
+      );
+    },
+  );
+
+  it("extends a crossing interval while leaving the music output clock continuous", () => {
+    const timeline = buildVirtualTimeline(
+      [slot({ durationS: 4 }), slot({ key: "b", clipIndex: 1, durationS: 4 })],
+      clips,
+      [],
+      { position: "middle", durationS: 3 },
+    );
+
+    expect(projectBaseRange(timeline, { startS: 3, endS: 5 })).toEqual({
+      startS: 3,
+      endS: 8,
+    });
+    expect(mapVirtualTimeToMusicTime(6, 10)).toBe(16);
+  });
+
+  it("replaces the old clip boundary with independent entry and exit overlaps", () => {
+    const timeline = buildVirtualTimeline(
+      [
+        slot({ key: "a", clipIndex: 0, durationS: 4, transitionAfter: "crossfade", transitionDurationS: 0.3 }),
+        slot({ key: "b", clipIndex: 1, durationS: 4 }),
+      ],
+      clips,
+      [],
+      {
+        position: "middle",
+        durationS: 3,
+        transitionIn: "crossfade",
+        transitionInDurationS: 0.4,
+        transitionOut: "none",
+      },
+    );
+
+    expect(timeline.entries).toEqual([
+      expect.objectContaining({ kind: "clip", startS: 0 }),
+      expect.objectContaining({ kind: "carousel", startS: 3.6, overlapBeforeS: 0.4 }),
+      expect.objectContaining({ kind: "clip", startS: 6.6, overlapBeforeS: 0 }),
+    ]);
+    // Old 0.3s clip-to-clip overlap is replaced. Net downstream ripple is
+    // 3.0 + 0.3 - 0.4 - 0.0 = 2.9s.
+    expect(timeline.carouselProjection).toEqual({ baseInsertionS: 3.7, downstreamShiftS: 2.9 });
+    expect(timeline.totalDurationS).toBe(10.6);
+    expect(projectBaseTime(timeline, 3.7)).toBe(6.6);
+    expect(unprojectOutputTime(timeline, 3.65)).toBe(3.7);
+    expect(unprojectOutputRange(timeline, { startS: 4, endS: 5 })).toEqual({
+      startS: 2.7,
+      endS: 3.7,
+    });
+    expect(transitionPreviewAtTime(timeline, 3.8)).toMatchObject({
+      kind: "crossfade",
+      durationS: 0.4,
+      progress: expect.closeTo(0.5, 5),
+      carouselRole: "incoming",
+    });
+  });
+
+  it("keeps projection identity when no insertion exists", () => {
+    const timeline = buildVirtualTimeline([], []);
+    expect(projectBaseRange(timeline, { startS: 2, endS: 5 })).toEqual({ startS: 2, endS: 5 });
+    expect(unprojectOutputTime(timeline, 7)).toBe(7);
+  });
+
   it("maps virtual time to slot index and source offset", () => {
     const timeline = buildVirtualTimeline(
       [

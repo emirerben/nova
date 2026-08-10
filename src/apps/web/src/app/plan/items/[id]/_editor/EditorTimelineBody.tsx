@@ -27,6 +27,12 @@ import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { CameraEffect } from "@/lib/plan-api";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import {
+  projectBaseRange,
+  unprojectOutputTime,
+  unprojectOutputRange,
+  type VirtualTimeline,
+} from "./virtual-timeline";
+import {
   fitPxPerSecond,
   pxToSeconds,
   resolveEditorTimelineScale,
@@ -141,6 +147,9 @@ export interface EditorCarouselBlockBar {
 
 export interface EditorTimelineBodyProps {
   durationS: number;
+  /** Canonical assembled timeline used by playback, ruler, scrubbing and all
+   * video-lane geometry. Never rebuild insertion timing inside this component. */
+  timelineProjection: VirtualTimeline;
   /** Real rendered player duration, used to calibrate transition overlap. */
   renderedOutputDurationS?: number | null;
   currentTimeS: number;
@@ -220,6 +229,9 @@ export interface EditorTimelineBodyProps {
   /** Fired by either a drag onto one of the three position drop targets OR a
    *  direct click on one (both stage + history.record() on the caller side). */
   onSetCarouselPosition?: (position: CarouselBlockPosition) => void;
+  /** Live outer-edge stretch; caller scales internal choreography without
+   * recording another undo snapshot for every pointermove. */
+  onPreviewCarouselDuration?: (durationS: number) => number | void;
 
   sfx: EditorSfxBar[];
   onPreviewSfxTiming?: (
@@ -249,6 +261,15 @@ export interface EditorTimelineBodyProps {
 }
 
 type ActiveDrag =
+  | {
+      kind: "carousel";
+      id: string;
+      handle: "left" | "right";
+      startTimelineX: number;
+      pxPerSecond: number;
+      origin: { durationS: number };
+      active: boolean;
+    }
   | {
       kind: "text";
       id: string;
@@ -318,6 +339,7 @@ type ActiveDrag =
 export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const {
     durationS,
+    timelineProjection,
     renderedOutputDurationS,
     currentTimeS,
     zoom,
@@ -327,20 +349,20 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     selection,
     onSelect,
     onClear,
-    textBars,
+    textBars: baseTextBars,
     captionsExpanded = false,
     captionsEnabled = true,
     onOpenCaptionCue,
     readOnly = false,
     onRecordTimelineEdit,
     onPreviewTextTiming,
-    visualBlocks,
+    visualBlocks: baseVisualBlocks,
     showVisualBlocks = true,
     onPreviewVisualTiming,
-    motionBlocks = [],
+    motionBlocks: baseMotionBlocks = [],
     showMotionBlocks = false,
     onPreviewMotionTiming,
-    cameraEffects = [],
+    cameraEffects: baseCameraEffects = [],
     onPreviewCameraTiming,
     slots,
     clipReadOnly = false,
@@ -357,7 +379,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     carouselDisabledReason,
     onSelectCarousel,
     onSetCarouselPosition,
-    sfx,
+    onPreviewCarouselDuration,
+    sfx: baseSfx,
     onPreviewSfxTiming,
     hasMusic,
     musicLabel,
@@ -368,13 +391,45 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     onToggleVideoMute,
     soundMuted,
     onToggleSoundMute,
-    overlays,
+    overlays: baseOverlays,
     onPreviewOverlayTiming,
     onOpenSounds,
     onScrub,
     onScrubStart,
     flashIds,
   } = props;
+
+  const projectRange = <T extends { start_s: number; end_s: number }>(item: T): T => {
+    const projected = projectBaseRange(timelineProjection, {
+      startS: item.start_s,
+      endS: item.end_s,
+    });
+    return { ...item, start_s: projected.startS, end_s: projected.endS };
+  };
+  const textBars = baseTextBars.map(projectRange);
+  const visualBlocks = baseVisualBlocks.map(projectRange);
+  const motionBlocks = baseMotionBlocks.map(projectRange);
+  const cameraEffects = baseCameraEffects.map(projectRange);
+  const overlays = baseOverlays.map(projectRange);
+  const sfx = baseSfx.map((item) => {
+    const projected = projectBaseRange(timelineProjection, {
+      startS: item.at_s,
+      endS: item.end_s ?? item.at_s,
+    });
+    return {
+      ...item,
+      at_s: projected.startS,
+      end_s: item.end_s == null ? null : projected.endS,
+    };
+  });
+
+  const toBaseRange = (range: { start_s: number; end_s: number }) => {
+    const base = unprojectOutputRange(timelineProjection, {
+      startS: range.start_s,
+      endS: range.end_s,
+    });
+    return { start_s: base.startS, end_s: base.endS };
+  };
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const rulerContentRef = useRef<HTMLDivElement>(null);
@@ -408,12 +463,16 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     outputDurationS: renderedOutputDurationS,
     fallbackOverlapS: 0,
   };
-  const slotLayout =
+  const renderedSlotLayout =
     clipPreviewMode === "rendered"
       ? renderedSequentialSlotLayout(slots, grid, renderedLayoutOptions)
       : baseSlotLayout;
   const effectiveDurationS =
-    slotLayout.totalDurationS > 0 ? slotLayout.totalDurationS : durationS;
+    timelineProjection.totalDurationS > 0
+      ? timelineProjection.totalDurationS
+      : renderedSlotLayout.totalDurationS > 0
+        ? renderedSlotLayout.totalDurationS
+        : durationS;
 
   const trackViewportW = Math.max(0, viewportW);
   const liveFitPps = fitPxPerSecond(trackViewportW, effectiveDurationS);
@@ -472,31 +531,26 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }, [currentTimeS, effectiveDurationS, pps, trackW, viewportW]);
 
   const playheadPx = secondsToPx(currentTimeS, pps);
-  const windows = slotLayout.windows;
-  // Carousel-block window (Lane C): mirror the server's position resolution
-  // (`_insert_carousel_moment_step` in app/tasks/generative_build.py, same
-  // rule `buildVirtualTimeline`'s `VirtualCarouselSplice` implements for the
-  // virtual-preview transport) against the ACTIVE (non-removed, resolved)
-  // clip windows currently in this editor's layout — "intro" => before every
-  // clip, "outro" => after every clip, "middle" => floor(n/2), i.e. before
-  // the clip currently at that 0-based index.
-  const activeClipWindows = windows.filter((win, i) => {
-    const slot = slots[i];
-    return !!slot && !slot.removed && win.startS != null && win.durationS > 0;
+  const projectedClipBySlot = new Map(
+    timelineProjection.entries
+      .filter((entry) => entry.kind === "clip")
+      .map((entry) => [entry.slotIndex, entry] as const),
+  );
+  const windows = slots.map((slot, index) => {
+    const projected = projectedClipBySlot.get(index);
+    const base = renderedSlotLayout.windows[index] ?? baseSlotLayout.windows[index];
+    if (!projected || slot.removed) {
+      return { startS: null, durationS: 0, offsetBeats: base?.offsetBeats ?? null };
+    }
+    return {
+      startS: projected.startS,
+      durationS: projected.durationS,
+      offsetBeats: base?.offsetBeats ?? null,
+    };
   });
-  const carouselWindow = carouselBlock
-    ? (() => {
-        const n = activeClipWindows.length;
-        const insertionIndex =
-          carouselBlock.position === "middle"
-            ? Math.floor(n / 2)
-            : carouselBlock.position === "outro"
-              ? n
-              : 0;
-        const before = insertionIndex > 0 ? activeClipWindows[insertionIndex - 1] : null;
-        const startS = before ? (before.startS ?? 0) + before.durationS : 0;
-        return { startS, durationS: carouselBlock.durationS };
-      })()
+  const projectedCarousel = timelineProjection.entries.find((entry) => entry.kind === "carousel");
+  const carouselWindow = carouselBlock && projectedCarousel
+    ? { startS: projectedCarousel.startS, durationS: projectedCarousel.durationS }
     : null;
   const filmstripLayout =
     clipPreviewMode === "rendered"
@@ -687,7 +741,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         deltaS,
         videoDurationS: effectiveDurationS,
       });
-      onPreviewTextTiming?.(active.id, next);
+      onPreviewTextTiming?.(active.id, toBaseRange(next));
       setDragLabel({
         x: clientX,
         y: window.innerHeight - 118,
@@ -717,6 +771,18 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         y: window.innerHeight - 118,
         text: `${(next.durationS ?? active.origin.durationS ?? 0).toFixed(1)}s`,
       });
+    } else if (active.kind === "carousel") {
+      const direction = active.handle === "left" ? -1 : 1;
+      const nextDuration = Math.max(
+        2,
+        Math.min(15, Math.round((active.origin.durationS + direction * deltaS) * 10) / 10),
+      );
+      const appliedDuration = onPreviewCarouselDuration?.(nextDuration);
+      setDragLabel({
+        x: clientX,
+        y: window.innerHeight - 118,
+        text: `${(appliedDuration ?? nextDuration).toFixed(1)}s`,
+      });
     } else if (active.kind === "sfx") {
       const next = applySfxBarDrag({
         bar: active.origin,
@@ -724,7 +790,17 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         deltaS,
         videoDurationS: effectiveDurationS,
       });
-      onPreviewSfxTiming?.(active.id, next);
+      const baseRange =
+        next.end_s == null
+          ? null
+          : unprojectOutputRange(timelineProjection, {
+              startS: next.at_s,
+              endS: next.end_s,
+            });
+      onPreviewSfxTiming?.(active.id, {
+        at_s: baseRange?.startS ?? unprojectOutputTime(timelineProjection, next.at_s),
+        end_s: baseRange?.endS ?? null,
+      });
       setDragLabel({
         x: clientX,
         y: window.innerHeight - 118,
@@ -757,13 +833,13 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         };
       }
       if (active.kind === "visual") {
-        onPreviewVisualTiming?.(active.id, next);
+        onPreviewVisualTiming?.(active.id, toBaseRange(next));
       } else if (active.kind === "motion") {
-        onPreviewMotionTiming?.(active.id, next);
+        onPreviewMotionTiming?.(active.id, toBaseRange(next));
       } else if (active.kind === "camera") {
-        onPreviewCameraTiming?.(active.id, next);
+        onPreviewCameraTiming?.(active.id, toBaseRange(next));
       } else {
-        onPreviewOverlayTiming?.(active.id, next);
+        onPreviewOverlayTiming?.(active.id, toBaseRange(next));
       }
       setDragLabel({
         x: clientX,
@@ -844,6 +920,25 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
       origin: { at_s: bar.at_s, end_s: bar.end_s },
+      active: false,
+    };
+  }
+
+  function startCarouselResize(
+    e: React.PointerEvent<HTMLElement>,
+    handle: "left" | "right",
+  ) {
+    if (!carouselBlock || carouselReadOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      kind: "carousel",
+      id: carouselBlock.id,
+      handle,
+      startTimelineX: pointerTimelineX(e.clientX),
+      pxPerSecond: pps,
+      origin: { durationS: carouselBlock.durationS },
       active: false,
     };
   }
@@ -1548,6 +1643,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                       e.dataTransfer.effectAllowed = "move";
                       e.dataTransfer.setData("text/plain", carouselBlock.id);
                     }}
+                    onPointerMove={(event) => updateDrag(event.clientX)}
+                    onPointerUp={(event) => finishDrag(event, "carousel", carouselBlock.id)}
+                    onPointerCancel={cancelDrag}
                     onClick={(e) => {
                       e.stopPropagation();
                       onSelectCarousel?.();
@@ -1578,6 +1676,24 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     <span className="truncate drop-shadow">
                       Carousel · {carouselBlock.effectLabel}
                     </span>
+                    {!carouselReadOnly && (
+                      <>
+                        <span
+                          aria-hidden
+                          data-carousel-resize-handle="left"
+                          onPointerDown={(e) => startCarouselResize(e, "left")}
+                          className="absolute inset-y-0 left-0 z-[9] w-3 cursor-ew-resize"
+                        />
+                        <span
+                          aria-hidden
+                          data-carousel-resize-handle="right"
+                          onPointerDown={(e) => startCarouselResize(e, "right")}
+                          className="absolute inset-y-0 right-0 z-[9] w-3 cursor-ew-resize"
+                        />
+                        <TimelineTrimHandle side="left" selected={isSel("carousel", carouselBlock.id)} />
+                        <TimelineTrimHandle side="right" selected={isSel("carousel", carouselBlock.id)} />
+                      </>
+                    )}
                   </div>
                 )}
               </LaneTrack>
@@ -2024,7 +2140,7 @@ function TimelineTrimHandle({
   return (
     <span
       aria-hidden
-      className={`absolute top-1/2 z-10 flex h-8 w-2 -translate-y-1/2 cursor-ew-resize items-center justify-center rounded-sm bg-white/95 shadow-sm ring-1 ring-black/10 motion-safe:transition-opacity motion-safe:duration-150 ${
+      className={`pointer-events-none absolute top-1/2 z-10 flex h-8 w-2 -translate-y-1/2 cursor-ew-resize items-center justify-center rounded-sm bg-white/95 shadow-sm ring-1 ring-black/10 motion-safe:transition-opacity motion-safe:duration-150 ${
         selected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
       } ${side === "left" ? "left-0" : "right-0"}`}
     >

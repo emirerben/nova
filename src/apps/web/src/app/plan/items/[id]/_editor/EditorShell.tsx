@@ -73,6 +73,11 @@ import {
 } from "@/lib/editor-commit";
 import { captionMetaFromVariant } from "@/lib/caption-meta";
 import {
+  resizeCarouselTiming,
+  shouldAutoUpgradeCarouselTiming,
+  upgradeCarouselTiming,
+} from "@/lib/carousel-timing";
+import {
   buildPlanItemEditorReturnHref,
   editorCommitStartedRender,
 } from "@/lib/editor-return";
@@ -199,9 +204,12 @@ import { useVirtualPreview } from "./useVirtualPreview";
 import { useEditorLayoutMode } from "./useEditorLayoutMode";
 import type { EditorLayoutMode } from "./useEditorLayoutMode";
 import {
+  projectBaseTime,
+  projectBaseRange,
   slotsDifferFromBaseline,
   virtualDeckLookAdjustmentsAtTime,
   virtualDeckLookPresetsAtTime,
+  unprojectOutputTime,
   type VirtualCarouselSplice,
 } from "./virtual-timeline";
 import {
@@ -899,6 +907,8 @@ export default function EditorShell({
   const [copilotSaveNoticeDismissed, setCopilotSaveNoticeDismissed] = useState(true);
   const panEnabled = zoomPct > 100;
   const [currentTime, setCurrentTime] = useState(0);
+  const outputToBaseTimeRef = useRef<(seconds: number) => number>((seconds) => seconds);
+  const baseToOutputTimeRef = useRef<(seconds: number) => number>((seconds) => seconds);
   const [pendingCopilotFocus, setPendingCopilotFocus] =
     useState<DirectorPreviewFocus | null>(null);
   const [duration, setDuration] = useState(0);
@@ -1036,9 +1046,31 @@ export default function EditorShell({
         label: `Clip ${out.length + 1}`,
         signedUrl: source.signed_url ?? null,
       });
+      if (out.length === 5) break;
     }
     return out;
   }, [slots, clip.clips]);
+  const carouselUpgradeVariantRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !variant ||
+      !carouselMoment ||
+      !shouldAutoUpgradeCarouselTiming(carouselMoment) ||
+      carouselMomentDirty ||
+      clip.loadState !== "ready" ||
+      carouselUpgradeVariantRef.current === variant.variant_id
+    ) {
+      return;
+    }
+    carouselUpgradeVariantRef.current = variant.variant_id;
+    setCarouselMoment(
+      upgradeCarouselTiming(
+        carouselMoment,
+        carouselClips.map((entry) => entry.clipIndex),
+      ),
+    );
+    setCarouselMomentDirty(true);
+  }, [carouselClips, carouselMoment, carouselMomentDirty, clip.loadState, variant]);
   const clipDirty = useMemo(
     () => slotsDifferFromBaseline(clip.state.baseline, slots),
     [clip.state.baseline, slots],
@@ -1280,9 +1312,10 @@ export default function EditorShell({
     const motionDuration =
       duration > 0 ? duration : Math.max(0, Number(variant?.duration_s ?? 0));
     const durationFrames = Math.max(1, Math.round(motionDuration * MOTION_FPS));
+    const baseCurrentTime = outputToBaseTimeRef.current(currentTime);
     let startFrame = Math.max(
       0,
-      Math.min(durationFrames - 1, Math.floor(currentTime * MOTION_FPS)),
+      Math.min(durationFrames - 1, Math.floor(baseCurrentTime * MOTION_FPS)),
     );
     const readyImages = poolAssets.filter(isBoundedCreatorImageAsset);
     const entry = presetId === "route_trace" ? null : creatorBlockEntry(presetId);
@@ -1722,8 +1755,10 @@ export default function EditorShell({
     musicTracksLoading,
     refreshMusicTracks,
   ]);
-  const carouselMomentPosition = carouselMoment?.position ?? null;
+  const carouselMomentPosition = carouselMoment ? (carouselMoment.position ?? "middle") : null;
   const carouselMomentDurationS = carouselMoment?.duration_s ?? null;
+  const carouselTransitionIn = carouselMoment?.transition_in ?? carouselMoment?.transition ?? "none";
+  const carouselTransitionOut = carouselMoment?.transition_out ?? carouselMoment?.transition ?? "none";
   // Referentially stable across renders unless the block's position/duration
   // actually changes: `useVirtualPreview`'s `timeline` is a `useMemo` keyed on
   // this object's IDENTITY (see virtual-timeline splice deps), and EditorShell
@@ -1738,9 +1773,22 @@ export default function EditorShell({
   const carouselSplice = useMemo<VirtualCarouselSplice | null>(
     () =>
       carouselMomentPosition
-        ? { position: carouselMomentPosition, durationS: carouselMomentDurationS ?? 6 }
+        ? {
+            position: carouselMomentPosition,
+            durationS: carouselMomentDurationS ?? 6,
+            transitionIn: carouselTransitionIn,
+            transitionInDurationS: carouselMoment?.transition_in_duration_s,
+            transitionOut: carouselTransitionOut,
+            transitionOutDurationS: carouselMoment?.transition_out_duration_s,
+          }
         : null,
-    [carouselMomentPosition, carouselMomentDurationS],
+    [
+      carouselMoment,
+      carouselMomentPosition,
+      carouselMomentDurationS,
+      carouselTransitionIn,
+      carouselTransitionOut,
+    ],
   );
   const virtualPreview = useVirtualPreview({
     enabled: virtualPreviewRequested,
@@ -1764,6 +1812,12 @@ export default function EditorShell({
     virtualPreviewRequested &&
     !virtualPreview.timeline.hasMissingSource &&
     virtualPreview.timeline.entries.length > 0;
+  outputToBaseTimeRef.current = virtualPreviewActive
+    ? (seconds) => unprojectOutputTime(virtualPreview.timeline, seconds)
+    : (seconds) => seconds;
+  baseToOutputTimeRef.current = virtualPreviewActive
+    ? (seconds) => projectBaseTime(virtualPreview.timeline, seconds)
+    : (seconds) => seconds;
   const virtualDeckLookPresets = useMemo(
     () =>
       virtualPreviewActive
@@ -1876,6 +1930,81 @@ export default function EditorShell({
       return key != null && key in lyricLineOverrides;
     });
   }, [elements, virtualPreviewActive, lyricsOptionalActive, lyricLineOverrides]);
+  const projectCanvasRange = useCallback(
+    (startS: number, endS: number) =>
+      virtualPreviewActive
+        ? projectBaseRange(virtualPreview.timeline, { startS, endS })
+        : { startS, endS },
+    [virtualPreview.timeline, virtualPreviewActive],
+  );
+  const canvasTextBars = useMemo(
+    () =>
+      visibleTextBars.map((bar) => {
+        const range = projectCanvasRange(bar.start_s, bar.end_s);
+        return { ...bar, start_s: range.startS, end_s: range.endS };
+      }),
+    [projectCanvasRange, visibleTextBars],
+  );
+  const canvasPreviewElements = useMemo(
+    () =>
+      previewElements.map((element) => {
+        const range = projectCanvasRange(element.start_s, element.end_s);
+        return { ...element, start_s: range.startS, end_s: range.endS };
+      }),
+    [previewElements, projectCanvasRange],
+  );
+  const canvasVisualBlocks = useMemo(
+    () =>
+      localVisualBlocks.map((block) => {
+        const range = projectCanvasRange(block.start_s, block.end_s);
+        return { ...block, start_s: range.startS, end_s: range.endS };
+      }),
+    [localVisualBlocks, projectCanvasRange],
+  );
+  const canvasMotionScenes = useMemo(
+    () =>
+      localMotionScenes.map((scene) => {
+        const range = projectCanvasRange(
+          scene.start_frame / MOTION_FPS,
+          scene.end_frame_exclusive / MOTION_FPS,
+        );
+        return {
+          ...scene,
+          start_frame: Math.round(range.startS * MOTION_FPS),
+          end_frame_exclusive: Math.round(range.endS * MOTION_FPS),
+        };
+      }),
+    [localMotionScenes, projectCanvasRange],
+  );
+  const canvasCameraEffects = useMemo(
+    () =>
+      localCameraEffects.map((effect) => {
+        const range = projectCanvasRange(effect.start_s, effect.end_s);
+        return { ...effect, start_s: range.startS, end_s: range.endS };
+      }),
+    [localCameraEffects, projectCanvasRange],
+  );
+  const canvasOverlays = useMemo(
+    () =>
+      localOverlays.map((overlay) => {
+        const range = projectCanvasRange(overlay.start_s, overlay.end_s);
+        return { ...overlay, start_s: range.startS, end_s: range.endS };
+      }),
+    [localOverlays, projectCanvasRange],
+  );
+  const canvasSfxPlacements = useMemo(
+    () =>
+      previewSfxPlacements.map((placement) => {
+        const durationS = Math.max(
+          0,
+          (placement.trim_end_s ?? placement.duration_s ?? placement.trim_start_s ?? 0) -
+            (placement.trim_start_s ?? 0),
+        );
+        const range = projectCanvasRange(placement.at_s, placement.at_s + durationS);
+        return { ...placement, at_s: range.startS };
+      }),
+    [previewSfxPlacements, projectCanvasRange],
+  );
   const previewDuration = virtualPreviewActive
     ? virtualPreview.timeline.totalDurationS
     : duration;
@@ -2273,30 +2402,37 @@ export default function EditorShell({
         if (layoutMode === "light" && !POCKET_UI) setLightSheetOpen(true);
       } else if (kind === "clip") {
         setInspectorTab("basic");
-        const startS = outputTimeForSlotBoundary({
-          slots,
-          grid: clip.state.grid,
-          key: id,
-          boundary: "start",
-          rendered: !virtualPreviewActive,
-          renderedOutputDurationS: duration,
-          fallbackOverlapS: 0,
-        });
+        const projectedEntry = virtualPreviewActive
+          ? virtualPreview.timeline.entries.find(
+              (entry) => entry.kind === "clip" && entry.slotKey === id,
+            )
+          : null;
+        const startS =
+          projectedEntry?.startS ??
+          outputTimeForSlotBoundary({
+            slots,
+            grid: clip.state.grid,
+            key: id,
+            boundary: "start",
+            rendered: !virtualPreviewActive,
+            renderedOutputDurationS: duration,
+            fallbackOverlapS: 0,
+          });
         if (startS != null) {
           seekPlaybackTo(startS);
         }
       } else if (kind === "sfx") {
         setInspectorTab("basic");
         const sfx = localSfx.find((p) => p.id === id);
-        if (sfx) seekPlaybackTo(sfx.at_s ?? 0);
+        if (sfx) seekPlaybackTo(baseToOutputTimeRef.current(sfx.at_s ?? 0));
       } else if (kind === "overlay") {
         setInspectorTab("basic");
         const overlay = localOverlays.find((o) => o.id === id);
-        if (overlay) seekPlaybackTo(overlay.start_s);
+        if (overlay) seekPlaybackTo(baseToOutputTimeRef.current(overlay.start_s));
       } else if (kind === "motion") {
         setInspectorTab("basic");
         const block = localMotionScenes.find((scene) => scene.id === id);
-        if (block) seekPlaybackTo(block.start_frame / MOTION_FPS);
+        if (block) seekPlaybackTo(baseToOutputTimeRef.current(block.start_frame / MOTION_FPS));
         setActiveTool("visuals");
         if (layoutMode === "light" && POCKET_UI) {
           dispatchPocket({ type: "OPEN_INSPECTOR" });
@@ -2348,7 +2484,7 @@ export default function EditorShell({
   useEffect(() => {
     if (!pendingCopilotFocus) return;
     pausePlayback();
-    seekPlaybackTo(pendingCopilotFocus.seekS);
+    seekPlaybackTo(baseToOutputTimeRef.current(pendingCopilotFocus.seekS));
     selectElement(pendingCopilotFocus.kind, pendingCopilotFocus.id, {
       preserveOverlayTool: true,
     });
@@ -2516,11 +2652,12 @@ export default function EditorShell({
   );
 
   const selectedTextMotion = useMemo(
-    () => collageMotionForTextBar(variant, previewDuration, selectedBar),
-    [previewDuration, selectedBar, variant],
+    () => collageMotionForTextBar(variant, duration, selectedBar),
+    [duration, selectedBar, variant],
   );
+  const selectedTextBaseTime = outputToBaseTimeRef.current(currentTime);
   const selectedTextBoxScreenXFrac = selectedBar
-    ? textBoxScreenXFrac(selectedTextMotion, currentTime, selectedBar.x_frac ?? 0.5)
+    ? textBoxScreenXFrac(selectedTextMotion, selectedTextBaseTime, selectedBar.x_frac ?? 0.5)
     : undefined;
   const setSelectedTextBoxPosition = useCallback(
     (position: TextBoxHorizontalPosition) => {
@@ -2529,13 +2666,13 @@ export default function EditorShell({
         selectedBar.id,
         textBoxPositionPatchForBar({
           motion: selectedTextMotion,
-          currentTimeS: currentTime,
+          currentTimeS: selectedTextBaseTime,
           bar: selectedBar,
           position,
         }),
       );
     },
-    [currentTime, patchBar, selectedBar, selectedTextMotion],
+    [patchBar, selectedBar, selectedTextBaseTime, selectedTextMotion],
   );
 
   // Elements-model Lyrics toggle: ON fetches (or reuses the cached) seed bars
@@ -2602,8 +2739,8 @@ export default function EditorShell({
       const assignments = resolveSmartPlacementAssignments(
         variant,
         targetBars,
-        previewDuration,
-        currentTime,
+        duration,
+        outputToBaseTimeRef.current(currentTime),
       );
       if (!assignments) {
         setToast("Not enough empty collage pockets for all overlapping text blocks.");
@@ -2627,7 +2764,7 @@ export default function EditorShell({
     history,
     currentTime,
     patchBar,
-    previewDuration,
+    duration,
     readOnly,
     selectedBar,
     smartPlacementCandidate,
@@ -2638,7 +2775,12 @@ export default function EditorShell({
   const applySelectedSmartPlacement = useCallback(() => {
     if (readOnly || !selectedBar) return;
     const candidate = isMasonryVariant(variant)
-      ? resolveSmartPlacementCandidate(variant, selectedBar, previewDuration, currentTime)
+      ? resolveSmartPlacementCandidate(
+          variant,
+          selectedBar,
+          duration,
+          outputToBaseTimeRef.current(currentTime),
+        )
       : smartPlacementCandidate;
     if (!candidate) {
       if (isMasonryVariant(variant)) {
@@ -2650,7 +2792,7 @@ export default function EditorShell({
   }, [
     currentTime,
     patchBar,
-    previewDuration,
+    duration,
     readOnly,
     selectedBar,
     smartPlacementCandidate,
@@ -2793,12 +2935,12 @@ export default function EditorShell({
       const next = applyTextTimingInput({
         startS: patch.start_s ?? selectedBar.start_s,
         endS: patch.end_s ?? selectedBar.end_s,
-        videoDurationS: previewDuration,
+        videoDurationS: duration,
       });
       if (!rangesDiffer(selectedBar, next)) return;
       patchBar(selectedBar.id, next);
     },
-    [patchBar, previewDuration, readOnly, selectedBar],
+    [duration, patchBar, readOnly, selectedBar],
   );
 
   const previewClipTiming = useCallback(
@@ -2895,8 +3037,11 @@ export default function EditorShell({
         durationS: patch.durationS,
         durationBeats: null,
       });
+      const projectedEntry = virtualPreview.timeline.entries.find(
+        (entry) => entry.kind === "clip" && entry.slotKey === selectedClip.slot.key,
+      );
       const slotIndex = slots.findIndex((s) => s.key === selectedClip.slot.key);
-      const startS = slotLayout.windows[slotIndex]?.startS;
+      const startS = projectedEntry?.startS ?? slotLayout.windows[slotIndex]?.startS;
       if (startS != null) {
         const boundaryS =
           Math.abs(patch.inS - selectedClip.slot.inS) > 1e-6
@@ -2913,6 +3058,7 @@ export default function EditorShell({
       selectedClip,
       slotLayout.windows,
       slots,
+      virtualPreview.timeline.entries,
     ],
   );
 
@@ -2952,7 +3098,10 @@ export default function EditorShell({
         sound_effect_id: effect.id,
         src_gcs_path: "",
         source: "user",
-        at_s: Math.min(Math.max(0, currentTime), Math.max(0, previewDuration - 0.1)),
+        at_s: Math.min(
+          Math.max(0, outputToBaseTimeRef.current(currentTime)),
+          Math.max(0, duration - 0.1),
+        ),
         gain: 1,
         duration_s: effect.duration_s ?? null,
         label: effect.name,
@@ -2968,7 +3117,7 @@ export default function EditorShell({
       select("sfx", placement.id);
       setInspectorTab("basic");
     },
-    [capabilities?.sfx, currentTime, history, previewDuration, readOnly, select],
+    [capabilities?.sfx, currentTime, duration, history, readOnly, select],
   );
 
   const patchSfx = useCallback(
@@ -3199,7 +3348,10 @@ export default function EditorShell({
         );
         const confirmedByPath = new Map(confirmed.map((c) => [c.gcs_path, c]));
         const previewUrls: Record<string, string> = {};
-        const start = Math.min(Math.max(0, currentTime), Math.max(0, previewDuration - 0.3));
+        const start = Math.min(
+          Math.max(0, outputToBaseTimeRef.current(currentTime)),
+          Math.max(0, duration - 0.3),
+        );
         const cards: MediaOverlay[] = uploadUrls.map((u, i) => {
           const file = files[i];
           const id = crypto.randomUUID();
@@ -3216,7 +3368,7 @@ export default function EditorShell({
             y_frac: 0.5,
             scale: 0.35,
             start_s: start,
-            end_s: Math.min(previewDuration || start + 5, start + 5),
+            end_s: Math.min(duration || start + 5, start + 5),
             z: localOverlays.length + i,
           };
         });
@@ -3240,7 +3392,7 @@ export default function EditorShell({
       history,
       itemId,
       localOverlays.length,
-      previewDuration,
+      duration,
       readOnly,
       select,
     ],
@@ -3315,7 +3467,10 @@ export default function EditorShell({
       const bar = newTextBar({
         id: crypto.randomUUID(),
         text: NEW_TEXT_CONTENT,
-        timing: textTimingAtPlayhead({ currentTime, previewDuration }),
+        timing: textTimingAtPlayhead({
+          currentTime: outputToBaseTimeRef.current(currentTime),
+          previewDuration: duration,
+        }),
         preset,
       });
       dispatch({ type: "ADD_TEXT", bar });
@@ -3323,7 +3478,7 @@ export default function EditorShell({
     },
     [
       currentTime,
-      previewDuration,
+      duration,
       selectText,
       readOnly,
       textElementsLocked,
@@ -3347,8 +3502,8 @@ export default function EditorShell({
       const remainingElementCount = Math.max(0, TEXT_ELEMENTS_API_MAX - existingElementCount);
       const sequence = buildTimedTextSequence(
         draft,
-        currentTime,
-        previewDuration,
+        outputToBaseTimeRef.current(currentTime),
+        duration,
         0.5,
         remainingElementCount,
       );
@@ -3381,7 +3536,7 @@ export default function EditorShell({
       capabilities,
       currentTime,
       history,
-      previewDuration,
+      duration,
       readOnly,
       selectText,
       state.bars,
@@ -3470,8 +3625,11 @@ export default function EditorShell({
 
   const nextVisualBlockWindow = useCallback(
     (requestedDuration: number) => {
-      const maxDuration = Math.max(0.75, previewDuration || duration || 60);
-      let start = Math.max(0, Math.min(currentTime, Math.max(0, maxDuration - 0.75)));
+      const maxDuration = Math.max(0.75, duration || 60);
+      let start = Math.max(
+        0,
+        Math.min(outputToBaseTimeRef.current(currentTime), Math.max(0, maxDuration - 0.75)),
+      );
       const ordered = [...localVisualBlocks].sort((a, b) => a.start_s - b.start_s);
       for (const block of ordered) {
         if (start + requestedDuration <= block.start_s) break;
@@ -3482,7 +3640,7 @@ export default function EditorShell({
       const end = Math.min(maxDuration, start + requestedDuration);
       return { start, end };
     },
-    [currentTime, duration, localVisualBlocks, previewDuration],
+    [currentTime, duration, localVisualBlocks],
   );
 
   const addTextCard = useCallback(
@@ -3536,7 +3694,7 @@ export default function EditorShell({
       dispatch({ type: "ADD_TEXT", bar });
       selectText(bar.id);
       setActiveTool("visuals");
-      seekPlaybackTo(start);
+      seekPlaybackTo(baseToOutputTimeRef.current(start));
     },
     [
       capabilities?.visual_blocks,
@@ -3598,7 +3756,7 @@ export default function EditorShell({
       history.record();
       setLocalVisualBlocks((current) => [...current, block]);
       setVisualBlocksDirty(true);
-      seekPlaybackTo(start);
+      seekPlaybackTo(baseToOutputTimeRef.current(start));
     },
     [
       capabilities?.visual_blocks,
@@ -3637,7 +3795,7 @@ export default function EditorShell({
       dispatch({ type: "ADD_TEXT", bar });
       setTextDirty(true);
       selectText(bar.id);
-      seekPlaybackTo(block.start_s);
+      seekPlaybackTo(baseToOutputTimeRef.current(block.start_s));
     },
     [
       history,
@@ -3753,7 +3911,7 @@ export default function EditorShell({
           });
         setTextDirty(true);
       }
-      seekPlaybackTo(start);
+      seekPlaybackTo(baseToOutputTimeRef.current(start));
     },
     [
       capabilities?.visual_blocks,
@@ -3914,7 +4072,7 @@ export default function EditorShell({
       openTools,
       // Slot-less variants (subtitled) have a 0 layout total — the real video
       // duration keeps every timing clamp from collapsing at_s values to 0.
-      videoDurationS: previewDuration,
+      videoDurationS: duration,
       sfxPlacements: localSfx,
       sfxCatalog: sfxGlossaryEffects,
       // Speech marks describe the PERSISTED render's timeline — hide them while
@@ -3967,7 +4125,7 @@ export default function EditorShell({
     musicTracks,
     overlaySuggestions.rows,
     poolAssets,
-    previewDuration,
+    duration,
     readOnly,
     sfxGlossaryEffects,
     slots,
@@ -3984,7 +4142,7 @@ export default function EditorShell({
         snapshot,
         capabilities,
         grid: clip.state.grid,
-        videoDurationS: previewDuration,
+        videoDurationS: duration,
         sfx: localSfx,
         sfxCatalog: sfxGlossaryEffects,
         overlays: localOverlays,
@@ -4019,7 +4177,7 @@ export default function EditorShell({
       mixLevel,
       overlaySuggestions.rows,
       poolAssets,
-      previewDuration,
+      duration,
       sfxGlossaryEffects,
       slots,
       state.bars,
@@ -4452,6 +4610,7 @@ export default function EditorShell({
 
   const splitAtPlayhead = useCallback(() => {
     if (!selection || readOnly) return;
+    const baseCurrentTime = outputToBaseTimeRef.current(currentTime);
     if (selection.kind === "text") {
       // Guard before recording so an out-of-bounds split (reducer no-op) never
       // pushes a spurious undo step.
@@ -4461,7 +4620,7 @@ export default function EditorShell({
         setToast("Lyric timing is locked to the vocal.");
         return;
       }
-      const at = Math.round(currentTime * 10) / 10;
+      const at = Math.round(baseCurrentTime * 10) / 10;
       const MIN = 0.2;
       if (at <= bar.start_s + MIN - 1e-9 || at >= bar.end_s - MIN + 1e-9) {
         setToast("Move the playhead over the text to split it.");
@@ -4473,7 +4632,7 @@ export default function EditorShell({
       dispatch({
         type: "SPLIT_BAR",
         id: selection.id,
-        at_s: currentTime,
+        at_s: baseCurrentTime,
         newId: crypto.randomUUID(),
       });
     } else if (selection.kind === "clip") {
@@ -4482,7 +4641,7 @@ export default function EditorShell({
         slots,
         clip.state.grid,
         selection.id,
-        currentTime,
+        baseCurrentTime,
         `split-${crypto.randomUUID()}`,
       );
       if (res.didSplit) {
@@ -4525,14 +4684,14 @@ export default function EditorShell({
       const bar = selectedBar;
       if (!bar) return;
       if (isLyricBar(bar)) return;
-      const start_s = nudgeBarStart(bar, deltaS, previewDuration);
+      const start_s = nudgeBarStart(bar, deltaS, duration);
       if (start_s === bar.start_s) return;
       history.record();
       if (isCaptionBar(bar)) setCaptionDirty(true);
       else setTextDirty(true);
       dispatch({ type: "MOVE_BAR", id: bar.id, start_s });
     },
-    [history, previewDuration, readOnly, selection, selectedBar],
+    [duration, history, readOnly, selection, selectedBar],
   );
 
   const nudgeSelectedMotion = useCallback(
@@ -4542,7 +4701,7 @@ export default function EditorShell({
       if (!scene) return;
       const deltaFrames = Math.round(deltaS * MOTION_FPS);
       const span = scene.end_frame_exclusive - scene.start_frame;
-      const durationFrames = Math.max(1, Math.round(previewDuration * MOTION_FPS));
+      const durationFrames = Math.max(1, Math.round(duration * MOTION_FPS));
       const startFrame = Math.max(
         0,
         Math.min(durationFrames - span, scene.start_frame + deltaFrames),
@@ -4553,7 +4712,7 @@ export default function EditorShell({
         end_frame_exclusive: startFrame + span,
       });
     },
-    [localMotionScenes, patchMotionScene, previewDuration, readOnly, selection],
+    [duration, localMotionScenes, patchMotionScene, readOnly, selection],
   );
 
   // Transport enablement (plan §6).
@@ -4922,7 +5081,7 @@ export default function EditorShell({
     return {
       cues: captionCueRows,
       selectedId: selection?.kind === "text" ? selection.id : null,
-      currentTime,
+      currentTime: outputToBaseTimeRef.current(currentTime),
       meta: captionMeta,
       language: variant?.caption_language ?? null,
       readOnly,
@@ -4930,7 +5089,7 @@ export default function EditorShell({
       error: captionsError,
       onSelectCue: (id: string) => {
         const cue = captionCueRows.find((c) => c.id === id);
-        if (cue) seekPlaybackTo(cue.start_s + 0.02);
+        if (cue) seekPlaybackTo(baseToOutputTimeRef.current(cue.start_s + 0.02));
         // preserveOverlayTool: at 1024-1280px selecting anything normally closes
         // the drawer (shouldCloseToolOnSelection). Clicking a cue IN the drawer
         // must not destroy the list you are working through.
@@ -5273,6 +5432,7 @@ export default function EditorShell({
 
   const editorModeProps: EditorTimelineBodyProps = {
     durationS: timelineDuration,
+    timelineProjection: virtualPreview.timeline,
     renderedOutputDurationS: duration,
     currentTimeS: currentTime,
     zoom,
@@ -5289,7 +5449,7 @@ export default function EditorShell({
     onOpenCaptionCue: (id: string) => {
       setActiveTool("captions");
       const cue = captionCueRows.find((c) => c.id === id);
-      if (cue) seekPlaybackTo(cue.start_s + 0.02);
+      if (cue) seekPlaybackTo(baseToOutputTimeRef.current(cue.start_s + 0.02));
       selectElement("text", id, { preserveOverlayTool: true });
     },
     readOnly,
@@ -5350,6 +5510,16 @@ export default function EditorShell({
         return;
       }
       stageCarouselMoment({ ...carouselMoment, position });
+    },
+    onPreviewCarouselDuration: (durationS) => {
+      if (!carouselMoment || !carouselCapable) return;
+      const resized = resizeCarouselTiming(
+        carouselMoment,
+        durationS,
+        carouselClips.map((clip) => clip.clipIndex),
+      );
+      applyCarouselMoment(resized);
+      return resized.duration_s;
     },
     sfx: localSfx.map((p) => {
       const trimStart = p.trim_start_s ?? 0;
@@ -5752,18 +5922,18 @@ export default function EditorShell({
         <div className="relative min-h-0">
           <EditorCanvas
             variant={variant}
-            elements={previewElements}
-            bars={visibleTextBars}
+            elements={canvasPreviewElements}
+            bars={canvasTextBars}
             captionsEnabled={captionMeta?.enabled}
-            visualBlocks={localVisualBlocks}
-            motionScenes={localMotionScenes}
+            visualBlocks={canvasVisualBlocks}
+            motionScenes={canvasMotionScenes}
             motionRuntimeHash={motionPreviewRuntimeHash}
-            cameraEffects={localCameraEffects}
+            cameraEffects={canvasCameraEffects}
             visualAssets={poolAssets}
-            mediaOverlays={localOverlays}
+            mediaOverlays={canvasOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
             suggestedOverlayIds={suggestedOverlayIds}
-            sfxPlacements={previewSfxPlacements}
+            sfxPlacements={canvasSfxPlacements}
             sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
             selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
@@ -5801,7 +5971,10 @@ export default function EditorShell({
             onReloadSource={() => setLoadNonce((n) => n + 1)}
             virtualPreview={virtualPreviewActive ? virtualPreview : null}
             carouselMoment={carouselMoment}
-            carouselClips={clip.clips}
+            carouselClips={carouselClips.map((entry) => ({
+              clip_index: entry.clipIndex,
+              signed_url: entry.signedUrl,
+            }))}
             allowManipulation={POCKET_UI ? !readOnly : false}
             stageHeightCss={
               POCKET_UI
@@ -6039,18 +6212,18 @@ export default function EditorShell({
         >
           <EditorCanvas
             variant={variant}
-            elements={previewElements}
-            bars={visibleTextBars}
+            elements={canvasPreviewElements}
+            bars={canvasTextBars}
             captionsEnabled={captionMeta?.enabled}
-            visualBlocks={localVisualBlocks}
-            motionScenes={localMotionScenes}
+            visualBlocks={canvasVisualBlocks}
+            motionScenes={canvasMotionScenes}
             motionRuntimeHash={motionPreviewRuntimeHash}
-            cameraEffects={localCameraEffects}
+            cameraEffects={canvasCameraEffects}
             visualAssets={poolAssets}
-            mediaOverlays={localOverlays}
+            mediaOverlays={canvasOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
             suggestedOverlayIds={suggestedOverlayIds}
-            sfxPlacements={previewSfxPlacements}
+            sfxPlacements={canvasSfxPlacements}
             sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
             selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
@@ -6077,7 +6250,10 @@ export default function EditorShell({
             onReloadSource={() => setLoadNonce((n) => n + 1)}
             virtualPreview={virtualPreviewActive ? virtualPreview : null}
             carouselMoment={carouselMoment}
-            carouselClips={clip.clips}
+            carouselClips={carouselClips.map((entry) => ({
+              clip_index: entry.clipIndex,
+              signed_url: entry.signedUrl,
+            }))}
             canvas={activeCanvas}
           />
         </div>

@@ -24,10 +24,12 @@ import EditorTimelineBody, {
   type EditorTimelineBodyProps,
 } from "@/app/plan/items/[id]/_editor/EditorTimelineBody";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
+import { buildVirtualTimeline } from "@/app/plan/items/[id]/_editor/virtual-timeline";
 
 function baseProps(textBars: TextElementBar[]): EditorTimelineBodyProps {
   return {
     durationS: 10,
+    timelineProjection: buildVirtualTimeline([], []),
     currentTimeS: 0,
     zoom: 1,
     selection: null,

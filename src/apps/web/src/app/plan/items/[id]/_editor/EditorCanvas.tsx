@@ -472,6 +472,8 @@ export default function EditorCanvas({
   const activeCarouselEntry =
     carouselMapping?.entry.kind === "carousel" ? carouselMapping.entry : null;
   const virtualTransition = virtualPreview?.transitionPreview ?? null;
+  const displayedCarouselEntry =
+    activeCarouselEntry ?? virtualTransition?.carouselEntry ?? null;
   const transitionProgress = virtualTransition?.progress ?? 0;
   const transitionOverlayOpacity =
     virtualTransition?.kind === "dip_to_black" || virtualTransition?.kind === "flash"
@@ -479,6 +481,12 @@ export default function EditorCanvas({
       : 0;
   const virtualDeckStyle = (deck: "a" | "b"): React.CSSProperties => {
     const isActive = virtualPreview?.activeDeck === deck;
+    if (virtualTransition?.carouselRole === "incoming") {
+      return { opacity: isActive ? 1 : 0, zIndex: EDITOR_STAGE_Z.video };
+    }
+    if (virtualTransition?.carouselRole === "outgoing") {
+      return { opacity: isActive ? 0 : 1, zIndex: EDITOR_STAGE_Z.video };
+    }
     const opacity = virtualTransition
       ? isActive
         ? 1 - transitionProgress
@@ -1122,10 +1130,18 @@ export default function EditorCanvas({
                     className="hidden"
                   />
                 )}
-                {activeCarouselEntry && carouselMoment && (
+                {displayedCarouselEntry && carouselMoment && (
                   <div
                     className="absolute inset-0 overflow-hidden"
-                    style={{ zIndex: EDITOR_STAGE_Z.video + 3 }}
+                    style={{
+                      zIndex: EDITOR_STAGE_Z.video + 3,
+                      opacity:
+                        virtualTransition?.carouselRole === "incoming"
+                          ? transitionProgress
+                          : virtualTransition?.carouselRole === "outgoing"
+                            ? 1 - transitionProgress
+                            : 1,
+                    }}
                   >
                     {/* CarouselBlockPreviewImpl renders at its native
                         1080x1920 canvas space (see that component's
@@ -1150,8 +1166,8 @@ export default function EditorCanvas({
                         config={carouselMoment}
                         clips={carouselClips}
                         currentTimeS={currentTime}
-                        blockStartS={activeCarouselEntry.startS}
-                        durationS={activeCarouselEntry.durationS}
+                        blockStartS={displayedCarouselEntry.startS}
+                        durationS={displayedCarouselEntry.durationS}
                         isPlaying={playing}
                       />
                     </div>

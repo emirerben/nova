@@ -82,10 +82,32 @@ export default function CarouselBlockPreviewImpl({
   const safeDurationS = Number.isFinite(durationS) && durationS > 0 ? durationS : 0.1;
   const cards = useMemo(() => clips.slice(0, MAX_CARDS), [clips]);
   const nCards = cards.length;
+  const timelineConfig = useMemo(() => {
+    const cardIndexByClipIndex = new Map(
+      cards.map((clip, cardIndex) => [clip.clip_index, cardIndex] as const),
+    );
+    return {
+      mode,
+      focus_clip_index:
+        config.focus_clip_index == null
+          ? config.focus_clip_index
+          : cardIndexByClipIndex.get(config.focus_clip_index),
+      sequence:
+        config.sequence
+          ?.map((item) => {
+            const cardIndex = cardIndexByClipIndex.get(item.clip_index);
+            return cardIndex == null ? null : { ...item, clip_index: cardIndex };
+          })
+          .filter((item): item is { clip_index: number; hold_s: number } => item != null) ?? null,
+      move_duration_s: config.move_duration_s,
+      zoom_duration_s: config.zoom_duration_s,
+      timing_model: config.timing_model,
+    };
+  }, [cards, config, mode]);
 
   const frames = useMemo(
-    () => buildMomentTimeline({ mode, focus_clip_index: config.focus_clip_index }, nCards, safeDurationS),
-    [mode, config.focus_clip_index, nCards, safeDurationS],
+    () => buildMomentTimeline(timelineConfig, nCards, safeDurationS),
+    [timelineConfig, nCards, safeDurationS],
   );
   const focusStartTimeline = useMemo(() => computeFocusStartTimeline(frames), [frames]);
 
