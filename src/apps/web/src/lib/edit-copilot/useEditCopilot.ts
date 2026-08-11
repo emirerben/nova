@@ -8,7 +8,12 @@ import {
 } from "@/lib/plan-api";
 import type { CopilotOp } from "./ops";
 import type { ApplyCopilotOpsResult } from "./apply-ops";
-import type { CopilotSnapshot } from "./snapshot";
+import type {
+  CopilotRenderStepSummaryItem,
+  CopilotSnapshot,
+  CopilotSnapshotContext,
+} from "./snapshot";
+import { COPILOT_RECENT_EDIT_HISTORY_MAX } from "./snapshot";
 import { isFeatureUnavailable } from "./availability";
 
 /** Shown once when the API has no copilot route, in place of a dead retry. */
@@ -59,7 +64,11 @@ export interface QueuedCopilotMessage {
 export interface UseEditCopilotOptions {
   itemId: string;
   variantId: string;
-  buildSnapshot: () => CopilotSnapshot;
+  /** Accepts an optional context the hook threads through on every turn:
+   * renderStepSummary (below) and the hook's own message-derived
+   * recentEditHistory. The caller's buildSnapshot forwards these into
+   * buildCopilotSnapshot's options — see snapshot.ts. */
+  buildSnapshot: (context?: CopilotSnapshotContext) => CopilotSnapshot;
   applyOps: (
     ops: CopilotOp[],
     snapshot: CopilotSnapshot,
@@ -69,6 +78,11 @@ export interface UseEditCopilotOptions {
     response: EditCopilotTurnResponse,
     snapshot: CopilotSnapshot,
   ) => { undoVersion?: number } | void;
+  /** Last ≤8 humanized render steps for the current job (PR1's status-route
+   * `steps` field, once a parallel PR lands it — the caller is responsible
+   * for sourcing this, e.g. from a polled job-status hook). Undefined/empty
+   * omits the render_step_summary snapshot section entirely. */
+  renderStepSummary?: CopilotRenderStepSummaryItem[];
 }
 
 export interface UseEditCopilotResult {
@@ -168,6 +182,36 @@ function summaries(result: ApplyCopilotOpsResult): {
     ),
     rejected: result.rejected.map((op) => `${op.label}: ${op.detail}`),
   };
+}
+
+/** One line per applied turn: distinct op labels (from the `label: from →
+ * to` chip strings summaries() builds) plus a total edit count — e.g.
+ * "Text color, Font size (3 edits)". Mirrors the "+N more" collapse the
+ * receipt chips already use in the drawer. */
+function summarizeAppliedTurn(applied: string[]): string {
+  const labels: string[] = [];
+  for (const entry of applied) {
+    const label = entry.split(":")[0]?.trim();
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  const shown = labels.slice(0, 3);
+  const suffix = labels.length > shown.length ? ", …" : "";
+  const count = applied.length;
+  return `${shown.join(", ")}${suffix} (${count} edit${count === 1 ? "" : "s"})`;
+}
+
+/** Derives recent_edit_history from the hook's own message log — the last
+ * ≤6 turns that actually applied a change (rejected-only or non-edit turns
+ * are not "edit history"). Purely local; nothing here reaches the network
+ * except via the buildSnapshot() context passed on the next turn. */
+export function deriveRecentEditHistory(messages: CopilotMessage[]): string[] {
+  const summaries: string[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant" || message.pending) continue;
+    if (!message.applied || message.applied.length === 0) continue;
+    summaries.push(summarizeAppliedTurn(message.applied));
+  }
+  return summaries.slice(-COPILOT_RECENT_EDIT_HISTORY_MAX);
 }
 
 export function outcomeAuthoritativeReply({
@@ -300,7 +344,13 @@ export function useEditCopilot(
     setMessages(optimisticMessages);
     activeTurnRef.current = { id: turnId, text: trimmed, userMessageId };
 
-    const snapshot = optsRef.current.buildSnapshot();
+    // messagesRef.current at this point already includes the optimistic
+    // pending user message set above — deriveRecentEditHistory only reads
+    // assistant turns, so the in-flight turn itself is naturally excluded.
+    const snapshot = optsRef.current.buildSnapshot({
+      renderStepSummary: optsRef.current.renderStepSummary,
+      recentEditHistory: deriveRecentEditHistory(messagesRef.current),
+    });
     let succeeded = false;
 
     try {

@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { editCopilotTurn } from "@/lib/plan-api";
 import {
+  deriveRecentEditHistory,
   editCopilotStorageKey,
   messagesToCopilotTurns,
   outcomeAuthoritativeReply,
@@ -145,6 +146,42 @@ describe("outcomeAuthoritativeReply", () => {
     })).toBe(
       "Applied: Caption text replaced: Kriya → Kria · 14 matches in 12 lines.\n\nCouldn't apply: Clip 2: changed since request",
     );
+  });
+});
+
+describe("deriveRecentEditHistory", () => {
+  function assistantMessage(over: Partial<CopilotMessage> = {}): CopilotMessage {
+    return { id: "a", role: "assistant", text: "Applied", ...over };
+  }
+
+  it("summarizes applied turns with distinct labels and an edit count", () => {
+    expect(
+      deriveRecentEditHistory([
+        { id: "u", role: "user", text: "make it bigger" },
+        assistantMessage({
+          applied: ["Size: 64 → 72", "Font family: Inter → Playfair Display"],
+        }),
+      ]),
+    ).toEqual(["Size, Font family (2 edits)"]);
+  });
+
+  it("skips pending and rejected-only turns", () => {
+    expect(
+      deriveRecentEditHistory([
+        assistantMessage({ pending: true, applied: ["Size: 64 → 72"] }),
+        assistantMessage({ rejected: ["Clip 2 duration: missing"] }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("caps to the last 6 applied turns", () => {
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      assistantMessage({ id: `a-${i}`, applied: [`Field ${i}: old → new`] }),
+    );
+    const history = deriveRecentEditHistory(messages);
+    expect(history).toHaveLength(6);
+    expect(history[0]).toBe("Field 4 (1 edit)");
+    expect(history[5]).toBe("Field 9 (1 edit)");
   });
 });
 
@@ -487,5 +524,40 @@ describe("useEditCopilot", () => {
         editCopilotStorageKey("item-1", "variant-clear"),
       ),
     ).toBeNull();
+  });
+
+  it("threads renderStepSummary and derived recentEditHistory into buildSnapshot", async () => {
+    mockEditCopilotTurn
+      .mockResolvedValueOnce(
+        response({
+          reply: "Applied",
+        }),
+      )
+      .mockResolvedValueOnce(response({ reply: "Applied again" }));
+    const applyOps = jest.fn(() =>
+      appliedResult({ applied: [{ label: "Size", from: "64", to: "54" }] }),
+    );
+    const buildSnapshot = jest.fn(() => snapshot("draft"));
+    const renderStepSummary = [{ label: "Analyzed clips", status: "done" as const }];
+    const { result } = renderCopilot({ buildSnapshot, applyOps, renderStepSummary });
+
+    await act(async () => {
+      await result.current.send("make it bigger");
+    });
+    expect(buildSnapshot).toHaveBeenNthCalledWith(1, {
+      renderStepSummary,
+      recentEditHistory: [],
+    });
+
+    await act(async () => {
+      await result.current.send("make it bigger again");
+    });
+    // The first turn applied one op ("Size"), so the second turn's context
+    // must carry it forward as edit history — this is how the model learns
+    // what it already did without a server round-trip.
+    expect(buildSnapshot).toHaveBeenNthCalledWith(2, {
+      renderStepSummary,
+      recentEditHistory: ["Size (1 edit)"],
+    });
   });
 });
