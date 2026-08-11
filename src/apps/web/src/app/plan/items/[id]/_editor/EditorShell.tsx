@@ -55,6 +55,8 @@ import {
   type VisualBlock,
 } from "@/lib/plan-api";
 import type { CarouselClipThumb } from "./CarouselPanel";
+import type { NovaStep } from "@/lib/job-phases";
+import { POLL_INTERVAL_MS } from "@/components/progress";
 import { normalizeCameraEffect } from "@/lib/camera-effects";
 import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
@@ -647,6 +649,10 @@ export default function EditorShell({
   variantParam: string | null;
 }) {
   const router = useRouter();
+  // Chat steps feed (PR4): server-render turns (set_intro_layout) show a
+  // disclosure + live NovaActivityFeed in the drawer instead of a receipt
+  // pill. Flag off is byte-identical to today's pill behavior.
+  const stepsFeedEnabled = process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED === "true";
 
   // ── Data ────────────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
@@ -4227,14 +4233,52 @@ export default function EditorShell({
     },
     [],
   );
+  // Chat steps feed (PR4): while a server-render turn (set_intro_layout) is
+  // in flight in THIS mount, poll the same status route the item page's
+  // ProgressTheater uses (`steps` field, PR1) so CopilotDrawer can show a
+  // live compact NovaActivityFeed before navigate-away. Best-effort — the
+  // fixed nav delay below is short, so this often shows 0-1 polls' worth of
+  // steps before the drawer unmounts and the item page's own polling takes
+  // over the narrative (feed continuity, not duplicated polling).
+  const [copilotRenderTurnActive, setCopilotRenderTurnActive] = useState(false);
+  const [copilotRenderSteps, setCopilotRenderSteps] = useState<NovaStep[] | null>(null);
+  const copilotRenderPollTimerRef = useRef<number | null>(null);
+
+  const stopCopilotRenderPoll = useCallback(() => {
+    if (copilotRenderPollTimerRef.current !== null) {
+      window.clearInterval(copilotRenderPollTimerRef.current);
+      copilotRenderPollTimerRef.current = null;
+    }
+  }, []);
+
+  const startCopilotRenderPoll = useCallback(() => {
+    const jobId = item?.current_job_id;
+    if (!jobId) return;
+    stopCopilotRenderPoll();
+    setCopilotRenderTurnActive(true);
+    setCopilotRenderSteps(null);
+    const poll = () => {
+      getPlanItemJobStatus(jobId)
+        .then((res) => setCopilotRenderSteps(res.steps ?? null))
+        .catch(() => {
+          // Best-effort — the item page's own poll (post-navigate) is the
+          // authoritative source; a failed chat-side poll just shows the
+          // disclosure copy a little longer.
+        });
+    };
+    poll();
+    copilotRenderPollTimerRef.current = window.setInterval(poll, POLL_INTERVAL_MS);
+  }, [item?.current_job_id, stopCopilotRenderPoll]);
+
   useEffect(
     () => () => {
       if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
       if (copilotRenderNavTimerRef.current !== null) {
         window.clearTimeout(copilotRenderNavTimerRef.current);
       }
+      stopCopilotRenderPoll();
     },
-    [],
+    [stopCopilotRenderPoll],
   );
 
   // Carousel-as-a-moment: staged like every other editor block (Lane C,
@@ -4264,11 +4308,13 @@ export default function EditorShell({
             intro_layout: result.renderRequest.layout,
           })
             .then(() => {
+              if (stepsFeedEnabled) startCopilotRenderPoll();
               if (copilotRenderNavTimerRef.current !== null) {
                 window.clearTimeout(copilotRenderNavTimerRef.current);
               }
               copilotRenderNavTimerRef.current = window.setTimeout(() => {
                 copilotRenderNavTimerRef.current = null;
+                stopCopilotRenderPoll();
                 router.push(`/plan/items/${itemId}`);
               }, 1400);
             })
@@ -4276,7 +4322,16 @@ export default function EditorShell({
               setToast(err instanceof Error ? err.message : "Couldn't update the intro layout.");
             });
         }
-        return {};
+        // Flag off: byte-identical to today — no isRenderTurn/assistantText
+        // override, so the caller falls back to the outcome-derived
+        // "Applied: Intro layout: ..." reply and the lime receipt pill.
+        return stepsFeedEnabled
+          ? {
+              isRenderTurn: true,
+              assistantText:
+                "That's a re-render, not an instant edit — starting it now.",
+            }
+          : {};
       }
       const hasAppliedChanges =
         result.textActions.length > 0 ||
@@ -4450,6 +4505,9 @@ export default function EditorShell({
       itemId,
       variant,
       lyricsOptionalActive,
+      stepsFeedEnabled,
+      startCopilotRenderPoll,
+      stopCopilotRenderPoll,
     ],
   );
 
@@ -6118,6 +6176,8 @@ export default function EditorShell({
                 onUndo: history.undo,
                 onClearRestoredInput: copilot.clearRestoredInput,
                 director,
+                renderTurnActive: copilotRenderTurnActive,
+                renderTurnSteps: copilotRenderSteps,
               }}
               onClose={() => setActiveTool(null)}
             />
@@ -6208,6 +6268,8 @@ export default function EditorShell({
                 onUndo: history.undo,
                 onClearRestoredInput: copilot.clearRestoredInput,
                 director,
+                renderTurnActive: copilotRenderTurnActive,
+                renderTurnSteps: copilotRenderSteps,
               }}
               onClose={() => setActiveTool(null)}
             />
@@ -6576,6 +6638,8 @@ export default function EditorShell({
             onUndo: history.undo,
             onClearRestoredInput: copilot.clearRestoredInput,
             director,
+            renderTurnActive: copilotRenderTurnActive,
+            renderTurnSteps: copilotRenderSteps,
           }}
           onClose={() => setActiveTool(null)}
         />

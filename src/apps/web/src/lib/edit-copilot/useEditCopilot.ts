@@ -54,6 +54,12 @@ export interface CopilotMessage {
   rejected?: string[];
   suggestions?: string[];
   undoVersion?: number;
+  /** Chat steps feed (PR4, NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED): this turn
+   *  dispatched a server render (today: set_intro_layout). CopilotDrawer
+   *  shows the disclosure + live NovaActivityFeed for these turns instead of
+   *  receipt rows, and never renders an Undo affordance (non-undoable
+   *  contract — undoVersion is never set alongside this). */
+  isRenderTurn?: boolean;
 }
 
 export interface QueuedCopilotMessage {
@@ -77,7 +83,7 @@ export interface UseEditCopilotOptions {
     result: ApplyCopilotOpsResult,
     response: EditCopilotTurnResponse,
     snapshot: CopilotSnapshot,
-  ) => { undoVersion?: number } | void;
+  ) => { undoVersion?: number; isRenderTurn?: boolean; assistantText?: string } | void;
   /** Last ≤8 humanized render steps for the current job (PR1's status-route
    * `steps` field, once a parallel PR lands it — the caller is responsible
    * for sourcing this, e.g. from a polled job-status hook). Undefined/empty
@@ -376,13 +382,15 @@ export function useEditCopilot(
         snapshot,
       );
       const outcome = summaries(applyResult);
-      const assistantText = outcomeAuthoritativeReply({
-        modelReply: response.reply,
-        intent: response.intent,
-        needsClarification: response.needs_clarification,
-        applied: outcome.applied,
-        rejected: outcome.rejected,
-      });
+      const assistantText =
+        applyMeta?.assistantText ??
+        outcomeAuthoritativeReply({
+          modelReply: response.reply,
+          intent: response.intent,
+          needsClarification: response.needs_clarification,
+          applied: outcome.applied,
+          rejected: outcome.rejected,
+        });
       const nextMessages: CopilotMessage[] = [
         ...messagesRef.current.map((message) => {
           if (message.id !== userMessageId) return message;
@@ -397,6 +405,7 @@ export function useEditCopilot(
           rejected: outcome.rejected,
           suggestions: response.suggestions,
           undoVersion: applyMeta?.undoVersion,
+          isRenderTurn: applyMeta?.isRenderTurn,
         },
       ];
       messagesRef.current = nextMessages;
