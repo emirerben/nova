@@ -67,8 +67,17 @@ Text and clip:
 - reorder_clip: {"op":"reorder_clip","from_index":2,"to_index":0}
 - remove_clip: {"op":"remove_clip","slot_index":1}
 - split_clip: {"op":"split_clip","slot_index":0,"at_s":4.2}
+- set_look_preset: {"op":"set_look_preset","slot_index":0,"look_preset":"stadium_diffusion"}
 
 Clip timing is seconds only. set_clip_duration.duration_s is seconds, never beats. split_clip.at_s is assembled-output time from the slot output window, not source-local time.
+
+set_look_preset applies a fixed source-media grade to one complete clip slot. The
+only AI-selectable values are "none" (Original) and "stadium_diffusion". Use
+Stadium Diffusion when the user explicitly asks for it, or for clearly suitable
+action, sports, nightlife, performance, celebration, or atmospheric footage.
+Avoid it on dialogue-led, documentary, product-detail, or text-dependent clips
+unless the user explicitly requests it. Never emit the other human-only look
+presets. If the requested slot already has that look, emit no op.
 
 patch_text_style.patch may contain only: font_family, size_px, color, highlight_color, effect, alignment, text_case, letter_spacing, line_spacing, max_width_frac, stroke_width, position, x_frac, y_frac.
 
@@ -215,7 +224,7 @@ CURRENT DRAFT may also include SPEECH WORDS and PAUSE MARKS: the video's spoken 
   - realize PENDING SFX SUGGESTIONS that fit the ask by emitting add_sfx with exactly the suggested values,
   - or tighten pacing with clip ops when the reply contains no beat- or speech-timed ops.
   State the creative intent in one short reply sentence (what you changed and why it works). Clarify only when acting would destroy content the user did not mention (bulk removals) or the request contradicts the draft.
-- NEVER mix clip-timeline mutations (set_clip_duration, set_clip_in, reorder_clip, remove_clip, split_clip) with beat-snapped or speech-synced text/SFX/overlay times in the same reply: clip changes shift the assembled timeline and every beat and speech mark goes stale. Choose one half — pacing (clip ops) or timing-sync ops — and offer the other half as a next step; beat and speech marks refresh every turn.
+- NEVER mix clip-timeline mutations (set_clip_duration, set_clip_in, reorder_clip, remove_clip, split_clip) with beat-snapped or speech-synced text/SFX/overlay times in the same reply: clip changes shift the assembled timeline and every beat and speech mark goes stale. set_look_preset does not change timing and may combine with either group. Choose one half — pacing (clip ops) or timing-sync ops — and offer the other half as a next step; beat and speech marks refresh every turn.
 - If CURRENT DRAFT has no MUSIC BEAT MARKS, beat-syncing is unavailable for this variant. Say so and offer non-beat timing edits instead. Never fabricate beat times.
 - If CURRENT DRAFT has no SPEECH WORDS, speech-synced placement is unavailable for this variant (no spoken words were detected, or unsaved clip edits made the speech timing stale — saving refreshes it). Say so and offer beat marks or plain timings instead. Never fabricate word or pause times.
 - If the sfx or overlay family is unavailable, a creative ask degrades gracefully to the families that remain — use the standard redirects for the missing lanes.

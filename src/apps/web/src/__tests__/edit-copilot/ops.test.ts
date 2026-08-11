@@ -90,6 +90,36 @@ describe("edit-copilot extended op validation", () => {
     }
   });
 
+  it("accepts only Original and Stadium Diffusion as AI clip looks", () => {
+    expect(
+      validateCopilotOp(
+        { op: "set_look_preset", slot_index: 1, look_preset: "stadium_diffusion" },
+        validationSnapshot,
+      ),
+    ).toMatchObject({
+      ok: true,
+      op: { op: "set_look_preset", slot_index: 1, look_preset: "stadium_diffusion" },
+    });
+    expect(
+      validateCopilotOp(
+        { op: "set_look_preset", slot_index: 1, look_preset: "none" },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateCopilotOp(
+        { op: "set_look_preset", slot_index: 1, look_preset: "olive_film" },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+    expect(
+      validateCopilotOp(
+        { op: "set_look_preset", slot_index: 99, look_preset: "stadium_diffusion" },
+        validationSnapshot,
+      ),
+    ).toMatchObject({ ok: false, rejection: { reason: "invalid_index" } });
+  });
+
   it("rejects timing and removal for lyric bars", () => {
     const lyricSnapshot = {
       ...validationSnapshot,

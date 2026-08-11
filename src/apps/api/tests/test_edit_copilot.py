@@ -282,6 +282,19 @@ def test_copilot_invalid_op_fixtures_drop() -> None:
         assert out.ops == [], case["name"]
 
 
+def test_copilot_prompt_limits_ai_look_selection_and_exposes_current_slot_look() -> None:
+    snap = _full_snapshot()
+    snap["slots"][0]["look_preset"] = "stadium_diffusion"
+
+    prompt = _agent().render_prompt(
+        EditCopilotInput(utterance="make this cinematic", variant_snapshot=snap)
+    )
+
+    assert "look_preset='stadium_diffusion'" in prompt
+    assert '"look_preset":"stadium_diffusion"' in prompt
+    assert 'only AI-selectable values are "none" (Original) and "stadium_diffusion"' in prompt
+
+
 def test_copilot_unknown_op_dropped() -> None:
     out = _parse([{"op": "restyle_all", "preset": "x"}])
     assert out.ops == []
@@ -1455,13 +1468,14 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # bundle linkage (2026-08-09-v17), then again
     # (2026-08-09-v18) for Lane D: set_carousel_moment moved off the "render"
     # family onto its own "carousel" family and became a staged draft edit
-    # (no more single-op restriction, no re-render disclosure), then again
-    # (2026-08-11-v19) for the RECENT STEPS / RECENT EDIT HISTORY sections —
-    # update this pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the
-    # prompt-change rule.
+    # (no more single-op restriction, no re-render disclosure), then
+    # (2026-08-11-v19) for the validated Stadium Diffusion clip-look op, then
+    # again (2026-08-11-v20) for the RECENT STEPS / RECENT EDIT HISTORY
+    # sections — update this pin whenever EDIT_COPILOT_PROMPT_VERSION moves,
+    # per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-11-v19"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-11-v20"
 
 
 def _motion_snapshot() -> dict:
