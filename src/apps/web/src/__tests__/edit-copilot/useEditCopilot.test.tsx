@@ -560,4 +560,51 @@ describe("useEditCopilot", () => {
       recentEditHistory: ["Size (1 edit)"],
     });
   });
+
+  it("threads onApplied's isRenderTurn/assistantText override onto the assistant message (chat steps feed, PR4)", async () => {
+    mockEditCopilotTurn.mockResolvedValueOnce(
+      response({ reply: "Applied: Intro layout: Classic → Editorial (re-rendering)." }),
+    );
+    const applyOps = jest.fn(() =>
+      appliedResult({
+        applied: [{ label: "Intro layout", from: "Classic", to: "Editorial (re-rendering)" }],
+        renderRequest: { kind: "set_intro_layout", layout: "cluster" },
+      }),
+    );
+    const onApplied = jest.fn(() => ({
+      isRenderTurn: true,
+      assistantText: "That's a re-render, not an instant edit — starting it now.",
+    }));
+    const { result } = renderCopilot({ applyOps, onApplied });
+
+    await act(async () => {
+      await result.current.send("give the intro a full-screen layout");
+    });
+
+    const assistantMessage = result.current.messages[1];
+    expect(assistantMessage.text).toBe(
+      "That's a re-render, not an instant edit — starting it now.",
+    );
+    expect(assistantMessage.isRenderTurn).toBe(true);
+    // Non-undoable contract: onApplied returned no undoVersion for a render turn.
+    expect(assistantMessage.undoVersion).toBeUndefined();
+  });
+
+  it("omits isRenderTurn and uses the outcome-derived reply when onApplied returns nothing render-specific", async () => {
+    mockEditCopilotTurn.mockResolvedValueOnce(response({ reply: "model reply" }));
+    const applyOps = jest.fn(() =>
+      appliedResult({ applied: [{ label: "Size", from: "64", to: "54" }] }),
+    );
+    const onApplied = jest.fn(() => ({ undoVersion: 5 }));
+    const { result } = renderCopilot({ applyOps, onApplied });
+
+    await act(async () => {
+      await result.current.send("make it bigger");
+    });
+
+    const assistantMessage = result.current.messages[1];
+    expect(assistantMessage.isRenderTurn).toBeUndefined();
+    expect(assistantMessage.undoVersion).toBe(5);
+    expect(assistantMessage.text).toBe("Applied: Size: 64 → 54.");
+  });
 });

@@ -57,6 +57,16 @@ export interface DirectorPreviewFocus {
 export interface DirectorApplyPresentation {
   undoVersion?: number;
   previewFocus?: DirectorPreviewFocus;
+  /** Chat steps feed (PR4, NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED): marks the
+   *  turn as a server-render dispatch (today: set_intro_layout) so
+   *  CopilotDrawer shows the disclosure + live activity feed instead of
+   *  receipt rows, and never offers an Undo affordance. Unused by the
+   *  director itself — carried here only so handleCopilotOps' single return
+   *  type stays compatible with both useEditCopilot and useEditDirector. */
+  isRenderTurn?: boolean;
+  /** Overrides the default outcome-derived assistant reply for this turn
+   *  (chat steps feed only). Unused by the director. */
+  assistantText?: string;
 }
 
 export interface DirectorAppliedReceipt {

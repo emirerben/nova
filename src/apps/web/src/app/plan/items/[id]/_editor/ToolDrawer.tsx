@@ -44,6 +44,7 @@ import type {
   QueuedCopilotMessage,
 } from "@/lib/edit-copilot/useEditCopilot";
 import type { UseEditDirectorResult } from "@/lib/edit-copilot/useEditDirector";
+import type { NovaStep } from "@/lib/job-phases";
 import {
   CREATOR_BLOCK_CATALOG,
   createCreatorBlockInstance,
@@ -209,6 +210,11 @@ export default function ToolDrawer({
     onUndo: () => void;
     onClearRestoredInput: () => void;
     director?: UseEditDirectorResult;
+    /** Chat steps feed (PR4): true while EditorShell is polling job status
+     *  for the latest server-render turn in THIS mount (set_intro_layout).
+     *  See CopilotDrawer's isRenderTurn handling. */
+    renderTurnActive?: boolean;
+    renderTurnSteps?: NovaStep[] | null;
   };
   onClose: () => void;
 }) {
@@ -263,6 +269,8 @@ export default function ToolDrawer({
         onUndo={copilot.onUndo}
         onClearRestoredInput={copilot.onClearRestoredInput}
         director={copilot.director}
+        renderTurnActive={copilot.renderTurnActive}
+        renderTurnSteps={copilot.renderTurnSteps}
         onClose={onClose}
       />
     );
