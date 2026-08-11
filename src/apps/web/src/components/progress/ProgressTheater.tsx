@@ -89,7 +89,10 @@ interface ProgressTheaterProps {
  *   PhaseChipRow → StatusHeadline → detail line → EtaBar
  *
  * D12 receipt: when isTerminal && isSuccess, band collapses to "✓ {receiptText}"
- *              after CELEBRATION_HOLD_MS.
+ *              after CELEBRATION_HOLD_MS. EXCEPT in Nova-steps-feed mode
+ *              (NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED + non-empty `steps`): the
+ *              band settles into NovaActivityFeed's own persistent one-line
+ *              receipt after the same hold and never collapses to height 0.
  * D15: NO border/background/padding — host owns the surface.
  * D13: size='inline' renders the compact band only.
  */
@@ -173,7 +176,18 @@ export function ProgressTheater({
       ? "Taking a bit longer than expected — still working on it."
       : "You can leave this page — we'll keep rendering.";
 
-  // D12 receipt band.
+  // Nova AI steps feed — additive, flag-gated. Flag off or steps absent/empty
+  // ⇒ useStepsFeed is false and PhaseChipRow + the legacy D12 receipt render
+  // exactly as before.
+  const stepsFeedEnabled = process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED === "true";
+  const useStepsFeed = stepsFeedEnabled && !!steps && steps.length > 0;
+
+  // D12 receipt band. When useStepsFeed is active, the band settles into
+  // NovaActivityFeed's OWN persistent one-line receipt (with a working
+  // "See what Nova did" toggle) instead of the plain "✓ {receiptText}" line —
+  // and, critically, it never collapses to height 0: the bandCollapsed timer
+  // is skipped entirely for this mode. The approved design treats the steps
+  // receipt as a persistent artifact, not a transient celebration.
   const [showReceipt, setShowReceipt] = useState(false);
   const [bandCollapsed, setBandCollapsed] = useState(false);
   useEffect(() => {
@@ -186,16 +200,21 @@ export function ProgressTheater({
       setBandCollapsed(false);
       return;
     }
+    if (useStepsFeed) {
+      // Defensive: guards the (unusual) case where `steps` arrives on a late
+      // poll after this component already collapsed the band under the
+      // legacy path — never leave the steps-feed mode stuck collapsed.
+      setBandCollapsed(false);
+    }
     const t1 = setTimeout(() => setShowReceipt(true), CELEBRATION_HOLD_MS);
-    const t2 = setTimeout(
-      () => setBandCollapsed(true),
-      CELEBRATION_HOLD_MS + BAND_COLLAPSE_MS,
-    );
+    const t2 = useStepsFeed
+      ? null
+      : setTimeout(() => setBandCollapsed(true), CELEBRATION_HOLD_MS + BAND_COLLAPSE_MS);
     return () => {
       clearTimeout(t1);
-      clearTimeout(t2);
+      if (t2) clearTimeout(t2);
     };
-  }, [isTerminal, isSuccess]);
+  }, [isTerminal, isSuccess, useStepsFeed]);
 
   // Detail line from variants.
   const detail = detailLine(variants);
@@ -217,10 +236,6 @@ export function ProgressTheater({
   // Phase log — find the most recent phase event to derive phase-level stall.
   const _phaseLogEntries = phaseLog ?? [];
 
-  // Nova AI steps feed — additive, flag-gated. Flag off or steps absent/empty
-  // ⇒ useStepsFeed is false and PhaseChipRow renders exactly as before.
-  const stepsFeedEnabled = process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED === "true";
-  const useStepsFeed = stepsFeedEnabled && !!steps && steps.length > 0;
   // Phases beyond the current one, humanized — dimmed placeholder rows so the
   // feed still communicates "what's left" the way PhaseChipRow's pending
   // chips do today. D6: derived from the phase order, not an index/constant.
@@ -230,6 +245,59 @@ export function ProgressTheater({
     if (idx < 0) return [];
     return phases.slice(idx + 1).map((p) => phaseLabels[p] ?? p);
   })();
+
+  // StatusHeadline + detail line + ETA + leave-note + retry button — the part
+  // of the band that sits BELOW the chips/feed. Once the steps feed has
+  // settled into its own persistent receipt (showReceipt && isTerminal &&
+  // isSuccess, steps-feed mode only), this tail is suppressed: NovaActivityFeed
+  // already owns "Ready in N:NN" at that point, and re-showing StatusHeadline
+  // with the same text would be a duplicate voice.
+  const bandTail = (
+    <>
+      <StatusHeadline text={headlineText} tone={tone} />
+      {detail && (
+        <p className={`text-xs ${tone === "light" ? "text-[#71717a]" : "text-zinc-500"}`}>{detail}</p>
+      )}
+      {!isTerminal && (
+        <EtaBar
+          barPosition={barPosition}
+          elapsedMs={elapsedMs}
+          etaText={etaText}
+          tone={tone}
+        />
+      )}
+      {!isTerminal && (
+        <p
+          // role="status": the retrying/stall copy swap is a stage-level
+          // state change — announce it once to screen readers instead of
+          // signaling recovery visually only.
+          role="status"
+          aria-live="polite"
+          className={[
+            "text-xs",
+            retrying || tier >= 2
+              ? (tone === "light" ? "text-lime-700" : "text-amber-400")
+              : (tone === "light" ? "text-[#a1a1aa]" : "text-zinc-600"),
+          ].join(" ")}
+        >
+          {leaveNote}
+        </p>
+      )}
+      {isFailed && onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className={`min-h-11 rounded-full px-4 text-[13px] font-semibold transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+            tone === "light" ? "bg-[#0c0c0e] text-white" : "bg-amber-300 text-zinc-900"
+          }`}
+        >
+          Try again
+        </button>
+      )}
+    </>
+  );
+
+  const stepsReceiptSettled = useStepsFeed && showReceipt && isTerminal && isSuccess;
 
   const statusBand = (
     <div
@@ -242,71 +310,39 @@ export function ProgressTheater({
         .join(" ")}
       style={{ transitionDuration: `${BAND_COLLAPSE_MS}ms` }}
     >
-      {showReceipt ? (
+      {useStepsFeed ? (
+        // NovaActivityFeed keeps ONE stable call site across the showReceipt
+        // flip — its own isTerminal/isSuccess props drive the transition into
+        // its persistent one-line receipt internally (no unmount, so its
+        // expand/announce-once state carries through cleanly). D12's plain
+        // "✓ {receiptText}" line and bandCollapsed height-0 path never apply
+        // to this mode — see the effect above.
+        <>
+          <NovaActivityFeed
+            steps={steps}
+            tone={tone}
+            size="full"
+            isTerminal={isTerminal}
+            isSuccess={isSuccess}
+            receiptText={receiptText}
+            pendingLabels={pendingPhaseLabels}
+          />
+          {!stepsReceiptSettled && bandTail}
+        </>
+      ) : showReceipt ? (
         <p className={`flex items-center gap-2 text-sm font-medium ${tone === "light" ? "text-lime-700" : "text-amber-300"}`}>
           <span aria-hidden="true">✓</span>
           {receiptText}
         </p>
       ) : (
         <>
-          {useStepsFeed ? (
-            <NovaActivityFeed
-              steps={steps}
-              tone={tone}
-              size="full"
-              isTerminal={isTerminal}
-              isSuccess={isSuccess}
-              receiptText={receiptText}
-              pendingLabels={pendingPhaseLabels}
-            />
-          ) : (
-            <PhaseChipRow
-              phases={phases}
-              phaseLabels={phaseLabels}
-              currentPhase={currentPhase}
-              tone={tone}
-            />
-          )}
-          <StatusHeadline text={headlineText} tone={tone} />
-          {detail && (
-            <p className={`text-xs ${tone === "light" ? "text-[#71717a]" : "text-zinc-500"}`}>{detail}</p>
-          )}
-          {!isTerminal && (
-            <EtaBar
-              barPosition={barPosition}
-              elapsedMs={elapsedMs}
-              etaText={etaText}
-              tone={tone}
-            />
-          )}
-          {!isTerminal && (
-            <p
-              // role="status": the retrying/stall copy swap is a stage-level
-              // state change — announce it once to screen readers instead of
-              // signaling recovery visually only.
-              role="status"
-              aria-live="polite"
-              className={[
-                "text-xs",
-                retrying || tier >= 2
-                  ? (tone === "light" ? "text-lime-700" : "text-amber-400")
-                  : (tone === "light" ? "text-[#a1a1aa]" : "text-zinc-600"),
-              ].join(" ")}
-            >
-              {leaveNote}
-            </p>
-          )}
-          {isFailed && onRetry && (
-            <button
-              type="button"
-              onClick={onRetry}
-              className={`min-h-11 rounded-full px-4 text-[13px] font-semibold transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
-                tone === "light" ? "bg-[#0c0c0e] text-white" : "bg-amber-300 text-zinc-900"
-              }`}
-            >
-              Try again
-            </button>
-          )}
+          <PhaseChipRow
+            phases={phases}
+            phaseLabels={phaseLabels}
+            currentPhase={currentPhase}
+            tone={tone}
+          />
+          {bandTail}
         </>
       )}
     </div>
