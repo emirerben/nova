@@ -108,11 +108,13 @@ import {
   buildCopilotSnapshot,
   type CopilotCaptionMetaSnapshot,
   type CopilotCarouselSnapshot,
+  type CopilotHistoryStateSnapshot,
   type CopilotSnapshot,
   type CopilotSnapshotContext,
 } from "@/lib/edit-copilot/snapshot";
 import {
   COPILOT_UNAVAILABLE_MESSAGE,
+  summarizeAppliedTurn,
   useEditCopilot,
 } from "@/lib/edit-copilot/useEditCopilot";
 import {
@@ -4117,6 +4119,18 @@ export default function EditorShell({
       // entirely when its input is absent, never an empty "(none)" block.
       renderStepSummary: context?.renderStepSummary,
       recentEditHistory: context?.recentEditHistory,
+      // PR7: sourced from lastAppliedTurnRef (updated in handleCopilotOps),
+      // never from the copilot hook's own message log — avoids a circular
+      // dependency (buildCopilotDraftSnapshot is what useEditCopilot's
+      // buildSnapshot option IS, so it can't read useEditCopilot's own state).
+      // Omitted entirely until a local turn has landed this session.
+      historyState: lastAppliedTurnRef.current
+        ? {
+            can_undo_last_turn:
+              history.canUndo && lastAppliedTurnRef.current.undoVersion === history.version,
+            last_turn_summary: lastAppliedTurnRef.current.summary,
+          }
+        : undefined,
     });
   }, [
     capabilities,
@@ -4129,6 +4143,8 @@ export default function EditorShell({
     effectiveMusicTitle,
     effectiveMusicTrackId,
     dirty,
+    history.canUndo,
+    history.version,
     localOverlays,
     localCameraEffects,
     localVisualBlocks,
@@ -4147,6 +4163,19 @@ export default function EditorShell({
     toolDisabledReasons,
     variant,
   ]);
+
+  // PR7 (repeat/undo ops): the most recent LOCAL (non-render) copilot turn
+  // that mutated the draft — undoVersion pins it to a point in the undo
+  // stack (canUndoLastTurn goes false once history moves past it, whether
+  // via a manual panel edit, redo, or an explicit undo), ops feeds
+  // repeat_last_edit's recursive re-apply, summary feeds the snapshot's
+  // history_state for the model. A plain ref (not state) because it's read
+  // only inside callbacks at turn-build/apply time, never rendered directly.
+  const lastAppliedTurnRef = useRef<{
+    undoVersion: number;
+    ops: CopilotOp[];
+    summary: string;
+  } | null>(null);
 
   const buildCopilotApplyContext = useCallback(
     (snapshot: CopilotSnapshot): ApplyCopilotOpsContext => ({
@@ -4175,6 +4204,13 @@ export default function EditorShell({
         makeOverlayId: () => crypto.randomUUID(),
         makeCameraEffectId: () => crypto.randomUUID(),
         makeMotionId: () => crypto.randomUUID(),
+        // PR7: repeat_last_edit re-runs these against the CURRENT snapshot
+        // (fingerprint validation does the real staleness gating); undo_last_edit
+        // rejects unless the ref's undoVersion still matches the live stack —
+        // the same staleness check CopilotDrawer's own Undo affordance uses.
+        lastAppliedOps: lastAppliedTurnRef.current?.ops,
+        canUndoLastTurn:
+          history.canUndo && lastAppliedTurnRef.current?.undoVersion === history.version,
       }),
     [
       capabilities,
@@ -4182,6 +4218,8 @@ export default function EditorShell({
       carouselMoment,
       clip.state.grid,
       effectiveMusicTrackId,
+      history.canUndo,
+      history.version,
       localOverlays,
       localCameraEffects,
       localVisualBlocks,
@@ -4333,6 +4371,18 @@ export default function EditorShell({
             }
           : {};
       }
+      // PR7: undo_last_edit has no local draft representation to route
+      // through the generic hasAppliedChanges path below — apply-ops.ts
+      // already verified ctx.canUndoLastTurn before setting this signal, so
+      // invoking the exact same handler the drawer's own Undo link/chip use
+      // (history.undo) is safe. repeat_last_edit needs no branch here: its
+      // recursive re-apply already merged real mutation fields (nextSlots,
+      // textActions, ...) into `result`, so it flows through the ordinary
+      // path below like any other applied turn.
+      if (result.historyAction === "undo") {
+        history.undo();
+        return { assistantText: "Undone — back to the previous version." };
+      }
       const hasAppliedChanges =
         result.textActions.length > 0 ||
         result.nextSlots !== null ||
@@ -4354,6 +4404,22 @@ export default function EditorShell({
       if (readOnly) return {};
 
       const version = history.record();
+      // PR7: remember this turn as the repeat/undo candidate for a LATER
+      // turn. Deliberately placed here (never in the renderRequest branch
+      // above) — "chips are absent after a server-render turn" (Phase-0
+      // design): nothing to instantly repeat or locally undo once a
+      // re-render has started.
+      if (result.appliedOps && result.appliedOps.length > 0) {
+        const appliedLines = result.applied.map(
+          (chip) =>
+            `${chip.label}: ${chip.from} → ${chip.to}${(chip.count ?? 1) > 1 ? ` (×${chip.count})` : ""}`,
+        );
+        lastAppliedTurnRef.current = {
+          undoVersion: version,
+          ops: result.appliedOps,
+          summary: summarizeAppliedTurn(appliedLines),
+        };
+      }
       const beforeSfxIds = new Set(localSfx.map((sfx) => sfx.id));
       const beforeOverlayById = new Map(localOverlays.map((overlay) => [overlay.id, overlay]));
       result.textActions.forEach((action) => dispatch(action));

@@ -114,7 +114,7 @@ describe("buildCopilotSnapshot", () => {
     ]);
     expect(snapshot.total_duration_s).toBe(6);
     expect(snapshot.remaining_duration_s).toBe(54);
-    expect(snapshot.allowed_op_families).toEqual(["text", "clip", "title"]);
+    expect(snapshot.allowed_op_families).toEqual(["text", "clip", "title", "history"]);
   });
 
   it("keeps full-entity mutation fingerprints local and out of model payloads", () => {
@@ -138,7 +138,7 @@ describe("buildCopilotSnapshot", () => {
       { text_elements: false, timeline: true },
     );
 
-    expect(snapshot.allowed_op_families).toEqual(["clip", "title"]);
+    expect(snapshot.allowed_op_families).toEqual(["clip", "title", "history"]);
   });
 
   it("emits new optional sections only when families are allowed and data is provided", () => {
@@ -179,6 +179,7 @@ describe("buildCopilotSnapshot", () => {
       "music",
       "title",
       "tool",
+      "history",
     ]);
     expect(snapshot.sfx?.placements[0].at_s).toBe(1.235);
     expect(snapshot.sfx?.catalog[0].name).toHaveLength(32);
@@ -540,7 +541,7 @@ describe("buildCopilotSnapshot", () => {
           openTools: ["sounds"],
         },
       ),
-    ).toEqual(["text", "clip", "overlay", "caption", "music", "title", "tool"]);
+    ).toEqual(["text", "clip", "overlay", "caption", "music", "title", "tool", "history"]);
     expect(
       allowedOpFamiliesFromCapabilities(
         { text_elements: false, timeline: false, split_clips: false, mix: false, sfx: false, overlays: false },
@@ -735,7 +736,10 @@ describe("buildCopilotSnapshot speech + SFX suggestions", () => {
       e: i * 0.4 + 0.3,
     }));
     const bigMap = { source: "caption_words", words, pauses: [{ s: 1.0, e: 1.5, after: "word2" }] };
-    const bars = Array.from({ length: 28 }, (_, i) =>
+    // 27, not 28: the "history" family (PR7) added a few bytes to every
+    // snapshot's allowed_op_families — one fewer oversized bar keeps this
+    // fixture landing at the intended head-cap-only trim stage.
+    const bars = Array.from({ length: 27 }, (_, i) =>
       bar({ id: `bar-${i}`, text: `label ${i} ${"y".repeat(110)}` }),
     );
     const snapshot = buildCopilotSnapshot(

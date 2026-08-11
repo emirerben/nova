@@ -1,7 +1,11 @@
 import { describe, expect, it } from "@jest/globals";
 import validFixture from "../../../../api/tests/fixtures/copilot-ops/valid.json";
 import invalidFixture from "../../../../api/tests/fixtures/copilot-ops/invalid.json";
-import { validateCopilotOp, type CopilotValidationSnapshot } from "@/lib/edit-copilot/ops";
+import {
+  copilotOpFamily,
+  validateCopilotOp,
+  type CopilotValidationSnapshot,
+} from "@/lib/edit-copilot/ops";
 
 const validationSnapshot: CopilotValidationSnapshot = {
   total_duration_s: 10,
@@ -243,6 +247,20 @@ describe("edit-copilot extended op validation", () => {
       .toMatchObject({ ok: false, rejection: { reason: "missing_required" } });
     expect(validateCopilotOp({ op: "set_intro_layout", layout: "stacked" }, validationSnapshot))
       .toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+  });
+
+  it("validates history ops (undo_last_edit/repeat_last_edit) as fieldless and maps them to the history family", () => {
+    expect(validateCopilotOp({ op: "undo_last_edit" }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { op: "undo_last_edit" } });
+    expect(validateCopilotOp({ op: "repeat_last_edit" }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { op: "repeat_last_edit" } });
+    // No payload fields to strip/validate — any extra keys the model sends
+    // are simply ignored, same as open_tool's tool-only shape but with none.
+    expect(validateCopilotOp({ op: "undo_last_edit", stray: "field" }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { op: "undo_last_edit" } });
+
+    expect(copilotOpFamily({ op: "undo_last_edit" })).toBe("history");
+    expect(copilotOpFamily({ op: "repeat_last_edit" })).toBe("history");
   });
 
   it("validates carousel-moment config shape and clamps duration_s", () => {

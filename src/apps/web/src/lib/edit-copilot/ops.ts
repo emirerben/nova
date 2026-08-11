@@ -20,7 +20,8 @@ export type CopilotOpFamily =
   | "transition"
   | "visual"
   | "motion"
-  | "carousel";
+  | "carousel"
+  | "history";
 
 export const TEXT_STYLE_PATCH_KEYS = [
   "font_family",
@@ -222,7 +223,12 @@ export type CopilotOp =
   | {
       op: "open_tool";
       tool: "text" | "visuals" | "sounds" | "overlays" | "styles";
-    };
+    }
+  // History (undo/repeat): no payload fields. Server-side single-op-only
+  // enforcement doesn't apply (there is no server draft state) — the
+  // restriction is enforced here in apply-ops.ts, mirroring set_intro_layout.
+  | { op: "undo_last_edit" }
+  | { op: "repeat_last_edit" };
 
 export type CopilotOpName = CopilotOp["op"];
 
@@ -613,6 +619,7 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
     op.op === "patch_motion_block" ||
     op.op === "remove_motion_block"
   ) return "motion";
+  if (op.op === "undo_last_edit" || op.op === "repeat_last_edit") return "history";
   return null;
 }
 
@@ -1376,6 +1383,10 @@ export function validateCopilotOp(
       }
       return { ok: true, op: { op: opName, tool: raw.tool as Extract<CopilotOp, { op: "open_tool" }>["tool"] } };
     }
+    case "undo_last_edit":
+      return { ok: true, op: { op: opName } };
+    case "repeat_last_edit":
+      return { ok: true, op: { op: opName } };
     default:
       return reject("unknown_op", "op name is not in the v1 vocabulary", opName);
   }

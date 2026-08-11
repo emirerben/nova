@@ -349,6 +349,18 @@ export interface CopilotSnapshotContext {
   recentEditHistory?: string[];
 }
 
+/** Whether an undoable/repeatable local-op turn currently exists (PR7:
+ * undo_last_edit / repeat_last_edit). `can_undo_last_turn` mirrors
+ * CopilotDrawer's own undoVersion===historyVersion staleness check;
+ * `last_turn_summary` is informational (shown even when no longer
+ * literally undoable — e.g. a manual panel edit moved the stack — since
+ * repeat_last_edit's own staleness gating is per-op fingerprint validation,
+ * not the undo stack). */
+export interface CopilotHistoryStateSnapshot {
+  can_undo_last_turn: boolean;
+  last_turn_summary: string | null;
+}
+
 export interface CopilotIntroSnapshot {
   layout: "linear" | "cluster";
   mode: string | null;
@@ -447,6 +459,10 @@ export interface CopilotSnapshot {
   /** One-line summaries of the last ≤6 prior applied copilot turns on this
    * draft. Omitted entirely when there is no applied history yet. */
   recent_edit_history?: string[];
+  /** Undo/repeat awareness (PR7). Omitted entirely when the caller has no
+   * prior local turn yet — never a `{can_undo_last_turn: false,
+   * last_turn_summary: null}` placeholder block. */
+  history_state?: CopilotHistoryStateSnapshot;
   allowed_op_families: CopilotOpFamily[];
 }
 
@@ -521,6 +537,7 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
   /** Raw, pre-validation — see CopilotSnapshotContext. Filtered/capped below. */
   renderStepSummary?: CopilotRenderStepSummaryItem[];
   recentEditHistory?: string[];
+  historyState?: CopilotHistoryStateSnapshot;
 }
 
 function effectiveSizePx(bar: TextElementBar): number {
@@ -580,6 +597,12 @@ export function allowedOpFamiliesFromCapabilities(
     families.push("motion");
   }
   if ((options.openTools?.length ?? 0) > 0) families.push("tool");
+  // History (undo/repeat) has no dedicated capability flag — it's gated only
+  // by the top-level readOnly/allCoreCapabilitiesFalse checks above, same as
+  // "title". Per-turn eligibility (is there actually something to undo/
+  // repeat right now) is a separate, finer-grained check at apply time
+  // (ctx.canUndoLastTurn / ctx.lastAppliedOps in apply-ops.ts).
+  families.push("history");
   return families;
 }
 
@@ -610,6 +633,10 @@ function trimSnapshotToBudget(snapshot: CopilotSnapshot): CopilotSnapshot {
   if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
   if (snapshot.recent_edit_history) {
     delete snapshot.recent_edit_history;
+  }
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (snapshot.history_state) {
+    delete snapshot.history_state;
   }
   if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
   if (snapshot.render_step_summary && snapshot.render_step_summary.length > RENDER_STEP_SUMMARY_TRIM_MAX) {
@@ -1017,6 +1044,13 @@ export function buildCopilotSnapshot(
     .map((entry) => truncate(entry, RECENT_EDIT_HISTORY_ENTRY_MAX) ?? "");
   if (editHistory.length > 0) {
     snapshot.recent_edit_history = editHistory;
+  }
+  if (options.historyState) {
+    snapshot.history_state = {
+      can_undo_last_turn: !!options.historyState.can_undo_last_turn,
+      last_turn_summary:
+        truncate(options.historyState.last_turn_summary, RECENT_EDIT_HISTORY_ENTRY_MAX) ?? null,
+    };
   }
   const trimmed = trimSnapshotToBudget(snapshot);
   const textById = new Map(visibleBars.map((bar) => [bar.id, bar]));

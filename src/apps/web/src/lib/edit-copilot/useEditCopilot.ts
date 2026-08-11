@@ -193,8 +193,10 @@ function summaries(result: ApplyCopilotOpsResult): {
 /** One line per applied turn: distinct op labels (from the `label: from →
  * to` chip strings summaries() builds) plus a total edit count — e.g.
  * "Text color, Font size (3 edits)". Mirrors the "+N more" collapse the
- * receipt chips already use in the drawer. */
-function summarizeAppliedTurn(applied: string[]): string {
+ * receipt chips already use in the drawer. Exported so EditorShell can build
+ * the same one-line shape for `history_state.last_turn_summary` (PR7)
+ * without duplicating the label-collapsing logic. */
+export function summarizeAppliedTurn(applied: string[]): string {
   const labels: string[] = [];
   for (const entry of applied) {
     const label = entry.split(":")[0]?.trim();

@@ -192,6 +192,7 @@ describe("CopilotDrawer — steps feed flag gate", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Undo that" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Do that again" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "What else changed?" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Make the hook punchier" })).not.toBeInTheDocument();
   });
@@ -207,9 +208,10 @@ describe("CopilotDrawer — steps feed flag gate", () => {
       />,
     );
     expect(screen.queryByRole("button", { name: "Undo that" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Do that again" })).not.toBeInTheDocument();
   });
 
-  it("'Undo that' fires the same handler as the Undo link; 'What else changed?' sends a chat message", () => {
+  it("'Undo that' fires the same handler as the Undo link; 'Do that again' and 'What else changed?' send chat messages", () => {
     process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED = "true";
     render(
       <CopilotDrawer
@@ -222,6 +224,9 @@ describe("CopilotDrawer — steps feed flag gate", () => {
     fireEvent.click(screen.getByRole("button", { name: "Undo that" }));
     expect(baseProps.onUndo).toHaveBeenCalledTimes(1);
 
+    fireEvent.click(screen.getByRole("button", { name: "Do that again" }));
+    expect(baseProps.onSend).toHaveBeenCalledWith("Do that again");
+
     fireEvent.click(screen.getByRole("button", { name: "What else changed?" }));
     expect(baseProps.onSend).toHaveBeenCalledWith("What else changed?");
   });
@@ -231,6 +236,7 @@ describe("CopilotDrawer — steps feed flag gate", () => {
     render(<CopilotDrawer {...baseProps} layoutMode="full" messages={[]} />);
     expect(screen.getByRole("button", { name: "Make the hook punchier" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Undo that" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Do that again" })).not.toBeInTheDocument();
   });
 
   describe("server-render turn (artboard 03)", () => {
@@ -299,6 +305,7 @@ describe("CopilotDrawer — steps feed flag gate", () => {
         />,
       );
       expect(screen.queryByRole("button", { name: "Undo that" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Do that again" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "What else changed?" })).not.toBeInTheDocument();
     });
 
