@@ -38,6 +38,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+import time
 import uuid
 from datetime import datetime
 from typing import Any
@@ -96,6 +97,96 @@ def _run_ffmpeg_effect(cmd: list[str]) -> None:
         )
 
 
+def reapply_persisted_custom_effect(
+    local_video_path: str,
+    variant: dict[str, Any],
+    tmpdir: str,
+) -> tuple[str, bool]:
+    """Re-burn a variant's persisted `custom_effects` entry (if any) onto a
+    freshly rebuilt local base video.
+
+    REAPPLY-ON-REBURN, not one-shot — the same contract this repo already
+    applies to persisted SFX and media-overlay lanes (see
+    `_reapply_user_media_layers` / `_will_reapply_media_layers` in
+    generative_build.py and CLAUDE.md's "every caption reburn re-applies
+    persisted lanes"). Every task that rebuilds a variant's video from
+    `base_video_path` (or an equivalent freshly-assembled clean base) and then
+    burns captions/text on top MUST call this FIRST — a custom effect renders
+    UNDER captions/text, same layering rule camera effects use, so it can
+    never be the outermost layer the way SFX/overlays are.
+
+    Never trusts the stored spec: a persisted `custom_effects` entry reached
+    the DB through the same untrusted PATCH surface a fresh chat-authored one
+    does, so it is re-validated via `validate_effect_spec` here exactly like
+    at first-apply time — a hand-tampered row, or one that predates a
+    since-tightened ALLOWED_FILTERS, must not reach FFmpeg.
+
+    Returns `(path, cleared)`:
+      - No persisted effect: `(local_video_path, False)` — untouched, so a
+        variant with no custom effect reburns byte-identically to before this
+        function existed.
+      - Valid effect: `(new_local_path, False)` — a new local file with the
+        effect burned in; the caller uses this as the input to its
+        caption/text burn instead of `local_video_path`.
+      - Invalid/tampered spec OR the burn itself fails: `(local_video_path,
+        True)` — fails OPEN (the caller proceeds with the unmodified video),
+        records a `("render", "custom_effect_reapply_failed")`
+        `pipeline_trace` event, and tells the caller (`cleared=True`) to clear
+        the persisted `custom_effects` entry in its patch so the UI stops
+        claiming an effect that isn't actually on the video.
+    """
+    effects = variant.get("custom_effects")
+    if not isinstance(effects, list) or not effects:
+        return local_video_path, False
+    raw_effect = effects[0]
+    if not isinstance(raw_effect, dict):
+        return local_video_path, False
+
+    from app.pipeline.custom_effects import (  # noqa: PLC0415
+        EffectValidationError,
+        effect_spec_to_filter_chain,
+        validate_effect_spec,
+    )
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    variant_id = variant.get("variant_id")
+    try:
+        spec = validate_effect_spec(raw_effect)
+    except EffectValidationError as exc:
+        log.warning(
+            "custom_effect_reapply_rejected",
+            variant_id=variant_id,
+            reason=exc.reason,
+        )
+        record_pipeline_event(
+            "render",
+            "custom_effect_reapply_failed",
+            {"variant_id": variant_id, "reason": exc.reason, "stage": "validate"},
+        )
+        return local_video_path, True
+
+    try:
+        filter_chain = effect_spec_to_filter_chain(spec)
+        effected_local = os.path.join(tmpdir, f"custom_effect_reapply_{uuid.uuid4().hex[:8]}.mp4")
+        _run_ffmpeg_effect(
+            _build_custom_effect_command(local_video_path, effected_local, filter_chain)
+        )
+    except Exception as exc:  # noqa: BLE001 — fail open, never break a reburn
+        log.warning(
+            "custom_effect_reapply_burn_failed",
+            variant_id=variant_id,
+            error=str(exc)[:500],
+        )
+        record_pipeline_event(
+            "render",
+            "custom_effect_reapply_failed",
+            {"variant_id": variant_id, "reason": "burn_failed", "stage": "render"},
+        )
+        return local_video_path, True
+
+    return effected_local, False
+
+
 def _run_apply_custom_effect(
     job_id: str,
     variant_id: str,
@@ -116,12 +207,26 @@ def _run_apply_custom_effect(
         upload_public_read,
     )
     from app.tasks.generative_build import (  # noqa: PLC0415
+        _CAPTION_TASK_SOFT_TIME_LIMIT_S,
+        _REAPPLY_DEADLINE_MARGIN_S,
         _burn_persisted_captions_onto_base,
         _compose_subtitled_final,
+        _fresh_variant_snapshot,
         _project_carousel_timed_lanes,
+        _reapply_user_media_layers,
         _rendered_duration_s,
         _should_compose_subtitled_final,
         _update_variant_entry,
+        _will_reapply_media_layers,
+    )
+
+    # Symmetric direction of REAPPLY-ON-REBURN: this task itself rebuilds from
+    # base_video_path, so any persisted SFX/media-overlay lanes on the
+    # variant must be reapplied on top of the effected+captioned output —
+    # same contract every caption/camera-effect reburn task uses (see
+    # reapply_persisted_custom_effect's docstring for the mirror direction).
+    reapply_deadline = (
+        time.monotonic() + _CAPTION_TASK_SOFT_TIME_LIMIT_S - _REAPPLY_DEADLINE_MARGIN_S
     )
 
     with _sync_session() as db:
@@ -219,17 +324,32 @@ def _run_apply_custom_effect(
         output_url = upload_public_read(final_local, new_video_gcs)
         duration_s = _rendered_duration_s(final_local)
 
+    # Symmetric REAPPLY-ON-REBURN direction: this rebuild replaces video_path
+    # from the clean base, so any persisted SFX/media-overlay snapshots point
+    # at the SUPERSEDED video and must be reset — the reapply chain below
+    # (when will_reapply) rebuilds them fresh on top of this output, same as
+    # every caption/camera-effect reburn task.
+    fresh_for_reapply = _fresh_variant_snapshot(job_id, variant_id) or variant
+    will_reapply = _will_reapply_media_layers(fresh_for_reapply)
+
     # v1: a single active custom effect (replace semantics) — a later spec
     # entirely replaces the prior one rather than stacking.
     patch: dict[str, Any] = {
         "video_path": new_video_gcs,
         "output_url": output_url,
         "custom_effects": [spec.model_dump(mode="json")],
-        "render_status": "ready",
-        "render_finished_at": datetime.utcnow().isoformat() + "Z",
+        "pre_media_overlay_video_path": None,
+        "pre_sfx_video_path": None,
     }
     if duration_s is not None:
         patch["duration_s"] = duration_s
+    if will_reapply:
+        # OV-7: the reapply chain owns the final ready/failed — no effect-less
+        # "ready" observable between this burn and the reapply.
+        patch["render_status"] = "rendering"
+    else:
+        patch["render_status"] = "ready"
+        patch["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
 
     if not _update_variant_entry(
         job_id,
@@ -255,6 +375,24 @@ def _run_apply_custom_effect(
         variant_id=variant_id,
         filters=len(spec.filters),
     )
+    if will_reapply and not _reapply_user_media_layers(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=render_gen_id,
+        deadline_monotonic=reapply_deadline,
+    ):
+        # R1-3: deferred terminal status (OV-7) but the chain no-oped —
+        # finalize so no path leaves the variant stranded in "rendering".
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            {
+                "render_status": "ready",
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            },
+            expected_render_gen_id=render_gen_id,
+            outcome="custom_effect_render_reapply_noop",
+        )
 
 
 @celery_app.task(
