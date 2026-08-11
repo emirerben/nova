@@ -14,6 +14,7 @@ import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
  */
 
 import type { CarouselMoment, EditVariantPayload } from "@/lib/generative-api";
+import type { NovaStep } from "@/lib/job-phases";
 // Re-exported so editor components can import the carousel-moment shape
 // alongside PlanItemVariant/editPlanItemVariant without a second import line.
 export type { CarouselMoment } from "@/lib/generative-api";
@@ -2225,6 +2226,11 @@ export interface PlanItemJobStatus {
   /** True while the render attempt died silently and is awaiting automatic
    *  retry (stale worker heartbeat). Optional — older API builds omit it. */
   retrying?: boolean;
+  /** Nova AI steps activity feed (PR1 `nova_steps` projection). Optional —
+   *  gated server-side by NOVA_STEPS_FEED_ENABLED; older API builds and the
+   *  flag-off case both omit it. NovaActivityFeed falls back to
+   *  PhaseChipRow whenever this is absent/empty. */
+  steps?: NovaStep[] | null;
 }
 
 export async function getPlanItemJobStatus(jobId: string): Promise<PlanItemJobStatus> {

@@ -108,6 +108,7 @@ import {
   type CopilotCaptionMetaSnapshot,
   type CopilotCarouselSnapshot,
   type CopilotSnapshot,
+  type CopilotSnapshotContext,
 } from "@/lib/edit-copilot/snapshot";
 import {
   COPILOT_UNAVAILABLE_MESSAGE,
@@ -3968,7 +3969,7 @@ export default function EditorShell({
     [capabilities, captionsToolState, readOnly, readOnlyReason, isLyrics],
   );
 
-  const buildCopilotDraftSnapshot = useCallback(() => {
+  const buildCopilotDraftSnapshot = useCallback((context?: CopilotSnapshotContext) => {
     const openTools = (["text", "visuals", "sounds", "overlays", "styles"] as const).filter((tool) => {
       if (toolDisabledReasons[tool]) return false;
       if (tool === "sounds") return SOUND_EFFECTS_UI_ENABLED;
@@ -4118,6 +4119,12 @@ export default function EditorShell({
       motionScenesEnabled:
         MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes === true,
       readOnly: readOnly || allowedFamilies.length === 0,
+      // PR1 (backend, parallel) wires an actual render-step source into this
+      // context; recentEditHistory always comes from the hook's own message
+      // log. Both are optional — buildCopilotSnapshot omits either section
+      // entirely when its input is absent, never an empty "(none)" block.
+      renderStepSummary: context?.renderStepSummary,
+      recentEditHistory: context?.recentEditHistory,
     });
   }, [
     capabilities,

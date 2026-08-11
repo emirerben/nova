@@ -79,6 +79,30 @@ export function computeAnchors(
   return result;
 }
 
+// ===== NOVA STEPS (render-progress activity feed — NovaActivityFeed) =====
+
+/**
+ * One narrated step in the "Nova AI steps" activity feed. Mirrors the
+ * backend `NovaStep` projection (`app/services/nova_steps.py`, PR1):
+ * an owner-safe, humanized view over `pipeline_trace` + `phase_log` +
+ * `AgentRun` milestones. `id` is stable across polls (append-only source),
+ * so React keys and the expand/collapse + announce-once state can track a
+ * step across re-renders without flicker.
+ */
+export interface NovaStep {
+  /** Stable across polls — do not regenerate from array index. */
+  id: string;
+  /** ISO timestamp of the underlying event. */
+  ts: string;
+  kind: "render" | "decision" | "agent" | "phase";
+  /** Humanized, user-facing — never raw internals (labels are pre-sanitized
+   *  server-side; the frontend renders them verbatim). */
+  label: string;
+  /** Optional expandable detail lines (e.g. "Encoding at 1080x1920, 30fps"). */
+  detail: string[] | null;
+  status: "done" | "active" | "failed";
+}
+
 // ===== ACTIVATION PHASES (SeedUploadCard inline theater) =====
 export const ACTIVATION_PHASE_ORDER = [
   "matching_clips",

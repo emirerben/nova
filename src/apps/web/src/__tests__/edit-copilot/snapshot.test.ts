@@ -838,6 +838,121 @@ describe("slot-less duration fallback", () => {
   });
 });
 
+describe("render_step_summary + recent_edit_history", () => {
+  it("omits both sections when no data is provided", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+    );
+    expect(snapshot.render_step_summary).toBeUndefined();
+    expect(snapshot.recent_edit_history).toBeUndefined();
+  });
+
+  it("emits render_step_summary capped to the last 8, dropping malformed entries", () => {
+    const steps = Array.from({ length: 10 }, (_, i) => ({
+      label: `Step ${i}`,
+      status: "done" as const,
+    }));
+    // Malformed entries simulate an untrusted/older caller — cast past the
+    // type so the runtime filter (not the type system) is what's exercised.
+    const malformed = [
+      { label: "", status: "done" },
+      { label: "Bad status", status: "queued" },
+    ] as unknown as typeof steps;
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      { renderStepSummary: [...malformed, ...steps] },
+    );
+    expect(snapshot.render_step_summary).toHaveLength(8);
+    expect(snapshot.render_step_summary?.[0]).toEqual({ label: "Step 2", status: "done" });
+    expect(snapshot.render_step_summary?.[7]).toEqual({ label: "Step 9", status: "done" });
+  });
+
+  it("truncates an oversized render step label", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      { renderStepSummary: [{ label: "x".repeat(500), status: "active" }] },
+    );
+    expect(snapshot.render_step_summary?.[0].label).toHaveLength(80);
+  });
+
+  it("emits recent_edit_history capped to the last 6, dropping blank entries", () => {
+    const history = Array.from({ length: 8 }, (_, i) => `Edit ${i}`);
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      { recentEditHistory: ["", "  ", ...history] },
+    );
+    expect(snapshot.recent_edit_history).toEqual([
+      "Edit 2",
+      "Edit 3",
+      "Edit 4",
+      "Edit 5",
+      "Edit 6",
+      "Edit 7",
+    ]);
+  });
+
+  it("drops render_step_summary and recent_edit_history before other sections under byte-budget pressure", () => {
+    const capped = "x".repeat(80);
+    const bars = Array.from({ length: 6 }, (_, i) =>
+      bar({ id: `bar-${i}`, text: capped, start_s: i, end_s: i + 0.5 }),
+    ).concat(
+      Array.from({ length: 40 }, (_, i) =>
+        bar({ id: `caption-${i}`, role: "narrated_caption", text: capped, start_s: i, end_s: i + 0.5 }),
+      ),
+    );
+    const slots = Array.from({ length: 12 }, (_, i) =>
+      slot({ key: `slot-${i}`, slotId: `slot-${i}`, clipIndex: 0, momentDescription: capped }),
+    );
+    const snapshot = buildCopilotSnapshot(bars, slots, [{ source_duration_s: 8 }], { sfx: true, overlays: true }, [], {
+      sfxEnabled: true,
+      sfxPlacements: Array.from({ length: 15 }, (_, i) => sfx({ id: `sfx-${i}` })),
+      sfxCatalog: Array.from({ length: 20 }, (_, i) => effect({ id: `effect-${i}` })),
+      overlaysEnabled: true,
+      overlayCards: Array.from({ length: 12 }, (_, i) => overlay({ id: `overlay-${i}` })),
+      poolAssets: Array.from({ length: 12 }, (_, i) => asset({ id: `asset-${i}`, subject: capped })),
+      pendingSuggestions: Array.from({ length: 6 }, (_, i) => suggestion({ id: `suggestion-${i}`, reason: capped })),
+      captionsPresent: true,
+      captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.7 },
+      musicState: {
+        swappable: true,
+        currentTrackId: "track-1",
+        currentTrackTitle: capped,
+        candidates: Array.from({ length: 20 }, (_, i) => ({ id: `track-${i}`, title: capped })),
+      },
+      mixLevel: 0.5,
+      title: capped,
+      openTools: ["text", "sounds", "overlays", "styles"],
+      renderStepSummary: Array.from({ length: 8 }, (_, i) => ({
+        label: `Step ${i} ${capped}`,
+        status: "done" as const,
+      })),
+      recentEditHistory: Array.from({ length: 6 }, (_, i) => `Edit ${i} ${capped}`),
+    });
+
+    expect(byteLength(snapshot)).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
+    // Captions (an editable, addressable section) survive at their normal
+    // trim floor — the narrative context sections are what gave up bytes.
+    expect(snapshot.captions?.cues.length).toBe(24);
+    expect(snapshot.recent_edit_history).toBeUndefined();
+    expect(snapshot.render_step_summary).toBeUndefined();
+  });
+});
+
 describe("Creator Block snapshot", () => {
   it("exposes the immutable catalog, eligible image IDs, and local-only stale fingerprint", () => {
     const motionScene = {

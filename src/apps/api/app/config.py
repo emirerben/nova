@@ -744,6 +744,12 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_EDIT_COPILOT_ENABLED gates the Nova drawer. Default off until
     # localhost QA validates the local-op applier and save parity.
     edit_copilot_enabled: bool = False
+    # Owner-safe "Nova steps" activity feed projected from pipeline_trace +
+    # phase_log + AgentRun (app/services/nova_steps.py) onto the generative
+    # job status response. Ships OFF -- `steps` stays None (byte-identical
+    # response) until enabled. Frontend twin (future PR):
+    # NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED.
+    nova_steps_feed_enabled: bool = False
     # Proactive, read-only editorial suggestions. The backend and frontend each
     # have a gate; accepting a suggestion still changes only the local draft.
     edit_director_enabled: bool = False

@@ -32,6 +32,18 @@ export const COPILOT_PAUSE_MARKS_MAX = 40;
 /** Budget-pressure fallback: head-cap words before dropping them entirely. */
 const SPEECH_WORDS_TRIM_MAX = 60;
 const COPILOT_SFX_SUGGESTIONS_MAX = 6;
+/** Last-N humanized render steps for the current job (PR1's status-route
+ * `steps` field, threaded in by the caller — see useEditCopilot.ts). Kept
+ * small: this is orientation context, not editable state. */
+export const COPILOT_RENDER_STEP_SUMMARY_MAX = 8;
+const RENDER_STEP_SUMMARY_TRIM_MAX = 4;
+const RENDER_STEP_LABEL_MAX = 80;
+/** One-line summaries of prior applied copilot turns, derived by the hook
+ * from its own message history (see deriveRecentEditHistory in
+ * useEditCopilot.ts) and passed through buildSnapshot. */
+export const COPILOT_RECENT_EDIT_HISTORY_MAX = 6;
+const RECENT_EDIT_HISTORY_TRIM_MAX = 3;
+const RECENT_EDIT_HISTORY_ENTRY_MAX = 160;
 
 function stableMutationValue(value: unknown): unknown {
   if (value === undefined) return { __nova_undefined__: true };
@@ -321,6 +333,22 @@ export interface CopilotMusicCandidateSnapshot {
   title: string;
 }
 
+/** Mirrors PR1's NovaStep status union (app/services/nova_steps.py), narrowed
+ * to the label+status pair the copilot needs — never the raw trace payload. */
+export interface CopilotRenderStepSummaryItem {
+  label: string;
+  status: "done" | "active" | "failed";
+}
+
+/** Threaded through buildSnapshot() by useEditCopilot.ts (see
+ * CopilotSnapshotContext) so the caller's render-step data and the hook's own
+ * message-derived edit history both flow through the same byte-budget path
+ * as every other snapshot section. */
+export interface CopilotSnapshotContext {
+  renderStepSummary?: CopilotRenderStepSummaryItem[];
+  recentEditHistory?: string[];
+}
+
 export interface CopilotIntroSnapshot {
   layout: "linear" | "cluster";
   mode: string | null;
@@ -411,6 +439,14 @@ export interface CopilotSnapshot {
     asset_pool: Array<{ id: string; subject: string | null }>;
   };
   open_tools?: Array<"text" | "visuals" | "sounds" | "overlays" | "styles">;
+  /** Last ≤8 humanized steps for the current job (label + status only — never
+   * raw pipeline_trace/AgentRun payloads). Omitted entirely when the caller
+   * has no step data yet — never an empty array (inert-prompt-block lesson:
+   * an empty "(none)" block measurably degraded intro_writer output). */
+  render_step_summary?: CopilotRenderStepSummaryItem[];
+  /** One-line summaries of the last ≤6 prior applied copilot turns on this
+   * draft. Omitted entirely when there is no applied history yet. */
+  recent_edit_history?: string[];
   allowed_op_families: CopilotOpFamily[];
 }
 
@@ -487,6 +523,9 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
   cameraEffects?: CameraEffect[];
   visualBlocks?: VisualBlock[];
   motionScenes?: MotionPresetInstance[];
+  /** Raw, pre-validation — see CopilotSnapshotContext. Filtered/capped below. */
+  renderStepSummary?: CopilotRenderStepSummaryItem[];
+  recentEditHistory?: string[];
 }
 
 function effectiveSizePx(bar: TextElementBar): number {
@@ -569,6 +608,24 @@ function compactByteLength(value: unknown): number {
 }
 
 function trimSnapshotToBudget(snapshot: CopilotSnapshot): CopilotSnapshot {
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  // Orientation context (steps/history) trims first — never worth crowding
+  // out addressable editable state (captions, overlays, sfx, ...) below.
+  if (snapshot.recent_edit_history && snapshot.recent_edit_history.length > RECENT_EDIT_HISTORY_TRIM_MAX) {
+    snapshot.recent_edit_history = snapshot.recent_edit_history.slice(-RECENT_EDIT_HISTORY_TRIM_MAX);
+  }
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (snapshot.recent_edit_history) {
+    delete snapshot.recent_edit_history;
+  }
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (snapshot.render_step_summary && snapshot.render_step_summary.length > RENDER_STEP_SUMMARY_TRIM_MAX) {
+    snapshot.render_step_summary = snapshot.render_step_summary.slice(-RENDER_STEP_SUMMARY_TRIM_MAX);
+  }
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (snapshot.render_step_summary) {
+    delete snapshot.render_step_summary;
+  }
   if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
   if (snapshot.captions && snapshot.captions.cues.length > 24) {
     snapshot.captions.cues = snapshot.captions.cues.slice(0, 24);
@@ -945,6 +1002,28 @@ export function buildCopilotSnapshot(
   }
   if (allowed.has("tool") && options.openTools) {
     snapshot.open_tools = options.openTools.filter((tool, index, arr) => arr.indexOf(tool) === index);
+  }
+  const validStepStatuses = new Set(["done", "active", "failed"]);
+  const renderSteps = (options.renderStepSummary ?? [])
+    .filter(
+      (step): step is CopilotRenderStepSummaryItem =>
+        !!step && typeof step.label === "string" && step.label.trim().length > 0 &&
+        validStepStatuses.has(step.status),
+    )
+    .slice(-COPILOT_RENDER_STEP_SUMMARY_MAX)
+    .map((step) => ({
+      label: truncate(step.label, RENDER_STEP_LABEL_MAX) ?? "",
+      status: step.status,
+    }));
+  if (renderSteps.length > 0) {
+    snapshot.render_step_summary = renderSteps;
+  }
+  const editHistory = (options.recentEditHistory ?? [])
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .slice(-COPILOT_RECENT_EDIT_HISTORY_MAX)
+    .map((entry) => truncate(entry, RECENT_EDIT_HISTORY_ENTRY_MAX) ?? "");
+  if (editHistory.length > 0) {
+    snapshot.recent_edit_history = editHistory;
   }
   const trimmed = trimSnapshotToBudget(snapshot);
   const textById = new Map(visibleBars.map((bar) => [bar.id, bar]));

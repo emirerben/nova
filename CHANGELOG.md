@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.5.0] — 2026-08-11
+
+### Added
+- **Nova steps activity feed on render progress.** `NovaActivityFeed` + `NovaStepRow` render the render-progress view as an expandable, Nova-voiced step log sourced from PR1's `steps` field, gated by `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED` (default off) with a `PhaseChipRow` fallback when disabled or `steps` is absent. New `t-accordion` motion token (registered in DESIGN.md) drives the expand/collapse; the completion receipt persists once settled rather than collapsing back into the chip row. Accessible: aria-live announces each newly-active step once (never re-announces), and reduced-motion is honored. 2725 tests.
+
+## [0.25.4.0] — 2026-08-11
+
+### Added
+- **Sandboxed custom-effect validator (inert).** `app/pipeline/custom_effects.py` introduces the `EffectSpec` schema and `validate_effect_spec()` for agent-authored FFmpeg filter graphs: a 20-filter whitelist with per-filter numeric parameter bounds, linear (non-branching) filter chains, and an injection-hardened serializer that rejects unknown filters, out-of-bound or non-numeric params, file/URL-accepting filters (`movie=`, `subtitles=`, etc.), and oversized graphs. Gated by `CUSTOM_EFFECTS_ENABLED` (default `false`) — the flag is unread by any call site in this PR by design, since nothing yet invokes the validator; 90 tests cover the rejection classes exhaustively. Note: `crop`, `scale`, `setpts`, and `zoompan` don't support FFmpeg `enable=` timeline gating, so the execution PR (PR6) will need trim/concat-based windowing for those four filters instead of timeline expressions.
+
+## [0.25.3.0] — 2026-08-11
+
+### Added
+- **Nova step-awareness snapshot sections.** The edit copilot's snapshot gains two optional, byte-budget-capped sections: `render_step_summary` (last ≤8 humanized job steps, threaded in by the caller — PR1's status-route steps field lands in a parallel PR) and `recent_edit_history` (last ≤6 one-line summaries of prior applied copilot turns, derived by `useEditCopilot` from its own message log). Both are omitted entirely when absent, never an empty "(none)" block, and are validated/truncated server-side in `edit_copilot.py`'s `_format_snapshot`, mirroring the beat-marks pattern. The prompt's trust-boundary language now explicitly covers RECENT STEPS and RECENT EDIT HISTORY as DATA, not instructions. `EDIT_COPILOT_PROMPT_VERSION` bumps to `2026-08-11-v20` (renumbered past `#797`'s `v19` Stadium Diffusion bump, discovered as a version collision during this merge) — live evals GO, 68/68 live, no judge. Coverage gap: no eval fixture yet drives the step-awareness answer path end to end — follow-up.
+
+## [0.25.2.0] — 2026-08-11
+
+### Added
+- **Owner-safe Nova steps projection on the generative status route (dark).** `app/services/nova_steps.py` projects allowlisted `pipeline_trace` events, `phase_log`, and `AgentRun` milestones (name/outcome/latency only — never `input_json`/`output_json`/raw text) into a Nova-voiced `NovaStep` feed, with an allowlist plus a second key-substring sanitizer defense so overlay/caption text, prompts, URLs, and paths can never reach a user-facing label. Exposed as `steps` on `GenerativeJobStatusResponse` behind `NOVA_STEPS_FEED_ENABLED` (default `false`); flag off leaves `steps` `None`, byte-identical to today's response. First PR of the Nova AI tool-chip activity feed train — backend only, ships dark; frontend lands after the Paper design gate.
+
 ## [0.25.1.0] — 2026-08-11
 
 ### Added
