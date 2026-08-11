@@ -21,7 +21,13 @@ export type CopilotOpFamily =
   | "visual"
   | "motion"
   | "carousel"
-  | "history";
+  | "history"
+  // Nova AI sandboxed effect language (PR6): deliberately its own family,
+  // NOT folded into "render" — set_intro_layout's eligibility (intro-layout
+  // switchability) and apply_custom_effect's (CUSTOM_EFFECTS_ENABLED + a
+  // renderable source video) are unrelated, so a variant with one available
+  // must not silently unlock the other.
+  | "custom_effect";
 
 export const TEXT_STYLE_PATCH_KEYS = [
   "font_family",
@@ -164,6 +170,15 @@ export type CopilotOp =
   | { op: "swap_music"; track_id: string }
   | { op: "set_mix"; music_level: number }
   | { op: "set_intro_layout"; layout: "linear" | "cluster" }
+  | {
+      op: "apply_custom_effect";
+      // Raw EffectSpec dict — the server (validate_effect_spec /
+      // app/pipeline/custom_effects.py) is the single source of truth for
+      // filter names, param names, and bounds. This deliberately stays
+      // loosely typed here rather than duplicating that whitelist in TS
+      // (drift risk); the backend drops the op server-side if it's invalid.
+      effect: Record<string, unknown>;
+    }
   | { op: "set_carousel_moment"; config: CarouselMoment | null }
   | { op: "set_title"; title: string }
   | {
@@ -600,6 +615,7 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
   }
   if (op.op === "swap_music" || op.op === "set_mix") return "music";
   if (op.op === "set_intro_layout") return "render";
+  if (op.op === "apply_custom_effect") return "custom_effect";
   // Carousel-as-a-moment is its own family (Lane D, carousel-blocks train):
   // unlike set_intro_layout, it's now a staged/undoable local draft mutation
   // (not a render dispatch), so it must not share the "render" gate — a
@@ -1073,6 +1089,16 @@ export function validateCopilotOp(
         return reject("invalid_value", "layout must be linear or cluster", opName);
       }
       return { ok: true, op: { op: opName, layout: raw.layout } };
+    }
+    case "apply_custom_effect": {
+      // Deep filter/param validation is the server's job (validate_effect_spec
+      // in app/pipeline/custom_effects.py, re-run at parse time in
+      // edit_copilot.py AND again at execution time) — this only checks the
+      // shape is a plausible object so a malformed payload fails fast.
+      if (!isRecord(raw.effect)) {
+        return reject("missing_required", "apply_custom_effect requires an effect object", opName);
+      }
+      return { ok: true, op: { op: opName, effect: raw.effect } };
     }
     case "set_carousel_moment": {
       if (raw.config === undefined) {

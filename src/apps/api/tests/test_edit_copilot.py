@@ -979,6 +979,88 @@ def test_copilot_history_ops_family_not_allowed_by_alias_drop() -> None:
     assert out.ops == [{"op": "undo_last_edit"}, {"op": "repeat_last_edit"}]
 
 
+_VALID_CUSTOM_EFFECT = {
+    "id": "vintage_1",
+    "label": "Vintage film",
+    "filters": [{"name": "curves", "params": {"preset": "vintage"}}],
+    "start_s": 0.0,
+    "end_s": 5.0,
+    "target": "full_frame",
+}
+
+
+def test_copilot_apply_custom_effect_registered_as_render_op() -> None:
+    from app.agents.edit_copilot import _RENDER_OPS, _VALID_OPS
+
+    assert "apply_custom_effect" in _VALID_OPS
+    assert "apply_custom_effect" in _RENDER_OPS
+
+
+def test_copilot_apply_custom_effect_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "custom_effects_enabled", True)
+    snap = _full_snapshot(
+        allowed=[
+            "text",
+            "custom_effect",
+        ]
+    )
+    out = _parse(
+        [{"op": "apply_custom_effect", "effect": _VALID_CUSTOM_EFFECT}],
+        snapshot=snap,
+    )
+    assert len(out.ops) == 1
+    assert out.ops[0]["op"] == "apply_custom_effect"
+    # The parser replaces the raw payload with the validated, canonicalized
+    # spec (round-tripped through EffectSpec.model_dump) — same id/label/
+    # filters/window the caller sent, since the input was already valid.
+    assert out.ops[0]["effect"]["id"] == "vintage_1"
+    assert out.ops[0]["effect"]["filters"] == [{"name": "curves", "params": {"preset": "vintage"}}]
+
+
+def test_copilot_apply_custom_effect_invalid_spec_drops_and_caps_confidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "custom_effects_enabled", True)
+    snap = _full_snapshot(allowed=["custom_effect"])
+    bad_effect = {**_VALID_CUSTOM_EFFECT, "filters": [{"name": "drawtext", "params": {}}]}
+    out = _parse(
+        [{"op": "apply_custom_effect", "effect": bad_effect}],
+        confidence=0.9,
+        snapshot=snap,
+    )
+    assert out.ops == []
+    assert out.confidence == 0.4
+    assert out.needs_clarification
+
+
+def test_copilot_apply_custom_effect_family_not_allowed_drop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "custom_effects_enabled", True)
+    out = _parse(
+        [{"op": "apply_custom_effect", "effect": _VALID_CUSTOM_EFFECT}],
+        confidence=0.9,
+        snapshot=_full_snapshot(allowed=["text"]),
+    )
+    assert out.ops == []
+    assert out.confidence == 0.9
+
+
+def test_copilot_apply_custom_effect_dropped_when_flag_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Backend defense-in-depth: even with "custom_effect" in allowed_op_families
+    # (a stale/malicious client claim), CUSTOM_EFFECTS_ENABLED=false drops it.
+    monkeypatch.setattr(settings, "custom_effects_enabled", False)
+    out = _parse(
+        [{"op": "apply_custom_effect", "effect": _VALID_CUSTOM_EFFECT}],
+        confidence=0.9,
+        snapshot=_full_snapshot(allowed=["custom_effect"]),
+    )
+    assert out.ops == []
+    assert out.confidence == 0.9
+
+
 def test_copilot_set_carousel_moment_add_parses() -> None:
     out = _parse(
         [{"op": "set_carousel_moment", "config": {"position": "intro"}}],
@@ -1595,12 +1677,12 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # family onto its own "carousel" family and became a staged draft edit
     # (no more single-op restriction, no re-render disclosure), then
     # (2026-08-11-v19) for the validated Stadium Diffusion clip-look op, then
-    # again (2026-08-11-v20) for the RECENT STEPS / RECENT EDIT HISTORY
-    # sections. v21 is reserved by a parallel in-flight PR (custom effects);
-    # this lane bumps straight to (2026-08-11-v22) for undo_last_edit /
-    # repeat_last_edit and the HISTORY STATE snapshot section — update this
-    # pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change
-    # rule. Final ordering between v21 and v22 is reconciled at ship time.
+    # (2026-08-11-v20) for the RECENT STEPS / RECENT EDIT HISTORY sections
+    # (copilot step awareness), then (2026-08-11-v21) for apply_custom_effect
+    # (PR6, effect-language train), then (2026-08-11-v22) for undo_last_edit /
+    # repeat_last_edit and the HISTORY STATE snapshot section (PR7) — update
+    # this pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the
+    # prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
     assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-11-v22"

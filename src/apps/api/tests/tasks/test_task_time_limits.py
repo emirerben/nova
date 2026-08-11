@@ -97,6 +97,10 @@ _RENDER_ORCHESTRATORS = [
     ("app/tasks/generative_build.py", "reburn_narrated_captions"),
     ("app/tasks/generative_build.py", "reburn_narrated_bed_level"),
     ("app/tasks/generative_build.py", "retranscribe_subtitled_captions"),
+    # apply_custom_effect (PR6, Nova AI effect-language train): FFmpeg burn +
+    # optional caption/text recompose, same render-orchestrator budget class
+    # as its sibling caption/camera reburn tasks above.
+    ("app/tasks/custom_effects_render.py", "apply_custom_effect_render"),
     ("app/tasks/auto_music_orchestrate.py", "tasks.orchestrate_auto_music_job"),
     # Footage-pool ingest: downloads + Gemini-uploads + analyzes up to 40 clips,
     # so it's in the same acks_late redelivery double-run risk class.

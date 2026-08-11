@@ -59,6 +59,7 @@ from app.routes.generative_jobs import (
     CaptionsRequest,
     CaptionStyleRequest,
     ChangeStyleRequest,
+    CustomEffectRequest,
     EditorCommitRequest,
     EditorCommitResponse,
     EditorCommitSections,
@@ -76,6 +77,7 @@ from app.routes.generative_jobs import (
     TimelineResponse,
     cascade_removed_overlay_effect_groups,
     dispatch_apply_captions,
+    dispatch_apply_custom_effect,
     dispatch_apply_speech_cut_candidate,
     dispatch_change_style,
     dispatch_edit_timeline,
@@ -1863,6 +1865,39 @@ async def set_item_caption_language(
         variant_id=variant_id,
         language=req.language,
     )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/custom-effect", response_model=PlanItemResponse)
+async def apply_item_custom_effect(
+    item_id: str,
+    variant_id: str,
+    req: CustomEffectRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Apply Nova's sandboxed effect language to a variant's video (async re-render).
+
+    Dark behind CUSTOM_EFFECTS_ENABLED — 404 when off, matching the SFX-lane
+    gating pattern (`sound_effects_enabled`/`media_overlays_enabled` above).
+    This is the same endpoint the chat copilot's `apply_custom_effect` op
+    PATCHes through (EditorShell, mirroring `intro_layout`); a future direct
+    panel control could reuse it too. v1: a single active custom effect —
+    each call replaces any previously-applied one, never stacks.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.custom_effects_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Custom effects not available."
+        )
+    job = await _owned_item_render_job(item_id, user.id, db)  # ownership check only
+    # dispatch_apply_custom_effect does its OWN row-locked re-fetch by job.id
+    # and commits internally — same discipline as dispatch_retranscribe_captions
+    # above (the task's start write is token-checked against the just-minted
+    # render_generation_id).
+    await dispatch_apply_custom_effect(job.id, variant_id, effect_raw=req.effect, db=db)
+    log.info("plan_item_apply_custom_effect", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 

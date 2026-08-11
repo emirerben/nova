@@ -1269,6 +1269,92 @@ def test_apply_captions_marks_rendering_synchronously(client: TestClient) -> Non
     assert db.commit.await_count >= 1  # persisted, not rolled back
 
 
+CUSTOM_EFFECT_RENDER = "app.tasks.custom_effects_render.apply_custom_effect_render"
+VALID_CUSTOM_EFFECT = {
+    "id": "vintage_1",
+    "label": "Vintage film",
+    "filters": [{"name": "curves", "params": {"preset": "vintage"}}],
+    "start_s": 0.0,
+    "end_s": 5.0,
+    "target": "full_frame",
+}
+
+
+def test_custom_effect_404_when_flag_off(client: TestClient, monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "custom_effects_enabled", False, raising=False)
+    user = _user()
+    variant = {**ORIGINAL_VARIANT, "video_path": "generative-jobs/j/variant_3_original_text.mp4"}
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([], plan)
+    _override(user, db)
+    with patch(CUSTOM_EFFECT_RENDER) as task:
+        task.apply_async = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/original_text/custom-effect",
+            json={"effect": VALID_CUSTOM_EFFECT},
+        )
+    assert resp.status_code == 404
+    task.apply_async.assert_not_called()
+
+
+def test_custom_effect_happy_enqueues_render(client: TestClient, monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "custom_effects_enabled", True, raising=False)
+    user = _user()
+    variant = {**ORIGINAL_VARIANT, "video_path": "generative-jobs/j/variant_3_original_text.mp4"}
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    # item (ownership) -> dispatcher's own row-locked job re-fetch -> reload.
+    db = _db([item, job, item], plan)
+    _override(user, db)
+    with patch(CUSTOM_EFFECT_RENDER) as task:
+        task.apply_async = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/original_text/custom-effect",
+            json={"effect": VALID_CUSTOM_EFFECT},
+        )
+    assert resp.status_code == 200
+    stamped = job.assembly_plan["variants"][0]["render_generation_id"]
+    assert stamped
+    assert job.assembly_plan["variants"][0]["render_status"] == "rendering"
+    task.apply_async.assert_called_once()
+    _, kwargs = task.apply_async.call_args
+    assert kwargs["args"][0] == str(job.id)
+    assert kwargs["args"][1] == "original_text"
+    assert kwargs["args"][2]["id"] == "vintage_1"
+    assert kwargs["kwargs"] == {"render_gen_id": stamped}
+    assert kwargs["queue"] == "overlay-jobs"
+
+
+def test_custom_effect_rejects_invalid_spec_422(client: TestClient, monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "custom_effects_enabled", True, raising=False)
+    user = _user()
+    variant = {**ORIGINAL_VARIANT, "video_path": "generative-jobs/j/variant_3_original_text.mp4"}
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    # Only the ownership lookup fires — validation 422s before the row-locked
+    # job re-fetch, so no second/third execute() result is consumed.
+    db = _db([item], plan)
+    _override(user, db)
+    bad_effect = {**VALID_CUSTOM_EFFECT, "filters": [{"name": "drawtext", "params": {}}]}
+    with patch(CUSTOM_EFFECT_RENDER) as task:
+        task.apply_async = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/original_text/custom-effect",
+            json={"effect": bad_effect},
+        )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["reason"] == "filter_not_allowed"
+    task.apply_async.assert_not_called()
+    assert job.assembly_plan["variants"][0]["render_status"] != "rendering"
+
+
 @pytest.mark.parametrize("endpoint", ["captions/apply", "caption-language"])
 def test_caption_dispatch_commits_gate_before_enqueue(client: TestClient, endpoint) -> None:
     """R1-1: the reburn/retranscribe START write is token-checked, so the gen

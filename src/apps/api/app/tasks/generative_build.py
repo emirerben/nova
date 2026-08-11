@@ -4516,6 +4516,23 @@ def _reburn_text_on_base(
                 base_duration_s = float(base_probe.duration_s)
                 existing = {**existing, "camera_effects": projected_camera_effects}
 
+        # REAPPLY-ON-REBURN, same contract as the persisted SFX/media-overlay
+        # lanes (see _reapply_user_media_layers, called by every caller of this
+        # shared fast-reburn function) — a custom effect renders UNDER text, so
+        # it burns onto local_base BEFORE any of the text-burn branches below,
+        # all of which read local_base. Fails open on rejection/render failure.
+        from app.tasks.custom_effects_render import (  # noqa: PLC0415
+            reapply_persisted_custom_effect,
+        )
+
+        custom_effect_cleared = False
+        if existing.get("custom_effects"):
+            local_base, custom_effect_cleared = reapply_persisted_custom_effect(
+                local_base, existing, tmpdir
+            )
+            if custom_effect_cleared:
+                existing = {**existing, "custom_effects": []}
+
         def _burn_text_for_variant(
             input_path: str,
             overlay_dicts: list[dict],
@@ -4590,6 +4607,7 @@ def _reburn_text_on_base(
                 ),
                 "subject_matte_path": subtitled_matte_path,
                 "_old_video_path_for_delete": previous_video_path,
+                **({"custom_effects": []} if custom_effect_cleared else {}),
             }
 
         if text_mode == "lyrics":
@@ -4630,6 +4648,7 @@ def _reburn_text_on_base(
                 "text_elements_user_edited": bool(existing.get("text_elements_user_edited")),
                 "subject_matte_path": _lyrics_matte_path,
                 "_old_video_path_for_delete": previous_video_path,
+                **({"custom_effects": []} if custom_effect_cleared else {}),
             }
 
         # ── TextElement early branch (T3 — plan-item-timeline) ──────────────
@@ -4673,6 +4692,7 @@ def _reburn_text_on_base(
                         if _old_video_path and _old_video_path != _te_gcs_key
                         else None
                     ),
+                    **({"custom_effects": []} if custom_effect_cleared else {}),
                 }
 
             _te_burn_dicts = _text_element_burn_dicts(existing)
@@ -4708,6 +4728,7 @@ def _reburn_text_on_base(
                 "text_placement_candidates": existing.get("text_placement_candidates"),
                 "subject_matte_path": _te_matte_path,
                 "_old_video_path_for_delete": previous_video_path,
+                **({"custom_effects": []} if custom_effect_cleared else {}),
             }
 
         # Resolve size (pixel-stability rule)
@@ -4952,6 +4973,7 @@ def _reburn_text_on_base(
             # semantics: absent keys keep the persisted values).
             **sequence_patch,
             **cluster_style_patch,
+            **({"custom_effects": []} if custom_effect_cleared else {}),
         }
 
 
@@ -13412,6 +13434,7 @@ def _run_rerender_caption_camera_effects(
         download_to_file,
         upload_public_read,
     )
+    from app.tasks.custom_effects_render import reapply_persisted_custom_effect  # noqa: PLC0415
 
     reapply_deadline = (
         time.monotonic() + _CAPTION_TASK_SOFT_TIME_LIMIT_S - _REAPPLY_DEADLINE_MARGIN_S
@@ -13481,6 +13504,20 @@ def _run_rerender_caption_camera_effects(
                 semantic_crop_pulses=effects,
                 **_canvas_kwargs(canvas_for_orientation(variant.get("orientation"))),
             )
+        # REAPPLY-ON-REBURN (not one-shot), same contract as persisted SFX/media-
+        # overlay lanes below: a custom effect renders UNDER captions, so it must
+        # burn onto caption_base_local BEFORE any caption/text compose step.
+        # Never trusts the stored spec — reapply_persisted_custom_effect
+        # re-validates it and fails open (unmodified video + cleared entry) on
+        # any rejection or render failure.
+        custom_effect_cleared = False
+        custom_effect_applied = False
+        if render_variant.get("custom_effects"):
+            caption_base_local, custom_effect_cleared = reapply_persisted_custom_effect(
+                caption_base_local, render_variant, tmpdir
+            )
+            custom_effect_applied = not custom_effect_cleared
+        pixels_modified = bool(effects) or custom_effect_applied
         fresh_variant = {
             **render_variant,
             "camera_effects": effects or None,
@@ -13492,23 +13529,23 @@ def _run_rerender_caption_camera_effects(
         camera_matte_path: str | None = None
         camera_matte_persist = False
         if _should_compose_subtitled_final(fresh_variant):
-            # With camera effects the substrate is warped — the matte must be
-            # recomputed against the warped pixels under a camera-scoped key,
-            # and NOT persisted (later reburns run on the clean base, where
-            # the variant's cached matte stays valid).
+            # With camera effects (or a reapplied custom effect) the substrate is
+            # warped/regraded — the matte must be recomputed against the changed
+            # pixels under a scoped key, and NOT persisted (later reburns run on
+            # the clean base, where the variant's cached matte stays valid).
             final_local, camera_matte_path = _compose_subtitled_final(
                 caption_base_local,
-                {**fresh_variant, "subject_matte_path": None} if effects else fresh_variant,
+                {**fresh_variant, "subject_matte_path": None} if pixels_modified else fresh_variant,
                 tmpdir,
                 job_id=job_id,
                 variant_id=variant_id,
                 upload_key_base=(
                     f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_camera_{suffix}.mp4"
-                    if effects
+                    if pixels_modified
                     else str(old_base_path)
                 ),
             )
-            camera_matte_persist = not effects
+            camera_matte_persist = not pixels_modified
         else:
             final_local = os.path.join(tmpdir, "out.mp4")
             _burn_persisted_captions_onto_base(
@@ -13537,6 +13574,7 @@ def _run_rerender_caption_camera_effects(
         ),
         "overlay_camera_rebuild_pending": False,
         **({"subject_matte_path": camera_matte_path} if camera_matte_persist else {}),
+        **({"custom_effects": []} if custom_effect_cleared else {}),
     }
     if not fresh_for_reapply.get("media_overlays"):
         patch["media_overlays_render_dirty"] = False
@@ -13604,6 +13642,7 @@ def _run_reburn_narrated_captions(
         download_to_file,
         upload_public_read,
     )
+    from app.tasks.custom_effects_render import reapply_persisted_custom_effect  # noqa: PLC0415
 
     # R4-2: the reapply chain below may run the overlay pass mid-task — clamp its
     # fullscreen budget to the wall clock actually left under the soft ceiling.
@@ -13646,22 +13685,38 @@ def _run_reburn_narrated_captions(
         variant=variant,
         base_gcs_path=base_path,
     )
+    custom_effect_cleared = False
     with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(render_base_path, base_local)
+        # REAPPLY-ON-REBURN, same contract as the persisted SFX/media-overlay
+        # lanes further below — a custom effect renders UNDER captions, so it
+        # burns onto base_local BEFORE any caption compose step. Fails open
+        # (unmodified video + cleared entry) on any rejection/render failure.
+        custom_effect_applied = False
+        if variant.get("custom_effects"):
+            base_local, custom_effect_cleared = reapply_persisted_custom_effect(
+                base_local, variant, tmpdir
+            )
+            custom_effect_applied = not custom_effect_cleared
         reburn_matte_path: str | None = None
         reburn_matte_persist = False
         if _should_compose_subtitled_final(variant):
             variant = _fresh_variant_snapshot(job_id, variant_id) or variant
             out_local, reburn_matte_path = _compose_subtitled_final(
                 base_local,
-                variant,
+                {**variant, "subject_matte_path": None} if custom_effect_applied else variant,
                 tmpdir,
                 job_id=job_id,
                 variant_id=variant_id,
-                upload_key_base=str(base_path),
+                upload_key_base=(
+                    f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_cap_effect_"
+                    f"{uuid.uuid4().hex[:8]}"
+                    if custom_effect_applied
+                    else str(base_path)
+                ),
             )
-            reburn_matte_persist = True
+            reburn_matte_persist = not custom_effect_applied
         else:
             out_local = os.path.join(tmpdir, "out.mp4")
             _burn_persisted_captions_onto_base(base_local, out_local, variant, tmpdir)
@@ -13695,6 +13750,7 @@ def _run_reburn_narrated_captions(
             motion_identity=motion_identity,
         ),
         **({"subject_matte_path": reburn_matte_path} if reburn_matte_persist else {}),
+        **({"custom_effects": []} if custom_effect_cleared else {}),
     }
     if will_reapply:
         # OV-7: the reapply chain owns the final ready/failed — no effect-less
@@ -13981,8 +14037,24 @@ def _run_reburn_narrated_bed_level(
         if not os.path.exists(new_base_path) or os.path.getsize(new_base_path) == 0:
             raise RuntimeError("bed-level reburn produced an empty base")
 
+        # REAPPLY-ON-REBURN, same contract as the persisted SFX/media-overlay
+        # lanes below — burns onto a COPY of new_base_path (never new_base_path
+        # itself, which is uploaded below as the fresh CLEAN base) since a
+        # custom effect renders UNDER captions, before this compose step.
+        # Fails open on any rejection/render failure.
+        from app.tasks.custom_effects_render import (  # noqa: PLC0415
+            reapply_persisted_custom_effect,
+        )
+
+        caption_base_path = new_base_path
+        custom_effect_cleared = False
+        if variant.get("custom_effects"):
+            caption_base_path, custom_effect_cleared = reapply_persisted_custom_effect(
+                new_base_path, variant, tmpdir
+            )
+
         out_local = os.path.join(tmpdir, "out.mp4")
-        _burn_persisted_captions_onto_base(new_base_path, out_local, variant, tmpdir)
+        _burn_persisted_captions_onto_base(caption_base_path, out_local, variant, tmpdir)
 
         # Shared suffix so the burned + base pair are traceable to the same reburn.
         reburn_token = uuid.uuid4().hex[:8]
@@ -14014,6 +14086,7 @@ def _run_reburn_narrated_bed_level(
         # reset explicitly: they point at the pre-reburn video deleted below.
         "pre_media_overlay_video_path": None,
         "pre_sfx_video_path": None,
+        **({"custom_effects": []} if custom_effect_cleared else {}),
     }
     if will_reapply:
         # OV-7: the reapply chain owns the final ready/failed.
@@ -14248,6 +14321,22 @@ def _run_retranscribe_subtitled(
         if render_base_path != base_path:
             caption_base_local = os.path.join(tmpdir, "caption_base.mp4")
             download_to_file(render_base_path, caption_base_local)
+        # REAPPLY-ON-REBURN, same contract as the persisted SFX/media-overlay
+        # lanes below — a custom effect renders UNDER captions, so it burns
+        # onto caption_base_local BEFORE the caption compose step (fails open
+        # on any rejection/render failure; the transcription pass above reads
+        # only audio, so effect order relative to it doesn't matter).
+        from app.tasks.custom_effects_render import (  # noqa: PLC0415
+            reapply_persisted_custom_effect,
+        )
+
+        custom_effect_cleared = False
+        custom_effect_applied = False
+        if variant.get("custom_effects"):
+            caption_base_local, custom_effect_cleared = reapply_persisted_custom_effect(
+                caption_base_local, variant, tmpdir
+            )
+            custom_effect_applied = not custom_effect_cleared
         retx_matte_path: str | None = None
         retx_matte_persist = False
         if getattr(settings, "subtitled_text_lane_enabled", False):
@@ -14258,13 +14347,18 @@ def _run_retranscribe_subtitled(
             }
             out_local, retx_matte_path = _compose_subtitled_final(
                 caption_base_local,
-                variant,
+                {**variant, "subject_matte_path": None} if custom_effect_applied else variant,
                 tmpdir,
                 job_id=job_id,
                 variant_id=variant_id,
-                upload_key_base=str(base_path),
+                upload_key_base=(
+                    f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_lang_effect_"
+                    f"{uuid.uuid4().hex[:8]}"
+                    if custom_effect_applied
+                    else str(base_path)
+                ),
             )
-            retx_matte_persist = True
+            retx_matte_persist = not custom_effect_applied
         else:
             out_local = os.path.join(tmpdir, "out.mp4")
             ass_path = os.path.join(tmpdir, "captions.ass")
@@ -14320,6 +14414,7 @@ def _run_retranscribe_subtitled(
             motion_identity=motion_identity,
         ),
         **({"subject_matte_path": retx_matte_path} if retx_matte_persist else {}),
+        **({"custom_effects": []} if custom_effect_cleared else {}),
     }
     if will_reapply:
         # OV-7: the reapply chain owns the final ready/failed.

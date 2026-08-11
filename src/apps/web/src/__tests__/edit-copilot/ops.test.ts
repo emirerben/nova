@@ -263,6 +263,28 @@ describe("edit-copilot extended op validation", () => {
     expect(copilotOpFamily({ op: "repeat_last_edit" })).toBe("history");
   });
 
+  it("validates apply_custom_effect shape-only — deep filter/param checks are server-side", () => {
+    const effect = {
+      id: "vintage_1",
+      label: "Vintage film",
+      filters: [{ name: "curves", params: { preset: "vintage" } }],
+      start_s: 0,
+      end_s: 5,
+      target: "full_frame",
+    };
+    expect(validateCopilotOp({ op: "apply_custom_effect", effect }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { op: "apply_custom_effect", effect } });
+    expect(validateCopilotOp({ op: "apply_custom_effect" }, validationSnapshot))
+      .toMatchObject({ ok: false, rejection: { reason: "missing_required" } });
+    expect(validateCopilotOp({ op: "apply_custom_effect", effect: "not-an-object" }, validationSnapshot))
+      .toMatchObject({ ok: false, rejection: { reason: "missing_required" } });
+    expect(copilotOpFamily({ op: "apply_custom_effect" })).toBe("custom_effect");
+    // Deliberately distinct from set_intro_layout's "render" family.
+    expect(copilotOpFamily({ op: "apply_custom_effect" })).not.toBe(
+      copilotOpFamily({ op: "set_intro_layout" }),
+    );
+  });
+
   it("validates carousel-moment config shape and clamps duration_s", () => {
     expect(
       validateCopilotOp(

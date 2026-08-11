@@ -126,7 +126,9 @@ export interface ApplyCopilotOpsResult {
   acceptedSuggestionRefs?: AcceptedSuggestionRef[];
   nextMusicTrackId?: string;
   nextMixLevel?: number;
-  renderRequest?: { kind: "set_intro_layout"; layout: "linear" | "cluster" };
+  renderRequest?:
+    | { kind: "set_intro_layout"; layout: "linear" | "cluster" }
+    | { kind: "apply_custom_effect"; effect: Record<string, unknown> };
   nextTitle?: string;
   captionMetaPatch?: CaptionMetaPatch;
   openTool?: "text" | "visuals" | "sounds" | "overlays" | "styles";
@@ -445,6 +447,7 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "swap_music") return "Swapped song";
   if (op.op === "set_mix") return "Music volume";
   if (op.op === "set_intro_layout") return "Intro layout";
+  if (op.op === "apply_custom_effect") return "Custom effect";
   if (op.op === "set_carousel_moment") return "Carousel";
   if (op.op === "set_title") return "Title set";
   if (op.op === "add_camera_effect") return "Add camera effect";
@@ -1491,6 +1494,25 @@ export function applyCopilotOps(
         from: label(ctx.snapshot.intro.layout),
         to: `${label(op.layout)} (re-rendering)`,
       });
+    } else if (op.op === "apply_custom_effect") {
+      // Same single-op-per-turn contract as set_intro_layout: a custom
+      // effect re-renders the video, so it can't share a turn with a local
+      // draft mutation or another render request. Deep filter/param
+      // validation already happened server-side (edit_copilot.py's parse
+      // step) — this branch only enforces the turn-shape rule and stages the
+      // dispatch; EditorShell PATCHes /custom-effect on renderRequest, same
+      // as it PATCHes intro_layout.
+      if (renderRequest || hasDraftMutation() || rawOps.length > 1) {
+        rejected.push(reject(
+          op.op,
+          labelForOp(op),
+          "capability_disabled",
+          "a custom effect re-renders the video — ask for it on its own",
+        ));
+        continue;
+      }
+      renderRequest = { kind: "apply_custom_effect", effect: op.effect };
+      applied.push({ label: "Custom effect", from: "current look", to: "new look (re-rendering)" });
     } else if (op.op === "set_carousel_moment") {
       // Carousel-as-a-moment (Lane D, carousel-blocks train): a first-class
       // staged/undoable draft mutation, same model as every other editor
