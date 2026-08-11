@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.9.0] — 2026-08-11
+
+### Added
+- **Undo & repeat by utterance — "Do that again" chip (PR7, final of the copilot edit-history train).** The edit copilot gets two new fieldless ops: `undo_last_edit` reverses the single most recent locally-applied turn ("undo that", "put it back") by invoking the same `history.undo()` path as the drawer's own Undo link/chip, gated on `history_state.can_undo_last_turn`; `repeat_last_edit` re-runs the last turn's exact ops against the CURRENT snapshot ("do that again", "same thing on the next clip"), gated only on `history_state.last_turn_summary` being present (independent of undo staleness — repeat re-validates per-op mutation fingerprints itself and rejects the whole turn if any op no longer matches). Both are single-op-only, never combined with another op in the same turn. Provenance stays flat: a repeated turn's `appliedOps` always carries the original op, never a `repeat_last_edit` wrapper, so a later repeat never recurses on itself. New `history_state` snapshot section (`can_undo_last_turn` + `last_turn_summary`) and a "Do that again" contextual chip alongside the existing "Undo that" chip in `CopilotDrawer`. `EDIT_COPILOT_PROMPT_VERSION` bumps to `2026-08-11-v22`; live evals green (no judge). Also fixes a structural-eval-runner gap: `tests/evals/runners/structural.py`'s `valid_ops` set was missing `set_look_preset` (since #797) and `apply_speech_cut_candidate`, causing structural validation on those ops' golden fixtures to spuriously fail in live mode — the set now matches `edit_copilot._VALID_OPS` exactly.
+
 ## [0.25.8.0] — 2026-08-11
 
 ### Fixed
