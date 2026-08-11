@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.0.2] — 2026-08-11
+
+### Fixed
+- The twice-daily brain refresh no longer leaves `TODOS.md` modified in the working tree. gbrain writes a `<slug>.md` mirror into the repo root, and on a case-insensitive filesystem `todos` resolves to the tracked `TODOS.md`, so every run rewrote it — including no-op runs — which then made `git pull --ff-only` refuse.
+- Agent guidance in `CLAUDE.md` pointed gbrain memory queries at a source that does not exist, so the documented command failed. Memory and transcripts live in the `default` source.
+
+### Changed
+- `CLAUDE.md` now records the Subtitled edit style as live in production (verified against the Fly secret and the Vercel environment) and notes that its frontend flag is inlined at build time, so changing it needs a rebuild rather than an env flip.
+- The Vercel CLI's local `.vercel` cache is ignored.
+
 ## [0.25.0.1] — 2026-08-10
 
 ### Added
