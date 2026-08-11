@@ -900,6 +900,79 @@ describe("applyCopilotOps", () => {
     ]);
   });
 
+  it("maps apply_custom_effect to a renderRequest without touching the draft", () => {
+    const base = extendedCtx();
+    const snapshot = {
+      ...base.snapshot,
+      allowed_op_families: [...base.snapshot.allowed_op_families, "custom_effect" as const],
+    };
+    const effect = {
+      id: "vintage_1",
+      label: "Vintage film",
+      filters: [{ name: "curves", params: { preset: "vintage" } }],
+      start_s: 0,
+      end_s: 5,
+      target: "full_frame",
+    };
+    const res = applyCopilotOps([{ op: "apply_custom_effect", effect }], {
+      ...base,
+      snapshot,
+    });
+
+    expect(res.renderRequest).toEqual({ kind: "apply_custom_effect", effect });
+    expect(res.textActions).toEqual([]);
+    expect(res.nextSlots).toBeNull();
+    expect(res.applied).toEqual([
+      { label: "Custom effect", from: "current look", to: "new look (re-rendering)" },
+    ]);
+  });
+
+  it("rejects apply_custom_effect when the family isn't allowed or it's batched with another op", () => {
+    const base = extendedCtx();
+    const withFamily = {
+      ...base.snapshot,
+      allowed_op_families: [...base.snapshot.allowed_op_families, "custom_effect" as const],
+    };
+    const effect = {
+      id: "vintage_1",
+      label: "Vintage film",
+      filters: [{ name: "curves", params: { preset: "vintage" } }],
+      start_s: 0,
+      end_s: 5,
+      target: "full_frame",
+    };
+
+    const notAllowed = applyCopilotOps([{ op: "apply_custom_effect", effect }], base);
+    expect(notAllowed.renderRequest).toBeUndefined();
+    expect(notAllowed.rejected).not.toEqual([]);
+
+    const mixed = applyCopilotOps(
+      [
+        { op: "apply_custom_effect", effect },
+        { op: "edit_text", bar_index: 0, text: "new hook" },
+      ],
+      { ...base, snapshot: withFamily },
+    );
+    expect(mixed.renderRequest).toBeUndefined();
+    expect(mixed.rejected).toMatchObject([
+      {
+        op: "apply_custom_effect",
+        detail: "a custom effect re-renders the video — ask for it on its own",
+      },
+    ]);
+
+    // Never shares set_intro_layout's "render" family — a variant eligible
+    // for intro-layout switching alone must not unlock custom effects too.
+    const renderOnly = applyCopilotOps([{ op: "apply_custom_effect", effect }], {
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        allowed_op_families: [...base.snapshot.allowed_op_families, "render" as const],
+      },
+    });
+    expect(renderOnly.renderRequest).toBeUndefined();
+  });
+
   it("applies a validated set_carousel_moment add as a staged draft mutation — Lane D", () => {
     // Lane D (carousel-blocks train): set_carousel_moment is now a first-class
     // draft mutation like patch_overlay/set_visual_fade — no renderRequest, no

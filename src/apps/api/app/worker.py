@@ -21,6 +21,7 @@ celery_app = Celery(
         "app.tasks.lyrics_backfill",
         "app.tasks.auto_music_orchestrate",
         "app.tasks.generative_build",
+        "app.tasks.custom_effects_render",
         "app.tasks.persona_build",
         "app.tasks.style_build",
         "app.tasks.style_vision_build",

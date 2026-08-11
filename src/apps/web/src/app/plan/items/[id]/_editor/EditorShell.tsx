@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  applyPlanItemCustomEffect,
   changePlanItemStyle,
   getPlanItem,
   getPlanItemJobStatus,
@@ -269,6 +270,11 @@ const VISUAL_BLOCKS_UI_ENABLED =
   process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
 const MOTION_SCENES_UI_ENABLED =
   process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED === "true";
+// Nova AI sandboxed effect language (PR6, effect-language train). Dual-flag
+// with the backend's CUSTOM_EFFECTS_ENABLED (app/config.py) — Fly first,
+// then Vercel, per this repo's dual-flag convention.
+const CUSTOM_EFFECTS_UI_ENABLED =
+  process.env.NEXT_PUBLIC_CUSTOM_EFFECTS_ENABLED === "true";
 const LYRICS_EDITOR_UI = process.env.NEXT_PUBLIC_LYRICS_EDITOR_ENABLED === "true";
 // Lyrics-optional "elements" model: instant toggle-insert/remove of
 // beat-synced lyric bars, no render round-trip. Independent of
@@ -4019,6 +4025,12 @@ export default function EditorShell({
     // below). Independent of renderLayoutSwitchable — either one unlocks the
     // shared "render" op family; each op still gates on its own section.
     const carouselMomentAvailable = !readOnly && capabilities?.carousel === true;
+    // Nova AI sandboxed effect language (PR6): its own eligibility, not tied
+    // to renderLayoutSwitchable — the backend independently re-checks
+    // ownership, editability, and the flag on the actual PATCH, so this only
+    // needs to be a reasonable client-side gate for exposing the op family to
+    // the model at all.
+    const customEffectsAvailable = !readOnly && CUSTOM_EFFECTS_UI_ENABLED && variant != null;
     // Staged-first (Lane D): `carouselMoment` state already holds the
     // session's EFFECTIVE moment (staged once touched, else the persisted
     // `variant.carousel_moment` — see its declaration comment), so reading it
@@ -4053,6 +4065,7 @@ export default function EditorShell({
       mixAllowed,
       renderLayoutSwitchable,
       carouselMomentAvailable,
+      customEffectsEnabled: customEffectsAvailable,
       cameraEffectsEnabled: capabilities?.camera_effects !== false,
       transitionsEnabled: EDIT_TRANSITIONS_UI_ENABLED,
       visualBlocksEnabled:
@@ -4098,6 +4111,7 @@ export default function EditorShell({
       renderLayoutSwitchable,
       carousel,
       carouselMomentAvailable,
+      customEffectsEnabled: customEffectsAvailable,
       title,
       cameraEffects: localCameraEffects,
       visualBlocks: localVisualBlocks,
@@ -4255,14 +4269,25 @@ export default function EditorShell({
   const handleCopilotOps = useCallback(
     (result: ApplyCopilotOpsResult): DirectorApplyPresentation => {
       if (result.renderRequest) {
-        // set_intro_layout is the only op that still produces a renderRequest
-        // (carousel-as-a-moment is a staged draft mutation as of Lane D — see
+        // set_intro_layout and apply_custom_effect (PR6) are the two ops that
+        // produce a renderRequest — a discriminated union on `kind` (carousel-
+        // as-a-moment is a staged draft mutation as of Lane D — see
         // result.nextCarouselMoment below, applied inline like every other
-        // draft field, never through this branch).
+        // draft field, never through this branch). Both follow the exact same
+        // navigate-back+poll flow: PATCH the dedicated variant endpoint, then
+        // return to the item page after a short beat so the toast/receipt is
+        // readable before the poller takes over.
         if (!readOnly && variant) {
-          void editPlanItemVariant(itemId, variant.variant_id, {
-            intro_layout: result.renderRequest.layout,
-          })
+          const request = result.renderRequest;
+          const dispatch =
+            request.kind === "set_intro_layout"
+              ? editPlanItemVariant(itemId, variant.variant_id, { intro_layout: request.layout })
+              : applyPlanItemCustomEffect(itemId, variant.variant_id, request.effect);
+          const failureMessage =
+            request.kind === "set_intro_layout"
+              ? "Couldn't update the intro layout."
+              : "Couldn't apply that effect.";
+          void dispatch
             .then(() => {
               if (copilotRenderNavTimerRef.current !== null) {
                 window.clearTimeout(copilotRenderNavTimerRef.current);
@@ -4273,7 +4298,7 @@ export default function EditorShell({
               }, 1400);
             })
             .catch((err) => {
-              setToast(err instanceof Error ? err.message : "Couldn't update the intro layout.");
+              setToast(err instanceof Error ? err.message : failureMessage);
             });
         }
         return {};

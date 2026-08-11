@@ -1717,6 +1717,7 @@ def check_edit_copilot(output: Any) -> list[str]:
         "swap_music",
         "set_mix",
         "set_intro_layout",
+        "apply_custom_effect",
         "set_carousel_moment",
         "set_title",
         "open_tool",

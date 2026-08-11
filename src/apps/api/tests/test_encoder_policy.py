@@ -99,6 +99,10 @@ FINAL_OUTPUT_REQUIRED: set[tuple[str, str]] = {
     # visible collage and ships directly to users, so it uses the same final
     # output budget as the base collage encode.
     ("app/pipeline/masonry_montage.py", "build_masonry_text_burn_command"),
+    # Nova AI sandboxed effect language (PR6, custom-effects execution). Burns
+    # an already-validated FFmpeg filter chain onto the variant's video — the
+    # bytes that ship for `apply_custom_effect`, so final-output budget.
+    ("app/tasks/custom_effects_render.py", "_build_custom_effect_command"),
 }
 
 # libx264 presets ordered from fastest to slowest. Anything at or stricter
@@ -126,6 +130,7 @@ FILES_TO_AUDIT: list[str] = [
     "app/pipeline/talking_head_assembler.py",
     "app/pipeline/masonry_montage.py",
     "app/pipeline/carousel/encode.py",
+    "app/tasks/custom_effects_render.py",
 ]
 
 
