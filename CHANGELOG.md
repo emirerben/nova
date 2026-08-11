@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.5.0] — 2026-08-11
+
+### Added
+- **Nova steps activity feed on render progress.** `NovaActivityFeed` + `NovaStepRow` render the render-progress view as an expandable, Nova-voiced step log sourced from PR1's `steps` field, gated by `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED` (default off) with a `PhaseChipRow` fallback when disabled or `steps` is absent. New `t-accordion` motion token (registered in DESIGN.md) drives the expand/collapse; the completion receipt persists once settled rather than collapsing back into the chip row. Accessible: aria-live announces each newly-active step once (never re-announces), and reduced-motion is honored. 2725 tests.
+
 ## [0.25.4.0] — 2026-08-11
 
 ### Added
