@@ -3194,8 +3194,9 @@ function FocusedResults({
         connected: true,
         status: "connected",
         account: tiktokConnection?.account ?? { display_name: "Emir" },
-        granted_scopes: ["video.publish"],
+        granted_scopes: ["video.publish", "video.upload"],
         can_publish: true,
+        can_upload_draft: true,
         can_analyze: true,
         audited: true,
         beta: false,
@@ -3293,7 +3294,7 @@ function FocusedResults({
             comparisonAvailable={tiktokComparisonAvailable}
             canPublish={Boolean(
               (tiktokSimulation || tiktokReceiptState === "ready") &&
-              releaseTikTokConnection?.can_publish &&
+              (releaseTikTokConnection?.can_publish || releaseTikTokConnection?.can_upload_draft) &&
               item.current_job_id &&
               variant?.render_status === "ready" &&
               variant.output_url,

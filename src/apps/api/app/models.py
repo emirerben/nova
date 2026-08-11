@@ -478,11 +478,13 @@ class Job(Base):
 
 
 class TikTokPublication(Base):
-    """One user-consented TikTok Direct Post attempt.
+    """One user-consented TikTok delivery attempt.
 
-    Processing completion and public visibility are deliberately separate:
+    ``delivery_mode`` separates a Direct Post from an upload-to-drafts handoff.
+    Processing completion and public visibility remain deliberately separate:
     TikTok can finish ingest while moderation is pending, and visibility may
-    later be revoked.
+    later be revoked. Draft uploads complete at ``visibility_status='draft'``
+    because the creator must finish editing and posting inside TikTok.
     """
 
     __tablename__ = "tiktok_publications"
@@ -497,6 +499,7 @@ class TikTokPublication(Base):
     variant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     request_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    delivery_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="direct_post")
 
     source_object_path: Mapped[str] = mapped_column(Text, nullable=False)
     source_generation: Mapped[str] = mapped_column(Text, nullable=False)
@@ -563,8 +566,12 @@ class TikTokPublication(Base):
             name="ck_tiktok_pub_processing_status",
         ),
         CheckConstraint(
-            "visibility_status IN ('unknown','private','public','removed')",
+            "visibility_status IN ('unknown','draft','private','public','removed')",
             name="ck_tiktok_pub_visibility_status",
+        ),
+        CheckConstraint(
+            "delivery_mode IN ('direct_post','draft_upload')",
+            name="ck_tiktok_pub_delivery_mode",
         ),
     )
 

@@ -113,10 +113,14 @@ function TikTokStatus({ publication }: { publication: TikTokPublication }) {
   const metrics = publication.latest_metrics;
   const label = publication.visibility_status === "public"
     ? "Live on TikTok"
+    : publication.visibility_status === "draft"
+      ? "Ready to finish in TikTok"
     : publication.visibility_status === "removed"
       ? "No longer public"
       : publication.visibility_status === "private"
         ? "Published privately on TikTok"
+      : publication.delivery_mode === "draft_upload" && publication.processing_status === "complete"
+        ? "Posted from TikTok"
       : publication.processing_status === "submission_unknown"
         ? "Check TikTok before retrying"
         : publication.processing_status === "failed"
@@ -127,7 +131,11 @@ function TikTokStatus({ publication }: { publication: TikTokPublication }) {
   return (
     <div className="mt-3 rounded-lg bg-zinc-50 p-2 text-xs text-[#3f3f46]">
       <p className="font-medium">{label}</p>
-      {publication.visibility_status !== "public" && <p className="mt-0.5 text-[#71717a]">Metrics begin when the post is public.</p>}
+      {publication.visibility_status === "draft" ? (
+        <p className="mt-0.5 text-[#71717a]">Open TikTok&apos;s inbox notification to edit and post.</p>
+      ) : publication.visibility_status !== "public" ? (
+        <p className="mt-0.5 text-[#71717a]">Metrics begin when the post is public.</p>
+      ) : null}
       {metrics && <p className="mt-1 text-[#71717a]">{formatMetric(metrics.view_count)} views · {formatMetric(metrics.like_count)} likes · {formatMetric(metrics.comment_count)} comments · {formatMetric(metrics.share_count)} shares</p>}
       <p className="mt-1 text-[#a1a1aa]">Updated {new Date(publication.updated_at).toLocaleString()}</p>
     </div>

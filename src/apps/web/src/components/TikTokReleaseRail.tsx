@@ -143,6 +143,9 @@ function ReleasePreparationPane({
   simulation: boolean;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
+  const hasContentPostingAccess = Boolean(
+    connection?.can_publish || connection?.can_upload_draft,
+  );
 
   return (
     <div className="space-y-4 lg:space-y-7">
@@ -202,7 +205,7 @@ function ReleasePreparationPane({
                 Connected-state preview. Nothing will be sent to TikTok.
               </p>
             )}
-            {!canPublish && !connection.can_publish && (
+            {!canPublish && !hasContentPostingAccess && (
               <div className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
                 <p>TikTok publishing access needs to be reconnected.</p>
                 {onConnect ? (
@@ -216,7 +219,7 @@ function ReleasePreparationPane({
                 )}
               </div>
             )}
-            {!canPublish && connection.can_publish && !videoReady && (
+            {!canPublish && hasContentPostingAccess && !videoReady && (
               <p className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
                 Publishing unlocks after this video finishes rendering successfully.
               </p>
@@ -314,8 +317,11 @@ function PublicationReceipt({
         short: "Preview",
       }
     : publicationStatus(publication);
-  const isWorking = !simulation &&
-    !["public", "private", "removed"].includes(publication.visibility_status) &&
+  const isDraftPosted = publication.delivery_mode === "draft_upload" &&
+    publication.processing_status === "complete" &&
+    publication.visibility_status === "unknown";
+  const isWorking = !simulation && !isDraftPosted &&
+    !["draft", "public", "private", "removed"].includes(publication.visibility_status) &&
     publication.processing_status !== "failed" &&
     publication.processing_status !== "submission_unknown";
 
@@ -337,8 +343,17 @@ function PublicationReceipt({
         </div>
       )}
       <div className="space-y-2 text-sm">
-        <MetaRow label="Privacy" value={privacyLabel(publication.privacy_level)} compact />
-        <MetaRow label="Interactions" value={interactionLabel(publication)} compact />
+        {publication.delivery_mode === "draft_upload" ? (
+          <>
+            <MetaRow label="Destination" value="TikTok drafts" compact />
+            <MetaRow label="Next step" value="Finish in TikTok" compact />
+          </>
+        ) : (
+          <>
+            <MetaRow label="Privacy" value={privacyLabel(publication.privacy_level)} compact />
+            <MetaRow label="Interactions" value={interactionLabel(publication)} compact />
+          </>
+        )}
       </div>
       {pollingStalled && !simulation && (
         <div className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
@@ -559,9 +574,11 @@ function MetaRow({ label, value, compact = false }: { label: string; value: stri
 
 function publicationStatus(publication: TikTokPublication) {
   if (publication.visibility_status === "public") return { title: "Live on TikTok", detail: "TikTok confirmed this post is public.", short: "Live" };
+  if (publication.visibility_status === "draft") return { title: "Ready in TikTok drafts", detail: "Open TikTok's inbox notification to finish editing and post.", short: "Draft ready" };
+  if (publication.delivery_mode === "draft_upload" && publication.processing_status === "complete") return { title: "Posted from TikTok", detail: "The creator completed the post inside TikTok; its audience was chosen there.", short: "Posted" };
   if (publication.visibility_status === "private") return { title: "Published privately", detail: "This post is visible only to the audience you selected.", short: "Private" };
   if (publication.visibility_status === "removed") return { title: "No longer public", detail: "TikTok reports that this post is no longer visible.", short: "Removed" };
-  if (publication.processing_status === "submission_unknown") return { title: "Check TikTok before retrying", detail: "TikTok did not confirm whether it received the post.", short: "Check TikTok" };
+  if (publication.processing_status === "submission_unknown") return { title: "Check TikTok before retrying", detail: "TikTok did not confirm whether it received the delivery.", short: "Check TikTok" };
   if (publication.processing_status === "failed") return publication.retryable
     ? { title: "TikTok is retrying", detail: "Kria is retrying this post without creating a duplicate.", short: "Retrying" }
     : { title: "Publishing failed", detail: publication.failure_detail ?? "TikTok could not publish this post.", short: "Failed" };
@@ -614,6 +631,7 @@ function interactionLabel(publication: TikTokPublication) {
 
 function privacyLabel(value?: string) {
   if (!value) return "TikTok audience";
+  if (value === "TIKTOK_DRAFT") return "TikTok draft";
   if (value === "SELF_ONLY") return "Only you";
   if (value === "MUTUAL_FOLLOW_FRIENDS") return "Friends";
   if (value === "FOLLOWER_OF_CREATOR") return "Followers";

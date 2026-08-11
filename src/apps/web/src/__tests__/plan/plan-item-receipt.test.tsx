@@ -227,6 +227,7 @@ beforeEach(() => {
     account: { display_name: "Kria Studio", avatar_url: null },
     granted_scopes: ["video.publish"],
     can_publish: true,
+    can_upload_draft: true,
     can_analyze: true,
     audited: true,
     beta: false,
@@ -372,6 +373,7 @@ describe("Plan item page — overlay_apply_receipt cleanup", () => {
       account: null,
       granted_scopes: [],
       can_publish: false,
+      can_upload_draft: false,
       can_analyze: false,
       audited: false,
       beta: false,
@@ -407,7 +409,7 @@ describe("Plan item page — overlay_apply_receipt cleanup", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Publish to TikTok" }));
 
-    expect(await screen.findByRole("heading", { name: "Preview TikTok post" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Preview TikTok delivery" })).toBeInTheDocument();
     expect(screen.getByText("No TikTok API request will be made.")).toBeInTheDocument();
     expect(mockSetVariantMediaOverlays).not.toHaveBeenCalled();
   });

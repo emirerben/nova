@@ -29,7 +29,7 @@ TODOS.md        — deferred work backlog, grouped by the PR that deferred it
 - **Template mode** — drop your clips into a viral template; Gemini analyzes each clip and matches it to the right slot
 - **Music beat-sync** — browse a music gallery, pick a song, upload clips; every cut lands on a detected beat (`/music`)
 - **Creator Blocks** — add, customize, time, and ask Nova to edit eight deterministic animated text and image blocks in the video editor ([runtime and rollout guide](docs/pipelines/motion-runtime.md))
-- **TikTok publishing beta** — connect TikTok, publish an approved final render, and sync public performance behind server-side rollout gates ([operator runbook](docs/runbooks/tiktok-direct-publishing.md))
+- **TikTok publishing beta** — connect TikTok, privately publish an approved final render, or send it to TikTok to finish as a draft ([operator runbook](docs/runbooks/tiktok-direct-publishing.md))
 - **Admin tools** — upload music tracks (YouTube/SoundCloud via yt-dlp), monitor beat analysis, publish/archive (`/admin/music`)
 
 ## Branch conventions

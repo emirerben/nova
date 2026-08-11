@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.8.0] — 2026-08-11
+
+### Fixed
+- **TikTok review scope parity.** OAuth and the reviewer workspace now demonstrate exactly the Login Kit and Content Posting permissions selected in TikTok's sandbox. Kria supports both creator-confirmed private Direct Post and Upload API handoff to TikTok drafts, while profile, statistics, video-list, and standalone Webhooks selections are removed from the resubmission. See the [review and rollout runbook](docs/runbooks/tiktok-direct-publishing.md) for the exact sandbox configuration and recording steps.
+
 ## [0.25.7.0] — 2026-08-11
 
 ### Added

@@ -5,8 +5,8 @@ that silently break a deploy:
 
   1. A single, linear alembic head. The prod release command is
      `alembic upgrade head` — a branched head or a renumbered chain fails the
-     Fly release step AFTER merge, not in review. We assert the 0035→0039 chain
-     is intact and 0039 is the sole head.
+     Fly release step AFTER merge, not in review. We assert the migration tail
+     is intact and the latest numbered revision is the sole head.
   2. The new ORM models exist with the expected columns and the circular FK
      pair (PlanItem.current_job_id ⇄ Job.content_plan_item_id) resolves. The
      migration ordering (plan_items FK in 0038, jobs FK in 0039) exists
@@ -50,6 +50,7 @@ _EXPECTED_CHAIN = {
     "0057": "0056",
     "0058": "0057",
     "0059": "0058",
+    "0060": "0059",
     "0061": "0060",
     "0062": "0061",
     "0063": "0062",
@@ -59,6 +60,8 @@ _EXPECTED_CHAIN = {
     "0067": "0066",
     "0068": "0067",
     "0069": "0068",
+    "0070": "0069",
+    "0071": "0070",
 }
 
 
@@ -70,7 +73,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0070"], f"expected a single head 0070, got {heads}"
+    assert heads == ["0071"], f"expected a single head 0071, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
