@@ -293,6 +293,37 @@ it("sends the exact render to TikTok drafts with explicit handoff consent", asyn
   }));
 });
 
+it("auto-selects draft handoff when the grant only includes upload", async () => {
+  mockedOptions.mockResolvedValue({
+    preview_url: "https://example.test/video.mp4",
+    source_revision: "a".repeat(64),
+    variant_id: "song_text",
+    duration_s: 18,
+    creator_nickname: "Upload-only creator",
+    privacy_options: ["SELF_ONLY"],
+    comment_disabled: false,
+    duet_disabled: false,
+    stitch_disabled: false,
+    max_duration_s: 60,
+    suggested_title: "A caption #topic",
+    audited: false,
+    consent_version: "2026-08-11",
+    can_direct_post: false,
+    can_upload_draft: true,
+  });
+
+  render(
+    <TikTokPublishDialog open jobId="job-1" variantId="song_text" onClose={jest.fn()} />,
+  );
+
+  await screen.findByText("Upload-only creator");
+  expect((screen.getByRole("radio", { name: /Post now/ }) as HTMLInputElement).disabled).toBe(true);
+  expect(
+    (screen.getByRole("radio", { name: /Finish in TikTok/ }) as HTMLInputElement).checked,
+  ).toBe(true);
+  expect(screen.getByText(/TikTok will send an inbox notification/)).not.toBeNull();
+});
+
 it("reuses the delivery-mode idempotency key after an ambiguous remount", async () => {
   const storageKey = "tiktok:publish-key:job-1:song_text:draft_upload";
   window.sessionStorage.setItem(storageKey, "stable-draft-key");

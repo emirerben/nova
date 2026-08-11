@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import importlib
 import json
 import logging
 import time
@@ -37,6 +38,7 @@ from app.routes.tiktok import (
     media_verification,
     oauth_callback,
     oauth_start,
+    publish_options,
     request_sync,
 )
 from app.services import tiktok_client
@@ -423,6 +425,31 @@ async def test_webhook_signature_freshness_body_cap_and_access_log_redaction() -
     assert draft.processing_status == "complete"
     assert draft.visibility_status == "draft"
     assert draft.next_poll_at is None
+
+    draft.processing_status = "processing"
+    draft.visibility_status = "unknown"
+    draft.retry_count = 0
+    assert (
+        await _apply_webhook(
+            db,
+            {
+                "event": "post.publish.failed",
+                "content": {
+                    "publish_id": "draft-1",
+                    "fail_reason": "duration_check_failed",
+                },
+            },
+        )
+        is None
+    )
+    assert draft.processing_status == "failed"
+    assert draft.failure_code == "duration_check_failed"
+    assert draft.failure_detail == "TikTok could not receive this draft"
+    assert draft.retryable is False
+    assert draft.next_poll_at is None
+
+    draft.processing_status = "processing"
+    draft.visibility_status = "unknown"
     assert (
         await _apply_webhook(
             db,
@@ -657,6 +684,45 @@ async def test_mutating_routes_fail_closed_before_external_side_effects() -> Non
                 user,
                 db,
             )
+
+
+@pytest.mark.asyncio
+async def test_publish_options_negotiates_upload_only_scope_without_creator_info() -> None:
+    user = MagicMock(id=uuid.uuid4())
+    job = _job()
+    output = MagicMock(
+        preview_url="https://example.test/video.mp4",
+        source_revision="a" * 64,
+        variant_id="song_text",
+        duration_s=18.0,
+    )
+    token_row = MagicMock(
+        scopes=["user.info.basic", "video.upload"],
+        account_metadata={"display_name": "Upload-only creator"},
+    )
+    with (
+        patch("app.routes.tiktok._publishing_available", return_value=True),
+        patch("app.routes.tiktok.settings.tiktok_draft_upload_enabled", True),
+        patch("app.routes.tiktok._owned_job", new=AsyncMock(return_value=job)),
+        patch("app.routes.tiktok.resolve_publishable_output", return_value=output),
+        patch(
+            "app.routes.tiktok.active_access_token",
+            new=AsyncMock(return_value=(token_row, "access")),
+        ),
+        patch("app.routes.tiktok.tiktok_client.creator_info") as creator_info,
+    ):
+        options = await publish_options(
+            user,
+            job_id=job.id,
+            variant_id="song_text",
+            db=MagicMock(),
+        )
+
+    assert options.can_direct_post is False
+    assert options.can_upload_draft is True
+    assert options.creator_nickname == "Upload-only creator"
+    assert options.privacy_options == ["SELF_ONLY"]
+    creator_info.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -905,6 +971,40 @@ def test_submit_worker_routes_draft_delivery_only_to_upload_api() -> None:
     assert row.next_poll_at is not None
 
 
+def test_submit_worker_fails_closed_when_draft_rollout_is_disabled() -> None:
+    publication_id = uuid.uuid4()
+    row = TikTokPublication(
+        id=publication_id,
+        user_id=uuid.uuid4(),
+        delivery_mode="draft_upload",
+        processing_status="queued",
+        source_object_path="generative-jobs/job/output.mp4",
+        source_generation="42",
+        retryable=False,
+        retry_count=0,
+    )
+    with (
+        patch(
+            "app.tasks.tiktok.sync_session",
+            return_value=_session_context(row, first=True),
+        ),
+        patch("app.tasks.tiktok.settings.tiktok_draft_upload_enabled", False),
+        patch("app.tasks.tiktok.storage.copy_object_generation") as copy_media,
+        patch("app.tasks.tiktok.tiktok_client.initialize_draft_upload") as initialize_draft,
+        patch("app.tasks.tiktok.tiktok_client.initialize_direct_post") as initialize_direct,
+    ):
+        submit_tiktok_publication.run(str(publication_id))
+
+    assert row.processing_status == "failed"
+    assert row.failure_code == "draft_upload_disabled"
+    assert row.failure_detail == "TikTok draft upload is temporarily unavailable"
+    assert row.retryable is False
+    assert row.next_poll_at is None
+    copy_media.assert_not_called()
+    initialize_draft.assert_not_called()
+    initialize_direct.assert_not_called()
+
+
 def test_ambiguous_draft_transport_failure_never_redispatches() -> None:
     publication_id = uuid.uuid4()
     row = TikTokPublication(
@@ -1083,6 +1183,18 @@ def test_tiktok_client_rejects_invalid_success_and_maps_retryable_errors() -> No
 
     with patch(
         "app.services.tiktok_client.httpx.request",
+        side_effect=httpx.ConnectError("connection refused"),
+    ):
+        with pytest.raises(tiktok_client.TikTokAPIError) as exc:
+            tiktok_client.initialize_draft_upload(
+                "access",
+                media_url="https://api/media",
+            )
+    assert exc.value.retryable is True
+    assert exc.value.ambiguous is False
+
+    with patch(
+        "app.services.tiktok_client.httpx.request",
         side_effect=httpx.ReadTimeout("read timeout"),
     ):
         with pytest.raises(tiktok_client.TikTokAPIError) as exc:
@@ -1110,6 +1222,21 @@ def test_tiktok_client_rejects_invalid_success_and_maps_retryable_errors() -> No
         assert exc.value.retryable is False
         assert exc.value.ambiguous is True
         assert exc.value.code == "submission_unknown"
+
+
+def test_migration_0071_refuses_downgrade_while_draft_rows_exist() -> None:
+    migration = importlib.import_module("app.migrations.versions.0071_tiktok_draft_upload")
+    bind = MagicMock()
+    bind.execute.return_value.scalar_one.return_value = 1
+
+    with (
+        patch.object(migration.op, "get_bind", return_value=bind),
+        patch.object(migration.op, "drop_constraint") as drop_constraint,
+        pytest.raises(RuntimeError, match="draft-upload records exist"),
+    ):
+        migration.downgrade()
+
+    drop_constraint.assert_not_called()
 
 
 def test_beta_user_id_setting_accepts_csv_json_and_empty_values() -> None:
