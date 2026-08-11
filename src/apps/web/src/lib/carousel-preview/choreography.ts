@@ -31,7 +31,7 @@ import { pythonRound, simulateFrom } from "./spring";
 import { CANONICAL_FLICK } from "./gesture";
 import * as effects from "./effects";
 import type { CardGeometry, FocusMoment, FrameState, SpringState } from "./types";
-import { createFrameState, createSpringState } from "./types";
+import { createFocusMoment, createFrameState, createSpringState } from "./types";
 
 // Fraction of the render canvas' non-focused-card dim applied at full focus
 // (CSS `filter: brightness(1 - DIM_MAX)` equivalent, approximated in the
@@ -207,6 +207,8 @@ export interface BuildTimelineOptions {
   readonly leadInS?: number;
   readonly settlePadS?: number;
   readonly seed?: number;
+  readonly manualTiming?: boolean;
+  readonly moveDurationS?: number;
 }
 
 /**
@@ -240,6 +242,8 @@ export function buildTimeline(
     leadInS = 0.4,
     settlePadS = 0.3,
     seed = 0,
+    manualTiming = false,
+    moveDurationS,
   } = options;
 
   const dt = 1.0 / fps;
@@ -250,7 +254,16 @@ export function buildTimeline(
   const frames: FrameState[] = [];
   let tCursor = 0.0;
 
-  const jitter = (baseS: number): number => baseS * (1.0 + rng.uniform(-JITTER_FRAC, JITTER_FRAC));
+  const jitter = (baseS: number): number =>
+    manualTiming ? baseS : baseS * (1.0 + rng.uniform(-JITTER_FRAC, JITTER_FRAC));
+
+  const retimeScrolls = (scrolls: readonly number[]): readonly number[] => {
+    if (moveDurationS == null || scrolls.length === 0) return scrolls;
+    const targetN = Math.max(1, pythonRound(moveDurationS * fps));
+    if (targetN === 1) return [scrolls[scrolls.length - 1]];
+    const last = scrolls.length - 1;
+    return Array.from({ length: targetN }, (_, i) => scrolls[pythonRound((i * last) / (targetN - 1))]);
+  };
 
   const hold = (scrollX: number, seconds: number): void => {
     const n = Math.max(0, pythonRound(seconds * fps));
@@ -277,14 +290,16 @@ export function buildTimeline(
 
   hold(state.virtualScroll, jitter(leadInS));
 
-  const orderedMoments = [...focusMoments].sort((a, b) => a.cardIndex - b.cardIndex);
+  const orderedMoments = manualTiming
+    ? [...focusMoments]
+    : [...focusMoments].sort((a, b) => a.cardIndex - b.cardIndex);
 
   for (const moment of orderedMoments) {
     const targetIndex = Math.max(0, Math.min(nCards - 1, moment.cardIndex));
 
     const flickResult = runFlick(state, targetIndex, snaps, viewportW, fps, bounds);
     state = flickResult.state;
-    appendScrolls(flickResult.scrolls);
+    appendScrolls(retimeScrolls(flickResult.scrolls));
 
     const centeredScroll = snaps.length > 0 ? snaps[targetIndex] : 0.0;
     state = { ...state, virtualScroll: centeredScroll, target: centeredScroll, velocity: 0.0 };
@@ -337,7 +352,7 @@ export function buildTimeline(
     hold(centeredScroll, jitter(settlePadS));
   }
 
-  if (orderedMoments.length > 0) {
+  if (orderedMoments.length > 0 && !manualTiming) {
     const lastIndex = Math.max(
       0,
       Math.min(nCards - 1, orderedMoments[orderedMoments.length - 1].cardIndex),
@@ -357,6 +372,9 @@ export function buildTimeline(
 export interface RollingTimelineOptions {
   readonly fps?: number;
   readonly seed?: number;
+  readonly sequence?: readonly FocusMoment[];
+  readonly moveDurationS?: number;
+  readonly manualTiming?: boolean;
 }
 
 /**
@@ -375,7 +393,13 @@ export function rollingTimeline(
   durationS: number,
   options: RollingTimelineOptions = {},
 ): FrameState[] {
-  const { fps = 30, seed = 0 } = options;
+  const {
+    fps = 30,
+    seed = 0,
+    sequence = [],
+    moveDurationS,
+    manualTiming = false,
+  } = options;
 
   const dt = 1.0 / fps;
   const snaps = flatSnapPositions(nCards, geo);
@@ -385,7 +409,8 @@ export function rollingTimeline(
   let frames: FrameState[] = [];
   let tCursor = 0.0;
 
-  const jitter = (baseS: number): number => baseS * (1.0 + rng.uniform(-JITTER_FRAC, JITTER_FRAC));
+  const jitter = (baseS: number): number =>
+    manualTiming ? baseS : baseS * (1.0 + rng.uniform(-JITTER_FRAC, JITTER_FRAC));
 
   const hold = (scrollX: number, seconds: number): void => {
     const n = Math.max(0, pythonRound(seconds * fps));
@@ -403,19 +428,33 @@ export function rollingTimeline(
     isDragging: false,
   });
 
-  hold(state.virtualScroll, jitter(0.3));
+  const targets = manualTiming && sequence.length > 0
+    ? [...sequence]
+    : Array.from({ length: Math.max(0, nCards - 1) }, (_, i) =>
+        createFocusMoment(i + 1, { holdS: 0.3 }),
+      );
+  if (!manualTiming) hold(state.virtualScroll, jitter(0.3));
 
-  for (let idx = 1; idx < nCards; idx += 1) {
+  for (const item of targets) {
     if (tCursor >= durationS) break;
+    const idx = Math.max(0, Math.min(nCards - 1, item.cardIndex));
     const flickResult = runFlick(state, idx, snaps, viewportW, fps, bounds);
     state = flickResult.state;
-    for (const sx of flickResult.scrolls) {
+    let scrolls = flickResult.scrolls;
+    if (manualTiming && moveDurationS != null && scrolls.length > 0) {
+      const targetN = Math.max(1, pythonRound(moveDurationS * fps));
+      const last = scrolls.length - 1;
+      scrolls = targetN === 1
+        ? [scrolls[last]]
+        : Array.from({ length: targetN }, (_, i) => scrolls[pythonRound((i * last) / (targetN - 1))]);
+    }
+    for (const sx of scrolls) {
       tCursor += dt;
       frames.push(createFrameState({ tS: tCursor, scrollX: sx }));
     }
     const centeredScroll = snaps.length > 0 ? snaps[idx] : 0.0;
     state = { ...state, virtualScroll: centeredScroll, target: centeredScroll, velocity: 0.0 };
-    hold(centeredScroll, jitter(0.3));
+    hold(centeredScroll, jitter(item.holdS));
   }
 
   const targetN = Math.max(1, pythonRound(durationS * fps));

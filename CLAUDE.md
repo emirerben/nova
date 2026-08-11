@@ -287,7 +287,7 @@ agents/DECISIONS.md "Dockerfile / .dockerignore coupling" for the PR #118/#119 i
 - **For batchable work** across N items, run the decompose workflow: `Workflow({ scriptPath: ".claude/workflows/decompose.js", args: { subtasks: [{title, prompt}, ...] } })`. Running ANY workflow needs explicit opt-in — include the word "workflow" in the request.
 - **Prefer gbrain over grep for semantic lookups.** `gbrain search "<intent>"`, `gbrain code-def <symbol>`, `gbrain code-callers <symbol>`. Grep is still right for exact strings and regex.
 - **Only start a new session when** the work is genuinely unrelated, or after a deliberate `/context-save` → `/context-restore` handoff.
-- **Project agent skills** live in `.agents/skills/` and are symlinked into `.claude/skills/` so they travel with all worktrees. Active skills: `/improve` (full-repo audit + improvement plans) and `/transitions-dev` (21 CSS transition patterns from transitions.dev). Versions pinned in `skills-lock.json`.
+- **Project skills** live in `.agents/skills/`: `/improve`, `/motion-dev`, `/transitions-dev`, `/verify-editor-timeline`. Read each `SKILL.md` for its trigger and gate; external versions are pinned in `skills-lock.json`.
 
 ## GBrain Search Guidance (configured by /sync-gbrain)
 <!-- gstack-gbrain-search-guidance:start -->

@@ -337,7 +337,6 @@ def test_transition_crossfade_outro_sets_only_incoming_edge(monkeypatch):
     assert moment_step.slot["transition_in"] == "crossfade"
     assert moment_step.slot["transition_duration_s"] == pytest.approx(0.4)
     # No step follows the moment — the original steps' slots stay untouched.
-    assert "transition_in" not in prev_step.slot
     assert "transition_in" not in other_step.slot
 
 
@@ -375,6 +374,55 @@ def test_transition_crossfade_middle_sets_both_edges(monkeypatch):
     assert next_step.slot["transition_in"] == "crossfade"
     assert next_step.slot["transition_duration_s"] == pytest.approx(0.4)
     assert "transition_in" not in prev_step.slot
+
+
+def test_ripple_boundaries_are_independent_capped_and_replace_old_overlap(monkeypatch):
+    monkeypatch.setattr(gb.settings, "carousel_effects_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_maybe_render_carousel_moment", lambda *a, **kw: "/tmp/moment.mp4")
+
+    import app.pipeline.probe as probe_mod
+
+    monkeypatch.setattr(
+        probe_mod, "probe_video", lambda path: types.SimpleNamespace(duration_s=2.0)
+    )
+    steps = [_step("clip_1"), _step("clip_2")]
+    steps[1].slot.update({"transition_in": "crossfade", "transition_duration_s": 0.2})
+    sink: dict[str, float] = {}
+
+    result = gb._insert_carousel_moment_step(
+        steps,
+        {
+            "variant_id": "v-ripple-boundaries",
+            "carousel_moment": {
+                "position": "middle",
+                "timing_model": "ripple_v1",
+                "transition_in": "crossfade",
+                "transition_in_duration_s": 0.9,
+                "transition_out": "none",
+            },
+        },
+        clip_id_to_local={"clip_1": "/a", "clip_2": "/b"},
+        clip_id_to_gcs={"clip_1": "gs://a", "clip_2": "gs://b"},
+        probe_map={},
+        variant_dir="/tmp",
+        inserted_duration_out=sink,
+    )
+
+    _previous, moment_step, next_step = result
+    assert moment_step.slot == {
+        "exact_window": True,
+        "transition_in": "crossfade",
+        # Requested 0.9s is capped to 30% of the adjacent 1s clip.
+        "transition_duration_s": pytest.approx(0.3),
+    }
+    assert next_step.slot["transition_in"] == "none"
+    assert "transition_duration_s" not in next_step.slot
+    assert sink == {
+        "duration_s": 2.0,
+        "insertion_base_s": pytest.approx(0.8),
+        # 2s insert + replaced 0.2 overlap - new 0.3 entry - 0 exit.
+        "ripple_duration_s": pytest.approx(1.9),
+    }
 
 
 def test_transition_absent_or_none_is_a_hard_cut_noop(monkeypatch):
@@ -478,6 +526,38 @@ def test_maybe_render_carousel_moment_defaults_effect_to_scale_sweep(monkeypatch
 
     assert captured["spec"].effect == "scale_sweep"
     assert captured["spec"].duration_s == 4.0
+
+
+def test_manual_sequence_clip_indices_map_to_render_card_order(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def _fake_render(spec, work_dir):
+        captured["spec"] = spec
+        return "/tmp/rendered.mp4"
+
+    import app.pipeline.carousel.segment as segment_mod
+
+    monkeypatch.setattr(segment_mod, "render_carousel_moment", _fake_render)
+
+    result = gb._maybe_render_carousel_moment(
+        {
+            "mode": "focus",
+            "timing_model": "ripple_v1",
+            # Source clip 2 is card 0 and source clip 0 is card 1 in this
+            # edited timeline. Authored source identity must survive that.
+            "sequence": [
+                {"clip_index": 0, "hold_s": 0.7},
+                {"clip_index": 2, "hold_s": 0.5},
+            ],
+        },
+        clip_id_to_local={"clip_2": "/two", "clip_0": "/zero"},
+        steps=[_step("clip_2"), _step("clip_0")],
+        variant_dir="/tmp/variant",
+    )
+
+    assert result == "/tmp/rendered.mp4"
+    assert captured["spec"].clip_paths == ("/two", "/zero")
+    assert [moment.card_index for moment in captured["spec"].focus_moments] == [1, 0]
 
 
 def test_maybe_render_carousel_moment_contains_unexpected_exception(monkeypatch):

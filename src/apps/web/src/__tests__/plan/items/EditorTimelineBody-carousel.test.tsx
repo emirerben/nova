@@ -22,6 +22,7 @@ import EditorTimelineBody, {
   type EditorTimelineBodyProps,
 } from "@/app/plan/items/[id]/_editor/EditorTimelineBody";
 import type { DraftSlot } from "@/app/generative/timeline-math";
+import { buildVirtualTimeline } from "@/app/plan/items/[id]/_editor/virtual-timeline";
 
 // jsdom's DragEvent doesn't accept `clientX` via the init dict the way
 // MouseEvent does (fireEvent.drop(el, {clientX}) silently drops it, leaving
@@ -57,8 +58,15 @@ const FOUR_SLOTS: DraftSlot[] = [
 ];
 
 function baseProps(over: Partial<EditorTimelineBodyProps> = {}): EditorTimelineBodyProps {
+  const timelineProjection = buildVirtualTimeline(FOUR_SLOTS, [], [], over.carouselBlock
+    ? {
+        position: over.carouselBlock.position,
+        durationS: over.carouselBlock.durationS,
+      }
+    : null);
   return {
     durationS: 8,
+    timelineProjection,
     currentTimeS: 0,
     zoom: 1,
     selection: null,
@@ -105,6 +113,26 @@ describe("EditorTimelineBody — carousel-moment block chip", () => {
     const chip = screen.getByRole("button", { name: /Carousel block, cover flow/i });
     expect(chip).toBeInTheDocument();
     expect(chip).toHaveAttribute("data-editor-bar-kind", "carousel");
+  });
+
+  it("uses the projected 11s ruler and places downstream clips after the Carousel", () => {
+    render(
+      <EditorTimelineBody
+        {...baseProps({
+          carouselBlock: {
+            id: "carousel-block",
+            effectLabel: "cover flow",
+            durationS: 3,
+            position: "middle",
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Clip 3, timeline 0:07–0:09/i })).toHaveStyle({
+      left: "28px",
+    });
+    expect(screen.getAllByText("0:11").length).toBeGreaterThan(0);
   });
 
   it("clicking the chip opens the panel as inspector (onSelectCarousel)", () => {

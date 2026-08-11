@@ -210,6 +210,8 @@ def build_timeline(
     lead_in_s: float = 0.4,
     settle_pad_s: float = 0.3,
     seed: int = 0,
+    manual_timing: bool = False,
+    move_duration_s: float | None = None,
 ) -> list[FrameState]:
     """Author a FOCUS CHOREOGRAPHY timeline: lead-in hold, then for each
     focus moment (sorted by `card_index`) — flick to center it, settle-pad
@@ -243,6 +245,8 @@ def build_timeline(
     t_cursor = 0.0
 
     def _jitter(base_s: float) -> float:
+        if manual_timing:
+            return base_s
         return base_s * (1.0 + rng.uniform(-JITTER_FRAC, JITTER_FRAC))
 
     def _hold(scroll_x: float, seconds: float) -> None:
@@ -258,6 +262,15 @@ def build_timeline(
             t_cursor += dt
             frames.append(FrameState(t_s=t_cursor, scroll_x=sx))
 
+    def _retime_scrolls(scrolls: list[float]) -> list[float]:
+        if move_duration_s is None or not scrolls:
+            return scrolls
+        target_n = max(1, round(move_duration_s * fps))
+        if target_n == 1:
+            return [scrolls[-1]]
+        last = len(scrolls) - 1
+        return [scrolls[round(i * last / (target_n - 1))] for i in range(target_n)]
+
     start_scroll = snaps[0] if snaps else 0.0
     state = SpringState(
         virtual_scroll=start_scroll, target=start_scroll, velocity=0.0, is_dragging=False
@@ -265,12 +278,14 @@ def build_timeline(
 
     _hold(state.virtual_scroll, _jitter(lead_in_s))
 
-    ordered_moments = sorted(focus_moments, key=lambda m: m.card_index)
+    ordered_moments = (
+        list(focus_moments) if manual_timing else sorted(focus_moments, key=lambda m: m.card_index)
+    )
     for moment in ordered_moments:
         target_index = max(0, min(n_cards - 1, moment.card_index))
 
         state, scrolls = _run_flick(state, target_index, snaps, viewport_w, fps, bounds)
-        _append_scrolls(scrolls)
+        _append_scrolls(_retime_scrolls(scrolls))
 
         centered_scroll = snaps[target_index] if snaps else 0.0
         state = replace(state, virtual_scroll=centered_scroll, target=centered_scroll, velocity=0.0)
@@ -319,7 +334,7 @@ def build_timeline(
 
         _hold(centered_scroll, _jitter(settle_pad_s))
 
-    if ordered_moments:
+    if ordered_moments and not manual_timing:
         last_index = max(0, min(n_cards - 1, ordered_moments[-1].card_index))
         next_index = last_index + 1 if last_index + 1 < n_cards else max(0, last_index - 1)
         if next_index != last_index:
@@ -338,6 +353,9 @@ def rolling_timeline(
     duration_s: float,
     fps: int = 30,
     seed: int = 0,
+    sequence: tuple[FocusMoment, ...] = (),
+    move_duration_s: float | None = None,
+    manual_timing: bool = False,
 ) -> list[FrameState]:
     """Author a ROLLING timeline: no focus, just a sequence of flicks
     advancing card by card through the whole set (seeded, slightly jittered
@@ -355,6 +373,8 @@ def rolling_timeline(
     t_cursor = 0.0
 
     def _jitter(base_s: float) -> float:
+        if manual_timing:
+            return base_s
         return base_s * (1.0 + rng.uniform(-JITTER_FRAC, JITTER_FRAC))
 
     def _hold(scroll_x: float, seconds: float) -> None:
@@ -369,18 +389,32 @@ def rolling_timeline(
         virtual_scroll=start_scroll, target=start_scroll, velocity=0.0, is_dragging=False
     )
 
-    _hold(state.virtual_scroll, _jitter(0.3))
+    targets = (
+        list(sequence)
+        if manual_timing and sequence
+        else [FocusMoment(card_index=idx, hold_s=0.3) for idx in range(1, n_cards)]
+    )
+    if not manual_timing:
+        _hold(state.virtual_scroll, _jitter(0.3))
 
-    for idx in range(1, n_cards):
+    for item in targets:
         if t_cursor >= duration_s:
             break
+        idx = max(0, min(n_cards - 1, item.card_index))
         state, scrolls = _run_flick(state, idx, snaps, viewport_w, fps, bounds)
+        if manual_timing and move_duration_s is not None and scrolls:
+            target_n = max(1, round(move_duration_s * fps))
+            if target_n == 1:
+                scrolls = [scrolls[-1]]
+            else:
+                last = len(scrolls) - 1
+                scrolls = [scrolls[round(i * last / (target_n - 1))] for i in range(target_n)]
         for sx in scrolls:
             t_cursor += dt
             frames.append(FrameState(t_s=t_cursor, scroll_x=sx))
         centered_scroll = snaps[idx] if snaps else 0.0
         state = replace(state, virtual_scroll=centered_scroll, target=centered_scroll, velocity=0.0)
-        _hold(centered_scroll, _jitter(0.3))
+        _hold(centered_scroll, _jitter(item.hold_s))
 
     target_n = max(1, round(duration_s * fps))
     if len(frames) < target_n:

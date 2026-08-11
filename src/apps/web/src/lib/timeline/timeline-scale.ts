@@ -105,5 +105,7 @@ export function rulerTicks(
   if (durationS <= 0) return [0];
   const interval = tickIntervalForScale(pxPerSecond, minLabelPx);
   const count = Math.floor(durationS / interval);
-  return Array.from({ length: count + 1 }, (_, i) => i * interval);
+  const ticks = Array.from({ length: count + 1 }, (_, i) => i * interval);
+  if (Math.abs(ticks[ticks.length - 1] - durationS) > 1e-6) ticks.push(durationS);
+  return ticks;
 }

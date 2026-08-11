@@ -1,0 +1,16 @@
+{
+  "fps": 30,
+  "n_cards": 5,
+  "focus_duration_s": 2.8,
+  "rolling_duration_s": 2.0,
+  "mode": "focus",
+  "move_duration_s": 0.4,
+  "zoom_duration_s": 0.2,
+  "sequence": [
+    { "clip_index": 3, "hold_s": 0.5 },
+    { "clip_index": 1, "hold_s": 0.7 }
+  ],
+  "expected_focus_order": [3, 1],
+  "expected_hold_frames": [15, 21],
+  "expected_move_frames": 12
+}

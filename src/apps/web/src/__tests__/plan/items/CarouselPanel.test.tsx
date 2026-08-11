@@ -17,8 +17,9 @@
 
 import "@testing-library/jest-dom";
 import { useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import CarouselPanel, {
+  createDefaultCarouselMoment,
   type CarouselClipThumb,
   type CarouselPanelControl,
 } from "@/app/plan/items/[id]/_editor/CarouselPanel";
@@ -53,7 +54,13 @@ function makeControl(overrides: Partial<CarouselPanelControl> = {}): CarouselPan
 }
 
 describe("CarouselPanel", () => {
-  it("a brand-new moment defaults to scale_sweep / focus / Let Nova pick / middle / crossfade, and Length defaults to the focus arc's natural length (not the flat 6s)", () => {
+  it("authors defaults with sparse active source identities", () => {
+    expect(createDefaultCarouselMoment([2, 5]).sequence?.map((item) => item.clip_index)).toEqual([
+      2,
+      5,
+    ]);
+  });
+  it("a brand-new moment defaults to an ordered ripple sequence with independent boundaries", () => {
     render(<CarouselPanel control={makeControl()} />);
 
     expect(screen.getByRole("radio", { name: "Scale sweep effect" })).toHaveAttribute(
@@ -64,21 +71,20 @@ describe("CarouselPanel", () => {
       "focus-visible:outline-lime-500",
     );
     expect(screen.getByRole("button", { name: "Focus" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("radio", { name: "Let Nova pick" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(screen.getByRole("radio", { name: "Let Nova pick" })).toHaveClass(
-      "focus-visible:outline-lime-500",
-    );
+    const sequence = screen.getByLabelText("Carousel video sequence");
+    expect(within(sequence).getByText("1. Clip 1")).toBeInTheDocument();
+    expect(within(sequence).getByText("2. Clip 2")).toBeInTheDocument();
+    expect(within(sequence).getByText("3. Clip 3")).toBeInTheDocument();
+    expect(screen.getByLabelText("Clip 1 hold seconds")).toHaveAttribute("step", "0.1");
     expect(screen.getByRole("button", { name: "Middle" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("Carousel length in seconds")).toHaveValue(
       String(expectedFocusDefaultDurationS(CLIPS.length, null)),
     );
-    expect(screen.getByRole("button", { name: "Crossfade" })).toHaveAttribute(
+    expect(within(screen.getByRole("group", { name: "Entry transition" })).getByRole("button", { name: "Crossfade" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+    expect(within(screen.getByRole("group", { name: "Exit transition" })).getByRole("button", { name: "Crossfade" })).toHaveAttribute("aria-pressed", "true");
     // No submit step and nothing to remove yet.
     expect(screen.queryByRole("button", { name: "Remove carousel" })).not.toBeInTheDocument();
   });
@@ -90,14 +96,20 @@ describe("CarouselPanel", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Cover flow effect" }));
 
     expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledWith({
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
       effect: "cover_flow",
       mode: "focus",
       focus_clip_index: null,
       position: "middle",
       duration_s: expectedFocusDefaultDurationS(CLIPS.length, null),
       transition: "crossfade",
-    } satisfies CarouselMoment);
+      timing_model: "ripple_v1",
+      sequence: [
+        { clip_index: 0, hold_s: expect.any(Number) },
+        { clip_index: 1, hold_s: expect.any(Number) },
+        { clip_index: 2, hold_s: expect.any(Number) },
+      ],
+    } satisfies Partial<CarouselMoment>));
   });
 
   it("prefills every control from an existing carousel_moment", () => {
@@ -120,56 +132,60 @@ describe("CarouselPanel", () => {
       "true",
     );
     expect(screen.getByRole("button", { name: "Outro" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Hard cut" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(within(screen.getByRole("group", { name: "Entry transition" })).getByRole("button", { name: "Hard cut" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByRole("group", { name: "Exit transition" })).getByRole("button", { name: "Hard cut" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("Carousel length in seconds")).toHaveValue("9");
     expect(screen.getByRole("button", { name: "Remove carousel" })).toBeInTheDocument();
-    // Rolling mode hides the focus-tile strip entirely.
-    expect(screen.queryByRole("radiogroup", { name: "Focus clip" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Carousel video sequence")).toBeInTheDocument();
   });
 
-  it("BUG A: prefills the focus tile from the legacy `focus` shape when focus_clip_index is absent", () => {
-    // A moment persisted before the backend started writing `focus_clip_index`
-    // alongside `focus` (see _merge_carousel_moment_override) only carries
-    // `focus: [{card_index}]`. The panel must still prefill the chosen tile,
-    // not fall back to "Let Nova pick".
+  it("upgrades the legacy focus shape to an all-video ordered sequence", () => {
     const current = {
       mode: "focus",
       focus: [{ card_index: 2 }],
     } as unknown as CarouselMoment;
     render(<CarouselPanel control={makeControl({ current })} />);
 
-    expect(screen.getByRole("radio", { name: "Clip 3" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("radio", { name: "Let Nova pick" })).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
+    expect(screen.getByText("1. Clip 1")).toBeInTheDocument();
+    expect(screen.getByText("2. Clip 2")).toBeInTheDocument();
+    expect(screen.getByText("3. Clip 3")).toBeInTheDocument();
   });
 
-  it("selecting a focus tile stages focus_clip_index", () => {
+  it("reorders videos and preserves the authored sequence order", () => {
     const onChange = jest.fn();
     render(<CarouselPanel control={makeControl({ onChange })} />);
 
-    fireEvent.click(screen.getByRole("radio", { name: "Clip 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move Clip 2 earlier" }));
 
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: "focus", focus_clip_index: 1 }),
+      expect.objectContaining({
+        timing_model: "ripple_v1",
+        sequence: [
+          expect.objectContaining({ clip_index: 1 }),
+          expect.objectContaining({ clip_index: 0 }),
+          expect.objectContaining({ clip_index: 2 }),
+        ],
+      }),
     );
   });
 
-  it('"Let Nova pick" stages a null focus_clip_index', () => {
+  it("removes and re-adds videos without losing per-video dwell controls", () => {
     const onChange = jest.fn();
-    const current: CarouselMoment = { mode: "focus", focus_clip_index: 2 };
-    render(<CarouselPanel control={makeControl({ current, onChange })} />);
+    const Controlled = () => {
+      const [current, setCurrent] = useState<CarouselMoment | null>(null);
+      return <CarouselPanel control={makeControl({ current, onChange: (next) => (onChange(next), setCurrent(next)) })} />;
+    };
+    render(<Controlled />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Clip 3 from sequence" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Clip 3" }));
 
-    expect(screen.getByRole("radio", { name: "Clip 3" })).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByRole("radio", { name: "Let Nova pick" }));
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ focus_clip_index: null }),
-    );
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      sequence: [
+        expect.objectContaining({ clip_index: 0 }),
+        expect.objectContaining({ clip_index: 1 }),
+        { clip_index: 2, hold_s: 2 },
+      ],
+    }));
   });
 
   it("switching to Rolling stages a null focus_clip_index regardless of prior selection", () => {
@@ -184,7 +200,7 @@ describe("CarouselPanel", () => {
     );
   });
 
-  it("position, length, and transition controls each stage the merged config immediately", () => {
+  it("position, length, and independent boundary controls stage the merged config immediately", () => {
     const onChange = jest.fn();
     render(<CarouselPanel control={makeControl({ onChange })} />);
 
@@ -196,10 +212,13 @@ describe("CarouselPanel", () => {
     });
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ duration_s: 12 }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Hard cut" }));
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ transition: "none" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Entry transition" })).getByRole("button", { name: "Hard cut" }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ transition_in: "none" }));
 
-    expect(onChange).toHaveBeenCalledTimes(3);
+    fireEvent.click(within(screen.getByRole("group", { name: "Exit transition" })).getByRole("button", { name: "Hard cut" }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ transition_out: "none" }));
+
+    expect(onChange).toHaveBeenCalledTimes(4);
   });
 
   it("switching from Rolling to Focus resets Length to the focus arc's natural length, overriding an explicitly customized rolling duration", () => {
@@ -303,6 +322,16 @@ describe("CarouselPanel", () => {
     expect(screen.getByRole("radio", { name: "Flipbook effect" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Middle" })).toBeDisabled();
     expect(screen.getByLabelText("Carousel length in seconds")).toBeDisabled();
+    expect(
+      within(screen.getByRole("group", { name: "Entry transition" })).getByRole("button", {
+        name: "Crossfade",
+      }),
+    ).toBeDisabled();
+    expect(
+      within(screen.getByRole("group", { name: "Exit transition" })).getByRole("button", {
+        name: "Crossfade",
+      }),
+    ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Focus" })).not.toBeDisabled();
     expect(screen.getByRole("button", { name: "Rolling" })).not.toBeDisabled();
 
