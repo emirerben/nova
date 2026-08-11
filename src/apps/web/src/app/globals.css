@@ -51,6 +51,13 @@
   --stagger-blur: 3px;
   --stagger-ease: cubic-bezier(0.22, 1, 0.36, 1);
 
+  /* t-accordion: expand/collapse detail reveal (NovaStepRow — render-progress
+     feed now, chat compact rows in a later PR share the same token pair so
+     both surfaces expand identically). Closes the §6 "no accordion primitive"
+     gap. Registered in DESIGN.md §6 in the same PR that ships this token. */
+  --t-accordion-dur: 300ms;
+  --t-accordion-ease: cubic-bezier(0.23, 1, 0.32, 1);
+
   /* Nova Beam loader: decorative perimeter motion for video/AI wait states. */
   --beam-rotate-dur: 1.96s;
   --beam-line-dur: 3.1s;
@@ -445,6 +452,31 @@
     transform: none;
     filter: none;
   }
+}
+
+/* t-accordion: expand/collapse detail reveal for NovaStepRow. Grid-rows
+   0fr → 1fr on the wrapper animates real height (no clipped-content flash,
+   no guessed pixel value); the inner child needs min-height:0 so a CSS grid
+   track can actually collapse to zero. Opacity crossfades over the same
+   duration so the reveal doesn't feel like a hard snap. */
+.t-accordion {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--t-accordion-dur) var(--t-accordion-ease),
+    opacity var(--t-accordion-dur) var(--t-accordion-ease);
+}
+.t-accordion > * {
+  overflow: hidden;
+  min-height: 0;
+}
+.t-accordion.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .t-accordion { transition: none !important; }
 }
 
 @keyframes montage-classic-a {
