@@ -549,6 +549,18 @@ describe("buildCopilotSnapshot", () => {
     ).toEqual([]);
     expect(allowedOpFamiliesFromCapabilities({}, { readOnly: true, openTools: ["text"] })).toEqual([]);
   });
+
+  it("includes each clip look in the AI snapshot", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot({ lookPreset: "stadium_diffusion" })],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+    );
+
+    expect(snapshot.slots[0].look_preset).toBe("stadium_diffusion");
+    expect(snapshot.allowed_op_families).toContain("clip");
+  });
 });
 
 function byteLength(value: unknown): number {

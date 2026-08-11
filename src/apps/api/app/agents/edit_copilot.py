@@ -27,7 +27,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-09-v18"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-11-v19"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -46,7 +46,14 @@ _SLOT_INDEX_KEYS = ("slots", "local_slots", "localSlots")
 _VALID_INTENTS = {"edit", "clarify", "describe", "reject", "unknown"}
 _TEXT_OPS = {"edit_text", "set_text_timing", "add_text", "remove_text"}
 _STYLE_OPS = {"patch_text_style"}
-_CLIP_OPS = {"set_clip_duration", "set_clip_in", "reorder_clip", "remove_clip", "split_clip"}
+_CLIP_OPS = {
+    "set_clip_duration",
+    "set_clip_in",
+    "reorder_clip",
+    "remove_clip",
+    "split_clip",
+    "set_look_preset",
+}
 _SFX_OPS = {"add_sfx", "patch_sfx", "remove_sfx"}
 _OVERLAY_OPS = {
     "add_overlay",
@@ -106,6 +113,7 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "reorder_clip": frozenset({"from_index", "to_index"}),
     "remove_clip": frozenset({"slot_index"}),
     "split_clip": frozenset({"slot_index", "at_s"}),
+    "set_look_preset": frozenset({"slot_index", "look_preset"}),
     "add_sfx": frozenset({"effect_id", "at_s"}),
     "patch_sfx": frozenset({"sfx_index"}),
     "remove_sfx": frozenset({"sfx_index"}),
@@ -146,6 +154,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "reorder_clip": frozenset({"from_index", "to_index"}),
     "remove_clip": frozenset({"slot_index"}),
     "split_clip": frozenset({"slot_index", "at_s"}),
+    "set_look_preset": frozenset({"slot_index", "look_preset"}),
     "add_sfx": frozenset({"effect_id", "at_s", "gain", "effect_bundle_id"}),
     "patch_sfx": frozenset({"sfx_index", "at_s", "gain"}),
     "remove_sfx": frozenset({"sfx_index"}),
@@ -217,6 +226,10 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("reorder_clip", '{"op":"reorder_clip","from_index":2,"to_index":0}'),
     ("remove_clip", '{"op":"remove_clip","slot_index":1}'),
     ("split_clip", '{"op":"split_clip","slot_index":0,"at_s":4.2}'),
+    (
+        "set_look_preset",
+        '{"op":"set_look_preset","slot_index":0,"look_preset":"stadium_diffusion"}',
+    ),
     (
         "add_sfx",
         '{"op":"add_sfx","effect_id":"sfx_pop","at_s":1.2,"gain":1.0,'
@@ -624,9 +637,11 @@ def _format_snapshot(snapshot: dict) -> str:
                 slot.get("transition_after") or "cut",
                 max_chars=30,
             )
+            look_preset = _clean_prompt_data(slot.get("look_preset") or "none", max_chars=30)
             lines.append(
                 f"{i}. output={_fmt_range(start, end)} duration={_fmt_num(duration)}s "
                 f"in={_fmt_num(in_s)}s source={_fmt_num(source)}s moment={moment!r} "
+                f"look_preset={look_preset!r} "
                 f"transition_after={transition!r} "
                 f"transition_duration_s={_fmt_num(_first_number(slot, ('transition_duration_s',)))}"
             )
@@ -1409,6 +1424,13 @@ def _coerce_payload(
             state.invalid_value()
             return None
         out["title"] = title
+
+    if name == "set_look_preset":
+        look_preset = str(out.get("look_preset") or "").strip()
+        if look_preset not in {"none", "stadium_diffusion"}:
+            state.invalid_value()
+            return None
+        out["look_preset"] = look_preset
 
     if name == "patch_text_style":
         patch = out.get("patch")

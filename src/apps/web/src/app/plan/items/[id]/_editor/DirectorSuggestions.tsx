@@ -34,6 +34,8 @@ export function directorWillChange(suggestion: EditorSuggestion): string[] {
       labels.add("Sound effects");
     } else if (operation.op.includes("overlay")) {
       labels.add("Visual overlays");
+    } else if (operation.op === "set_look_preset") {
+      labels.add("Clip look");
     } else if (operation.op.includes("clip") || operation.op === "set_transition") {
       labels.add("Clip timing");
     } else if (operation.op.includes("camera_effect") || operation.op === "set_visual_fade") {

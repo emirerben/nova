@@ -36,6 +36,7 @@ def _snapshot() -> dict:
                 "output_start_s": 0.0,
                 "output_end_s": 3.0,
                 "duration_s": 3.0,
+                "look_preset": "none",
             },
             {
                 "key": "slot-1",
@@ -44,6 +45,7 @@ def _snapshot() -> dict:
                 "output_start_s": 3.0,
                 "output_end_s": 6.0,
                 "duration_s": 3.0,
+                "look_preset": "none",
             },
             {
                 "key": "slot-2",
@@ -52,6 +54,7 @@ def _snapshot() -> dict:
                 "output_start_s": 6.0,
                 "output_end_s": 9.0,
                 "duration_s": 3.0,
+                "look_preset": "none",
             },
         ],
         "camera_effects": [{"start_s": 0.4, "end_s": 1.5, "intensity": 0.04}],
@@ -206,6 +209,8 @@ def test_director_prompt_includes_exact_operation_field_contract() -> None:
 
     assert '{"op":"set_text_timing","bar_index":0,"start_s":0.2,"end_s":2.8}' in prompt
     assert '{"op":"set_clip_duration","slot_index":1,"duration_s":3.0}' in prompt
+    assert '{"op":"set_look_preset","slot_index":0,"look_preset":"stadium_diffusion"}' in prompt
+    assert "look_preset='none'" in prompt
     assert (
         '{"op":"add_sfx","effect_id":"sfx_pop","at_s":1.2,"gain":1.0,"effect_bundle_id":"reveal_1"}'
     ) in prompt
@@ -228,6 +233,25 @@ def test_director_prompt_omits_unavailable_operation_families() -> None:
     assert '{"op":"set_transition"' not in prompt
     assert '{"op":"add_camera_effect"' not in prompt
     assert '{"op":"set_visual_fade"' not in prompt
+
+
+def test_director_validates_stadium_diffusion_and_rejects_human_only_looks() -> None:
+    valid = _suggestion(
+        "effect",
+        "Give the action clip a cinematic stadium look",
+        {"op": "set_look_preset", "slot_index": 1, "look_preset": "stadium_diffusion"},
+    )
+    invalid = _suggestion(
+        "effect",
+        "Apply a human-only look",
+        {"op": "set_look_preset", "slot_index": 2, "look_preset": "olive_film"},
+    )
+
+    output = _parse([valid, invalid])
+
+    assert [item.ops for item in output.suggestions] == [
+        [{"op": "set_look_preset", "slot_index": 1, "look_preset": "stadium_diffusion"}]
+    ]
 
 
 def test_director_filters_dismissed_ids_without_reordering_remaining() -> None:
