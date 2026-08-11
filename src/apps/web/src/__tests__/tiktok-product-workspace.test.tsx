@@ -91,6 +91,26 @@ describe("public TikTok product workspace", () => {
     expect(screen.getByText(/never submits a post/i)).toBeInTheDocument();
   });
 
+  test("demonstrates the video.upload handoff without claiming that it creates a post", () => {
+    render(<TikTokProductWorkspace videoSrc={null} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: /Finish in TikTok/ }));
+    expect(screen.getByRole("heading", { name: "TikTok draft handoff" })).toBeInTheDocument();
+    expect(screen.getAllByText(/inbox notification/i)).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Review draft handoff" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /must open TikTok/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /right to use the music/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Review draft handoff" }));
+
+    expect(screen.getByRole("heading", { name: "Confirm the TikTok handoff" })).toBeInTheDocument();
+    expect(screen.getByText("Open the TikTok inbox notification")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send demo to TikTok drafts" }));
+
+    expect(screen.getByRole("heading", { name: "Ready to finish in TikTok" })).toBeInTheDocument();
+    expect(screen.getByText("No post created")).toBeInTheDocument();
+  });
+
   test("shows creator edits and disclosures in confirmation and supports going back", () => {
     render(<TikTokProductWorkspace videoSrc={null} />);
 

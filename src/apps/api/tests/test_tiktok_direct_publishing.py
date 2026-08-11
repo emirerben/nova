@@ -53,9 +53,11 @@ from app.tasks.tiktok import (
     _edit_correlations,
     _mature_fingerprint,
     _normalize_videos,
+    _poll_one,
     _recover_stale_publication,
     _summary_with_edit_correlations,
     _within_evaluation_window,
+    submit_tiktok_publication,
 )
 
 
@@ -175,6 +177,7 @@ def test_publication_response_carries_release_receipt_and_frozen_learning_fields
     response = _publication_response(row)
 
     assert response.title == "A precise caption #topic"
+    assert response.delivery_mode == "direct_post"
     assert response.creator_nickname == "Kria Studio"
     assert response.privacy_level == "PUBLIC_TO_EVERYONE"
     assert response.allow_comment is True
@@ -284,6 +287,7 @@ def test_publishable_metadata_duration_fallback_and_signature_buckets(
         id=uuid.uuid4(),
         job_id=job.id,
         variant_id=None,
+        delivery_mode="direct_post",
         processing_status="complete",
         visibility_status="private",
         retryable=False,
@@ -297,6 +301,7 @@ def test_publishable_metadata_duration_fallback_and_signature_buckets(
     mapped = _to_library_job(job, tiktok_publication=publication)
     assert mapped.tiktok_publishable is True
     assert mapped.tiktok_publication is not None
+    assert mapped.tiktok_publication.delivery_mode == "direct_post"
     assert mapped.tiktok_publication.updated_at == publication_updated_at
 
 
@@ -398,6 +403,50 @@ async def test_webhook_signature_freshness_body_cap_and_access_log_redaction() -
     assert publication.processing_status == "complete"
     assert publication.visibility_status == "private"
     assert publication.next_poll_at is None
+
+    draft = TikTokPublication(
+        id=uuid.uuid4(),
+        delivery_mode="draft_upload",
+        processing_status="processing",
+        visibility_status="unknown",
+        privacy_level="TIKTOK_DRAFT",
+        tiktok_publish_id="draft-1",
+    )
+    result.scalar_one_or_none.return_value = draft
+    assert (
+        await _apply_webhook(
+            db,
+            {"event": "post.publish.inbox_delivered", "content": {"publish_id": "draft-1"}},
+        )
+        is None
+    )
+    assert draft.processing_status == "complete"
+    assert draft.visibility_status == "draft"
+    assert draft.next_poll_at is None
+    assert (
+        await _apply_webhook(
+            db,
+            {"event": "post.publish.complete", "content": {"publish_id": "draft-1"}},
+        )
+        is None
+    )
+    assert draft.processing_status == "complete"
+    assert draft.visibility_status == "unknown"
+
+    draft.visibility_status = "public"
+    await _apply_webhook(
+        db,
+        {"event": "post.publish.inbox_delivered", "content": {"publish_id": "draft-1"}},
+    )
+    assert draft.visibility_status == "public"
+
+    draft.visibility_status = "removed"
+    await _apply_webhook(
+        db,
+        {"event": "post.publish.complete", "content": {"publish_id": "draft-1"}},
+    )
+    assert draft.visibility_status == "removed"
+    result.scalar_one_or_none.return_value = publication
 
     publication.visibility_status = "removed"
     assert (
@@ -501,7 +550,7 @@ async def test_oauth_start_persists_the_safe_item_return_in_state() -> None:
         patch(
             "app.routes.tiktok.tiktok_client.authorization_url",
             return_value="https://tiktok.test/oauth",
-        ),
+        ) as authorization_url,
     ):
         response = await oauth_start(
             user,
@@ -514,6 +563,11 @@ async def test_oauth_start_persists_the_safe_item_return_in_state() -> None:
         "user_id": str(user.id),
         "return_to": "/plan/items/item-1?tiktok_preview=connected",
     }
+    assert authorization_url.call_args.args[1] == [
+        "user.info.basic",
+        "video.publish",
+        "video.upload",
+    ]
     redis.aclose.assert_awaited_once()
 
 
@@ -580,10 +634,126 @@ async def test_mutating_routes_fail_closed_before_external_side_effects() -> Non
 
     with (
         patch("app.routes.tiktok.settings.tiktok_publishing_enabled", True),
+        patch("app.routes.tiktok.settings.tiktok_draft_upload_enabled", True),
         patch("app.routes.tiktok.settings.tiktok_content_posting_audited", True),
     ):
         with pytest.raises(HTTPException, match="Music usage"):
             await create_publication(_body(music_usage_confirmed=False), user, db)
+        with pytest.raises(HTTPException, match="finish this draft inside TikTok"):
+            await create_publication(
+                _body(delivery_mode="draft_upload", draft_handoff_confirmed=False),
+                user,
+                db,
+            )
+
+    with (
+        patch("app.routes.tiktok.settings.tiktok_publishing_enabled", True),
+        patch("app.routes.tiktok.settings.tiktok_draft_upload_enabled", False),
+        patch("app.routes.tiktok.settings.tiktok_content_posting_audited", True),
+    ):
+        with pytest.raises(HTTPException, match="draft upload is not available"):
+            await create_publication(
+                _body(delivery_mode="draft_upload", draft_handoff_confirmed=True),
+                user,
+                db,
+            )
+
+
+@pytest.mark.asyncio
+async def test_draft_publication_requires_upload_scope_and_persists_only_handoff_fields() -> None:
+    user = MagicMock(id=uuid.uuid4())
+    job = _job()
+    body = _body(
+        job_id=job.id,
+        delivery_mode="draft_upload",
+        draft_handoff_confirmed=True,
+        title="must not leave Kria",
+        allow_comment=True,
+        allow_duet=True,
+        allow_stitch=True,
+        brand_content_toggle=True,
+        brand_organic_toggle=True,
+        is_aigc=True,
+    )
+    output = MagicMock(
+        source_revision=body.source_revision,
+        variant_id="song_text",
+        object_path="generative-jobs/job/output.mp4",
+        generation="42",
+        etag="etag",
+        edit_signature={"text_mode": "agent_text"},
+    )
+    token_row = MagicMock(scopes=["user.info.basic", "video.upload"], account_metadata={})
+    existing_result = MagicMock()
+    existing_result.scalar_one_or_none.return_value = None
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=existing_result)
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+
+    async def refresh(row: TikTokPublication) -> None:
+        now = datetime.now(UTC)
+        row.id = uuid.uuid4()
+        row.processing_status = "queued"
+        row.visibility_status = "unknown"
+        row.retryable = False
+        row.created_at = now
+        row.updated_at = now
+
+    db.refresh = AsyncMock(side_effect=refresh)
+    metadata = storage.ObjectMetadata(
+        path=output.object_path,
+        generation=output.generation,
+        etag=output.etag,
+        size=123,
+        content_type="video/mp4",
+    )
+    with (
+        patch("app.routes.tiktok._publishing_available", return_value=True),
+        patch("app.routes.tiktok.settings.tiktok_draft_upload_enabled", True),
+        patch("app.routes.tiktok._owned_job", new=AsyncMock(return_value=job)),
+        patch(
+            "app.routes.tiktok.active_access_token",
+            new=AsyncMock(return_value=(token_row, "access")),
+        ),
+        patch("app.routes.tiktok.resolve_publishable_output", return_value=output),
+        patch("app.routes.tiktok.storage.object_metadata", return_value=metadata),
+        patch("app.routes.tiktok.tiktok_client.creator_info") as creator_info,
+        patch("app.routes.tiktok._dispatch_publication") as dispatch,
+    ):
+        response = await create_publication(body, user, db)
+
+    row = db.add.call_args.args[0]
+    assert response.delivery_mode == "draft_upload"
+    assert row.delivery_mode == "draft_upload"
+    assert row.privacy_level == "TIKTOK_DRAFT"
+    assert row.title == ""
+    assert row.allow_comment is False
+    assert row.allow_duet is False
+    assert row.allow_stitch is False
+    assert row.brand_content_toggle is False
+    assert row.brand_organic_toggle is False
+    assert row.is_aigc is False
+    creator_info.assert_not_called()
+    dispatch.assert_called_once_with(row.id)
+
+    denied_db = MagicMock()
+    denied_result = MagicMock()
+    denied_result.scalar_one_or_none.return_value = None
+    denied_db.execute = AsyncMock(return_value=denied_result)
+    publish_only = MagicMock(scopes=["user.info.basic", "video.publish"])
+    with (
+        patch("app.routes.tiktok._publishing_available", return_value=True),
+        patch("app.routes.tiktok.settings.tiktok_draft_upload_enabled", True),
+        patch("app.routes.tiktok._owned_job", new=AsyncMock(return_value=job)),
+        patch(
+            "app.routes.tiktok.active_access_token",
+            new=AsyncMock(return_value=(publish_only, "access")),
+        ),
+        patch("app.routes.tiktok.resolve_publishable_output", return_value=output),
+    ):
+        with pytest.raises(HTTPException, match="video.upload"):
+            await create_publication(body, user, denied_db)
 
 
 def test_beta_post_settings_are_private_and_interactions_respect_creator_info() -> None:
@@ -644,6 +814,235 @@ def test_direct_post_pull_payload_does_not_send_file_upload_chunk_fields() -> No
     assert source_info == {"source": "PULL_FROM_URL", "video_url": "https://api/media"}
 
 
+def test_draft_upload_uses_creator_inbox_and_pull_from_url() -> None:
+    response = MagicMock()
+    response.is_error = False
+    response.json.return_value = {"data": {"publish_id": "draft-1"}, "error": {"code": "ok"}}
+    with patch("app.services.tiktok_client.httpx.request", return_value=response) as request:
+        assert (
+            tiktok_client.initialize_draft_upload(
+                "access",
+                media_url="https://api/media",
+            )
+            == "draft-1"
+        )
+    assert request.call_args.args[1].endswith("/v2/post/publish/inbox/video/init/")
+    assert request.call_args.kwargs["json"] == {
+        "source_info": {"source": "PULL_FROM_URL", "video_url": "https://api/media"}
+    }
+
+
+def test_user_info_requests_only_basic_scope_fields() -> None:
+    response = MagicMock()
+    response.is_error = False
+    response.json.return_value = {
+        "data": {"user": {"open_id": "open", "display_name": "Creator"}},
+        "error": {"code": "ok"},
+    }
+    with patch("app.services.tiktok_client.httpx.request", return_value=response) as request:
+        assert tiktok_client.user_info("access")["open_id"] == "open"
+    url = request.call_args.args[1]
+    assert url.endswith("fields=open_id,union_id,avatar_url,display_name")
+    assert "follower_count" not in url
+
+
+def _session_context(row: TikTokPublication, *, first: bool = False) -> MagicMock:
+    session = MagicMock()
+    session.get.return_value = row
+    result = MagicMock()
+    if first:
+        result.scalar_one_or_none.return_value = row
+    else:
+        result.scalar_one.return_value = row
+    session.execute.return_value = result
+    context = MagicMock()
+    context.__enter__.return_value = session
+    context.__exit__.return_value = False
+    return context
+
+
+def test_submit_worker_routes_draft_delivery_only_to_upload_api() -> None:
+    publication_id = uuid.uuid4()
+    row = TikTokPublication(
+        id=publication_id,
+        user_id=uuid.uuid4(),
+        delivery_mode="draft_upload",
+        processing_status="queued",
+        source_object_path="generative-jobs/job/output.mp4",
+        source_generation="42",
+        retryable=False,
+        retry_count=0,
+    )
+    contexts = iter(
+        [
+            _session_context(row, first=True),
+            _session_context(row),
+            _session_context(row),
+            _session_context(row),
+        ]
+    )
+    with (
+        patch("app.tasks.tiktok.sync_session", side_effect=lambda: next(contexts)),
+        patch("app.tasks.tiktok.settings.tiktok_draft_upload_enabled", True),
+        patch("app.tasks.tiktok.storage.copy_object_generation"),
+        patch("app.tasks.tiktok.secrets.token_urlsafe", return_value="media-token"),
+        patch(
+            "app.tasks.tiktok.active_access_token_sync",
+            return_value=(MagicMock(), "access"),
+        ),
+        patch(
+            "app.tasks.tiktok.tiktok_client.initialize_draft_upload",
+            return_value="draft-1",
+        ) as initialize_draft,
+        patch("app.tasks.tiktok.tiktok_client.initialize_direct_post") as initialize_direct,
+    ):
+        submit_tiktok_publication.run(str(publication_id))
+
+    initialize_draft.assert_called_once()
+    initialize_direct.assert_not_called()
+    assert row.tiktok_publish_id == "draft-1"
+    assert row.processing_status == "processing"
+    assert row.next_poll_at is not None
+
+
+def test_ambiguous_draft_transport_failure_never_redispatches() -> None:
+    publication_id = uuid.uuid4()
+    row = TikTokPublication(
+        id=publication_id,
+        user_id=uuid.uuid4(),
+        delivery_mode="draft_upload",
+        processing_status="queued",
+        source_object_path="generative-jobs/job/output.mp4",
+        source_generation="42",
+        retryable=False,
+        retry_count=0,
+    )
+    contexts = iter(
+        [
+            _session_context(row, first=True),
+            _session_context(row),
+            _session_context(row),
+            _session_context(row),
+        ]
+    )
+    ambiguous = tiktok_client.TikTokAPIError(
+        "submission_unknown",
+        "TikTok did not confirm whether it received the submission",
+        retryable=False,
+        ambiguous=True,
+    )
+    with (
+        patch("app.tasks.tiktok.sync_session", side_effect=lambda: next(contexts)),
+        patch("app.tasks.tiktok.settings.tiktok_draft_upload_enabled", True),
+        patch("app.tasks.tiktok.storage.copy_object_generation"),
+        patch("app.tasks.tiktok.secrets.token_urlsafe", return_value="media-token"),
+        patch(
+            "app.tasks.tiktok.active_access_token_sync",
+            return_value=(MagicMock(), "access"),
+        ),
+        patch(
+            "app.tasks.tiktok.tiktok_client.initialize_draft_upload",
+            side_effect=ambiguous,
+        ),
+        patch("app.tasks.tiktok._safe_dispatch") as redispatch,
+    ):
+        submit_tiktok_publication.run(str(publication_id))
+
+    assert row.processing_status == "submission_unknown"
+    assert row.retryable is False
+    assert row.next_poll_at is None
+    redispatch.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("status_payload", "expected_status", "expected_visibility", "failure_detail"),
+    [
+        ({"status": "SEND_TO_USER_INBOX"}, "complete", "draft", None),
+        ({"status": "PUBLISH_COMPLETE"}, "complete", "unknown", None),
+        (
+            {"status": "FAILED", "fail_reason": "duration_check_failed"},
+            "failed",
+            "unknown",
+            "TikTok could not receive this draft",
+        ),
+    ],
+)
+def test_draft_polling_reconciles_inbox_success_and_failure(
+    status_payload: dict[str, str],
+    expected_status: str,
+    expected_visibility: str,
+    failure_detail: str | None,
+) -> None:
+    publication_id = uuid.uuid4()
+    row = TikTokPublication(
+        id=publication_id,
+        user_id=uuid.uuid4(),
+        delivery_mode="draft_upload",
+        processing_status="processing",
+        visibility_status="unknown",
+        tiktok_publish_id="draft-1",
+        retry_count=0,
+    )
+    contexts = iter(
+        [
+            _session_context(row),
+            _session_context(row),
+            _session_context(row),
+        ]
+    )
+    with (
+        patch("app.tasks.tiktok.sync_session", side_effect=lambda: next(contexts)),
+        patch(
+            "app.tasks.tiktok.active_access_token_sync",
+            return_value=(MagicMock(), "access"),
+        ),
+        patch("app.tasks.tiktok.tiktok_client.fetch_publish_status", return_value=status_payload),
+    ):
+        _poll_one(publication_id)
+
+    assert row.processing_status == expected_status
+    assert row.visibility_status == expected_visibility
+    assert row.failure_detail == failure_detail
+    if expected_status == "complete":
+        assert row.next_poll_at is None
+
+
+def test_late_draft_poll_cannot_downgrade_public_visibility() -> None:
+    publication_id = uuid.uuid4()
+    row = TikTokPublication(
+        id=publication_id,
+        user_id=uuid.uuid4(),
+        delivery_mode="draft_upload",
+        processing_status="complete",
+        visibility_status="public",
+        tiktok_publish_id="draft-1",
+        retry_count=0,
+    )
+    contexts = iter(
+        [
+            _session_context(row),
+            _session_context(row),
+            _session_context(row),
+        ]
+    )
+    with (
+        patch("app.tasks.tiktok.sync_session", side_effect=lambda: next(contexts)),
+        patch(
+            "app.tasks.tiktok.active_access_token_sync",
+            return_value=(MagicMock(), "access"),
+        ),
+        patch(
+            "app.tasks.tiktok.tiktok_client.fetch_publish_status",
+            return_value={"status": "SEND_TO_USER_INBOX"},
+        ),
+    ):
+        _poll_one(publication_id)
+
+    assert row.processing_status == "complete"
+    assert row.visibility_status == "public"
+    assert row.next_poll_at is None
+
+
 def test_tiktok_client_rejects_invalid_success_and_maps_retryable_errors() -> None:
     invalid = MagicMock(is_error=False, status_code=200)
     invalid.json.return_value = {"data": {}}
@@ -694,6 +1093,23 @@ def test_tiktok_client_rejects_invalid_success_and_maps_retryable_errors() -> No
             )
     assert exc.value.retryable is False
     assert exc.value.ambiguous is True
+
+    for transport_error in (
+        httpx.ReadError("response ended early"),
+        httpx.RemoteProtocolError("server disconnected"),
+    ):
+        with patch(
+            "app.services.tiktok_client.httpx.request",
+            side_effect=transport_error,
+        ):
+            with pytest.raises(tiktok_client.TikTokAPIError) as exc:
+                tiktok_client.initialize_draft_upload(
+                    "access",
+                    media_url="https://api/media",
+                )
+        assert exc.value.retryable is False
+        assert exc.value.ambiguous is True
+        assert exc.value.code == "submission_unknown"
 
 
 def test_beta_user_id_setting_accepts_csv_json_and_empty_values() -> None:

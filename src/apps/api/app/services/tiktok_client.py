@@ -143,15 +143,35 @@ def initialize_direct_post(
     return str(publish_id)
 
 
+def initialize_draft_upload(access_token: str, *, media_url: str) -> str:
+    """Upload a video to TikTok's creator inbox for in-app completion."""
+    data = _json(
+        "POST",
+        "/v2/post/publish/inbox/video/init/",
+        access_token,
+        {
+            "source_info": {
+                "source": "PULL_FROM_URL",
+                "video_url": media_url,
+            }
+        },
+        ambiguous_timeout=True,
+    )
+    publish_id = data.get("publish_id")
+    if not publish_id:
+        raise TikTokAPIError("missing_publish_id", "TikTok did not return a publish id")
+    return str(publish_id)
+
+
 def fetch_publish_status(access_token: str, publish_id: str) -> dict[str, Any]:
     return _json("POST", "/v2/post/publish/status/fetch/", access_token, {"publish_id": publish_id})
 
 
 def user_info(access_token: str) -> dict[str, Any]:
-    fields = (
-        "open_id,union_id,avatar_url,display_name,bio_description,profile_deep_link,"
-        "is_verified,follower_count,following_count,likes_count,video_count"
-    )
+    # These are the fields authorized by user.info.basic. Profile, statistics,
+    # and video-list fields require scopes this integration deliberately does
+    # not request for app review.
+    fields = "open_id,union_id,avatar_url,display_name"
     return _json("GET", f"/v2/user/info/?fields={fields}", access_token).get("user", {})
 
 
@@ -207,6 +227,10 @@ def _json(
         raise TikTokAPIError(
             "network_timeout", "TikTok connection timed out", retryable=True
         ) from exc
+    except httpx.ConnectError as exc:
+        # The connection was never established, so no mutating request reached
+        # TikTok and a retry is safe.
+        raise TikTokAPIError("network_error", "TikTok is unavailable", retryable=True) from exc
     except httpx.TimeoutException as exc:
         raise TikTokAPIError(
             "submission_timeout" if ambiguous_timeout else "network_timeout",
@@ -219,7 +243,16 @@ def _json(
             ambiguous=ambiguous_timeout,
         ) from exc
     except httpx.HTTPError as exc:
-        raise TikTokAPIError("network_error", "TikTok is unavailable", retryable=True) from exc
+        raise TikTokAPIError(
+            "submission_unknown" if ambiguous_timeout else "network_error",
+            (
+                "TikTok did not confirm whether it received the submission"
+                if ambiguous_timeout
+                else "TikTok is unavailable"
+            ),
+            retryable=not ambiguous_timeout,
+            ambiguous=ambiguous_timeout,
+        ) from exc
     return _decode(response)
 
 

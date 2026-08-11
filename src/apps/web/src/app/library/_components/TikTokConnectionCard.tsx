@@ -27,7 +27,7 @@ export default function TikTokConnectionCard({ onConnection }: { onConnection?: 
 
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   if (!connection?.available) return null;
-  const missingScopes = ["video.publish", "user.info.basic", "video.list"].filter(
+  const missingScopes = ["user.info.basic", "video.publish", "video.upload"].filter(
     (scope) => !connection.granted_scopes.includes(scope),
   );
   const partialGrant = connection.connected && missingScopes.length > 0;
@@ -37,7 +37,7 @@ export default function TikTokConnectionCard({ onConnection }: { onConnection?: 
     try { await startTikTokOAuth(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not connect TikTok"); setBusy(false); }
   }
   async function disconnect() {
-    if (!window.confirm("Disconnect TikTok and remove synced TikTok performance data?")) return;
+    if (!window.confirm("Disconnect TikTok and erase the stored TikTok credentials?")) return;
     setBusy(true); setError(null);
     try { await disconnectTikTok(); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not disconnect TikTok"); }
     finally { setBusy(false); }
@@ -53,15 +53,15 @@ export default function TikTokConnectionCard({ onConnection }: { onConnection?: 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#71717a]">TikTok</p>
-          <p className="mt-1 font-display text-xl text-[#0c0c0e]">{connection.connected ? connection.account?.display_name || "Connected" : "Publish and learn"}</p>
+          <p className="mt-1 font-display text-xl text-[#0c0c0e]">{connection.connected ? connection.account?.display_name || "Connected" : "Publish with TikTok"}</p>
           <p className="mt-1 max-w-xl text-sm text-[#71717a]">
             {connection.connected
-              ? `${connection.learned_post_count} public Nova post${connection.learned_post_count === 1 ? "" : "s"} ready for performance learning.`
-              : "Connect your account to publish finalized videos and learn from public performance."}
+              ? "Post an approved edit now, or send it to TikTok to finish there."
+              : "Connect your account to post finalized videos or finish them in TikTok."}
           </p>
           {connection.connected && !connection.audited && <p className="mt-2 text-xs text-[#71717a]">Private beta: Direct Posts are Only you until TikTok approves public posting.</p>}
           {connection.status === "reconnect_required" && <p className="mt-2 text-xs text-red-700">TikTok access expired. Reconnect to continue.</p>}
-          {partialGrant && <p className="mt-2 text-xs text-[#71717a]">TikTok granted partial access. Reconnect to enable {missingScopes.includes("video.publish") ? "publishing" : "performance insights"}.</p>}
+          {partialGrant && <p className="mt-2 text-xs text-[#71717a]">TikTok granted partial access. Reconnect to enable {missingScopes.includes("video.publish") ? "Direct Post" : "draft handoff"}.</p>}
           {connection.last_synced_at && <p className="mt-2 text-xs text-[#a1a1aa]">Last synced {new Date(connection.last_synced_at).toLocaleString()}</p>}
           {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
         </div>

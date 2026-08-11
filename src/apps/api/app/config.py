@@ -682,6 +682,10 @@ class Settings(BaseSettings):
     tiktok_web_app_url: str = "http://localhost:3000/library"
     tiktok_media_base_url: str = "http://localhost:8000/tiktok/media"
     tiktok_publishing_enabled: bool = False
+    # Rollout guard for the distinct Upload API consent path. Keep this off
+    # during the code deploy, then enable it only after every worker runs the
+    # delivery-mode-aware task implementation.
+    tiktok_draft_upload_enabled: bool = False
     tiktok_content_posting_audited: bool = False
     tiktok_performance_sync_enabled: bool = False
     tiktok_publishing_beta_user_ids: list[str] = []

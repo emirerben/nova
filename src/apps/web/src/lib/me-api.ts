@@ -34,6 +34,8 @@ export interface LibraryJob {
     id: string;
     job_id: string;
     variant_id: string | null;
+    /** Optional while the Fly response shape rolls out ahead of Vercel. */
+    delivery_mode?: "direct_post" | "draft_upload";
     processing_status: string;
     visibility_status: string;
     retryable: boolean;

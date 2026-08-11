@@ -10,7 +10,7 @@ import secrets
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlencode, urlparse
 
 import redis.asyncio as redis_async
@@ -29,6 +29,10 @@ from app.config import settings
 from app.database import get_db
 from app.models import Job, OAuthToken, Persona, TikTokPublication
 from app.services import tiktok_client
+from app.services.tiktok_lifecycle import (
+    visibility_after_draft_inbox,
+    visibility_after_draft_post,
+)
 from app.services.tiktok_publishable import PublishableOutputError, resolve_publishable_output
 from app.services.tiktok_tokens import active_access_token
 from app.services.token_crypto import TokenCryptoError, decrypt_token, encrypt_token
@@ -41,13 +45,11 @@ _WEBHOOK_FRESHNESS_S = 300
 _MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
 _SCOPES = [
     "user.info.basic",
-    "user.info.profile",
-    "user.info.stats",
-    "video.list",
     "video.publish",
+    "video.upload",
 ]
 _ANALYTICS_SCOPES = {"user.info.basic", "video.list"}
-_CONSENT_VERSION = "2026-08-01"
+_CONSENT_VERSION = "2026-08-11"
 _MEDIA_VERIFICATION_FILENAME = "tiktok9a2bMaksajhuoYRL3P7tSex7MrV8z5lg.txt"
 _MEDIA_VERIFICATION_CONTENT = "tiktok-developers-site-verification=9a2bMaksajhuoYRL3P7tSex7MrV8z5lg"
 
@@ -97,6 +99,7 @@ class TikTokConnectionResponse(BaseModel):
     account: dict[str, Any] | None = None
     granted_scopes: list[str] = Field(default_factory=list)
     can_publish: bool = False
+    can_upload_draft: bool = False
     can_analyze: bool = False
     audited: bool = False
     beta: bool = False
@@ -126,6 +129,8 @@ class PublishOptionsResponse(BaseModel):
     suggested_title: str
     audited: bool
     consent_version: str
+    can_direct_post: bool
+    can_upload_draft: bool
 
 
 class CreatePublicationBody(BaseModel):
@@ -133,6 +138,7 @@ class CreatePublicationBody(BaseModel):
     variant_id: str | None = None
     source_revision: str = Field(min_length=32, max_length=128)
     idempotency_key: str = Field(min_length=8, max_length=128)
+    delivery_mode: Literal["direct_post", "draft_upload"] = "direct_post"
     title: str = Field(default="", max_length=2200)
     privacy_level: str = Field(min_length=1, max_length=80)
     allow_comment: bool = False
@@ -142,6 +148,7 @@ class CreatePublicationBody(BaseModel):
     brand_organic_toggle: bool = False
     is_aigc: bool = False
     music_usage_confirmed: bool
+    draft_handoff_confirmed: bool = False
     consent_version: str = _CONSENT_VERSION
 
 
@@ -149,6 +156,7 @@ class PublicationResponse(BaseModel):
     id: str
     job_id: str
     variant_id: str | None
+    delivery_mode: str
     title: str
     privacy_level: str
     allow_comment: bool
@@ -175,6 +183,7 @@ def _publication_response(row: TikTokPublication) -> PublicationResponse:
         id=str(row.id),
         job_id=str(row.job_id),
         variant_id=row.variant_id,
+        delivery_mode=row.delivery_mode or "direct_post",
         title=row.title,
         privacy_level=row.privacy_level,
         allow_comment=row.allow_comment,
@@ -221,6 +230,12 @@ async def connection(
         account=token.account_metadata if token else None,
         granted_scopes=sorted(scopes),
         can_publish=connected and _publishing_available(user.id) and "video.publish" in scopes,
+        can_upload_draft=(
+            connected
+            and _publishing_available(user.id)
+            and settings.tiktok_draft_upload_enabled
+            and "video.upload" in scopes
+        ),
         can_analyze=(
             connected
             and settings.tiktok_performance_sync_enabled
@@ -405,11 +420,18 @@ async def publish_options(
     try:
         output = await run_in_threadpool(resolve_publishable_output, job, variant_id)
         token_row, access_token = await active_access_token(db, user.id)
-        if "video.publish" not in set(token_row.scopes or []):
+        granted_scopes = set(token_row.scopes or [])
+        can_direct_post = "video.publish" in granted_scopes
+        can_upload_draft = settings.tiktok_draft_upload_enabled and "video.upload" in granted_scopes
+        if not (can_direct_post or can_upload_draft):
             raise HTTPException(
-                status_code=409, detail="Reconnect TikTok to grant publishing access"
+                status_code=409, detail="Reconnect TikTok to grant Content Posting access"
             )
-        creator = await run_in_threadpool(tiktok_client.creator_info, access_token)
+        creator = (
+            await run_in_threadpool(tiktok_client.creator_info, access_token)
+            if can_direct_post
+            else {}
+        )
     except PublishableOutputError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LookupError as exc:
@@ -438,6 +460,8 @@ async def publish_options(
         suggested_title=_suggested_title(job),
         audited=settings.tiktok_content_posting_audited,
         consent_version=_CONSENT_VERSION,
+        can_direct_post=can_direct_post,
+        can_upload_draft=can_upload_draft,
     )
 
 
@@ -451,6 +475,13 @@ async def create_publication(
         raise HTTPException(status_code=404, detail="TikTok publishing is not available")
     if not body.music_usage_confirmed:
         raise HTTPException(status_code=400, detail="Music usage confirmation is required")
+    if body.delivery_mode == "draft_upload" and not settings.tiktok_draft_upload_enabled:
+        raise HTTPException(status_code=404, detail="TikTok draft upload is not available")
+    if body.delivery_mode == "draft_upload" and not body.draft_handoff_confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirm that you will finish this draft inside TikTok",
+        )
     request_hash = hashlib.sha256(
         json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -477,11 +508,17 @@ async def create_publication(
     try:
         output = await run_in_threadpool(resolve_publishable_output, job, body.variant_id)
         token_row, access_token = await active_access_token(db, user.id)
-        if "video.publish" not in set(token_row.scopes or []):
+        required_scope = "video.upload" if body.delivery_mode == "draft_upload" else "video.publish"
+        if required_scope not in set(token_row.scopes or []):
             raise HTTPException(
-                status_code=409, detail="Reconnect TikTok to grant publishing access"
+                status_code=409,
+                detail=f"Reconnect TikTok to grant {required_scope} access",
             )
-        creator = await run_in_threadpool(tiktok_client.creator_info, access_token)
+        creator = (
+            {}
+            if body.delivery_mode == "draft_upload"
+            else await run_in_threadpool(tiktok_client.creator_info, access_token)
+        )
     except PublishableOutputError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LookupError as exc:
@@ -492,7 +529,8 @@ async def create_publication(
         raise HTTPException(
             status_code=409, detail="The video changed; review the latest render before publishing"
         )
-    _validate_post_settings(body, creator)
+    if body.delivery_mode == "direct_post":
+        _validate_post_settings(body, creator)
     if body.consent_version != _CONSENT_VERSION:
         raise HTTPException(
             status_code=409, detail="Review the latest TikTok consent before posting"
@@ -514,18 +552,21 @@ async def create_publication(
         variant_id=output.variant_id,
         idempotency_key=body.idempotency_key,
         request_hash=request_hash,
+        delivery_mode=body.delivery_mode,
         source_object_path=output.object_path,
         source_generation=output.generation,
         source_etag=output.etag,
         edit_signature=output.edit_signature,
-        title=body.title.strip(),
-        privacy_level=body.privacy_level,
-        allow_comment=body.allow_comment,
-        allow_duet=body.allow_duet,
-        allow_stitch=body.allow_stitch,
-        brand_content_toggle=body.brand_content_toggle,
-        brand_organic_toggle=body.brand_organic_toggle,
-        is_aigc=body.is_aigc,
+        title=("" if body.delivery_mode == "draft_upload" else body.title.strip()),
+        privacy_level=(
+            "TIKTOK_DRAFT" if body.delivery_mode == "draft_upload" else body.privacy_level
+        ),
+        allow_comment=body.delivery_mode == "direct_post" and body.allow_comment,
+        allow_duet=body.delivery_mode == "direct_post" and body.allow_duet,
+        allow_stitch=body.delivery_mode == "direct_post" and body.allow_stitch,
+        brand_content_toggle=(body.delivery_mode == "direct_post" and body.brand_content_toggle),
+        brand_organic_toggle=(body.delivery_mode == "direct_post" and body.brand_organic_toggle),
+        is_aigc=body.delivery_mode == "direct_post" and body.is_aigc,
         music_usage_confirmed=body.music_usage_confirmed,
         consent_version=body.consent_version,
         consented_at=datetime.now(UTC),
@@ -1021,9 +1062,25 @@ async def _apply_webhook(
         row.tiktok_post_id = post_id
     if row.visibility_status == "removed" and event == "post.publish.publicly_available":
         return None
-    if event in {"post.publish.complete", "post.publish.completed"}:
+    if event == "post.publish.inbox_delivered":
+        if (row.delivery_mode or "direct_post") != "draft_upload":
+            return None
+        visibility_status = visibility_after_draft_inbox(
+            row.visibility_status,
+            row.processing_status,
+        )
         row.processing_status = "complete"
-        if row.privacy_level == "SELF_ONLY" and row.visibility_status == "unknown":
+        row.visibility_status = visibility_status
+        row.next_poll_at = None
+    elif event in {"post.publish.complete", "post.publish.completed"}:
+        row.processing_status = "complete"
+        if (row.delivery_mode or "direct_post") == "draft_upload":
+            # Upload API completion means the creator continued from their
+            # inbox and posted in TikTok. Audience is chosen there, so do not
+            # invent a private/public visibility value.
+            row.visibility_status = visibility_after_draft_post(row.visibility_status)
+            row.next_poll_at = None
+        elif row.privacy_level == "SELF_ONLY" and row.visibility_status == "unknown":
             row.visibility_status = "private"
             row.next_poll_at = None
         elif row.visibility_status == "unknown":
@@ -1045,7 +1102,11 @@ async def _apply_webhook(
         reason = str(content.get("fail_reason") or "publish_failed")[:100]
         row.processing_status = "failed"
         row.failure_code = reason
-        row.failure_detail = "TikTok could not publish this video"
+        row.failure_detail = (
+            "TikTok could not receive this draft"
+            if (row.delivery_mode or "direct_post") == "draft_upload"
+            else "TikTok could not publish this video"
+        )
         row.retryable = reason in {"internal", "video_pull_failed"} and row.retry_count < 3
         if row.retryable:
             row.retry_count += 1

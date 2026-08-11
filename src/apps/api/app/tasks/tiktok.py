@@ -25,6 +25,10 @@ from app.config import settings
 from app.database import sync_session
 from app.models import OAuthToken, Persona, TikTokPublication
 from app.services import tiktok_client
+from app.services.tiktok_lifecycle import (
+    visibility_after_draft_inbox,
+    visibility_after_draft_post,
+)
 from app.services.tiktok_tokens import active_access_token_sync
 from app.worker import celery_app
 
@@ -58,6 +62,16 @@ def submit_tiktok_publication(self, publication_id: str) -> None:  # noqa: ANN00
         if row.processing_status == "failed" and not _can_submit_failed(
             row.retryable, row.retry_count
         ):
+            return
+        if (row.delivery_mode or "direct_post") == "draft_upload" and not (
+            settings.tiktok_draft_upload_enabled
+        ):
+            row.processing_status = "failed"
+            row.failure_code = "draft_upload_disabled"
+            row.failure_detail = "TikTok draft upload is temporarily unavailable"
+            row.retryable = False
+            row.next_poll_at = None
+            session.commit()
             return
         row.processing_status = "snapshotting"
         row.next_poll_at = None
@@ -99,17 +113,24 @@ def submit_tiktok_publication(self, publication_id: str) -> None:  # noqa: ANN00
         row.processing_status = "submitting"
         session.commit()
         user_id = row.user_id
-        post_info = _post_info(row)
+        delivery_mode = row.delivery_mode or "direct_post"
+        post_info = _post_info(row) if delivery_mode == "direct_post" else None
 
     media_url = f"{settings.tiktok_media_base_url.rstrip('/')}/{publication_id}/{media_token}.mp4"
     try:
         with sync_session() as session:
             _, access_token = active_access_token_sync(session, user_id)
-        publish_id = tiktok_client.initialize_direct_post(
-            access_token,
-            post_info=post_info,
-            media_url=media_url,
-        )
+        if delivery_mode == "draft_upload":
+            publish_id = tiktok_client.initialize_draft_upload(
+                access_token,
+                media_url=media_url,
+            )
+        else:
+            publish_id = tiktok_client.initialize_direct_post(
+                access_token,
+                post_info=post_info or {},
+                media_url=media_url,
+            )
     except tiktok_client.TikTokAPIError as exc:
         if exc.ambiguous:
             _mark_unknown(publication_uuid)
@@ -303,9 +324,23 @@ def _poll_one(publication_id: uuid.UUID) -> None:
             row.tiktok_post_id = str(post_ids[0])
             row.visibility_status = "public"
             row.public_at = row.public_at or datetime.now(UTC)
-        if status_value == "PUBLISH_COMPLETE":
+        if (
+            status_value == "SEND_TO_USER_INBOX"
+            and (row.delivery_mode or "direct_post") == "draft_upload"
+        ):
+            visibility_status = visibility_after_draft_inbox(
+                row.visibility_status,
+                row.processing_status,
+            )
             row.processing_status = "complete"
-            if row.visibility_status == "public":
+            row.visibility_status = visibility_status
+            row.next_poll_at = None
+        elif status_value == "PUBLISH_COMPLETE":
+            row.processing_status = "complete"
+            if (row.delivery_mode or "direct_post") == "draft_upload":
+                row.visibility_status = visibility_after_draft_post(row.visibility_status)
+                row.next_poll_at = None
+            elif row.visibility_status == "public":
                 row.next_poll_at = None
             elif row.privacy_level == "SELF_ONLY":
                 row.visibility_status = "private"
@@ -323,7 +358,11 @@ def _poll_one(publication_id: uuid.UUID) -> None:
             reason = str(payload.get("fail_reason") or "publish_failed")
             row.processing_status = "failed"
             row.failure_code = reason[:100]
-            row.failure_detail = "TikTok could not publish this video"
+            row.failure_detail = (
+                "TikTok could not receive this draft"
+                if (row.delivery_mode or "direct_post") == "draft_upload"
+                else "TikTok could not publish this video"
+            )
             row.retryable = (
                 reason in {"internal", "video_pull_failed"} and row.retry_count < _MAX_RETRIES
             )
@@ -782,7 +821,7 @@ def _mark_unknown(publication_id: uuid.UUID) -> None:
             row.processing_status = "submission_unknown"
             row.failure_code = "submission_timeout"
             row.failure_detail = (
-                "TikTok may have received this post. Check TikTok before trying again."
+                "TikTok may have received this delivery. Check TikTok before trying again."
             )
             row.retryable = False
             row.next_poll_at = None
@@ -810,7 +849,9 @@ def _recover_stale_publication(row: TikTokPublication, now: datetime) -> bool:
     if row.processing_status == "submitting":
         row.processing_status = "submission_unknown"
         row.failure_code = "submission_worker_lost"
-        row.failure_detail = "TikTok may have received this post. Check TikTok before trying again."
+        row.failure_detail = (
+            "TikTok may have received this delivery. Check TikTok before trying again."
+        )
         row.retryable = False
         row.next_poll_at = None
         return False
