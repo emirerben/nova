@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.1.0] — 2026-08-11
+
+### Added
+- **Owner-safe Nova steps projection on the generative status route (dark).** `app/services/nova_steps.py` projects allowlisted `pipeline_trace` events, `phase_log`, and `AgentRun` milestones (name/outcome/latency only — never `input_json`/`output_json`/raw text) into a Nova-voiced `NovaStep` feed, with an allowlist plus a second key-substring sanitizer defense so overlay/caption text, prompts, URLs, and paths can never reach a user-facing label. Exposed as `steps` on `GenerativeJobStatusResponse` behind `NOVA_STEPS_FEED_ENABLED` (default `false`); flag off leaves `steps` `None`, byte-identical to today's response. First PR of the Nova AI tool-chip activity feed train — backend only, ships dark; frontend lands after the Paper design gate.
+
 ## [0.25.0.2] — 2026-08-11
 
 ### Fixed
