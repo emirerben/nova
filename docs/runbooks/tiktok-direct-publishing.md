@@ -1,287 +1,191 @@
-# TikTok direct publishing rollout
+# TikTok Content Posting review and rollout
 
-Nova can connect a creator's TikTok account, publish the exact finalized video
-they approved, reconcile TikTok processing and visibility, and sync official
-public metrics. Every backend capability ships off by default. Public posting
-is a release gate, not a configuration shortcut: keep unaudited users on
-`SELF_ONLY` until TikTok approves Nova for audited Direct Post access.
+Kria connects a creator's TikTok account and sends the exact finalized video
+they approved by either of TikTok's Content Posting paths:
 
-## What ships
+- **Post now** uses Direct Post (`video.publish`). Until TikTok grants audited
+  access, the API and UI allow only `SELF_ONLY`.
+- **Finish in TikTok** uses Upload API (`video.upload`). TikTok creates an inbox
+  notification; the creator opens TikTok and finishes the draft there. Kria
+  never describes a successful upload as a published post.
 
-- OAuth through TikTok Login Kit with one-use, 10-minute state values.
-- Item-aware OAuth return paths so a creator who connects or reconnects from a
-  finished video lands back on that exact release desk.
-- Direct Post from an immutable GCS snapshot of an owned, generation-checked
-  Nova render.
-- A release-first item-page desk and full-screen Details → Confirm workspace for
-  caption, privacy, interactions, disclosures, and music confirmation.
-- Signed webhook reconciliation with rate-limited polling as a fallback.
-- Item-page receipts and Library status for processing, moderation/visibility,
-  publication history, and public metrics.
-- Official account and latest-30-video sync every 12 hours.
-- Low-confidence edit correlations from age-aligned, linked Nova posts. These
-  associations never override a user-edited style.
+Both paths use the same immutable GCS snapshot, generation check, lifecycle
+receipt, and creator music-rights confirmation.
 
-Nova deliberately does not support scheduling, draft upload, photo posts,
-comment management, TikTok metadata edits/deletes, or watch-time and audience
-demographics in this release.
+## Review configuration: exact products and scopes
 
-## API reference
+The August 2026 resubmission must contain only these products:
 
-Browser calls go through the authenticated Next.js plan proxy. TikTok calls the
+1. Login Kit
+2. Content Posting API
+
+The OAuth request and the TikTok Developer Portal must show exactly:
+
+| Scope | Why Kria needs it | What the review video must show |
+| --- | --- | --- |
+| `user.info.basic` | Identify the connected TikTok account | Login Kit consent and the connected nickname in Kria |
+| `video.publish` | Submit the approved render as a Direct Post | Post now → Only you → processing receipt → private TikTok post |
+| `video.upload` | Send the approved render to TikTok for creator completion | Finish in TikTok → inbox notification → open TikTok draft composer |
+
+Content Posting API automatically adds both content scopes in TikTok's portal,
+so both must be implemented and recorded. Do **not** add `user.info.profile`,
+`user.info.stats`, or `video.list` to this review. Performance sync remains
+disabled and is deferred to a separate future review.
+
+The backend scope list is pinned in `app/routes/tiktok.py`; its OAuth test must
+assert this exact three-scope set.
+
+## Sandbox checklist
+
+TikTok requires the first review to be demonstrated in a sandbox. Before
+recording, open the sandbox named **Kria Review Demo** and verify:
+
+- Sandbox ID: `7669267012891740181`
+- Target user: `emirerben`
+- Products: Login Kit and Content Posting API only
+- Direct Post switch: enabled
+- Scopes: only `user.info.basic`, `video.publish`, `video.upload`
+- Website URL: `https://www.usekria.com/tiktok`
+- Redirect URI: `https://nova-video.fly.dev/tiktok/oauth/callback`
+
+Remove the sandbox's manually selected `user.info.profile`,
+`user.info.stats`, and `video.list` scopes. Do not select Webhooks as a
+standalone product for this review. Kria's signed lifecycle endpoint can remain
+implemented without expanding the products shown in the review. Never select a
+product merely because code exists for a future rollout.
+
+The deployed API and the account used in the recording must be configured with
+the **sandbox** client key and secret. Do not reveal either credential in the
+recording or paste it into logs.
+
+## Reviewer-facing Website URL
+
+Use `https://www.usekria.com/tiktok`. It is public and does not require a Kria
+login. It demonstrates account connection plus both selected Content Posting
+scopes and links to the live product, Terms, and Privacy Policy. It contains no
+profile analytics or video-list claims.
+
+Suggested Apply Reason (under TikTok's character limit):
+
+```text
+We aligned the integration and review materials with the exact sandbox scope set. Kria now requests only user.info.basic, video.publish, and video.upload. The public reviewer workspace at https://www.usekria.com/tiktok demonstrates both Content Posting paths: (1) a creator-confirmed Direct Post restricted to “Only you” during unaudited review, and (2) Upload API handoff, where TikTok creates an inbox notification and the creator must finish the draft inside TikTok. We removed the unused profile, statistics, and video-list scopes and all analytics claims. The attached video starts in the Kria Review Demo sandbox, shows the target user and exact scopes, completes Login Kit consent, then demonstrates both paths end to end, including the private TikTok result and TikTok inbox/draft composer. No public post is created during review.
+```
+
+## Required review video — one continuous recording
+
+Record a new video after the sandbox settings and deployed build are live. Do
+not reuse `kria-tiktok-demo-final.mov`; it documents the rejected scope set.
+
+1. Open TikTok Developer Portal → **Kria Review Demo** sandbox.
+2. Show the sandbox name/ID, target user, selected products, Direct Post switch,
+   and the exact three scopes. Keep secrets hidden.
+3. Open `https://www.usekria.com/tiktok` and briefly show both delivery choices.
+4. Open the live Kria product, sign in, and connect TikTok through Login Kit.
+5. Show the TikTok consent screen containing the three requested permissions,
+   approve it with the sandbox target user, and show the connected nickname.
+6. Choose a finalized Kria video and select **Post now**.
+7. Show the exact preview, choose **Only you**, confirm music rights, review the
+   summary, submit, wait for processing, and open the resulting private post in
+   TikTok. Keep the account and video consistent throughout.
+8. Return to the same finalized video and select **Finish in TikTok**.
+9. Show the handoff explanation, confirm that the creator must continue in
+   TikTok, send the video, and wait for the Kria draft receipt.
+10. Open TikTok, show the inbox notification, enter the draft composer, and
+    stop before publishing. Explicitly narrate that Kria uploaded a draft and
+    the creator retains final control.
+
+Narrate each permission by name and point to the matching visible behavior.
+Avoid cuts that make the sandbox account, selected video, or result ambiguous.
+Keep browser tabs, system notifications, and secrets outside the capture area.
+
+## Submission gate
+
+Do not click **Submit for Review** until every item below is true:
+
+- Portal products/scopes match the table exactly.
+- Sandbox target user can complete OAuth.
+- Deployed Kria uses sandbox credentials for the recording.
+- Direct Post produces a private result and a terminal Kria receipt.
+- Draft upload creates the TikTok inbox notification and opens in TikTok's
+  composer without Kria claiming it was published.
+- The new video visibly demonstrates all three scopes and both products.
+- Website URL and Apply Reason match this runbook.
+- Automated checks listed below pass.
+
+The final Submit for Review action is manual and requires explicit confirmation
+from the account owner after watching the uploaded video once from the portal.
+
+## Runtime configuration
+
+Store these values only in the API/worker secret store:
+
+```text
+TOKEN_ENCRYPTION_KEY=<fernet-key>
+TIKTOK_CLIENT_KEY=<sandbox-client-key-for-review>
+TIKTOK_CLIENT_SECRET=<sandbox-client-secret-for-review>
+TIKTOK_REDIRECT_URI=https://nova-video.fly.dev/tiktok/oauth/callback
+TIKTOK_WEB_APP_URL=https://www.usekria.com/library
+TIKTOK_MEDIA_BASE_URL=https://nova-video.fly.dev/tiktok/media
+TIKTOK_PUBLISHING_ENABLED=true
+TIKTOK_DRAFT_UPLOAD_ENABLED=true
+TIKTOK_CONTENT_POSTING_AUDITED=false
+TIKTOK_PERFORMANCE_SYNC_ENABLED=false
+TIKTOK_PUBLISHING_BETA_USER_IDS=<review-user-nova-uuid>
+```
+
+`TIKTOK_CONTENT_POSTING_AUDITED=false` is mandatory during review: it makes the
+backend reject every Direct Post privacy value except `SELF_ONLY`, regardless
+of creator-info options. `TIKTOK_PERFORMANCE_SYNC_ENABLED=false` must remain off
+because this review does not request `video.list` or statistics scopes.
+
+Deploy with `TIKTOK_DRAFT_UPLOAD_ENABLED=false` first. After the API and every
+worker are running this release, set it to `true` and restart both process
+groups. This prevents an old worker in a rolling deploy from interpreting a
+new draft-only consent record as a Direct Post.
+
+## API surface
+
+Browser calls use the authenticated Next.js plan proxy. TikTok calls the
 callback, webhook, and media URLs directly on FastAPI.
 
 | Method | FastAPI path | Purpose |
 | --- | --- | --- |
-| `GET` | `/tiktok/connection` | Connection metadata, scopes, rollout state, and separate publish/analyze capabilities |
-| `POST` | `/tiktok/oauth/start` | Create one-use OAuth state, optionally preserving a safe `/library` or `/plan/items/...` `return_to`, and return TikTok's authorization URL |
-| `GET` | `/tiktok/oauth/callback` | Consume state, exchange credentials, and return to the preserved item release desk or Library fallback |
-| `DELETE` | `/tiktok/connection` | Revoke best-effort, erase credentials, and start account-data cleanup |
-| `GET` | `/tiktok/publish-options?job_id=&variant_id=` | Resolve the owned final render and fetch fresh creator capabilities |
-| `POST` | `/tiktok/publications` | Create an idempotent publication from an approved `source_revision` |
-| `GET` | `/tiktok/publications?job_id=&variant_id=` | Return the user's 100 most recent publication records, optionally filtered to one job or variant |
-| `GET` | `/tiktok/publications/receipt?job_id=&variant_id=` | Return the newest owned receipt for a job or variant, or `null` when it has never been submitted |
-| `GET` | `/tiktok/publications/{publication_id}` | Read one owned publication's lifecycle and metrics |
-| `POST` | `/tiktok/sync` | Queue a rate-limited official metrics sync |
-| `GET`, `HEAD` | `/tiktok/media/{publication_id}/{token}.mp4` | Serve the immutable snapshot to TikTok, including one byte range |
-| `POST` | `/tiktok/webhook` | Verify and reconcile TikTok lifecycle or deauthorization events |
+| `GET` | `/tiktok/connection` | Account, granted scopes, and direct/draft capabilities |
+| `POST` | `/tiktok/oauth/start` | One-use OAuth state and TikTok authorization URL |
+| `GET` | `/tiktok/oauth/callback` | Exchange credentials and return to the originating Kria surface |
+| `DELETE` | `/tiktok/connection` | Revoke best-effort and erase credentials |
+| `GET` | `/tiktok/publish-options` | Resolve the exact render and fresh creator capabilities |
+| `POST` | `/tiktok/publications` | Create an idempotent direct or draft delivery |
+| `GET` | `/tiktok/publications` | List the creator's recent delivery records, optionally filtered to one render |
+| `GET` | `/tiktok/publications/receipt` | Read the newest receipt for one render, or `null` before its first delivery |
+| `GET` | `/tiktok/publications/{id}` | Read delivery lifecycle |
+| `POST` | `/tiktok/sync` | Queue official metrics sync; disabled for this review because it requires deferred analytics scopes |
+| `GET`, `HEAD` | `/tiktok/media/{id}/{token}.mp4` | Serve the immutable snapshot to TikTok |
+| `POST` | `/tiktok/webhook` | Verify and reconcile TikTok lifecycle events |
 
-Every user-owned endpoint enforces Nova authentication and ownership. Media
-access uses the short-lived opaque token in its URL; webhook access uses
-TikTok's timestamped signature. Never log either value or a full webhook body.
+Direct Post uses TikTok's `/v2/post/publish/video/init/` endpoint with
+`PULL_FROM_URL`. Draft handoff uses `/v2/post/publish/inbox/video/init/` with
+the same source mode. A draft completion is stored as visibility `draft`, not
+`private` or `public`.
 
-## External release gates
+An ambiguous submission timeout becomes `submission_unknown` and is never
+automatically retried because retrying could duplicate a delivery. The creator
+must inspect TikTok before starting another attempt.
 
-Complete these in TikTok's developer console before enabling a beta user:
+## Verification
 
-1. Configure Login Kit and the Display API scopes used by Nova:
-   `user.info.basic`, `user.info.profile`, `user.info.stats`, and `video.list`.
-2. Configure Content Posting API / Direct Post and request `video.publish`.
-3. Register the exact static callback:
-   `https://<api-domain>/tiktok/oauth/callback`.
-4. Register the signed webhook endpoint:
-   `https://<api-domain>/tiktok/webhook`.
-5. Verify the API domain and the media URL prefix:
-   `https://<api-domain>/tiktok/media`.
-6. Complete TikTok's Content Posting audit before allowing public privacy
-   options. Until approval, Nova exposes only `SELF_ONLY`.
-
-The API domain must be owned and verifiable by TikTok. The media endpoint
-streams bytes directly from GCS and cannot sit behind a redirecting URL. If the
-current Fly hostname cannot satisfy TikTok's verification, provision an owned
-custom API domain before enabling publishing.
-
-### Reviewer-facing Website URL
-
-Use `https://www.usekria.com/tiktok` for TikTok's **Website URL** field. It is a
-public, substantive product workspace rather than Kria's marketing homepage or
-Google-gated Library. A reviewer can inspect a real Kria output, exercise the
-exact-preview consent flow, see private publication reconciliation, understand
-official metrics and learning thresholds, and reach the Terms, Privacy Policy,
-and live product without receiving credentials to a creator account.
-
-Suggested Apply Reason text for this resubmission:
-
-```text
-We updated the Website URL to https://www.usekria.com/tiktok.
-
-This URL is a fully developed, public product workspace and does not require a
-login. It lets reviewers inspect a real Kria video, complete the interactive
-Direct Post approval flow, review the processing and visibility lifecycle, and
-see how official TikTok metrics inform bounded performance learning. The page
-also links to Kria's live product, Terms of Service, and Privacy Policy.
-
-The interactive submission on this public page is explicitly demo-only and
-does not create a TikTok post. The separately uploaded review video shows the
-complete live account connection and Direct Post flow. Until Content Posting
-audit approval, live Direct Posts remain limited to “Only you”.
-```
-
-## Required configuration
-
-Generate a Fernet key once and store it with the API and worker secrets:
-
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-Set the following values in the production secret store. Do not commit their
-values or paste them into logs:
-
-```text
-TOKEN_ENCRYPTION_KEY=<generated-fernet-key>
-TIKTOK_CLIENT_KEY=<tiktok-client-key>
-TIKTOK_CLIENT_SECRET=<tiktok-client-secret>
-TIKTOK_REDIRECT_URI=https://<api-domain>/tiktok/oauth/callback
-TIKTOK_WEB_APP_URL=https://<web-domain>/library
-TIKTOK_MEDIA_BASE_URL=https://<api-domain>/tiktok/media
-TIKTOK_PUBLISHING_ENABLED=false
-TIKTOK_CONTENT_POSTING_AUDITED=false
-TIKTOK_PERFORMANCE_SYNC_ENABLED=false
-TIKTOK_PUBLISHING_BETA_USER_IDS=<comma-separated-or-json-user-uuids>
-```
-
-`TIKTOK_WEB_APP_URL` supplies the trusted web origin and should use the
-`/library` fallback path on an origin already present in `ALLOWED_ORIGINS`.
-The callback ignores any untrusted destination supplied by the browser: only
-relative `/library` and `/plan/items/...` return paths are preserved, external
-origins and path traversal are rejected, and the safe fallback is Library.
-
-`TOKEN_ENCRYPTION_KEY` and the TikTok client credentials are mandatory for a
-working connection. Token encryption fails closed when the key is missing or
-invalid. Rotate this key only with a credential migration or by disconnecting
-and reconnecting every TikTok account; replacing it in place makes stored
-tokens unreadable.
-
-## Rollout order
-
-The frontend has no `NEXT_PUBLIC` copy of these flags. It derives availability
-and partial-scope capabilities from `GET /tiktok/connection`.
-
-### 1. OAuth-only beta
-
-- Keep all three capability flags `false`.
-- Add test users' Nova UUIDs to `TIKTOK_PUBLISHING_BETA_USER_IDS`.
-- Deploy API and worker, then connect from the Library or a finished video's
-  release desk. Confirm the OAuth callback returns to the surface that started
-  the connection.
-- Confirm the connected nickname and granted scopes. A partial grant is valid:
-  the UI prompts for reconnection only for the missing capability.
-
-### 2. Private Direct Post beta
-
-- Keep `TIKTOK_CONTENT_POSTING_AUDITED=false`.
-- Set `TIKTOK_PUBLISHING_ENABLED=true`.
-- Keep the beta UUID allowlist narrow.
-- Publish a finalized plan-item variant and confirm the TikTok media pull,
-  processing state, and final private visibility in the Library.
-
-With the audited flag off, the API rejects every privacy value except
-`SELF_ONLY`, even if TikTok's creator-info response lists public options.
-
-### 3. Performance sync
-
-- Confirm the connection granted `user.info.basic` and `video.list`.
-- Set `TIKTOK_PERFORMANCE_SYNC_ENABLED=true`.
-- Use the Library's manual sync once, then confirm `last_synced_at` and public
-  video metrics. Manual sync is limited to one request per user per five
-  minutes; scheduled sync becomes due every 12 hours.
-
-### 4. Audited posting
-
-Only after TikTok confirms the Content Posting audit:
-
-- Set `TIKTOK_CONTENT_POSTING_AUDITED=true`.
-- Keep `TIKTOK_PUBLISHING_ENABLED=true`.
-- Verify fresh creator-info responses expose the expected privacy and
-  interaction capabilities before broadening access.
-
-The audited flag makes publishing available beyond the beta allowlist. Treat
-that change as the broad-launch switch.
-
-## Publishing lifecycle
-
-The user previews a finalized render first. The item page keeps that preview,
-the connected TikTok profile, caption, and primary Publish action together.
-Publish opens a full-screen two-step workspace: Details collects caption,
-privacy, interactions, commercial-content and AIGC declarations, plus music
-confirmation; Confirm shows the exact submission summary before the API call.
-
-Nova returns an opaque `source_revision` and reads fresh creator capabilities.
-On submission it rechecks the source object's GCS generation and ETag. A
-changed render returns `409` and must be previewed again. Submission errors keep
-the creator's entered details so retrying does not restart the form.
-
-Accepted publications return `202`. The worker copies the approved generation
-to `tiktok-publish/<publication-id>.mp4`, mints a two-hour media token, and lets
-TikTok pull it with `GET`, `HEAD`, or one byte range. The API never redirects or
-buffers the complete video in memory.
-
-Processing and visibility are separate:
-
-- Processing: `queued`, `snapshotting`, `submitting`, `processing`, `complete`,
-  `submission_unknown`, or `failed`.
-- Visibility: `unknown`, `private`, `public`, or `removed`.
-
-`PUBLISH_COMPLETE` means TikTok finished ingestion; it does not prove a post is
-public. Live metrics are stored when TikTok's authorized video list returns a
-linked post; the learning snapshot remains strictly gated on confirmed public
-visibility and maturity.
-
-Nova retries only definite transient errors and validated media-pull failures,
-at most three times. An ambiguous submission timeout becomes
-`submission_unknown` and is never retried automatically because a retry could
-create a duplicate TikTok post. The creator must check TikTok before starting a
-new publication.
-
-## Metrics and bounded learning
-
-The scheduled sync stores official account totals and the latest 30 authorized
-videos. Live views, likes, comments, and shares update the Library. Nova freezes
-one evaluation snapshot on the first sync 72–84 hours after a linked post became
-public so comparisons use similar post ages.
-
-Generic profile analysis needs at least five videos and a changed input
-fingerprint. Nova-specific associations additionally need five currently public,
-mature, linked Nova posts, at least three examples in each compared bucket, and
-variation across two supported buckets. Output includes sample size, time window,
-provenance, and low-confidence wording. Weak or conflicting support produces no
-recommendation. Automatic style derivation runs at most weekly for a changed
-mature-post fingerprint; user-edited style always wins.
-
-## Disconnect, deauthorization, and retention
-
-Disconnect and TikTok deauthorization erase encrypted credentials immediately,
-stop new refresh/sync work, invalidate media tokens, and cancel work that has not
-been submitted. Connected-account metrics and automatic analysis are removed,
-while user-edited style remains intact.
-
-- Unsubmitted snapshots are deleted during cleanup.
-- Submitted snapshots become cleanup-eligible after the publication row has
-  been unchanged in a terminal state for 24 hours. Metric updates can move that
-  clock; the seven-day absolute limit is the hard deletion backstop.
-- Revoked-account publication data is minimized asynchronously within 24 hours.
-- Minimal publication and consent audit rows remain for 30 days; cleanup then
-  clears TikTok identifiers and residual account metadata.
-
-The Celery beat polls due publications every minute, schedules account syncs
-every 15 minutes, and runs snapshot/audit cleanup daily. Database recovery sweeps
-make broker dispatch best-effort rather than a durability boundary.
-
-## Verification checklist
-
-- `GET /tiktok/connection` reports the expected beta, audit, scopes, and
-  `can_publish` / `can_analyze` values.
-- OAuth denial, expired state, replay, and duplicate-account connection fail
-  without exposing codes or tokens.
-- OAuth started from an item returns to that exact relative item path and query
-  on success or recoverable error; external, traversal, malformed, and oversized
-  destinations fall back to the allowlisted Library.
-- Publish options show the exact variant and a fresh source revision.
-- The receipt endpoint returns only the signed-in user's newest matching job or
-  variant publication, while the history endpoint applies the same filters.
-- Changing the render after preview produces `409`.
-- TikTok can issue `HEAD` and final-byte range requests without a redirect.
-- Signed webhook duplicates are harmless and stale or replayed signatures fail.
-- A private beta post reaches `complete` + `private`; it never becomes eligible
-  for a learning snapshot.
-- A public audited post reaches `complete` + `public`, receives metrics, and can
-  freeze one mature evaluation snapshot in the 72–84-hour window.
-- Disconnect clears credentials immediately and cleanup removes snapshots and
-  derived account data on schedule.
-
-For code-level verification, run:
+Run:
 
 ```bash
 cd src/apps/api
-pytest tests/test_tiktok_direct_publishing.py tests/routes/test_me_jobs.py -q
+pytest tests/test_tiktok_direct_publishing.py -q
+ruff check app/routes/tiktok.py app/services/tiktok_client.py app/tasks/tiktok.py tests/test_tiktok_direct_publishing.py
 
 cd ../web
-npm test -- --runInBand src/__tests__/tiktok src/__tests__/lib/tiktok-api.test.ts
+npx tsc --noEmit
+npm test -- --runInBand src/__tests__/tiktok src/__tests__/lib/tiktok-api.test.ts src/__tests__/tiktok-product-workspace.test.tsx
 ```
 
-CI and local testing use mocked TikTok responses. In non-production localhost,
-open a finished item with `?tiktok_preview=connected` to exercise the connected
-profile, Details, Confirm, and receipt flow without calling TikTok. Local preview
-publication IDs never enter the real publication polling loop. A live TikTok
-account remains a release-environment check, not a CI dependency.
+The automated suite mocks TikTok. The sandbox recording is the required final
+integration check and must exercise TikTok's actual consent, Direct Post,
+inbox notification, and draft composer.

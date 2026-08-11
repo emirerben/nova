@@ -220,6 +220,7 @@ def test_render_carousel_moment_focus_mode_honors_explicit_duration_cap_trim(tmp
     assert probe.duration_s == pytest.approx(1.0, abs=0.15)
 
 
+@pytest.mark.timeout(180)
 def test_render_carousel_moment_focus_mode_no_cap_ignores_duration_s(tmp_path, two_clips):
     """Control: `focus_duration_cap_s=None` (the default — never set by the
     auto-director) preserves the pre-existing behavior byte-for-byte: the

@@ -71,6 +71,8 @@ it("posts publication consent as JSON", async () => {
   global.fetch = fetchMock as typeof fetch;
   await createTikTokPublication({
     job_id: "job-1",
+    delivery_mode: "direct_post",
+    draft_handoff_confirmed: false,
     source_revision: "a".repeat(64),
     idempotency_key: "idem-12345",
     title: "caption",
@@ -82,7 +84,7 @@ it("posts publication consent as JSON", async () => {
     brand_organic_toggle: false,
     is_aigc: false,
     music_usage_confirmed: true,
-    consent_version: "2026-08-01",
+    consent_version: "2026-08-11",
   });
   const [, init] = fetchMock.mock.calls[0];
   expect(init.method).toBe("POST");
@@ -128,7 +130,13 @@ it("stops polling completed private publications", () => {
   };
 
   expect(shouldPollTikTokPublication(publication)).toBe(false);
+  expect(shouldPollTikTokPublication({ ...publication, visibility_status: "draft" })).toBe(false);
   expect(shouldPollTikTokPublication({ ...publication, visibility_status: "unknown" })).toBe(true);
+  expect(shouldPollTikTokPublication({
+    ...publication,
+    delivery_mode: "draft_upload",
+    visibility_status: "unknown",
+  })).toBe(false);
   expect(shouldPollTikTokPublication({
     ...publication,
     processing_status: "failed",

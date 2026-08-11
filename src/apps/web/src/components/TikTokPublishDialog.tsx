@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BeamLoader } from "@/components/progress";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
@@ -13,6 +13,7 @@ import {
 } from "@/lib/tiktok-api";
 
 type PublishStep = "details" | "confirm";
+type DeliveryMode = "direct_post" | "draft_upload";
 
 export type TikTokPublishSimulation = {
   creatorNickname: string;
@@ -47,6 +48,7 @@ export function TikTokPublishDialog({
   const simulationDurationSeconds = simulation?.durationSeconds ?? null;
   const [options, setOptions] = useState<TikTokPublishOptions | null>(null);
   const [step, setStep] = useState<PublishStep>("details");
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("direct_post");
   const [title, setTitle] = useState("");
   const [privacy, setPrivacy] = useState("");
   const [allowComment, setAllowComment] = useState(false);
@@ -57,6 +59,7 @@ export function TikTokPublishDialog({
   const [brandOrganic, setBrandOrganic] = useState(false);
   const [isAigc, setIsAigc] = useState(false);
   const [musicConfirmed, setMusicConfirmed] = useState(false);
+  const [draftHandoffConfirmed, setDraftHandoffConfirmed] = useState(false);
   const [state, setState] = useState<"loading" | "ready" | "submitting" | "error">(
     "loading",
   );
@@ -72,10 +75,26 @@ export function TikTokPublishDialog({
   const openerRef = useRef<HTMLElement | null>(null);
   useFocusTrap(sheetRef, open);
 
+  const storageKeyFor = useCallback((mode: DeliveryMode) => {
+    return `tiktok:publish-key:${jobId}:${variantId ?? "default"}:${mode}`;
+  }, [jobId, variantId]);
+
+  const restoreIdempotencyKey = useCallback((mode: DeliveryMode) => {
+    try {
+      const storageKey = storageKeyFor(mode);
+      const storedKey = window.sessionStorage.getItem(storageKey);
+      idempotencyKey.current = storedKey || crypto.randomUUID();
+      if (!storedKey) window.sessionStorage.setItem(storageKey, idempotencyKey.current);
+    } catch {
+      idempotencyKey.current = crypto.randomUUID();
+    }
+  }, [storageKeyFor]);
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setStep("details");
+    setDeliveryMode("direct_post");
     setState("loading");
     setError(null);
     setOptions(null);
@@ -88,14 +107,8 @@ export function TikTokPublishDialog({
     setBrandOrganic(false);
     setIsAigc(false);
     setMusicConfirmed(false);
-    const storageKey = `tiktok:publish-key:${jobId}:${variantId ?? "default"}`;
-    try {
-      const storedKey = window.sessionStorage.getItem(storageKey);
-      idempotencyKey.current = storedKey || crypto.randomUUID();
-      if (!storedKey) window.sessionStorage.setItem(storageKey, idempotencyKey.current);
-    } catch {
-      idempotencyKey.current = crypto.randomUUID();
-    }
+    setDraftHandoffConfirmed(false);
+    restoreIdempotencyKey("direct_post");
     const optionsPromise = simulationEnabled
       ? Promise.resolve<TikTokPublishOptions>({
           preview_url: simulationPreviewUrl,
@@ -116,12 +129,24 @@ export function TikTokPublishDialog({
           suggested_title: videoTitle,
           audited: true,
           consent_version: "local-preview",
+          can_direct_post: true,
+          can_upload_draft: true,
         })
       : getTikTokPublishOptions(jobId, variantId);
     void optionsPromise
       .then((value) => {
         if (cancelled) return;
-        setOptions(value);
+        const normalizedValue = {
+          ...value,
+          // Vercel can briefly run ahead of Fly during the rollout. The old
+          // response shape was Direct Post only, so preserve that behavior.
+          can_direct_post: value.can_direct_post ?? true,
+          can_upload_draft: value.can_upload_draft ?? false,
+        };
+        setOptions(normalizedValue);
+        const availableMode = normalizedValue.can_direct_post ? "direct_post" : "draft_upload";
+        setDeliveryMode(availableMode);
+        restoreIdempotencyKey(availableMode);
         setTitle(value.suggested_title);
         setState("ready");
       })
@@ -145,6 +170,7 @@ export function TikTokPublishDialog({
     simulationPreviewUrl,
     videoTitle,
     optionsAttempt,
+    restoreIdempotencyKey,
   ]);
 
   useEffect(() => {
@@ -178,16 +204,31 @@ export function TikTokPublishDialog({
 
   const invalidCommercial = commercialContent && !brandContent && !brandOrganic;
   const invalidPrivateBrand = brandContent && privacy === "SELF_ONLY";
-  const canReview = Boolean(privacy && musicConfirmed && !invalidCommercial && !invalidPrivateBrand);
-  const reviewBlocker = !privacy
-    ? "Choose who can watch this video."
-    : invalidCommercial
-      ? "Choose what kind of commercial content this is."
-      : invalidPrivateBrand
-        ? "Branded content cannot use Only you privacy."
-        : !musicConfirmed
-          ? "Confirm TikTok's music usage terms."
-          : null;
+  const canReview = deliveryMode === "draft_upload"
+    ? musicConfirmed && draftHandoffConfirmed
+    : Boolean(privacy && musicConfirmed && !invalidCommercial && !invalidPrivateBrand);
+  const reviewBlocker = deliveryMode === "draft_upload"
+    ? !musicConfirmed
+      ? "Confirm TikTok's music usage terms."
+      : !draftHandoffConfirmed
+        ? "Confirm that you will finish this draft inside TikTok."
+        : null
+    : !privacy
+      ? "Choose who can watch this video."
+      : invalidCommercial
+        ? "Choose what kind of commercial content this is."
+        : invalidPrivateBrand
+          ? "Branded content cannot use Only you privacy."
+          : !musicConfirmed
+            ? "Confirm TikTok's music usage terms."
+            : null;
+
+  function changeDeliveryMode(value: DeliveryMode) {
+    setDeliveryMode(value);
+    setStep("details");
+    setError(null);
+    restoreIdempotencyKey(value);
+  }
 
   async function publish() {
     if (!options || !canReview || submissionInFlight.current) return;
@@ -199,31 +240,34 @@ export function TikTokPublishDialog({
         ? simulatedPublication({
             jobId,
             variantId: options.variant_id,
-            title,
-            privacy,
+            title: deliveryMode === "draft_upload" ? "" : title,
+            privacy: deliveryMode === "draft_upload" ? "TIKTOK_DRAFT" : privacy,
             allowComment,
             allowDuet,
             allowStitch,
             creatorNickname: simulationCreatorNickname,
+            deliveryMode,
           })
         : await createTikTokPublication({
             job_id: jobId,
             variant_id: options.variant_id,
             source_revision: options.source_revision,
             idempotency_key: idempotencyKey.current,
-            title,
-            privacy_level: privacy,
-            allow_comment: allowComment,
-            allow_duet: allowDuet,
-            allow_stitch: allowStitch,
-            brand_content_toggle: brandContent,
-            brand_organic_toggle: brandOrganic,
-            is_aigc: isAigc,
+            delivery_mode: deliveryMode,
+            title: deliveryMode === "draft_upload" ? "" : title,
+            privacy_level: deliveryMode === "draft_upload" ? "TIKTOK_DRAFT" : privacy,
+            allow_comment: deliveryMode === "direct_post" && allowComment,
+            allow_duet: deliveryMode === "direct_post" && allowDuet,
+            allow_stitch: deliveryMode === "direct_post" && allowStitch,
+            brand_content_toggle: deliveryMode === "direct_post" && brandContent,
+            brand_organic_toggle: deliveryMode === "direct_post" && brandOrganic,
+            is_aigc: deliveryMode === "direct_post" && isAigc,
             music_usage_confirmed: musicConfirmed,
+            draft_handoff_confirmed: deliveryMode === "draft_upload" && draftHandoffConfirmed,
             consent_version: options.consent_version,
           });
       try {
-        window.sessionStorage.removeItem(`tiktok:publish-key:${jobId}:${variantId ?? "default"}`);
+        window.sessionStorage.removeItem(storageKeyFor(deliveryMode));
       } catch {
         // Storage is a resilience aid; the backend idempotency contract remains authoritative.
       }
@@ -263,7 +307,7 @@ export function TikTokPublishDialog({
             </button>
             <div className="min-w-0 text-center">
               <h2 id="tiktok-publish-title" className="truncate font-display text-xl text-[#0c0c0e] md:text-2xl">
-                {simulationEnabled ? "Preview TikTok post" : "Publish to TikTok"}
+                {simulationEnabled ? "Preview TikTok delivery" : "Send to TikTok"}
               </h2>
               <p className="mt-0.5 text-[11px] font-medium uppercase tracking-[0.16em] text-[#71717a] md:hidden">
                 {step === "details" ? "1 of 2 · Details" : "2 of 2 · Confirm"}
@@ -329,8 +373,14 @@ export function TikTokPublishDialog({
                   No TikTok API request will be made.
                 </p>
               )}
-              <h3 ref={stepHeadingRef} tabIndex={-1} className="sr-only">TikTok post details</h3>
-              <DetailsStep
+              <h3 ref={stepHeadingRef} tabIndex={-1} className="sr-only">TikTok delivery details</h3>
+              <DeliveryModePicker
+                value={deliveryMode}
+                canDirectPost={options.can_direct_post}
+                canUploadDraft={options.can_upload_draft}
+                onChange={changeDeliveryMode}
+              />
+              {deliveryMode === "direct_post" ? <DetailsStep
                 options={options}
               simulation={simulationEnabled}
               title={title}
@@ -364,14 +414,24 @@ export function TikTokPublishDialog({
               onBrandOrganic={setBrandOrganic}
               onIsAigc={setIsAigc}
                 onMusicConfirmed={setMusicConfirmed}
-              />
+              /> : <DraftDetailsStep
+                options={options}
+                simulation={simulationEnabled}
+                accountAvatarUrl={accountAvatarUrl}
+                videoTitle={videoTitle}
+                variantLabel={variantLabel}
+                musicConfirmed={musicConfirmed}
+                handoffConfirmed={draftHandoffConfirmed}
+                onMusicConfirmed={setMusicConfirmed}
+                onHandoffConfirmed={setDraftHandoffConfirmed}
+              />}
             </>
           )}
 
           {options && state !== "loading" && state !== "error" && step === "confirm" && (
             <>
-              <h3 ref={stepHeadingRef} tabIndex={-1} className="sr-only">Confirm TikTok post</h3>
-              <ConfirmStep
+              <h3 ref={stepHeadingRef} tabIndex={-1} className="sr-only">Confirm TikTok delivery</h3>
+              {deliveryMode === "direct_post" ? <ConfirmStep
                 options={options}
                 simulation={simulationEnabled}
                 title={title}
@@ -385,7 +445,12 @@ export function TikTokPublishDialog({
                 isAigc={isAigc}
                 accountAvatarUrl={accountAvatarUrl}
                 onEdit={() => setStep("details")}
-              />
+              /> : <DraftConfirmStep
+                options={options}
+                simulation={simulationEnabled}
+                accountAvatarUrl={accountAvatarUrl}
+                onEdit={() => setStep("details")}
+              />}
             </>
           )}
           </div>
@@ -411,7 +476,9 @@ export function TikTokPublishDialog({
                     {simulationEnabled
                       ? "Preview only — no post will be sent."
                       : step === "confirm"
-                        ? "Publishing creates a TikTok post. Changes may need to be made in TikTok."
+                        ? deliveryMode === "draft_upload"
+                          ? "TikTok will notify you to finish editing and post this draft in the app."
+                          : "Publishing creates a TikTok post. Changes may need to be made in TikTok."
                         : "You will review everything before publishing."}
                   </p>
                 )}
@@ -425,7 +492,7 @@ export function TikTokPublishDialog({
                   aria-describedby={!canReview ? "tiktok-review-blocker" : undefined}
                   className="min-h-12 w-full rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-35 lg:max-w-[300px]"
                 >
-                  Review post
+                  Review {deliveryMode === "draft_upload" ? "draft handoff" : "post"}
                 </button>
               ) : (
                 <>
@@ -445,7 +512,7 @@ export function TikTokPublishDialog({
                   >
                     {state === "submitting"
                       ? simulationEnabled ? "Simulating…" : "Sending to TikTok…"
-                      : simulationEnabled ? "Simulate publish" : "Publish now"}
+                      : simulationEnabled ? "Simulate delivery" : deliveryMode === "draft_upload" ? "Send to TikTok drafts" : "Publish now"}
                   </button>
                 </>
               )}
@@ -468,6 +535,7 @@ function simulatedPublication({
   allowDuet,
   allowStitch,
   creatorNickname,
+  deliveryMode,
 }: {
   jobId: string;
   variantId: string | null;
@@ -477,12 +545,14 @@ function simulatedPublication({
   allowDuet: boolean;
   allowStitch: boolean;
   creatorNickname: string;
+  deliveryMode: DeliveryMode;
 }): TikTokPublication {
   const now = new Date().toISOString();
   return {
     id: `local-preview-${crypto.randomUUID()}`,
     job_id: jobId,
     variant_id: variantId,
+    delivery_mode: deliveryMode,
     title,
     privacy_level: privacy,
     allow_comment: allowComment,
@@ -532,6 +602,145 @@ function PublishLoading() {
         </div>
       </div>
     </BeamLoader>
+  );
+}
+
+function DeliveryModePicker({
+  value,
+  canDirectPost,
+  canUploadDraft,
+  onChange,
+}: {
+  value: DeliveryMode;
+  canDirectPost: boolean;
+  canUploadDraft: boolean;
+  onChange: (value: DeliveryMode) => void;
+}) {
+  return (
+    <fieldset className="mb-7">
+      <legend className="text-sm font-semibold text-[#18181b]">How do you want to continue?</legend>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className={`rounded-xl border p-4 ${canDirectPost ? "cursor-pointer" : "cursor-not-allowed opacity-50"} ${value === "direct_post" ? "border-lime-600 bg-lime-50/40" : "border-zinc-200 bg-white"}`}>
+          <span className="flex items-start gap-3">
+            <input
+              type="radio"
+              name="tiktok-delivery-mode"
+              value="direct_post"
+              checked={value === "direct_post"}
+              disabled={!canDirectPost}
+              onChange={() => onChange("direct_post")}
+              className="mt-0.5 h-5 w-5 accent-lime-600"
+            />
+            <span>
+              <span className="block text-sm font-semibold text-[#0c0c0e]">Post now</span>
+              <span className="mt-1 block text-xs leading-relaxed text-[#71717a]">Choose the audience and publish the approved video directly.</span>
+            </span>
+          </span>
+        </label>
+        <label className={`rounded-xl border p-4 ${canUploadDraft ? "cursor-pointer" : "cursor-not-allowed opacity-50"} ${value === "draft_upload" ? "border-lime-600 bg-lime-50/40" : "border-zinc-200 bg-white"}`}>
+          <span className="flex items-start gap-3">
+            <input
+              type="radio"
+              name="tiktok-delivery-mode"
+              value="draft_upload"
+              checked={value === "draft_upload"}
+              disabled={!canUploadDraft}
+              onChange={() => onChange("draft_upload")}
+              className="mt-0.5 h-5 w-5 accent-lime-600"
+            />
+            <span>
+              <span className="block text-sm font-semibold text-[#0c0c0e]">Finish in TikTok</span>
+              <span className="mt-1 block text-xs leading-relaxed text-[#71717a]">Send a draft, then use TikTok&apos;s inbox notification to edit and post it.</span>
+            </span>
+          </span>
+        </label>
+      </div>
+    </fieldset>
+  );
+}
+
+function DraftDetailsStep({
+  options,
+  simulation,
+  accountAvatarUrl,
+  videoTitle,
+  variantLabel,
+  musicConfirmed,
+  handoffConfirmed,
+  onMusicConfirmed,
+  onHandoffConfirmed,
+}: {
+  options: TikTokPublishOptions;
+  simulation: boolean;
+  accountAvatarUrl: string | null;
+  videoTitle: string;
+  variantLabel: string;
+  musicConfirmed: boolean;
+  handoffConfirmed: boolean;
+  onMusicConfirmed: (value: boolean) => void;
+  onHandoffConfirmed: (value: boolean) => void;
+}) {
+  return (
+    <div className="grid gap-7 lg:grid-cols-[minmax(280px,0.72fr)_minmax(500px,1.28fr)] lg:items-start xl:gap-12">
+      <div className="border-y border-zinc-200 py-4 lg:sticky lg:top-0">
+        <div className="grid grid-cols-[88px_minmax(0,1fr)] items-start gap-4 sm:grid-cols-[112px_minmax(0,1fr)] lg:grid-cols-[132px_minmax(0,1fr)]">
+          <video src={options.preview_url} controls playsInline preload="metadata" className="aspect-[9/16] w-full rounded-lg bg-black object-cover" aria-label="Exact video TikTok will receive as a draft" />
+          <div className="min-w-0">
+            <AccountRow nickname={options.creator_nickname} avatarUrl={accountAvatarUrl} subline="Connected TikTok account" compact />
+            <p className="mt-4 line-clamp-4 text-sm leading-relaxed text-[#3f3f46]">{videoTitle}</p>
+            <p className="mt-3 text-xs leading-relaxed text-[#71717a]">{variantLabel} · {formatDuration(options.duration_s)}</p>
+          </div>
+        </div>
+      </div>
+      <div className="space-y-5">
+        <div className="border-l-2 border-lime-600 pl-4">
+          <p className="font-semibold text-[#0c0c0e]">Kria sends the video, TikTok finishes the post</p>
+          <p className="mt-1 text-sm leading-relaxed text-[#3f3f46]">TikTok will send an inbox notification. Open it in the TikTok app to add a sound or effects, choose privacy and disclosures, and publish. Kria cannot complete those steps for you.</p>
+        </div>
+        <label className="flex min-h-14 items-start gap-3 border-y border-zinc-200 px-1 py-4 text-sm text-[#3f3f46] focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-600">
+          <input type="checkbox" checked={musicConfirmed} onChange={(event) => onMusicConfirmed(event.target.checked)} className="mt-0.5 h-5 w-5 accent-lime-600" />
+          <span>{simulation ? "For this local preview, confirm the video follows " : "By sending this draft, you agree to "}TikTok&apos;s Music Usage Confirmation.</span>
+        </label>
+        <label className="flex min-h-14 items-start gap-3 border-y border-zinc-200 px-1 py-4 text-sm text-[#3f3f46] focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-600">
+          <input type="checkbox" checked={handoffConfirmed} onChange={(event) => onHandoffConfirmed(event.target.checked)} className="mt-0.5 h-5 w-5 accent-lime-600" />
+          <span>I understand that I must open TikTok&apos;s inbox notification and finish the draft inside TikTok before it is posted.</span>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function DraftConfirmStep({
+  options,
+  simulation,
+  accountAvatarUrl,
+  onEdit,
+}: {
+  options: TikTokPublishOptions;
+  simulation: boolean;
+  accountAvatarUrl: string | null;
+  onEdit: () => void;
+}) {
+  return (
+    <div className="mx-auto w-full max-w-[900px]">
+      <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-4 border-b border-zinc-200 pb-6 sm:grid-cols-[112px_minmax(0,1fr)]">
+        <video src={options.preview_url} controls muted playsInline preload="metadata" className="aspect-[9/16] w-full rounded-lg bg-black object-cover" aria-label={simulation ? "Video being previewed" : "Video being sent to TikTok drafts"} />
+        <AccountRow nickname={options.creator_nickname} avatarUrl={accountAvatarUrl} subline="Sending to TikTok drafts" compact />
+      </div>
+      <div className="mt-7 flex items-center justify-between gap-4">
+        <p className="font-display text-3xl text-[#0c0c0e]">Draft handoff summary</p>
+        <button type="button" onClick={onEdit} className="min-h-11 text-sm font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">Edit choice</button>
+      </div>
+      <dl className="mt-2 divide-y divide-zinc-200 border-y border-zinc-200">
+        <ReviewSummaryRow label="Destination" value="TikTok drafts" />
+        <ReviewSummaryRow label="Next step" value="Open TikTok's inbox notification to edit and post" />
+        <ReviewSummaryRow label="Music" value="Music usage confirmed" />
+      </dl>
+      <div className="mt-7 border border-lime-600 px-4 py-4">
+        <p className="font-semibold text-[#0c0c0e]">Ready to send</p>
+        <p className="mt-1 text-sm text-[#3f3f46]">This does not create a TikTok post. You stay in control of the final edit and publish action inside TikTok.</p>
+      </div>
+    </div>
   );
 }
 

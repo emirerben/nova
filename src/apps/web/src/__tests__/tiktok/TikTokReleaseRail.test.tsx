@@ -10,6 +10,7 @@ const connection: TikTokConnection = {
   account: { display_name: "Kria Studio", avatar_url: "https://example.test/avatar.jpg" },
   granted_scopes: ["video.publish"],
   can_publish: true,
+  can_upload_draft: true,
   can_analyze: true,
   audited: true,
   beta: false,
@@ -110,7 +111,7 @@ it("offers publishing only for a connected account with permission", () => {
 
   rerender(
     <TikTokReleaseRail
-      connection={{ ...connection, can_publish: false }}
+      connection={{ ...connection, can_publish: false, can_upload_draft: false }}
       publication={null}
       publications={[]}
       canPublish={false}
@@ -196,6 +197,7 @@ it("uses account-wide publications for learning but item attempts for history", 
 
 it.each([
   ["private", "complete", "Published privately"],
+  ["draft", "complete", "Ready in TikTok drafts"],
   ["removed", "complete", "No longer public"],
   ["unknown", "submission_unknown", "Check TikTok before retrying"],
   ["unknown", "failed", "Publishing failed"],
@@ -208,6 +210,19 @@ it.each([
   });
 
   expect(screen.getByText(heading)).not.toBeNull();
+});
+
+it("stops the working state after the creator posts an uploaded draft in TikTok", () => {
+  renderRail({
+    ...basePublication,
+    delivery_mode: "draft_upload",
+    processing_status: "complete",
+    visibility_status: "unknown",
+  });
+
+  expect(screen.getByText("Posted from TikTok")).not.toBeNull();
+  expect(screen.getByText(/audience was chosen there/)).not.toBeNull();
+  expect(screen.queryByText("Sending to TikTok")).toBeNull();
 });
 
 it("fails closed when receipt history cannot be confirmed", () => {

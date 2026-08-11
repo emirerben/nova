@@ -134,7 +134,9 @@ export default function LibraryPage() {
                 <LibraryTile
                   job={job}
                   plan={plan}
-                  canPublishToTikTok={Boolean(tiktokConnection?.can_publish)}
+                  canPublishToTikTok={Boolean(
+                    tiktokConnection?.can_publish || tiktokConnection?.can_upload_draft,
+                  )}
                   onPinned={(itemId) => onPinned(job.id, itemId)}
                 />
               </li>

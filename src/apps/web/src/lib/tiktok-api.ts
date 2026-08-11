@@ -9,6 +9,7 @@ export interface TikTokConnection {
   account: { display_name?: string; avatar_url?: string } | null;
   granted_scopes: string[];
   can_publish: boolean;
+  can_upload_draft: boolean;
   can_analyze: boolean;
   audited: boolean;
   beta: boolean;
@@ -30,12 +31,15 @@ export interface TikTokPublishOptions {
   suggested_title: string;
   audited: boolean;
   consent_version: string;
+  can_direct_post: boolean;
+  can_upload_draft: boolean;
 }
 
 export interface TikTokPublication {
   id: string;
   job_id: string;
   variant_id: string | null;
+  delivery_mode?: "direct_post" | "draft_upload";
   /** Optional during the Fly-before-Vercel response-shape rollout. */
   title?: string;
   privacy_level?: string;
@@ -61,13 +65,16 @@ export function shouldPollTikTokPublication(publication: TikTokPublication): boo
   if (publication.id.startsWith("local-preview-")) {
     return false;
   }
+  if (publication.delivery_mode === "draft_upload" && publication.processing_status === "complete") {
+    return false;
+  }
   if (publication.processing_status === "submission_unknown") {
     return false;
   }
   if (publication.processing_status === "failed" && !publication.retryable) {
     return false;
   }
-  return !["public", "private", "removed"].includes(publication.visibility_status);
+  return !["draft", "public", "private", "removed"].includes(publication.visibility_status);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -108,6 +115,7 @@ export function createTikTokPublication(body: {
   variant_id?: string | null;
   source_revision: string;
   idempotency_key: string;
+  delivery_mode: "direct_post" | "draft_upload";
   title: string;
   privacy_level: string;
   allow_comment: boolean;
@@ -117,6 +125,7 @@ export function createTikTokPublication(body: {
   brand_organic_toggle: boolean;
   is_aigc: boolean;
   music_usage_confirmed: boolean;
+  draft_handoff_confirmed: boolean;
   consent_version: string;
 }) {
   return request<TikTokPublication>("/publications", {

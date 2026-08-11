@@ -99,6 +99,7 @@ class LibraryTikTokPublication(BaseModel):
     id: str
     job_id: str
     variant_id: str | None
+    delivery_mode: str
     processing_status: str
     visibility_status: str
     retryable: bool
@@ -171,6 +172,7 @@ def _to_library_job(
                 id=str(tiktok_publication.id),
                 job_id=str(tiktok_publication.job_id),
                 variant_id=tiktok_publication.variant_id,
+                delivery_mode=tiktok_publication.delivery_mode or "direct_post",
                 processing_status=tiktok_publication.processing_status,
                 visibility_status=tiktok_publication.visibility_status,
                 retryable=tiktok_publication.retryable,
@@ -646,6 +648,7 @@ async def export_my_data(
                 "id": str(t.id),
                 "job_id": str(t.job_id),
                 "tiktok_post_id": t.tiktok_post_id,
+                "delivery_mode": t.delivery_mode or "direct_post",
                 "processing_status": t.processing_status,
                 "visibility_status": t.visibility_status,
                 "latest_metrics": t.latest_metrics,
