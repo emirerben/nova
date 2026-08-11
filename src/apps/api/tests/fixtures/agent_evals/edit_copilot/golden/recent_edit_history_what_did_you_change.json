@@ -1,0 +1,22 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-11-v20",
+  "input": {
+    "utterance": "what did you just do?",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline", "sfx"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "we almost quit", "start_s": 0.0, "end_s": 3.0, "font_family": "Inter", "size_px": 52, "color": "#FFFFFF"}],
+      "slots": [
+        {"clip_index": 0, "output_start_s": 0.0, "output_end_s": 4.0, "duration_s": 4.0},
+        {"clip_index": 1, "output_start_s": 4.0, "output_end_s": 9.0, "duration_s": 5.0}
+      ],
+      "total_duration_s": 9.0,
+      "recent_edit_history": ["Font size, Text color (2 edits)", "Clip 2 duration (1 edit)", "Added SFX (1 edit)"]
+    }
+  },
+  "raw_text": "{\"intent\": \"describe\", \"ops\": [], \"confidence\": 1.0, \"reply\": \"Recently, font size and text color were updated, clip 2's duration was changed, and a sound effect was added to the draft.\", \"suggestions\": [\"Adjust text font\", \"Change clip durations\", \"Add more SFX\"], \"needs_clarification\": false}",
+  "output": {"intent": "describe", "ops": [], "confidence": 1.0, "reply": "Recently, font size and text color were updated, clip 2's duration was changed, and a sound effect was added to the draft.", "suggestions": ["Adjust text font", "Change clip durations", "Add more SFX"], "needs_clarification": false},
+  "meta": {"source": "live_capture", "case": "\"what did you just do?\" with prior_turns empty (chat log cleared) but recent_edit_history populated -- proves the answer is driven from RECENT EDIT HISTORY snapshot data, not the visible turn window; intent stays describe, no ops emitted, reply summarizes the history without inventing entries beyond it. Recorded live against EDIT_COPILOT_PROMPT_VERSION 2026-08-11-v20 (gemini-3.6-flash)."}
+}
