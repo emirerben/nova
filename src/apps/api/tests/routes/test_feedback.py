@@ -97,7 +97,12 @@ def test_plan_level_note_on_owned_plan() -> None:
     plan = MagicMock()
     plan.id = uuid.uuid4()
     plan.user_id = user.id
-    db = _db([_scalar(plan)])
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = None
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = user.id
+    db = _db([_scalar(plan), _scalar(persona)])
     _override(user, db)
 
     resp = client.post(

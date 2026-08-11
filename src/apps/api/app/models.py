@@ -439,6 +439,9 @@ class Job(Base):
     content_plan_item_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("plan_items.id"), nullable=True
     )
+    # Durable owner-generation captured when a content-plan Job is minted.
+    # NULL is legacy epoch 0. Public/non-plan Jobs always leave this NULL.
+    content_plan_ownership_epoch: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # True pipeline-wall-time anchors. Distinct from created_at (queue insert)
     # and updated_at (any column write).
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
@@ -811,6 +814,16 @@ class ContentPlan(Base):
     # NULL until the user leaves feedback + regenerates; the generator treats NULL
     # as "(none)".
     preference_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Monotonic ownership fence. Long-running plan tasks snapshot this value and
+    # must observe the same value before committing any plan-derived result.
+    ownership_epoch: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="0"
+    )
+    # An operator-set containment fence for ownership-integrity incidents.
+    # While populated, all user and worker paths fail closed for this plan.
+    ownership_quarantined_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMPTZ, nullable=True
+    )
     # Footage pool (plan dogfood feedback #4): the post-activation "dump the
     # whole trip" batch. Shape: {"status": "matching"|"matched"|"matched_empty"|
     # "match_failed", "clips": [{"gcs_path": str, "matched_item_id": str|null}],

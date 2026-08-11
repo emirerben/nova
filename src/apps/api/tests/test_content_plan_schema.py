@@ -116,6 +116,8 @@ def test_new_tables_registered() -> None:
         "generation_started_at",
         "activation_started_at",
         "activation_phase",
+        "ownership_epoch",
+        "ownership_quarantined_at",
     } <= plan_cols
 
     item_cols = set(tables["plan_items"].columns.keys())
@@ -251,7 +253,10 @@ def test_plan_item_assets_registered() -> None:
 
 
 def test_jobs_has_content_plan_item_fk() -> None:
-    assert "content_plan_item_id" in models.Base.metadata.tables["jobs"].columns
+    job_columns = models.Base.metadata.tables["jobs"].columns
+    assert "content_plan_item_id" in job_columns
+    assert "content_plan_ownership_epoch" in job_columns
+    assert job_columns["content_plan_ownership_epoch"].nullable is True
 
 
 def test_circular_fk_relationships_resolve() -> None:
@@ -266,6 +271,93 @@ def test_circular_fk_relationships_resolve() -> None:
 def test_personas_user_id_is_unique() -> None:
     # 1:1 with users is enforced at the column level (unique=True).
     assert models.Base.metadata.tables["personas"].columns["user_id"].unique is True
+
+
+def test_0071_adds_durable_ownership_fence_columns(monkeypatch) -> None:
+    migration = importlib.import_module(
+        "app.migrations.versions.0071_content_plan_ownership_fence"
+    )
+    added: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        migration.op,
+        "add_column",
+        lambda table, column: added.append((table, column)),
+    )
+
+    migration.upgrade()
+
+    assert [table for table, _column in added] == [
+        "jobs",
+        "content_plans",
+        "content_plans",
+    ]
+    columns = {(table, column.name): column for table, column in added}
+    assert set(columns) == {
+        ("jobs", "content_plan_ownership_epoch"),
+        ("content_plans", "ownership_epoch"),
+        ("content_plans", "ownership_quarantined_at"),
+    }
+    assert columns[("jobs", "content_plan_ownership_epoch")].nullable is True
+    assert columns[("content_plans", "ownership_epoch")].nullable is False
+    assert str(columns[("content_plans", "ownership_epoch")].server_default.arg) == "0"
+    assert columns[("content_plans", "ownership_quarantined_at")].nullable is True
+
+
+@pytest.mark.parametrize("used_fences", [1, 2])
+def test_0071_refuses_to_erase_used_ownership_fences(monkeypatch, used_fences: int) -> None:
+    migration = importlib.import_module(
+        "app.migrations.versions.0071_content_plan_ownership_fence"
+    )
+    dropped: list[tuple[str, str]] = []
+
+    class _Result:
+        def scalar_one(self) -> int:
+            return used_fences
+
+    class _Bind:
+        def execute(self, _stmt) -> _Result:
+            return _Result()
+
+    monkeypatch.setattr(migration.op, "get_bind", lambda: _Bind())
+    monkeypatch.setattr(
+        migration.op,
+        "drop_column",
+        lambda table, column: dropped.append((table, column)),
+    )
+
+    with pytest.raises(RuntimeError, match="ownership fence has been used"):
+        migration.downgrade()
+    assert dropped == []
+
+
+def test_0071_downgrade_removes_an_unused_fence(monkeypatch) -> None:
+    migration = importlib.import_module(
+        "app.migrations.versions.0071_content_plan_ownership_fence"
+    )
+    dropped: list[tuple[str, str]] = []
+
+    class _Result:
+        def scalar_one(self) -> int:
+            return 0
+
+    class _Bind:
+        def execute(self, _stmt) -> _Result:
+            return _Result()
+
+    monkeypatch.setattr(migration.op, "get_bind", lambda: _Bind())
+    monkeypatch.setattr(
+        migration.op,
+        "drop_column",
+        lambda table, column: dropped.append((table, column)),
+    )
+
+    migration.downgrade()
+    assert dropped == [
+        ("content_plans", "ownership_quarantined_at"),
+        ("content_plans", "ownership_epoch"),
+        ("jobs", "content_plan_ownership_epoch"),
+    ]
 
 
 def test_0067_upgrades_only_cigdem_v1_rows(monkeypatch) -> None:

@@ -70,6 +70,7 @@ def _job(path: str = "generative-jobs/00000000-0000-0000-0000-000000000002/outpu
     job.mode = "generative"
     job.job_type = "default"
     job.music_track_id = None
+    job.status = "variants_ready"
     job.probe_metadata = {"duration": 18.0}
     job.assembly_plan = {
         "variants": [
@@ -261,6 +262,120 @@ def test_publishable_output_rejects_missing_or_unready_variant() -> None:
     job.assembly_plan["variants"][0]["render_status"] = "rendering"
     with pytest.raises(PublishableOutputError, match="not ready"):
         resolve_publishable_output(job, "song_text")
+
+
+@pytest.mark.parametrize("status", ["queued", "rendering", "posting", "cancelled"])
+def test_publishable_output_requires_terminal_ready_job(status: str) -> None:
+    job = _job()
+    job.status = status
+
+    with pytest.raises(PublishableOutputError, match="cannot be published"):
+        resolve_publishable_output(job, "song_text")
+
+
+def test_submit_task_fails_receipt_before_snapshot_when_source_job_not_ready() -> None:
+    publication_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    publication = TikTokPublication(
+        id=publication_id,
+        job_id=job_id,
+        processing_status="queued",
+        retryable=True,
+        source_object_path=f"generative-jobs/{job_id}/output.mp4",
+        source_generation="42",
+    )
+    job = MagicMock(status="cancelled")
+    job.id = job_id
+
+    job_id_result = MagicMock()
+    job_id_result.scalar_one_or_none.return_value = job_id
+    publication_result = MagicMock()
+    publication_result.scalar_one_or_none.return_value = publication
+    session = MagicMock()
+    session.execute.side_effect = [job_id_result, publication_result]
+    session.get.return_value = job
+    context = MagicMock()
+    context.__enter__.return_value = session
+    context.__exit__.return_value = False
+
+    with (
+        patch("app.tasks.tiktok.sync_session", return_value=context),
+        patch("app.tasks.tiktok.storage.copy_object_generation") as copy_snapshot,
+        patch("app.tasks.tiktok.tiktok_client.initialize_direct_post") as submit,
+    ):
+        submit_tiktok_publication.run(str(publication_id))
+
+    copy_snapshot.assert_not_called()
+    submit.assert_not_called()
+    assert publication.processing_status == "failed"
+    assert publication.failure_code == "source_job_not_ready"
+    assert publication.retryable is False
+    session.commit.assert_called_once()
+
+
+def test_submit_task_rechecks_source_job_immediately_before_provider_call() -> None:
+    publication_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    publication = TikTokPublication(
+        id=publication_id,
+        job_id=job_id,
+        user_id=uuid.uuid4(),
+        processing_status="queued",
+        retry_count=0,
+        retryable=False,
+        source_object_path=f"generative-jobs/{job_id}/output.mp4",
+        source_generation="42",
+        title="caption",
+        privacy_level="SELF_ONLY",
+        allow_comment=False,
+        allow_duet=False,
+        allow_stitch=False,
+        brand_content_toggle=False,
+        brand_organic_toggle=False,
+        is_aigc=False,
+    )
+
+    def _locked_context(job_status: str) -> MagicMock:
+        job_id_result = MagicMock()
+        job_id_result.scalar_one_or_none.return_value = job_id
+        publication_result = MagicMock()
+        publication_result.scalar_one_or_none.return_value = publication
+        session = MagicMock()
+        session.execute.side_effect = [job_id_result, publication_result]
+        session.get.return_value = MagicMock(status=job_status, id=job_id)
+        context = MagicMock()
+        context.__enter__.return_value = session
+        context.__exit__.return_value = False
+        return context
+
+    token_context = MagicMock()
+    token_context.__enter__.return_value = MagicMock()
+    token_context.__exit__.return_value = False
+    with (
+        patch(
+            "app.tasks.tiktok.sync_session",
+            side_effect=[
+                _locked_context("variants_ready"),
+                _locked_context("variants_ready"),
+                token_context,
+                _locked_context("cancelled"),
+            ],
+        ),
+        patch("app.tasks.tiktok.storage.copy_object_generation"),
+        patch("app.tasks.tiktok.storage.delete_object_best_effort") as delete_snapshot,
+        patch(
+            "app.tasks.tiktok.active_access_token_sync",
+            return_value=(MagicMock(), "access-token"),
+        ),
+        patch("app.tasks.tiktok.tiktok_client.initialize_direct_post") as submit,
+    ):
+        submit_tiktok_publication.run(str(publication_id))
+
+    submit.assert_not_called()
+    assert publication.processing_status == "failed"
+    assert publication.failure_code == "source_job_not_ready"
+    assert publication.snapshot_object_path is None
+    delete_snapshot.assert_called_once_with(f"tiktok-publish/{publication_id}.mp4")
 
 
 @pytest.mark.parametrize(

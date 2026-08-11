@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.models import ContentPlan, Job, Persona, PlanItem
 
 
 def _fake_user(uid: uuid.UUID | None = None) -> MagicMock:
@@ -437,6 +438,48 @@ def test_retune_allows_when_edited_and_empty_summary(client: TestClient) -> None
 # ── POST /personas/reset ─────────────────────────────────────────────────────
 
 
+def _reset_db(
+    db_user: MagicMock,
+    *,
+    persona: MagicMock | None,
+    plans: list[MagicMock] | None = None,
+    items: list[MagicMock] | None = None,
+    jobs: list[MagicMock] | None = None,
+) -> AsyncMock:
+    plans = plans or []
+    items = items or []
+    jobs = jobs or []
+    delete_persona_result = MagicMock(rowcount=1 if persona is not None else 0)
+
+    def _many(rows: list[MagicMock]) -> MagicMock:
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = rows
+        return result
+
+    async def _execute(stmt):  # noqa: ANN001
+        descriptions = getattr(stmt, "column_descriptions", None) or []
+        entity = descriptions[0].get("entity") if descriptions else None
+        if entity is ContentPlan:
+            return _many(plans)
+        if entity is Persona:
+            return MagicMock(scalar_one_or_none=MagicMock(return_value=persona))
+        if entity is PlanItem:
+            return _many(items)
+        if entity is Job:
+            return _many(jobs)
+        table = getattr(stmt, "table", None)
+        if getattr(table, "name", None) == "personas":
+            return delete_persona_result
+        return MagicMock()
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=_execute)
+    db.commit = AsyncMock()
+    db.delete = AsyncMock()
+    db.get = AsyncMock(return_value=db_user)
+    return db
+
+
 def test_reset_requires_auth(client: TestClient) -> None:
     """No auth → 401; route is behind CurrentUser (strict)."""
     app.dependency_overrides[get_db] = lambda: _async_db()
@@ -458,20 +501,8 @@ def test_reset_happy_path(client: TestClient) -> None:
     db_user = MagicMock()
     db_user.onboarding_status = "complete"
 
-    delete_result = MagicMock()
-    delete_result.rowcount = 1  # persona existed
-
-    db = AsyncMock()
-    db.commit = AsyncMock()
-    # execute side_effects: (1) UPDATE jobs, (2) DELETE feedback, (3) DELETE persona
-    execute_results = [
-        MagicMock(),  # UPDATE jobs result
-        MagicMock(),  # DELETE feedback result
-        delete_result,  # DELETE persona result (rowcount=1)
-    ]
-    db.execute = AsyncMock(side_effect=execute_results)
-    db.delete = AsyncMock()
-    db.get = AsyncMock(return_value=db_user)
+    persona = MagicMock(id=uuid.uuid4(), user_id=user.id)
+    db = _reset_db(db_user, persona=persona)
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -480,8 +511,6 @@ def test_reset_happy_path(client: TestClient) -> None:
 
     assert resp.status_code == 200
     assert resp.json() == {"reset": True}
-    # Three execute calls: jobs UPDATE, feedback DELETE, persona DELETE — raw SQL.
-    assert db.execute.call_count == 3
     # ORM db.delete must NOT be called (causes the NOT NULL cascade bug).
     db.delete.assert_not_awaited()
     # Onboarding status reset.
@@ -500,19 +529,7 @@ def test_reset_no_persona_is_idempotent_200(client: TestClient) -> None:
     db_user = MagicMock()
     db_user.onboarding_status = "pending"
 
-    no_persona_result = MagicMock()
-    no_persona_result.rowcount = 0
-
-    db = AsyncMock()
-    db.commit = AsyncMock()
-    execute_results = [
-        MagicMock(),  # UPDATE jobs result
-        MagicMock(),  # DELETE feedback result
-        no_persona_result,  # DELETE persona (0 rows — nothing existed)
-    ]
-    db.execute = AsyncMock(side_effect=execute_results)
-    db.delete = AsyncMock()
-    db.get = AsyncMock(return_value=db_user)
+    db = _reset_db(db_user, persona=None)
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -521,47 +538,71 @@ def test_reset_no_persona_is_idempotent_200(client: TestClient) -> None:
 
     assert resp.status_code == 200
     assert resp.json() == {"reset": True}
-    assert db.execute.call_count == 3
     db.delete.assert_not_awaited()
     assert db_user.onboarding_status == "pending"
     db.commit.assert_awaited_once()
 
 
 def test_reset_nulls_job_fk_before_persona_delete(client: TestClient) -> None:
-    """The FK fix: the first execute must target 'jobs' with content_plan_item_id.
-
-    If a future refactor reorders the operations, this test fails loudly — which
-    prevents the Postgres NO ACTION violation on plan_items.id (models.py:383,
-    no ondelete on Job.content_plan_item_id).
-    """
+    """Reset locks parents before children and detaches each linked Job."""
     user = _fake_user()
-
-    delete_result = MagicMock()
-    delete_result.rowcount = 1
-
-    db = AsyncMock()
-    db.commit = AsyncMock()
-    execute_results = [
-        MagicMock(),  # UPDATE jobs
-        MagicMock(),  # DELETE feedback
-        delete_result,  # DELETE persona
-    ]
-    db.execute = AsyncMock(side_effect=execute_results)
-    db.delete = AsyncMock()
-    db.get = AsyncMock(return_value=_fake_user())
+    persona = MagicMock(id=uuid.uuid4(), user_id=user.id)
+    plan = MagicMock(id=uuid.uuid4(), user_id=user.id, persona_id=persona.id)
+    item = MagicMock(id=uuid.uuid4(), content_plan_id=plan.id)
+    job = MagicMock(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        content_plan_item_id=item.id,
+        status="ready",
+    )
+    db = _reset_db(
+        user,
+        persona=persona,
+        plans=[plan],
+        items=[item],
+        jobs=[job],
+    )
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
 
-    client.post("/personas/reset")
+    resp = client.post("/personas/reset")
 
-    # First call must be the jobs UPDATE (the FK-nulling step).
-    first_stmt = str(db.execute.call_args_list[0].args[0])
-    assert "jobs" in first_stmt.lower(), (
-        "First execute must target 'jobs' to NULL content_plan_item_id "
-        "before plan_items are cascade-deleted (models.py:383 no-ondelete FK)"
+    assert resp.status_code == 200
+    lock_statements = [str(call.args[0]).lower() for call in db.execute.call_args_list[:4]]
+    assert "content_plans" in lock_statements[0]
+    assert "personas" in lock_statements[1]
+    assert "plan_items" in lock_statements[2]
+    assert "jobs" in lock_statements[3]
+    assert job.content_plan_item_id is None
+
+
+def test_reset_refuses_to_mutate_cancelled_job_tombstone(client: TestClient) -> None:
+    user = _fake_user()
+    persona = MagicMock(id=uuid.uuid4(), user_id=user.id)
+    plan = MagicMock(id=uuid.uuid4(), user_id=user.id, persona_id=persona.id)
+    item = MagicMock(id=uuid.uuid4(), content_plan_id=plan.id)
+    job = MagicMock(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        content_plan_item_id=item.id,
+        status="cancelled",
     )
-    assert "content_plan_item_id" in first_stmt.lower()
+    db = _reset_db(
+        user,
+        persona=persona,
+        plans=[plan],
+        items=[item],
+        jobs=[job],
+    )
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post("/personas/reset")
+
+    assert resp.status_code == 409
+    assert job.content_plan_item_id == item.id
+    db.commit.assert_not_awaited()
 
 
 # ── POST /personas/onboarding-fork ────────────────────────────────────────────

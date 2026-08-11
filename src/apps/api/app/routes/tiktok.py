@@ -33,7 +33,11 @@ from app.services.tiktok_lifecycle import (
     visibility_after_draft_inbox,
     visibility_after_draft_post,
 )
-from app.services.tiktok_publishable import PublishableOutputError, resolve_publishable_output
+from app.services.tiktok_publishable import (
+    PublishableOutputError,
+    job_is_terminal_ready,
+    resolve_publishable_output,
+)
 from app.services.tiktok_tokens import active_access_token
 from app.services.token_crypto import TokenCryptoError, decrypt_token, encrypt_token
 
@@ -482,6 +486,9 @@ async def create_publication(
             status_code=400,
             detail="Confirm that you will finish this draft inside TikTok",
         )
+    # Validate the Job before the idempotency fast path: cancellation also
+    # suppresses retries of an older queued/failed publication receipt.
+    job = await _owned_job(db, user.id, body.job_id)
     request_hash = hashlib.sha256(
         json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -504,7 +511,6 @@ async def create_publication(
             _dispatch_publication(existing.id)
         return _publication_response(existing)
 
-    job = await _owned_job(db, user.id, body.job_id)
     try:
         output = await run_in_threadpool(resolve_publishable_output, job, body.variant_id)
         token_row, access_token = await active_access_token(db, user.id)
@@ -545,6 +551,12 @@ async def create_publication(
         raise HTTPException(
             status_code=409, detail="The video changed; review the latest render before publishing"
         )
+
+    # Re-lock immediately before inserting the durable publication receipt.
+    # The creator-info and metadata calls above intentionally run without a DB
+    # lock; this second fence prevents a concurrent rerender/cancellation from
+    # slipping between the initial validation and the publication commit.
+    job = await _owned_job(db, user.id, body.job_id, for_update=True)
 
     row = TikTokPublication(
         user_id=user.id,
@@ -698,6 +710,9 @@ async def media(
         )
     ):
         raise HTTPException(status_code=404, detail="Media not found")
+    job_status = await db.scalar(select(Job.status).where(Job.id == row.job_id))
+    if job_status == "cancelled":
+        raise HTTPException(status_code=404, detail="Media not found")
     try:
         meta = await run_in_threadpool(storage.object_metadata, row.snapshot_object_path)
     except FileNotFoundError as exc:
@@ -780,12 +795,26 @@ async def _read_bounded_webhook_body(request: Request) -> bytes:
     return bytes(body)
 
 
-async def _owned_job(db: AsyncSession, user_id: uuid.UUID, job_id: uuid.UUID) -> Job:
-    row = (
-        await db.execute(select(Job).where(Job.id == job_id, Job.user_id == user_id))
-    ).scalar_one_or_none()
+async def _owned_job(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    job_id: uuid.UUID,
+    *,
+    for_update: bool = False,
+) -> Job:
+    statement = select(Job).where(Job.id == job_id, Job.user_id == user_id)
+    if for_update:
+        statement = statement.execution_options(populate_existing=True).with_for_update()
+    row = (await db.execute(statement)).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    if not job_is_terminal_ready(row):
+        detail = (
+            "Cancelled videos cannot be published"
+            if row.status == "cancelled"
+            else "The video must finish rendering before it can be published"
+        )
+        raise HTTPException(status_code=409, detail=detail)
     return row
 
 

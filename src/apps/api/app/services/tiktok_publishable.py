@@ -15,6 +15,37 @@ class PublishableOutputError(ValueError):
     pass
 
 
+TIKTOK_PUBLISHABLE_JOB_STATUSES: frozenset[str] = frozenset(
+    {
+        "done",
+        "clips_ready",
+        "clips_ready_partial",
+        "template_ready",
+        "music_ready",
+        "variants_ready",
+        "variants_ready_partial",
+    }
+)
+
+
+def job_is_terminal_ready(job: Job) -> bool:
+    """Return whether ``job`` has finished rendering a publishable output.
+
+    A ready variant may exist while a generative Job is still ``rendering``.
+    Publishing during that window races later variant writes and, more
+    importantly, lets an admin cancellation overlap a queued TikTok submit.
+    Keep the release boundary on terminal success states instead.
+    """
+    return str(job.status or "") in TIKTOK_PUBLISHABLE_JOB_STATUSES
+
+
+def require_terminal_ready_job(job: Job) -> None:
+    if str(job.status or "") == "cancelled":
+        raise PublishableOutputError("Cancelled videos cannot be published")
+    if not job_is_terminal_ready(job):
+        raise PublishableOutputError("The video is still being prepared and cannot be published")
+
+
 @dataclass(frozen=True)
 class PublishableOutput:
     object_path: str
@@ -30,6 +61,7 @@ class PublishableOutput:
 
 
 def resolve_publishable_output(job: Job, variant_id: str | None = None) -> PublishableOutput:
+    require_terminal_ready_job(job)
     plan = dict(job.assembly_plan or {})
     selected_variant: dict[str, Any] | None = None
     path: str | None = None

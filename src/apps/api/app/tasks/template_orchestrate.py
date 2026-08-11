@@ -42,7 +42,7 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.config import settings
 from app.database import sync_session as _sync_session
-from app.models import Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
+from app.models import MusicTrack, TemplateRecipeVersion, VideoTemplate
 from app.pipeline.agentic_matcher import agentic_match_or_fallback as _agentic_match_or_fallback
 from app.pipeline.agents.gemini_analyzer import (
     AssemblyPlan,
@@ -101,6 +101,11 @@ from app.services.template_poster import (
     generate_and_upload as generate_poster,
 )
 from app.storage import copy_object_signed_url, download_to_file, upload_public_read
+from app.tasks._job_cancel_fence import (
+    active_job_for_update,
+    delete_task_owned_outputs,
+    new_task_run_id,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -849,24 +854,22 @@ def _orchestrate_template_job_inner(
 def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
     """Core template job logic. May raise — caller wraps in try/except."""
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = active_job_for_update(db, job_id, operation="template_job_start")
         if job is None:
-            log.error("template_job_not_found", job_id=job_id)
+            log.info("template_job_start_skipped", job_id=job_id)
             return
 
         job.status = "processing"
-        db.commit()
-
-        # Stamp started_at + initial current_phase so the frontend shows motion
-        # the moment the worker picks the job up — distinct from `created_at`
-        # which is the original queue insert time. Inside the session block
-        # because the rest of `_run_template_job` continues here.
-        mark_started(job_id)
 
         # Fast path: locked re-render skips Gemini entirely
+        rerender_snapshot = None
         if isinstance(job.assembly_plan, dict) and job.assembly_plan.get("locked"):
-            _run_rerender(job_id, job, force_single_pass=force_single_pass)
-            return
+            rerender_snapshot = {
+                "assembly_plan": copy.deepcopy(job.assembly_plan),
+                "template_id": job.template_id,
+                "selected_platforms": list(job.selected_platforms or []),
+                "all_candidates": copy.deepcopy(job.all_candidates or {}),
+            }
 
         # Snapshot fields before session closes
         template_id = job.template_id
@@ -878,6 +881,16 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         # (curtain-close) and the copy-generation LLM call. Set by admin.py's
         # create_test_job from TestJobRequest.preview_mode. Default False.
         preview_mode = bool(all_candidates.get("preview_mode", False))
+        db.commit()
+
+    # Stamp started_at only after the start transaction releases its row lock.
+    # job_phases independently locks + rejects cancelled, so cancellation that
+    # wins between these calls remains terminal.
+    mark_started(job_id)
+
+    if rerender_snapshot is not None:
+        _run_rerender(job_id, rerender_snapshot, force_single_pass=force_single_pass)
+        return
 
     if not clip_paths_gcs:
         raise ValueError("No clip paths found in job")
@@ -1185,10 +1198,15 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             ]
         }
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job:
-                job.assembly_plan = plan_data
-                db.commit()
+            job = active_job_for_update(
+                db,
+                job_id,
+                operation="template_job_persist_plan",
+            )
+            if job is None:
+                return
+            job.assembly_plan = plan_data
+            db.commit()
 
         record_phase(
             job_id,
@@ -1342,11 +1360,21 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         )
         _phase_t0 = time.monotonic()
 
-        # [8] Upload assembled video + base video to GCS
-        gcs_output_path = f"jobs/{job_id}/template_output.mp4"
-        video_url = upload_public_read(output_path, gcs_output_path)
-        gcs_base_path = f"jobs/{job_id}/template_base.mp4"
-        base_video_url = upload_public_read(base_path, gcs_base_path)
+        # [8] Upload assembled video + base video to a per-attempt namespace.
+        # A cancelled/retried worker can therefore clean up only its own bytes,
+        # never a prior successful render at a stable Job key.
+        task_run_id = new_task_run_id()
+        gcs_output_path = f"jobs/{job_id}/task-runs/{task_run_id}/template_output.mp4"
+        gcs_base_path = f"jobs/{job_id}/task-runs/{task_run_id}/template_base.mp4"
+        created_outputs: list[str] = []
+        try:
+            video_url = upload_public_read(output_path, gcs_output_path)
+            created_outputs.append(gcs_output_path)
+            base_video_url = upload_public_read(base_path, gcs_base_path)
+            created_outputs.append(gcs_base_path)
+        except Exception:
+            delete_task_owned_outputs(job_id, [gcs_output_path, gcs_base_path])
+            raise
 
         record_phase(
             job_id,
@@ -1357,19 +1385,32 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         _phase_t0 = time.monotonic()
 
         # [9] Finalize
-        with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job:
-                job.status = "template_ready"
-                job.assembly_plan = {
-                    **plan_data,
-                    "output_url": video_url,
-                    "output_path": gcs_output_path,
-                    "base_output_url": base_video_url,
-                    "platform_copy": platform_copy.model_dump(),
-                    "copy_status": copy_status,
-                }
-                db.commit()
+        finalized = False
+        try:
+            with _sync_session() as db:
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="template_job_finalize",
+                )
+                if job is not None:
+                    job.status = "template_ready"
+                    job.assembly_plan = {
+                        **plan_data,
+                        "output_url": video_url,
+                        "output_path": gcs_output_path,
+                        "base_output_url": base_video_url,
+                        "platform_copy": platform_copy.model_dump(),
+                        "copy_status": copy_status,
+                    }
+                    db.commit()
+                    finalized = True
+        except Exception:
+            delete_task_owned_outputs(job_id, created_outputs)
+            raise
+        if not finalized:
+            delete_task_owned_outputs(job_id, created_outputs)
+            return
 
         record_phase(
             job_id,
@@ -1384,7 +1425,11 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
 # ── Locked re-render fast path ─────────────────────────────────────────────────
 
 
-def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> None:
+def _run_rerender(
+    job_id: str,
+    job_snapshot: dict,
+    force_single_pass: bool = False,
+) -> None:
     """Re-render with locked clip-to-slot assignments. Skips Gemini entirely.
 
     Reads the locked assembly plan, downloads only the used clips,
@@ -1392,11 +1437,17 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
     """
     from app.pipeline.agents.gemini_analyzer import AssemblyStep  # noqa: PLC0415
 
-    plan = job.assembly_plan
+    plan = job_snapshot["assembly_plan"]
     steps_data = plan.get("steps", [])
-    template_id = job.template_id
-    selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
-    user_subject = (((job.all_candidates or {}).get("inputs") or {}).get("location") or "").strip()
+    template_id = job_snapshot["template_id"]
+    selected_platforms = job_snapshot["selected_platforms"] or [
+        "tiktok",
+        "instagram",
+        "youtube",
+    ]
+    user_subject = (
+        (job_snapshot["all_candidates"].get("inputs") or {}).get("location") or ""
+    ).strip()
 
     # Load current recipe from DB (reflects user edits)
     with _sync_session() as db:
@@ -1551,26 +1602,48 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
             job_id=job_id,
         )
 
-        # Upload
-        gcs_output_path = f"jobs/{job_id}/template_output.mp4"
-        video_url = upload_public_read(output_path, gcs_output_path)
-        gcs_base_path = f"jobs/{job_id}/template_base.mp4"
-        base_video_url = upload_public_read(base_path, gcs_base_path)
+        # Upload to a per-attempt namespace so cancellation cleanup cannot
+        # target a previous successful rerender.
+        task_run_id = new_task_run_id()
+        gcs_output_path = f"jobs/{job_id}/task-runs/{task_run_id}/template_output.mp4"
+        gcs_base_path = f"jobs/{job_id}/task-runs/{task_run_id}/template_base.mp4"
+        created_outputs: list[str] = []
+        try:
+            video_url = upload_public_read(output_path, gcs_output_path)
+            created_outputs.append(gcs_output_path)
+            base_video_url = upload_public_read(base_path, gcs_base_path)
+            created_outputs.append(gcs_base_path)
+        except Exception:
+            delete_task_owned_outputs(job_id, [gcs_output_path, gcs_base_path])
+            raise
 
         # Finalize — keep locked steps plus output metadata
-        with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job:
-                job.status = "template_ready"
-                job.assembly_plan = {
-                    **plan,
-                    "output_url": video_url,
-                    "output_path": gcs_output_path,
-                    "base_output_url": base_video_url,
-                    "platform_copy": platform_copy.model_dump(),
-                    "copy_status": copy_status,
-                }
-                db.commit()
+        finalized = False
+        try:
+            with _sync_session() as db:
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="template_rerender_finalize",
+                )
+                if job is not None:
+                    job.status = "template_ready"
+                    job.assembly_plan = {
+                        **plan,
+                        "output_url": video_url,
+                        "output_path": gcs_output_path,
+                        "base_output_url": base_video_url,
+                        "platform_copy": platform_copy.model_dump(),
+                        "copy_status": copy_status,
+                    }
+                    db.commit()
+                    finalized = True
+        except Exception:
+            delete_task_owned_outputs(job_id, created_outputs)
+            raise
+        if not finalized:
+            delete_task_owned_outputs(job_id, created_outputs)
+            return
 
         log.info("rerender_done", job_id=job_id, output_url=video_url)
 
@@ -6991,15 +7064,23 @@ def _run_single_video_job(
         # (no slot-level overlays to strip for the editor's "without
         # overlays" preview). Upload once, server-side copy to the second
         # key — saves egress + re-upload bandwidth.
-        gcs_output_path = f"jobs/{job_id}/template_output.mp4"
-        gcs_base_path = f"jobs/{job_id}/template_base.mp4"
+        task_run_id = new_task_run_id()
+        gcs_output_path = f"jobs/{job_id}/task-runs/{task_run_id}/template_output.mp4"
+        gcs_base_path = f"jobs/{job_id}/task-runs/{task_run_id}/template_base.mp4"
+        created_outputs: list[str] = []
         with _stage(
             "upload_outputs",
             FAILURE_REASON_OUTPUT_UPLOAD_FAILED,
             job_id=job_id,
         ):
-            video_url = upload_public_read(final_path, gcs_output_path)
-            base_video_url = copy_object_signed_url(gcs_output_path, gcs_base_path)
+            try:
+                video_url = upload_public_read(final_path, gcs_output_path)
+                created_outputs.append(gcs_output_path)
+                base_video_url = copy_object_signed_url(gcs_output_path, gcs_base_path)
+                created_outputs.append(gcs_base_path)
+            except Exception:
+                delete_task_owned_outputs(job_id, [gcs_output_path, gcs_base_path])
+                raise
 
         record_phase(
             job_id,
@@ -7069,14 +7150,27 @@ def _run_single_video_job(
             # outside worker logs.
             "audio_health": audio_health,
         }
-        with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job:
-                job.status = "template_ready"
-                job.assembly_plan = plan_data
-                if audio_health:
-                    job.error_detail = f"audio assets unavailable: {','.join(audio_health)}"
-                db.commit()
+        finalized = False
+        try:
+            with _sync_session() as db:
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="single_video_job_finalize",
+                )
+                if job is not None:
+                    job.status = "template_ready"
+                    job.assembly_plan = plan_data
+                    if audio_health:
+                        job.error_detail = f"audio assets unavailable: {','.join(audio_health)}"
+                    db.commit()
+                    finalized = True
+        except Exception:
+            delete_task_owned_outputs(job_id, created_outputs)
+            raise
+        if not finalized:
+            delete_task_owned_outputs(job_id, created_outputs)
+            return
 
         record_phase(
             job_id,
@@ -7199,9 +7293,9 @@ def orchestrate_single_video_job(self, job_id: str) -> None:
 def _run_single_video_job_entry(job_id: str) -> None:
     """Hydrate job state, set processing, then call _run_single_video_job."""
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = active_job_for_update(db, job_id, operation="single_video_job_start")
         if job is None:
-            log.error("single_video_job_not_found", job_id=job_id)
+            log.info("single_video_job_start_skipped", job_id=job_id)
             return
 
         job.status = "processing"
@@ -7276,12 +7370,17 @@ def _mark_failed(job_uuid: uuid.UUID, reason: str, message: str) -> None:
     for attempt in range(3):
         try:
             with _sync_session() as db:
-                job = db.get(Job, job_uuid)
-                if job:
-                    job.status = "processing_failed"
-                    job.error_detail = message[:1000] if message else None
-                    job.failure_reason = reason
-                    db.commit()
+                job = active_job_for_update(
+                    db,
+                    job_uuid,
+                    operation="template_job_mark_failed",
+                )
+                if job is None:
+                    return
+                job.status = "processing_failed"
+                job.error_detail = message[:1000] if message else None
+                job.failure_reason = reason
+                db.commit()
             # Clear current_phase and stamp finished_at so the progress UI
             # shows a terminal state instead of frozen mid-phase.
             # Best-effort and idempotent.

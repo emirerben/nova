@@ -531,6 +531,11 @@ class TestReconcileStuckVariants:
         assert session.execute.call_count == 2
         session.commit.assert_called_once()
 
+        select_sql = str(session.execute.call_args_list[0].args[0])
+        update_sql = str(session.execute.call_args_list[1].args[0])
+        assert "jobs.status !=" in select_sql
+        assert "jobs.status !=" in update_sql
+
     def test_skips_live_re_render(self):
         import uuid as _uuid
 

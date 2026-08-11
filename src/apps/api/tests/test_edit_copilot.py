@@ -20,6 +20,7 @@ from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.main import app
+from app.models import ContentPlan, Job, Persona, PlanItem
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "copilot-ops"
 
@@ -1298,16 +1299,38 @@ def _item_and_plan(user_id: uuid.UUID, *, owner_id: uuid.UUID | None = None):
     job.id = uuid.uuid4()
     job.status = "variants_ready"
     job.assembly_plan = {"variants": [{"variant_id": "v1", "render_status": "ready"}]}
+    job.content_plan_item_id = item.id
+    item.current_job_id = job.id
     item.current_job = job
     plan = MagicMock()
+    plan.id = item.content_plan_id
     plan.user_id = owner_id or user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = None
     return item, plan
 
 
 def _install_route_deps(user, item, plan) -> AsyncMock:  # noqa: ANN001
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = plan.user_id
+
+    async def _execute(stmt):  # noqa: ANN001
+        entity = stmt.column_descriptions[0].get("entity")
+        return _result(persona if entity is Persona else item)
+
+    async def _get(model, _object_id, **_kwargs):  # noqa: ANN001
+        if model is ContentPlan:
+            return plan
+        if model is Job:
+            return item.current_job
+        if model is PlanItem:
+            return item
+        return None
+
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_result(item))
-    db.get = AsyncMock(return_value=plan)
+    db.execute = AsyncMock(side_effect=_execute)
+    db.get = AsyncMock(side_effect=_get)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
     return db

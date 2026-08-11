@@ -23,6 +23,9 @@ def _owned_plan(user_id: uuid.UUID, *, status="ready", activation="none", seed=N
     plan = MagicMock()
     plan.id = uuid.uuid4()
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_epoch = 1
+    plan.ownership_quarantined_at = None
     plan.plan_status = status
     plan.activation_status = activation
     plan.seed_clip_paths = seed or []
@@ -32,15 +35,24 @@ def _owned_plan(user_id: uuid.UUID, *, status="ready", activation="none", seed=N
     # Explicit None so Pydantic doesn't try to validate the MagicMock attr as a date
     plan.start_date = None
     plan.generation_started_at = None
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = plan.user_id
+    persona.persona = {}
+    persona.idea_seeds = []
+    plan._owned_persona_fixture = persona
     return plan
 
 
 def _db_for(plan) -> AsyncMock:
     db = AsyncMock()
     db.commit = AsyncMock()
-    result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=plan)
-    db.execute = AsyncMock(return_value=result)
+
+    async def _execute(stmt):  # noqa: ANN001
+        value = plan._owned_persona_fixture if "FROM personas" in str(stmt) else plan
+        return MagicMock(scalar_one_or_none=MagicMock(return_value=value))
+
+    db.execute = AsyncMock(side_effect=_execute)
     return db
 
 
@@ -135,5 +147,5 @@ def test_activate_enqueues_on_happy_path(client: TestClient) -> None:
         task.delay = MagicMock()
         resp = client.post(f"/content-plans/{plan.id}/activate")
     assert resp.status_code == 200
-    task.delay.assert_called_once_with(str(plan.id))
+    task.delay.assert_called_once_with(str(plan.id), plan.ownership_epoch)
     assert plan.activation_status == "activating"

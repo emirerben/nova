@@ -21,11 +21,13 @@ in `Job.assembly_plan["variants"]`, which the status endpoint surfaces directly.
 from __future__ import annotations
 
 import asyncio
+import copy
 import math
 import os
 import re
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -46,7 +48,7 @@ from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
-from app.models import AgentRun, Job, MusicTrack, User
+from app.models import AgentRun, ContentPlan, Job, MusicTrack, PlanItem, User
 from app.pipeline.look_presets import (
     LookAdjustments,
     LookPreset,
@@ -57,6 +59,11 @@ from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voice
 from app.routes.music_jobs import classify_slot_kind
 from app.routes.waitlist import get_real_ip
 from app.schemas.montage_preset import is_collage_montage_preset
+from app.services.content_plan_persona import (
+    PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+    PlanPersonaOwnershipError,
+    load_owned_plan_persona,
+)
 from app.services.generative_upload_paths import (
     DIRECT_CLIP_PREFIX,
     DIRECT_VOICEOVER_PREFIX,
@@ -1103,16 +1110,99 @@ async def _load_generative_job(
     current_user: User,
     *,
     allowed_modes: tuple[str, ...] = ("generative",),
+    allow_cancelled: bool = False,
+    with_for_update: bool = True,
 ) -> Job:
     try:
         job_uuid = uuid.UUID(job_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    # Resolve the mode without a lock first. Content-plan Jobs must then enter
+    # the canonical Plan -> Persona -> PlanItem -> Job lock order; locking Job
+    # here first would deadlock with quarantine/remediation.
     result = await db.execute(select(Job).where(Job.id == job_uuid))
     job = result.scalar_one_or_none()
     if job is None or job.mode not in allowed_modes:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     ensure_job_owner(job.user_id, current_user)
+
+    if job.mode == "content_plan":
+        item_id = getattr(job, "content_plan_item_id", None)
+        item_ref = await db.get(PlanItem, item_id) if item_id is not None else None
+        if item_ref is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+            )
+        plan = await db.get(
+            ContentPlan,
+            item_ref.content_plan_id,
+            **(
+                {"populate_existing": True, "with_for_update": True}
+                if with_for_update
+                else {}
+            ),
+        )
+        if plan is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+            )
+        try:
+            await load_owned_plan_persona(db, plan, for_update=with_for_update)
+        except PlanPersonaOwnershipError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+            ) from exc
+        if with_for_update:
+            item = await db.get(
+                PlanItem,
+                item_ref.id,
+                populate_existing=True,
+                with_for_update=True,
+            )
+            locked_result = await db.execute(
+                select(Job)
+                .where(Job.id == job_uuid)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            locked_job = locked_result.scalar_one_or_none()
+        else:
+            item = item_ref
+            locked_job = job
+        if (
+            item is None
+            or locked_job is None
+            or item.content_plan_id != plan.id
+            or item.current_job_id != locked_job.id
+            or locked_job.content_plan_item_id != item.id
+            or locked_job.user_id != plan.user_id
+            or locked_job.mode != "content_plan"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+            )
+        job = locked_job
+    elif with_for_update:
+        locked_result = await db.execute(
+            select(Job)
+            .where(Job.id == job_uuid)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        job = locked_result.scalar_one_or_none()
+        if job is None or job.mode not in allowed_modes:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        ensure_job_owner(job.user_id, current_user)
+
+    if job.status == "cancelled" and not allow_cancelled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled videos cannot be edited.",
+        )
     return job
 
 
@@ -1234,7 +1324,7 @@ async def _persist_media_overlay_preview_backfill(
     if not preview_by_src:
         return
     job = await db.get(Job, job_id, with_for_update=True)
-    if job is None:
+    if job is None or getattr(job, "status", None) == "cancelled":
         return
     variants = list((job.assembly_plan or {}).get("variants") or [])
     changed = False
@@ -1276,6 +1366,9 @@ def _variants_for_response(job: Job) -> list[dict]:
     playing the base while a committed re-render is in flight. A signing failure just
     omits the key (the editor degrades to the legacy controls).
     """
+    if getattr(job, "status", None) == "cancelled":
+        return []
+
     changed = _lazy_backfill_media_overlay_previews(job)
     if changed:
         setattr(job, "_media_overlay_preview_backfilled", True)
@@ -1490,6 +1583,132 @@ def _find_variant(job: Job, variant_id: str) -> dict | None:
     return next((v for v in _variants_of(job) if v.get("variant_id") == variant_id), None)
 
 
+@dataclass(frozen=True, slots=True)
+class PendingVariantPublish:
+    """A committed render attempt whose broker publication is still pending.
+
+    Route handlers commit the row-locked mutation before touching Celery so eager
+    workers cannot deadlock on the same Job.  The receipt keeps enough exact state
+    to roll back only that newly-minted attempt if publication fails.  It remains
+    callable for the content-plan dispatchers that still use the legacy immediate
+    publication path.
+    """
+
+    callback: Callable[[], None]
+    job_id: uuid.UUID
+    variant_id: str
+    render_generation_id: str
+    previous_variant: dict[str, Any]
+    rollback_fields: frozenset[str]
+    previous_started_at: datetime | None
+    attempted_started_at: datetime | None
+
+    def __call__(self) -> None:
+        self.callback()
+
+
+def _pending_variant_publish(
+    job: Job,
+    variant_id: str,
+    *,
+    callback: Callable[[], None],
+    render_generation_id: str,
+    previous_variant: dict[str, Any],
+    previous_started_at: datetime | None,
+) -> PendingVariantPublish:
+    current = _find_variant(job, variant_id) or {}
+    changed = frozenset(
+        key
+        for key in set(previous_variant) | set(current)
+        if previous_variant.get(key, _UNSET) != current.get(key, _UNSET)
+    )
+    return PendingVariantPublish(
+        callback=callback,
+        job_id=job.id,
+        variant_id=variant_id,
+        render_generation_id=render_generation_id,
+        previous_variant=copy.deepcopy(previous_variant),
+        rollback_fields=changed,
+        previous_started_at=previous_started_at,
+        attempted_started_at=getattr(job, "started_at", None),
+    )
+
+
+async def _publish_committed_variant_render(
+    receipt: PendingVariantPublish, db: AsyncSession
+) -> None:
+    """Publish after commit, restoring only this attempt on broker failure.
+
+    A fresh ``FOR UPDATE`` read linearizes recovery with cancellation and newer
+    edits.  A cancelled tombstone or a superseding generation is never mutated.
+    Unrelated fields written after the dispatch commit are retained because only
+    fields changed by this exact attempt are restored.
+    """
+
+    try:
+        receipt()
+        return
+    except Exception as publish_exc:
+        restored = False
+        try:
+            stmt = (
+                select(Job)
+                .where(Job.id == receipt.job_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            result = await db.execute(stmt)
+            locked_job = result.scalar_one_or_none()
+            if locked_job is not None and locked_job.status != "cancelled":
+                variants = list((locked_job.assembly_plan or {}).get("variants") or [])
+                for index, current in enumerate(variants):
+                    if current.get("variant_id") != receipt.variant_id:
+                        continue
+                    if current.get("render_generation_id") != receipt.render_generation_id:
+                        break
+                    restored_variant = copy.deepcopy(current)
+                    for field in receipt.rollback_fields:
+                        if field in receipt.previous_variant:
+                            restored_variant[field] = copy.deepcopy(receipt.previous_variant[field])
+                        else:
+                            restored_variant.pop(field, None)
+                    variants[index] = restored_variant
+                    locked_job.assembly_plan = {
+                        **(locked_job.assembly_plan or {}),
+                        "variants": variants,
+                    }
+                    # Do not rewind a newer sibling attempt's clock.
+                    if locked_job.started_at == receipt.attempted_started_at:
+                        locked_job.started_at = receipt.previous_started_at
+                    await db.commit()
+                    restored = True
+                    break
+            if not restored:
+                await db.rollback()
+        except Exception as recovery_exc:
+            await db.rollback()
+            log.error(
+                "variant_render_publish_recovery_failed",
+                job_id=str(receipt.job_id),
+                variant_id=receipt.variant_id,
+                render_generation_id=receipt.render_generation_id,
+                publish_error=str(publish_exc),
+                recovery_error=str(recovery_exc),
+            )
+        log.error(
+            "variant_render_publish_failed",
+            job_id=str(receipt.job_id),
+            variant_id=receipt.variant_id,
+            render_generation_id=receipt.render_generation_id,
+            restored=restored,
+            error=str(publish_exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The render queue is temporarily unavailable. Please try again.",
+        ) from publish_exc
+
+
 # ── Shared variant-edit validation + dispatch ───────────────────────────────────
 # These are public (no leading underscore) so the content-plan routes
 # (`routes/plan_items.py`) can reuse them verbatim across modules — content_plan
@@ -1502,6 +1721,11 @@ def _find_variant(job: Job, variant_id: str) -> dict | None:
 
 def require_editable_variant(job: Job, variant_id: str) -> dict:
     """Return the variant; 404 if unknown, 409 if it's already re-rendering."""
+    if getattr(job, "status", None) == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled videos cannot be edited.",
+        )
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
@@ -1589,7 +1813,14 @@ _SEQUENCE_TEXT_LOCKED_DETAIL = (
 )
 
 
-def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool) -> None:
+def dispatch_retext(
+    job: Job,
+    variant_id: str,
+    *,
+    text: str | None,
+    remove: bool,
+    publish: bool = True,
+) -> PendingVariantPublish:
     """Validate + enqueue an intro-text edit/removal for one variant.
 
     T8: the sequence lock that used to 422 here is removed.  PUT /text-elements
@@ -1597,7 +1828,9 @@ def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool
     all variant types including sequence (intro_text override on re-render).
     """
     # Guard: raises 404/409 when variant is unknown or already rendering.
-    require_editable_variant(job, variant_id)
+    variant = require_editable_variant(job, variant_id)
+    previous_variant = copy.deepcopy(variant)
+    previous_started_at = getattr(job, "started_at", None)
     if not remove and not (text and text.strip()):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1607,21 +1840,37 @@ def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool
     # Persist render_status="rendering" before enqueuing — full dict replacement so
     # SQLAlchemy tracks the change without flag_modified.
     variants = list((job.assembly_plan or {}).get("variants") or [])
+    render_gen_id = uuid.uuid4().hex
     for v in variants:
         if v.get("variant_id") == variant_id:
             stamp_variant_attempt(v)
+            v["render_generation_id"] = render_gen_id
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     mark_reattempt(job)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-    regenerate_generative_variant.delay(
-        str(job.id),
+    def _publish() -> None:
+        regenerate_generative_variant.delay(
+            str(job.id),
+            variant_id,
+            override_text=(text.strip() if (text and not remove) else None),
+            remove_text=bool(remove),
+            render_gen_id=render_gen_id,
+        )
+
+    receipt = _pending_variant_publish(
+        job,
         variant_id,
-        override_text=(text.strip() if (text and not remove) else None),
-        remove_text=bool(remove),
+        callback=_publish,
+        render_generation_id=render_gen_id,
+        previous_variant=previous_variant,
+        previous_started_at=previous_started_at,
     )
+    if publish:
+        receipt()
+    return receipt
 
 
 # A caption edit may never bloat the JSONB / slow the libass burn unbounded; the
@@ -1944,6 +2193,11 @@ async def _patch_narrated_variant(
     job = result.scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    if getattr(job, "status", None) == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled videos cannot be edited.",
+        )
     plan = dict(job.assembly_plan or {})
     variants = list(plan.get("variants") or [])
     target = next((v for v in variants if v.get("variant_id") == variant_id), None)
@@ -2442,11 +2696,15 @@ def rollback_speech_cut_dispatch(
     flag_modified(job, "assembly_plan")
 
 
-def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> None:
+def dispatch_change_style(
+    job: Job, variant_id: str, *, style_set_id: str, publish: bool = True
+) -> PendingVariantPublish:
     """Validate + enqueue a text-style-set change for one variant."""
     from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
 
-    require_editable_variant(job, variant_id)
+    variant = require_editable_variant(job, variant_id)
+    previous_variant = copy.deepcopy(variant)
+    previous_started_at = getattr(job, "started_at", None)
     if style_set_id not in set(style_set_ids(applies_to="generative")):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2456,23 +2714,47 @@ def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> No
     # Persist render_status="rendering" before enqueuing — full dict replacement so
     # SQLAlchemy tracks the change without flag_modified.
     variants = list((job.assembly_plan or {}).get("variants") or [])
+    render_gen_id = uuid.uuid4().hex
     for v in variants:
         if v.get("variant_id") == variant_id:
             stamp_variant_attempt(v)
+            v["render_generation_id"] = render_gen_id
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     mark_reattempt(job)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-    regenerate_generative_variant.delay(str(job.id), variant_id, style_set_id=style_set_id)
+    def _publish() -> None:
+        regenerate_generative_variant.delay(
+            str(job.id),
+            variant_id,
+            style_set_id=style_set_id,
+            render_gen_id=render_gen_id,
+        )
+
+    receipt = _pending_variant_publish(
+        job,
+        variant_id,
+        callback=_publish,
+        render_generation_id=render_gen_id,
+        previous_variant=previous_variant,
+        previous_started_at=previous_started_at,
+    )
+    if publish:
+        receipt()
+    return receipt
 
 
-def dispatch_set_intro_size(job: Job, variant_id: str, *, text_size_px: int) -> None:
+def dispatch_set_intro_size(
+    job: Job, variant_id: str, *, text_size_px: int, publish: bool = True
+) -> PendingVariantPublish:
     """Validate + enqueue a user intro font-size override for one variant."""
     from app.pipeline.overlay_sizing import clamp_intro_px  # noqa: PLC0415
 
     variant = require_editable_variant(job, variant_id)
+    previous_variant = copy.deepcopy(variant)
+    previous_started_at = getattr(job, "started_at", None)
     # Only the AI-intro text variants carry a resizable hero overlay. The lyrics
     # variant's typography is governed by its style set and a text-removed variant
     # has no overlay, so resizing either is a no-op — reject rather than spin up a
@@ -2487,21 +2769,50 @@ def dispatch_set_intro_size(job: Job, variant_id: str, *, text_size_px: int) -> 
     # Persist render_status="rendering" before enqueuing — full dict replacement so
     # SQLAlchemy tracks the change without flag_modified.
     variants = list((job.assembly_plan or {}).get("variants") or [])
+    render_gen_id = uuid.uuid4().hex
     for v in variants:
         if v.get("variant_id") == variant_id:
             stamp_variant_attempt(v)
+            v["render_generation_id"] = render_gen_id
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     mark_reattempt(job)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-    regenerate_generative_variant.delay(str(job.id), variant_id, size_override_px=px)
+    def _publish() -> None:
+        regenerate_generative_variant.delay(
+            str(job.id),
+            variant_id,
+            size_override_px=px,
+            render_gen_id=render_gen_id,
+        )
+
+    receipt = _pending_variant_publish(
+        job,
+        variant_id,
+        callback=_publish,
+        render_generation_id=render_gen_id,
+        previous_variant=previous_variant,
+        previous_started_at=previous_started_at,
+    )
+    if publish:
+        receipt()
+    return receipt
 
 
-def dispatch_set_intro_timing(job: Job, variant_id: str, *, start_s: float, end_s: float) -> None:
+def dispatch_set_intro_timing(
+    job: Job,
+    variant_id: str,
+    *,
+    start_s: float,
+    end_s: float,
+    publish: bool = True,
+) -> PendingVariantPublish:
     """Validate + enqueue a user intro-timing override for one variant."""
     variant = require_editable_variant(job, variant_id)
+    previous_variant = copy.deepcopy(variant)
+    previous_started_at = getattr(job, "started_at", None)
     if variant.get("text_mode") != "agent_text":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2513,9 +2824,11 @@ def dispatch_set_intro_timing(job: Job, variant_id: str, *, start_s: float, end_
             detail="end_s must be greater than start_s.",
         )
     variants = list((job.assembly_plan or {}).get("variants") or [])
+    render_gen_id = uuid.uuid4().hex
     for v in variants:
         if v.get("variant_id") == variant_id:
             stamp_variant_attempt(v)
+            v["render_generation_id"] = render_gen_id
             v["intro_start_s"] = start_s
             v["intro_end_s"] = end_s
             break
@@ -2524,12 +2837,26 @@ def dispatch_set_intro_timing(job: Job, variant_id: str, *, start_s: float, end_
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-    regenerate_generative_variant.delay(
-        str(job.id),
+    def _publish() -> None:
+        regenerate_generative_variant.delay(
+            str(job.id),
+            variant_id,
+            intro_start_s_override=start_s,
+            intro_end_s_override=end_s,
+            render_gen_id=render_gen_id,
+        )
+
+    receipt = _pending_variant_publish(
+        job,
         variant_id,
-        intro_start_s_override=start_s,
-        intro_end_s_override=end_s,
+        callback=_publish,
+        render_generation_id=render_gen_id,
+        previous_variant=previous_variant,
+        previous_started_at=previous_started_at,
     )
+    if publish:
+        receipt()
+    return receipt
 
 
 def dispatch_patch_scene_timing(job: Job, variant_id: str, *, overrides: list[dict]) -> None:
@@ -3131,7 +3458,8 @@ def dispatch_set_text_elements(
     *,
     elements: list[dict],
     render: bool = True,
-) -> None:
+    publish: bool = True,
+) -> PendingVariantPublish | None:
     """Validate + persist TextElements on a variant; optionally enqueue fast-reburn.
 
     Full-replace semantics: `elements` becomes the authoritative element list for
@@ -3156,6 +3484,8 @@ def dispatch_set_text_elements(
         )
 
     variant = require_editable_variant(job, variant_id)
+    previous_variant = copy.deepcopy(variant)
+    previous_started_at = getattr(job, "started_at", None)
 
     validated, _is_first_sequence_edit = validate_text_elements_payload(
         variant, elements, require_base=render
@@ -3190,12 +3520,27 @@ def dispatch_set_text_elements(
 
         from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-        # Route to the overlay-jobs queue (solo worker — avoids macOS prefork CLIP fork crash).
-        regenerate_generative_variant.apply_async(
-            args=[str(job.id), variant_id],
-            kwargs={"render_gen_id": render_gen_id},
-            queue="overlay-jobs",
+        def _publish() -> None:
+            # Route to the overlay-jobs queue (solo worker — avoids macOS
+            # prefork CLIP fork crashes).
+            regenerate_generative_variant.apply_async(
+                args=[str(job.id), variant_id],
+                kwargs={"render_gen_id": render_gen_id},
+                queue="overlay-jobs",
+            )
+
+        receipt = _pending_variant_publish(
+            job,
+            variant_id,
+            callback=_publish,
+            render_generation_id=render_gen_id,
+            previous_variant=previous_variant,
+            previous_started_at=previous_started_at,
         )
+        if publish:
+            receipt()
+        return receipt
+    return None
 
 
 def _lyrics_error(status_code: int, code: str, message: str | None = None) -> HTTPException:
@@ -3558,7 +3903,8 @@ def dispatch_edit_variant(
     cluster_accent_size_px: int | None = None,
     text_behind_subject: bool | None = None,
     carousel_moment: object = _UNSET,
-) -> None:
+    publish: bool = True,
+) -> PendingVariantPublish:
     """Validate + enqueue a combined text/style/size/layout edit as ONE re-render.
 
     The instant editor batches an entire editing session into a single commit, so
@@ -3573,6 +3919,8 @@ def dispatch_edit_variant(
     persisted by `_merge_carousel_moment_override` on the worker side.
     """
     variant = require_editable_variant(job, variant_id)
+    previous_variant = copy.deepcopy(variant)
+    previous_started_at = getattr(job, "started_at", None)
 
     # Server-side flag gate (text-behind-subject): a stale client with the FE
     # flag cached on can still submit this field after a rollback — coerce to
@@ -3794,9 +4142,11 @@ def dispatch_edit_variant(
     # Persist render_status="rendering" before enqueuing — full dict replacement so
     # SQLAlchemy tracks the change without flag_modified.
     _variants = list((job.assembly_plan or {}).get("variants") or [])
+    render_gen_id = uuid.uuid4().hex
     for _v in _variants:
         if _v.get("variant_id") == variant_id:
             stamp_variant_attempt(_v)
+            _v["render_generation_id"] = render_gen_id
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": _variants}
     mark_reattempt(job)
@@ -3806,35 +4156,53 @@ def dispatch_edit_variant(
         regenerate_generative_variant,
     )
 
-    regenerate_generative_variant.delay(
-        str(job.id),
+    def _publish() -> None:
+        regenerate_generative_variant.delay(
+            str(job.id),
+            variant_id,
+            override_text=(text.strip() if text and not remove_text else None),
+            remove_text=bool(remove_text),
+            style_set_id=style_set_id,
+            size_override_px=size_override_px,
+            layout_override=intro_layout,
+            font_family_override=font_family,
+            effect_override=effect,
+            text_color_override=text_color,
+            cluster_hero_font_override=cluster_hero_font,
+            cluster_body_font_override=cluster_body_font,
+            cluster_accent_font_override=cluster_accent_font,
+            cluster_hero_size_px_override=cluster_hero_size_px,
+            cluster_body_size_px_override=cluster_body_size_px,
+            cluster_accent_size_px_override=cluster_accent_size_px,
+            text_behind_subject=text_behind_subject,
+            render_gen_id=render_gen_id,
+            carousel_moment_override=(
+                CAROUSEL_MOMENT_UNSET
+                if carousel_moment_override is _UNSET
+                else carousel_moment_override
+            ),
+        )
+
+    receipt = _pending_variant_publish(
+        job,
         variant_id,
-        override_text=(text.strip() if text and not remove_text else None),
-        remove_text=bool(remove_text),
-        style_set_id=style_set_id,
-        size_override_px=size_override_px,
-        layout_override=intro_layout,
-        font_family_override=font_family,
-        effect_override=effect,
-        text_color_override=text_color,
-        cluster_hero_font_override=cluster_hero_font,
-        cluster_body_font_override=cluster_body_font,
-        cluster_accent_font_override=cluster_accent_font,
-        cluster_hero_size_px_override=cluster_hero_size_px,
-        cluster_body_size_px_override=cluster_body_size_px,
-        cluster_accent_size_px_override=cluster_accent_size_px,
-        text_behind_subject=text_behind_subject,
-        carousel_moment_override=(
-            CAROUSEL_MOMENT_UNSET
-            if carousel_moment_override is _UNSET
-            else carousel_moment_override
-        ),
+        callback=_publish,
+        render_generation_id=render_gen_id,
+        previous_variant=previous_variant,
+        previous_started_at=previous_started_at,
     )
+    if publish:
+        receipt()
+    return receipt
 
 
-def dispatch_set_mix(job: Job, variant_id: str, *, mix: float) -> None:
+def dispatch_set_mix(
+    job: Job, variant_id: str, *, mix: float, publish: bool = True
+) -> PendingVariantPublish:
     """Validate + enqueue a voice/bed mix change for one voiceover variant."""
     variant = require_editable_variant(job, variant_id)
+    previous_variant = copy.deepcopy(variant)
+    previous_started_at = getattr(job, "started_at", None)
     # Only voiceover variants carry a voice bed to rebalance. A song/original/lyrics
     # variant has no `mix`, so adjusting it is a no-op — reject rather than spin up a
     # render that changes nothing. (Voiceover variants persist a non-None `mix`.)
@@ -3849,16 +4217,36 @@ def dispatch_set_mix(job: Job, variant_id: str, *, mix: float) -> None:
     # render_status at all, which left BOTH clocks reading the first render's
     # timestamps and let two concurrent mix edits race.
     _variants = list((job.assembly_plan or {}).get("variants") or [])
+    render_gen_id = uuid.uuid4().hex
     for _v in _variants:
         if _v.get("variant_id") == variant_id:
             stamp_variant_attempt(_v)
+            _v["render_generation_id"] = render_gen_id
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": _variants}
     mark_reattempt(job)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-    regenerate_generative_variant.delay(str(job.id), variant_id, mix_override=float(mix))
+    def _publish() -> None:
+        regenerate_generative_variant.delay(
+            str(job.id),
+            variant_id,
+            mix_override=float(mix),
+            render_gen_id=render_gen_id,
+        )
+
+    receipt = _pending_variant_publish(
+        job,
+        variant_id,
+        callback=_publish,
+        render_generation_id=render_gen_id,
+        previous_variant=previous_variant,
+        previous_started_at=previous_started_at,
+    )
+    if publish:
+        receipt()
+    return receipt
 
 
 async def dispatch_set_narrated_bed_level(
@@ -6845,7 +7233,14 @@ async def get_generative_job_status(
     """
     from app.services.phase_baselines import get_baselines, scale_render_variants  # noqa: PLC0415
 
-    job = await _load_generative_job(job_id, db, current_user, allowed_modes=_READABLE_MODES)
+    job = await _load_generative_job(
+        job_id,
+        db,
+        current_user,
+        allowed_modes=_READABLE_MODES,
+        allow_cancelled=True,
+        with_for_update=False,
+    )
 
     # Count pending/rendering variants for baseline scaling.
     variants_list = (job.assembly_plan or {}).get("variants") or []
@@ -6880,7 +7275,7 @@ async def get_generative_job_status(
         job_id=str(job.id),
         status=job.status,
         variants=variants,
-        error_detail=job.error_detail,
+        error_detail=None if job.status == "cancelled" else job.error_detail,
         created_at=job.created_at,
         updated_at=job.updated_at,
         edit_format=(job.all_candidates or {}).get("edit_format"),
@@ -6933,8 +7328,11 @@ async def retext(
 ) -> GenerativeJobResponse:
     """Re-render a variant with user-supplied intro text, or remove the text."""
     job = await _load_generative_job(job_id, db, current_user)
-    dispatch_retext(job, variant_id, text=req.text, remove=req.remove)
+    pending_publish = dispatch_retext(
+        job, variant_id, text=req.text, remove=req.remove, publish=False
+    )
     await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info("generative_retext", job_id=str(job.id), variant_id=variant_id, remove=req.remove)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 
@@ -7007,8 +7405,11 @@ async def change_style(
     intro on the text variants and the lyric typography on the lyrics variant.
     """
     job = await _load_generative_job(job_id, db, current_user)
-    dispatch_change_style(job, variant_id, style_set_id=req.style_set_id)
+    pending_publish = dispatch_change_style(
+        job, variant_id, style_set_id=req.style_set_id, publish=False
+    )
     await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info(
         "generative_change_style",
         job_id=str(job.id),
@@ -7028,8 +7429,11 @@ async def set_intro_size(
 ) -> GenerativeJobResponse:
     """Re-render a variant with a user-pinned AI-intro font size (the ±size nudge)."""
     job = await _load_generative_job(job_id, db, current_user)
-    dispatch_set_intro_size(job, variant_id, text_size_px=req.text_size_px)
+    pending_publish = dispatch_set_intro_size(
+        job, variant_id, text_size_px=req.text_size_px, publish=False
+    )
     await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info(
         "generative_set_intro_size",
         job_id=str(job.id),
@@ -7076,8 +7480,15 @@ async def set_intro_timing(
 ) -> GenerativeJobResponse:
     """Re-render a variant with user-pinned intro overlay timing (drag the intro bar)."""
     job = await _load_generative_job(job_id, db, current_user)
-    dispatch_set_intro_timing(job, variant_id, start_s=req.start_s, end_s=req.end_s)
+    pending_publish = dispatch_set_intro_timing(
+        job,
+        variant_id,
+        start_s=req.start_s,
+        end_s=req.end_s,
+        publish=False,
+    )
     await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info(
         "generative_set_intro_timing",
         job_id=str(job.id),
@@ -7139,7 +7550,7 @@ async def edit_variant(
         carousel_moment_field = None
     else:
         carousel_moment_field = req.carousel_moment.model_dump(exclude_unset=True)
-    dispatch_edit_variant(
+    pending_publish = dispatch_edit_variant(
         job,
         variant_id,
         text=req.text,
@@ -7158,8 +7569,10 @@ async def edit_variant(
         cluster_accent_size_px=req.cluster_accent_size_px,
         text_behind_subject=req.text_behind_subject,
         carousel_moment=carousel_moment_field,
+        publish=False,
     )
     await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info(
         "generative_edit_variant",
         job_id=str(job.id),
@@ -7192,7 +7605,13 @@ async def get_variant_timeline(
     Readable for the same modes as the status endpoint (the plan item page opens
     the same editor). `editable=false` carries a `reason` instead of erroring.
     """
-    job = await _load_generative_job(job_id, db, current_user, allowed_modes=_READABLE_MODES)
+    job = await _load_generative_job(
+        job_id,
+        db,
+        current_user,
+        allowed_modes=_READABLE_MODES,
+        with_for_update=False,
+    )
     return TimelineResponse(**dispatch_get_timeline(job, variant_id))
 
 
@@ -7209,7 +7628,13 @@ async def get_variant_lyric_seeds(
     persists anything. 404 when the flag is off; 422 when the variant has no
     matched track / no renderable cached lyrics.
     """
-    job = await _load_generative_job(job_id, db, current_user, allowed_modes=_READABLE_MODES)
+    job = await _load_generative_job(
+        job_id,
+        db,
+        current_user,
+        allowed_modes=_READABLE_MODES,
+        with_for_update=False,
+    )
     return LyricSeedsResponse(**await dispatch_get_lyric_seeds(job, variant_id, db))
 
 
@@ -7257,6 +7682,8 @@ async def set_mix(
 ) -> GenerativeJobResponse:
     """Re-render a voiceover variant at a new voice/bed mix (the mix slider)."""
     job = await _load_generative_job(job_id, db, current_user)
-    dispatch_set_mix(job, variant_id, mix=req.mix)
+    pending_publish = dispatch_set_mix(job, variant_id, mix=req.mix, publish=False)
+    await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info("generative_set_mix", job_id=str(job.id), variant_id=variant_id, mix=req.mix)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")

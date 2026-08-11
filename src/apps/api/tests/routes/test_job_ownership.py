@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from app.database import get_db
 from app.main import app
+from app.models import ContentPlan, PlanItem
 
 SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 _TEST_KEY = "test-internal-key"
@@ -353,7 +354,33 @@ def test_generative_status_content_plan_job_owner_allowed():
     """content_plan-mode job is readable by its owner via the generative status endpoint."""
     owner_id = uuid.uuid4()
     job = _make_job(owner_id, mode="content_plan")
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.content_plan_id = uuid.uuid4()
+    item.current_job_id = job.id
+    job.content_plan_item_id = item.id
+    plan = MagicMock()
+    plan.id = item.content_plan_id
+    plan.user_id = owner_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = None
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = owner_id
     db = _auth_db(owner_id, job)
+    db.execute.side_effect = [
+        *db.execute.side_effect,
+        MagicMock(scalar_one_or_none=MagicMock(return_value=persona)),
+    ]
+
+    async def _get(model, _object_id, **_kwargs):  # noqa: ANN001
+        if model is PlanItem:
+            return item
+        if model is ContentPlan:
+            return plan
+        return None
+
+    db.get = AsyncMock(side_effect=_get)
 
     with patch("app.services.phase_baselines.get_baselines", return_value=None):
         client = _client(db)

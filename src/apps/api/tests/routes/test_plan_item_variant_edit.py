@@ -10,7 +10,7 @@ shared validation rules fire identically to the generative surface.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.models import ContentPlan, Job, Persona, PlanItem
 from app.pipeline.speech_cut_state import cut_revision, make_candidate
 from app.pipeline.style_sets import style_set_ids
 from app.routes.generative_jobs import (
@@ -77,17 +78,52 @@ def _owned_item(user_id: uuid.UUID, *, job=None):
     item.voiceover_caption_style = None
     item.edit_format = None
     plan = MagicMock()
+    plan.id = item.content_plan_id
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = user_id
+    plan._test_persona = persona
     return item, plan
 
 
 def _db(execute_results: list, plan) -> AsyncMock:
-    """db.execute() yields the given scalar_one_or_none values in order; db.get()
-    (the ContentPlan ownership check + reload) always returns `plan`."""
+    """Small owner-aware DB double for the shared Plan→Persona→Item→Job loader."""
     db = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(v) for v in execute_results])
-    db.get = AsyncMock(return_value=plan)
+    db.rollback = AsyncMock()
+    db.refresh = AsyncMock()
+    item = execute_results[0] if execute_results else None
+    job = getattr(item, "current_job", None) if item is not None else None
+    extras = [value for value in execute_results if value is not item and value is not job]
+
+    async def _execute(stmt):  # noqa: ANN001
+        descriptions = getattr(stmt, "column_descriptions", None) or []
+        entity = descriptions[0].get("entity") if descriptions else None
+        if entity is Persona:
+            return _result(plan._test_persona)
+        if entity is ContentPlan:
+            return _result(plan)
+        if entity is PlanItem:
+            return _result(item)
+        if entity is Job:
+            return _result(job)
+        return _result(extras.pop(0) if extras else None)
+
+    async def _get(model, _pk, **_kwargs):  # noqa: ANN001
+        if model is ContentPlan:
+            return plan
+        if model is PlanItem:
+            return item
+        if model is Job:
+            return job
+        return None
+
+    db.execute = AsyncMock(side_effect=_execute)
+    db.get = AsyncMock(side_effect=_get)
     return db
 
 
@@ -261,10 +297,12 @@ def test_convert_heif_overlay_preview_generates_jpeg(monkeypatch, tmp_path) -> N
         "users/u1/plan/p1/overlays/card.heic"
     )
 
-    assert preview_path == "users/u1/plan/p1/overlays/card.heic.preview.jpg"
-    assert preview_url == "https://signed/users/u1/plan/p1/overlays/card.heic.preview.jpg"
+    assert preview_path is not None
+    assert preview_path.startswith("users/u1/plan/p1/overlays/card.heic.preview.")
+    assert preview_path.endswith(".jpg")
+    assert preview_url == f"https://signed/{preview_path}"
     assert uploaded == {
-        "gcs_path": "users/u1/plan/p1/overlays/card.heic.preview.jpg",
+        "gcs_path": preview_path,
         "content_type": "image/jpeg",
         "format": "JPEG",
         "size": "8x8",
@@ -392,7 +430,11 @@ def test_retext_happy_path(client: TestClient) -> None:
         )
     assert resp.status_code == 200
     regen.delay.assert_called_once_with(
-        str(job.id), "song_text", override_text="new hook", remove_text=False
+        str(job.id),
+        "song_text",
+        override_text="new hook",
+        remove_text=False,
+        render_gen_id=ANY,
     )
 
 
@@ -410,7 +452,11 @@ def test_retext_remove_happy_path(client: TestClient) -> None:
         )
     assert resp.status_code == 200
     regen.delay.assert_called_once_with(
-        str(job.id), "song_text", override_text=None, remove_text=True
+        str(job.id),
+        "song_text",
+        override_text=None,
+        remove_text=True,
+        render_gen_id=ANY,
     )
 
 
@@ -441,7 +487,9 @@ def test_change_style_happy_path(client: TestClient) -> None:
             json={"style_set_id": valid_style},
         )
     assert resp.status_code == 200
-    regen.delay.assert_called_once_with(str(job.id), "song_text", style_set_id=valid_style)
+    regen.delay.assert_called_once_with(
+        str(job.id), "song_text", style_set_id=valid_style, render_gen_id=ANY
+    )
 
 
 def test_change_style_rejects_unknown_style(client: TestClient) -> None:
@@ -477,7 +525,9 @@ def test_intro_size_happy_path(client: TestClient) -> None:
             json={"text_size_px": 72},
         )
     assert resp.status_code == 200
-    regen.delay.assert_called_once_with(str(job.id), "song_text", size_override_px=72)
+    regen.delay.assert_called_once_with(
+        str(job.id), "song_text", size_override_px=72, render_gen_id=ANY
+    )
 
 
 def test_intro_size_clamps_to_envelope(client: TestClient) -> None:
@@ -946,6 +996,7 @@ def test_edit_intro_layout_happy_path(client: TestClient) -> None:
         cluster_body_size_px_override=None,
         cluster_accent_size_px_override=None,
         text_behind_subject=None,
+        render_gen_id=ANY,
         # No carousel_moment in the request body → the Celery-safe "leave it
         # alone" sentinel (see generative_build.CAROUSEL_MOMENT_UNSET).
         carousel_moment_override=CAROUSEL_MOMENT_UNSET,
@@ -994,6 +1045,7 @@ def test_edit_accepts_full_batch_payload(client: TestClient) -> None:
         cluster_body_size_px_override=None,
         cluster_accent_size_px_override=None,
         text_behind_subject=None,
+        render_gen_id=ANY,
         carousel_moment_override=CAROUSEL_MOMENT_UNSET,
     )
 

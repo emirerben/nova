@@ -252,3 +252,25 @@ def test_export_survives_a_signing_failure_without_500ing() -> None:
     body = resp.json()
     assert body["jobs"][0]["source_media_url"] is None
     assert body["persona"] is None
+
+
+def test_export_rejects_quarantined_plan_before_loading_children() -> None:
+    user = _user()
+    plan = MagicMock()
+    plan.id = uuid.uuid4()
+    plan.user_id = user.id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = datetime(2026, 8, 11, tzinfo=UTC)
+    db = _db(
+        [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+            _scalars([plan]),
+        ]
+    )
+    _override(user, db)
+
+    resp = client.get("/me/export")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Content plan is unavailable"
+    assert db.execute.await_count == 2

@@ -23,11 +23,10 @@ import structlog
 from celery import chord, group
 from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import sync_session as _sync_session
-from app.models import Job, JobClip
+from app.models import JobClip
 from app.pipeline import probe as probe_mod
 from app.pipeline import scene_detect
 from app.pipeline import transcribe as transcribe_mod
@@ -39,6 +38,11 @@ from app.pipeline.score import TOP_N, select_candidates
 from app.pipeline.thumbnail import select_thumbnail
 from app.pipeline.validator import validate_output
 from app.storage import download_to_file, upload_bytes_public_read, upload_public_read
+from app.tasks._job_cancel_fence import (
+    active_job_for_update,
+    delete_task_owned_outputs,
+    new_task_run_id,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -66,12 +70,13 @@ def orchestrate_job(self, job_id: str) -> None:
         try:
             # Snapshot raw_storage_path before session closes (matches render_clip pattern)
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
+                job = active_job_for_update(db, job_id, operation="legacy_orchestrate_start")
                 if job is None:
-                    log.error("job_not_found", job_id=job_id)
+                    log.info("legacy_orchestrate_start_skipped", job_id=job_id)
                     return
                 raw_storage_path = job.raw_storage_path
-                _set_job_status(db, job, "processing")
+                job.status = "processing"
+                db.commit()
 
             # [1] Download raw video from GCS
             log.info("downloading_raw", job_id=job_id, path=raw_storage_path)
@@ -90,7 +95,13 @@ def orchestrate_job(self, job_id: str) -> None:
             # [1c] Probe
             video_probe = probe_mod.probe_video(raw_local)
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="legacy_orchestrate_persist_probe",
+                )
+                if job is None:
+                    return
                 job.probe_metadata = {
                     "duration_s": video_probe.duration_s,
                     "fps": video_probe.fps,
@@ -111,7 +122,13 @@ def orchestrate_job(self, job_id: str) -> None:
                 job_id=job_id,
             )
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="legacy_orchestrate_persist_transcript",
+                )
+                if job is None:
+                    return
                 job.transcript = {
                     "full_text": transcript.full_text,
                     "low_confidence": transcript.low_confidence,
@@ -130,7 +147,13 @@ def orchestrate_job(self, job_id: str) -> None:
             # [3] Scene detection
             cuts = scene_detect.detect_scenes(raw_local)
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="legacy_orchestrate_persist_scenes",
+                )
+                if job is None:
+                    return
                 job.scene_cuts = [{"timestamp_s": c.timestamp_s, "score": c.score} for c in cuts]
                 db.commit()
 
@@ -148,7 +171,13 @@ def orchestrate_job(self, job_id: str) -> None:
             # Persist all 9 candidates + create JobClip rows for top 3
             clip_db_ids: list[str] = []
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="legacy_orchestrate_persist_candidates",
+                )
+                if job is None:
+                    return
                 job.all_candidates = [
                     {
                         "rank": c.rank,
@@ -198,8 +227,12 @@ def orchestrate_job(self, job_id: str) -> None:
         except SoftTimeLimitExceeded:
             log.error("orchestrate_timeout", job_id=job_id)
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
-                if job:
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="legacy_orchestrate_timeout",
+                )
+                if job is not None:
                     job.status = "processing_failed"
                     job.error_detail = "Job timed out (exceeded 1080s soft limit)"
                     db.commit()
@@ -217,8 +250,12 @@ def orchestrate_job(self, job_id: str) -> None:
         except Exception as exc:
             log.error("orchestrate_failed", job_id=job_id, error=str(exc))
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
-                if job:
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="legacy_orchestrate_failed",
+                )
+                if job is not None:
                     job.status = "processing_failed"
                     job.error_detail = str(exc)[:1000]
                     db.commit()
@@ -227,12 +264,29 @@ def orchestrate_job(self, job_id: str) -> None:
     # Fan-out: render top 3 clips in parallel, then finalize
     if not clip_db_ids:
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job:
+            job = active_job_for_update(
+                db,
+                job_id,
+                operation="legacy_orchestrate_no_segments",
+            )
+            if job is not None:
                 job.status = "processing_failed"
                 job.error_detail = "No scoreable segments found"
                 db.commit()
         return
+
+    # Final broker checkpoint. The lock is released before apply_async; render
+    # task entry fences are the backstop if cancellation wins after this read.
+    with _sync_session() as db:
+        if (
+            active_job_for_update(
+                db,
+                job_id,
+                operation="legacy_orchestrate_before_fanout",
+            )
+            is None
+        ):
+            return
 
     render_tasks = group(render_clip.s(job_id, clip_id) for clip_id in clip_db_ids)
     workflow = chord(render_tasks, finalize_job.s(job_id))
@@ -259,12 +313,18 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
     log.info("render_clip_start", job_id=job_id, clip_id=clip_db_id)
 
     with _sync_session() as db:
-        clip = db.get(JobClip, uuid.UUID(clip_db_id))
-        job = db.get(Job, uuid.UUID(job_id))
-        if clip is None or job is None:
+        job = active_job_for_update(
+            db,
+            job_id,
+            operation=f"legacy_render_clip_{clip_db_id}_start",
+        )
+        if job is None:
+            return {"clip_id": clip_db_id, "success": False, "error": "cancelled"}
+        clip = db.get(JobClip, uuid.UUID(clip_db_id), with_for_update=True)
+        if clip is None:
             return {"clip_id": clip_db_id, "success": False, "error": "DB record not found"}
 
-        _set_clip_render_status(db, clip, "rendering")
+        clip.render_status = "rendering"
 
         # Snapshot what we need from DB before closing session
         start_s = clip.start_s
@@ -282,7 +342,9 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
         has_transcript = not transcript_data.get("low_confidence", True)
         transcript_excerpt = _extract_excerpt(transcript_data, start_s, end_s)
         scene_cut_timestamps = [c["timestamp_s"] for c in (job.scene_cuts or [])]
+        db.commit()
 
+    created_output_paths: list[str] = []
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
             raw_local = os.path.join(tmpdir, "raw.mp4")
@@ -334,8 +396,10 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
                 raise ReframeError(f"Output spec validation failed: {validation.errors}")
 
             # [8] Upload to GCS
-            clip_gcs_path = f"{user_id}/{job_id}/clip_{rank}.mp4"
-            thumb_gcs_path = f"{user_id}/{job_id}/thumb_{rank}.jpg"
+            task_run_id = new_task_run_id()
+            clip_gcs_path = f"{user_id}/{job_id}/task-runs/{task_run_id}/clip_{rank}.mp4"
+            thumb_gcs_path = f"{user_id}/{job_id}/task-runs/{task_run_id}/thumb_{rank}.jpg"
+            created_output_paths = [clip_gcs_path, thumb_gcs_path]
 
             video_url = upload_public_read(output_path, clip_gcs_path)
             with open(thumb_result.jpeg_path, "rb") as tf:
@@ -348,31 +412,56 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
             # it); keeping it truthful so a future sweeper isn't surprised.
             expires_at = datetime.now(UTC) + timedelta(days=1)
 
+            finalized = False
             with _sync_session() as db:
-                clip = db.get(JobClip, uuid.UUID(clip_db_id))
-                clip.render_status = "ready"
-                clip.video_path = video_url
-                clip.thumbnail_path = thumb_url
-                clip.duration_s = duration_s
-                clip.file_size_bytes = file_size
-                clip.platform_copy = platform_copy.model_dump()
-                clip.copy_status = copy_status
-                clip.storage_expires_at = expires_at
-                db.commit()
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation=f"legacy_render_clip_{clip_db_id}_finalize",
+                )
+                if job is not None:
+                    clip = db.get(JobClip, uuid.UUID(clip_db_id), with_for_update=True)
+                    if clip is not None:
+                        clip.render_status = "ready"
+                        clip.video_path = video_url
+                        clip.thumbnail_path = thumb_url
+                        clip.duration_s = duration_s
+                        clip.file_size_bytes = file_size
+                        clip.platform_copy = platform_copy.model_dump()
+                        clip.copy_status = copy_status
+                        clip.storage_expires_at = expires_at
+                        db.commit()
+                        finalized = True
+            if not finalized:
+                delete_task_owned_outputs(job_id, created_output_paths)
+                return {"clip_id": clip_db_id, "success": False, "error": "cancelled"}
 
             log.info("render_clip_done", clip_id=clip_db_id, video_url=video_url)
-            return {"clip_id": clip_db_id, "success": True, "error": None}
+            return {
+                "clip_id": clip_db_id,
+                "success": True,
+                "error": None,
+                "output_paths": created_output_paths,
+            }
 
         except SoftTimeLimitExceeded:
             log.error("render_clip_timeout", clip_id=clip_db_id)
+            delete_task_owned_outputs(job_id, created_output_paths)
             with _sync_session() as db:
-                clip = db.get(JobClip, uuid.UUID(clip_db_id))
-                if clip:
-                    clip.render_status = "failed"
-                    clip.error_detail = "Clip render timed out (exceeded 540s soft limit)"
-                    db.commit()
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation=f"legacy_render_clip_{clip_db_id}_timeout",
+                )
+                if job is not None:
+                    clip = db.get(JobClip, uuid.UUID(clip_db_id), with_for_update=True)
+                    if clip is not None:
+                        clip.render_status = "failed"
+                        clip.error_detail = "Clip render timed out (exceeded 540s soft limit)"
+                        db.commit()
             return {"clip_id": clip_db_id, "success": False, "error": "render timeout"}
         except OperationalError as db_exc:
+            delete_task_owned_outputs(job_id, created_output_paths)
             # Transient Postgres outage — re-raise for Celery autoretry. The
             # chord callback (finalize_job) sees the eventual retry result;
             # if all retries are exhausted, Celery will mark the task FAILED
@@ -386,12 +475,19 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
             raise
         except Exception as exc:
             log.error("render_clip_failed", clip_id=clip_db_id, error=str(exc))
+            delete_task_owned_outputs(job_id, created_output_paths)
             with _sync_session() as db:
-                clip = db.get(JobClip, uuid.UUID(clip_db_id))
-                if clip:
-                    clip.render_status = "failed"
-                    clip.error_detail = str(exc)[:1000]
-                    db.commit()
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation=f"legacy_render_clip_{clip_db_id}_failed",
+                )
+                if job is not None:
+                    clip = db.get(JobClip, uuid.UUID(clip_db_id), with_for_update=True)
+                    if clip is not None:
+                        clip.render_status = "failed"
+                        clip.error_detail = str(exc)[:1000]
+                        db.commit()
             # Return failure dict — do NOT raise (would break chord callback)
             return {"clip_id": clip_db_id, "success": False, "error": str(exc)}
 
@@ -412,35 +508,32 @@ def finalize_job(render_results: list[dict], job_id: str) -> None:
         failures=len(failures),
     )
 
+    finalized_status: str | None = None
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
-        if job is None:
-            return
+        job = active_job_for_update(db, job_id, operation="legacy_finalize_job")
+        if job is not None:
+            if len(successes) == 0:
+                job.status = "processing_failed"
+                job.error_detail = "All clip renders failed"
+            elif len(failures) > 0:
+                job.status = "clips_ready_partial"
+            else:
+                job.status = "clips_ready"
 
-        if len(successes) == 0:
-            job.status = "processing_failed"
-            job.error_detail = "All clip renders failed"
-        elif len(failures) > 0:
-            job.status = "clips_ready_partial"
-        else:
-            job.status = "clips_ready"
+            db.commit()
+            finalized_status = job.status
 
-        db.commit()
+    if finalized_status is None:
+        delete_task_owned_outputs(
+            job_id,
+            [str(path) for result in successes for path in (result.get("output_paths") or [])],
+        )
+        return
 
-    log.info("job_finalized", job_id=job_id, status=job.status)
+    log.info("job_finalized", job_id=job_id, status=finalized_status)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _set_job_status(db: Session, job: Job, status: str) -> None:
-    job.status = status
-    db.commit()
-
-
-def _set_clip_render_status(db: Session, clip: JobClip, status: str) -> None:
-    clip.render_status = status
-    db.commit()
 
 
 def _extract_excerpt(transcript_data: dict, start_s: float, end_s: float) -> str:

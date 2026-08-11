@@ -58,14 +58,38 @@ def _idea_item(user_id: uuid.UUID, *, item_status: str = "idea", current_job_id=
     item.edit_format = None
     item.clip_assignments = []
     plan = MagicMock()
+    plan.id = item.content_plan_id
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = plan.user_id
+    persona.persona = {}
+    persona.idea_seeds = []
+    persona.style = {}
+    plan._owned_persona_fixture = persona
     return item, plan
 
 
 def _db(execute_results: list, plan) -> AsyncMock:
     db = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(v) for v in execute_results])
+    item_results = iter(execute_results)
+    last_item = execute_results[-1] if execute_results else None
+
+    async def _execute(stmt):  # noqa: ANN001
+        nonlocal last_item
+        if "FROM personas" in str(stmt):
+            return _result(plan._owned_persona_fixture)
+        try:
+            last_item = next(item_results)
+        except StopIteration:
+            pass
+        return _result(last_item)
+
+    db.execute = AsyncMock(side_effect=_execute)
     db.get = AsyncMock(return_value=plan)
     return db
 
@@ -104,7 +128,7 @@ def test_reroll_dispatches_task_and_sets_rerolling(client: TestClient) -> None:
     assert resp.status_code == 200
     # item_status was set to "rerolling" before the commit
     assert item.item_status == "rerolling"
-    task.delay.assert_called_once_with(str(item.id))
+    task.delay.assert_called_once_with(str(item.id), 0)
 
 
 # ── 409 guards ────────────────────────────────────────────────────────────────

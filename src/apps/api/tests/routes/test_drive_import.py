@@ -17,6 +17,7 @@ TEST_FERNET_KEY = Fernet.generate_key().decode()
 def _mock_db():
     """Yield a mock async DB session."""
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()
     yield mock_db
 
 
@@ -70,12 +71,11 @@ class TestDriveImportValidation:
             patch("app.routes.uploads.settings") as mock_s,
             patch("app.routes.uploads._fernet_valid", None),
             patch("app.routes.uploads._fernet", None),
-            patch("app.routes.uploads.import_from_drive", create=True) as mock_task,
+            patch("app.tasks.drive_import.import_from_drive") as mock_task,
         ):
             mock_s.token_encryption_key = TEST_FERNET_KEY
             mock_s.max_upload_bytes = 4 * 1024 * 1024 * 1024
-            mock_task_obj = MagicMock()
-            mock_task.apply_async = mock_task_obj
+            mock_task.apply_async = MagicMock()
 
             # Reset cached Fernet state
             import app.routes.uploads as uploads_mod
@@ -88,6 +88,76 @@ class TestDriveImportValidation:
         data = res.json()
         assert data["status"] == "importing"
         assert "job_id" in data
+        call = mock_task.apply_async.call_args
+        assert call.kwargs["task_id"]
+        assert call.kwargs["task_id"] != data["job_id"]
+
+    def test_enqueue_failure_only_fails_matching_unclaimed_import(self, client):
+        db = AsyncMock()
+        db.add = MagicMock()
+        failure = MagicMock(rowcount=1)
+        db.execute = AsyncMock(return_value=failure)
+
+        async def _db():
+            yield db
+
+        app.dependency_overrides[get_db] = _db
+        with (
+            patch("app.routes.uploads.settings") as mock_s,
+            patch("app.routes.uploads._fernet_valid", None),
+            patch("app.routes.uploads._fernet", None),
+            patch("app.tasks.drive_import.import_from_drive") as mock_task,
+        ):
+            mock_s.token_encryption_key = TEST_FERNET_KEY
+            mock_s.max_upload_bytes = 4 * 1024 * 1024 * 1024
+            mock_task.apply_async.side_effect = RuntimeError("broker response lost")
+
+            import app.routes.uploads as uploads_mod
+
+            uploads_mod._fernet_valid = None
+            uploads_mod._fernet = None
+            res = client.post("/uploads/drive-import", json=_valid_single_request())
+
+        assert res.status_code == 503
+        job = db.add.call_args.args[0]
+        assert job.celery_task_id == mock_task.apply_async.call_args.kwargs["task_id"]
+        statement = db.execute.await_args.args[0]
+        sql = str(statement)
+        assert "jobs.status" in sql
+        assert "jobs.celery_task_id" in sql
+        assert "jobs.started_at IS NULL" in sql
+        assert "processing_failed" in statement.compile().params.values()
+
+    def test_ambiguous_enqueue_does_not_overwrite_claimed_import(self, client):
+        db = AsyncMock()
+        db.add = MagicMock()
+        failure = MagicMock(rowcount=0)
+        status_result = MagicMock()
+        status_result.scalar_one_or_none.return_value = "importing"
+        db.execute = AsyncMock(side_effect=[failure, status_result])
+
+        async def _db():
+            yield db
+
+        app.dependency_overrides[get_db] = _db
+        with (
+            patch("app.routes.uploads.settings") as mock_s,
+            patch("app.tasks.drive_import.import_from_drive") as mock_task,
+        ):
+            mock_s.token_encryption_key = TEST_FERNET_KEY
+            mock_s.max_upload_bytes = 4 * 1024 * 1024 * 1024
+            mock_task.apply_async.side_effect = RuntimeError("ambiguous publish")
+
+            import app.routes.uploads as uploads_mod
+
+            uploads_mod._fernet_valid = None
+            uploads_mod._fernet = None
+            res = client.post("/uploads/drive-import", json=_valid_single_request())
+
+        assert res.status_code == 202
+        assert res.json()["status"] == "importing"
+        job = db.add.call_args.args[0]
+        assert job.status == "importing"
 
     def test_missing_fernet_key_returns_503(self, client):
         import app.routes.uploads as uploads_mod
@@ -144,7 +214,7 @@ class TestDriveImportValidation:
 
         with (
             patch("app.routes.uploads.settings") as mock_s,
-            patch("app.routes.uploads.import_from_drive", create=True),
+            patch("app.tasks.drive_import.import_from_drive"),
         ):
             mock_s.token_encryption_key = TEST_FERNET_KEY
             mock_s.max_upload_bytes = 4 * 1024 * 1024 * 1024
@@ -297,7 +367,7 @@ class TestDriveImportBatchValidation:
 
         with (
             patch("app.routes.uploads.settings") as mock_s,
-            patch("app.routes.uploads.batch_import_from_drive", create=True),
+            patch("app.tasks.drive_import.batch_import_from_drive"),
         ):
             mock_s.token_encryption_key = TEST_FERNET_KEY
             mock_s.max_upload_bytes = 4 * 1024 * 1024 * 1024

@@ -482,6 +482,55 @@ async def test_start_restyle_accepts_one_complete_unsaved_draft_slot(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_start_enqueue_failure_never_rewrites_cancelled_job(monkeypatch) -> None:
+    variant = {
+        "variant_id": "v1",
+        "ai_timeline": {"slots": [{"clip_index": 0, "duration_s": 4.0}]},
+    }
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000001",
+        status="variants_ready",
+        assembly_plan={"variants": [variant]},
+        all_candidates={"clip_paths": ["source-a.mp4"]},
+    )
+    monkeypatch.setattr(_omni.settings, "omni_generated_video_enabled", True)
+    monkeypatch.setattr(_omni, "_lock_job", AsyncMock(return_value=job))
+    monkeypatch.setattr(
+        omni_generate.generate_omni_asset,
+        "apply_async",
+        MagicMock(side_effect=RuntimeError("broker unavailable")),
+    )
+    locked_result = MagicMock()
+    locked_result.scalar_one_or_none.return_value = job
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=locked_result)
+
+    async def commit_then_cancel() -> None:
+        job.status = "cancelled"
+
+    db.commit = AsyncMock(side_effect=commit_then_cancel)
+    db.rollback = AsyncMock()
+    body = OmniAssetStartBody(
+        draft_revision="v1-test",
+        suggestion_id="suggestion-1",
+        action="generate_insert",
+        prompt="Generate a bridge",
+        insert_at_s=2,
+        duration_s=3,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await start_omni_asset(job, "v1", body, db)
+
+    assert exc_info.value.status_code == 503
+    asset = next(iter(job.assembly_plan["omni_generated_assets"].values()))
+    assert asset["status"] == "queued"
+    assert job.status == "cancelled"
+    db.commit.assert_awaited_once()
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_cancel_queued_asset_becomes_terminal_without_worker(monkeypatch) -> None:
     job = SimpleNamespace(
         id="00000000-0000-0000-0000-000000000001",
@@ -543,6 +592,53 @@ def test_cancelled_ready_commit_preserves_original_candidates_and_cleans_storage
     assert cancelled["status"] == "cancelled"
     assert cancelled.get("operation") is None
     assert deleted == ["generative-jobs/job/omni/asset-1.mp4"]
+
+
+def test_whole_job_cancellation_rejects_child_updates_and_late_ready_output(
+    monkeypatch,
+) -> None:
+    """Per-asset state cannot outlive the parent Job cancellation tombstone."""
+    storage_path = "generative-jobs/00000000-0000-0000-0000-000000000001/omni/asset-1.mp4"
+    record = _record(status="generating", progress=0.55)
+    job = SimpleNamespace(
+        status="cancelled",
+        assembly_plan={"omni_generated_assets": {"asset-1": record}},
+        all_candidates={"clip_paths": ["source-a.mp4"]},
+    )
+    session = MagicMock()
+    session.scalar.return_value = job
+
+    @contextmanager
+    def fake_session():
+        yield session
+
+    deleted = MagicMock(return_value=True)
+    monkeypatch.setattr(omni_generate, "sync_session", fake_session)
+    monkeypatch.setattr(omni_generate, "delete_object_best_effort", deleted)
+
+    assert omni_generate._update(  # noqa: SLF001
+        "00000000-0000-0000-0000-000000000001",
+        "asset-1",
+        status="ready",
+        progress=1.0,
+    ) == {}
+    assert (
+        omni_generate._commit_ready(  # noqa: SLF001
+            "00000000-0000-0000-0000-000000000001",
+            "asset-1",
+            storage_path=storage_path,
+            output_url="https://storage.example/asset-1",
+            duration_s=4.0,
+        )
+        is False
+    )
+
+    assert job.assembly_plan == {
+        "omni_generated_assets": {"asset-1": _record(status="generating", progress=0.55)}
+    }
+    assert job.all_candidates == {"clip_paths": ["source-a.mp4"]}
+    session.commit.assert_not_called()
+    deleted.assert_called_once_with(storage_path)
 
 
 def test_cleanup_expires_unclaimed_asset_and_deletes_storage(monkeypatch) -> None:

@@ -538,14 +538,16 @@ class TestJobDebug:
 class TestCancelJob:
     """POST /admin/jobs/{id}/cancel — revoke Celery task + flip status."""
 
-    def _db_gen_for_cancel(self, job, *, rowcount: int = 1):
+    def _db_gen_for_cancel(self, job, *, rowcount: int = 1, publications=None):
         async def _gen():
             db = AsyncMock()
             job_res = MagicMock()
             job_res.scalar_one_or_none.return_value = job
+            publication_res = MagicMock()
+            publication_res.scalars.return_value.all.return_value = publications or []
             update_res = MagicMock()
             update_res.rowcount = rowcount
-            db.execute = AsyncMock(side_effect=[job_res, update_res])
+            db.execute = AsyncMock(side_effect=[job_res, publication_res, update_res])
             db.commit = AsyncMock()
             db.rollback = AsyncMock()
             yield db
@@ -656,6 +658,51 @@ class TestCancelJob:
         # 30s countdown so the still-dying worker can finish writing
         # to GCS before cleanup deletes the prefix.
         mock_cleanup.apply_async.assert_called_once_with(args=[str(j.id)], countdown=30)
+
+    def test_importing_cancel_revokes_import_and_fails_unsubmitted_tiktok_receipt(self, client):
+        task_id = str(uuid.uuid4())
+        j = _job_row(status="importing", celery_task_id=task_id)
+        snapshot_path = f"tiktok-publish/{uuid.uuid4()}.mp4"
+        publication = SimpleNamespace(
+            processing_status="snapshotting",
+            retryable=True,
+            next_poll_at=datetime.now(UTC),
+            failure_code=None,
+            failure_detail=None,
+            snapshot_object_path=snapshot_path,
+            media_token_hash="secret",
+            media_expires_at=datetime.now(UTC),
+        )
+        from app.worker import celery_app  # noqa: PLC0415
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch.object(celery_app, "control") as mock_control,
+            patch("app.routes.admin_jobs.storage.delete_object_best_effort") as delete_snapshot,
+            patch("app.tasks.maintenance.cleanup_cancelled_job") as mock_cleanup,
+        ):
+            s.admin_api_key = VALID_TOKEN
+            mock_control.revoke = MagicMock()
+            mock_cleanup.apply_async = MagicMock()
+            app.dependency_overrides[get_db] = self._db_gen_for_cancel(
+                j, publications=[publication]
+            )
+            try:
+                res = client.post(
+                    f"/admin/jobs/{j.id}/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        mock_control.revoke.assert_called_once_with(task_id, terminate=True, signal="SIGTERM")
+        assert publication.processing_status == "failed"
+        assert publication.failure_code == "source_job_cancelled"
+        assert publication.retryable is False
+        assert publication.snapshot_object_path is None
+        assert publication.media_token_hash is None
+        delete_snapshot.assert_called_once_with(snapshot_path)
 
     def test_null_task_id_skips_revoke_but_still_flips_status(self, client):
         """Legacy row (celery_task_id=NULL): worker is gone, revoke would no-op anyway.
@@ -817,6 +864,23 @@ class TestSilenceCutDisable:
         assert res.status_code == 200
         assert res.json()["silence_cut_disabled"] is True
         assert j.assembly_plan == {"silence_cut_disabled": True}
+
+    def test_cancelled_job_is_immutable(self, client):
+        j = _job_row(status="cancelled", assembly_plan={"variants": [{"variant_id": "v1"}]})
+        before = dict(j.assembly_plan)
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = self._db_gen(j)
+            try:
+                res = client.post(
+                    f"/admin/jobs/{j.id}/silence-cut-disable",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 409
+        assert j.assembly_plan == before
 
 
 # ── Queue-state endpoint ─────────────────────────────────────────────────────

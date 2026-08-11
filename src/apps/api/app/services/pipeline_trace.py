@@ -132,6 +132,7 @@ def record_pipeline_event(stage: str, event: str, data: dict[str, Any] | None = 
                              || CAST(:event_json AS JSONB)
                     END
                     WHERE id = :job_id
+                      AND status <> 'cancelled'
                     """
                 ),
                 {

@@ -32,12 +32,15 @@ from typing import Any
 
 import structlog
 from celery import Task
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Job
 
 log = structlog.get_logger()
+
+_DISPATCH_FAILURE_REASON = "dispatch_publish_failed"
+_DISPATCH_FAILURE_DETAIL = "The job couldn't be handed to the queue. Please try again."
 
 # Task names that MUST route through `enqueue_orchestrator`. Used by the
 # source-grep regression test in `tests/services/test_job_dispatch.py`.
@@ -50,6 +53,98 @@ ORCHESTRATOR_TASK_NAMES: tuple[str, ...] = (
     "orchestrate_generative_job",
     "render_lyrics_preview_task",
 )
+
+
+async def _recover_async_publish_failure(
+    db: AsyncSession,
+    *,
+    job_id: uuid.UUID,
+    task_name: str,
+    publish_error: Exception,
+) -> bool:
+    """Terminalize only a still-queued Job after broker publication raises.
+
+    ``apply_async`` can raise after the broker accepted the message.  The
+    worker's queued -> processing claim therefore wins this compare-and-set;
+    cancellation and every other newer state are immutable here.  This UPDATE
+    runs only after broker I/O has returned, so no database lock spans the
+    network call.
+    """
+
+    try:
+        result = await db.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status == "queued")
+            .values(
+                status="processing_failed",
+                failure_reason=_DISPATCH_FAILURE_REASON,
+                error_detail=_DISPATCH_FAILURE_DETAIL,
+            )
+        )
+        await db.commit()
+        recovered = int(getattr(result, "rowcount", 0) or 0) == 1
+    except Exception as recovery_error:  # noqa: BLE001
+        await db.rollback()
+        log.error(
+            "enqueue_orchestrator_publish_recovery_failed",
+            task_name=task_name,
+            job_id=str(job_id),
+            publish_error=str(publish_error),
+            recovery_error=str(recovery_error),
+        )
+        return False
+
+    log.error(
+        "enqueue_orchestrator_publish_failed",
+        task_name=task_name,
+        job_id=str(job_id),
+        recovered=recovered,
+        error=str(publish_error),
+    )
+    return recovered
+
+
+def _recover_sync_publish_failure(
+    *,
+    job_id: uuid.UUID,
+    task_name: str,
+    publish_error: Exception,
+) -> bool:
+    """Synchronous twin of :func:`_recover_async_publish_failure`."""
+
+    from app.database import sync_session  # noqa: PLC0415
+
+    try:
+        with sync_session() as db:
+            result = db.execute(
+                update(Job)
+                .where(Job.id == job_id, Job.status == "queued")
+                .values(
+                    status="processing_failed",
+                    failure_reason=_DISPATCH_FAILURE_REASON,
+                    error_detail=_DISPATCH_FAILURE_DETAIL,
+                )
+            )
+            db.commit()
+            recovered = int(getattr(result, "rowcount", 0) or 0) == 1
+    except Exception as recovery_error:  # noqa: BLE001
+        log.error(
+            "enqueue_orchestrator_publish_recovery_failed",
+            task_name=task_name,
+            job_id=str(job_id),
+            publish_error=str(publish_error),
+            recovery_error=str(recovery_error),
+        )
+        return False
+
+    log.error(
+        "enqueue_orchestrator_publish_failed",
+        task_name=task_name,
+        job_id=str(job_id),
+        recovered=recovered,
+        error=str(publish_error),
+    )
+    return recovered
 
 
 async def enqueue_orchestrator(
@@ -70,9 +165,9 @@ async def enqueue_orchestrator(
         await enqueue_orchestrator(orchestrate_X, job.id, db)
 
     Order of operations:
-      1. apply_async(task_id=str(job_id))  — dispatch to broker
-      2. UPDATE jobs SET celery_task_id=... — persist for admin UI
-      3. await db.commit()                  — one-column commit
+      1. Read current status and return without publishing if cancelled.
+      2. apply_async(task_id=str(job_id)) — dispatch to broker.
+      3. Conditionally persist celery_task_id while status != cancelled.
 
     If step 2 or 3 fails after step 1 succeeds, the task is still
     dispatched and the reaper continues to handle the row the old way
@@ -93,10 +188,43 @@ async def enqueue_orchestrator(
     task_id = str(job_id)
     job_uuid = job_id if isinstance(job_id, uuid.UUID) else uuid.UUID(task_id)
 
-    task.apply_async(args=[task_id], kwargs=kwargs or {}, task_id=task_id)
+    try:
+        current_status = (
+            await db.execute(select(Job.status).where(Job.id == job_uuid))
+        ).scalar_one_or_none()
+    except Exception as exc:  # noqa: BLE001
+        current_status = None
+        log.warning(
+            "enqueue_orchestrator_status_check_failed",
+            task_name=task.name,
+            job_id=task_id,
+            error=str(exc),
+        )
+    if current_status == "cancelled":
+        log.info(
+            "enqueue_orchestrator_cancelled_job_skipped",
+            task_name=task.name,
+            job_id=task_id,
+        )
+        return task_id
 
     try:
-        await db.execute(update(Job).where(Job.id == job_uuid).values(celery_task_id=task_id))
+        task.apply_async(args=[task_id], kwargs=kwargs or {}, task_id=task_id)
+    except Exception as exc:
+        await _recover_async_publish_failure(
+            db,
+            job_id=job_uuid,
+            task_name=task.name,
+            publish_error=exc,
+        )
+        raise
+
+    try:
+        await db.execute(
+            update(Job)
+            .where(Job.id == job_uuid, Job.status != "cancelled")
+            .values(celery_task_id=task_id)
+        )
         await db.commit()
     except Exception as exc:  # noqa: BLE001
         # Task is already on the broker; row write failed. Don't re-raise —
@@ -127,16 +255,49 @@ def enqueue_orchestrator_sync(
     A Celery task runs sync and holds a sync Session, so it can't await the
     async helper. This dispatches with `task_id=str(job_id)` (same contract:
     Celery task_id == Job id, so the reaper/admin can correlate) and routes to
-    `queue` when given (the throttled `plan-jobs` queue, plan T3). It does NOT
-    touch the DB — `task_id` is deterministically `str(job_id)`, so the calling
-    task sets `job.celery_task_id = str(job.id)` itself and commits BEFORE
-    calling this (the worker must be able to SELECT the row on pickup).
+    `queue` when given (the throttled `plan-jobs` queue, plan T3). The calling
+    task commits first so the worker can load the row; this helper then performs
+    a fresh status read and skips broker publication when cancellation is
+    already visible.
 
     Returns the task_id (= `str(job_id)`).
     """
     task_id = str(job_id)
+    job_uuid = job_id if isinstance(job_id, uuid.UUID) else uuid.UUID(task_id)
+    from app.database import sync_session  # noqa: PLC0415
+
+    try:
+        with sync_session() as db:
+            current_status = db.execute(
+                select(Job.status).where(Job.id == job_uuid)
+            ).scalar_one_or_none()
+        if current_status == "cancelled":
+            log.info(
+                "enqueue_orchestrator_cancelled_job_skipped",
+                task_name=task.name,
+                job_id=task_id,
+            )
+            return task_id
+    except Exception as exc:  # noqa: BLE001
+        # Preserve the historical availability contract: a status-read outage
+        # cannot strand a freshly committed job. The worker's immutable-status
+        # guard remains the race/backstop after publication.
+        log.warning(
+            "enqueue_orchestrator_status_check_failed",
+            task_name=task.name,
+            job_id=task_id,
+            error=str(exc),
+        )
     opts: dict[str, Any] = {"args": [task_id], "kwargs": kwargs or {}, "task_id": task_id}
     if queue:
         opts["queue"] = queue
-    task.apply_async(**opts)
+    try:
+        task.apply_async(**opts)
+    except Exception as exc:
+        _recover_sync_publish_failure(
+            job_id=job_uuid,
+            task_name=task.name,
+            publish_error=exc,
+        )
+        raise
     return task_id

@@ -10,6 +10,7 @@ import pytest
 from celery.exceptions import Retry
 
 from app.agents._runtime import RefusalError
+from app.models import Job, MusicTrack
 from app.tasks.music_orchestrate import (
     analyze_music_track_task,
     orchestrate_music_job,
@@ -222,13 +223,12 @@ def test_orchestrate_music_job_track_not_ready_fails_fast() -> None:
     mock_track.analysis_status = "analyzing"
     mock_track.audio_gcs_path = "music/abc/audio.m4a"
 
-    call_count = [0]
-
-    def mock_get(model, id_val):
-        call_count[0] += 1
-        if call_count[0] == 1:
+    def mock_get(model, id_val, **_kwargs):
+        if model is Job:
             return mock_job
-        return mock_track
+        if model is MusicTrack:
+            return mock_track
+        raise AssertionError(f"unexpected model lookup: {model}")
 
     mock_session = MagicMock()
     mock_session.__enter__ = lambda s: s
@@ -252,13 +252,12 @@ def test_orchestrate_music_job_no_audio_gcs_path_fails() -> None:
     mock_track.analysis_status = "ready"
     mock_track.audio_gcs_path = None  # Critical failure mode
 
-    call_count = [0]
-
-    def mock_get(model, id_val):
-        call_count[0] += 1
-        if call_count[0] == 1:
+    def mock_get(model, id_val, **_kwargs):
+        if model is Job:
             return mock_job
-        return mock_track
+        if model is MusicTrack:
+            return mock_track
+        raise AssertionError(f"unexpected model lookup: {model}")
 
     mock_session = MagicMock()
     mock_session.__enter__ = lambda s: s

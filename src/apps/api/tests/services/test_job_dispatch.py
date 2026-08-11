@@ -16,13 +16,14 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.services.job_dispatch import (
     ORCHESTRATOR_TASK_NAMES,
     enqueue_orchestrator,
+    enqueue_orchestrator_sync,
 )
 
 API_ROOT = Path(__file__).resolve().parents[2] / "app"
@@ -35,8 +36,10 @@ async def test_enqueue_orchestrator_sets_task_id_and_persists_column() -> None:
     task = MagicMock()
     task.name = "orchestrate_template_job"
 
+    status_result = MagicMock()
+    status_result.scalar_one_or_none.return_value = "queued"
     db = MagicMock()
-    db.execute = AsyncMock()
+    db.execute = AsyncMock(side_effect=[status_result, MagicMock()])
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
 
@@ -49,7 +52,9 @@ async def test_enqueue_orchestrator_sets_task_id_and_persists_column() -> None:
     assert call_kwargs["args"] == [str(job_id)]
     assert call_kwargs["kwargs"] == {}
     # UPDATE jobs SET celery_task_id was issued.
-    assert db.execute.await_count == 1
+    assert db.execute.await_count == 2
+    stmt = db.execute.await_args_list[-1].args[0]
+    assert "jobs.status !=" in str(stmt)
     db.commit.assert_awaited_once()
 
 
@@ -59,14 +64,154 @@ async def test_enqueue_orchestrator_forwards_kwargs() -> None:
     job_id = uuid.uuid4()
     task = MagicMock()
     task.name = "orchestrate_template_job"
+    status_result = MagicMock()
+    status_result.scalar_one_or_none.return_value = "queued"
     db = MagicMock()
-    db.execute = AsyncMock()
+    db.execute = AsyncMock(side_effect=[status_result, MagicMock()])
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
 
     await enqueue_orchestrator(task, job_id, db, kwargs={"force_single_pass": True})
 
     assert task.apply_async.call_args.kwargs["kwargs"] == {"force_single_pass": True}
+
+
+@pytest.mark.asyncio
+async def test_enqueue_orchestrator_does_not_publish_cancelled_job() -> None:
+    job_id = uuid.uuid4()
+    task = MagicMock()
+    task.name = "orchestrate_template_job"
+    status_result = MagicMock()
+    status_result.scalar_one_or_none.return_value = "cancelled"
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=status_result)
+
+    returned = await enqueue_orchestrator(task, job_id, db)
+
+    assert returned == str(job_id)
+    task.apply_async.assert_not_called()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_orchestrator_publish_failure_terminalizes_only_queued_job() -> None:
+    job_id = uuid.uuid4()
+    task = MagicMock()
+    task.name = "orchestrate_template_job"
+    events: list[str] = []
+    status_result = MagicMock()
+    status_result.scalar_one_or_none.return_value = "queued"
+    recovery_result = MagicMock()
+    recovery_result.rowcount = 1
+
+    async def _execute(_stmt):
+        events.append("status_read" if not events else "recovery_update")
+        return status_result if len(events) == 1 else recovery_result
+
+    def _publish(**_kwargs):
+        events.append("broker_publish")
+        raise RuntimeError("broker unavailable")
+
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=_execute)
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+    task.apply_async.side_effect = _publish
+
+    with pytest.raises(RuntimeError, match="broker unavailable"):
+        await enqueue_orchestrator(task, job_id, db)
+
+    assert events == ["status_read", "broker_publish", "recovery_update"]
+    recovery_stmt = db.execute.await_args_list[-1].args[0]
+    assert "jobs.status =" in str(recovery_stmt)
+    assert "FOR UPDATE" not in str(recovery_stmt)
+    assert "processing_failed" in set(recovery_stmt.compile().params.values())
+    assert "dispatch_publish_failed" in set(recovery_stmt.compile().params.values())
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_orchestrator_publish_failure_preserves_newer_state() -> None:
+    job_id = uuid.uuid4()
+    task = MagicMock()
+    task.name = "orchestrate_template_job"
+    task.apply_async.side_effect = RuntimeError("ambiguous publish")
+    status_result = MagicMock()
+    status_result.scalar_one_or_none.return_value = "queued"
+    recovery_result = MagicMock()
+    recovery_result.rowcount = 0
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[status_result, recovery_result])
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+
+    with pytest.raises(RuntimeError, match="ambiguous publish"):
+        await enqueue_orchestrator(task, job_id, db)
+
+    # A worker claim or cancellation made the queued-only CAS lose. Recovery
+    # commits no Job mutation and preserves the newer state.
+    db.commit.assert_awaited_once()
+
+
+def test_enqueue_orchestrator_sync_does_not_publish_cancelled_job() -> None:
+    job_id = uuid.uuid4()
+    task = MagicMock()
+    task.name = "orchestrate_generative_job"
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = "cancelled"
+    session = MagicMock()
+    session.execute.return_value = result
+    context = MagicMock()
+    context.__enter__.return_value = session
+    context.__exit__.return_value = False
+
+    with patch("app.database.sync_session", return_value=context):
+        returned = enqueue_orchestrator_sync(task, job_id)
+
+    assert returned == str(job_id)
+    task.apply_async.assert_not_called()
+
+
+def test_enqueue_orchestrator_sync_publish_failure_recovers_after_broker_io() -> None:
+    job_id = uuid.uuid4()
+    task = MagicMock()
+    task.name = "orchestrate_generative_job"
+    events: list[str] = []
+
+    status_result = MagicMock()
+    status_result.scalar_one_or_none.return_value = "queued"
+    status_session = MagicMock()
+    status_session.execute.side_effect = lambda _stmt: events.append("status_read") or status_result
+    status_context = MagicMock()
+    status_context.__enter__.return_value = status_session
+    status_context.__exit__.return_value = False
+
+    recovery_result = MagicMock()
+    recovery_result.rowcount = 1
+    recovery_session = MagicMock()
+    recovery_session.execute.side_effect = (
+        lambda _stmt: events.append("recovery_update") or recovery_result
+    )
+    recovery_context = MagicMock()
+    recovery_context.__enter__.return_value = recovery_session
+    recovery_context.__exit__.return_value = False
+
+    def _publish(**_kwargs):
+        events.append("broker_publish")
+        raise RuntimeError("broker unavailable")
+
+    task.apply_async.side_effect = _publish
+    with (
+        patch(
+            "app.database.sync_session",
+            side_effect=[status_context, recovery_context],
+        ),
+        pytest.raises(RuntimeError, match="broker unavailable"),
+    ):
+        enqueue_orchestrator_sync(task, job_id)
+
+    assert events == ["status_read", "broker_publish", "recovery_update"]
+    recovery_session.commit.assert_called_once()
 
 
 @pytest.mark.asyncio

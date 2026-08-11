@@ -360,8 +360,8 @@ async def get_music_job_status(
         job_id=str(job.id),
         status=job.status,
         music_track_id=job.music_track_id,
-        assembly_plan=job.assembly_plan,
-        error_detail=job.error_detail,
+        assembly_plan=None if job.status == "cancelled" else job.assembly_plan,
+        error_detail=None if job.status == "cancelled" else job.error_detail,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )

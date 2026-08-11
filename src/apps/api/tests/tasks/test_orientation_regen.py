@@ -74,6 +74,8 @@ def test_persisted_landscape_request_rebuilds_from_source_clips(monkeypatch) -> 
         "music_track_id": None,
     }
     job = types.SimpleNamespace(
+        status="variants_ready",
+        mode="generative",
         all_candidates={
             "clip_paths": [f"generative-jobs/{job_id}/sources/clip.mp4"],
             "landscape_fit": "fit",
@@ -180,6 +182,8 @@ def test_unusable_cached_base_rebuilds_after_superseding_text_edit(
         "render_generation_id": "text-commit-newer",
     }
     job = types.SimpleNamespace(
+        status="variants_ready",
+        mode="generative",
         all_candidates={
             "clip_paths": [f"generative-jobs/{job_id}/sources/clip.mp4"],
             "landscape_fit": "fit",

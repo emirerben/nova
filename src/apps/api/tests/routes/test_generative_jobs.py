@@ -2484,7 +2484,7 @@ async def test_status_exposes_archetype_fallback(monkeypatch):
         finished_at=None,
     )
 
-    async def _load(job_id, db, user, allowed_modes=None):
+    async def _load(job_id, db, user, allowed_modes=None, **_kwargs):
         return job
 
     monkeypatch.setattr(gj, "_load_generative_job", _load)
@@ -2520,7 +2520,7 @@ async def test_status_archetype_fallback_null_when_absent_or_malformed(monkeypat
             finished_at=None,
         )
 
-        async def _load(job_id, db, user, allowed_modes=None, _job=job):
+        async def _load(job_id, db, user, allowed_modes=None, _job=job, **_kwargs):
             return _job
 
         monkeypatch.setattr(gj, "_load_generative_job", _load)
@@ -2581,7 +2581,7 @@ async def test_status_attaches_music_preview_for_unpublished_track(monkeypatch):
         async def execute(self, stmt):
             return _Result()
 
-    async def _load(job_id, db, user, allowed_modes=None):
+    async def _load(job_id, db, user, allowed_modes=None, **_kwargs):
         return job
 
     monkeypatch.setattr(gj, "_load_generative_job", _load)

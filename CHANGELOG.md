@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.0.0] — 2026-08-11
+
+### Added
+- **Tenant-safe content plan rendering.** Content plans now fail closed when their linked Persona belongs to another account, with durable ownership epochs, quarantine handling, cancelled-job output fences, and a database-level same-owner constraint.
+- **Migration and regression coverage.** Added staged ownership migrations, PostgreSQL constraint verification, and route/task tests for mismatches, stale workers, cancellation, and dispatch races.
+
 ## [0.25.8.0] — 2026-08-11
 
 ### Fixed

@@ -98,11 +98,16 @@ from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION, MusicLabels
 from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.config import settings
 from app.database import sync_session as _sync_session
-from app.models import Job, JobClip, MusicTrack
+from app.models import JobClip, MusicTrack
 from app.pipeline.music_recipe import generate_music_recipe
 from app.services.music_sections import (
     current_best_section_for_track,
     track_config_with_rank_one,
+)
+from app.tasks._job_cancel_fence import (
+    active_job_for_update,
+    delete_task_owned_outputs,
+    new_task_run_id,
 )
 
 # Shared render-path helpers live in template_orchestrate. We REUSE these
@@ -233,20 +238,20 @@ def _run_auto_music_job(job_id: str) -> None:
 
     # [1] Load job + clip paths
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = active_job_for_update(db, job_id, operation="auto_music_job_start")
         if job is None:
-            log.error("auto_music_job_not_found", job_id=job_id)
+            log.info("auto_music_job_start_skipped", job_id=job_id)
             return
 
         job.status = "processing"
         if job.mode is None:
             job.mode = "auto_music"
-        db.commit()
 
         all_candidates = job.all_candidates or {}
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", []) or []
         n_variants = int(all_candidates.get("n_variants", DEFAULT_N_VARIANTS) or DEFAULT_N_VARIANTS)
         n_variants = max(1, min(n_variants, 10))
+        db.commit()
 
     if not clip_paths_gcs:
         raise ValueError("Auto-music job has no clip paths in all_candidates")
@@ -301,7 +306,8 @@ def _run_auto_music_job(job_id: str) -> None:
         }
 
         # [3] Status: matching
-        _set_status(job_id, "matching")
+        if not _set_status(job_id, "matching"):
+            return
 
         # [4] Load labeled, published tracks + filter
         candidate_tracks = _load_matcher_candidates(len(clip_metas))
@@ -377,7 +383,8 @@ def _run_auto_music_job(job_id: str) -> None:
         )
 
         # [7] Status: rendering
-        _set_status(job_id, "rendering")
+        if not _set_status(job_id, "rendering"):
+            return
 
         # [8] Fan out variants in parallel.
         # Each variant runs in its own thread, builds its own recipe and
@@ -402,25 +409,38 @@ def _run_auto_music_job(job_id: str) -> None:
     else:
         terminal = "variants_failed"
 
-    _set_status(
-        job_id,
-        terminal,
-        # Capture per-variant outcome in the job's assembly_plan so the
-        # UI can show "1 of 3 variants failed" without joining JobClip.
-        extra_plan={
-            "variants": [
-                {
-                    "rank": r["rank"],
-                    "track_id": r["track_id"],
-                    "score": r.get("score"),
-                    "output_url": r.get("output_url"),
-                    "ok": bool(r.get("ok")),
-                    "error": r.get("error"),
-                }
-                for r in results
-            ],
-        },
-    )
+    try:
+        finalized = _set_status(
+            job_id,
+            terminal,
+            # Capture per-variant outcome in the job's assembly_plan so the
+            # UI can show "1 of 3 variants failed" without joining JobClip.
+            extra_plan={
+                "variants": [
+                    {
+                        "rank": r["rank"],
+                        "track_id": r["track_id"],
+                        "score": r.get("score"),
+                        "output_url": r.get("output_url"),
+                        "ok": bool(r.get("ok")),
+                        "error": r.get("error"),
+                    }
+                    for r in results
+                ],
+            },
+        )
+    except Exception:
+        delete_task_owned_outputs(
+            job_id,
+            [str(r.get("output_path") or "") for r in successes],
+        )
+        raise
+    if not finalized:
+        delete_task_owned_outputs(
+            job_id,
+            [str(r.get("output_path") or "") for r in successes],
+        )
+        return
     log.info(
         "auto_music_job_done",
         job_id=job_id,
@@ -807,6 +827,28 @@ def _render_one_variant(
         track_id=track_id,
     )
 
+    # Short cancellation checkpoint before any per-variant render work.  The
+    # lock is released when the context exits; FFmpeg/network work never runs
+    # while a Job row lock is held.
+    with _sync_session() as db:
+        if (
+            active_job_for_update(
+                db,
+                job_id,
+                operation=f"auto_music_variant_{rank}_start",
+            )
+            is None
+        ):
+            return {
+                "ok": False,
+                "rank": rank,
+                "track_id": track_id,
+                "score": match_score,
+                "error": "cancelled",
+                "cancelled": True,
+            }
+
+    created_output_gcs: str | None = None
     try:
         if track.audio_gcs_path is None:
             raise ValueError(f"Track {track_id} has no audio_gcs_path")
@@ -885,12 +927,19 @@ def _render_one_variant(
         # [e] Upload + JobClip row
         from app.storage import upload_public_read  # noqa: PLC0415
 
-        output_gcs = f"auto-music-jobs/{job_id}/variant_{rank}.mp4"
+        task_run_id = new_task_run_id()
+        output_gcs = f"auto-music-jobs/{job_id}/task-runs/{task_run_id}/variant_{rank}.mp4"
+        created_output_gcs = output_gcs
         # Capture the signed URL so consumers can render it directly as a
         # <video src>. Matches the convention used by _run_music_job and
         # template_orchestrate; the relative GCS path is logged but never
         # stored as the user-facing output_url.
-        output_url = upload_public_read(final_path, output_gcs)
+        try:
+            output_url = upload_public_read(final_path, output_gcs)
+        except Exception:
+            delete_task_owned_outputs(job_id, [output_gcs])
+            created_output_gcs = None
+            raise
         log.info(
             "auto_music_variant_uploaded",
             job_id=job_id,
@@ -899,7 +948,7 @@ def _render_one_variant(
             gcs_path=output_gcs,
         )
 
-        _write_variant_jobclip(
+        persisted = _write_variant_jobclip(
             job_id=job_id,
             rank=rank,
             track_id=track_id,
@@ -909,14 +958,28 @@ def _render_one_variant(
             assembly_plan=_assembly_plan_to_dict(assembly_plan, clip_id_to_gcs),
             render_status="ready",
         )
+        if not persisted:
+            delete_task_owned_outputs(job_id, [output_gcs])
+            created_output_gcs = None
+            return {
+                "ok": False,
+                "rank": rank,
+                "track_id": track_id,
+                "score": match_score,
+                "error": "cancelled",
+                "cancelled": True,
+            }
         return {
             "ok": True,
             "rank": rank,
             "track_id": track_id,
             "score": match_score,
             "output_url": output_url,
+            "output_path": output_gcs,
         }
     except Exception as exc:
+        if created_output_gcs:
+            delete_task_owned_outputs(job_id, [created_output_gcs])
         err = str(exc)[:MAX_ERROR_DETAIL_LEN]
         log.error(
             "auto_music_variant_failed",
@@ -984,7 +1047,7 @@ def _write_variant_jobclip(
     assembly_plan: dict[str, Any] | None,
     render_status: str,
     error_detail: str | None = None,
-) -> None:
+) -> bool:
     """Persist a JobClip row for a variant.
 
     Score fields are populated with the matcher score so the existing
@@ -996,6 +1059,13 @@ def _write_variant_jobclip(
     ``video_path``.
     """
     with _sync_session() as db:
+        job = active_job_for_update(
+            db,
+            job_id,
+            operation=f"auto_music_variant_{rank}_persist",
+        )
+        if job is None:
+            return False
         clip = JobClip(
             job_id=uuid.UUID(job_id),
             rank=rank,
@@ -1022,30 +1092,35 @@ def _write_variant_jobclip(
         # — the job-level plan is informational; per-variant detail
         # lives on the JobClip + the assembly_plan.variants summary.
         if assembly_plan is not None:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job is not None and job.assembly_plan is None:
+            if job.assembly_plan is None:
                 # Only set if no plan yet — avoids the parallel-write race
                 # where two variants overwrite each other's plan with no
                 # winner.
                 job.assembly_plan = assembly_plan
         db.commit()
+        return True
 
 
 def _set_status(
     job_id: str,
     status: str,
     extra_plan: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     """Update ``Job.status`` (and optionally merge into ``assembly_plan``)."""
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = active_job_for_update(
+            db,
+            job_id,
+            operation=f"auto_music_set_status:{status}",
+        )
         if job is None:
-            return
+            return False
         job.status = status
         if extra_plan is not None:
             existing = job.assembly_plan or {}
             job.assembly_plan = {**existing, **extra_plan}
         db.commit()
+        return True
 
 
 def _fail_job(
@@ -1053,7 +1128,7 @@ def _fail_job(
     error_detail: str,
     failure_reason: str | None = None,
     status: str = "processing_failed",
-) -> None:
+) -> bool:
     """Mark the job as failed with a structured reason.
 
     Mirrors the existing music_orchestrate._fail_job shape — same
@@ -1066,21 +1141,26 @@ def _fail_job(
     for attempt in range(3):
         try:
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
-                if job:
-                    job.status = status
-                    job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
-                    if failure_reason:
-                        job.failure_reason = failure_reason
-                    db.commit()
-            return
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation=f"auto_music_mark_failed:{status}",
+                )
+                if job is None:
+                    return False
+                job.status = status
+                job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
+                if failure_reason:
+                    job.failure_reason = failure_reason
+                db.commit()
+            return True
         except (OperationalError, DBAPIError) as exc:
             if attempt == 2:
                 log.error("auto_music_fail_job_db_unreachable", job_id=job_id, error=str(exc))
-                return
+                return False
             import time as _time  # noqa: PLC0415
 
             _time.sleep(1 + attempt)
         except Exception as exc:
             log.error("auto_music_fail_job_db_error", job_id=job_id, error=str(exc))
-            return
+            return False

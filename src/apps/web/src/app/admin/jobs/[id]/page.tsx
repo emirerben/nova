@@ -43,6 +43,7 @@ import { Timeline } from "./Timeline";
 // status the backend rejects with 409 (or hides for a status it would
 // accept) — operator confusion either way.
 const CANCELLABLE_STATUSES: ReadonlySet<string> = new Set([
+  "importing",
   "queued",
   "processing",
   "matching",

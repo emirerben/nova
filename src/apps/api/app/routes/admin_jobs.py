@@ -25,9 +25,10 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
+from app import storage
 from app.agents._runtime import SUCCESS_OUTCOMES
 from app.database import get_db
-from app.models import AgentRun, Job, JobClip, MusicTrack, VideoTemplate
+from app.models import AgentRun, Job, JobClip, MusicTrack, TikTokPublication, VideoTemplate
 from app.routes._admin_schemas import (
     AgentRunPayload,
     AgentRunSummaryPayload,
@@ -35,7 +36,6 @@ from app.routes._admin_schemas import (
     agent_run_to_payload_summary,
 )
 from app.routes.admin import _require_admin
-from app.services.pipeline_trace import pipeline_trace_for, record_pipeline_event
 from app.services.queue_state import (
     get_job_runtime_state,
     get_queue_position,
@@ -49,8 +49,9 @@ router = APIRouter()
 
 # Status values eligible for cancellation. Anything outside this set is
 # either already terminal (done, *_failed, *_ready, cancelled) or a
-# status we don't expect to ever see on a live row (importing happens
-# pre-queue). Keep this list intentional — broader is dangerous.
+# status we don't expect to ever see on a live row. Drive ``importing`` is
+# included because its task id is persisted before broker publication.
+# Keep this list intentional — broader is dangerous.
 #
 # Mirror of CANCELLABLE_STATUSES in
 # src/apps/web/src/app/admin/jobs/[id]/page.tsx. Update both when
@@ -59,6 +60,7 @@ router = APIRouter()
 # button can show for a status the backend rejects with 409 (or
 # hide for a status it would accept).
 _CANCELLABLE_STATUSES = (
+    "importing",
     "queued",
     "processing",
     "matching",
@@ -778,18 +780,15 @@ async def cancel_job(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(_require_admin),
 ) -> CancelJobResponse:
-    """Cancel a queued or processing job. Revokes the Celery task and flips status.
+    """Cancel a queued or processing job, then revoke its Celery task.
 
     Flow:
       1. SELECT FOR UPDATE — 404 if missing, 409 if already terminal.
-      2. Revoke the Celery task (terminate=True, SIGTERM). Idempotent —
-         revoking an unknown task_id is a no-op. Skipped when
+      2. Atomically flip status and append the cancellation audit event.
+      3. Release the row lock, then revoke the Celery task (terminate=True,
+         SIGTERM). Revoking an unknown task_id is a no-op. Skipped when
          celery_task_id is NULL (legacy row / dispatch failed).
-      3. Conditional UPDATE: only succeed if status is STILL cancellable.
-         Wins the race against a worker that finished naturally in the
-         microseconds since step 1.
-      4. Record a pipeline_trace event for audit.
-      5. Enqueue cleanup_cancelled_job as a Celery task (best-effort GCS
+      4. Enqueue cleanup_cancelled_job as a Celery task (best-effort GCS
          temp delete — 24h lifecycle is the real backstop).
     """
     try:
@@ -817,6 +816,73 @@ async def cancel_job(
     previous_status = job.status
     task_id = job.celery_task_id
 
+    # Lock and fail receipts that provably have not crossed the provider
+    # boundary. ``submitting`` is deliberately excluded: that state can mean
+    # TikTok already received an ambiguous request and must retain its audit
+    # receipt. Lock order is Job -> TikTokPublication, matching the submit task.
+    publication_rows = (
+        (
+            await db.execute(
+                select(TikTokPublication)
+                .where(
+                    TikTokPublication.job_id == job_uuid,
+                    TikTokPublication.processing_status.in_(["queued", "snapshotting"]),
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    publication_snapshots = [
+        row.snapshot_object_path for row in publication_rows if row.snapshot_object_path
+    ]
+    for publication in publication_rows:
+        publication.processing_status = "failed"
+        publication.retryable = False
+        publication.next_poll_at = None
+        publication.failure_code = "source_job_cancelled"
+        publication.failure_detail = "The source video was cancelled before TikTok submission"
+        publication.snapshot_object_path = None
+        publication.media_token_hash = None
+        publication.media_expires_at = None
+
+    # Append the audit event while the row lock is held. Broker/network work is
+    # deliberately deferred until after commit so a slow Celery control plane
+    # cannot extend this database critical section.
+    cancelled_at = datetime.now(UTC)
+    cancel_event = {
+        "ts": cancelled_at.isoformat(),
+        "stage": "cancel",
+        "event": "admin_cancel",
+        "data": {
+            "previous_status": previous_status,
+            "task_id": task_id,
+            "revoke_requested": bool(task_id),
+        },
+    }
+    trace = list(job.pipeline_trace or [])
+    if len(trace) < 500:
+        trace.append(cancel_event)
+    result = await db.execute(
+        update(Job)
+        .where(Job.id == job_uuid, Job.status.in_(_CANCELLABLE_STATUSES))
+        .values(
+            status="cancelled",
+            finished_at=cancelled_at,
+            failure_reason="cancelled_by_admin",
+            error_detail="Cancelled via admin UI",
+            pipeline_trace=trace,
+        )
+    )
+    if result.rowcount == 0:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Job reached a terminal status before cancellation could apply.",
+        )
+    await db.commit()
+
     from app.worker import celery_app  # noqa: PLC0415
 
     revoke_dispatched = False
@@ -836,39 +902,11 @@ async def cancel_job(
                 error=str(exc),
             )
 
-    # Conditional UPDATE: only flip if still cancellable. Returns 0 rows
-    # if a worker finalized between our SELECT and this UPDATE, in which
-    # case we 409 rather than overwriting a terminal status.
-    result = await db.execute(
-        update(Job)
-        .where(Job.id == job_uuid, Job.status.in_(_CANCELLABLE_STATUSES))
-        .values(
-            status="cancelled",
-            finished_at=datetime.now(UTC),
-            failure_reason="cancelled_by_admin",
-            error_detail="Cancelled via admin UI",
-        )
-    )
-    if result.rowcount == 0:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Job reached a terminal status before cancellation could apply.",
-        )
-    await db.commit()
-
-    # Pipeline trace event (audit trail). The trace contextvar is
-    # per-task in normal pipeline code; we bind it inline here.
-    with pipeline_trace_for(job_id):
-        record_pipeline_event(
-            "cancel",
-            "admin_cancel",
-            {
-                "previous_status": previous_status,
-                "task_id": task_id,
-                "revoke_dispatched": revoke_dispatched,
-            },
-        )
+    # DB state is already terminal, so a cleanup outage cannot resurrect a
+    # publication. Revoke first, then delete exact snapshot keys after locks
+    # are released so storage latency cannot delay the worker stop request.
+    for snapshot_path in publication_snapshots:
+        storage.delete_object_best_effort(snapshot_path)
 
     # Best-effort cleanup. Lifecycle rule is the backstop, so a failure
     # to enqueue this task is non-fatal.
@@ -939,6 +977,11 @@ async def disable_silence_cut(
     job = job_res.scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled jobs are immutable",
+        )
 
     # Reassign (not mutate) so SQLAlchemy's change tracking sees the new JSONB
     # value; guards legacy rows where assembly_plan is still NULL.

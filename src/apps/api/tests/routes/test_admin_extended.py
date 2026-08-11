@@ -536,6 +536,7 @@ class TestReanalyzeErrorDetail:
         with (
             patch("app.routes.admin.settings") as s,
             patch("redis.from_url", return_value=mock_redis_instance),
+            patch("app.tasks.template_orchestrate.analyze_template_task.delay") as enqueue,
         ):
             s.admin_api_key = VALID_TOKEN
             s.redis_url = "redis://localhost:6379"
@@ -555,6 +556,7 @@ class TestReanalyzeErrorDetail:
         assert template.analysis_status == "analyzing"
         # Redis counter should have been cleared
         mock_redis_instance.delete.assert_called_once_with(f"analyze_attempts:{template.id}")
+        enqueue.assert_called_once_with(template.id, force=True, overwrite_overlays=False)
 
     def test_error_detail_in_template_response(self, client):
         """TemplateResponse includes error_detail field."""

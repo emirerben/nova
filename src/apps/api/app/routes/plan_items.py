@@ -75,6 +75,7 @@ from app.routes.generative_jobs import (
     TextElementsRequest,
     TimelineEditRequest,
     TimelineResponse,
+    _publish_committed_variant_render,
     cascade_removed_overlay_effect_groups,
     dispatch_apply_captions,
     dispatch_apply_custom_effect,
@@ -118,12 +119,67 @@ from app.schemas.montage_preset import (
     coerce_montage_preset,
     is_collage_montage_preset,
 )
+from app.services.content_plan_persona import (
+    PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+    PlanPersonaOwnershipError,
+    load_owned_plan_persona,
+    require_plan_persona_owned,
+)
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
     is_heif_overlay,
     nonblank_str,
 )
+
+
+async def _load_plan_persona_or_409(
+    db: AsyncSession,
+    plan: ContentPlan,
+    *,
+    for_update: bool = False,
+) -> Persona:
+    try:
+        return await load_owned_plan_persona(db, plan, for_update=for_update)
+    except PlanPersonaOwnershipError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+        ) from None
+
+
+def _cache_owned_item_context(item: PlanItem, plan: ContentPlan, persona: Persona) -> None:
+    # Request-local cache only.  The three serializer helpers otherwise repeat
+    # the same plan/persona reads back-to-back for every item response.
+    item.__dict__["_owned_plan_persona_context"] = (plan, persona)
+
+
+async def _load_item_plan_persona(
+    item: PlanItem,
+    db: AsyncSession,
+) -> tuple[ContentPlan, Persona]:
+    cached = item.__dict__.get("_owned_plan_persona_context")
+    if isinstance(cached, tuple) and len(cached) == 2:
+        plan, persona = cached
+        try:
+            require_plan_persona_owned(plan, persona)
+        except PlanPersonaOwnershipError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+            ) from None
+        return plan, persona
+
+    plan = await db.get(ContentPlan, item.content_plan_id)
+    if plan is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+        )
+    persona = await _load_plan_persona_or_409(db, plan)
+    _cache_owned_item_context(item, plan, persona)
+    return plan, persona
+
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -394,59 +450,37 @@ async def _get_content_mode(item: PlanItem, db: AsyncSession) -> str:
     if own in _valid:
         return own
     # 2. Fall back to persona JSONB (existing pre-0058 behaviour, unchanged).
-    try:
-        plan = await db.get(ContentPlan, item.content_plan_id)
-        if plan is None:
-            return "create_new"
-        persona = await db.get(Persona, plan.persona_id)
-        if persona is None or not isinstance(persona.persona, dict):
-            return "create_new"
-        return str(persona.persona.get("content_mode") or "create_new")
-    except Exception:  # noqa: BLE001
+    _, persona = await _load_item_plan_persona(item, db)
+    if not isinstance(persona.persona, dict):
         return "create_new"
+    return str(persona.persona.get("content_mode") or "create_new")
 
 
 async def _get_instruction_level(item: PlanItem, db: AsyncSession) -> str:
     """Read instruction_level from the owning user's personas.style JSONB.
 
-    Null-safe chain: item → ContentPlan → Persona → style → instruction_level.
-    Any missing link → default "full".
+    Invalid optional style data defaults to "full".  A missing, quarantined, or
+    cross-tenant persona link is an ownership conflict and never defaults.
     """
-    try:
-        plan = await db.get(ContentPlan, item.content_plan_id)
-        if plan is None:
-            return "full"
-        persona = await db.get(Persona, plan.persona_id)
-        if persona is None:
-            return "full"
-        style = persona.style or {}
-        level = str(style.get("instruction_level", "full") or "full")
-        return level if level in ("full", "light", "none") else "full"
-    except Exception:  # noqa: BLE001
-        return "full"
+    _, persona = await _load_item_plan_persona(item, db)
+    style = persona.style or {}
+    level = str(style.get("instruction_level", "full") or "full")
+    return level if level in ("full", "light", "none") else "full"
 
 
 async def _get_seed_text_by_id(item: PlanItem, db: AsyncSession) -> dict[str, str]:
     """Build {seed_id: seed_text} map from the owning persona's idea_seeds.
 
     Used to resolve source_idea_seed_text at read time for the provenance badge.
-    Any missing link returns {} — the badge gracefully shows nothing.
+    An empty/invalid seed list returns {}; an invalid ownership link fails closed.
     """
-    try:
-        plan = await db.get(ContentPlan, item.content_plan_id)
-        if plan is None:
-            return {}
-        persona = await db.get(Persona, plan.persona_id)
-        if persona is None:
-            return {}
-        seeds = persona.idea_seeds if isinstance(persona.idea_seeds, list) else []
-        return {
-            str(s["id"]): str(s["text"])
-            for s in seeds
-            if isinstance(s, dict) and s.get("id") and s.get("text")
-        }
-    except Exception:  # noqa: BLE001
-        return {}
+    _, persona = await _load_item_plan_persona(item, db)
+    seeds = persona.idea_seeds if isinstance(persona.idea_seeds, list) else []
+    return {
+        str(s["id"]): str(s["text"])
+        for s in seeds
+        if isinstance(s, dict) and s.get("id") and s.get("text")
+    }
 
 
 @router.get("/{item_id}", response_model=PlanItemResponse)
@@ -622,17 +656,29 @@ async def add_idea(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad plan id") from exc
 
-    plan = (
-        await db.execute(
-            select(ContentPlan)
-            .where(ContentPlan.id == pid, ContentPlan.user_id == user.id)
-            .options(selectinload(ContentPlan.items).selectinload(PlanItem.current_job))
-        )
-    ).scalar_one_or_none()
+    # Shared mutation lock order: ContentPlan -> Persona -> PlanItem.  Validate
+    # and lock both owner rows before adding anything to the unit of work; an
+    # autoflush on a later SELECT must not insert a partial item on mismatch.
+    plan_stmt = (
+        select(ContentPlan)
+        .where(ContentPlan.id == pid, ContentPlan.user_id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    plan = (await db.execute(plan_stmt)).scalar_one_or_none()
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 
-    existing_positions = [it.position for it in plan.items]
+    persona = await _load_plan_persona_or_409(db, plan, for_update=True)
+    items_stmt = (
+        select(PlanItem)
+        .where(PlanItem.content_plan_id == plan.id)
+        .order_by(PlanItem.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    existing_items = (await db.execute(items_stmt)).scalars().all()
+    existing_positions = [it.position for it in existing_items]
     next_position = (max(existing_positions) + 1) if existing_positions else 1
 
     sanitized = _sanitize_text(body.idea) or body.idea
@@ -649,28 +695,24 @@ async def add_idea(
         source_idea_seed_id=seed_id,
         user_edited=True,
     )
-    db.add(item)
-
     # Mirror to idea_seeds on the persona (upsert by id if seed_id supplied).
-    persona_stmt = select(Persona).where(Persona.id == plan.persona_id).with_for_update()
-    persona = (await db.execute(persona_stmt)).scalar_one_or_none()
-    if persona is not None:
-        raw_seeds: list = list(persona.idea_seeds) if isinstance(persona.idea_seeds, list) else []
-        if seed_id:
-            # Update existing seed status to in_plan.
-            for s in raw_seeds:
-                if isinstance(s, dict) and s.get("id") == seed_id:
-                    s["status"] = "in_plan"
-                    break
-            else:
-                raw_seeds.append({"id": seed_id, "text": sanitized, "status": "in_plan"})
+    raw_seeds: list = list(persona.idea_seeds) if isinstance(persona.idea_seeds, list) else []
+    if seed_id:
+        # Update existing seed status to in_plan.
+        for s in raw_seeds:
+            if isinstance(s, dict) and s.get("id") == seed_id:
+                s["status"] = "in_plan"
+                break
         else:
-            new_seed_id = uuid.uuid4().hex
-            raw_seeds.append({"id": new_seed_id, "text": sanitized, "status": "in_plan"})
-            # Backfill on the item so clients can correlate.
-            item.source_idea_seed_id = new_seed_id
-        persona.idea_seeds = raw_seeds  # type: ignore[assignment]
-        flag_modified(persona, "idea_seeds")
+            raw_seeds.append({"id": seed_id, "text": sanitized, "status": "in_plan"})
+    else:
+        new_seed_id = uuid.uuid4().hex
+        raw_seeds.append({"id": new_seed_id, "text": sanitized, "status": "in_plan"})
+        # Backfill on the item so clients can correlate.
+        item.source_idea_seed_id = new_seed_id
+    persona.idea_seeds = raw_seeds  # type: ignore[assignment]
+    flag_modified(persona, "idea_seeds")
+    db.add(item)
 
     await db.commit()
     reloaded = await _load_owned_item(str(item_id), user.id, db)
@@ -709,28 +751,22 @@ async def delete_idea(
 
     ensure_deletable(item)
 
-    seed_id = item.source_idea_seed_id
-    persona = None
-    if seed_id:
-        # Persona → PlanItem is the shared lock order. It matches persona reset's
-        # cascade order and prevents two fast deletes from restoring stale JSONB.
-        persona_stmt = (
-            select(Persona)
-            .join(ContentPlan, ContentPlan.persona_id == Persona.id)
-            .where(ContentPlan.id == item.content_plan_id, ContentPlan.user_id == user.id)
-            .with_for_update(of=Persona)
-            .execution_options(populate_existing=True)
-        )
-        persona = (await db.execute(persona_stmt)).scalar_one_or_none()
-
-    # Re-read under a row lock after the persona lock, then repeat the safety
-    # checks so a job or clip attached between the snapshot and lock returns 409.
-    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    # Re-enter under the global ContentPlan -> Persona -> PlanItem lock order,
+    # then repeat the safety checks so a job or clip attached between the
+    # snapshot and lock returns 409.  No ORM state is mutated before all three
+    # ownership/lock checks pass.
+    item, _, persona = await _load_owned_item_context(
+        item_id,
+        user.id,
+        db,
+        for_update=True,
+        known_item=item,
+    )
     ensure_deletable(item)
     seed_id = item.source_idea_seed_id
 
     if seed_id:
-        if persona is not None and isinstance(persona.idea_seeds, list):
+        if isinstance(persona.idea_seeds, list):
             retained_seeds = [
                 seed
                 for seed in persona.idea_seeds
@@ -740,8 +776,20 @@ async def delete_idea(
                 persona.idea_seeds = retained_seeds
                 flag_modified(persona, "idea_seeds")
 
-    if item.current_job is not None:
-        item.current_job.content_plan_item_id = None
+    if item.current_job_id is not None:
+        locked_job = await db.get(
+            Job,
+            item.current_job_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+        if locked_job is not None:
+            if locked_job.status == "cancelled":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Cancelled video records cannot be deleted.",
+                )
+            locked_job.content_plan_item_id = None
 
     await db.delete(item)
     await db.commit()
@@ -757,6 +805,23 @@ async def _load_owned_item(
     *,
     for_update: bool = False,
 ) -> PlanItem:
+    item, _, _ = await _load_owned_item_context(
+        item_id,
+        user_id,
+        db,
+        for_update=for_update,
+    )
+    return item
+
+
+async def _load_owned_item_context(
+    item_id: str,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    for_update: bool = False,
+    known_item: PlanItem | None = None,
+) -> tuple[PlanItem, ContentPlan, Persona]:
     try:
         iid = uuid.UUID(item_id)
     except ValueError as exc:
@@ -765,16 +830,48 @@ async def _load_owned_item(
     # relationship, and a bare db.get() leaves it lazy → MissingGreenlet 500 on
     # the async session once an item has a linked job (mirrors the list endpoint's
     # selectinload in content_plans.py).
-    stmt = select(PlanItem).where(PlanItem.id == iid).options(selectinload(PlanItem.current_job))
-    if for_update:
-        stmt = stmt.with_for_update().execution_options(populate_existing=True)
-    item = (await db.execute(stmt)).scalar_one_or_none()
+    item = known_item
+    if item is None:
+        item_stmt = (
+            select(PlanItem).where(PlanItem.id == iid).options(selectinload(PlanItem.current_job))
+        )
+        item = (await db.execute(item_stmt)).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
-    plan = await db.get(ContentPlan, item.content_plan_id)
+    if item.id != iid:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
+
+    if for_update:
+        plan = await db.get(
+            ContentPlan,
+            item.content_plan_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+    else:
+        plan = await db.get(ContentPlan, item.content_plan_id)
     if plan is None or plan.user_id != user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
-    return item
+
+    persona = await _load_plan_persona_or_409(db, plan, for_update=for_update)
+
+    if for_update:
+        # Plan and persona locks are held before the item lock.  Re-read under
+        # the lock and pin the original plan id so an inconsistent association
+        # cannot cross the validated boundary.
+        item_stmt = (
+            select(PlanItem)
+            .where(PlanItem.id == iid, PlanItem.content_plan_id == plan.id)
+            .options(selectinload(PlanItem.current_job))
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        item = (await db.execute(item_stmt)).scalar_one_or_none()
+        if item is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
+
+    _cache_owned_item_context(item, plan, persona)
+    return item, plan, persona
 
 
 class UploadFile(BaseModel):
@@ -880,7 +977,13 @@ async def attach_clips(
         set_item_clips,
     )
 
-    item = await _load_owned_item(item_id, user.id, db)
+    item, plan, _ = await _load_owned_item_context(
+        item_id,
+        user.id,
+        db,
+        for_update=True,
+    )
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     # Accept clips uploaded to THIS item's prefix OR matched in from the plan's
     # footage pool (users/{uid}/plan-pool/{plan_id}/). The frontend re-sends the
     # full assignment set on every attach, so without the pool prefix any
@@ -998,7 +1101,7 @@ async def attach_clips(
     # Fire-and-forget conformance analysis (best-effort, never blocks this response).
     from app.tasks.conformance_build import analyze_item_conformance  # noqa: PLC0415
 
-    analyze_item_conformance.delay(str(item.id))
+    analyze_item_conformance.delay(str(item.id), ownership_epoch)
     # Reload with current_job eager-loaded (commit expired it) before serializing.
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
@@ -1026,7 +1129,7 @@ async def edit_shot(
     clip_assignments remain bound to the shot. Sets user_edited=True so re-analysis
     knows the guide was touched by the user.
     """
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
 
     guide = list(item.filming_guide or [])
     matched = False
@@ -1081,7 +1184,8 @@ async def generate_guide(
         run_shot_list_writer,
     )
 
-    item = await _load_owned_item(item_id, user.id, db)
+    item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
 
     if item.filming_guide:
         raise HTTPException(
@@ -1094,6 +1198,10 @@ async def generate_guide(
         idea=item.idea or "",
         edit_format=str(item.edit_format or "montage"),
     )
+    # Release the request transaction before the external model call. The
+    # immutable snapshot above is accepted only if the same ownership epoch is
+    # still current when we reacquire Plan -> Persona -> PlanItem below.
+    await db.rollback()
     try:
         result = await asyncio.to_thread(run_shot_list_writer, inp)
     except Exception:
@@ -1108,9 +1216,20 @@ async def generate_guide(
             detail="Shot list generation returned no shots. Please try again.",
         )
 
-    # Re-check after Gemini (20s) to catch concurrent double-submit that would
-    # otherwise orphan clip assignments from the first write's shot_ids.
-    await db.refresh(item)
+    # Re-check after Gemini (20s) under the shared mutation lock order. This
+    # catches both a concurrent double-submit and an ownership quarantine/repair
+    # that landed while the model was running.
+    item, live_plan, _ = await _load_owned_item_context(
+        item_id,
+        user.id,
+        db,
+        for_update=True,
+    )
+    if int(getattr(live_plan, "ownership_epoch", 0) or 0) != ownership_epoch:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+        )
     if item.filming_guide:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1145,7 +1264,13 @@ async def set_clip_note(
     checking state, never a stale verdict, while the judge re-reads the clip
     with the new context.
     """
-    item = await _load_owned_item(item_id, user.id, db)
+    item, plan, _ = await _load_owned_item_context(
+        item_id,
+        user.id,
+        db,
+        for_update=True,
+    )
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     note = (body.user_note or "")[:_MAX_NOTE_CHARS]
 
     assignments = list(item.clip_assignments or [])
@@ -1172,7 +1297,7 @@ async def set_clip_note(
     await db.commit()
     from app.tasks.conformance_build import analyze_item_conformance  # noqa: PLC0415
 
-    analyze_item_conformance.delay(str(item.id))
+    analyze_item_conformance.delay(str(item.id), ownership_epoch)
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
     return plan_item_response(reloaded, instruction_level=instruction_level)
@@ -1197,7 +1322,7 @@ async def set_item_voiceover(
     """
     from app.routes.admin_music import _validate_voiceover_path  # noqa: PLC0415
 
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
     if body.voiceover_gcs_path is not None:
         try:
             _validate_voiceover_path(body.voiceover_gcs_path)
@@ -1233,7 +1358,7 @@ async def set_item_voiceover_bed_level(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="voiceover_bed_level must be between 0.0 and 1.0",
         )
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
     item.voiceover_bed_level = body.voiceover_bed_level
     await db.commit()
     reloaded = await _load_owned_item(item_id, user.id, db)
@@ -1271,7 +1396,7 @@ async def set_item_voiceover_caption_style(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail='voiceover_caption_style must be "sentence" or "word"',
         )
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
     item.voiceover_caption_style = body.voiceover_caption_style
     await db.commit()
     reloaded = await _load_owned_item(item_id, user.id, db)
@@ -1287,7 +1412,7 @@ async def dismiss_conformance(
 ) -> PlanItemResponse:
     """'Hide this read' — persist the dismissal so the verdict never re-renders
     for this footage (a fresh attach nulls conformance and starts over)."""
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
     if item.conformance:
         item.conformance = {**item.conformance, "dismissed": True}
         await db.commit()
@@ -1304,7 +1429,7 @@ async def contest_conformance(
 ) -> PlanItemResponse:
     """'Looks wrong? Tell Kria' — mark the verdict contested. From here on,
     only high-confidence (≥0.8) verdicts may render on this footage."""
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
     if item.conformance:
         item.conformance = {**item.conformance, "contested": True}
         await db.commit()
@@ -1350,15 +1475,13 @@ async def plan_item_advisor_turn(
 
     item = await _load_owned_item(item_id, user.id, db)
 
-    # Persona context (summary + content_mode), null-safe.
+    # Persona context is optional data behind a mandatory ownership boundary.
     persona_summary = ""
     content_mode = "create_new"
-    plan = await db.get(ContentPlan, item.content_plan_id)
-    if plan is not None:
-        persona_row = await db.get(Persona, plan.persona_id)
-        if persona_row is not None and isinstance(persona_row.persona, dict):
-            persona_summary = str(persona_row.persona.get("summary") or "")
-            content_mode = str(persona_row.persona.get("content_mode") or "create_new")
+    _, persona_row = await _load_item_plan_persona(item, db)
+    if isinstance(persona_row.persona, dict):
+        persona_summary = str(persona_row.persona.get("summary") or "")
+        content_mode = str(persona_row.persona.get("content_mode") or "create_new")
 
     # Clips block: filename (uuid prefix stripped), slot label, creator note.
     shot_label_by_id = {
@@ -1434,7 +1557,8 @@ async def generate_item(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Enqueue a generative render for this item's themed clips (≥1 required)."""
-    item = await _load_owned_item(item_id, user.id, db)
+    item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     # Narrated walkthroughs are spined by narration. With self-narration OFF that
     # means a recorded voiceover — block generation until one is attached (without it
     # the job silently falls back to montage: the "started a narrated render with no
@@ -1479,7 +1603,10 @@ async def generate_item(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A render is already in progress for this item",
             )
-        generate_plan_item_videos.delay(str(item.id))
+        # Keep the legacy producer fail-closed immediately before publication;
+        # the worker repeats this check when it consumes the message.
+        await _load_item_plan_persona(item, db)
+        generate_plan_item_videos.delay(str(item.id), ownership_epoch)
         reloaded = await _load_owned_item(item_id, user.id, db)
         instruction_level = await _get_instruction_level(reloaded, db)
         return plan_item_response(reloaded, instruction_level=instruction_level)
@@ -1500,9 +1627,18 @@ async def generate_item(
     # the async handler → MissingGreenlet 500 on every successful generate
     # (review 2026-08-04, performance P1).
     owner_id = user.id
-    result = await to_thread.run_sync(dispatch_item_render_for, str(item.id))
+    result = await to_thread.run_sync(
+        dispatch_item_render_for,
+        str(item.id),
+        ownership_epoch,
+    )
     if result.outcome == "missing_row":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
+    if result.outcome == "invalid_persona":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+        )
     if result.outcome == "invalid_clips":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1542,21 +1678,45 @@ async def generate_item(
 
 
 async def _owned_item_render_job(item_id: str, user_id: uuid.UUID, db: AsyncSession) -> Job:
-    """Load the user-owned item and return its current render Job (404 if none yet)."""
+    """Return a fresh, user-owned render Job and hide cancelled tombstones."""
     item = await _load_owned_item(item_id, user_id, db)
-    job = item.current_job
+    job_id = item.current_job_id or (item.current_job.id if item.current_job is not None else None)
+    job = (
+        await db.get(Job, job_id, populate_existing=True)
+        if job_id is not None
+        else None
+    )
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    if job.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled videos cannot be edited.",
+        )
     return job
 
 
 async def _locked_owned_item_render_job(item_id: str, user_id: uuid.UUID, db: AsyncSession) -> Job:
-    """Ownership-check first, then lock the JSONB writer row for revisions."""
-    owned = await _owned_item_render_job(item_id, user_id, db)
-    result = await db.execute(select(Job).where(Job.id == owned.id).with_for_update())
-    locked = result.scalar_one_or_none()
-    if locked is None:  # pragma: no cover - deleted between ownership read and lock
+    """Lock Plan -> Persona -> PlanItem -> Job, then recheck cancellation."""
+    item, _, _ = await _load_owned_item_context(item_id, user_id, db, for_update=True)
+    job_id = item.current_job_id or (item.current_job.id if item.current_job is not None else None)
+    locked = (
+        await db.get(
+            Job,
+            job_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+        if job_id is not None
+        else None
+    )
+    if locked is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    if locked.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled videos cannot be edited.",
+        )
     return locked
 
 
@@ -1595,7 +1755,7 @@ async def apply_plan_item_speech_cut(
     except Exception as exc:  # noqa: BLE001 — committed dispatch must be reversible
         result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
         fresh_job = result.scalar_one_or_none()
-        if fresh_job is not None:
+        if fresh_job is not None and fresh_job.status != "cancelled":
             rollback_speech_cut_dispatch(
                 fresh_job,
                 str(exc),
@@ -1631,7 +1791,7 @@ async def restore_plan_item_speech_timing(
     except Exception as exc:  # noqa: BLE001 — committed dispatch must be reversible
         result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
         fresh_job = result.scalar_one_or_none()
-        if fresh_job is not None:
+        if fresh_job is not None and fresh_job.status != "cancelled":
             rollback_speech_cut_dispatch(
                 fresh_job,
                 str(exc),
@@ -1654,7 +1814,7 @@ async def swap_item_song(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Re-render one of this item's variants against a different library song."""
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     await dispatch_swap_song(job, variant_id, new_track_id=req.new_track_id, db=db)
     log.info("plan_item_swap_song", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
@@ -1669,9 +1829,16 @@ async def retext_item(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Re-render one of this item's variants with new intro text, or remove it."""
-    job = await _owned_item_render_job(item_id, user.id, db)
-    dispatch_retext(job, variant_id, text=req.text, remove=req.remove)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    pending_publish = dispatch_retext(
+        job,
+        variant_id,
+        text=req.text,
+        remove=req.remove,
+        publish=False,
+    )
     await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info("plan_item_retext", item_id=item_id, variant_id=variant_id, remove=req.remove)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -1689,7 +1856,7 @@ async def edit_item_captions(
     The on-video editor calls this as the creator types — the change is instant
     (the player overlays the cues). Apply (`/captions/apply`) reburns them.
     """
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     await persist_variant_captions(job.id, variant_id, req.cues, db)
     log.info("plan_item_edit_captions", item_id=item_id, variant_id=variant_id, cues=len(req.cues))
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
@@ -1703,7 +1870,7 @@ async def apply_item_captions(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Reburn the variant's edited captions onto its caption-free base (async)."""
-    job = await _owned_item_render_job(item_id, user.id, db)  # ownership check only
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     # dispatch_apply_captions does its OWN row-locked re-fetch by job.id and commits
     # the rendering gate BEFORE enqueuing (R1-1): the reburn's start write is
     # token-checked, so a worker dequeuing before the commit would read the old
@@ -1727,7 +1894,7 @@ async def set_item_caption_font(
     the font locally; Apply (`/captions/apply`) reburns in the chosen font. ``null``
     resets to the default. Unknown fonts are rejected (422).
     """
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     await persist_variant_caption_font(job.id, variant_id, req.caption_font, db)
     log.info(
         "plan_item_set_caption_font",
@@ -1747,7 +1914,7 @@ async def set_item_caption_position(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Set caption vertical position and reburn the captioned variant (async)."""
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     # The dispatcher row-locks, commits the margin + gen mint, then enqueues
     # (R1-1 commit-before-enqueue) — no route-side commit needed.
     margin_v = await dispatch_set_caption_position(job.id, variant_id, y_frac=req.y_frac, db=db)
@@ -1775,7 +1942,7 @@ async def set_item_caption_style(
     chosen style. Moved here from the pre-generation picker — see the plan-item
     redesign (subtitles are now tuned post-gen, not before).
     """
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     await persist_variant_caption_style(job.id, variant_id, req.caption_style, db)
     log.info(
         "plan_item_set_caption_style",
@@ -1800,7 +1967,7 @@ async def set_item_captions_enabled(
     transcript-derived cues, so toggling back on later needs no re-transcription.
     Apply (`/captions/apply`) reburns to reflect the current on/off state.
     """
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     await persist_variant_captions_enabled(job.id, variant_id, req.enabled, db)
     log.info(
         "plan_item_set_captions_enabled",
@@ -1825,7 +1992,7 @@ async def set_item_bed_level(
     is the post-gen editor's Background Sound slider. Narrated-only: talking-to-camera
     has no separate voice track to duck under, so there is nothing to mix.
     """
-    job = await _owned_item_render_job(item_id, user.id, db)  # ownership check only
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     # dispatch_set_narrated_bed_level does its OWN row-locked re-fetch by job.id and
     # commits internally — unlike the sibling dispatch_* calls above, it must not
     # operate on the unlocked `job` snapshot from _owned_item_render_job (see its
@@ -1855,7 +2022,7 @@ async def set_item_caption_language(
     hint and rebuilds the cues, REPLACING the current captions + any hand-edits (the
     frontend confirms first). Subtitled-only; unsupported languages are rejected (422).
     """
-    job = await _owned_item_render_job(item_id, user.id, db)  # ownership check only
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     # Same commit-before-enqueue rationale as apply_item_captions above (R1-1) —
     # the dispatcher row-locks, stamps the generation, commits, then enqueues.
     await dispatch_retranscribe_captions(job.id, variant_id, language=req.language, db=db)
@@ -1910,9 +2077,15 @@ async def change_item_style(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Re-render one of this item's variants with a different curated text style set."""
-    job = await _owned_item_render_job(item_id, user.id, db)
-    dispatch_change_style(job, variant_id, style_set_id=req.style_set_id)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    pending_publish = dispatch_change_style(
+        job,
+        variant_id,
+        style_set_id=req.style_set_id,
+        publish=False,
+    )
     await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info("plan_item_change_style", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -2022,7 +2195,7 @@ async def start_plan_item_omni_asset(
 ) -> OmniAssetResponse:
     """Start an opt-in generated insert without changing the editor draft."""
     _ = request
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     require_editable_variant(job, variant_id)
     return await start_omni_asset(job, variant_id, body, db)
 
@@ -2056,7 +2229,7 @@ async def cancel_plan_item_omni_asset(
     db: AsyncSession = Depends(get_db),
 ) -> OmniAssetResponse:
     """Request cancellation and leave the current draft untouched."""
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     require_editable_variant(job, variant_id)
     return await cancel_omni_asset(job, asset_id, db)
 
@@ -2074,7 +2247,7 @@ async def claim_plan_item_omni_asset(
     db: AsyncSession = Depends(get_db),
 ) -> OmniAssetResponse:
     """Claim one completed generated clip after the draft revision is verified."""
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     require_editable_variant(job, variant_id)
     return await claim_omni_asset(job, asset_id, body, db)
 
@@ -2095,7 +2268,7 @@ async def edit_item_variant(
     """
     from app.routes.generative_jobs import _UNSET  # noqa: PLC0415
 
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     # Tri-state (mirrors generative_jobs.edit_variant): absent from the request
     # -> _UNSET (leave unchanged); explicit top-level `null` -> None (remove);
     # an object -> only the fields the client actually set (exclude_unset), so
@@ -2109,7 +2282,7 @@ async def edit_item_variant(
         carousel_moment_field = None
     else:
         carousel_moment_field = req.carousel_moment.model_dump(exclude_unset=True)
-    dispatch_edit_variant(
+    pending_publish = dispatch_edit_variant(
         job,
         variant_id,
         text=req.text,
@@ -2128,8 +2301,10 @@ async def edit_item_variant(
         cluster_accent_size_px=req.cluster_accent_size_px,
         text_behind_subject=req.text_behind_subject,
         carousel_moment=carousel_moment_field,
+        publish=False,
     )
     await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info(
         "plan_item_edit_variant",
         item_id=item_id,
@@ -2156,9 +2331,15 @@ async def set_item_intro_size(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Re-render one of this item's variants with a user-pinned AI-intro font size."""
-    job = await _owned_item_render_job(item_id, user.id, db)
-    dispatch_set_intro_size(job, variant_id, text_size_px=req.text_size_px)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    pending_publish = dispatch_set_intro_size(
+        job,
+        variant_id,
+        text_size_px=req.text_size_px,
+        publish=False,
+    )
     await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info(
         "plan_item_set_intro_size", item_id=item_id, variant_id=variant_id, px=req.text_size_px
     )
@@ -2174,9 +2355,16 @@ async def set_item_intro_timing(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Re-render one of this item's variants with user-pinned intro overlay timing."""
-    job = await _owned_item_render_job(item_id, user.id, db)
-    dispatch_set_intro_timing(job, variant_id, start_s=req.start_s, end_s=req.end_s)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    pending_publish = dispatch_set_intro_timing(
+        job,
+        variant_id,
+        start_s=req.start_s,
+        end_s=req.end_s,
+        publish=False,
+    )
     await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
     log.info(
         "plan_item_set_intro_timing",
         item_id=item_id,
@@ -2196,7 +2384,7 @@ async def patch_item_scene_timing(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Persist user-pinned scene timing overrides for one of this item's variants."""
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     dispatch_patch_scene_timing(
         job,
         variant_id,
@@ -2251,7 +2439,7 @@ async def edit_item_timeline(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Persist a user-edited clip timeline for one of this item's variants + re-render."""
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     await dispatch_edit_timeline(job, variant_id, req, db=db)
     log.info("plan_item_edit_timeline", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
@@ -2265,7 +2453,7 @@ async def reset_item_timeline(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Discard the user timeline on one of this item's variants + re-render from AI."""
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     await dispatch_reset_timeline(job, variant_id, db=db)
     log.info("plan_item_reset_timeline", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
@@ -2286,7 +2474,13 @@ async def reroll_plan_item_route(
     and no current_job_id) — re-rolling a rendered/rendering item would
     orphan work in progress.
     """
-    item = await _load_owned_item(item_id, user.id, db)
+    item, plan, _ = await _load_owned_item_context(
+        item_id,
+        user.id,
+        db,
+        for_update=True,
+    )
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
 
     if item.item_status != "idea" or item.current_job_id is not None:
         raise HTTPException(
@@ -2299,7 +2493,7 @@ async def reroll_plan_item_route(
 
     from app.tasks.content_plan_build import reroll_plan_item  # noqa: PLC0415
 
-    reroll_plan_item.delay(str(item.id))
+    reroll_plan_item.delay(str(item.id), ownership_epoch)
 
     log.info("plan_item_reroll.dispatched", item_id=item_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
@@ -2368,14 +2562,12 @@ async def expand_idea(
     persona_summary = ""
     content_pillars: list[str] = []
     content_mode = _normalize_content_mode(getattr(item, "content_mode", None))
-    plan = await db.get(ContentPlan, item.content_plan_id)
-    if plan is not None:
-        persona = await db.get(Persona, plan.persona_id)
-        if persona is not None and isinstance(persona.persona, dict):
-            persona_summary = str(persona.persona.get("summary", ""))
-            content_pillars = list(persona.persona.get("content_pillars") or [])
-            if getattr(item, "content_mode", None) is None:
-                content_mode = _normalize_content_mode(persona.persona.get("content_mode"))
+    _, persona = await _load_item_plan_persona(item, db)
+    if isinstance(persona.persona, dict):
+        persona_summary = str(persona.persona.get("summary", ""))
+        content_pillars = list(persona.persona.get("content_pillars") or [])
+        if getattr(item, "content_mode", None) is None:
+            content_mode = _normalize_content_mode(persona.persona.get("content_mode"))
 
     agent = IdeaExpanderAgent(default_client())
     try:
@@ -2447,7 +2639,13 @@ def _is_heif_overlay(path: str, content_type: str) -> bool:
 
 
 def _convert_heif_overlay_preview(gcs_path: str) -> tuple[str | None, str | None]:
-    return convert_heif_overlay_preview(gcs_path)
+    # Per-attempt key makes stale-epoch cleanup exact.  Reusing the legacy
+    # deterministic `.preview.jpg` key could overwrite and then delete a
+    # preview created by an earlier valid request.
+    return convert_heif_overlay_preview(
+        gcs_path,
+        preview_gcs_path=f"{gcs_path}.preview.{uuid.uuid4().hex}.jpg",
+    )
 
 
 @router.post("/{item_id}/overlay-upload-urls", response_model=OverlayUploadUrlsResponse)
@@ -2518,28 +2716,58 @@ async def confirm_overlay_uploads(
             status_code=status.HTTP_404_NOT_FOUND, detail="Media overlays not available."
         )
 
-    item = await _load_owned_item(item_id, user.id, db)
-    prefix = f"users/{user.id}/plan/{item.id}/overlays/"
+    item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
+    stable_item_id = item.id
+    await db.rollback()
+    prefix = f"users/{user.id}/plan/{stable_item_id}/overlays/"
     confirmed: list[OverlayUploadConfirmItem] = []
-    for f in body.files:
-        if not f.gcs_path.startswith(prefix):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Overlay asset path must be under '{prefix}'.",
+    try:
+        for f in body.files:
+            if not f.gcs_path.startswith(prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Overlay asset path must be under '{prefix}'.",
+                )
+            preview_gcs_path: str | None = None
+            preview_url: str | None = None
+            if _is_heif_overlay(f.gcs_path, f.content_type):
+                preview_gcs_path, preview_url = _convert_heif_overlay_preview(f.gcs_path)
+                preview_gcs_path = nonblank_str(preview_gcs_path)
+                preview_url = nonblank_str(preview_url)
+            confirmed.append(
+                OverlayUploadConfirmItem(
+                    gcs_path=f.gcs_path,
+                    preview_gcs_path=preview_gcs_path,
+                    preview_url=preview_url,
+                )
             )
-        preview_gcs_path: str | None = None
-        preview_url: str | None = None
-        if _is_heif_overlay(f.gcs_path, f.content_type):
-            preview_gcs_path, preview_url = _convert_heif_overlay_preview(f.gcs_path)
-            preview_gcs_path = nonblank_str(preview_gcs_path)
-            preview_url = nonblank_str(preview_url)
-        confirmed.append(
-            OverlayUploadConfirmItem(
-                gcs_path=f.gcs_path,
-                preview_gcs_path=preview_gcs_path,
-                preview_url=preview_url,
-            )
+        _, locked_plan, _ = await _load_owned_item_context(
+            item_id,
+            user.id,
+            db,
+            for_update=True,
         )
+        if int(getattr(locked_plan, "ownership_epoch", 0) or 0) != ownership_epoch:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+            )
+        await db.rollback()
+    except Exception:
+        await db.rollback()
+        for converted in confirmed:
+            if converted.preview_gcs_path:
+                deleted = await asyncio.to_thread(
+                    storage.delete_object_best_effort,
+                    converted.preview_gcs_path,
+                )
+                if not deleted:
+                    log.error(
+                        "overlay_preview_stale_cleanup_failed",
+                        gcs_path=converted.preview_gcs_path,
+                    )
+        raise
     return OverlayUploadConfirmResponse(files=confirmed)
 
 
@@ -2628,7 +2856,7 @@ async def set_item_media_overlays(
             status_code=status.HTTP_404_NOT_FOUND, detail="Media overlays not available."
         )
 
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     enqueue_after_commit = None
     if body.render:
         enqueue_after_commit = dispatch_set_media_overlays(
@@ -2678,9 +2906,17 @@ async def set_item_text_elements(
     Once text_elements_user_edited is set, the instant-edit surface (PUT /edit)
     returns 409 and directs the caller here instead (A15).
     """
-    job = await _owned_item_render_job(item_id, user.id, db)
-    dispatch_set_text_elements(job, variant_id, elements=body.elements, render=body.render)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    pending_publish = dispatch_set_text_elements(
+        job,
+        variant_id,
+        elements=body.elements,
+        render=body.render,
+        publish=False,
+    )
     await db.commit()
+    if pending_publish is not None:
+        await _publish_committed_variant_render(pending_publish, db)
     log.info(
         "plan_item_set_text_elements",
         item_id=item_id,
@@ -2703,7 +2939,7 @@ async def set_item_lyrics(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Toggle lyrics or replace lyric line overrides for one of this item's variants."""
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     from app.routes.generative_jobs import _UNSET  # noqa: PLC0415
 
     enabled = body.enabled if "enabled" in body.model_fields_set else _UNSET
@@ -2737,7 +2973,7 @@ async def set_item_orientation(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Set portrait/landscape output for one of this item's variants."""
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     await dispatch_set_orientation(
         db,
         job,
@@ -2780,10 +3016,25 @@ async def editor_commit_item(
     on a different table than the variant job-JSON, but both rows are written in
     the SAME database transaction here, so the commit stays all-or-nothing.
     """
-    item = await _load_owned_item(item_id, user.id, db)
-    job = item.current_job
-    if job is None:
+    item, _, _ = await _load_owned_item_context(item_id, user.id, db, for_update=True)
+    job_id = item.current_job_id or (item.current_job.id if item.current_job is not None else None)
+    locked_job = (
+        await db.get(
+            Job,
+            job_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+        if job_id is not None
+        else None
+    )
+    if locked_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    if locked_job.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled videos cannot be edited.",
+        )
 
     # Validate the title section BEFORE the job-JSON staging so a bad title
     # fails the whole commit with nothing persisted (validation-first contract).
@@ -2804,10 +3055,6 @@ async def editor_commit_item(
             db=db,
         )
         commit_body = body.model_copy(update={"sound_effects": resolved_sfx})
-
-    locked_job = await db.get(Job, job.id, with_for_update=True)
-    if locked_job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
 
     selected_music_track = None
     selected_background_music_track = None
@@ -2888,7 +3135,7 @@ async def editor_commit_item(
     # observes the committed sections + generation token. If the kick fails the
     # persist stands — the honest partial state ("saved, rendering didn't
     # start") the plan's §9 table describes.
-    enqueue_editor_commit_render(str(job.id), variant_id, prep)
+    enqueue_editor_commit_render(str(locked_job.id), variant_id, prep)
 
     log.info(
         "plan_item_editor_commit",
@@ -3197,7 +3444,7 @@ async def set_item_sound_effects(
         db=db,
     )
 
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
 
     # Persist directly — no Celery render dispatched here.
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
@@ -3241,7 +3488,7 @@ async def render_item_sound_effects(
             status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
         )
 
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
 
     # Read persisted placements from assembly_plan.
     variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -3480,7 +3727,11 @@ async def transcript_script(
 ) -> TranscriptScriptResponse:
     """Generate (or rewrite) the voiceover script, persist it (bump version), return it."""
     _require_transcript_helper()
-    item = await _load_owned_item(item_id, user.id, db)
+    item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
+    # The model/heuristic needs no live ORM state. Release the read transaction
+    # and accept its output only after the fenced owner pair is reacquired.
+    await db.rollback()
     from app.agents.voiceover_script_writer import split_script_lines  # noqa: PLC0415
     from app.config import settings  # noqa: PLC0415
     from app.schemas.voiceover_script import VoiceoverScript, estimate_read_time_s  # noqa: PLC0415
@@ -3518,10 +3769,20 @@ async def transcript_script(
         text = _sanitize_script(heuristic_script(body.brief, body.answers, body.duration_s))
         lines = split_script_lines(text)
 
-    # Lock the row so two concurrent /script POSTs (double-click "Rewrite") can't
-    # both read the same version and each write N+1 — a lost update that would let
-    # two distinct scripts share a version and mis-point the recorded-version pin.
-    await db.refresh(item, with_for_update=True)
+    # Lock in Plan -> Persona -> PlanItem order so two concurrent rewrites cannot
+    # lose a version and a quarantine/repair racing the agent cannot accept its
+    # stale output.
+    item, live_plan, _ = await _load_owned_item_context(
+        item_id,
+        user.id,
+        db,
+        for_update=True,
+    )
+    if int(getattr(live_plan, "ownership_epoch", 0) or 0) != ownership_epoch:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+        )
     prev = item.voiceover_script if isinstance(item.voiceover_script, dict) else {}
     version = int(prev.get("version", 0)) + 1
     script = VoiceoverScript(
@@ -3560,7 +3821,7 @@ async def transcript_script_edit(
     the SAME server-side sentence/clause line split the teleprompter reads (the
     client can only newline-split, which collapses prose to one line)."""
     _require_transcript_helper()
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
     from app.agents.voiceover_script_writer import (  # noqa: PLC0415
         _sanitize_script,
         split_script_lines,
@@ -3604,7 +3865,7 @@ async def transcript_recorded(
 ) -> dict:
     """Pin the script version the currently-attached take was recorded against."""
     _require_transcript_helper()
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
     item.voiceover_script_recorded_version = int(body.version)
     await db.commit()
     return {"ok": True}
@@ -3817,7 +4078,7 @@ async def register_pool_asset(
     finding 9). Analysis dispatch lands in PR1a; PR0 rows stay status="uploaded".
     """
     _require_asset_pool()
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
     _pool_prefix = f"users/{user.id}/plan/{item.id}/pool/"
     if not body.gcs_path.startswith(_pool_prefix):
         raise HTTPException(
@@ -3912,28 +4173,19 @@ async def upload_pool_asset(
     import tempfile  # noqa: PLC0415
 
     _require_asset_pool()
-    item = await _load_owned_item(item_id, user.id, db)
+    item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
+    stable_item_id = item.id
+    # Do not retain a transaction or ownership row lock while the client body
+    # streams and storage upload run.  The epoch snapshot is revalidated at the
+    # only persistence boundary below.
+    await db.rollback()
 
     content_type = (file.content_type or "").split(";")[0].strip()
     if content_type not in _OVERLAY_ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported asset content type: {content_type or 'unknown'}",
-        )
-
-    count = int(
-        (
-            await db.execute(
-                select(func.count())
-                .select_from(PlanItemAsset)
-                .where(PlanItemAsset.plan_item_id == item.id)
-            )
-        ).scalar_one()
-    )
-    if count >= _MAX_POOL_ASSETS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
         )
 
     # Stream to a temp file, hashing as we go (never the whole file in RAM).
@@ -3957,39 +4209,82 @@ async def upload_pool_asset(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
         content_hash = hasher.hexdigest()
 
-        existing = (
-            await db.execute(
-                select(PlanItemAsset).where(
-                    PlanItemAsset.plan_item_id == item.id,
-                    PlanItemAsset.content_hash == content_hash,
-                )
-            )
-        ).scalar_one_or_none()
-        if existing is not None:
-            return _asset_out(existing, deduped=True)
-
         source_filename = (file.filename or "asset").split("/")[-1]
         safe_name = f"{uuid.uuid4().hex}-{source_filename}"
-        gcs_path = f"users/{user.id}/plan/{item.id}/pool/{safe_name}"
-        await asyncio.to_thread(storage.upload_local_file, tmp_path, gcs_path, content_type)
+        gcs_path = f"users/{user.id}/plan/{stable_item_id}/pool/{safe_name}"
+        try:
+            await asyncio.to_thread(storage.upload_local_file, tmp_path, gcs_path, content_type)
+        except Exception:
+            # A provider error may occur after creating a partial object.
+            await asyncio.to_thread(storage.delete_object_best_effort, gcs_path)
+            raise
     finally:
         try:
             _os.unlink(tmp_path)
         except OSError:
             pass
 
-    asset = PlanItemAsset(
-        plan_item_id=item.id,
-        user_id=user.id,
-        gcs_path=gcs_path,
-        kind=_asset_kind_for_content_type(content_type),
-        content_hash=content_hash,
-        source_filename=source_filename,
-        status="uploaded",
-    )
-    db.add(asset)
-    await db.commit()
-    await db.refresh(asset)
+    try:
+        locked_item, locked_plan, _ = await _load_owned_item_context(
+            item_id,
+            user.id,
+            db,
+            for_update=True,
+        )
+        if int(getattr(locked_plan, "ownership_epoch", 0) or 0) != ownership_epoch:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+            )
+
+        existing = (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == locked_item.id,
+                    PlanItemAsset.content_hash == content_hash,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            await db.rollback()
+            await asyncio.to_thread(storage.delete_object_best_effort, gcs_path)
+            return _asset_out(existing, deduped=True)
+
+        count = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(PlanItemAsset)
+                    .where(PlanItemAsset.plan_item_id == locked_item.id)
+                )
+            ).scalar_one()
+        )
+        if count >= _MAX_POOL_ASSETS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
+            )
+
+        asset = PlanItemAsset(
+            plan_item_id=locked_item.id,
+            user_id=user.id,
+            gcs_path=gcs_path,
+            kind=_asset_kind_for_content_type(content_type),
+            content_hash=content_hash,
+            source_filename=source_filename,
+            status="uploaded",
+        )
+        db.add(asset)
+        await db.commit()
+        await db.refresh(asset)
+    except Exception:
+        await db.rollback()
+        deleted = await asyncio.to_thread(storage.delete_object_best_effort, gcs_path)
+        if not deleted:
+            log.error("pool_asset_stale_upload_cleanup_failed", gcs_path=gcs_path)
+        raise
 
     try:
         from app.config import settings as _settings  # noqa: PLC0415
@@ -4045,7 +4340,7 @@ async def delete_pool_asset(
     the persistent prefix is cheap and other rows may share bytes).
     """
     _require_asset_pool()
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
     try:
         aid = uuid.UUID(asset_id)
     except ValueError as exc:
@@ -4060,15 +4355,25 @@ async def delete_pool_asset(
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
     removed = 0
-    if item.current_job is not None:
-        if _visual_blocks_reference_asset(item.current_job, str(asset.id)):
+    locked_job = (
+        await db.get(
+            Job,
+            item.current_job_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+        if item.current_job_id is not None
+        else None
+    )
+    if locked_job is not None and locked_job.status != "cancelled":
+        if _visual_blocks_reference_asset(locked_job, str(asset.id)):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Replace or remove this asset from visual blocks before deleting it.",
             )
         # Decision 11A: deleting an asset eagerly clears dependent PENDING
         # suggestion rows (staged/accepted cards are real placements — untouched).
-        removed = _clear_suggestions_for_asset(item.current_job, str(asset.id))
+        removed = _clear_suggestions_for_asset(locked_job, str(asset.id))
     await db.delete(asset)
     await db.commit()
     return {"ok": True, "removed_suggestions": removed}
@@ -4122,6 +4427,7 @@ def _clear_pending_overlay_suggestions(job: Job) -> int:
             not pending
             and not v.get("overlay_suggest_status")
             and not v.get("overlay_suggest_hash")
+            and not v.get("overlay_suggest_attempt_token")
         ):
             continue
         removed += len(pending) if isinstance(pending, list) else 0
@@ -4130,6 +4436,7 @@ def _clear_pending_overlay_suggestions(job: Job) -> int:
         v["overlay_suggest_status"] = None
         v["overlay_suggest_hash"] = None
         v["overlay_suggest_wishlist"] = None
+        v.pop("overlay_suggest_attempt_token", None)
     if changed:
         job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
         flag_modified(job, "assembly_plan")
@@ -4164,7 +4471,7 @@ async def update_pool_asset_context(
     clears pending AI suggestions so the next Re-match uses the new context.
     """
     _require_asset_pool()
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
     try:
         aid = uuid.UUID(asset_id)
     except ValueError as exc:
@@ -4181,8 +4488,18 @@ async def update_pool_asset_context(
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
     asset.user_context = body.user_context
-    if item.current_job is not None:
-        _clear_pending_overlay_suggestions(item.current_job)
+    locked_job = (
+        await db.get(
+            Job,
+            item.current_job_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+        if item.current_job_id is not None
+        else None
+    )
+    if locked_job is not None and locked_job.status != "cancelled":
+        _clear_pending_overlay_suggestions(locked_job)
     await db.commit()
     await db.refresh(asset)
     return _asset_out(asset)
@@ -4191,11 +4508,61 @@ async def update_pool_asset_context(
 # ── Overlay auto-placement suggestion routes (plans/005 PR1b) ─────────────────
 
 
+_OVERLAY_SUGGEST_ATTEMPT_KEY = "overlay_suggest_attempt_token"
+
+
 def _find_variant_dict(job: Job, variant_id: str) -> dict:
     for v in (job.assembly_plan or {}).get("variants") or []:
         if v.get("variant_id") == variant_id:
             return v
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+
+
+async def _rollback_overlay_suggest_enqueue_attempt(
+    *,
+    item_id: str,
+    variant_id: str,
+    user_id: uuid.UUID,
+    job_id: uuid.UUID,
+    attempt_token: str,
+    db: AsyncSession,
+) -> bool:
+    """Clear ``matching`` only while this failed publish still owns it.
+
+    Broker publication is deliberately outside the database transaction. On
+    failure, re-enter through the canonical Plan -> Persona -> PlanItem -> Job
+    lock order and compare both the current Job and per-variant attempt token.
+    Cancellation, a replacement Job, and a newer re-match therefore win.
+    """
+
+    try:
+        locked_job = await _locked_owned_item_render_job(item_id, user_id, db)
+    except HTTPException:
+        await db.rollback()
+        return False
+    if locked_job.id != job_id:
+        await db.rollback()
+        return False
+
+    target = next(
+        (
+            candidate
+            for candidate in (locked_job.assembly_plan or {}).get("variants") or []
+            if candidate.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if target is None or target.get(_OVERLAY_SUGGEST_ATTEMPT_KEY) != attempt_token:
+        await db.rollback()
+        return False
+
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    target["overlay_suggest_status"] = None
+    target.pop(_OVERLAY_SUGGEST_ATTEMPT_KEY, None)
+    flag_modified(locked_job, "assembly_plan")
+    await db.commit()
+    return True
 
 
 class SuggestOverlaysResponse(BaseModel):
@@ -4224,7 +4591,7 @@ async def suggest_overlays(
 
     _require_autoplace()
     item = await _load_owned_item(item_id, user.id, db)
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     variant = _find_variant_dict(job, variant_id)
 
     # Music-variant guard (review C20): mirror the zero-click auto path's G2-A
@@ -4265,9 +4632,11 @@ async def suggest_overlays(
         )
 
     variants = list((job.assembly_plan or {}).get("variants") or [])
+    attempt_token = uuid.uuid4().hex
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["overlay_suggest_status"] = "matching"
+            v[_OVERLAY_SUGGEST_ATTEMPT_KEY] = attempt_token
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")
@@ -4281,17 +4650,38 @@ async def suggest_overlays(
     try:
         match_overlay_suggestions.apply_async(
             args=[str(job.id), variant_id, str(user.id)],
+            kwargs={"attempt_token": attempt_token},
             queue=_settings.autoplace_queue,
         )
     except Exception as exc:  # noqa: BLE001
-        for v in variants:
-            if v.get("variant_id") == variant_id:
-                v["overlay_suggest_status"] = None
-                break
-        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-        flag_modified(job, "assembly_plan")
-        await db.commit()
-        log.warning("plan_item_suggest_enqueue_failed", item_id=item_id, error=str(exc)[:200])
+        restored = False
+        try:
+            restored = await _rollback_overlay_suggest_enqueue_attempt(
+                item_id=item_id,
+                variant_id=variant_id,
+                user_id=user.id,
+                job_id=job.id,
+                attempt_token=attempt_token,
+                db=db,
+            )
+        except Exception as recovery_exc:  # noqa: BLE001
+            await db.rollback()
+            log.error(
+                "plan_item_suggest_enqueue_recovery_failed",
+                item_id=item_id,
+                variant_id=variant_id,
+                attempt_token=attempt_token,
+                publish_error=str(exc)[:200],
+                recovery_error=str(recovery_exc)[:200],
+            )
+        log.warning(
+            "plan_item_suggest_enqueue_failed",
+            item_id=item_id,
+            variant_id=variant_id,
+            attempt_token=attempt_token,
+            restored=restored,
+            error=str(exc)[:200],
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Couldn't start matching right now. Please try again.",
@@ -4327,7 +4717,7 @@ async def get_overlay_suggestions(
 
     _require_autoplace()
     await _load_owned_item(item_id, user.id, db)
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     variant = _find_variant_dict(job, variant_id)
 
     stale_cleared = False
@@ -4338,6 +4728,7 @@ async def get_overlay_suggestions(
                 v["overlay_suggestions"] = None
                 v["overlay_suggest_status"] = None
                 v["overlay_suggest_hash"] = None
+                v.pop(_OVERLAY_SUGGEST_ATTEMPT_KEY, None)
                 break
         job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
         flag_modified(job, "assembly_plan")
@@ -4381,7 +4772,7 @@ async def apply_overlay_suggestions(
 
     _require_autoplace()
     await _load_owned_item(item_id, user.id, db)
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     _find_variant_dict(job, variant_id)
 
     result = apply_suggestions_to_variant(job, variant_id, body.suggestions, user_id=str(user.id))
@@ -4417,7 +4808,7 @@ async def dismiss_overlay_suggestions(
 
     _require_autoplace()
     await _load_owned_item(item_id, user.id, db)
-    job = await _owned_item_render_job(item_id, user.id, db)
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
     _find_variant_dict(job, variant_id)
 
     variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -4427,6 +4818,7 @@ async def dismiss_overlay_suggestions(
             v["overlay_suggest_status"] = None
             v["overlay_suggest_hash"] = None
             v["overlay_suggest_wishlist"] = None
+            v.pop(_OVERLAY_SUGGEST_ATTEMPT_KEY, None)
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")

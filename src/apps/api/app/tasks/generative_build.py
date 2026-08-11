@@ -26,6 +26,7 @@ task owns it), so the API needs no new DB column to distinguish text modes.
 
 from __future__ import annotations
 
+import contextvars
 import copy
 import hashlib
 import json
@@ -36,8 +37,10 @@ import tempfile
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass, replace
 from datetime import datetime
+from functools import wraps
 from itertools import cycle
 from typing import Any, NamedTuple
 
@@ -202,6 +205,195 @@ _NO_RERUN_STATUSES = frozenset(
     }
 )
 
+_CANCELLED_JOB_STATUS = "cancelled"
+_CONTENT_PLAN_FENCE: contextvars.ContextVar[tuple[str, int] | None] = contextvars.ContextVar(
+    "generative_content_plan_owner_fence", default=None
+)
+
+
+def _lock_owned_entry_job(db, job_id: str) -> tuple[Job, int | None] | None:  # noqa: ANN001
+    """Lock the worker entry graph and fail closed on plan/persona drift.
+
+    Public generative Jobs need only their Job lock. Content-plan Jobs resolve
+    the unlocked foreign-key chain first, then acquire the canonical
+    ContentPlan -> Persona -> PlanItem -> Job locks before any status, agent, or
+    storage work. The returned epoch is the fence for every later Job write.
+    """
+
+    from app.models import ContentPlan, PlanItem  # noqa: PLC0415
+    from app.services.content_plan_persona import (  # noqa: PLC0415
+        PlanPersonaOwnershipError,
+        load_owned_plan_persona_sync,
+    )
+
+    job_uuid = uuid.UUID(str(job_id))
+    job_ref = db.get(Job, job_uuid)
+    if job_ref is None:
+        return None
+    if job_ref.status == _CANCELLED_JOB_STATUS:
+        # Read-only early exit; avoid acquiring the plan graph for an immutable
+        # tombstone and let the caller emit the standard cancellation log.
+        return job_ref, None
+    content_plan_item_id = getattr(job_ref, "content_plan_item_id", None)
+    is_plan_job = (
+        getattr(job_ref, "mode", None) == "content_plan" or content_plan_item_id is not None
+    )
+    if not is_plan_job:
+        return db.get(Job, job_uuid, with_for_update=True), None
+    if content_plan_item_id is None:
+        log.error("generative_plan_owner_gate_missing_item", job_id=job_id)
+        return None
+    item_ref = db.get(PlanItem, content_plan_item_id)
+    if item_ref is None:
+        log.error("generative_plan_owner_gate_missing_item", job_id=job_id)
+        return None
+    plan = db.get(ContentPlan, item_ref.content_plan_id, with_for_update=True)
+    if plan is None:
+        log.error("generative_plan_owner_gate_missing_plan", job_id=job_id)
+        return None
+    try:
+        load_owned_plan_persona_sync(db, plan, for_update=True)
+    except PlanPersonaOwnershipError:
+        log.error("generative_plan_owner_gate_rejected", job_id=job_id)
+        return None
+    item = db.get(PlanItem, item_ref.id, with_for_update=True)
+    job = db.get(Job, job_uuid, with_for_update=True)
+    if (
+        item is None
+        or job is None
+        or item.content_plan_id != plan.id
+        or item.current_job_id != job.id
+        or job.content_plan_item_id != item.id
+        or job.user_id != plan.user_id
+        or job.mode != "content_plan"
+    ):
+        log.error("generative_plan_owner_gate_link_mismatch", job_id=job_id)
+        return None
+    live_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
+    bound_epoch_raw = getattr(job, "content_plan_ownership_epoch", None)
+    bound_epoch = 0 if bound_epoch_raw is None else int(bound_epoch_raw)
+    if bound_epoch < 0 or live_epoch != bound_epoch:
+        log.error(
+            "generative_plan_owner_gate_epoch_mismatch",
+            job_id=job_id,
+            bound_epoch=bound_epoch,
+            live_epoch=live_epoch,
+        )
+        return None
+    return job, bound_epoch
+
+
+@contextmanager
+def _owned_job_task_fence(job_id: str):  # noqa: ANN202
+    """Establish the durable plan epoch before any task-side effect."""
+
+    token = _CONTENT_PLAN_FENCE.set(None)
+    accepted = False
+    try:
+        with _sync_session() as db:
+            entry = _lock_owned_entry_job(db, job_id)
+            if entry is not None and entry[0].status != _CANCELLED_JOB_STATUS:
+                job, ownership_epoch = entry
+                if ownership_epoch is not None:
+                    _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
+                accepted = True
+        yield accepted
+    finally:
+        _CONTENT_PLAN_FENCE.reset(token)
+
+
+def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
+    """Wrap every generative task entry in the same owner/cancellation gate."""
+
+    @wraps(fn)
+    def wrapped(self, job_id: str, *args, **kwargs):  # noqa: ANN001, ANN202
+        with _owned_job_task_fence(job_id) as accepted:
+            if not accepted:
+                log.info("generative_task_entry_rejected", job_id=job_id, task=fn.__name__)
+                return None
+            return fn(self, job_id, *args, **kwargs)
+
+    return wrapped
+
+
+def _content_plan_write_rejected(db, job: Job, *, operation: str) -> bool:  # noqa: ANN001
+    """Revalidate the entry ownership epoch before a post-external Job write."""
+
+    expected = _CONTENT_PLAN_FENCE.get()
+    if expected is None or expected[0] != str(job.id):
+        return False
+    from app.models import ContentPlan, Persona, PlanItem  # noqa: PLC0415
+    from app.services.content_plan_persona import is_plan_persona_owned  # noqa: PLC0415
+
+    item = db.get(PlanItem, job.content_plan_item_id) if job.content_plan_item_id else None
+    plan = db.get(ContentPlan, item.content_plan_id) if item is not None else None
+    persona = db.get(Persona, plan.persona_id) if plan is not None else None
+    valid = bool(
+        item is not None
+        and plan is not None
+        and item.current_job_id == job.id
+        and job.content_plan_item_id == item.id
+        and job.user_id == plan.user_id
+        and job.mode == "content_plan"
+        and int(getattr(plan, "ownership_epoch", 0) or 0) == expected[1]
+        and is_plan_persona_owned(plan, persona)
+    )
+    if valid:
+        return False
+    log.error(
+        "generative_plan_owner_write_rejected",
+        job_id=str(job.id),
+        operation=operation,
+    )
+    return True
+
+
+def _cancelled_job_write_rejected(job: Job, *, operation: str, db=None) -> bool:  # noqa: ANN001
+    """Return True when an immutable cancelled Job rejects a worker write.
+
+    This check is only useful while the caller holds the Job row lock.  Keeping
+    it next to every read-modify-write makes cancellation the linearization
+    point: either the worker commits first and cancellation follows, or the
+    worker observes ``cancelled`` and the *whole* mutation is a no-op.
+    """
+    if job.status == _CANCELLED_JOB_STATUS:
+        log.info(
+            "cancelled_job_write_rejected",
+            job_id=str(job.id),
+            operation=operation,
+        )
+        return True
+    return bool(db is not None and _content_plan_write_rejected(db, job, operation=operation))
+
+
+def _delete_cancelled_job_objects(job_id: str, paths: list[str]) -> None:
+    """Synchronously delete exact task-created keys after a rejected write.
+
+    ``generative-jobs/{job_id}/`` is lifecycle-exempt.  A late render that loses
+    to cancellation therefore owns its cleanup; merely dropping the DB write
+    would leak the uploaded object forever.  Callers must pass only keys created
+    by the losing attempt; this helper never walks persisted Job state.
+    """
+    prefix = f"generative-jobs/{job_id}/"
+    exact_paths = {
+        path
+        for path in paths
+        if isinstance(path, str) and path.startswith(prefix) and ".." not in path
+    }
+    if not exact_paths:
+        return
+
+    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+    for path in sorted(exact_paths):
+        if not delete_object_best_effort(path):
+            log.error(
+                "cancelled_job_storage_delete_failed",
+                job_id=job_id,
+                object_path=path,
+            )
+
+
 # Kill switch for the TextElement authoring layer (T3/T4 — plan-item-timeline).
 # When False: no text_elements snapshot is written on render, and the
 # _reburn_text_on_base early branch (user-authored text_elements) is bypassed.
@@ -253,22 +445,26 @@ def _read_all_candidates(job_id: str | uuid.UUID | None) -> dict[str, Any]:
         return {}
 
 
-def _merge_all_candidates(job_id: str | uuid.UUID | None, patch: dict[str, Any]) -> None:
+def _merge_all_candidates(job_id: str | uuid.UUID | None, patch: dict[str, Any]) -> bool:
     if job_id is None:
-        return
+        return False
     try:
         job_uuid = uuid.UUID(str(job_id))
     except (ValueError, TypeError):
-        return
+        return False
     try:
         with _sync_session() as db:
             job = db.get(Job, job_uuid, with_for_update=True)
-            if job is None:
-                return
+            if job is None or _cancelled_job_write_rejected(
+                job, operation="merge_all_candidates", db=db
+            ):
+                return False
             job.all_candidates = {**(job.all_candidates or {}), **patch}
             db.commit()
+            return True
     except Exception as exc:  # noqa: BLE001 - cache is best-effort
         log.warning("generative_cache_write_failed", job_id=str(job_id), error=str(exc))
+        return False
 
 
 def _clip_meta_to_cache(meta: Any) -> dict[str, Any]:
@@ -361,10 +557,10 @@ def _load_preprocessed_source_cache(job_id: str, clip_paths_gcs: list[str]) -> l
 def _store_preprocessed_source_cache(
     job_id: str, clip_paths_gcs: list[str], local_clip_paths: list[str]
 ) -> None:
+    processed_paths: list[str] = []
     try:
         from app.storage import upload_public_read  # noqa: PLC0415
 
-        processed_paths: list[str] = []
         for i, local_path in enumerate(local_clip_paths):
             ext = os.path.splitext(local_path)[1] or ".mp4"
             dst = f"generative-jobs/{job_id}/preprocessed/{i:03d}{ext}"
@@ -372,8 +568,9 @@ def _store_preprocessed_source_cache(
             processed_paths.append(dst)
     except Exception as exc:  # noqa: BLE001 - cache is best-effort
         log.warning("preprocessed_source_cache_store_failed", job_id=job_id, error=str(exc))
+        _delete_cancelled_job_objects(job_id, processed_paths)
         return
-    _merge_all_candidates(
+    accepted = _merge_all_candidates(
         job_id,
         {
             "preprocessed_source_cache": {
@@ -383,6 +580,8 @@ def _store_preprocessed_source_cache(
             }
         },
     )
+    if accepted is False:
+        _delete_cancelled_job_objects(job_id, processed_paths)
 
 
 def _pretonemap_fingerprint(clip_id_to_local: dict[str, str], probe_map: dict) -> dict[str, Any]:
@@ -464,10 +663,10 @@ def _store_hdr_pretonemap_cache(
 ) -> None:
     if job_id is None or not converted:
         return
+    processed_by_clip_id: dict[str, str] = {}
     try:
         from app.storage import upload_public_read  # noqa: PLC0415
 
-        processed_by_clip_id: dict[str, str] = {}
         for i, (clip_id, local_path, _probe) in enumerate(converted):
             dst = (
                 f"generative-jobs/{job_id}/preprocessed/"
@@ -477,8 +676,9 @@ def _store_hdr_pretonemap_cache(
             processed_by_clip_id[clip_id] = dst
     except Exception as exc:  # noqa: BLE001 - cache is best-effort
         log.warning("hdr_pretonemap_cache_store_failed", job_id=job_id, error=str(exc))
+        _delete_cancelled_job_objects(str(job_id), list(processed_by_clip_id.values()))
         return
-    _merge_all_candidates(
+    accepted = _merge_all_candidates(
         job_id,
         {
             "hdr_pretonemap_cache": {
@@ -488,6 +688,8 @@ def _store_hdr_pretonemap_cache(
             }
         },
     )
+    if accepted is False:
+        _delete_cancelled_job_objects(str(job_id), list(processed_by_clip_id.values()))
 
 
 @celery_app.task(
@@ -508,6 +710,7 @@ def _store_hdr_pretonemap_cache(
     soft_time_limit=1740,
     time_limit=1800,
 )
+@_with_owned_job_fence
 def orchestrate_generative_job(self, job_id: str) -> None:
     """Entry point. Never raises — any exception becomes processing_failed."""
     log.info("generative_job_start", job_id=job_id)
@@ -520,7 +723,6 @@ def orchestrate_generative_job(self, job_id: str) -> None:
     # a silently killed attempt stops beating, and the redelivered attempt's
     # first beat clears the stale state (2026-07-21 OOM, job e8173a25).
     with pipeline_trace_for(job_id), job_heartbeat(job_id):
-        mark_started(job_id)
         try:
             _run_generative_job(job_id)
             mark_finished(job_id)
@@ -556,6 +758,7 @@ def orchestrate_generative_job(self, job_id: str) -> None:
     soft_time_limit=1740,
     time_limit=1800,
 )
+@_with_owned_job_fence
 def rerender_speech_timing(self, job_id: str, operation_id: str) -> None:
     """Dedicated full speech rebuild with last-good transactional semantics."""
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
@@ -577,7 +780,6 @@ def rerender_speech_timing(self, job_id: str, operation_id: str) -> None:
                 operation_id=operation_id,
             )
             return
-        mark_started(job_id)
         try:
             _run_generative_job(
                 job_id,
@@ -624,35 +826,64 @@ def _run_generative_job(
     speech_cut_operation_id: str | None = None,
     speech_cut_attempt_id: str | None = None,
 ) -> None:
+    """Run with a task-local ownership epoch that every late writer can see."""
+
+    # Preserve an outer task-entry fence. Re-setting the current value gives us
+    # a token for direct-call cleanup without erasing the durable bound epoch.
+    token = _CONTENT_PLAN_FENCE.set(_CONTENT_PLAN_FENCE.get())
+    try:
+        _run_generative_job_impl(
+            job_id,
+            speech_cut_operation_id=speech_cut_operation_id,
+            speech_cut_attempt_id=speech_cut_attempt_id,
+        )
+    finally:
+        _CONTENT_PLAN_FENCE.reset(token)
+
+
+def _run_generative_job_impl(
+    job_id: str,
+    *,
+    speech_cut_operation_id: str | None = None,
+    speech_cut_attempt_id: str | None = None,
+) -> None:
     from app.services.pipeline_trace import (  # noqa: PLC0415
         record_pipeline_event,
         record_render_stage,
         render_stage_timer,
     )
 
-    # Skia kill-switch guard. Agent-text + karaoke reveals have NO Pillow equivalent;
-    # if the renderer falls back to Pillow+libass the overlays render wrong or drop.
-    # Fail loudly rather than ship garbage. (See CLAUDE.md TEXT_RENDERER_SKIA_ENABLED.)
-    if not settings.text_renderer_skia_enabled:
-        if speech_cut_operation_id:
-            raise RuntimeError("speech timing rerender requires TEXT_RENDERER_SKIA_ENABLED")
-        _fail_job(
-            job_id,
-            "Generative edits require the Skia text renderer (TEXT_RENDERER_SKIA_ENABLED). "
-            "It is disabled in this environment — refusing to render with the Pillow "
-            "fallback, which cannot draw the agent-text / karaoke overlays.",
-            failure_reason="skia_disabled",
-        )
-        return
-
-    # Phase: analyze_clips — covers download + probe + Gemini + clip_metadata.
-    record_phase(job_id, "queued", next_phase="analyze_clips")
     render_trace_id = uuid.uuid4().hex
 
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
-        if job is None:
-            log.error("generative_job_not_found", job_id=job_id)
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None:
+            log.error("generative_job_entry_rejected", job_id=job_id)
+            return
+        job, ownership_epoch = entry
+        # Cancellation is immutable even for a matching speech-cut finalizer.
+        # That claim may have been minted before cancellation and must never be
+        # treated as authority to resurrect the Job.
+        if job.status == _CANCELLED_JOB_STATUS:
+            log.info("generative_job_skip_cancelled", job_id=job_id)
+            return
+        if ownership_epoch is not None:
+            _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
+        # Skia kill-switch guard. Agent-text + karaoke reveals have NO Pillow
+        # equivalent. The plan-owner graph is already locked and validated, so
+        # even this early failure cannot mutate a quarantined/mismatched Job.
+        if not settings.text_renderer_skia_enabled:
+            if speech_cut_operation_id:
+                raise RuntimeError("speech timing rerender requires TEXT_RENDERER_SKIA_ENABLED")
+            job.status = "processing_failed"
+            job.error_detail = (
+                "Generative edits require the Skia text renderer "
+                "(TEXT_RENDERER_SKIA_ENABLED). It is disabled in this environment — "
+                "refusing to render with the Pillow fallback, which cannot draw the "
+                "agent-text / karaoke overlays."
+            )[:MAX_ERROR_DETAIL_LEN]
+            job.failure_reason = "skia_disabled"
+            db.commit()
             return
         # Redelivery guard (acks_late). If this job already reached a terminal state,
         # a redelivered message must not re-run the whole pipeline (it would repeat
@@ -788,6 +1019,11 @@ def _run_generative_job(
         # Montage visual preset. Absent means classic so public/legacy jobs keep
         # byte-identical render behavior.
         montage_preset = coerce_montage_preset((all_candidates or {}).get("montage_preset"))
+
+    # Phase writes happen only after the owner/quarantine gate and the initial
+    # status mutation commit. job_phases has its own cancelled tombstone fence.
+    mark_started(job_id)
+    record_phase(job_id, "queued", next_phase="analyze_clips")
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -948,7 +1184,12 @@ def _run_generative_job(
         try:
             prework_started = time.monotonic()
             fut_tonemap = pool.submit(
-                _pretonemap_hdr_clips, clip_id_to_local, probe_map, tmpdir, job_id=job_id
+                contextvars.copy_context().run,
+                _pretonemap_hdr_clips,
+                clip_id_to_local,
+                probe_map,
+                tmpdir,
+                job_id=job_id,
             )
             fut_text = pool.submit(_text_then_style)
             fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
@@ -1067,7 +1308,8 @@ def _run_generative_job(
             and speech_cut_pinned_spine in clip_id_to_local
         ):
             spine_clip_id = speech_cut_pinned_spine
-        _set_status(job_id, "rendering")
+        if _set_status(job_id, "rendering") is False:
+            return
         # Persist the style-downgrade reason so the item page can explain a montage
         # fallback to the user (trace events are admin-only). A retry that now
         # resolves cleanly clears the stale reason from the previous attempt.
@@ -1122,14 +1364,20 @@ def _run_generative_job(
             # First render only. Re-renders stamp this at DISPATCH instead
             # (`stamp_variant_attempt` in services/job_phases.py) so the tile
             # clock restarts on the Save press rather than inheriting this value.
-            _update_variant_entry(
+            if _update_variant_entry(
                 job_id,
                 variant_id,
                 {
                     "render_status": "rendering",
                     "render_started_at": datetime.utcnow().isoformat() + "Z",
                 },
-            )
+            ) is False:
+                return {
+                    "variant_id": variant_id,
+                    "rank": rank,
+                    "render_status": "cancelled",
+                    "ok": False,
+                }
 
             variant_dir = os.path.join(tmpdir, f"variant_{rank}")
             os.makedirs(variant_dir, exist_ok=True)
@@ -1232,7 +1480,24 @@ def _run_generative_job(
                 # Persist immediately so a deploy/OOM after this point can't lose it,
                 # and so the status endpoint reveals variants as they finish rather
                 # than all-at-once at _finalize_job.
-                _upsert_variant_entry(job_id, result)
+                if _upsert_variant_entry(job_id, result) is False:
+                    _discard_generation_storage(
+                        result,
+                        job_id=job_id,
+                        generation=spec.get("storage_generation"),
+                        fields=(
+                            "video_path",
+                            "base_video_path",
+                            "subject_matte_path",
+                            "visual_blocks_base_path",
+                            "motion_base_path",
+                            # Fresh initial-render media snapshots. Keep these
+                            # out of the helper default because later rerenders
+                            # may merely carry prior persisted snapshot refs.
+                            "pre_media_overlay_video_path",
+                            "pre_sfx_video_path",
+                        ),
+                    )
                 return result
             except BaseException as exc:
                 record_render_stage(
@@ -1302,7 +1567,13 @@ def _run_generative_job(
                 pool = ThreadPoolExecutor(max_workers=workers)
                 try:
                     futs = {
-                        pool.submit(_render_one_spec, rank, spec, spine): rank
+                        pool.submit(
+                            contextvars.copy_context().run,
+                            _render_one_spec,
+                            rank,
+                            spec,
+                            spine,
+                        ): rank
                         for rank, spec in to_render
                     }
                     for fut in as_completed(futs):
@@ -1335,7 +1606,7 @@ def _run_generative_job(
         # rules. No-op — mutates nothing — unless both carousel flags are on.
         _author_carousel_moments(initial_specs, job_id=job_id, n_clips=len(clip_metas))
         for spec in initial_specs:
-            _upsert_variant_entry(
+            if _upsert_variant_entry(
                 job_id,
                 {
                     "variant_id": spec["variant_id"],
@@ -1354,7 +1625,8 @@ def _run_generative_job(
                     # rendered must still be visible to a re-render.
                     "carousel_moment": spec.get("carousel_moment"),
                 },
-            )
+            ) is False:
+                return
 
         try:
             results = _render_spec_set(initial_specs, spine_clip_id)
@@ -1378,7 +1650,7 @@ def _run_generative_job(
                 variant_policy=variant_policy,
             )
             for spec in fallback_specs:
-                _upsert_variant_entry(
+                if _upsert_variant_entry(
                     job_id,
                     {
                         "variant_id": spec["variant_id"],
@@ -1389,7 +1661,8 @@ def _run_generative_job(
                         "render_status": "pending",
                         "ok": False,
                     },
-                )
+                ) is False:
+                    return
             results = _render_spec_set(fallback_specs, None)
 
     record_phase(
@@ -1404,12 +1677,14 @@ def _run_generative_job(
         trace_id=render_trace_id,
         counts={"variant_count": len(results)},
     ):
-        _finalize_job(
+        finalized = _finalize_job(
             job_id,
             results,
             expected_operation_id=speech_cut_operation_id,
             expected_attempt_id=speech_cut_attempt_id,
         )
+        if finalized is False:
+            return
         if speech_cut_operation_id and speech_cut_attempt_id:
             _compose_speech_cut_rerender(
                 job_id,
@@ -1477,7 +1752,13 @@ def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
     skipped_archetypes: list[tuple[str, str]] = []
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
-        if job is None or job.content_plan_item_id is None:
+        if (
+            job is None
+            or _cancelled_job_write_rejected(
+                job, operation="visual_blocks_autoplace", db=db
+            )
+            or job.content_plan_item_id is None
+        ):
             return
         variants = list((job.assembly_plan or {}).get("variants") or [])
         eligible: list[str] = []
@@ -1554,7 +1835,11 @@ def _maybe_sfx_autoplace_after_finalize(job_id: str) -> None:
         return
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
-        if job is None or job.content_plan_item_id is None:
+        if (
+            job is None
+            or _cancelled_job_write_rejected(job, operation="sfx_autoplace", db=db)
+            or job.content_plan_item_id is None
+        ):
             return
         variants = list((job.assembly_plan or {}).get("variants") or [])
         eligible: list[str] = []
@@ -1607,7 +1892,11 @@ def _maybe_autoplace_after_finalize(job_id: str) -> None:
 
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
-        if job is None or job.content_plan_item_id is None:
+        if (
+            job is None
+            or _cancelled_job_write_rejected(job, operation="overlay_autoplace", db=db)
+            or job.content_plan_item_id is None
+        ):
             return
         # The persisted context pins the preset/version for determinism, but the
         # master switch remains an emergency kill switch throughout the job. A
@@ -1904,6 +2193,8 @@ def _persist_durable_sources(job_id: str, clip_paths: list[str]) -> list[str]:
     prefix = _durable_sources_prefix(job_id)
     if all(p.startswith(prefix) for p in clip_paths):
         return clip_paths  # already durable — idempotent re-run
+    copied_paths: list[str] = []
+    cancelled = False
     try:
         durable: list[str] = []
         for i, src in enumerate(clip_paths):
@@ -1912,10 +2203,15 @@ def _persist_durable_sources(job_id: str, clip_paths: list[str]) -> list[str]:
                 continue
             dst = f"{prefix}{i:03d}_{os.path.basename(src)}"
             copy_object(src, dst)
+            copied_paths.append(dst)
             durable.append(dst)
         with _sync_session() as db:
             job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
-            if job is not None:
+            if job is not None and _cancelled_job_write_rejected(
+                job, operation="persist_durable_sources", db=db
+            ):
+                cancelled = True
+            elif job is not None:
                 all_candidates = dict(job.all_candidates or {})
                 all_candidates["clip_paths"] = list(durable)
                 job.all_candidates = all_candidates
@@ -1926,6 +2222,9 @@ def _persist_durable_sources(job_id: str, clip_paths: list[str]) -> list[str]:
             job_id=job_id,
             error=str(exc),
         )
+        return clip_paths
+    if cancelled:
+        _delete_cancelled_job_objects(job_id, copied_paths)
         return clip_paths
     log.info("generative_durable_sources_persisted", job_id=job_id, clips=len(durable))
     return durable
@@ -2119,6 +2418,7 @@ def _pretonemap_hdr_clips(
     soft_time_limit=1740,
     time_limit=1800,
 )
+@_with_owned_job_fence
 def regenerate_generative_variant(
     self,
     job_id: str,
@@ -2554,6 +2854,12 @@ def _run_masonry_audio_only_song_swap(
         patch,
         expected_render_gen_id=expected_render_gen_id,
         outcome="masonry_audio_swap",
+        cancelled_cleanup_paths=[
+            patch[field]
+            for field in path_fields
+            if isinstance(patch.get(field), str)
+            and patch[field].startswith(f"generative-jobs/{job_id}/audio-swap/")
+        ],
     ):
         return False
 
@@ -2677,6 +2983,12 @@ def _run_music_window_audio_only_swap(
         patch,
         expected_render_gen_id=expected_render_gen_id,
         outcome="music_window_audio_swap",
+        cancelled_cleanup_paths=[
+            patch[field]
+            for field in path_fields
+            if isinstance(patch.get(field), str)
+            and patch[field].startswith(f"generative-jobs/{job_id}/music-window-audio/")
+        ],
     ):
         return False
 
@@ -2735,6 +3047,9 @@ def _run_media_overlay_pass(
         if job is None:
             log.error("media_overlay_job_not_found", job_id=job_id)
             return
+        if job.status == _CANCELLED_JOB_STATUS:
+            log.info("media_overlay_cancelled_job_skipped", job_id=job_id)
+            return
         persisted = (job.assembly_plan or {}).get("variants") or []
         found = next((v for v in persisted if v.get("variant_id") == variant_id), None)
         existing = dict(found) if found is not None else None
@@ -2766,8 +3081,8 @@ def _run_media_overlay_pass(
         output_url: str,
         pre_clean: str | None,
         clear: bool,
-    ) -> tuple[bool, bool, bool]:
-        """Return (accepted, will_reapply_sfx, stale_card_metadata_skipped)."""
+    ) -> tuple[bool, bool, bool, bool]:
+        """Return (accepted, will_reapply_sfx, stale_metadata, cancelled)."""
         from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
         from app.config import settings as _settings_ov  # noqa: PLC0415
@@ -2775,7 +3090,11 @@ def _run_media_overlay_pass(
         with _sync_session() as db:
             locked_job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if locked_job is None:
-                return False, False, False
+                return False, False, False, False
+            if _cancelled_job_write_rejected(
+                locked_job, operation="media_overlay_persist", db=db
+            ):
+                return False, False, False, True
             variants = list((locked_job.assembly_plan or {}).get("variants") or [])
             stale_write_skipped = False
             for variant in variants:
@@ -2795,7 +3114,7 @@ def _run_media_overlay_pass(
                         expected_gen_id=expected_render_gen_id,
                         actual_gen_id=current,
                     )
-                    return False, False, False
+                    return False, False, False, False
 
                 will_reapply_sfx = (
                     (
@@ -2824,7 +3143,7 @@ def _run_media_overlay_pass(
                     variant["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
                 break
             else:
-                return False, False, False
+                return False, False, False, False
 
             locked_job.assembly_plan = {
                 **(locked_job.assembly_plan or {}),
@@ -2832,7 +3151,7 @@ def _run_media_overlay_pass(
             }
             flag_modified(locked_job, "assembly_plan")
             db.commit()
-            return True, will_reapply_sfx, stale_write_skipped
+            return True, will_reapply_sfx, stale_write_skipped, False
 
     # ── Clear path: remove all cards ──────────────────────────────────────────
     if not cards:
@@ -2845,12 +3164,12 @@ def _run_media_overlay_pass(
         else:
             signed_url = existing.get("output_url", "")
 
-        accepted, will_reapply_sfx, _ = _persist_result(
+        accepted, will_reapply_sfx, _, _cancelled = _persist_result(
             output_url=signed_url,
             pre_clean=None,
             clear=True,
         )
-        if not accepted:
+        if accepted is False:
             return
         record_pipeline_event(
             "media_overlay",
@@ -2872,6 +3191,7 @@ def _run_media_overlay_pass(
 
     # ── Apply path: composite cards onto the clean base ───────────────────────
     pre_clean = existing.get("pre_media_overlay_video_path")
+    created_pre_clean: str | None = None
     if not pre_clean:
         base_for_clean = existing.get("pre_sfx_video_path") or current_video_path
         pre_clean = current_video_path + "_pre_overlay"
@@ -2880,6 +3200,7 @@ def _run_media_overlay_pass(
                 log.info("media_overlay_clean_copy_reused", job_id=job_id, dst=pre_clean)
             else:
                 copy_object(base_for_clean, pre_clean)
+                created_pre_clean = pre_clean
                 log.info("media_overlay_clean_copy_created", job_id=job_id, dst=pre_clean)
         except Exception as exc:  # noqa: BLE001
             log.warning("media_overlay_clean_copy_failed", job_id=job_id, error=str(exc))
@@ -2918,12 +3239,17 @@ def _run_media_overlay_pass(
         )
         return
 
-    accepted, will_reapply_sfx, stale_write_skipped = _persist_result(
+    accepted, will_reapply_sfx, stale_write_skipped, cancelled = _persist_result(
         output_url=new_url,
         pre_clean=pre_clean,
         clear=False,
     )
-    if not accepted:
+    if accepted is False:
+        # The compositor overwrites the already-persisted video_path, so it did
+        # not allocate a new output object. Only the optional clean snapshot is
+        # a task-created key that can safely be deleted on cancellation.
+        if cancelled and created_pre_clean:
+            _delete_cancelled_job_objects(job_id, [created_pre_clean])
         return
     record_pipeline_event(
         "media_overlay",
@@ -3154,7 +3480,9 @@ def _reapply_persisted_media_overlays_if_any(
             # and the commit happen under ONE lock; blob deletes run after
             # (mirrors _upsert_variant_entry, same clobber class as PR #595).
             job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
-            if job is None:
+            if job is None or _cancelled_job_write_rejected(
+                job, operation="media_overlay_reapply_prep", db=db
+            ):
                 return False
             variants = list((job.assembly_plan or {}).get("variants") or [])
             existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
@@ -3246,7 +3574,9 @@ def _reapply_persisted_sfx_if_any(
         with _sync_session() as db:
             # F4: row-locked RMW — see _reapply_persisted_media_overlays_if_any.
             job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
-            if job is None:
+            if job is None or _cancelled_job_write_rejected(
+                job, operation="sfx_reapply_prep", db=db
+            ):
                 return False
             variants = list((job.assembly_plan or {}).get("variants") or [])
             existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
@@ -3346,7 +3676,9 @@ def _mark_variant_failed(
         try:
             with _sync_session() as db:
                 job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
-                if job is None:
+                if job is None or _cancelled_job_write_rejected(
+                    job, operation="mark_variant_failed", db=db
+                ):
                     return
                 variants = list((job.assembly_plan or {}).get("variants") or [])
                 for v in variants:
@@ -3442,6 +3774,9 @@ def _run_sfx_pass(
         if job is None:
             log.error("sfx_job_not_found", job_id=job_id)
             return
+        if job.status == _CANCELLED_JOB_STATUS:
+            log.info("sfx_cancelled_job_skipped", job_id=job_id)
+            return
         persisted = (job.assembly_plan or {}).get("variants") or []
         found = next((v for v in persisted if v.get("variant_id") == variant_id), None)
         existing = dict(found) if found is not None else None
@@ -3494,6 +3829,7 @@ def _run_sfx_pass(
 
     # ── Apply path: mix effects onto the clean base ───────────────────────────
     pre_clean = existing.get("pre_sfx_video_path")
+    created_pre_clean: str | None = None
     if not pre_clean:
         pre_clean = current_video_path + "_pre_sfx"
         try:
@@ -3501,6 +3837,7 @@ def _run_sfx_pass(
                 log.info("sfx_clean_copy_reused", job_id=job_id, dst=pre_clean)
             else:
                 copy_object(current_video_path, pre_clean)
+                created_pre_clean = pre_clean
                 log.info("sfx_clean_copy_created", job_id=job_id, dst=pre_clean)
         except Exception as exc:  # noqa: BLE001
             log.warning("sfx_clean_copy_failed", job_id=job_id, error=str(exc))
@@ -3577,6 +3914,7 @@ def _run_sfx_pass(
         patch,
         expected_render_gen_id=expected_render_gen_id,
         outcome="sfx_apply",
+        cancelled_cleanup_paths=[created_pre_clean] if created_pre_clean else None,
     ):
         return
     record_pipeline_event(
@@ -3760,6 +4098,7 @@ def _resolve_subject_matte_for_burn(
     job_id: str,
     variant_id: str,
     cut_boundaries_s: list[float] | None = None,
+    created_storage_paths: list[str] | None = None,
 ) -> tuple[Any, str | None, list[dict]]:
     """Best-effort matte resolution for a burn about to happen.
 
@@ -3827,6 +4166,8 @@ def _resolve_subject_matte_for_burn(
 
     provider = None
     matte_gcs_path = original_matte_path
+    newly_uploaded_paths: list[str] = []
+    upload_replaced_existing_cache = False
     try:
         windows = _behind_subject_windows(behind, duration_s)
         if not windows:
@@ -3914,8 +4255,15 @@ def _resolve_subject_matte_for_burn(
                 ]
                 return None, sentinel, stripped
             upload_key = f"{upload_key_base}{_MATTE_CACHE_SUFFIX}"
+            upload_replaced_existing_cache = upload_key == original_matte_path
             upload_public_read(local_matte, upload_key)
+            newly_uploaded_paths.append(upload_key)
+            if created_storage_paths is not None:
+                created_storage_paths.append(upload_key)
             upload_public_read(f"{local_matte}.json", f"{upload_key}.json")
+            newly_uploaded_paths.append(f"{upload_key}.json")
+            if created_storage_paths is not None:
+                created_storage_paths.append(f"{upload_key}.json")
             provider = SubjectMatteProvider.open(local_matte)
             if provider is None:
                 raise RuntimeError("freshly computed matte failed to open")
@@ -3930,6 +4278,17 @@ def _resolve_subject_matte_for_burn(
                 delete_object_best_effort(stale_matte_path)
                 delete_object_best_effort(f"{stale_matte_path}.json")
     except Exception as exc:  # noqa: BLE001 — best-effort, never fails the burn
+        # A failed resolver returns the prior cache path, so anything this
+        # attempt managed to upload is unreachable and must be removed now.
+        # Generation-scoped reburn keys ensure this never deletes a prior
+        # committed matte; retain the defensive inequality for legacy callers.
+        rejected_paths = [] if upload_replaced_existing_cache else newly_uploaded_paths
+        if rejected_paths:
+            _delete_cancelled_job_objects(job_id, rejected_paths)
+            if created_storage_paths is not None:
+                created_storage_paths[:] = [
+                    path for path in created_storage_paths if path not in rejected_paths
+                ]
         log.warning(
             "text_behind_subject_fallback",
             job_id=job_id,
@@ -4586,7 +4945,8 @@ def _reburn_text_on_base(
                 tmpdir,
                 job_id=job_id,
                 variant_id=variant_id,
-                upload_key_base=base_gcs_path,
+                upload_key_base=reburn_output_key,
+                created_storage_paths=created_storage_paths,
             )
             output_url = upload_public_read(final_path, reburn_output_key)
             return {
@@ -4622,11 +4982,12 @@ def _reburn_text_on_base(
                         overlays=_lyrics_burn_dicts,
                         tmpdir=tmpdir,
                         cached_matte_path=existing.get("subject_matte_path"),
-                        upload_key_base=base_gcs_path,
+                        upload_key_base=reburn_output_key,
                         duration_s=_lyrics_dur,
                         job_id=job_id,
                         variant_id=variant_id,
                         cut_boundaries_s=_variant_slot_boundaries(existing),
+                        created_storage_paths=created_storage_paths,
                     )
                 )
                 _burn_text_for_variant(
@@ -4665,7 +5026,8 @@ def _reburn_text_on_base(
                     tmpdir,
                     job_id=job_id,
                     variant_id=variant_id,
-                    upload_key_base=base_gcs_path,
+                    upload_key_base=reburn_output_key,
+                    created_storage_paths=created_storage_paths,
                 )
                 # Subtitled text edits must not overwrite the current key. Signed URLs and
                 # CDN layers may keep serving that object, so mint a new key and delete the old.
@@ -4706,8 +5068,9 @@ def _reburn_text_on_base(
                 upload_key_base=base_gcs_path,
                 duration_s=_te_dur,
                 job_id=job_id,
-                variant_id=variant_id,
-                cut_boundaries_s=_variant_slot_boundaries(existing),
+                    variant_id=variant_id,
+                    cut_boundaries_s=_variant_slot_boundaries(existing),
+                    created_storage_paths=created_storage_paths,
             )
             _burn_text_for_variant(local_base, _te_burn_dicts, _te_final_path, matte=_te_provider)
             _te_gcs_key = reburn_output_key
@@ -4890,11 +5253,12 @@ def _reburn_text_on_base(
                 overlays=overlays,
                 tmpdir=tmpdir,
                 cached_matte_path=existing.get("subject_matte_path"),
-                upload_key_base=base_gcs_path,
+                upload_key_base=reburn_output_key,
                 duration_s=base_dur,
                 job_id=job_id,
                 variant_id=variant_id,
                 cut_boundaries_s=_variant_slot_boundaries(existing),
+                created_storage_paths=created_storage_paths,
             )
             _burn_text_for_variant(local_base, overlays, final_path, matte=_matte_provider)
 
@@ -6431,6 +6795,9 @@ def _run_regenerate_variant(
         if job is None:
             log.error("generative_regenerate_job_not_found", job_id=job_id)
             return
+        if job.status == _CANCELLED_JOB_STATUS:
+            log.info("generative_regenerate_cancelled_job_skipped", job_id=job_id)
+            return
         clip_paths_gcs = (job.all_candidates or {}).get("clip_paths", []) or []
         # Re-renders inherit the language the user chose at job creation. Legacy
         # jobs (pre-language-field) default to "en". Frontend NEVER passes language
@@ -6756,9 +7123,14 @@ def _run_regenerate_variant(
                     existing_music_window_duration_s = active_timeline_duration_s
 
     # Mark this variant as re-rendering so the UI can show a spinner immediately.
-    _update_variant_entry(
-        job_id, variant_id, {"render_status": "rendering", "ok": False, "error": None}
-    )
+    if _update_variant_entry(
+        job_id,
+        variant_id,
+        {"render_status": "rendering", "ok": False, "error": None},
+        expected_render_gen_id=render_gen_id,
+        outcome="regenerate_start",
+    ) is False:
+        return
 
     # ── Fast-reburn path ──────────────────────────────────────────────────────
     # When the edit is a pure text/style/size change (no audio change, base cached),
@@ -7467,12 +7839,12 @@ def _existing_variants(job_id: str) -> list[dict[str, Any]]:
     """Return the variants already persisted on this job (empty on first run)."""
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
-        if job is None:
+        if job is None or job.status == _CANCELLED_JOB_STATUS:
             return []
         return list((job.assembly_plan or {}).get("variants") or [])
 
 
-def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> None:
+def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
     """Insert or replace `result` in Job.assembly_plan['variants'] by variant_id.
 
     Like `_update_variant_entry` but appends when the variant isn't present yet —
@@ -7485,7 +7857,9 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> None:
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
-            return
+            return False
+        if _cancelled_job_write_rejected(job, operation="upsert_variant", db=db):
+            return False
         plan = dict(job.assembly_plan or {})
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
@@ -7497,6 +7871,7 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> None:
         plan["variants"] = variants
         job.assembly_plan = plan
         db.commit()
+    return True
 
 
 def _clear_user_timeline(
@@ -7517,6 +7892,8 @@ def _clear_user_timeline(
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
+            return False
+        if _cancelled_job_write_rejected(job, operation="clear_user_timeline", db=db):
             return False
         plan = dict(job.assembly_plan or {})
         variants = list(plan.get("variants") or [])
@@ -7566,11 +7943,13 @@ def _stale_render_discarded(
     whose render lands (D8 queue/supersede). Tasks launched without a token
     (legacy per-field dispatchers) always write — flag-off surfaces unchanged.
     """
-    if render_gen_id is None:
-        return False
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         if job is None:
+            return False
+        if job.status == _CANCELLED_JOB_STATUS:
+            return True
+        if render_gen_id is None:
             return False
         variants = (job.assembly_plan or {}).get("variants") or []
         variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
@@ -7597,6 +7976,7 @@ def _update_variant_entry(
     *,
     expected_render_gen_id: str | None = None,
     outcome: str | None = None,
+    cancelled_cleanup_paths: list[str] | None = None,
 ) -> bool:
     """Merge `patch` into the matching entry of Job.assembly_plan['variants'].
 
@@ -7614,6 +7994,11 @@ def _update_variant_entry(
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
+            return False
+        if _cancelled_job_write_rejected(
+            job, operation=outcome or "variant_update", db=db
+        ):
+            _delete_cancelled_job_objects(job_id, cancelled_cleanup_paths or [])
             return False
         plan = dict(job.assembly_plan or {})
         variants = list(plan.get("variants") or [])
@@ -8859,36 +9244,34 @@ def _discard_generation_storage(
         "motion_base_path",
     ),
 ) -> None:
-    """Best-effort cleanup for outputs rejected by the generation guard."""
+    """Synchronous cleanup for exact outputs rejected by a terminal DB write.
+
+    A generation token narrows re-render cleanup to that attempt.  Initial
+    renders use immutable, unversioned filenames; their freshly-returned result
+    dict is itself the exact ownership receipt, so a missing token deletes only
+    the named top-level output fields below.
+    """
     token = "".join(character for character in str(generation or "") if character.isalnum())[:32]
-    if not token:
-        return
     prefix = f"generative-jobs/{job_id}/"
     keys = {
         value
         for field in fields
         if isinstance((value := result.get(field)), str)
         and value.startswith(prefix)
-        and token in value
+        and (not token or token in value)
     }
     if not keys:
         return
-    from app.storage import delete_object_best_effort  # noqa: PLC0415
-
-    for key in keys:
-        delete_object_best_effort(key)
-        if key == result.get("subject_matte_path"):
-            delete_object_best_effort(f"{key}.json")
+    exact_paths = list(keys)
+    matte_path = result.get("subject_matte_path")
+    if matte_path in keys:
+        exact_paths.append(f"{matte_path}.json")
+    _delete_cancelled_job_objects(job_id, exact_paths)
 
 
 def _free_uncommitted_storage_paths(paths: list[str], *, job_id: str) -> None:
     """Best-effort cleanup for task-owned keys that never won a DB write."""
-    prefix = f"generative-jobs/{job_id}/"
-    from app.storage import delete_object_best_effort  # noqa: PLC0415
-
-    for path in set(paths):
-        if path.startswith(prefix):
-            delete_object_best_effort(path)
+    _delete_cancelled_job_objects(job_id, paths)
 
 
 def _free_retired_generation_outputs(previous: dict, result: dict, *, job_id: str) -> None:
@@ -8921,8 +9304,7 @@ def _discard_uncommitted_reburn_storage(
 ) -> None:
     """Delete immutable reburn outputs rejected by the DB generation guard."""
     prefix = f"generative-jobs/{job_id}/"
-    from app.storage import delete_object_best_effort  # noqa: PLC0415
-
+    paths: list[str] = []
     for field, previous_field in (
         ("video_path", "video_path"),
         ("visual_blocks_base_path", "visual_blocks_base_path"),
@@ -8934,7 +9316,8 @@ def _discard_uncommitted_reburn_storage(
             and path.startswith(prefix)
             and path != previous.get(previous_field)
         ):
-            delete_object_best_effort(path)
+            paths.append(path)
+    _delete_cancelled_job_objects(job_id, paths)
 
 
 def _render_generative_variant(
@@ -12455,6 +12838,7 @@ def _render_subtitled_variant(
         # conditional base upload below.
         base_gcs_key = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
         subtitled_matte_path = base.get("subject_matte_path")
+        subtitled_created_storage: list[str] = []
         if getattr(settings, "subtitled_text_lane_enabled", False) or smart_compiled is not None:
             with _stage_timer("composition", counts={"cue_count": len(cues)}):
                 # A camera-warped substrate needs its own matte (the mask must
@@ -12477,9 +12861,15 @@ def _render_subtitled_variant(
                         if camera_render_applied
                         else base_gcs_key
                     ),
+                    created_storage_paths=subtitled_created_storage,
                 )
                 final_path = composed_final
-                if not camera_render_applied:
+                if camera_render_applied:
+                    # The mask is registered to a throwaway warped substrate
+                    # and is deliberately not persisted on the variant.
+                    _delete_cancelled_job_objects(job_id, subtitled_created_storage)
+                    subtitled_created_storage.clear()
+                else:
                     subtitled_matte_path = composed_matte_path
         elif cues:
             ass_path = os.path.join(variant_dir, "captions.ass")
@@ -12946,6 +13336,7 @@ def _render_subtitled_variant(
     soft_time_limit=1740,
     time_limit=1800,
 )
+@_with_owned_job_fence
 def reburn_narrated_captions(
     self, job_id: str, variant_id: str, render_gen_id: str | None = None
 ) -> None:
@@ -13009,6 +13400,7 @@ def reburn_narrated_captions(
     soft_time_limit=1740,
     time_limit=1800,
 )
+@_with_owned_job_fence
 def rerender_caption_camera_effects(
     self, job_id: str, variant_id: str, render_gen_id: str | None = None
 ) -> None:
@@ -13245,6 +13637,7 @@ def _compose_subtitled_final(
     job_id: str,
     variant_id: str,
     upload_key_base: str,
+    created_storage_paths: list[str] | None = None,
 ) -> tuple[str, str | None]:
     """Compose a subtitled final: authored text first, persisted captions last.
 
@@ -13290,6 +13683,7 @@ def _compose_subtitled_final(
                 # (Silence-cut keep-segment joins are a known unmodeled
                 # discontinuity; acceptable, boundary hints are best-effort.)
                 cut_boundaries_s=None,
+                created_storage_paths=created_storage_paths,
             )
         text_burned = os.path.join(tmpdir, "subtitled_text_underlay.mp4")
         burn_text_overlays_skia(
@@ -13526,6 +13920,8 @@ def _run_rerender_caption_camera_effects(
             "pre_media_overlay_video_path": render_variant.get("pre_media_overlay_video_path"),
         }
         suffix = uuid.uuid4().hex[:8]
+        new_video_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_camera_{suffix}.mp4"
+        camera_created_storage: list[str] = []
         camera_matte_path: str | None = None
         camera_matte_persist = False
         if _should_compose_subtitled_final(fresh_variant):
@@ -13544,15 +13940,18 @@ def _run_rerender_caption_camera_effects(
                     if pixels_modified
                     else str(old_base_path)
                 ),
+                created_storage_paths=camera_created_storage,
             )
             camera_matte_persist = not pixels_modified
+            if pixels_modified:
+                _delete_cancelled_job_objects(job_id, camera_created_storage)
+                camera_created_storage.clear()
         else:
             final_local = os.path.join(tmpdir, "out.mp4")
             _burn_persisted_captions_onto_base(
                 caption_base_local, final_local, fresh_variant, tmpdir
             )
 
-        new_video_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_camera_{suffix}.mp4"
         output_url = upload_public_read(final_local, new_video_gcs)
         duration_s = _rendered_duration_s(final_local)
 
@@ -13592,7 +13991,7 @@ def _run_rerender_caption_camera_effects(
         expected_render_gen_id=render_gen_id,
         outcome="caption_camera_rerender",
     ):
-        delete_object_best_effort(new_video_gcs)
+        _delete_cancelled_job_objects(job_id, [new_video_gcs, *camera_created_storage])
         for new_path, old_path in (
             (visual_blocks_cache_path, variant.get("visual_blocks_base_path")),
             (motion_cache_path, variant.get("motion_base_path")),
@@ -13686,6 +14085,8 @@ def _run_reburn_narrated_captions(
         base_gcs_path=base_path,
     )
     custom_effect_cleared = False
+    new_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_cap_{uuid.uuid4().hex[:8]}.mp4"
+    caption_created_storage: list[str] = []
     with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(render_base_path, base_local)
@@ -13709,21 +14110,14 @@ def _run_reburn_narrated_captions(
                 tmpdir,
                 job_id=job_id,
                 variant_id=variant_id,
-                upload_key_base=(
-                    f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_cap_effect_"
-                    f"{uuid.uuid4().hex[:8]}"
-                    if custom_effect_applied
-                    else str(base_path)
-                ),
+                upload_key_base=new_gcs,
+                created_storage_paths=caption_created_storage,
             )
             reburn_matte_persist = not custom_effect_applied
         else:
             out_local = os.path.join(tmpdir, "out.mp4")
             _burn_persisted_captions_onto_base(base_local, out_local, variant, tmpdir)
         # New key so CDN / signed-URL caches never serve the pre-edit captions.
-        new_gcs = (
-            f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_cap_{uuid.uuid4().hex[:8]}.mp4"
-        )
         output_url = upload_public_read(out_local, new_gcs)
 
     # #626: the burn above took wall-clock minutes — a lane save (the render=False
@@ -13772,7 +14166,7 @@ def _run_reburn_narrated_captions(
         outcome="caption_reburn",
     ):
         # F3: superseded — the just-uploaded burn was never referenced; free it.
-        delete_object_best_effort(new_gcs)
+        _delete_cancelled_job_objects(job_id, [new_gcs, *caption_created_storage])
         for new_path, old_path in (
             (visual_blocks_cache_path, variant.get("visual_blocks_base_path")),
             (motion_cache_path, variant.get("motion_base_path")),
@@ -13840,6 +14234,7 @@ _BED_LEVEL_ARCHETYPES = frozenset({"narrated"})
     soft_time_limit=1740,
     time_limit=1800,
 )
+@_with_owned_job_fence
 def reburn_narrated_bed_level(
     self, job_id: str, variant_id: str, bed_level: float, render_gen_id: str | None = None
 ) -> None:
@@ -14151,6 +14546,7 @@ def _run_reburn_narrated_bed_level(
     soft_time_limit=1740,
     time_limit=1800,
 )
+@_with_owned_job_fence
 def retranscribe_subtitled_captions(
     self, job_id: str, variant_id: str, language: str, render_gen_id: str | None = None
 ) -> None:
@@ -14268,6 +14664,10 @@ def _run_retranscribe_subtitled(
         outcome="subtitled_retranscribe_start",
     ):
         return
+    new_gcs = (
+        f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_lang_{uuid.uuid4().hex[:8]}.mp4"
+    )
+    retranscribe_created_storage: list[str] = []
     with tempfile.TemporaryDirectory(prefix="nova_subtitled_retx_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(base_path, base_local)
@@ -14351,12 +14751,8 @@ def _run_retranscribe_subtitled(
                 tmpdir,
                 job_id=job_id,
                 variant_id=variant_id,
-                upload_key_base=(
-                    f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_lang_effect_"
-                    f"{uuid.uuid4().hex[:8]}"
-                    if custom_effect_applied
-                    else str(base_path)
-                ),
+                upload_key_base=new_gcs,
+                created_storage_paths=retranscribe_created_storage,
             )
             retx_matte_persist = not custom_effect_applied
         else:
@@ -14384,9 +14780,6 @@ def _run_retranscribe_subtitled(
                     **caption_appearance_kwargs,
                 )
             burn_captions_on_video(caption_base_local, ass_path, FONTS_DIR, out_local)
-        new_gcs = (
-            f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_lang_{uuid.uuid4().hex[:8]}.mp4"
-        )
         output_url = upload_public_read(out_local, new_gcs)
 
     # #626: decide the reapply from the FRESH persisted lane state — the
@@ -14430,7 +14823,7 @@ def _run_retranscribe_subtitled(
         outcome="subtitled_retranscribe",
     ):
         # F3: superseded — the just-uploaded burn was never referenced; free it.
-        delete_object_best_effort(new_gcs)
+        _delete_cancelled_job_objects(job_id, [new_gcs, *retranscribe_created_storage])
         for new_path, old_path in (
             (visual_blocks_cache_path, variant.get("visual_blocks_base_path")),
             (motion_cache_path, variant.get("motion_base_path")),
@@ -15168,6 +15561,10 @@ def _claim_speech_cut_finalize(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
+        if _cancelled_job_write_rejected(
+            job, operation="claim_speech_cut_finalize", db=db
+        ):
+            return False
         plan = job.assembly_plan or {}
         control = dict(plan.get("speech_cut_control") or {})
         if control.get("operation_id") != operation_id:
@@ -15206,6 +15603,8 @@ def _claim_speech_cut_finalize(
 def _assert_speech_cut_finalize_claim(job_id: str, operation_id: str, attempt_id: str) -> None:
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
+        if job is not None and job.status == _CANCELLED_JOB_STATUS:
+            raise RuntimeError("speech cut operation was cancelled")
         control = ((job.assembly_plan or {}).get("speech_cut_control") or {}) if job else {}
     if not _speech_cut_claim_matches(control, operation_id, attempt_id):
         raise RuntimeError("speech cut operation was superseded")
@@ -15218,6 +15617,10 @@ def _release_speech_cut_finalize_claim(job_id: str, operation_id: str, attempt_i
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
+            return False
+        if _cancelled_job_write_rejected(
+            job, operation="release_speech_cut_finalize", db=db
+        ):
             return False
         plan = job.assembly_plan or {}
         control = dict(plan.get("speech_cut_control") or {})
@@ -15259,6 +15662,10 @@ def _merge_speech_cut_prior_state(
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         if job is None:
+            return result
+        if job.status == _CANCELLED_JOB_STATUS:
+            if expected_operation_id and expected_attempt_id:
+                raise RuntimeError("speech cut operation was cancelled during render")
             return result
         plan = job.assembly_plan or {}
         control = plan.get("speech_cut_control") or {}
@@ -15401,6 +15808,10 @@ def _restore_failed_speech_cut_rerender(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
+        if _cancelled_job_write_rejected(
+            job, operation="restore_failed_speech_cut", db=db
+        ):
+            return False
         plan = job.assembly_plan or {}
         prior = plan.get("speech_cut_previous_variant")
         control = plan.get("speech_cut_control") or {}
@@ -15458,6 +15869,8 @@ def _publish_speech_cut_rerender(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return
+        if _cancelled_job_write_rejected(job, operation="publish_speech_cut", db=db):
+            return
         plan = job.assembly_plan or {}
         control = plan.get("speech_cut_control") or {}
         if not _speech_cut_claim_matches(control, expected_operation_id, expected_attempt_id):
@@ -15510,6 +15923,8 @@ def _compose_speech_cut_rerender(
         job = db.get(Job, uuid.UUID(job_id))
         if job is None:
             return
+        if job.status == _CANCELLED_JOB_STATUS:
+            raise RuntimeError("speech cut composition was cancelled")
         control = (job.assembly_plan or {}).get("speech_cut_control") or {}
         if not _speech_cut_claim_matches(control, expected_operation_id, expected_attempt_id):
             raise RuntimeError("speech cut composition was superseded")
@@ -15549,6 +15964,7 @@ def _compose_speech_cut_rerender(
     if archetype != "talking_head":
         raise RuntimeError(f"unsupported speech cut archetype: {archetype}")
 
+    speech_reburn_created: list[str] = []
     patch = _reburn_text_on_base(
         job_id=job_id,
         variant_id=str(variant_id),
@@ -15561,6 +15977,7 @@ def _compose_speech_cut_rerender(
         settings=settings,
         language="en",
         storage_generation=render_gen_id,
+        created_storage_paths=speech_reburn_created,
     )
     patch.pop("_old_video_path_for_delete", None)
     will_reapply = _will_reapply_media_layers({**variant, **patch})
@@ -15572,6 +15989,7 @@ def _compose_speech_cut_rerender(
         expected_render_gen_id=render_gen_id,
         outcome="speech_cut_recompose_talking_head",
     ):
+        _free_uncommitted_storage_paths(speech_reburn_created, job_id=job_id)
         raise RuntimeError("speech cut text recomposition was superseded")
     if will_reapply and not _reapply_user_media_layers(
         job_id=job_id,
@@ -15591,7 +16009,7 @@ def _finalize_job(
     *,
     expected_operation_id: str | None = None,
     expected_attempt_id: str | None = None,
-) -> None:
+) -> bool:
     successes = [r for r in results if r.get("ok")]
     failures = [r for r in results if not r.get("ok")]
     if successes and failures:
@@ -15609,7 +16027,7 @@ def _finalize_job(
         else {}
     )
 
-    _set_status(
+    accepted = _set_status(
         job_id,
         terminal,
         extra_plan={
@@ -15807,6 +16225,14 @@ def _finalize_job(
         },
         **speech_cut_status_kwargs,
     )
+    if accepted is False:
+        for result in results:
+            _discard_generation_storage(
+                result,
+                job_id=job_id,
+                generation=result.get("render_generation_id"),
+            )
+        return False
     log.info(
         "generative_job_done",
         job_id=job_id,
@@ -15814,6 +16240,7 @@ def _finalize_job(
         successes=len(successes),
         failures=len(failures),
     )
+    return True
 
 
 def _persist_archetype_fallback(job_id: str, declared: str, reason: str | None) -> None:
@@ -15826,8 +16253,12 @@ def _persist_archetype_fallback(job_id: str, declared: str, reason: str | None) 
     clean job keeps flag-off assembly_plan byte-identical to pre-feature output.
     """
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
+            return
+        if _cancelled_job_write_rejected(
+            job, operation="persist_archetype_fallback", db=db
+        ):
             return
         plan = job.assembly_plan or {}
         if reason:
@@ -15849,7 +16280,7 @@ def _set_status(
     *,
     expected_speech_cut_operation_id: str | None = None,
     expected_speech_cut_attempt_id: str | None = None,
-) -> None:
+) -> bool:
     # Row-locked RMW (mirrors _upsert_variant_entry / _update_variant_entry).
     # `extra_plan` merges into assembly_plan — _finalize_job writes the WHOLE
     # variants list here. Sibling regenerate/reapply tasks and the status route's
@@ -15858,7 +16289,11 @@ def _set_status(
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
-            return
+            return False
+        if _cancelled_job_write_rejected(
+            job, operation=f"set_status:{status}", db=db
+        ):
+            return False
         if expected_speech_cut_operation_id and expected_speech_cut_attempt_id:
             control = (job.assembly_plan or {}).get("speech_cut_control") or {}
             if not _speech_cut_claim_matches(
@@ -15872,9 +16307,10 @@ def _set_status(
             existing = job.assembly_plan or {}
             job.assembly_plan = {**existing, **extra_plan}
         db.commit()
+    return True
 
 
-def _fail_job(job_id: str, error_detail: str, failure_reason: str | None = None) -> None:
+def _fail_job(job_id: str, error_detail: str, failure_reason: str | None = None) -> bool:
     try:
         with _sync_session() as db:
             # Row-locked: reconciling variant render_status below is a
@@ -15883,6 +16319,8 @@ def _fail_job(job_id: str, error_detail: str, failure_reason: str | None = None)
             # (mirrors _upsert_variant_entry).
             job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job:
+                if _cancelled_job_write_rejected(job, operation="fail_job", db=db):
+                    return False
                 job.status = "processing_failed"
                 job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
                 if failure_reason:
@@ -15910,5 +16348,7 @@ def _fail_job(job_id: str, error_detail: str, failure_reason: str | None = None)
                         job.assembly_plan = {**ap, "variants": new_variants}
 
                 db.commit()
+                return True
     except Exception as exc:
         log.error("generative_fail_job_db_error", job_id=job_id, error=str(exc))
+    return False

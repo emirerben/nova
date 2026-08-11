@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from datetime import UTC, datetime
 
 import httpx
 import structlog
@@ -213,8 +214,36 @@ def _cleanup_gcs_blob(gcs_path: str) -> None:
         blob = bucket.blob(gcs_path)
         if blob.exists():
             blob.delete()
-    except Exception:
-        log.warning("gcs_cleanup_failed", gcs_path=gcs_path)
+    except Exception as exc:
+        log.error("gcs_cleanup_failed", gcs_path=gcs_path, error=str(exc))
+
+
+def _claim_import_job(db, job_id: str, import_task_id: str) -> int | None:  # noqa: ANN001
+    """Claim a matching Drive import before decrypting tokens or doing I/O."""
+    job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+    if (
+        job is None
+        or job.status != "importing"
+        or not import_task_id
+        or job.celery_task_id != import_task_id
+    ):
+        return None
+    now = datetime.now(UTC)
+    job.started_at = job.started_at or now
+    job.worker_heartbeat_at = now
+    declared_size = int((job.probe_metadata or {}).get("drive_file_size_bytes", 0) or 0)
+    db.commit()
+    return declared_size
+
+
+def _touch_active_import(db, job_id: str, import_task_id: str) -> bool:  # noqa: ANN001
+    """Post-I/O cancellation/token fence for the active import attempt."""
+    job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+    if job is None or job.status != "importing" or job.celery_task_id != import_task_id:
+        return False
+    job.worker_heartbeat_at = datetime.now(UTC)
+    db.commit()
+    return True
 
 
 @celery_app.task(
@@ -239,24 +268,38 @@ def import_from_drive(
 ) -> None:
     """Download a single file from Google Drive to GCS, then enqueue orchestrate_job."""
     redis_key = f"import:progress:{job_id}"
-    log.info("drive_import_start", job_id=job_id, drive_file_id=drive_file_id)
+    import_task_id = str(self.request.id or "")
+    log.info(
+        "drive_import_start",
+        job_id=job_id,
+        drive_file_id=drive_file_id,
+        task_id=import_task_id or None,
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         local_path = os.path.join(tmpdir, "raw.mp4")
+        uploaded_raw = False
         try:
-            # Decrypt the access token
-            access_token = _decrypt_token(encrypted_token)
-
-            # Get declared file size from job metadata for progress tracking
+            # Claim the exact task token before decrypting credentials or
+            # touching Drive. Legacy/mismatched deliveries fail closed.
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
-                if job is None:
-                    log.error("job_not_found", job_id=job_id)
-                    return
-                declared_size = (job.probe_metadata or {}).get("drive_file_size_bytes", 0)
+                declared_size = _claim_import_job(db, job_id, import_task_id)
+            if declared_size is None:
+                log.info(
+                    "drive_import_claim_skipped",
+                    job_id=job_id,
+                    task_id=import_task_id or None,
+                )
+                return
+
+            access_token = _decrypt_token(encrypted_token)
 
             # Stream download from Drive
             _stream_download(access_token, drive_file_id, local_path, declared_size, redis_key)
+            with _sync_session() as db:
+                if not _touch_active_import(db, job_id, import_task_id):
+                    log.info("drive_import_cancelled_after_download", job_id=job_id)
+                    return
 
             # Validate with ffprobe: check duration and format
             duration = _ffprobe_duration(local_path)
@@ -286,25 +329,68 @@ def import_from_drive(
                     size_mb=round(os.path.getsize(local_path) / (1024**2)),
                 )
 
+            # Compression/validation can be long enough for cancellation to
+            # win. Fence once more before creating the durable raw object.
+            with _sync_session() as db:
+                if not _touch_active_import(db, job_id, import_task_id):
+                    log.info("drive_import_cancelled_before_upload", job_id=job_id)
+                    return
+
             # Upload to GCS
             log.info("drive_import_uploading_gcs", job_id=job_id, gcs_path=gcs_path)
             _upload_to_gcs(local_path, gcs_path)
+            uploaded_raw = True
 
-            # Atomic handoff: set status + celery_task_id + enqueue orchestrate.
-            # task_id=job_id is the convention enforced by
-            # app/services/job_dispatch.py — drive_import predates that helper
-            # and runs in sync context, so it sets celery_task_id inline here.
+            # Atomic state handoff. Broker publication happens after the lock
+            # is released; a cancellation that wins here keeps its tombstone
+            # and this attempt deletes only the exact object it uploaded.
+            handoff_ready = False
+            cleanup_cancelled_upload = False
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
+                job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
                 if job is None:
-                    return
-                job.status = "queued"
-                job.celery_task_id = job_id
-                db.commit()
+                    pass
+                elif job.status == "cancelled":
+                    cleanup_cancelled_upload = True
+                    log.info("drive_import_cancelled_before_handoff", job_id=job_id)
+                elif job.status == "importing" and job.celery_task_id == import_task_id:
+                    job.status = "queued"
+                    job.celery_task_id = job_id
+                    job.worker_heartbeat_at = datetime.now(UTC)
+                    db.commit()
+                    handoff_ready = True
+                else:
+                    log.warning(
+                        "drive_import_handoff_stale_attempt_skipped",
+                        job_id=job_id,
+                        task_id=import_task_id,
+                        status=job.status,
+                        current_task_id=job.celery_task_id,
+                    )
 
+            if cleanup_cancelled_upload:
+                _cleanup_gcs_blob(gcs_path)
+                return
+            if not handoff_ready:
+                return
+
+            try:
+                from app.services.job_dispatch import enqueue_orchestrator_sync
                 from app.tasks.orchestrate import orchestrate_job
 
-                orchestrate_job.apply_async(args=[job_id], task_id=job_id)
+                enqueue_orchestrator_sync(orchestrate_job, job_id)
+            except Exception as exc:  # noqa: BLE001
+                # The shared helper conditionally terminalizes an unclaimed
+                # queued row after a broker failure. If the worker already won
+                # the status race, that CAS is a no-op. Either way the raw input
+                # remains intact for the claimed worker or operator recovery.
+                log.error(
+                    "drive_import_orchestrator_enqueue_ambiguous",
+                    job_id=job_id,
+                    task_id=job_id,
+                    error=str(exc),
+                )
+                return
 
             log.info("drive_import_complete", job_id=job_id)
 
@@ -320,13 +406,32 @@ def import_from_drive(
             raise
         except Exception as exc:
             log.error("drive_import_failed", job_id=job_id, error=str(exc))
-            _cleanup_gcs_blob(gcs_path)
+            cleanup_failed_upload = False
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
-                if job is not None:
+                job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                if job is not None and job.status == "cancelled":
+                    cleanup_failed_upload = uploaded_raw
+                elif (
+                    job is not None
+                    and job.status == "importing"
+                    and job.celery_task_id == import_task_id
+                ):
                     job.status = "processing_failed"
+                    job.finished_at = datetime.now(UTC)
+                    job.failure_reason = "drive_import_failed"
                     job.error_detail = str(exc)[:500]
                     db.commit()
+                    cleanup_failed_upload = uploaded_raw
+                else:
+                    log.warning(
+                        "drive_import_failure_stale_attempt_ignored",
+                        job_id=job_id,
+                        task_id=import_task_id or None,
+                        status=getattr(job, "status", None),
+                        current_task_id=getattr(job, "celery_task_id", None),
+                    )
+            if cleanup_failed_upload:
+                _cleanup_gcs_blob(gcs_path)
         finally:
             # Always clean up Redis progress key
             try:

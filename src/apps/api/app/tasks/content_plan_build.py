@@ -18,7 +18,6 @@ from typing import Literal
 import structlog
 from celery.exceptions import Retry
 from sqlalchemy import select
-from sqlalchemy import update as sa_update
 
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext
@@ -33,6 +32,10 @@ from app.database import sync_session
 from app.models import ContentPlan, Job, PlanItem, User
 from app.models import Persona as PersonaRow
 from app.services.content_plan_dedup import choose_replacements, flag_replacement_indices
+from app.services.content_plan_persona import (
+    PlanPersonaOwnershipError,
+    load_owned_plan_persona_sync,
+)
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 from app.services.seed_provenance import match_specs_to_seeds
 from app.worker import celery_app
@@ -40,15 +43,54 @@ from app.worker import celery_app
 log = structlog.get_logger()
 
 
-def _locked_persona(session, persona_id: uuid.UUID):  # noqa: ANN001, ANN202
-    """Reload a persona under the shared idea_seeds JSONB writer lock."""
-    stmt = (
-        select(PersonaRow)
-        .where(PersonaRow.id == persona_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    return session.execute(stmt).scalar_one_or_none()
+def _plan_epoch(plan: ContentPlan) -> int:
+    """Return the ownership generation captured around off-database work."""
+    return int(getattr(plan, "ownership_epoch", 0) or 0)
+
+
+def _coerce_dispatch_epoch(value: object) -> int | None:
+    """Normalize the producer-bound ownership epoch.
+
+    Tokenless pre-R1 deliveries are epoch 0. They can finish only while the plan
+    is still epoch 0; containment/repair increments the row and makes the same
+    old delivery stale. Booleans, negative values, and non-integers are invalid.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _lock_owned_plan_persona(
+    session,  # noqa: ANN001
+    plan_id: uuid.UUID,
+    *,
+    expected_epoch: int | None = None,
+) -> tuple[ContentPlan, PersonaRow] | None:
+    """Lock and validate a plan/persona pair in the global mutation order.
+
+    The caller must acquire any PlanItem and Job locks only after this helper.
+    A changed epoch, quarantine, missing persona, or owner mismatch is the same
+    fail-closed condition: no plan-derived write may land.
+    """
+    plan = session.get(ContentPlan, plan_id, with_for_update=True)
+    if plan is None:
+        return None
+    persona = load_owned_plan_persona_sync(session, plan, for_update=True)
+    if expected_epoch is not None and _plan_epoch(plan) != expected_epoch:
+        raise PlanPersonaOwnershipError(plan)
+    return plan, persona
+
+
+def _lock_plan_items(session, items: list[PlanItem]) -> list[PlanItem]:  # noqa: ANN001
+    """Lock existing items after Plan and Persona, in deterministic id order."""
+    locked: list[PlanItem] = []
+    for item in sorted(items, key=lambda row: str(row.id)):
+        current = session.get(PlanItem, item.id, with_for_update=True)
+        if current is not None:
+            locked.append(current)
+    return locked
 
 
 def _analysis_summary(tiktok_profile: dict | None) -> str:
@@ -69,15 +111,33 @@ def _analysis_summary(tiktok_profile: dict | None) -> str:
     max_retries=2,
     default_retry_delay=10,
 )
-def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
+def generate_content_plan(
+    self,
+    plan_id: str,
+    expected_ownership_epoch: int | None = None,
+) -> None:  # noqa: ANN001
     """Generate plan_items for `content_plans.id == plan_id` and persist them."""
+    pid = uuid.UUID(str(plan_id))
+    expected_ownership_epoch = _coerce_dispatch_epoch(expected_ownership_epoch)
+    if expected_ownership_epoch is None:
+        log.error("content_plan_build.missing_dispatch_epoch", plan_id=plan_id)
+        return
     with sync_session() as session:
-        plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
-        if plan is None:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=expected_ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.error("content_plan_build.invalid_persona", plan_id=plan_id)
+            return
+        if owned is None:
             log.warning("content_plan_build.missing_row", plan_id=plan_id)
             return
-        persona_row = session.get(PersonaRow, plan.persona_id)
-        if persona_row is None or not persona_row.persona:
+        plan, persona_row = owned
+        ownership_epoch = _plan_epoch(plan)
+        if not persona_row.persona:
             _fail(session, plan, "persona is not ready")
             return
         tiktok_summary = _analysis_summary(persona_row.tiktok_profile)
@@ -102,9 +162,14 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             s for s in raw_seeds if isinstance(s, dict) and s.get("text") and s.get("id")
         ]
         idea_seed_texts = [str(s["text"]) for s in seeds_with_ids]
-        persona_id_for_seeds = plan.persona_id
+        try:
+            persona = Persona(**persona_row.persona)
+        except Exception as exc:  # noqa: BLE001 — invalid readiness payload
+            _fail(session, plan, "persona is not ready")
+            log.warning("content_plan_build.persona_not_ready", plan_id=plan_id, error=str(exc))
+            return
         agent_input = ContentPlanInput(
-            persona=Persona(**persona_row.persona),
+            persona=persona,
             events=str((plan.events or {}).get("text", "") or ""),
             horizon_days=plan.horizon_days or 30,
             tiktok_analysis=tiktok_summary,
@@ -120,17 +185,34 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
     except Exception as exc:  # noqa: BLE001
         log.warning("content_plan_build.failed", plan_id=plan_id, error=str(exc))
         with sync_session() as session:
-            plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
-            if plan is not None:
-                _fail(session, plan, str(exc))
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    pid,
+                    expected_epoch=ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("content_plan_build.stale_result", plan_id=plan_id)
+                return
+            if owned is not None:
+                _fail(session, owned[0], str(exc))
         raise self.retry(exc=exc) from exc
 
     with sync_session() as session:
-        plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
-        if plan is None:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.warning("content_plan_build.stale_result", plan_id=plan_id)
             return
+        if owned is None:
+            return
+        plan, persona_row_p = owned
         # Replace any prior items (re-generation is idempotent per plan).
-        for existing in list(plan.items):
+        for existing in _lock_plan_items(session, list(plan.items)):
             session.delete(existing)
         session.flush()
         # T5 provenance: match each generated spec back to the seed it
@@ -160,17 +242,15 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
         # Flip matched seeds → in_plan (monotonic: never demote).
         matched_seed_ids = set(seed_by_index.values())
         if matched_seed_ids:
-            persona_row_p = _locked_persona(session, persona_id_for_seeds)
-            if persona_row_p is not None:
-                raw = persona_row_p.idea_seeds if isinstance(persona_row_p.idea_seeds, list) else []
-                persona_row_p.idea_seeds = [
-                    {**s, "status": "in_plan"}
-                    if isinstance(s, dict)
-                    and s.get("id") in matched_seed_ids
-                    and s.get("status") != "in_plan"
-                    else s
-                    for s in raw
-                ]
+            raw = persona_row_p.idea_seeds if isinstance(persona_row_p.idea_seeds, list) else []
+            persona_row_p.idea_seeds = [
+                {**s, "status": "in_plan"}
+                if isinstance(s, dict)
+                and s.get("id") in matched_seed_ids
+                and s.get("status") != "in_plan"
+                else s
+                for s in raw
+            ]
         plan.plan_status = "ready"
         if plan.start_date is None:
             plan.start_date = date.today()
@@ -246,7 +326,11 @@ def _dedup_and_replace(
     max_retries=2,
     default_retry_delay=10,
 )
-def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
+def regenerate_content_plan(
+    self,
+    plan_id: str,
+    expected_ownership_epoch: int | None = None,
+) -> None:  # noqa: ANN001
     """Re-tune a plan from the user's feedback (feedback loop, Phase 2).
 
     User-triggered (never silent). Rolls the user's video_feedback into a bounded
@@ -258,13 +342,27 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
     """
     from app.services.feedback_summary import rollup_user_feedback  # noqa: PLC0415
 
+    pid = uuid.UUID(str(plan_id))
+    expected_ownership_epoch = _coerce_dispatch_epoch(expected_ownership_epoch)
+    if expected_ownership_epoch is None:
+        log.error("content_plan_regen.missing_dispatch_epoch", plan_id=plan_id)
+        return
     with sync_session() as session:
-        plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
-        if plan is None:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=expected_ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.error("content_plan_regen.invalid_persona", plan_id=plan_id)
+            return
+        if owned is None:
             log.warning("content_plan_regen.missing_row", plan_id=plan_id)
             return
-        persona_row = session.get(PersonaRow, plan.persona_id)
-        if persona_row is None or not persona_row.persona:
+        plan, persona_row = owned
+        ownership_epoch = _plan_epoch(plan)
+        if not persona_row.persona:
             _fail(session, plan, "persona is not ready")
             return
         summary = rollup_user_feedback(session, plan.user_id)
@@ -292,9 +390,14 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             s for s in raw_seeds_regen if isinstance(s, dict) and s.get("text") and s.get("id")
         ]
         idea_seed_texts_regen = [str(s["text"]) for s in seeds_with_ids_regen]
-        persona_id_for_seeds_regen = plan.persona_id
+        try:
+            persona = Persona(**persona_row.persona)
+        except Exception as exc:  # noqa: BLE001 — invalid readiness payload
+            _fail(session, plan, "persona is not ready")
+            log.warning("content_plan_regen.persona_not_ready", plan_id=plan_id, error=str(exc))
+            return
         agent_input = ContentPlanInput(
-            persona=Persona(**persona_row.persona),
+            persona=persona,
             events=str((plan.events or {}).get("text", "") or ""),
             horizon_days=plan.horizon_days or 30,
             preference_summary=summary or "",
@@ -311,21 +414,39 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
     except Exception as exc:  # noqa: BLE001
         log.warning("content_plan_regen.failed", plan_id=plan_id, error=str(exc))
         with sync_session() as session:
-            plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
-            if plan is not None:
-                _fail(session, plan, str(exc))
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    pid,
+                    expected_epoch=ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("content_plan_regen.stale_result", plan_id=plan_id)
+                return
+            if owned is not None:
+                _fail(session, owned[0], str(exc))
         raise self.retry(exc=exc) from exc
 
     with sync_session() as session:
-        plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
-        if plan is None:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.warning("content_plan_regen.stale_result", plan_id=plan_id)
             return
+        if owned is None:
+            return
+        plan, persona_row_p = owned
+        locked_items = _lock_plan_items(session, list(plan.items))
         # PROTECTED days win: an item the user edited or already started rendering is
         # kept verbatim and never replaced. Everything else is regenerable.
         protected_days = {
-            it.day_index for it in plan.items if it.user_edited or it.current_job_id is not None
+            it.day_index for it in locked_items if it.user_edited or it.current_job_id is not None
         }
-        for existing in list(plan.items):
+        for existing in locked_items:
             if existing.day_index not in protected_days:
                 session.delete(existing)
         session.flush()
@@ -360,17 +481,15 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 matched_seed_ids_regen.add(seed_id)
         # Flip matched seeds → in_plan (monotonic: never demote).
         if matched_seed_ids_regen:
-            persona_row_p = _locked_persona(session, persona_id_for_seeds_regen)
-            if persona_row_p is not None:
-                raw = persona_row_p.idea_seeds if isinstance(persona_row_p.idea_seeds, list) else []
-                persona_row_p.idea_seeds = [
-                    {**s, "status": "in_plan"}
-                    if isinstance(s, dict)
-                    and s.get("id") in matched_seed_ids_regen
-                    and s.get("status") != "in_plan"
-                    else s
-                    for s in raw
-                ]
+            raw = persona_row_p.idea_seeds if isinstance(persona_row_p.idea_seeds, list) else []
+            persona_row_p.idea_seeds = [
+                {**s, "status": "in_plan"}
+                if isinstance(s, dict)
+                and s.get("id") in matched_seed_ids_regen
+                and s.get("status") != "in_plan"
+                else s
+                for s in raw
+            ]
         plan.plan_status = "ready"
         if plan.start_date is None:
             plan.start_date = date.today()
@@ -391,7 +510,12 @@ PLAN_JOBS_QUEUE = "plan-jobs"
 
 
 DispatchOutcome = Literal[
-    "dispatched", "already_active", "invalid_clips", "missing_row", "publish_failed"
+    "dispatched",
+    "already_active",
+    "invalid_clips",
+    "invalid_persona",
+    "missing_row",
+    "publish_failed",
 ]
 
 
@@ -403,6 +527,8 @@ class DispatchResult:
       dispatched     — Job minted + orchestrator enqueued (job_id set)
       already_active — a non-terminal render already exists (job_id = that job)
       invalid_clips  — no clips, or build_generative_job rejected them
+      invalid_persona — the plan/persona ownership fence rejected the request
+                        before a Job was minted or queued
       missing_row    — item/plan row not found (or malformed id)
       publish_failed — Job minted but the broker publish failed; the Job row was
                        flipped to processing_failed/dispatch_publish_failed so it
@@ -464,6 +590,8 @@ def _dispatch_item_render(
     item: PlanItem,
     plan: ContentPlan,
     persona_data: dict,
+    *,
+    ownership_epoch: int,
 ) -> DispatchResult:
     """Mint a generative Job for an item's clips, persist it, dispatch its render.
 
@@ -491,6 +619,8 @@ def _dispatch_item_render(
     )
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
 
+    content_plan_id = plan.id
+    plan_item_id = item.id
     clip_paths = list(item.clip_gcs_paths or [])
     if not clip_paths:
         log.warning("plan_item_render.no_clips", plan_item_id=str(item.id))
@@ -514,6 +644,7 @@ def _dispatch_item_render(
             clip_paths=clip_paths,
             mode="content_plan",
             content_plan_item_id=item.id,
+            content_plan_ownership_epoch=ownership_epoch,
             persona_tone=str(persona_data.get("tone", "") or ""),
             persona_pillars=list(persona_data.get("content_pillars", []) or []),
             item_theme=str(item.theme or ""),
@@ -565,6 +696,10 @@ def _dispatch_item_render(
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
         return DispatchResult("invalid_clips")
+    # Caller holds Plan -> Persona -> PlanItem locks and has revalidated this
+    # exact epoch. Job is last in the global lock/write order.
+    if _plan_epoch(plan) != ownership_epoch:
+        return DispatchResult("invalid_persona")
     session.add(job)
     session.flush()  # populate job.id
     item.current_job_id = job.id
@@ -591,17 +726,41 @@ def _dispatch_item_render(
         # to "processing" — an unconditional write would mark a RUNNING render
         # failed and invite a duplicate. rowcount 0 ⇒ the worker owns it ⇒
         # report dispatched (the render is genuinely under way).
-        res = session.execute(
-            sa_update(Job)
-            .where(Job.id == uuid.UUID(job_id), Job.status == "queued")
-            .values(
-                status="processing_failed",
-                failure_reason="dispatch_publish_failed",
-                error_detail=("The render couldn't be handed to the queue. Give it another go."),
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                content_plan_id,
+                expected_epoch=ownership_epoch,
             )
+        except PlanPersonaOwnershipError:
+            log.warning(
+                "plan_item_render.publish_failed_stale_owner",
+                plan_item_id=str(item.id),
+                job_id=job_id,
+            )
+            return DispatchResult("invalid_persona")
+        if owned is None:
+            return DispatchResult("missing_row", job_id=job_id)
+        locked_item = session.get(PlanItem, plan_item_id, with_for_update=True)
+        if locked_item is None or locked_item.content_plan_id != content_plan_id:
+            return DispatchResult("missing_row", job_id=job_id)
+        locked_job = session.get(
+            Job,
+            uuid.UUID(job_id),
+            populate_existing=True,
+            with_for_update=True,
         )
-        session.commit()
-        if res.rowcount == 0:
+        if locked_job is None:
+            return DispatchResult("missing_row", job_id=job_id)
+        if (
+            locked_job.status == "processing_failed"
+            and locked_job.failure_reason == "dispatch_publish_failed"
+        ):
+            # The central dispatch helper already won its queued-only recovery
+            # CAS.  Preserve the caller contract instead of treating that
+            # terminalized row as evidence that a worker claimed it.
+            return DispatchResult("publish_failed", job_id=job_id)
+        if locked_job.status != "queued":
             log.warning(
                 "plan_item_render.publish_raised_but_claimed",
                 plan_item_id=str(item.id),
@@ -609,6 +768,10 @@ def _dispatch_item_render(
                 error=str(exc),
             )
             return DispatchResult("dispatched", job_id=job_id)
+        locked_job.status = "processing_failed"
+        locked_job.failure_reason = "dispatch_publish_failed"
+        locked_job.error_detail = "The render couldn't be handed to the queue. Give it another go."
+        session.commit()
         log.error(
             "plan_item_render.publish_failed",
             plan_item_id=str(item.id),
@@ -620,27 +783,34 @@ def _dispatch_item_render(
     return DispatchResult("dispatched", job_id=job_id)
 
 
-def _load_persona_data(session, plan: ContentPlan) -> dict:  # noqa: ANN001
-    """Best-effort persona dict for intro_writer threading. Empty if missing.
+def _persona_data(persona_row: PersonaRow) -> dict:
+    """Build the private render snapshot from an already-owned persona row.
 
     Includes `_tiktok_summary` (the pre-rendered TikTok analysis summary) as a
     private key so _dispatch_item_render can thread it down to build_generative_job
     without changing the public persona schema. The underscore prefix prevents
     accidental use as an LLM field.
     """
-    persona_row = session.get(PersonaRow, plan.persona_id)
-    if persona_row is not None and persona_row.persona:
-        data = dict(persona_row.persona)
-        data["_tiktok_summary"] = _analysis_summary(persona_row.tiktok_profile)
-        # Thread the per-user style (Creator Agent M1) under a private key so
-        # _dispatch_item_render can pass it to build_generative_job without
-        # polluting the public persona schema fields.
-        data["_user_style"] = dict(persona_row.style) if persona_row.style else None
-        return data
-    return {}
+    if not persona_row.persona:
+        raise ValueError("persona is not ready")
+    data = dict(persona_row.persona)
+    data["_tiktok_summary"] = _analysis_summary(persona_row.tiktok_profile)
+    # Thread the per-user style (Creator Agent M1) under a private key so
+    # _dispatch_item_render can pass it to build_generative_job without
+    # polluting the public persona schema fields.
+    data["_user_style"] = dict(persona_row.style) if persona_row.style else None
+    return data
 
 
-def dispatch_item_render_for(plan_item_id: str) -> DispatchResult:
+def _load_persona_data(session, plan: ContentPlan) -> dict:  # noqa: ANN001
+    """Load a render snapshot only through the compound owner predicate."""
+    return _persona_data(load_owned_plan_persona_sync(session, plan))
+
+
+def dispatch_item_render_for(
+    plan_item_id: str,
+    expected_ownership_epoch: int | None = None,
+) -> DispatchResult:
     """Load + lock a plan item, re-check for an active render, then dispatch.
 
     The ONE entry point shared by the interactive generate route (which runs
@@ -653,9 +823,8 @@ def dispatch_item_render_for(plan_item_id: str) -> DispatchResult:
     rows by design), so this lock is the duplicate-mint guard for every
     minting path (the activation loop applies the same lock+re-check inline).
 
-    TRUST BOUNDARY: performs NO ownership check — callers passing a
-    client-supplied id MUST verify ownership first (the route does, via
-    _load_owned_item); task/activation callers are server-internal.
+    This remains a task-side trust boundary even when a route already checked
+    ownership: delayed deliveries and direct Celery calls must fail closed too.
     """
     with sync_session() as session:
         try:
@@ -663,19 +832,49 @@ def dispatch_item_render_for(plan_item_id: str) -> DispatchResult:
         except (TypeError, ValueError):
             log.warning("plan_item_videos.bad_item_id", plan_item_id=str(plan_item_id))
             return DispatchResult("missing_row")
-        item = session.get(PlanItem, item_uuid, with_for_update=True)
-        if item is None:
+        expected_ownership_epoch = _coerce_dispatch_epoch(expected_ownership_epoch)
+        if expected_ownership_epoch is None:
+            log.error("plan_item_videos.invalid_dispatch_epoch", plan_item_id=plan_item_id)
+            return DispatchResult("invalid_persona")
+        # Resolve the parent without a lock, then acquire every mutation lock in
+        # the global Plan -> Persona -> PlanItem -> Job order.
+        item_ref = session.get(PlanItem, item_uuid)
+        if item_ref is None:
             log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
             return DispatchResult("missing_row")
-        plan = session.get(ContentPlan, item.content_plan_id)
-        if plan is None:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                item_ref.content_plan_id,
+                expected_epoch=expected_ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.error("plan_item_videos.invalid_persona", plan_item_id=plan_item_id)
+            return DispatchResult("invalid_persona")
+        if owned is None:
             log.warning("plan_item_videos.missing_plan", plan_item_id=plan_item_id)
             return DispatchResult("missing_row")
+        plan, persona_row = owned
+        ownership_epoch = _plan_epoch(plan)
+        item = session.get(PlanItem, item_uuid, with_for_update=True)
+        if item is None or item.content_plan_id != plan.id:
+            log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
+            return DispatchResult("missing_row")
         if item.current_job_id is not None:
-            current = session.get(Job, item.current_job_id)
+            current = session.get(Job, item.current_job_id, with_for_update=True)
             if current is not None and current.status not in PLAN_ITEM_JOB_TERMINAL:
                 return DispatchResult("already_active", job_id=str(current.id))
-        return _dispatch_item_render(session, item, plan, _load_persona_data(session, plan))
+        if not persona_row.persona:
+            log.error("plan_item_videos.persona_not_ready", plan_item_id=plan_item_id)
+            return DispatchResult("invalid_persona")
+        persona_data = _persona_data(persona_row)
+        return _dispatch_item_render(
+            session,
+            item,
+            plan,
+            persona_data,
+            ownership_epoch=ownership_epoch,
+        )
 
 
 @celery_app.task(
@@ -684,9 +883,18 @@ def dispatch_item_render_for(plan_item_id: str) -> DispatchResult:
     max_retries=1,
     default_retry_delay=15,
 )
-def generate_plan_item_videos(self, plan_item_id: str) -> None:  # noqa: ANN001
+def generate_plan_item_videos(
+    self,
+    plan_item_id: str,
+    expected_ownership_epoch: int | None = None,
+) -> None:  # noqa: ANN001
     """Mint a generative Job for a plan item's themed clips and dispatch its render."""
-    result = dispatch_item_render_for(str(plan_item_id))
+    result = dispatch_item_render_for(str(plan_item_id), expected_ownership_epoch)
+    if result.outcome == "invalid_persona":
+        # Legacy/direct Celery deliveries must be visibly failed rather than
+        # proceeding with a Job; this error log is its terminal task outcome.
+        log.error("plan_item_videos.invalid_persona", plan_item_id=str(plan_item_id))
+        return
     if result.outcome not in ("dispatched", "already_active"):
         log.warning(
             "plan_item_videos.not_dispatched",
@@ -706,7 +914,11 @@ _AUTO_GENERATE_LIMIT = 2
     bind=True,
     max_retries=0,
 )
-def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
+def activate_content_plan(
+    self,
+    plan_id: str,
+    expected_ownership_epoch: int | None = None,
+) -> None:  # noqa: ANN001
     """Match a plan's seed clips to its items and auto-generate the top picks.
 
     The content-plan activation seed: analyze the user's uploaded seed batch with
@@ -733,16 +945,35 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
     from app.tasks.generative_build import _ingest_clips  # noqa: PLC0415
 
     pid = uuid.UUID(str(plan_id))
+    expected_ownership_epoch = _coerce_dispatch_epoch(expected_ownership_epoch)
+    if expected_ownership_epoch is None:
+        log.error("activate_plan.missing_dispatch_epoch", plan_id=plan_id)
+        return
     with sync_session() as session:
-        plan = session.get(ContentPlan, pid)
-        if plan is None:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=expected_ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.error("activate_plan.invalid_persona", plan_id=plan_id)
+            return
+        if owned is None:
             log.warning("activate_plan.missing_row", plan_id=plan_id)
+            return
+        plan, persona_row = owned
+        ownership_epoch = _plan_epoch(plan)
+        if not persona_row.persona:
+            _set_activation(session, plan, "failed")
+            log.warning("activate_plan.persona_not_ready", plan_id=plan_id)
             return
         seed_paths = list(plan.seed_clip_paths or [])
         if not seed_paths:
             _set_activation(session, plan, "failed")
             log.warning("activate_plan.no_seed_clips", plan_id=plan_id)
             return
+        locked_items = _lock_plan_items(session, list(plan.items))
         items = [
             PlanItemSummary(
                 item_id=str(it.id),
@@ -750,18 +981,26 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 idea=it.idea or "",
                 filming_suggestion=it.filming_suggestion or "",
             )
-            for it in plan.items
+            for it in locked_items
         ]
-        persona_data = _load_persona_data(session, plan)
+        persona_data = _persona_data(persona_row)
         plan.activation_started_at = datetime.now(UTC)
         plan.activation_phase = "matching_clips"
         _set_activation(session, plan, "activating")
 
     if not items:
         with sync_session() as session:
-            plan = session.get(ContentPlan, pid)
-            if plan is not None:
-                _set_activation(session, plan, "activated_empty")
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    pid,
+                    expected_epoch=ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("activate_plan.stale_result", plan_id=plan_id)
+                return
+            if owned is not None:
+                _set_activation(session, owned[0], "activated_empty")
         return
 
     # Synthetic non-UUID trace scope (no single Job owns this) — matches the
@@ -797,9 +1036,17 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
     except Exception as exc:  # noqa: BLE001 — best-effort; never hard-fail the plan
         log.warning("activate_plan.match_failed", plan_id=plan_id, error=str(exc))
         with sync_session() as session:
-            plan = session.get(ContentPlan, pid)
-            if plan is not None:
-                _set_activation(session, plan, "activated_empty")
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    pid,
+                    expected_epoch=ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("activate_plan.stale_result", plan_id=plan_id)
+                return
+            if owned is not None:
+                _set_activation(session, owned[0], "activated_empty")
         return
 
     # Group assignments by item (the matcher caps assignment count, but two clips
@@ -809,17 +1056,47 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
         by_item.setdefault(a.item_id, []).append(a.clip_gcs_path)
 
     with sync_session() as session:
-        plan = session.get(ContentPlan, pid)
-        if plan is not None:
-            _set_activation_phase(session, plan, "picking_days")
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.warning("activate_plan.stale_result", plan_id=plan_id)
+            return
+        if owned is not None:
+            _set_activation_phase(session, owned[0], "picking_days")
 
     dispatched = 0
     with sync_session() as session:
-        plan = session.get(ContentPlan, pid)
-        if plan is None:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.warning("activate_plan.stale_result", plan_id=plan_id)
             return
-        _set_activation_phase(session, plan, "starting_renders")
-        for item_id, paths in by_item.items():
+        if owned is None:
+            return
+        _set_activation_phase(session, owned[0], "starting_renders")
+
+    for item_id, paths in by_item.items():
+        with sync_session() as session:
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    pid,
+                    expected_epoch=ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("activate_plan.stale_result", plan_id=plan_id)
+                return
+            if owned is None:
+                return
+            plan, _persona_row = owned
             # FOR UPDATE + active-render skip (review 2026-08-04, CA2/CX2): the
             # activation analysis runs for minutes while the user can attach
             # clips and hit Generate on the same items. Without the lock +
@@ -830,7 +1107,7 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             if item is None or item.content_plan_id != plan.id:
                 continue
             if item.current_job_id is not None:
-                current = session.get(Job, item.current_job_id)
+                current = session.get(Job, item.current_job_id, with_for_update=True)
                 if current is not None and current.status not in PLAN_ITEM_JOB_TERMINAL:
                     log.info(
                         "activate_plan.skip_active_item",
@@ -852,12 +1129,35 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
 
             set_item_clips(item, [ClipAssignment(gcs_path=p, shot_id=None) for p in paths])
             session.flush()
-            if _dispatch_item_render(session, item, plan, persona_data).outcome == "dispatched":
+            result = _dispatch_item_render(
+                session,
+                item,
+                plan,
+                persona_data,
+                ownership_epoch=ownership_epoch,
+            )
+            if result.outcome == "invalid_persona":
+                log.warning("activate_plan.invalid_persona", plan_id=plan_id)
+                return
+            if result.outcome == "dispatched":
                 dispatched += 1
 
-        plan = session.get(ContentPlan, pid)
-        if plan is not None:
-            _set_activation(session, plan, "activated" if dispatched else "activated_empty")
+    with sync_session() as session:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.warning("activate_plan.stale_result", plan_id=plan_id)
+            return
+        if owned is not None:
+            _set_activation(
+                session,
+                owned[0],
+                "activated" if dispatched else "activated_empty",
+            )
     log.info("activate_plan.done", plan_id=plan_id, dispatched=dispatched)
 
 
@@ -900,7 +1200,11 @@ def _set_pool_status(session, plan: ContentPlan, status_value: str) -> None:  # 
     soft_time_limit=1740,
     time_limit=1800,
 )
-def match_pool_clips(self, plan_id: str) -> None:  # noqa: ANN001
+def match_pool_clips(
+    self,
+    plan_id: str,
+    expected_ownership_epoch: int | None = None,
+) -> None:  # noqa: ANN001
     """Distribute the plan's footage pool across PENDING items (provisional).
 
     Activation's sibling, with three deliberate differences: it matches only
@@ -913,8 +1217,28 @@ def match_pool_clips(self, plan_id: str) -> None:  # noqa: ANN001
     pool.status="match_failed" with items untouched; the user can hit
     "Match again".
     """
+    pid = uuid.UUID(str(plan_id))
+    expected_ownership_epoch = _coerce_dispatch_epoch(expected_ownership_epoch)
+    if expected_ownership_epoch is None:
+        log.error("pool_match.missing_dispatch_epoch", plan_id=plan_id)
+        return
+    with sync_session() as session:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=expected_ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.error("pool_match.invalid_persona", plan_id=plan_id)
+            return
+        if owned is None:
+            log.warning("pool_match.missing_row", plan_id=plan_id)
+            return
+        ownership_epoch = _plan_epoch(owned[0])
+
     try:
-        _run_pool_match(plan_id)
+        _run_pool_match(plan_id, ownership_epoch=ownership_epoch)
     except Exception as exc:  # noqa: BLE001
         # Never let the pool wedge in "matching" forever — ANY failure (soft time
         # limit, a DB error in the write-back block that the inner try/except
@@ -923,15 +1247,23 @@ def match_pool_clips(self, plan_id: str) -> None:  # noqa: ANN001
         log.warning("pool_match.failed_terminal", plan_id=plan_id, error=str(exc)[:300])
         try:
             with sync_session() as session:
-                plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
-                if plan is not None and (plan.pool or {}).get("status") == "matching":
-                    _set_pool_status(session, plan, "match_failed")
-        except Exception:  # noqa: BLE001
+                try:
+                    owned = _lock_owned_plan_persona(
+                        session,
+                        pid,
+                        expected_epoch=ownership_epoch,
+                    )
+                except PlanPersonaOwnershipError:
+                    log.warning("pool_match.stale_result", plan_id=plan_id)
+                    return
+                if owned is not None and (owned[0].pool or {}).get("status") == "matching":
+                    _set_pool_status(session, owned[0], "match_failed")
+        except Exception:  # noqa: BLE001 — preserve the original task failure
             pass
         raise
 
 
-def _run_pool_match(plan_id: str) -> None:
+def _run_pool_match(plan_id: str, *, ownership_epoch: int | None = None) -> None:
     """Inner body of match_pool_clips (separated so the soft-time-limit handler
     can wrap it and still mark the pool failed)."""
     import tempfile  # noqa: PLC0415
@@ -950,16 +1282,28 @@ def _run_pool_match(plan_id: str) -> None:
 
     pid = uuid.UUID(str(plan_id))
     with sync_session() as session:
-        plan = session.get(ContentPlan, pid)
-        if plan is None:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.error("pool_match.invalid_persona", plan_id=plan_id)
+            return
+        if owned is None:
             log.warning("pool_match.missing_row", plan_id=plan_id)
             return
+        plan, _persona_row = owned
+        if ownership_epoch is None:
+            ownership_epoch = _plan_epoch(plan)
         pool = dict(plan.pool or {})
         pool_clips = [c for c in pool.get("clips", []) if isinstance(c, dict) and c.get("gcs_path")]
         unmatched = [c["gcs_path"] for c in pool_clips if not c.get("matched_item_id")]
         if not unmatched:
             _set_pool_status(session, plan, "matched_empty" if not pool_clips else "matched")
             return
+        locked_items = _lock_plan_items(session, list(plan.items))
         # Pending = items the pool may fill: no render yet, no clips yet.
         items = [
             PlanItemSummary(
@@ -968,16 +1312,24 @@ def _run_pool_match(plan_id: str) -> None:
                 idea=it.idea or "",
                 filming_suggestion=it.filming_suggestion or "",
             )
-            for it in plan.items
+            for it in locked_items
             if it.current_job_id is None and not (it.clip_gcs_paths or [])
         ]
         _set_pool_status(session, plan, "matching")
 
     if not items:
         with sync_session() as session:
-            plan = session.get(ContentPlan, pid)
-            if plan is not None:
-                _set_pool_status(session, plan, "matched_empty")
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    pid,
+                    expected_epoch=ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("pool_match.stale_result", plan_id=plan_id)
+                return
+            if owned is not None:
+                _set_pool_status(session, owned[0], "matched_empty")
         return
 
     trace_scope = f"pool-match-{plan_id}"
@@ -1011,9 +1363,17 @@ def _run_pool_match(plan_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 — best-effort; items stay untouched
         log.warning("pool_match.failed", plan_id=plan_id, error=str(exc))
         with sync_session() as session:
-            plan = session.get(ContentPlan, pid)
-            if plan is not None:
-                _set_pool_status(session, plan, "match_failed")
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    pid,
+                    expected_epoch=ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("pool_match.stale_result", plan_id=plan_id)
+                return
+            if owned is not None:
+                _set_pool_status(session, owned[0], "match_failed")
         return
 
     by_item: dict[str, list[str]] = {}
@@ -1022,11 +1382,21 @@ def _run_pool_match(plan_id: str) -> None:
 
     assigned_paths: dict[str, str] = {}  # gcs_path → item_id actually attached
     with sync_session() as session:
-        plan = session.get(ContentPlan, pid)
-        if plan is None:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                pid,
+                expected_epoch=ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.warning("pool_match.stale_result", plan_id=plan_id)
             return
+        if owned is None:
+            return
+        plan, _persona_row = owned
+        locked_by_id = {str(item.id): item for item in _lock_plan_items(session, list(plan.items))}
         for item_id, paths in by_item.items():
-            item = session.get(PlanItem, uuid.UUID(item_id))
+            item = locked_by_id.get(item_id)
             if item is None or item.content_plan_id != plan.id:
                 continue
             if item.current_job_id is not None or (item.clip_gcs_paths or []):
@@ -1065,7 +1435,11 @@ def _run_pool_match(plan_id: str) -> None:
     max_retries=2,
     default_retry_delay=10,
 )
-def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
+def reroll_plan_item(
+    self,
+    item_id: str,
+    expected_ownership_epoch: int | None = None,
+) -> None:  # noqa: ANN001
     """Re-generate the idea for a single plan item.
 
     Mirrors _dedup_and_replace: runs ContentPlanGeneratorAgent with all
@@ -1074,38 +1448,56 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
     day_index. Failure is best-effort — resets item_status to 'idea' so
     the user's original idea survives.
     """
+    iid = uuid.UUID(str(item_id))
+    expected_ownership_epoch = _coerce_dispatch_epoch(expected_ownership_epoch)
+    if expected_ownership_epoch is None:
+        log.error("reroll_plan_item.missing_dispatch_epoch", item_id=item_id)
+        return
     with sync_session() as session:
-        item = session.get(PlanItem, uuid.UUID(str(item_id)))
+        item_ref = session.get(PlanItem, iid)
+        if item_ref is None:
+            log.warning("reroll_plan_item.missing_item", item_id=item_id)
+            return
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                item_ref.content_plan_id,
+                expected_epoch=expected_ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.error("reroll_plan_item.invalid_persona", item_id=item_id)
+            return
+        if owned is None:
+            log.warning("reroll_plan_item.missing_plan", item_id=item_id)
+            return
+        plan, persona_row = owned
+        content_plan_id = plan.id
+        ownership_epoch = _plan_epoch(plan)
+        locked_items = _lock_plan_items(session, list(plan.items))
+        item = next((row for row in locked_items if row.id == iid), None)
         if item is None:
             log.warning("reroll_plan_item.missing_item", item_id=item_id)
             return
-        plan = session.get(ContentPlan, item.content_plan_id)
-        if plan is None:
-            log.warning("reroll_plan_item.missing_plan", item_id=item_id)
-            return
 
         # Collect all current ideas to exclude so the fresh idea is distinct.
-        all_ideas = [it.idea for it in plan.items if it.idea]
+        all_ideas = [it.idea for it in locked_items if it.idea]
 
-        persona_row = session.get(PersonaRow, plan.persona_id)
-        persona = (
-            Persona(**persona_row.persona)
-            if persona_row is not None and persona_row.persona
-            else Persona(
-                summary="",
-                content_pillars=[],
-                tone="",
-                audience="",
-                posting_cadence="",
-                sample_topics=[],
-            )
-        )
+        if not persona_row.persona:
+            item.item_status = "idea"
+            session.commit()
+            log.warning("reroll_plan_item.persona_not_ready", item_id=item_id)
+            return
+        try:
+            persona = Persona(**persona_row.persona)
+        except Exception as exc:  # noqa: BLE001 — invalid readiness payload, no agent call
+            item.item_status = "idea"
+            session.commit()
+            log.warning("reroll_plan_item.persona_not_ready", item_id=item_id, error=str(exc))
+            return
         # M1: carry seeds into reroll so the replacement idea still respects the
         # user's stated intent (best-effort; no seeds = byte-identical to prior).
         raw_seeds_reroll = (
-            persona_row.idea_seeds
-            if persona_row is not None and isinstance(persona_row.idea_seeds, list)
-            else []
+            persona_row.idea_seeds if isinstance(persona_row.idea_seeds, list) else []
         )
         idea_seed_texts_reroll = [
             str(s["text"]) for s in raw_seeds_reroll if isinstance(s, dict) and s.get("text")
@@ -1126,15 +1518,37 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
     except Exception as exc:  # noqa: BLE001
         log.warning("reroll_plan_item.failed", item_id=item_id, error=str(exc))
         with sync_session() as session:
-            item = session.get(PlanItem, uuid.UUID(str(item_id)))
-            if item is not None:
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    content_plan_id,
+                    expected_epoch=ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("reroll_plan_item.stale_result", item_id=item_id)
+                return
+            if owned is None:
+                return
+            item = session.get(PlanItem, iid, with_for_update=True)
+            if item is not None and item.content_plan_id == content_plan_id:
                 item.item_status = "idea"
                 session.commit()
         raise self.retry(exc=exc) from exc
 
     with sync_session() as session:
-        item = session.get(PlanItem, uuid.UUID(str(item_id)))
-        if item is None:
+        try:
+            owned = _lock_owned_plan_persona(
+                session,
+                content_plan_id,
+                expected_epoch=ownership_epoch,
+            )
+        except PlanPersonaOwnershipError:
+            log.warning("reroll_plan_item.stale_result", item_id=item_id)
+            return
+        if owned is None:
+            return
+        item = session.get(PlanItem, iid, with_for_update=True)
+        if item is None or item.content_plan_id != content_plan_id:
             return
 
         if not replacements:
@@ -1190,20 +1604,6 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
     )
 
 
-# Fallback persona for mid-onboarding accounts whose stored payload doesn't
-# validate yet (e.g. only footage_type_bias saved during the interview). Keeps
-# the home page's generate CTA working; the real persona takes over once
-# generation completes. Deliberately generic — no invented niche.
-_GENERIC_PERSONA_DEFAULTS: dict = {
-    "summary": "A creator sharing their real day-to-day work and life on short-form video.",
-    "content_pillars": ["day-to-day moments", "behind the scenes", "personal projects"],
-    "tone": "casual and direct",
-    "audience": "people curious about the creator's work and life",
-    "posting_cadence": "a few times a week",
-    "sample_topics": [],
-}
-
-
 @celery_app.task(
     name="app.tasks.content_plan_build.generate_ideas_into_plan",
     bind=True,
@@ -1216,11 +1616,16 @@ def generate_ideas_into_plan(
     self,
     plan_id: str,
     generation_token: str | None = None,
+    expected_ownership_epoch: int | None = None,
 ) -> None:  # noqa: ANN001
     """Generate exactly one fresh unscheduled AI idea for a content plan."""
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     pid = uuid.UUID(str(plan_id))
+    expected_ownership_epoch = _coerce_dispatch_epoch(expected_ownership_epoch)
+    if expected_ownership_epoch is None:
+        log.error("generate_ideas_into_plan.missing_dispatch_epoch", plan_id=plan_id)
+        return
     generation_started_at = (
         datetime.fromisoformat(generation_token) if generation_token is not None else None
     )
@@ -1233,18 +1638,38 @@ def generate_ideas_into_plan(
         started_at = plan.generation_started_at
         return started_at is not None and started_at == generation_started_at
 
-    def _mark_failed() -> None:
+    def _mark_failed(expected_epoch: int | None) -> None:
+        if expected_epoch is None:
+            return
         with sync_session() as session:
-            plan = session.get(ContentPlan, pid, with_for_update=True)
-            if plan is not None and _is_current_attempt(plan):
-                plan.plan_status = "failed"
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    pid,
+                    expected_epoch=expected_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("generate_ideas_into_plan.stale_result", plan_id=plan_id)
+                return
+            if owned is not None and _is_current_attempt(owned[0]):
+                owned[0].plan_status = "failed"
                 session.commit()
 
+    ownership_epoch: int | None = None
     try:
         with sync_session() as session:
-            plan = session.get(ContentPlan, pid)
-            if plan is None:
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    pid,
+                    expected_epoch=expected_ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.error("generate_ideas_into_plan.invalid_persona", plan_id=plan_id)
                 return
+            if owned is None:
+                return
+            plan, persona_row = owned
             if not _is_current_attempt(plan):
                 log.info(
                     "generate_ideas_into_plan.stale_delivery",
@@ -1252,48 +1677,28 @@ def generate_ideas_into_plan(
                     plan_status=plan.plan_status,
                 )
                 return
+            ownership_epoch = _plan_epoch(plan)
 
-            def _persona_from_row(row: PersonaRow | None) -> Persona | None:
-                # Sparse payloads are a legitimate mid-onboarding state (the
-                # interview PATCHes e.g. footage_type_bias before generation fills
-                # the rest) and fail Persona's min-length validators. Salvage what
-                # validates by overlaying the payload on generic defaults —
-                # personas is UNIQUE(user_id), so there is no other row to try.
-                if row is None or not row.persona:
-                    return None
-                payload = dict(row.persona)
-                try:
-                    return Persona(**payload)
-                except Exception:  # noqa: BLE001 — pydantic ValidationError et al.
-                    pass
-                try:
-                    return Persona(**{**_GENERIC_PERSONA_DEFAULTS, **payload})
-                except Exception:  # noqa: BLE001 — a provided field itself is invalid
-                    return Persona(**_GENERIC_PERSONA_DEFAULTS)
-
-            persona = _persona_from_row(session.get(PersonaRow, plan.persona_id))
-            if persona is None:
-                persona_row = (
-                    session.execute(
-                        select(PersonaRow)
-                        .where(PersonaRow.user_id == plan.user_id)
-                        .order_by(PersonaRow.created_at.desc())
-                        .limit(1)
-                    )
-                    .scalars()
-                    .first()
+            if not persona_row.persona:
+                plan.plan_status = "failed"
+                session.commit()
+                log.warning("generate_ideas_into_plan.persona_not_ready", plan_id=plan_id)
+                return
+            try:
+                persona = Persona(**dict(persona_row.persona))
+            except Exception as exc:  # noqa: BLE001 — invalid readiness payload
+                plan.plan_status = "failed"
+                session.commit()
+                log.warning(
+                    "generate_ideas_into_plan.persona_not_ready",
+                    plan_id=plan_id,
+                    error=str(exc),
                 )
-                persona = _persona_from_row(persona_row)
-            if persona is None:
-                raise RuntimeError("persona is not ready")
+                return
 
             existing_items = list(plan.items or [])
             events_text = str((plan.events or {}).get("text", "") or "")
             exclude_ideas = [it.idea for it in existing_items if it.idea]
-            next_position = (
-                max((it.position for it in existing_items if it.position is not None), default=0)
-                + 1
-            )
 
         agent_input = ContentPlanInput(
             persona=persona,
@@ -1311,9 +1716,18 @@ def generate_ideas_into_plan(
             raise RuntimeError("fresh idea generation returned no items")
 
         with sync_session() as session:
-            plan = session.get(ContentPlan, pid, with_for_update=True)
-            if plan is None:
+            try:
+                owned = _lock_owned_plan_persona(
+                    session,
+                    pid,
+                    expected_epoch=ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("generate_ideas_into_plan.stale_result", plan_id=plan_id)
                 return
+            if owned is None:
+                return
+            plan = owned[0]
             if not _is_current_attempt(plan):
                 log.info(
                     "generate_ideas_into_plan.stale_result",
@@ -1322,6 +1736,40 @@ def generate_ideas_into_plan(
                 )
                 return
             spec = new_specs[0]
+            # The agent ran outside the transaction.  A creator may have added
+            # an idea meanwhile, so lock and reload the full child set only
+            # after the Plan/Persona pair is locked, then derive placement from
+            # the current rows rather than the stale pre-agent snapshot.
+            locked_items = list(
+                session.execute(
+                    select(PlanItem)
+                    .where(PlanItem.content_plan_id == plan.id)
+                    .order_by(PlanItem.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+                .scalars()
+                .all()
+            )
+            # Simple mock sessions used by unit tests do not materialize query
+            # rows; the relationship is equivalent there.  Real PostgreSQL
+            # always takes the explicit row locks above.
+            if not locked_items:
+                locked_items = list(plan.items or [])
+            next_position = (
+                max(
+                    (it.position for it in locked_items if it.position is not None),
+                    default=0,
+                )
+                + 1
+            )
+            new_idea_key = (spec.idea or "").strip().casefold()
+            if new_idea_key and any(
+                (it.idea or "").strip().casefold() == new_idea_key for it in locked_items
+            ):
+                # Retry from a fresh exclusion snapshot instead of persisting a
+                # duplicate returned against stale context.
+                raise RuntimeError("fresh idea duplicated a concurrently added item")
             session.add(
                 PlanItem(
                     content_plan_id=plan.id,
@@ -1362,7 +1810,7 @@ def generate_ideas_into_plan(
             except Retry:
                 raise
             except Exception:  # noqa: BLE001 — retry publish itself failed
-                _mark_failed()
+                _mark_failed(ownership_epoch)
                 raise
         log.warning(
             "generate_ideas_into_plan.fresh_failed",
@@ -1370,5 +1818,5 @@ def generate_ideas_into_plan(
             retries=retries,
             error=str(exc),
         )
-        _mark_failed()
+        _mark_failed(ownership_epoch)
         raise
