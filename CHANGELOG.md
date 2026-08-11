@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.1.0] — 2026-08-11
+
+### Added
+- **Nova can now apply Stadium Diffusion to complete image or video clips.** Creators can request the look in chat or accept a proactive Director suggestion, preview it immediately, undo it, and save it through the same authoritative render path as a manual preset selection.
+
+### Changed
+- Nova keeps automatic look choices conservative: it can select only Original or Stadium Diffusion, favors suitable action, sports, nightlife, performance, celebration, and atmospheric footage, and leaves dialogue, documentary, product-detail, and text-dependent clips unchanged unless asked.
+
 ## [0.25.0.2] — 2026-08-11
 
 ### Fixed

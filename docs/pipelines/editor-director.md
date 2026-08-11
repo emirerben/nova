@@ -88,6 +88,18 @@ clamped to 30% of each adjacent clip; a non-cut transition is rejected when the
 resulting safe duration would be under 100 ms. Backend rendering ignores
 persisted transitions unless `EDIT_TRANSITIONS_ENABLED=true`.
 
+## Source-media looks
+
+Copilot and Director can stage `set_look_preset` for a complete clip slot. The
+AI contract deliberately exposes only `none` (Original) and
+`stadium_diffusion`; Olive Film and Smoky Split-Tone remain human-only choices.
+Director recommends Stadium Diffusion conservatively for suitable action,
+sports, nightlife, performance, celebration, or atmospheric footage. Chat also
+honors an explicit request. A look edit is local, undoable, and included in the
+normal Save payload; the existing FFmpeg whole-slot renderer remains
+authoritative for both image and video sources. Look changes do not move the
+timeline, so they may safely accompany beat- or speech-timed operations.
+
 ## Omni generated assets
 
 Omni is a separate optional renderer, never a structured planner. It is gated by

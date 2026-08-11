@@ -231,6 +231,66 @@ describe("applyCopilotOps", () => {
     expect(split.nextSlots?.find((s) => s.key === "b-split")?.inS).toBe(3);
   });
 
+  it("applies and removes Stadium Diffusion through the slot draft", () => {
+    const base = ctx();
+    const applied = applyCopilotOps(
+      [{ op: "set_look_preset", slot_index: 1, look_preset: "stadium_diffusion" }],
+      base,
+    );
+
+    expect(applied.rejected).toEqual([]);
+    expect(applied.nextSlots?.[1]).toMatchObject({
+      lookPreset: "stadium_diffusion",
+      lookAdjustments: null,
+    });
+    expect(applied.applied).toEqual([
+      { label: "Clip 2 look", from: "Original", to: "Stadium Diffusion" },
+    ]);
+
+    const stadiumSlots = applied.nextSlots ?? base.slots;
+    const resetCtx = ctx({ slots: stadiumSlots });
+    const reset = applyCopilotOps(
+      [{ op: "set_look_preset", slot_index: 1, look_preset: "none" }],
+      resetCtx,
+    );
+    expect(reset.rejected).toEqual([]);
+    expect(reset.nextSlots?.[1]).toMatchObject({ lookPreset: "none", lookAdjustments: null });
+  });
+
+  it("rejects a stale look suggestion after the user changes that slot", () => {
+    const base = ctx();
+    const liveSlots = base.slots.map((candidate, index) =>
+      index === 1 ? { ...candidate, lookPreset: "olive_film" as const } : candidate,
+    );
+
+    const result = applyCopilotOps(
+      [{ op: "set_look_preset", slot_index: 1, look_preset: "stadium_diffusion" }],
+      { ...base, slots: liveSlots },
+    );
+
+    expect(result.nextSlots).toBeNull();
+    expect(result.rejected).toMatchObject([
+      { op: "set_look_preset", reason: "user_changed" },
+    ]);
+  });
+
+  it("names a replaced human-only look accurately in the edit receipt", () => {
+    const base = ctx({
+      slots: ctx().slots.map((candidate, index) =>
+        index === 1 ? { ...candidate, lookPreset: "olive_film" as const } : candidate,
+      ),
+    });
+
+    const result = applyCopilotOps(
+      [{ op: "set_look_preset", slot_index: 1, look_preset: "stadium_diffusion" }],
+      base,
+    );
+
+    expect(result.applied).toEqual([
+      { label: "Clip 2 look", from: "Olive Film", to: "Stadium Diffusion" },
+    ]);
+  });
+
   it("resolves indices through the snapshotted slot array including removed slots", () => {
     const slots = [
       slot({ key: "a", slotId: "a", durationS: 3 }),
