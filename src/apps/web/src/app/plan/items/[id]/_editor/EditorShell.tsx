@@ -43,6 +43,7 @@ import {
   uploadToGcs,
   type CameraEffect,
   type CarouselMoment,
+  type EditCopilotTurnResponse,
   type MediaOverlay,
   type OverlaySuggestion,
   type PlanItem,
@@ -4349,7 +4350,10 @@ export default function EditorShell({
   }, []);
 
   const handleCopilotOps = useCallback(
-    (result: ApplyCopilotOpsResult): DirectorApplyPresentation => {
+    (
+      result: ApplyCopilotOpsResult,
+      response?: EditCopilotTurnResponse,
+    ): DirectorApplyPresentation => {
       if (result.renderRequest) {
         // set_intro_layout and apply_custom_effect (PR6) are the two ops that
         // produce a renderRequest — a discriminated union on `kind` (carousel-
@@ -4388,10 +4392,20 @@ export default function EditorShell({
         // Flag off: byte-identical to today — no isRenderTurn/assistantText
         // override, so the caller falls back to the outcome-derived
         // "Applied: Intro layout: ..." reply and the lime receipt pill.
+        //
+        // Flag on: the agent's OWN reply is REQUIRED reading here — the
+        // prompt obligates it to carry the feeling-label, the "can't be
+        // undone from chat" disclosure, and "current version stays in
+        // history" on every render-turn reply (set_intro_layout AND
+        // apply_custom_effect). Dropping it in favor of generic copy silently
+        // strips those disclosures from the user. The hardcoded fallback
+        // exists ONLY for the case the model returns an empty/whitespace
+        // reply — never as a routine override.
         return stepsFeedEnabled
           ? {
               isRenderTurn: true,
               assistantText:
+                response?.reply?.trim() ||
                 "That's a re-render, not an instant edit — starting it now.",
             }
           : {};
