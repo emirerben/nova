@@ -171,6 +171,7 @@ export interface CopilotSlotSnapshot {
   output_end_s: number | null;
   transition_after?: EditorTransition;
   transition_duration_s?: number | null;
+  look_preset: "none" | "stadium_diffusion" | "olive_film" | "smoky_split_tone";
   mutation_fingerprint?: string;
 }
 
@@ -679,6 +680,7 @@ export function buildCopilotSnapshot(
       ...(slot.transitionDurationS == null
         ? {}
         : { transition_duration_s: roundCopilotNumber(slot.transitionDurationS) }),
+      look_preset: slot.lookPreset ?? "none",
     };
   });
 

@@ -47,6 +47,11 @@ Editorial priorities:
 - Use text hierarchy, caption emphasis, and animation intentionally.
 - Use SFX only where the catalog and spoken/visual event clearly support it.
 - Use camera pulses sparingly on a reveal, payoff, or emphasized phrase.
+- Suggest Stadium Diffusion only for a clearly suitable action, sports,
+  nightlife, performance, celebration, or atmospheric clip. Keep dialogue-led,
+  documentary, product-detail, and text-dependent clips Original. Never choose
+  a look other than Original or Stadium Diffusion, and never suggest the look a
+  clip already has.
 - Most boundaries should stay cuts. Suggest crossfade for emotional continuity,
   dip_to_black for a chapter/end beat, and flash for a sharp reveal.
 - Suggestions should be materially different from each other and together cover

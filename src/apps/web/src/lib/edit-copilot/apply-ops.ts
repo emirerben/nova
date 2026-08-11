@@ -13,6 +13,7 @@ import type {
 } from "@/lib/plan-api";
 import { normalizeCameraEffect } from "@/lib/camera-effects";
 import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
+import { defaultLookAdjustments } from "@/lib/look-presets";
 import type { AcceptedSuggestionRef } from "@/lib/editor-commit";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import {
@@ -398,6 +399,7 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "reorder_clip") return `Move clip ${op.from_index + 1}`;
   if (op.op === "remove_clip") return `Remove clip ${op.slot_index + 1}`;
   if (op.op === "split_clip") return `Split clip ${op.slot_index + 1}`;
+  if (op.op === "set_look_preset") return `Clip ${op.slot_index + 1} look`;
   if (op.op === "insert_generated_asset") return "Insert generated clip";
   if (op.op === "replace_generated_segment") return "Restyle clip";
   if (op.op === "add_sfx") return "Add sound";
@@ -428,6 +430,13 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "open_tool") return `Opened ${op.tool[0].toUpperCase()}${op.tool.slice(1)}`;
   const _exhaustive: never = op;
   return _exhaustive;
+}
+
+function lookPresetLabel(preset: DraftSlot["lookPreset"]): string {
+  if (preset === "stadium_diffusion") return "Stadium Diffusion";
+  if (preset === "olive_film") return "Olive Film";
+  if (preset === "smoky_split_tone") return "Smoky Split-Tone";
+  return "Original";
 }
 
 /** Beat fidelity is not prompt-only: a model-proposed timing within this window
@@ -1038,6 +1047,39 @@ export function applyCopilotOps(
       nextSlots = res.slots;
       timelineMutated = true;
       applied.push({ label: `Split clip ${op.slot_index + 1}`, from: "one clip", to: "two clips" });
+    } else if (op.op === "set_look_preset") {
+      const snap = slotSnapAt(ctx.snapshot, op.slot_index);
+      const slots = currentSlots();
+      const index = snap ? currentSlotIndex(slots, snap.key) : -1;
+      const slot = index >= 0 ? slots[index] : null;
+      if (!snap || !slot) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "clip slot no longer exists"));
+        continue;
+      }
+      if (!completeSlotFingerprintMatches(slots, grid, slot, index, snap)) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip was changed after Nova read it"));
+        continue;
+      }
+      const before = slot.lookPreset ?? "none";
+      if (before === op.look_preset) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "clip already uses that look"));
+        continue;
+      }
+      workingSlots = slots.map((candidate) =>
+        candidate.key === slot.key
+          ? {
+              ...candidate,
+              lookPreset: op.look_preset,
+              lookAdjustments: defaultLookAdjustments(op.look_preset),
+            }
+          : candidate,
+      );
+      nextSlots = workingSlots;
+      applied.push({
+        label: `Clip ${op.slot_index + 1} look`,
+        from: lookPresetLabel(before),
+        to: lookPresetLabel(op.look_preset),
+      });
     } else if (op.op === "add_sfx") {
       const snapCatalogEntry = ctx.snapshot.sfx?.catalog.find((effect) => effect.id === op.effect_id) ?? null;
       const catalogEntry = (ctx.sfxCatalog ?? ctx.snapshot.sfx?.catalog ?? []).find((effect) => effect.id === op.effect_id) ?? null;

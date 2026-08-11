@@ -27,7 +27,7 @@ from app.agents.edit_copilot import (
 from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
 
-EDIT_DIRECTOR_PROMPT_VERSION = "2026-08-09-v5"
+EDIT_DIRECTOR_PROMPT_VERSION = "2026-08-11-v6"
 
 SuggestionCategory = Literal["hook_pacing", "text", "audio", "effect", "transition"]
 SuggestionApplyMode = Literal["instant", "omni_async", "server_async"]

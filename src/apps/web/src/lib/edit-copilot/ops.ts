@@ -127,6 +127,11 @@ export type CopilotOp =
   | { op: "remove_clip"; slot_index: number }
   | { op: "split_clip"; slot_index: number; at_s: number }
   | {
+      op: "set_look_preset";
+      slot_index: number;
+      look_preset: "none" | "stadium_diffusion";
+    }
+  | {
       op: "add_sfx";
       effect_id: string;
       at_s: number;
@@ -265,6 +270,7 @@ export interface CopilotValidationSnapshot {
     removed?: boolean;
     transition_after?: string | null;
     transition_duration_s?: number | null;
+    look_preset?: string | null;
   }>;
   camera_effects?: unknown[];
   visual_blocks?: unknown[];
@@ -562,6 +568,7 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
     op.op === "reorder_clip" ||
     op.op === "remove_clip" ||
     op.op === "split_clip" ||
+    op.op === "set_look_preset" ||
     op.op === "insert_generated_asset" ||
     op.op === "replace_generated_segment"
   ) {
@@ -822,6 +829,33 @@ export function validateCopilotOp(
         return reject("invalid_time", "split_clip.at_s must be inside the slot output window", opName);
       }
       return { ok: true, op: { op: opName, slot_index: raw.slot_index, at_s: raw.at_s } };
+    }
+    case "set_look_preset": {
+      if (!integerIndex(raw.slot_index) || typeof raw.look_preset !== "string") {
+        return reject(
+          "missing_required",
+          "set_look_preset requires slot_index and look_preset",
+          opName,
+        );
+      }
+      if (!hasIndex(snapshot, "slot", raw.slot_index)) {
+        return reject("invalid_index", "slot_index must point into snapshot slots", opName);
+      }
+      if (raw.look_preset !== "none" && raw.look_preset !== "stadium_diffusion") {
+        return reject(
+          "invalid_value",
+          "look_preset must be none or stadium_diffusion",
+          opName,
+        );
+      }
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          slot_index: raw.slot_index,
+          look_preset: raw.look_preset,
+        },
+      };
     }
     case "add_sfx": {
       if (typeof raw.effect_id !== "string" || raw.effect_id.trim() === "" || !finiteNumber(raw.at_s)) {

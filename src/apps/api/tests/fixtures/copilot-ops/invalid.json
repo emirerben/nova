@@ -36,6 +36,16 @@
       "op": {"op": "split_clip", "slot_index": 1, "at_s": 9.5}
     },
     {
+      "name": "unsupported AI look",
+      "reason": "Nova AI may only choose Original or Stadium Diffusion",
+      "op": {"op": "set_look_preset", "slot_index": 1, "look_preset": "olive_film"}
+    },
+    {
+      "name": "look slot out of bounds",
+      "reason": "slot_index must point into the snapshot slots",
+      "op": {"op": "set_look_preset", "slot_index": 99, "look_preset": "stadium_diffusion"}
+    },
+    {
       "name": "intro layout missing layout",
       "reason": "set_intro_layout requires layout",
       "op": {"op": "set_intro_layout"}
