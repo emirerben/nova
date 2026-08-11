@@ -47,13 +47,12 @@ recording, open the sandbox named **Kria Review Demo** and verify:
 - Scopes: only `user.info.basic`, `video.publish`, `video.upload`
 - Website URL: `https://www.usekria.com/tiktok`
 - Redirect URI: `https://nova-video.fly.dev/tiktok/oauth/callback`
-- Webhook URL: `https://nova-video.fly.dev/tiktok/webhook`
 
 Remove the sandbox's manually selected `user.info.profile`,
-`user.info.stats`, and `video.list` scopes. If Webhooks appears as a standalone
-selected product, remove it unless TikTok's portal requires it for the signed
-Content Posting lifecycle webhook. Never select a product merely because code
-exists for a future rollout.
+`user.info.stats`, and `video.list` scopes. Do not select Webhooks as a
+standalone product for this review. Kria's signed lifecycle endpoint can remain
+implemented without expanding the products shown in the review. Never select a
+product merely because code exists for a future rollout.
 
 The deployed API and the account used in the recording must be configured with
 the **sandbox** client key and secret. Do not reveal either credential in the
@@ -157,7 +156,10 @@ callback, webhook, and media URLs directly on FastAPI.
 | `DELETE` | `/tiktok/connection` | Revoke best-effort and erase credentials |
 | `GET` | `/tiktok/publish-options` | Resolve the exact render and fresh creator capabilities |
 | `POST` | `/tiktok/publications` | Create an idempotent direct or draft delivery |
+| `GET` | `/tiktok/publications` | List the creator's recent delivery records, optionally filtered to one render |
+| `GET` | `/tiktok/publications/receipt` | Read the newest receipt for one render, or `null` before its first delivery |
 | `GET` | `/tiktok/publications/{id}` | Read delivery lifecycle |
+| `POST` | `/tiktok/sync` | Queue official metrics sync; disabled for this review because it requires deferred analytics scopes |
 | `GET`, `HEAD` | `/tiktok/media/{id}/{token}.mp4` | Serve the immutable snapshot to TikTok |
 | `POST` | `/tiktok/webhook` | Verify and reconcile TikTok lifecycle events |
 

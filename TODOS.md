@@ -874,18 +874,18 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 
 **What:** Resubmit Kria's TikTok app with the public reviewer workspace and obtain audited Content Posting access.
 
-**Why:** TikTok rejected the Website URL because the prior destination appeared to be a landing or login page. Public privacy options must stay gated until TikTok approves the corrected application.
+**Why:** TikTok's latest review rejected a mismatch between the selected products/scopes and the submitted video, and requires the integration to be demonstrated in a sandbox. Public privacy options must stay gated until TikTok approves the corrected application.
 
-**Context:** The original application was submitted. v0.23.8.0 adds a substantive, login-free reviewer workspace at `https://www.usekria.com/tiktok`; `docs/runbooks/tiktok-direct-publishing.md` contains the exact Website URL and Apply Reason copy for resubmission.
+**Context:** v0.25.8.0 aligns OAuth and the public reviewer workspace with exactly `user.info.basic`, `video.publish`, and `video.upload`; removes the unused profile, statistics, video-list, and standalone Webhooks selections; and adds the Upload API draft handoff required by Content Posting API. `docs/runbooks/tiktok-direct-publishing.md` contains the exact **Kria Review Demo** sandbox configuration, continuous-video script, Website URL, and Apply Reason copy for resubmission.
 
 **Effort:** XS (human: ~15 minutes to resubmit / CC: N/A)
 **Priority:** P0 — blocks audited public Direct Post access
-**Depends on:** v0.23.8.0 deployed at `https://www.usekria.com/tiktok`
+**Depends on:** v0.25.8.0 deployed with sandbox credentials and both Content Posting paths verified end to end
 
-### Advanced TikTok release modes (deferred 2026-08-04)
-**What:** Add two explicit alternatives to direct posting: Kria-owned scheduled publishing for videos that keep their rendered audio, and “Finish in TikTok” draft handoff for creators who want to choose a TikTok-library sound.
-**Why:** TikTok's video Direct Post API exposes neither a scheduled-publish field nor a library-sound selector. Scheduling therefore needs a Kria queue, token refresh, publish-time creator revalidation, cancellation, and failure notifications; library music requires the creator to finish the draft inside TikTok. Combining either with the current release-desk redesign would expand the reliability and consent surface beyond this branch.
-**How:** Design the two modes as separate promises. For scheduling, persist timezone-aware intent, re-query creator info immediately before execution, fail safely on changed permissions or caps, and keep cancel/edit available until submission. For library music, use TikTok's upload-to-draft flow and make the remaining in-app action explicit; never imply Kria selected or attached the sound.
+### Scheduled TikTok publishing (draft handoff shipped in v0.25.8.0)
+**What:** Add Kria-owned scheduled publishing for videos that keep their rendered audio. The separate “Finish in TikTok” Upload API handoff is complete in v0.25.8.0.
+**Why:** TikTok's Direct Post API exposes no scheduled-publish field. Scheduling therefore needs a Kria queue, token refresh, publish-time creator revalidation, cancellation, and failure notifications. Draft handoff no longer belongs in this deferred item: Kria now sends the video to TikTok and clearly requires the creator to finish it in the app.
+**How:** Persist timezone-aware intent, re-query creator info immediately before execution, fail safely on changed permissions or caps, and keep cancel/edit available until submission.
 **Effort:** L (human: ~2 weeks / CC: ~2 hours)
 **Priority:** P2 — revisit after the direct-publish release desk is stable in production
 **Depends on:** Audited TikTok Content Posting API access, durable scheduler/worker monitoring, and validated OAuth refresh behavior
