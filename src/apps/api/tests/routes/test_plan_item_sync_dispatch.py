@@ -80,7 +80,11 @@ def _seed_item(*, clips: list[str] | None = None) -> tuple[uuid.UUID, uuid.UUID]
     with sync_session() as s:
         s.add(User(id=user_id, email=f"{user_id}@test.local"))
         s.flush()
-        persona = Persona(user_id=user_id)
+        persona = Persona(
+            user_id=user_id,
+            persona_status="ready",
+            persona={"content_mode": "travel", "tone": "direct"},
+        )
         s.add(persona)
         s.flush()
         plan = ContentPlan(user_id=user_id, persona_id=persona.id)
@@ -402,7 +406,7 @@ def test_generate_item_kill_switch_falls_back_to_task(
         resp = client.post(f"/plan-items/{item_id}/generate", headers=_auth(user_id))
     assert resp.status_code == 200
     assert resp.json()["status"] == "awaiting_clips"  # registration still async
-    task.delay.assert_called_once_with(str(item_id))
+    task.delay.assert_called_once_with(str(item_id), 0)
     enqueue.assert_not_called()
     assert _jobs_for(item_id) == []
 
