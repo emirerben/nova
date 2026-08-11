@@ -1,10 +1,27 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
-import DirectorSuggestions from "@/app/plan/items/[id]/_editor/DirectorSuggestions";
+import DirectorSuggestions, {
+  directorWillChange,
+} from "@/app/plan/items/[id]/_editor/DirectorSuggestions";
 import type { DirectorAppliedReceipt } from "@/lib/edit-copilot/useEditDirector";
 import type { EditorSuggestion } from "@/lib/plan-api";
 
 describe("DirectorSuggestions applied receipts", () => {
+  it("describes Stadium Diffusion as a clip-look change", () => {
+    expect(directorWillChange({
+      id: "look-1",
+      category: "effect",
+      title: "Give the action clip a stadium look",
+      rationale: "The highlight bloom suits this celebration.",
+      expected_benefit: "A stronger cinematic finish.",
+      confidence: 0.9,
+      start_s: 0,
+      end_s: 3,
+      apply_mode: "instant",
+      ops: [{ op: "set_look_preset", slot_index: 0, look_preset: "stadium_diffusion" }],
+    })).toEqual(["Clip look"]);
+  });
+
   it("shows an honest empty review and operation-derived change summary", () => {
     const props = {
       appliedReceipts: [] as DirectorAppliedReceipt[],

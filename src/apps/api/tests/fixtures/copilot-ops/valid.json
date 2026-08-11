@@ -45,6 +45,14 @@
       "op": {"op": "split_clip", "slot_index": 1, "at_s": 5.0}
     },
     {
+      "name": "apply stadium diffusion",
+      "op": {"op": "set_look_preset", "slot_index": 1, "look_preset": "stadium_diffusion"}
+    },
+    {
+      "name": "restore original look",
+      "op": {"op": "set_look_preset", "slot_index": 1, "look_preset": "none"}
+    },
+    {
       "name": "set intro layout editorial",
       "op": {"op": "set_intro_layout", "layout": "cluster"}
     },
