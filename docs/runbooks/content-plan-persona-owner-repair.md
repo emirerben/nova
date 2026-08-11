@@ -8,13 +8,13 @@ fails.
 
 ## Required release order
 
-1. Deploy release 1 (`0071`): additive ownership epoch/quarantine columns,
+1. Deploy release 1 (`0072`): additive ownership epoch/quarantine columns,
    fail-closed application checks, stale-task epoch checks, immutable cancelled
    Jobs, and cancelled-output suppression.
 2. Quarantine, cancel, quiesce workers, preserve restricted evidence, delete
    user-signable bad outputs, and repair the affected rows as described below.
 3. Require the global mismatch audit to return zero rows.
-4. Deploy release 2 (`0072`): the composite same-owner foreign key.
+4. Deploy release 2 (`0073`): the composite same-owner foreign key.
 5. Verify the constraint, clear quarantine without resetting the epoch, and
    dispatch a corrected render.
 
@@ -120,7 +120,7 @@ Job cancellation remain the safe state.
 
 ## 4. Release-2 gate and verification
 
-Before deploying `0072`, require:
+Before deploying `0073`, require:
 
 - the mismatch audit returns zero rows globally;
 - the attributable seed exists exactly once under the correct Persona and not
@@ -131,7 +131,7 @@ Before deploying `0072`, require:
   cancelled Jobs;
 - admin Job debug still retains metadata and agent evidence.
 
-After deploying `0072`, verify:
+After deploying `0073`, verify:
 
 ```sql
 SELECT conname, contype
@@ -147,7 +147,7 @@ Also run a rolled-back smoke transaction proving a cross-owner insert and an
 independent owner update fail, while a normal same-owner plan succeeds.
 
 Finally, in one short transaction, lock the repaired plan and its owner Persona,
-re-run the global mismatch audit, require the `0072` constraints, clear
+re-run the global mismatch audit, require the `0073` constraints, clear
 `ownership_quarantined_at`, and leave `ownership_epoch` unchanged. Dispatch one
 replacement render. Admin Job debug must show only the reporting account's
 Persona snapshot; historical cancelled Jobs remain admin-only evidence.
@@ -158,9 +158,9 @@ Persona snapshot; historical cancelled Jobs remain admin-only evidence.
   plans regress.
 - After Transaction A, keep a guard-capable image deployed and fix forward.
 - If release 2 must be rolled back, use release-2 tooling to downgrade the
-  schema to `0071` first while release-1 guards remain live, verify the legacy
+  schema to `0072` first while release-1 guards remain live, verify the legacy
   single-column FK, and only then deploy the release-1 image.
-- Migration `0071` intentionally refuses downgrade after any epoch or
+- Migration `0072` intentionally refuses downgrade after any epoch or
   quarantine has been used.
 - Never restore a cross-account Persona link or restore deleted bad output to a
   user-signable prefix.
