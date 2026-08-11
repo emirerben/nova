@@ -46,7 +46,7 @@ from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
-from app.models import Job, MusicTrack, User
+from app.models import AgentRun, Job, MusicTrack, User
 from app.pipeline.look_presets import (
     LookAdjustments,
     LookPreset,
@@ -70,6 +70,7 @@ from app.services.media_overlay_preview import (
     is_heif_overlay,
     nonblank_str,
 )
+from app.services.nova_steps import NovaStep, project_nova_steps
 from app.smart_edit.schemas import SemanticRole
 from app.storage import signed_get_url
 
@@ -520,6 +521,11 @@ class GenerativeJobStatusResponse(BaseModel):
     # Computed at READ time from jobs.worker_heartbeat_at, never persisted;
     # flips back to false the moment the redelivered attempt starts beating.
     retrying: bool = False
+    # Owner-safe Nova activity feed (app/services/nova_steps.py), projected
+    # from pipeline_trace + phase_log + AgentRun at READ time -- never
+    # persisted. None (not []) when `nova_steps_feed_enabled` is off, so the
+    # response stays byte-identical to pre-PR1 output while the flag is off.
+    steps: list[NovaStep] | None = None
 
 
 class SwapSongRequest(BaseModel):
@@ -6724,6 +6730,29 @@ def _compute_retrying(job: Job) -> bool:
     return stale_after_s < age_s <= retry_window_s
 
 
+async def _load_agent_runs_for_nova_steps(db: AsyncSession, job_id: uuid.UUID) -> list[AgentRun]:
+    """Fetch AgentRun milestones for the Nova steps feed.
+
+    Defers `input_json`/`output_json`/`raw_text`/`error_message` at the query
+    level -- on top of `project_nova_steps` never reading them off the ORM
+    object -- so the columns are never even fetched for this read path.
+    """
+    from sqlalchemy.orm import defer  # noqa: PLC0415
+
+    result = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.job_id == job_id)
+        .options(
+            defer(AgentRun.input_json),
+            defer(AgentRun.output_json),
+            defer(AgentRun.raw_text),
+            defer(AgentRun.error_message),
+        )
+        .order_by(AgentRun.created_at)
+    )
+    return list(result.scalars().all())
+
+
 @router.get("/{job_id}/status", response_model=GenerativeJobStatusResponse)
 async def get_generative_job_status(
     job_id: str,
@@ -6762,6 +6791,11 @@ async def get_generative_job_status(
             reason=str(_reason) if _reason is not None else None,
         )
 
+    steps: list[NovaStep] | None = None
+    if settings.nova_steps_feed_enabled:
+        agent_runs = await _load_agent_runs_for_nova_steps(db, job.id)
+        steps = project_nova_steps(job, agent_runs)
+
     response = GenerativeJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
@@ -6777,6 +6811,7 @@ async def get_generative_job_status(
         expected_phase_durations=baselines,
         archetype_fallback=archetype_fallback,
         retrying=_compute_retrying(job),
+        steps=steps,
     )
     if getattr(job, "_media_overlay_preview_backfilled", False):
         # `_variants_for_response` mutated an UNLOCKED snapshot of assembly_plan.

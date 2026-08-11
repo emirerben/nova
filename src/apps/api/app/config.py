@@ -744,6 +744,12 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_EDIT_COPILOT_ENABLED gates the Nova drawer. Default off until
     # localhost QA validates the local-op applier and save parity.
     edit_copilot_enabled: bool = False
+    # Owner-safe "Nova steps" activity feed projected from pipeline_trace +
+    # phase_log + AgentRun (app/services/nova_steps.py) onto the generative
+    # job status response. Ships OFF -- `steps` stays None (byte-identical
+    # response) until enabled. Frontend twin (future PR):
+    # NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED.
+    nova_steps_feed_enabled: bool = False
     # Proactive, read-only editorial suggestions. The backend and frontend each
     # have a gate; accepting a suggestion still changes only the local draft.
     edit_director_enabled: bool = False
@@ -864,6 +870,16 @@ class Settings(BaseSettings):
     # on create; ideas added directly as PlanItems; AI generation is opt-in.
     # Kill switch: IDEA_CENTRIC_PLAN_ENABLED=false → create_plan auto-generates (old behavior).
     idea_centric_plan_enabled: bool = True
+
+    # Sandboxed effect-language validator (PR5 of the Nova AI effect-language
+    # train — see app/pipeline/custom_effects.py). Nothing reads this flag
+    # yet: PR5 lands the validator + this flag inert (no execution wiring, no
+    # copilot op registration). A later PR gates the `apply_custom_effect`
+    # copilot op and its render task behind it. Future Vercel twin:
+    # NEXT_PUBLIC_CUSTOM_EFFECTS_ENABLED (frontend affordance gate, added
+    # alongside that PR — Fly first, then Vercel, per this repo's dual-flag
+    # convention).
+    custom_effects_enabled: bool = False
 
     # Scoring weights (named constants — change here only)
     hook_weight: float = 0.65

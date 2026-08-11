@@ -1,0 +1,23 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-11-v20",
+  "input": {
+    "utterance": "why did my video fail?",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "day one on the job", "start_s": 0.0, "end_s": 3.0, "size_px": 56}],
+      "slots": [{"clip_index": 0, "output_start_s": 0.0, "output_end_s": 6.0, "duration_s": 6.0}],
+      "total_duration_s": 6.0,
+      "render_step_summary": [
+        {"label": "Analyzed clips", "status": "done"},
+        {"label": "Matched song: Golden Hour", "status": "done"},
+        {"label": "Rendering final video", "status": "failed"}
+      ]
+    }
+  },
+  "raw_text": "{\"intent\": \"describe\", \"ops\": [], \"confidence\": 0.95, \"reply\": \"The final rendering step failed after matching the song 'Golden Hour'. You can try rendering again or saving your draft.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {"intent": "describe", "ops": [], "confidence": 0.95, "reply": "The final rendering step failed after matching the song 'Golden Hour'. You can try rendering again or saving your draft.", "suggestions": [], "needs_clarification": false},
+  "meta": {"source": "live_capture", "case": "render_step_summary contains a failed step and the user asks about it -- reply honestly names the failed step (\"Rendering final video\") using only the label text provided, no hallucinated ops (ops=[]), no invented cause beyond the given data. Recorded live against EDIT_COPILOT_PROMPT_VERSION 2026-08-11-v20 (gemini-3.6-flash)."}
+}
