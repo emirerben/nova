@@ -134,6 +134,22 @@ export interface ApplyCopilotOpsResult {
   openTool?: "text" | "visuals" | "sounds" | "overlays" | "styles";
   applied: ChangeChip[];
   rejected: RejectedOp[];
+  /** The exact validated ops (in CopilotOp form) that mutated the draft this
+   *  call — the producer for `ctx.lastAppliedOps`, which `repeat_last_edit`
+   *  re-runs on a later turn. Every branch that pushes an `applied` chip is
+   *  captured automatically (see the per-op loop in applyCopilotOps); never
+   *  includes rejected ops. Optional like every other result field so
+   *  existing test fixtures/callers that construct this object by hand don't
+   *  need updating — `applyCopilotOps`/`applyCopilotOpsAtomic` always
+   *  populate it (empty array, never omitted). */
+  appliedOps?: CopilotOp[];
+  /** Signal for history ops — neither mutates the draft itself (`undo_last_edit`
+   *  has no local draft representation; `repeat_last_edit`'s actual mutation,
+   *  if any, is merged into the fields above via a recursive
+   *  `applyCopilotOpsAtomic` call against `ctx.lastAppliedOps`). The caller
+   *  (EditorShell's handleCopilotOps) inspects this to invoke `history.undo()`
+   *  for "undo", or to label a "repeat" turn distinctly from an ordinary one. */
+  historyAction?: "undo" | { kind: "repeat"; ops: CopilotOp[] };
 }
 
 export interface ApplyCopilotOpsContext {
@@ -167,6 +183,18 @@ export interface ApplyCopilotOpsContext {
   makeOverlayId?: () => string;
   makeCameraEffectId?: () => string;
   makeMotionId?: () => string;
+  /** The op list `repeat_last_edit` re-runs (the previous turn's
+   *  `ApplyCopilotOpsResult.appliedOps`). Sourced by the caller from its own
+   *  turn history — never persisted here. Undefined/empty ⇒ nothing to
+   *  repeat, so the op rejects with "nothing to repeat yet". */
+  lastAppliedOps?: CopilotOp[];
+  /** Whether the most recent locally-applied turn is still at the top of the
+   *  undo stack — mirrors CopilotDrawer's own staleness check
+   *  (`latestChanged.undoVersion === historyVersion && canUndo`). Used
+   *  exclusively by `undo_last_edit` so a stale "undo that" (issued after a
+   *  manual panel edit already moved the stack) rejects instead of undoing
+   *  the wrong thing. */
+  canUndoLastTurn?: boolean;
 }
 
 let textIdCounter = 0;
@@ -431,6 +459,8 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "patch_motion_block") return "Edit Creator Block";
   if (op.op === "remove_motion_block") return "Remove Creator Block";
   if (op.op === "open_tool") return `Opened ${op.tool[0].toUpperCase()}${op.tool.slice(1)}`;
+  if (op.op === "undo_last_edit") return "Undo";
+  if (op.op === "repeat_last_edit") return "Repeat";
   const _exhaustive: never = op;
   return _exhaustive;
 }
@@ -675,6 +705,8 @@ export function applyCopilotOps(
   const textActions: TextEditorAction[] = [];
   const applied: ChangeChip[] = [];
   const rejected: RejectedOp[] = [];
+  const appliedOps: CopilotOp[] = [];
+  let historyAction: ApplyCopilotOpsResult["historyAction"];
   const grid = ctx.grid ?? [];
   const videoDurationS = ctx.videoDurationS ?? Math.max(60, ctx.snapshot.total_duration_s);
   const allowedFamilies = new Set(ctx.snapshot.allowed_op_families);
@@ -805,6 +837,7 @@ export function applyCopilotOps(
     }
 
     const op = validation.op;
+    const appliedCountBeforeOp = applied.length;
     const bundleEffectGroupId =
       "effect_bundle_id" in op && op.effect_bundle_id
         ? bundleEffectGroupIds.get(op.effect_bundle_id)
@@ -1881,6 +1914,65 @@ export function applyCopilotOps(
       workingMotionScenes = workingMotionScenes.filter((item) => item.id !== op.motion_id);
       nextMotionScenes = workingMotionScenes;
       applied.push({ label: snap.label, from: "in edit", to: "removed" });
+    } else if (op.op === "undo_last_edit") {
+      // Mirrors set_intro_layout's single-op-only enforcement: undo can't
+      // compose with anything else in the same turn, and there is no server
+      // draft state to validate against — the staleness gate is entirely
+      // client-side (ctx.canUndoLastTurn, threaded from EditorShell).
+      if (rawOps.length > 1 || historyAction || renderRequest || hasDraftMutation()) {
+        rejected.push(reject(op.op, labelForOp(op), "capability_disabled", "undo needs to be the only thing asked for"));
+        continue;
+      }
+      if (!ctx.canUndoLastTurn) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "nothing safe to undo"));
+        continue;
+      }
+      historyAction = "undo";
+    } else if (op.op === "repeat_last_edit") {
+      if (rawOps.length > 1 || historyAction || renderRequest || hasDraftMutation()) {
+        rejected.push(reject(op.op, labelForOp(op), "capability_disabled", "repeat needs to be the only thing asked for"));
+        continue;
+      }
+      const lastOps = ctx.lastAppliedOps ?? [];
+      if (lastOps.length === 0) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "nothing to repeat yet"));
+        continue;
+      }
+      // Re-run the prior turn's applied ops against the CURRENT snapshot —
+      // atomic, so per-op fingerprint staleness rejects the WHOLE repeat and
+      // every individual rejection still surfaces normally via `rejected`.
+      const rerun = applyCopilotOpsAtomic(lastOps, ctx);
+      if (rerun.rejected.length > 0) {
+        rejected.push(...rerun.rejected);
+        continue;
+      }
+      textActions.push(...rerun.textActions);
+      if (rerun.nextSlots !== null) nextSlots = rerun.nextSlots;
+      if (rerun.nextSfx != null) nextSfx = rerun.nextSfx;
+      if (rerun.nextOverlays != null) nextOverlays = rerun.nextOverlays;
+      if (rerun.nextCameraEffects != null) nextCameraEffects = rerun.nextCameraEffects;
+      if (rerun.nextVisualBlocks != null) nextVisualBlocks = rerun.nextVisualBlocks;
+      if (rerun.nextMotionScenes != null) nextMotionScenes = rerun.nextMotionScenes;
+      if (rerun.nextCarouselMoment !== undefined) nextCarouselMoment = rerun.nextCarouselMoment;
+      if (rerun.acceptedSuggestionRefs?.length) {
+        acceptedSuggestionRefs = [...(acceptedSuggestionRefs ?? []), ...rerun.acceptedSuggestionRefs];
+      }
+      if (rerun.nextMusicTrackId !== undefined) nextMusicTrackId = rerun.nextMusicTrackId;
+      if (rerun.nextMixLevel !== undefined) nextMixLevel = rerun.nextMixLevel;
+      if (rerun.renderRequest) renderRequest = rerun.renderRequest;
+      if (rerun.nextTitle !== undefined) nextTitle = rerun.nextTitle;
+      if (rerun.captionMetaPatch !== undefined) captionMetaPatch = rerun.captionMetaPatch;
+      if (rerun.openTool) openTool = rerun.openTool;
+      // Provenance stays flat: record the ops that actually reapplied, never
+      // the repeat_last_edit wrapper itself — otherwise a second "do that
+      // again" would try to repeat a single self-referential op and recurse
+      // forever.
+      appliedOps.push(...(rerun.appliedOps ?? []));
+      applied.push(...rerun.applied);
+      historyAction = { kind: "repeat", ops: lastOps };
+    }
+    if (op.op !== "repeat_last_edit" && applied.length > appliedCountBeforeOp) {
+      appliedOps.push(op);
     }
   }
 
@@ -1902,6 +1994,8 @@ export function applyCopilotOps(
     openTool,
     applied: consolidateChips(applied),
     rejected,
+    appliedOps,
+    historyAction,
   };
 }
 
@@ -1919,5 +2013,6 @@ export function applyCopilotOpsAtomic(
     nextSlots: null,
     applied: [],
     rejected: result.rejected,
+    appliedOps: [],
   };
 }

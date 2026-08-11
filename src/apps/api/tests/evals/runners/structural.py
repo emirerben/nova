@@ -1702,6 +1702,7 @@ def check_edit_copilot(output: Any) -> list[str]:
         "reorder_clip",
         "remove_clip",
         "split_clip",
+        "set_look_preset",
         "add_sfx",
         "patch_sfx",
         "remove_sfx",
@@ -1709,6 +1710,7 @@ def check_edit_copilot(output: Any) -> list[str]:
         "patch_overlay",
         "remove_overlay",
         "accept_overlay_suggestion",
+        "apply_speech_cut_candidate",
         "edit_caption",
         "replace_caption_text",
         "set_caption_timing",
@@ -1729,6 +1731,8 @@ def check_edit_copilot(output: Any) -> list[str]:
         "add_motion_block",
         "patch_motion_block",
         "remove_motion_block",
+        "undo_last_edit",
+        "repeat_last_edit",
     }
     failures: list[str] = []
 

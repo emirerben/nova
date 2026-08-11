@@ -21,6 +21,7 @@ export type CopilotOpFamily =
   | "visual"
   | "motion"
   | "carousel"
+  | "history"
   // Nova AI sandboxed effect language (PR6): deliberately its own family,
   // NOT folded into "render" — set_intro_layout's eligibility (intro-layout
   // switchability) and apply_custom_effect's (CUSTOM_EFFECTS_ENABLED + a
@@ -237,7 +238,12 @@ export type CopilotOp =
   | {
       op: "open_tool";
       tool: "text" | "visuals" | "sounds" | "overlays" | "styles";
-    };
+    }
+  // History (undo/repeat): no payload fields. Server-side single-op-only
+  // enforcement doesn't apply (there is no server draft state) — the
+  // restriction is enforced here in apply-ops.ts, mirroring set_intro_layout.
+  | { op: "undo_last_edit" }
+  | { op: "repeat_last_edit" };
 
 export type CopilotOpName = CopilotOp["op"];
 
@@ -629,6 +635,7 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
     op.op === "patch_motion_block" ||
     op.op === "remove_motion_block"
   ) return "motion";
+  if (op.op === "undo_last_edit" || op.op === "repeat_last_edit") return "history";
   return null;
 }
 
@@ -1402,6 +1409,10 @@ export function validateCopilotOp(
       }
       return { ok: true, op: { op: opName, tool: raw.tool as Extract<CopilotOp, { op: "open_tool" }>["tool"] } };
     }
+    case "undo_last_edit":
+      return { ok: true, op: { op: opName } };
+    case "repeat_last_edit":
+      return { ok: true, op: { op: opName } };
     default:
       return reject("unknown_op", "op name is not in the v1 vocabulary", opName);
   }

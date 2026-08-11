@@ -495,6 +495,14 @@ export default function CopilotDrawer({
             <button
               type="button"
               disabled={unavailable || !!queued}
+              onClick={() => onSend("Do that again")}
+              className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              Do that again
+            </button>
+            <button
+              type="button"
+              disabled={unavailable || !!queued}
               onClick={() => onSend("What else changed?")}
               className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
             >
