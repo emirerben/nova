@@ -100,6 +100,11 @@ STEP_ALLOWLIST: dict[str, frozenset[str]] = {
     "sound_effects": frozenset({"effects_applied"}),
     "audio_mix": frozenset({"voiceover_mixed"}),
     "render_stage": _WILDCARD,
+    "custom_effect": frozenset({"burn_start", "burn_done"}),
+    # Only the reapply-failure event -- other "render"-stage events
+    # (e.g. fast_reburn_base_probe_failed/fast_reburn_base_canvas_mismatch in
+    # generative_build.py) carry base_path/orientation and stay excluded.
+    "render": frozenset({"custom_effect_reapply_failed"}),
 }
 
 
@@ -266,6 +271,35 @@ def _humanize_voiceover_mixed(_data: dict[str, Any]) -> tuple[str, list[str] | N
     return "Nova mixed your voiceover into the audio", None
 
 
+def _humanize_custom_effect_burn_start(data: dict[str, Any]) -> tuple[str, list[str] | None]:
+    count = data.get("filters")
+    detail = (
+        [f"{count} filter{'s' if count != 1 else ''}"]
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0
+        else None
+    )
+    return "Applying your custom look", detail
+
+
+def _humanize_custom_effect_burn_done(data: dict[str, Any]) -> tuple[str, list[str] | None]:
+    count = data.get("filters")
+    detail = (
+        [f"{count} filter{'s' if count != 1 else ''}"]
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0
+        else None
+    )
+    return "Custom look applied", detail
+
+
+def _humanize_custom_effect_reapply_failed(
+    _data: dict[str, Any],
+) -> tuple[str, list[str] | None]:
+    # Deliberately no detail line -- `reason`/`stage` are machine-readable
+    # validator codes, not durations/counts, and adding nothing is safer
+    # than risking a confusing internal code leaking to the user.
+    return "Couldn't re-apply your custom look — kept the video without it", None
+
+
 _HUMANIZERS: dict[tuple[str, str], _Humanizer] = {
     ("assembly", "clip_metadata_done"): _humanize_clip_metadata_done,
     ("assembly", "song_match_done"): _humanize_song_match_done,
@@ -279,6 +313,9 @@ _HUMANIZERS: dict[tuple[str, str], _Humanizer] = {
     ("media_overlay", "cards_applied"): _humanize_cards_applied,
     ("sound_effects", "effects_applied"): _humanize_effects_applied,
     ("audio_mix", "voiceover_mixed"): _humanize_voiceover_mixed,
+    ("custom_effect", "burn_start"): _humanize_custom_effect_burn_start,
+    ("custom_effect", "burn_done"): _humanize_custom_effect_burn_done,
+    ("render", "custom_effect_reapply_failed"): _humanize_custom_effect_reapply_failed,
 }
 
 # render_stage's `event` is the dynamic sub-stage name passed to
@@ -395,8 +432,11 @@ def project_nova_steps(job: Job, agent_runs: Sequence[AgentRun] | None = None) -
 
     Status rule: every step starts as ``"done"`` unless it carries its own
     failure signal (a ``render_stage`` payload with ``status == "failed"``,
-    or an ``AgentRun.outcome`` outside ``SUCCESS_OUTCOMES``) in which case
-    it's ``"failed"``. If the job itself is non-terminal
+    a ``pipeline_trace`` event whose name ends in ``"_failed"`` (e.g.
+    ``custom_effect_reapply_failed`` -- a fail-open event that still
+    represents a failure the user should see), or an ``AgentRun.outcome``
+    outside ``SUCCESS_OUTCOMES``) in which case it's ``"failed"``. If the
+    job itself is non-terminal
     (``job.status not in PLAN_ITEM_JOB_TERMINAL``), the chronologically
     LATEST step is promoted to ``"active"`` -- unless that step already
     failed on its own, in which case it stays ``"failed"``.
@@ -424,11 +464,11 @@ def project_nova_steps(job: Job, agent_runs: Sequence[AgentRun] | None = None) -
             continue
         data = _sanitize_event_data(raw_event.get("data"))
         label, detail = _humanize(stage, event, data)
-        own_failed = data.get("status") == "failed"
+        own_failed = data.get("status") == "failed" or event.endswith("_failed")
         step = NovaStep(
             id=f"{stage}:{event}:{index}",
             ts=ts,
-            kind="render" if stage == "render_stage" else "decision",
+            kind="render" if stage in ("render_stage", "custom_effect", "render") else "decision",
             label=label,
             detail=detail,
             status="failed" if own_failed else "done",

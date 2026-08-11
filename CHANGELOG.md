@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.10.0] — 2026-08-11
+
+### Fixed
+- **fix(steps): surface custom-effect render steps in Nova feed + preserve agent reply on render turns (E2E findings).** Real-video E2E validation of the Nova AI steps train (PRs #798–#806) found two bugs before the `CUSTOM_EFFECTS`/`NOVA_STEPS_FEED` flags could flip in prod. (1) `app/tasks/custom_effects_render.py`'s `custom_effect` burn events (`burn_start`/`burn_done`) and the fail-open `custom_effect_reapply_failed` event weren't in `nova_steps.STEP_ALLOWLIST`, so a custom-effect render was invisible in the Nova activity feed even though the pipeline recorded it — added the stage with Nova-voiced labels ("Applying your custom look" / "Custom look applied" / "Couldn't re-apply your custom look — kept the video without it"), sanitized filter-count detail only, and a `status="failed"` signal for any `*_failed` event name. (2) `EditorShell.tsx`'s `handleCopilotOps` hardcoded the assistant reply on every render turn (`set_intro_layout`, `apply_custom_effect`) when the chat steps feed is on, silently dropping the agent's real reply — which the prompt requires to carry the feeling-label, the "can't be undone from chat" disclosure, and "current version stays in history". Now uses the agent's actual `response.reply`, falling back to the old hardcoded copy only when the reply is empty/whitespace. 4 new EditorShell Jest tests + 3 new backend pytest cases; both flags stay off pending the deploy gate.
+
 ## [0.25.9.0] — 2026-08-11
 
 ### Added
