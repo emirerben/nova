@@ -1,7 +1,7 @@
 """Add durable ownership fencing to content plans.
 
-Revision ID: 0071
-Revises: 0070
+Revision ID: 0072
+Revises: 0071
 Create Date: 2026-08-11
 
 This release is deliberately additive so the previous application image can
@@ -15,8 +15,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0071"
-down_revision = "0070"
+revision = "0072"
+down_revision = "0071"
 branch_labels = None
 depends_on = None
 

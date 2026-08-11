@@ -1029,12 +1029,17 @@ def test_user_info_requests_only_basic_scope_fields() -> None:
 
 def _session_context(row: TikTokPublication, *, first: bool = False) -> MagicMock:
     session = MagicMock()
-    session.get.return_value = row
+    job_id = row.job_id or uuid.uuid4()
+    job = _job()
+    job.id = job_id
+    row.job_id = job_id
+    def _get(model, *args, **kwargs):  # noqa: ANN001, ARG001
+        return row if model is TikTokPublication else job
+
+    session.get.side_effect = _get
     result = MagicMock()
-    if first:
-        result.scalar_one_or_none.return_value = row
-    else:
-        result.scalar_one.return_value = row
+    result.scalar_one_or_none.side_effect = [job_id, row]
+    result.scalar_one.return_value = row
     session.execute.return_value = result
     context = MagicMock()
     context.__enter__.return_value = session
@@ -1057,6 +1062,7 @@ def test_submit_worker_routes_draft_delivery_only_to_upload_api() -> None:
     contexts = iter(
         [
             _session_context(row, first=True),
+            _session_context(row),
             _session_context(row),
             _session_context(row),
             _session_context(row),
@@ -1135,6 +1141,8 @@ def test_ambiguous_draft_transport_failure_never_redispatches() -> None:
     contexts = iter(
         [
             _session_context(row, first=True),
+            _session_context(row),
+            _session_context(row),
             _session_context(row),
             _session_context(row),
             _session_context(row),

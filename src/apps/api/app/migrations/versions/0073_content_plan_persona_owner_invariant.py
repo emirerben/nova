@@ -1,7 +1,7 @@
 """Enforce the content-plan/persona tenant invariant in PostgreSQL.
 
-Revision ID: 0072
-Revises: 0071
+Revision ID: 0073
+Revises: 0072
 Create Date: 2026-08-11
 
 R1 made every application path fail closed and introduced a durable epoch.
@@ -25,8 +25,8 @@ from typing import Any
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0072"
-down_revision = "0071"
+revision = "0073"
+down_revision = "0072"
 branch_labels = None
 depends_on = None
 

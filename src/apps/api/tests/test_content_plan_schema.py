@@ -64,6 +64,7 @@ _EXPECTED_CHAIN = {
     "0070": "0069",
     "0071": "0070",
     "0072": "0071",
+    "0073": "0072",
 }
 
 
@@ -75,7 +76,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0072"], f"expected a single head 0072, got {heads}"
+    assert heads == ["0073"], f"expected a single head 0073, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -342,7 +343,7 @@ def test_persona_content_plan_navigation_is_viewonly_and_owner_joined() -> None:
 
 def test_0071_adds_durable_ownership_fence_columns(monkeypatch) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0071_content_plan_ownership_fence"
+        "app.migrations.versions.0072_content_plan_ownership_fence"
     )
     added: list[tuple[str, object]] = []
 
@@ -374,7 +375,7 @@ def test_0071_adds_durable_ownership_fence_columns(monkeypatch) -> None:
 @pytest.mark.parametrize("used_fences", [1, 2])
 def test_0071_refuses_to_erase_used_ownership_fences(monkeypatch, used_fences: int) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0071_content_plan_ownership_fence"
+        "app.migrations.versions.0072_content_plan_ownership_fence"
     )
     dropped: list[tuple[str, str]] = []
 
@@ -400,7 +401,7 @@ def test_0071_refuses_to_erase_used_ownership_fences(monkeypatch, used_fences: i
 
 def test_0071_downgrade_removes_an_unused_fence(monkeypatch) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0071_content_plan_ownership_fence"
+        "app.migrations.versions.0072_content_plan_ownership_fence"
     )
     dropped: list[tuple[str, str]] = []
 
@@ -554,7 +555,7 @@ def test_0072_upgrade_enforces_owner_invariant_before_dropping_legacy_fk(
     """The composite boundary must exist before the permissive legacy FK leaves."""
 
     migration = importlib.import_module(
-        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+        "app.migrations.versions.0073_content_plan_persona_owner_invariant"
     )
     events: list[tuple] = []
     bind = _0072Bind(events)
@@ -613,7 +614,7 @@ def test_0072_upgrade_enforces_owner_invariant_before_dropping_legacy_fk(
 
 def test_0072_upgrade_aborts_on_existing_cross_owner_link(monkeypatch) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+        "app.migrations.versions.0073_content_plan_persona_owner_invariant"
     )
     events: list[tuple] = []
     bind = _0072Bind(
@@ -635,7 +636,7 @@ def test_0072_upgrade_aborts_on_existing_cross_owner_link(monkeypatch) -> None:
 
 def test_0072_upgrade_aborts_when_required_uuid_column_is_nullable(monkeypatch) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+        "app.migrations.versions.0073_content_plan_persona_owner_invariant"
     )
     events: list[tuple] = []
     drifted_rows = [dict(row) for row in _0072_CATALOG_ROWS]
@@ -654,7 +655,7 @@ def test_0072_upgrade_aborts_when_required_uuid_column_is_nullable(monkeypatch) 
 
 def test_0072_upgrade_aborts_when_owner_column_type_drifted(monkeypatch) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+        "app.migrations.versions.0073_content_plan_persona_owner_invariant"
     )
     events: list[tuple] = []
     drifted_rows = [dict(row) for row in _0072_CATALOG_ROWS]
@@ -711,7 +712,7 @@ def test_0072_upgrade_rejects_legacy_fk_catalog_drift(
     monkeypatch, legacy_rows: list[dict]
 ) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+        "app.migrations.versions.0073_content_plan_persona_owner_invariant"
     )
     events: list[tuple] = []
     bind = _0072Bind(events, legacy_rows=legacy_rows)
@@ -727,7 +728,7 @@ def test_0072_downgrade_validates_legacy_fk_before_removing_owner_invariant(
     monkeypatch,
 ) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+        "app.migrations.versions.0073_content_plan_persona_owner_invariant"
     )
     events: list[tuple] = []
     bind = _0072Bind(events)
@@ -767,7 +768,7 @@ def test_0072_downgrade_validates_legacy_fk_before_removing_owner_invariant(
 
 def test_0072_downgrade_checks_schema_before_recreating_legacy_fk(monkeypatch) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+        "app.migrations.versions.0073_content_plan_persona_owner_invariant"
     )
     events: list[tuple] = []
     bind = _0072Bind(events, catalog_rows=_0072_CATALOG_ROWS[:-1])
