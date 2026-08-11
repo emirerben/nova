@@ -4,6 +4,8 @@
  * (lands under the `music-uploads/` prefix the backend allowlists).
  */
 
+import type { NovaStep } from "./job-phases";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Intro font-size envelope + nudge step (mirrors overlay_sizing.MIN/MAX_INTRO_PX
@@ -224,6 +226,11 @@ export interface GenerativeJobStatus {
   /** True while the render attempt died silently and is awaiting automatic
    *  retry (stale worker heartbeat). Optional — older API builds omit it. */
   retrying?: boolean;
+  /** Nova AI steps activity feed (PR1 `nova_steps` projection). Optional —
+   *  gated server-side by NOVA_STEPS_FEED_ENABLED; older API builds and the
+   *  flag-off case both omit it. NovaActivityFeed falls back to
+   *  PhaseChipRow whenever this is absent/empty. */
+  steps?: NovaStep[] | null;
 }
 
 /** The SUCCESS half of the terminal set. */

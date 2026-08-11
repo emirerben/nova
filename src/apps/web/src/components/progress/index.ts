@@ -7,6 +7,8 @@ export { BeamLoader } from "./BeamLoader";
 export { PhaseChipRow } from "./PhaseChipRow";
 export { StatusHeadline } from "./StatusHeadline";
 export { EtaBar } from "./EtaBar";
+export { NovaActivityFeed } from "./NovaActivityFeed";
+export { NovaStepRow, NovaPendingRow } from "./NovaStepRow";
 export { VariantRenderCard, ShimmerSweep } from "./VariantRenderCard";
 export type { VariantRenderCardVariant } from "./VariantRenderCard";
 export { PayoffField } from "./PayoffField";

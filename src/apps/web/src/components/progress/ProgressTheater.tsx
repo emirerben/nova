@@ -7,8 +7,9 @@ import {
   POLL_INTERVAL_MS,
 } from "./constants";
 import { computeBarPosition, detailLine, etaLadder, stallTier } from "./logic";
-import { computeAnchors } from "../../lib/job-phases";
+import { computeAnchors, type NovaStep } from "../../lib/job-phases";
 import { EtaBar } from "./EtaBar";
+import { NovaActivityFeed } from "./NovaActivityFeed";
 import { PhaseChipRow } from "./PhaseChipRow";
 import { StatusHeadline } from "./StatusHeadline";
 
@@ -71,6 +72,14 @@ interface ProgressTheaterProps {
    * theatre palette. Forwarded to PhaseChipRow, StatusHeadline, EtaBar.
    */
   tone?: "dark" | "light";
+  /**
+   * Nova AI steps activity feed (PR1 `steps` projection on the status
+   * response). When `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED` is "true" AND this
+   * is non-empty, NovaActivityFeed renders in place of PhaseChipRow inside
+   * the status band. Flag off, or steps absent/empty, ⇒ PhaseChipRow renders
+   * exactly as before (byte-identical fallback — this prop is additive).
+   */
+  steps?: NovaStep[] | null;
 }
 
 /**
@@ -101,6 +110,7 @@ export function ProgressTheater({
   size = "full",
   children,
   tone = "dark",
+  steps = null,
 }: ProgressTheaterProps) {
   // Elapsed since job start.
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -207,6 +217,20 @@ export function ProgressTheater({
   // Phase log — find the most recent phase event to derive phase-level stall.
   const _phaseLogEntries = phaseLog ?? [];
 
+  // Nova AI steps feed — additive, flag-gated. Flag off or steps absent/empty
+  // ⇒ useStepsFeed is false and PhaseChipRow renders exactly as before.
+  const stepsFeedEnabled = process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED === "true";
+  const useStepsFeed = stepsFeedEnabled && !!steps && steps.length > 0;
+  // Phases beyond the current one, humanized — dimmed placeholder rows so the
+  // feed still communicates "what's left" the way PhaseChipRow's pending
+  // chips do today. D6: derived from the phase order, not an index/constant.
+  const pendingPhaseLabels = (() => {
+    if (!useStepsFeed || isTerminal) return [];
+    const idx = currentPhase ? phases.indexOf(currentPhase) : -1;
+    if (idx < 0) return [];
+    return phases.slice(idx + 1).map((p) => phaseLabels[p] ?? p);
+  })();
+
   const statusBand = (
     <div
       className={[
@@ -225,12 +249,24 @@ export function ProgressTheater({
         </p>
       ) : (
         <>
-          <PhaseChipRow
-            phases={phases}
-            phaseLabels={phaseLabels}
-            currentPhase={currentPhase}
-            tone={tone}
-          />
+          {useStepsFeed ? (
+            <NovaActivityFeed
+              steps={steps}
+              tone={tone}
+              size="full"
+              isTerminal={isTerminal}
+              isSuccess={isSuccess}
+              receiptText={receiptText}
+              pendingLabels={pendingPhaseLabels}
+            />
+          ) : (
+            <PhaseChipRow
+              phases={phases}
+              phaseLabels={phaseLabels}
+              currentPhase={currentPhase}
+              tone={tone}
+            />
+          )}
           <StatusHeadline text={headlineText} tone={tone} />
           {detail && (
             <p className={`text-xs ${tone === "light" ? "text-[#71717a]" : "text-zinc-500"}`}>{detail}</p>

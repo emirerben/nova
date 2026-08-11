@@ -2373,6 +2373,7 @@ export default function PlanItemPage() {
                   receiptText={deriveReceiptText(data.job.started_at, data.job.finished_at)}
                   variants={variants}
                   retrying={data.job.retrying ?? false}
+                  steps={data.job.steps ?? null}
                   size="full"
                   tone="light"
                   onRetry={allVariantsFailed && !generating ? handleGenerate : undefined}
