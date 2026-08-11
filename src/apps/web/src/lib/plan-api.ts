@@ -1929,6 +1929,44 @@ export function changePlanItemStyle(
   });
 }
 
+/**
+ * Raw EffectSpec wire shape (see src/apps/api/app/pipeline/custom_effects.py) —
+ * the server owns the filter whitelist and param bounds; this type documents
+ * the request shape only and does not re-validate it client-side.
+ */
+export interface CustomEffectSpec {
+  id: string;
+  label: string;
+  filters: Array<{ name: string; params?: Record<string, number | string> }>;
+  start_s: number;
+  end_s: number;
+  target: "full_frame";
+}
+
+/**
+ * Apply Nova's sandboxed effect language (agent-authored FFmpeg filter chain
+ * from a validated whitelist, PR6 of the effect-language train) to a
+ * variant's video (async re-render). v1: a single active custom effect —
+ * each call REPLACES any previously-applied one, never stacks. Dark behind
+ * CUSTOM_EFFECTS_ENABLED (404 when off).
+ *
+ * Accepts `CustomEffectSpec` OR a loosely-typed `Record<string, unknown>` —
+ * the copilot's `apply_custom_effect` op carries the model-authored spec as
+ * an untyped object (ops.ts deliberately doesn't duplicate the filter
+ * whitelist in TS); the server is the single source of truth and validates
+ * either shape identically via `validate_effect_spec`.
+ */
+export function applyPlanItemCustomEffect(
+  itemId: string,
+  variantId: string,
+  effect: CustomEffectSpec | Record<string, unknown>,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/custom-effect`, {
+    method: "POST",
+    body: JSON.stringify({ effect }),
+  });
+}
+
 export function setPlanItemIntroSize(
   itemId: string,
   variantId: string,

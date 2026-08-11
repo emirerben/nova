@@ -474,6 +474,11 @@ export interface AllowedOpFamilyOptions {
   transitionsEnabled?: boolean;
   visualBlocksEnabled?: boolean;
   motionScenesEnabled?: boolean;
+  /** Nova AI sandboxed effect language (PR6) is eligible for THIS variant
+   * right now — CUSTOM_EFFECTS_ENABLED (frontend flag) AND a renderable
+   * source video AND not read-only. Its own "custom_effect" family,
+   * independent of renderLayoutSwitchable — see the CopilotOpFamily note. */
+  customEffectsEnabled?: boolean;
 }
 
 export interface CaptionCueLike {
@@ -552,6 +557,7 @@ export function allowedOpFamiliesFromCapabilities(
     const gated: CopilotOpFamily[] = [];
     if (options.renderLayoutSwitchable) gated.push("render");
     if (options.carouselMomentAvailable) gated.push("carousel");
+    if (options.customEffectsEnabled) gated.push("custom_effect");
     return gated;
   }
   const families: CopilotOpFamily[] = [];
@@ -579,6 +585,7 @@ export function allowedOpFamiliesFromCapabilities(
   if (capabilities?.motion_scenes === true && options.motionScenesEnabled) {
     families.push("motion");
   }
+  if (options.customEffectsEnabled) families.push("custom_effect");
   if ((options.openTools?.length ?? 0) > 0) families.push("tool");
   return families;
 }

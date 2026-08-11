@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.6.0] — 2026-08-11
+
+### Added
+- **`apply_custom_effect` — sandboxed custom effects authored by Nova AI in chat.** The edit copilot can now compose a custom look for a clip from PR5's validated FFmpeg filter-graph schema when the user asks for something no preset op covers ("make this feel like an old film," "add some grain," "zoom in slowly"). New `app/tasks/custom_effects_render.py` execution task re-validates the spec at render time (the client PATCH body is untrusted), persists it on `assembly_plan.variants[i].custom_effects`, and reapplies it across all base-rebuild paths on reburn (text edits, caption/camera rerenders, language re-transcribe) in both directions — fail-open with a `custom_effect_reapply_failed` trace event and entry clear on failure so a broken effect never blocks an otherwise-valid reburn. Gated by `CUSTOM_EFFECTS_ENABLED` (default `false`) with `NEXT_PUBLIC_CUSTOM_EFFECTS_ENABLED` as its Vercel twin — both default off, Fly-first convention. `EDIT_COPILOT_PROMPT_VERSION` bumps to `2026-08-11-v21`; live evals green (no judge). Known follow-up: a matte-cache key edge in `_reburn_text_on_base` after a reapplied effect (cosmetic, tracked for a later PR).
+
+## [0.25.5.0] — 2026-08-11
+
+### Added
+- **Nova steps activity feed on render progress.** `NovaActivityFeed` + `NovaStepRow` render the render-progress view as an expandable, Nova-voiced step log sourced from PR1's `steps` field, gated by `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED` (default off) with a `PhaseChipRow` fallback when disabled or `steps` is absent. New `t-accordion` motion token (registered in DESIGN.md) drives the expand/collapse; the completion receipt persists once settled rather than collapsing back into the chip row. Accessible: aria-live announces each newly-active step once (never re-announces), and reduced-motion is honored. 2725 tests.
+
+## [0.25.4.0] — 2026-08-11
+
+### Added
+- **Sandboxed custom-effect validator (inert).** `app/pipeline/custom_effects.py` introduces the `EffectSpec` schema and `validate_effect_spec()` for agent-authored FFmpeg filter graphs: a 20-filter whitelist with per-filter numeric parameter bounds, linear (non-branching) filter chains, and an injection-hardened serializer that rejects unknown filters, out-of-bound or non-numeric params, file/URL-accepting filters (`movie=`, `subtitles=`, etc.), and oversized graphs. Gated by `CUSTOM_EFFECTS_ENABLED` (default `false`) — the flag is unread by any call site in this PR by design, since nothing yet invokes the validator; 90 tests cover the rejection classes exhaustively. Note: `crop`, `scale`, `setpts`, and `zoompan` don't support FFmpeg `enable=` timeline gating, so the execution PR (PR6) will need trim/concat-based windowing for those four filters instead of timeline expressions.
+
 ## [0.25.3.0] — 2026-08-11
 
 ### Added
