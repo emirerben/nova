@@ -396,7 +396,7 @@ async def _status_response_for(
         worker_heartbeat_at=None,
     )
 
-    async def _load(job_id, db, user, allowed_modes=None):
+    async def _load(job_id, db, user, allowed_modes=None, **kwargs):
         return job
 
     async def _load_runs(db, job_id):
