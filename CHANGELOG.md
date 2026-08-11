@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.4.0] — 2026-08-11
+
+### Added
+- **Sandboxed custom-effect validator (inert).** `app/pipeline/custom_effects.py` introduces the `EffectSpec` schema and `validate_effect_spec()` for agent-authored FFmpeg filter graphs: a 20-filter whitelist with per-filter numeric parameter bounds, linear (non-branching) filter chains, and an injection-hardened serializer that rejects unknown filters, out-of-bound or non-numeric params, file/URL-accepting filters (`movie=`, `subtitles=`, etc.), and oversized graphs. Gated by `CUSTOM_EFFECTS_ENABLED` (default `false`) — the flag is unread by any call site in this PR by design, since nothing yet invokes the validator; 90 tests cover the rejection classes exhaustively. Note: `crop`, `scale`, `setpts`, and `zoompan` don't support FFmpeg `enable=` timeline gating, so the execution PR (PR6) will need trim/concat-based windowing for those four filters instead of timeline expressions.
+
 ## [0.25.3.0] — 2026-08-11
 
 ### Added
