@@ -12,6 +12,7 @@ from sqlalchemy import (
     Date,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -775,7 +776,16 @@ class Persona(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="persona")
-    content_plans: Mapped[list["ContentPlan"]] = relationship(back_populates="persona")
+    # The tenant compound FK includes ContentPlan.user_id, which is also written
+    # by ContentPlan.user.  Keep this traversal read-only so assigning a Persona
+    # can never silently rewrite a plan's tenant key.
+    content_plans: Mapped[list["ContentPlan"]] = relationship(
+        back_populates="persona", viewonly=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("id", "user_id", name="uq_personas_id_user_id"),
+    )
 
 
 class ContentPlan(Base):
@@ -789,7 +799,7 @@ class ContentPlan(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     persona_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("personas.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), nullable=False
     )
     # Optional user-supplied events that bias generation (trips, launches, exams).
     events: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -842,12 +852,26 @@ class ContentPlan(Base):
     )
 
     user: Mapped["User"] = relationship()
-    persona: Mapped["Persona"] = relationship(back_populates="content_plans")
+    # Read-only for the same reason as Persona.content_plans: the compound
+    # relationship shares user_id with the independently writable user
+    # relationship.  Callers create plans with explicit user_id + persona_id.
+    persona: Mapped["Persona"] = relationship(
+        back_populates="content_plans", viewonly=True
+    )
     items: Mapped[list["PlanItem"]] = relationship(
         back_populates="content_plan", order_by="PlanItem.position"
     )
 
-    __table_args__ = (Index("idx_content_plans_user_id", "user_id"),)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["persona_id", "user_id"],
+            ["personas.id", "personas.user_id"],
+            name="fk_content_plans_persona_owner",
+            ondelete="CASCADE",
+            match="FULL",
+        ),
+        Index("idx_content_plans_user_id", "user_id"),
+    )
 
 
 class PlanItem(Base):

@@ -20,6 +20,7 @@ import importlib
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from sqlalchemy import ForeignKeyConstraint, UniqueConstraint
 from sqlalchemy.orm import configure_mappers
 
 from app import models
@@ -62,6 +63,7 @@ _EXPECTED_CHAIN = {
     "0069": "0068",
     "0070": "0069",
     "0071": "0070",
+    "0072": "0071",
 }
 
 
@@ -73,7 +75,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0071"], f"expected a single head 0071, got {heads}"
+    assert heads == ["0072"], f"expected a single head 0072, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -273,6 +275,71 @@ def test_personas_user_id_is_unique() -> None:
     assert models.Base.metadata.tables["personas"].columns["user_id"].unique is True
 
 
+def test_content_plan_persona_owner_constraints_registered() -> None:
+    """ORM DDL must encode the same compound tenant invariant as Alembic."""
+
+    personas = models.Base.metadata.tables["personas"]
+    persona_owner_key = next(
+        constraint
+        for constraint in personas.constraints
+        if isinstance(constraint, UniqueConstraint)
+        and constraint.name == "uq_personas_id_user_id"
+    )
+    assert tuple(persona_owner_key.columns.keys()) == ("id", "user_id")
+
+    content_plans = models.Base.metadata.tables["content_plans"]
+    persona_owner_fk = next(
+        constraint
+        for constraint in content_plans.constraints
+        if isinstance(constraint, ForeignKeyConstraint)
+        and constraint.name == "fk_content_plans_persona_owner"
+    )
+    assert tuple(persona_owner_fk.columns.keys()) == ("persona_id", "user_id")
+    assert tuple(element.target_fullname for element in persona_owner_fk.elements) == (
+        "personas.id",
+        "personas.user_id",
+    )
+    assert persona_owner_fk.ondelete == "CASCADE"
+    assert persona_owner_fk.match == "FULL"
+    assert content_plans.columns["persona_id"].nullable is False
+    assert content_plans.columns["user_id"].nullable is False
+
+    # The compound FK supersedes the old persona_id-only trust boundary.  A
+    # second FK here would let ORM metadata drift from the migration ordering.
+    assert not any(
+        tuple(constraint.columns.keys()) == ("persona_id",)
+        for constraint in content_plans.foreign_key_constraints
+    )
+
+
+def test_persona_content_plan_navigation_is_viewonly_and_owner_joined() -> None:
+    """Navigation remains compatible without synchronizing the shared user_id."""
+
+    configure_mappers()
+    plan_to_persona = models.ContentPlan.persona.property
+    persona_to_plans = models.Persona.content_plans.property
+    assert plan_to_persona.viewonly is True
+    assert persona_to_plans.viewonly is True
+
+    def _column_pair_names(relationship) -> set[frozenset[tuple[str, str]]]:
+        return {
+            frozenset(
+                {
+                    (local.table.name, local.name),
+                    (remote.table.name, remote.name),
+                }
+            )
+            for local, remote in relationship.local_remote_pairs
+        }
+
+    expected_pairs = {
+        frozenset({("content_plans", "persona_id"), ("personas", "id")}),
+        frozenset({("content_plans", "user_id"), ("personas", "user_id")}),
+    }
+    assert _column_pair_names(plan_to_persona) == expected_pairs
+    assert _column_pair_names(persona_to_plans) == expected_pairs
+
+
 def test_0071_adds_durable_ownership_fence_columns(monkeypatch) -> None:
     migration = importlib.import_module(
         "app.migrations.versions.0071_content_plan_ownership_fence"
@@ -358,6 +425,361 @@ def test_0071_downgrade_removes_an_unused_fence(monkeypatch) -> None:
         ("content_plans", "ownership_epoch"),
         ("jobs", "content_plan_ownership_epoch"),
     ]
+
+
+_0072_CATALOG_ROWS = [
+    {
+        "table_schema": "public",
+        "table_name": table,
+        "column_name": column,
+        "is_nullable": "NO",
+        "is_not_null": True,
+        "not_null": True,
+        "attnotnull": True,
+        "data_type": "uuid",
+        "formatted_type": "uuid",
+        "type_name": "uuid",
+        "udt_name": "uuid",
+        "type_oid": 2950,
+        "type_modifier": -1,
+        "atttypid": 2950,
+    }
+    for table, column in (
+        ("personas", "id"),
+        ("personas", "user_id"),
+        ("content_plans", "persona_id"),
+        ("content_plans", "user_id"),
+    )
+]
+
+
+class _0072Result:
+    def __init__(self, rows: list[object]):
+        self._rows = rows
+
+    def mappings(self):
+        return self
+
+    def scalars(self):
+        return _0072Result(
+            [
+                row["constraint_name"]
+                if isinstance(row, dict) and "constraint_name" in row
+                else row
+                for row in self._rows
+            ]
+        )
+
+    def all(self) -> list[object]:
+        return self._rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _0072Bind:
+    def __init__(
+        self,
+        events: list[tuple],
+        *,
+        catalog_rows: list[dict] | None = None,
+        mismatch: dict | None = None,
+        legacy_rows: list[dict] | None = None,
+    ) -> None:
+        self.events = events
+        self.catalog_rows = (
+            [dict(row) for row in _0072_CATALOG_ROWS]
+            if catalog_rows is None
+            else catalog_rows
+        )
+        self.mismatch = mismatch
+        self.legacy_rows = (
+            [
+                {
+                    "constraint_name": "content_plans_persona_id_fkey",
+                    "is_validated": True,
+                    "delete_action": "c",
+                }
+            ]
+            if legacy_rows is None
+            else legacy_rows
+        )
+
+    def execute(self, statement) -> _0072Result:
+        sql = str(statement)
+        self.events.append(("sql", sql))
+        normalized = " ".join(sql.lower().split())
+        if "left join personas" in normalized:
+            return _0072Result([self.mismatch] if self.mismatch is not None else [])
+        if "pg_constraint" in normalized:
+            return _0072Result(list(self.legacy_rows))
+        if "pg_attribute" in normalized or "information_schema.columns" in normalized:
+            return _0072Result(list(self.catalog_rows))
+        return _0072Result([])
+
+
+def _patch_0072_ops(monkeypatch, migration, bind: _0072Bind) -> list[tuple]:
+    events = bind.events
+    monkeypatch.setattr(migration.op, "get_bind", lambda: bind)
+    monkeypatch.setattr(
+        migration.op,
+        "execute",
+        lambda statement: events.append(("sql", str(statement))),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "create_unique_constraint",
+        lambda name, table, columns, **kwargs: events.append(
+            ("create_unique", name, table, tuple(columns), kwargs)
+        ),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "create_foreign_key",
+        lambda name, source, target, local, remote, **kwargs: events.append(
+            ("create_fk", name, source, target, tuple(local), tuple(remote), kwargs)
+        ),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "drop_constraint",
+        lambda name, table, **kwargs: events.append(("drop", name, table, kwargs)),
+    )
+    return events
+
+
+def test_0072_upgrade_enforces_owner_invariant_before_dropping_legacy_fk(
+    monkeypatch,
+) -> None:
+    """The composite boundary must exist before the permissive legacy FK leaves."""
+
+    migration = importlib.import_module(
+        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+    )
+    events: list[tuple] = []
+    bind = _0072Bind(events)
+    _patch_0072_ops(monkeypatch, migration, bind)
+
+    migration.upgrade()
+
+    unique_event = next(event for event in events if event[0] == "create_unique")
+    assert unique_event[1:4] == (
+        "uq_personas_id_user_id",
+        "personas",
+        ("id", "user_id"),
+    )
+    fk_event = next(event for event in events if event[0] == "create_fk")
+    assert fk_event[1:6] == (
+        "fk_content_plans_persona_owner",
+        "content_plans",
+        "personas",
+        ("persona_id", "user_id"),
+        ("id", "user_id"),
+    )
+    assert fk_event[6]["ondelete"] == "CASCADE"
+    assert fk_event[6]["match"] == "FULL"
+    assert fk_event[6]["postgresql_not_valid"] is True
+    legacy_drop = next(
+        event
+        for event in events
+        if event[:3]
+        == ("drop", "content_plans_persona_id_fkey", "content_plans")
+    )
+    assert legacy_drop[3]["type_"] == "foreignkey"
+
+    normalized_sql = [
+        " ".join(event[1].lower().split()) for event in events if event[0] == "sql"
+    ]
+    assert any("set local lock_timeout" in sql and "5s" in sql for sql in normalized_sql)
+    assert any(
+        "set local statement_timeout" in sql and "30s" in sql for sql in normalized_sql
+    )
+    mismatch_index = next(
+        index
+        for index, event in enumerate(events)
+        if event[0] == "sql" and "left join personas" in event[1].lower()
+    )
+    unique_index = events.index(unique_event)
+    fk_index = events.index(fk_event)
+    validate_index = next(
+        index
+        for index, event in enumerate(events)
+        if event[0] == "sql"
+        and "validate constraint fk_content_plans_persona_owner" in event[1].lower()
+    )
+    drop_index = events.index(legacy_drop)
+    assert mismatch_index < unique_index < fk_index < validate_index < drop_index
+
+
+def test_0072_upgrade_aborts_on_existing_cross_owner_link(monkeypatch) -> None:
+    migration = importlib.import_module(
+        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+    )
+    events: list[tuple] = []
+    bind = _0072Bind(
+        events,
+        mismatch={
+            "plan_id": "00000000-0000-0000-0000-000000000001",
+            "plan_user_id": "00000000-0000-0000-0000-000000000002",
+            "persona_id": "00000000-0000-0000-0000-000000000003",
+            "persona_user_id": "00000000-0000-0000-0000-000000000004",
+        },
+    )
+    _patch_0072_ops(monkeypatch, migration, bind)
+
+    with pytest.raises(RuntimeError, match="mismatch|owner"):
+        migration.upgrade()
+
+    assert not any(event[0] in {"create_unique", "create_fk", "drop"} for event in events)
+
+
+def test_0072_upgrade_aborts_when_required_uuid_column_is_nullable(monkeypatch) -> None:
+    migration = importlib.import_module(
+        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+    )
+    events: list[tuple] = []
+    drifted_rows = [dict(row) for row in _0072_CATALOG_ROWS]
+    drifted_rows[-1]["is_nullable"] = "YES"
+    drifted_rows[-1]["is_not_null"] = False
+    drifted_rows[-1]["not_null"] = False
+    drifted_rows[-1]["attnotnull"] = False
+    bind = _0072Bind(events, catalog_rows=drifted_rows)
+    _patch_0072_ops(monkeypatch, migration, bind)
+
+    with pytest.raises(RuntimeError, match="NOT NULL|precondition|schema"):
+        migration.upgrade()
+
+    assert not any(event[0] in {"create_unique", "create_fk", "drop"} for event in events)
+
+
+def test_0072_upgrade_aborts_when_owner_column_type_drifted(monkeypatch) -> None:
+    migration = importlib.import_module(
+        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+    )
+    events: list[tuple] = []
+    drifted_rows = [dict(row) for row in _0072_CATALOG_ROWS]
+    drifted_rows[-1]["type_name"] = "text"
+    bind = _0072Bind(events, catalog_rows=drifted_rows)
+    _patch_0072_ops(monkeypatch, migration, bind)
+
+    with pytest.raises(RuntimeError, match="UUID|type"):
+        migration.upgrade()
+
+    assert not any(event[0] in {"create_unique", "create_fk", "drop"} for event in events)
+
+
+@pytest.mark.parametrize(
+    "legacy_rows",
+    [
+        [],
+        [
+            {
+                "constraint_name": "wrong_name",
+                "is_validated": True,
+                "delete_action": "c",
+            }
+        ],
+        [
+            {
+                "constraint_name": "content_plans_persona_id_fkey",
+                "is_validated": False,
+                "delete_action": "c",
+            }
+        ],
+        [
+            {
+                "constraint_name": "content_plans_persona_id_fkey",
+                "is_validated": True,
+                "delete_action": "a",
+            }
+        ],
+        [
+            {
+                "constraint_name": "content_plans_persona_id_fkey",
+                "is_validated": True,
+                "delete_action": "c",
+            },
+            {
+                "constraint_name": "unexpected_second_fk",
+                "is_validated": True,
+                "delete_action": "c",
+            },
+        ],
+    ],
+)
+def test_0072_upgrade_rejects_legacy_fk_catalog_drift(
+    monkeypatch, legacy_rows: list[dict]
+) -> None:
+    migration = importlib.import_module(
+        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+    )
+    events: list[tuple] = []
+    bind = _0072Bind(events, legacy_rows=legacy_rows)
+    _patch_0072_ops(monkeypatch, migration, bind)
+
+    with pytest.raises(RuntimeError):
+        migration.upgrade()
+
+    assert not any(event[0] == "drop" for event in events)
+
+
+def test_0072_downgrade_validates_legacy_fk_before_removing_owner_invariant(
+    monkeypatch,
+) -> None:
+    migration = importlib.import_module(
+        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+    )
+    events: list[tuple] = []
+    bind = _0072Bind(events)
+    _patch_0072_ops(monkeypatch, migration, bind)
+
+    migration.downgrade()
+
+    add_index = next(
+        index
+        for index, event in enumerate(events)
+        if event[0] == "sql"
+        and "add constraint content_plans_persona_id_fkey" in event[1].lower()
+    )
+    validate_index = next(
+        index
+        for index, event in enumerate(events)
+        if event[0] == "sql"
+        and "validate constraint content_plans_persona_id_fkey" in event[1].lower()
+    )
+    composite_drop = next(
+        event
+        for event in events
+        if event[:3]
+        == ("drop", "fk_content_plans_persona_owner", "content_plans")
+    )
+    unique_drop = next(
+        event for event in events if event[:3] == ("drop", "uq_personas_id_user_id", "personas")
+    )
+    composite_drop_index = events.index(composite_drop)
+    unique_drop_index = events.index(unique_drop)
+    assert add_index < validate_index < composite_drop_index < unique_drop_index
+    assert "not valid" in events[add_index][1].lower()
+    assert "on delete cascade" in events[add_index][1].lower()
+    assert composite_drop[3]["type_"] == "foreignkey"
+    assert unique_drop[3]["type_"] == "unique"
+
+
+def test_0072_downgrade_checks_schema_before_recreating_legacy_fk(monkeypatch) -> None:
+    migration = importlib.import_module(
+        "app.migrations.versions.0072_content_plan_persona_owner_invariant"
+    )
+    events: list[tuple] = []
+    bind = _0072Bind(events, catalog_rows=_0072_CATALOG_ROWS[:-1])
+    _patch_0072_ops(monkeypatch, migration, bind)
+
+    with pytest.raises(RuntimeError, match="precondition|schema|column|catalog"):
+        migration.downgrade()
+
+    assert not any(
+        event[0] == "sql" and "add constraint" in event[1].lower() for event in events
+    )
+    assert not any(event[0] == "drop" for event in events)
 
 
 def test_0067_upgrades_only_cigdem_v1_rows(monkeypatch) -> None:
