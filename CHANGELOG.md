@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.7.0] — 2026-08-11
+
+### Added
+- **Nova steps inline in copilot chat.** `CopilotDrawer` retires the lime `ChangeChip` receipt pills in favor of compact `NovaStepRow`s threaded straight into the chat thread: server-render turns get their own disclosure, an in-flight render shows a live compact `NovaActivityFeed` in the drawer, and completion hands off feed continuity to the item page's progress view. Contextual Undo chips let the user revert a specific applied step from the thread without leaving chat. Gated by `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED` (default off) — flag off is byte-identical to today's pill-based receipts. 17 new tests. Deviations noted: diff values render as plain text (no rich formatting) in the new step rows, and the chat done-state usually hands off to the item page rather than settling in place, since a 1400ms nav timer typically fires first.
+
 ## [0.25.6.0] — 2026-08-11
 
 ### Added
