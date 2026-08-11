@@ -8,6 +8,8 @@ import type {
 import type { EditorLayoutMode } from "./useEditorLayoutMode";
 import DirectorSuggestions from "./DirectorSuggestions";
 import type { UseEditDirectorResult } from "@/lib/edit-copilot/useEditDirector";
+import { NovaActivityFeed, NovaStepRow } from "@/components/progress";
+import type { NovaStep } from "@/lib/job-phases";
 
 const STARTERS = [
   "Make the hook punchier",
@@ -66,6 +68,27 @@ function latestAssistantWithChanges(messages: CopilotMessage[]): CopilotMessage 
   return null;
 }
 
+/** Chat steps feed (PR4): the most recent server-render turn (today: only
+ *  set_intro_layout) — used to decide which message, if any, is still
+ *  associated with an active EditorShell poll (see renderTurnActive). */
+function latestAssistantRenderTurn(messages: CopilotMessage[]): CopilotMessage | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (msg.role === "assistant" && msg.isRenderTurn) return msg;
+  }
+  return null;
+}
+
+/** Compact step-row label for an applied op — same "label value" the retired
+ *  lime pill showed (`parseApplied`), just without the bold weight on the
+ *  new value (NovaStepRow's `label` is a plain string). */
+function appliedRowLabel(summary: string): string {
+  const parsed = parseApplied(summary);
+  return `${parsed.label} ${parsed.value}`;
+}
+
+function noop() {}
+
 export default function CopilotDrawer({
   layoutMode,
   open = true,
@@ -86,6 +109,8 @@ export default function CopilotDrawer({
   onClose,
   onClearRestoredInput,
   director,
+  renderTurnActive = false,
+  renderTurnSteps = null,
 }: {
   layoutMode: EditorLayoutMode;
   open?: boolean;
@@ -107,6 +132,16 @@ export default function CopilotDrawer({
   onClose: () => void;
   onClearRestoredInput: () => void;
   director?: UseEditDirectorResult;
+  /** Chat steps feed (PR4): true while EditorShell is polling job status for
+   *  the latest server-render turn in THIS mount. False (default) for a
+   *  freshly (re)mounted drawer, including one reopened onto a thread whose
+   *  render-turn already finished in a prior session — that historical
+   *  message shows its disclosure bubble text only, no stale spinner. */
+  renderTurnActive?: boolean;
+  /** Last-polled `steps` for the active render turn (PR1 projection, same
+   *  field the item page's ProgressTheater consumes). Null until the first
+   *  poll response lands. */
+  renderTurnSteps?: NovaStep[] | null;
 }) {
   const [draft, setDraft] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -115,8 +150,31 @@ export default function CopilotDrawer({
   const elapsed = useElapsed(sending);
   const keyboardOffset = useKeyboardOffset(layoutMode === "light" && open);
   const latestChanged = useMemo(() => latestAssistantWithChanges(messages), [messages]);
+  const latestRenderTurn = useMemo(() => latestAssistantRenderTurn(messages), [messages]);
   const starterVisible = messages.length === 0;
-  const activeSuggestions = suggestions.length > 0 ? suggestions : starterVisible ? STARTERS : [];
+  // Steps feed (NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED): retires the lime
+  // ChangeChip receipt pills in favor of compact NovaStepRows, and gives
+  // server-render turns their own disclosure + live NovaActivityFeed. Flag
+  // off renders exactly as before (byte-identical fallback).
+  const stepsFeedEnabled = process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED === "true";
+  // Contextual suggestion chips (artboard 06): "Undo that" / "What else
+  // changed?" replace the generic starters right after an applied,
+  // locally-undoable turn — the same staleness guard as the Undo link, and
+  // never shown after a (non-undoable) server-render turn.
+  const showContextualChips =
+    stepsFeedEnabled &&
+    !!latestChanged &&
+    !latestChanged.isRenderTurn &&
+    latestChanged.undoVersion === historyVersion &&
+    canUndo &&
+    (latestChanged.applied?.length ?? 0) > 0;
+  const activeSuggestions = showContextualChips
+    ? []
+    : suggestions.length > 0
+      ? suggestions
+      : starterVisible
+        ? STARTERS
+        : [];
 
   useEffect(() => {
     if (!restoredInput) return;
@@ -208,6 +266,7 @@ export default function CopilotDrawer({
 
         {messages.map((message) => {
           const isUser = message.role === "user";
+          const isRenderTurnMsg = stepsFeedEnabled && !isUser && !!message.isRenderTurn;
           const chips = [...(message.applied ?? []), ...(message.rejected ?? [])];
           const collapsed = chips.length > 3 && !expanded[message.id];
           const shownApplied = collapsed
@@ -215,10 +274,13 @@ export default function CopilotDrawer({
             : (message.applied ?? []);
           const remainingSlots = Math.max(0, chips.length - shownApplied.length);
           const showUndo =
+            !isRenderTurnMsg &&
             message.id === latestChanged?.id &&
             message.undoVersion === historyVersion &&
             canUndo &&
             (message.applied?.length ?? 0) > 0;
+          const isActiveRenderTurn =
+            isRenderTurnMsg && renderTurnActive && message.id === latestRenderTurn?.id;
           return (
             <div key={message.id} className="space-y-1.5">
               <div
@@ -231,7 +293,106 @@ export default function CopilotDrawer({
               >
                 {message.text}
               </div>
-              {!isUser && chips.length > 0 && (
+
+              {/* Server-render turn (artboard 03): disclosure + live compact
+                  NovaActivityFeed while THIS mount is polling; a historical
+                  render turn (reopened later, or superseded by a newer one)
+                  shows only the bubble text above — no stale spinner, no
+                  Undo (non-undoable contract). */}
+              {isRenderTurnMsg && isActiveRenderTurn && (
+                <div className="mr-auto max-w-[85%]">
+                  {renderTurnSteps && renderTurnSteps.length > 0 ? (
+                    <div className="rounded-lg bg-zinc-50 px-2.5 py-2">
+                      <NovaActivityFeed
+                        steps={renderTurnSteps}
+                        tone="light"
+                        size="compact"
+                        isTerminal={false}
+                        isSuccess={false}
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-2 rounded-lg border border-zinc-200 bg-white px-3 py-2.5">
+                      <p className="text-[12px] leading-4 text-[#71717a]">
+                        This re-renders the video and can&apos;t be undone from
+                        chat. Your current version stays in history if you
+                        want it back.
+                      </p>
+                      <div className="space-y-1" aria-hidden="true">
+                        <div className="h-2 w-4/5 rounded-full bg-[linear-gradient(90deg,#f4f4f5_25%,#fff_50%,#f4f4f5_75%)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+                        <div className="h-2 w-1/2 rounded-full bg-[linear-gradient(90deg,#f4f4f5_25%,#fff_50%,#f4f4f5_75%)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Local-op turn, steps feed on (artboard 02): compact
+                  NovaStepRows replace the retired lime ChangeChip pills. */}
+              {!isRenderTurnMsg && stepsFeedEnabled && !isUser && chips.length > 0 && (
+                <div className="space-y-1">
+                  <ul role="list" aria-label="Nova AI changes" className="space-y-0.5">
+                    {shownApplied.map((summary, idx) => (
+                      <NovaStepRow
+                        key={`applied-${idx}`}
+                        step={{
+                          id: `${message.id}-applied-${idx}`,
+                          ts: "",
+                          kind: "decision",
+                          label: appliedRowLabel(summary),
+                          detail: null,
+                          status: "done",
+                        }}
+                        tone="light"
+                        size="compact"
+                        expanded={false}
+                        onToggle={noop}
+                      />
+                    ))}
+                    {!collapsed &&
+                      (message.rejected ?? []).map((summary, idx) => (
+                        <NovaStepRow
+                          key={`rejected-${idx}`}
+                          step={{
+                            id: `${message.id}-rejected-${idx}`,
+                            ts: "",
+                            kind: "decision",
+                            label: `Couldn't apply: ${summary}`,
+                            detail: null,
+                            status: "failed",
+                          }}
+                          tone="light"
+                          size="compact"
+                          expanded={false}
+                          onToggle={noop}
+                        />
+                      ))}
+                  </ul>
+                  <div className="flex items-center gap-3 pl-1">
+                    {remainingSlots > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setExpanded((cur) => ({ ...cur, [message.id]: true }))}
+                        className="min-h-8 text-[12px] text-[#3f3f46] underline underline-offset-2 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                      >
+                        +{remainingSlots} more
+                      </button>
+                    )}
+                    {showUndo && (
+                      <button
+                        type="button"
+                        onClick={onUndo}
+                        className="min-h-8 text-[12px] text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                      >
+                        Undo
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Flag off: today's lime ChangeChip pills, byte-identical. */}
+              {!isRenderTurnMsg && !stepsFeedEnabled && !isUser && chips.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5">
                   {shownApplied.map((summary) => {
                     const parsed = parseApplied(summary);
@@ -321,17 +482,38 @@ export default function CopilotDrawer({
       </div>
 
       <div className="flex flex-none flex-wrap gap-1.5 border-t border-zinc-200 px-4 pb-2 pt-3">
-        {activeSuggestions.map((suggestion) => (
-          <button
-            key={suggestion}
-            type="button"
-            disabled={unavailable || !!queued}
-            onClick={() => onSend(suggestion)}
-            className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            {suggestion}
-          </button>
-        ))}
+        {showContextualChips ? (
+          <>
+            <button
+              type="button"
+              disabled={unavailable || !!queued}
+              onClick={onUndo}
+              className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              Undo that
+            </button>
+            <button
+              type="button"
+              disabled={unavailable || !!queued}
+              onClick={() => onSend("What else changed?")}
+              className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              What else changed?
+            </button>
+          </>
+        ) : (
+          activeSuggestions.map((suggestion) => (
+            <button
+              key={suggestion}
+              type="button"
+              disabled={unavailable || !!queued}
+              onClick={() => onSend(suggestion)}
+              className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {suggestion}
+            </button>
+          ))
+        )}
       </div>
 
       <form
