@@ -369,6 +369,7 @@ export default function GenerativePage() {
             receiptText={receiptText}
             variants={status?.variants ?? null}
             retrying={status?.retrying ?? false}
+            steps={status?.steps ?? null}
             size="full"
             tone="light"
           >
