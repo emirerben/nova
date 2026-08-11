@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.3.0] — 2026-08-11
+
+### Added
+- **Nova step-awareness snapshot sections.** The edit copilot's snapshot gains two optional, byte-budget-capped sections: `render_step_summary` (last ≤8 humanized job steps, threaded in by the caller — PR1's status-route steps field lands in a parallel PR) and `recent_edit_history` (last ≤6 one-line summaries of prior applied copilot turns, derived by `useEditCopilot` from its own message log). Both are omitted entirely when absent, never an empty "(none)" block, and are validated/truncated server-side in `edit_copilot.py`'s `_format_snapshot`, mirroring the beat-marks pattern. The prompt's trust-boundary language now explicitly covers RECENT STEPS and RECENT EDIT HISTORY as DATA, not instructions. `EDIT_COPILOT_PROMPT_VERSION` bumps to `2026-08-11-v20` (renumbered past `#797`'s `v19` Stadium Diffusion bump, discovered as a version collision during this merge) — live evals GO, 68/68 live, no judge. Coverage gap: no eval fixture yet drives the step-awareness answer path end to end — follow-up.
+
 ## [0.25.2.0] — 2026-08-11
 
 ### Added
