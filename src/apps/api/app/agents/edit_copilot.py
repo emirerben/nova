@@ -27,7 +27,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-11-v19"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-11-v21"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -70,7 +70,10 @@ _CAPTION_OPS = {
 }
 _MUSIC_OPS = {"swap_music", "set_mix"}
 # set_intro_layout starts a server re-render (render family, single-op-only).
-_RENDER_OPS = frozenset({"set_intro_layout"})
+# apply_custom_effect (PR6 of the Nova AI effect-language train) joins it as the
+# second render op — same single-op-only + not-locally-undoable contract,
+# enforced client-side in apply-ops.ts alongside set_intro_layout's own check.
+_RENDER_OPS = frozenset({"set_intro_layout", "apply_custom_effect"})
 # set_carousel_moment is a staged/undoable local draft mutation (Lane D,
 # carousel-blocks train) — its own family, deliberately NOT part of
 # _RENDER_OPS: a variant can have one available without the other, and unlike
@@ -129,6 +132,7 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "swap_music": frozenset({"track_id"}),
     "set_mix": frozenset({"music_level"}),
     "set_intro_layout": frozenset({"layout"}),
+    "apply_custom_effect": frozenset({"effect"}),
     "set_carousel_moment": frozenset({"config"}),
     "set_title": frozenset({"title"}),
     "open_tool": frozenset({"tool"}),
@@ -182,6 +186,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "swap_music": frozenset({"track_id"}),
     "set_mix": frozenset({"music_level"}),
     "set_intro_layout": frozenset({"layout"}),
+    "apply_custom_effect": frozenset({"effect"}),
     "set_carousel_moment": frozenset({"config"}),
     "set_title": frozenset({"title"}),
     "open_tool": frozenset({"tool"}),
@@ -1029,6 +1034,48 @@ def _effect_catalog() -> str:
     return "\n".join(f"- {effect}" for effect in sorted(_ALLOWED_EFFECTS))
 
 
+def _custom_effect_catalog() -> str:
+    """Embed the sandboxed effect-language whitelist + param bounds so the
+    model can author a valid `EffectSpec` on the first try instead of
+    guessing filter names that `validate_effect_spec` will drop.
+
+    Returns a not-available placeholder when CUSTOM_EFFECTS_ENABLED is off —
+    the model never sees a single filter name or bound in that build, on top
+    of the runtime `_family_allowed` gate that drops the op regardless of
+    what the model proposes. Never invent a filter or param name outside
+    this list; the copy contract (artboard 04) is that the CHAT REPLY never
+    names a filter either — this catalog is authoring input, not user copy.
+    """
+    if not settings.custom_effects_enabled:
+        return "(not available for this build)"
+    from app.pipeline.custom_effects import (  # noqa: PLC0415
+        FILTER_PARAM_SPECS,
+        FILTERS_WITHOUT_TIMELINE_ENABLE,
+    )
+
+    lines: list[str] = []
+    for name in sorted(FILTER_PARAM_SPECS):
+        param_specs = FILTER_PARAM_SPECS[name]
+        if param_specs:
+            bits = []
+            for pname in sorted(param_specs):
+                pspec = param_specs[pname]
+                if pspec.kind == "numeric":
+                    bits.append(f"{pname}∈[{pspec.min:g},{pspec.max:g}]")
+                else:
+                    bits.append(f"{pname}∈{{{','.join(sorted(pspec.enum or ()))}}}")
+            params = ", ".join(bits)
+        else:
+            params = "(no params)"
+        window = (
+            "full-clip only, ignores start_s/end_s"
+            if name in FILTERS_WITHOUT_TIMELINE_ENABLE
+            else "windowed to start_s-end_s"
+        )
+        lines.append(f"- {name}: {params} — {window}")
+    return "\n".join(lines)
+
+
 def _caption_font_catalog() -> str:
     try:
         from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
@@ -1084,6 +1131,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             font_catalog=_font_catalog(),
             effect_catalog=_effect_catalog(),
             caption_font_catalog=_caption_font_catalog(),
+            custom_effect_catalog=_custom_effect_catalog(),
         )
 
     def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002
@@ -1220,6 +1268,15 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
 
 
 def _family_allowed(name: str, snapshot: dict) -> bool:
+    # Backend defense-in-depth: apply_custom_effect is dropped outright when
+    # CUSTOM_EFFECTS_ENABLED is off, regardless of what allowed_op_families the
+    # (untrusted) client-sent snapshot claims — a stale client with the
+    # frontend flag cached on, or a hand-crafted request, must not resurrect
+    # the op past a kill-switch or pre-launch backend. This must run BEFORE
+    # the `raw_allowed in (None, [])` all-ops fallback below, since an absent
+    # allowed_op_families would otherwise default the op to allowed.
+    if name == "apply_custom_effect" and not settings.custom_effects_enabled:
+        return False
     raw_allowed = snapshot.get("allowed_op_families") if isinstance(snapshot, dict) else None
     if raw_allowed in (None, []):
         return True
@@ -1246,6 +1303,13 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         aliases = {"music", "audio"}
     elif name == "set_intro_layout":
         aliases = {"render", "layout", "intro_layout"}
+    elif name == "apply_custom_effect":
+        # Deliberately its own family ("custom_effect"), NOT sharing
+        # set_intro_layout's "render" alias: the two render ops have
+        # unrelated eligibility (intro-layout switchability vs the
+        # CUSTOM_EFFECTS_ENABLED flag + a renderable source video), so a
+        # variant with one available must not silently unlock the other.
+        aliases = {"custom_effect", "effect", "effects"}
     elif name in _CAROUSEL_OPS:
         aliases = {"carousel", "carousel_moment"}
     elif name in _TITLE_OPS:
@@ -1612,6 +1676,31 @@ def _coerce_payload(
             state.invalid_value()
             return None
         out["layout"] = layout
+
+    if name == "apply_custom_effect":
+        from app.pipeline.custom_effects import (  # noqa: PLC0415
+            EffectValidationError,
+            validate_effect_spec,
+        )
+
+        raw_effect = out.get("effect")
+        if not isinstance(raw_effect, dict):
+            state.invalid_value()
+            return None
+        try:
+            spec = validate_effect_spec(raw_effect)
+        except EffectValidationError as exc:
+            # Rejected, machine-readable reason — logged for debugging, never
+            # surfaced verbatim to the model or the user; the reply copy for
+            # "I couldn't build that look" is generic (see the prompt).
+            log.warning("edit_copilot.drop_invalid_custom_effect", reason=exc.reason)
+            state.invalid_value()
+            return None
+        # Replace the raw payload with the validated, canonicalized spec — the
+        # execution task re-validates AGAIN at dispatch/render time (never
+        # trusts a stored/client value either), but there is no reason to let
+        # an unvalidated shape survive this boundary once validation succeeds.
+        out["effect"] = spec.model_dump(mode="json")
 
     if name == "split_clip":
         slots = _snapshot_list(snapshot, _SLOT_INDEX_KEYS)

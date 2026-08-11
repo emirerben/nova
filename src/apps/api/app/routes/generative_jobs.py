@@ -1782,6 +1782,16 @@ class CaptionFontRequest(BaseModel):
     caption_font: str | None = None
 
 
+class CustomEffectRequest(BaseModel):
+    """Raw EffectSpec dict for `apply_custom_effect` (PR6, effect-language
+    train). Never trusted at this shape — `dispatch_apply_custom_effect`
+    below runs it through `validate_effect_spec` before anything happens,
+    and the execution task validates it again independently at render time.
+    """
+
+    effect: dict[str, Any]
+
+
 class CaptionPositionRequest(BaseModel):
     """Caption vertical position as a normalized y coordinate from the top."""
 
@@ -2181,6 +2191,76 @@ async def dispatch_retranscribe_captions(
     # Caption tasks inline-run the overlay/SFX reapply passes — overlay-jobs queue.
     retranscribe_subtitled_captions.apply_async(
         args=[str(job_id), variant_id, lang],
+        kwargs={"render_gen_id": render_gen_id},
+        queue="overlay-jobs",
+    )
+
+
+async def dispatch_apply_custom_effect(
+    job_id: uuid.UUID, variant_id: str, *, effect_raw: dict, db: AsyncSession
+) -> None:
+    """Validate + enqueue Nova's sandboxed effect-language burn for one variant
+    (PR6, effect-language train).
+
+    Route-level flag gate (`settings.custom_effects_enabled`, 404 when off)
+    happens in the caller, matching the SFX-lane pattern — this function is
+    the shared dispatcher any caller (copilot-driven or, later, a direct panel
+    control) can reuse once the gate has already passed.
+
+    Validates the spec HERE, before the row-locked fetch, so an invalid spec
+    422s without ever touching `render_status` — chat-authored specs are
+    already validated once at parse time in `edit_copilot.py`, but the PATCH
+    body reaching this route is untrusted regardless of origin.
+    `apply_custom_effect_render` validates AGAIN, independently, at execution
+    time (never trusts a stored/dispatched value either) — two checks, one
+    boundary each.
+
+    Row-locked re-fetch + COMMIT BEFORE the enqueue — same discipline as
+    `dispatch_retranscribe_captions` (the task's start write is token-checked
+    against the just-minted render_generation_id, so a worker that dequeues
+    before the commit would strand the variant in "rendering" forever).
+    """
+    from app.pipeline.custom_effects import (
+        EFFECT_COST_CEILING as _EFFECT_COST_CEILING,  # noqa: PLC0415
+    )
+    from app.pipeline.custom_effects import (  # noqa: PLC0415
+        EffectValidationError,
+        estimate_cost,
+        validate_effect_spec,
+    )
+
+    try:
+        spec = validate_effect_spec(effect_raw)
+    except EffectValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "invalid_effect_spec", "reason": exc.reason, "detail": exc.detail},
+        ) from exc
+
+    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
+    if not variant.get("base_video_path") and not variant.get("video_path"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This video has no rendered source to apply an effect to.",
+        )
+    duration_hint = float(variant.get("duration_s") or 0.0)
+    if estimate_cost(spec, duration_s=duration_hint) > _EFFECT_COST_CEILING:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This effect is too complex for the current clip length — shorten the window "
+            "or use fewer filters.",
+        )
+
+    render_gen_id = _mark_variant_rendering(job, variant_id)
+    await db.commit()
+    from app.tasks.custom_effects_render import apply_custom_effect_render  # noqa: PLC0415
+
+    apply_custom_effect_render.apply_async(
+        args=[str(job_id), variant_id, spec.model_dump(mode="json")],
         kwargs={"render_gen_id": render_gen_id},
         queue="overlay-jobs",
     )

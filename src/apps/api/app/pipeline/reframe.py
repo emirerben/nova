@@ -122,6 +122,7 @@ def _encoding_args(
         - build_talking_head_command     talking_head_assembler.py (Lane C)
         - build_masonry_command          masonry_montage.py
         - build_masonry_text_burn_command masonry_montage.py
+        - _build_custom_effect_command   custom_effects_render.py (Lane PR6)
 
     Why this matters: libx264 preset=ultrafast disables mb-tree, psy-rd,
     B-frames and trellis quant. On smooth gradients (sky, dark canopy)

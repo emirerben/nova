@@ -865,14 +865,13 @@ class Settings(BaseSettings):
     # Kill switch: IDEA_CENTRIC_PLAN_ENABLED=false → create_plan auto-generates (old behavior).
     idea_centric_plan_enabled: bool = True
 
-    # Sandboxed effect-language validator (PR5 of the Nova AI effect-language
-    # train — see app/pipeline/custom_effects.py). Nothing reads this flag
-    # yet: PR5 lands the validator + this flag inert (no execution wiring, no
-    # copilot op registration). A later PR gates the `apply_custom_effect`
-    # copilot op and its render task behind it. Future Vercel twin:
-    # NEXT_PUBLIC_CUSTOM_EFFECTS_ENABLED (frontend affordance gate, added
-    # alongside that PR — Fly first, then Vercel, per this repo's dual-flag
-    # convention).
+    # Sandboxed effect-language validator + execution (PR5 lands the validator
+    # at app/pipeline/custom_effects.py inert; PR6 wires the `apply_custom_effect`
+    # copilot op, the edit_copilot.py family gate, and the
+    # app/tasks/custom_effects_render.py execution task behind this flag).
+    # Defaults false. Dual-flag with NEXT_PUBLIC_CUSTOM_EFFECTS_ENABLED
+    # (Vercel — gates the frontend op-family exposure) — Fly first, then
+    # Vercel, per this repo's dual-flag convention.
     custom_effects_enabled: bool = False
 
     # Scoring weights (named constants — change here only)
