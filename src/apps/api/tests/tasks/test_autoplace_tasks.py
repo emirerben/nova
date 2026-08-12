@@ -8,17 +8,20 @@ source. These pin the state-machine transitions of
 feature's failure design depends on — the persisted `overlay_suggest_status` and
 the run-once transcript key (`overlay_transcript`, NOT `transcript` — review C19).
 
-`analyze_pool_asset` is NOT covered here (it downloads + probes real media and its
-transitions are already exercised indirectly by the register-route dispatch test);
-see the report for the gap.
+`analyze_pool_asset` uses mocked media I/O here to pin its ownership/epoch fence
+and image/video persistence transitions without downloading real footage.
 """
 
 from __future__ import annotations
 
 import json
 import uuid
+from types import SimpleNamespace
+
+import pytest
 
 import app.tasks.autoplace as ap
+from app.services.content_plan_persona import require_plan_persona_owned
 
 JOB_ID = "11111111-1111-1111-1111-111111111111"
 VARIANT_ID = "original_text"
@@ -39,6 +42,7 @@ def _variant(**over) -> dict:
 class _Job:
     def __init__(self, variant: dict):
         self.id = uuid.UUID(JOB_ID)
+        self.status = "processing"
         self.content_plan_item_id = uuid.uuid4()
         self.assembly_plan = {"variants": [variant]}
 
@@ -164,8 +168,10 @@ class _PoolAsset:
 
 
 class _AnalyzeSess:
-    def __init__(self, asset: _PoolAsset):
+    def __init__(self, asset: _PoolAsset, item, plan):  # noqa: ANN001
         self.asset = asset
+        self.item = item
+        self.plan = plan
         self.commits = 0
 
     def __enter__(self):
@@ -174,19 +180,46 @@ class _AnalyzeSess:
     def __exit__(self, *a):
         return False
 
-    def get(self, _model, _pk, **_kw):
-        return self.asset
+    def get(self, model, _pk, **_kw):
+        from app.models import ContentPlan, PlanItem, PlanItemAsset
+
+        return {
+            ContentPlan: self.plan,
+            PlanItem: self.item,
+            PlanItemAsset: self.asset,
+        }.get(model)
 
     def commit(self):
         self.commits += 1
 
 
-def _patch_analyze_pool_common(monkeypatch, asset: _PoolAsset, *, gemini_key: str | None) -> None:
+def _patch_analyze_pool_common(
+    monkeypatch,
+    asset: _PoolAsset,
+    *,
+    gemini_key: str | None,
+) -> tuple[SimpleNamespace, SimpleNamespace]:
     from PIL import Image
 
     from app.config import settings as _settings
 
-    monkeypatch.setattr(ap, "_sync_session", lambda: _AnalyzeSess(asset))
+    item = SimpleNamespace(id=asset.plan_item_id, content_plan_id=uuid.uuid4())
+    plan = SimpleNamespace(
+        id=item.content_plan_id,
+        user_id=asset.user_id,
+        persona_id=uuid.uuid4(),
+        ownership_epoch=0,
+        ownership_quarantined_at=None,
+    )
+    persona = SimpleNamespace(id=plan.persona_id, user_id=plan.user_id)
+    monkeypatch.setattr(ap, "_sync_session", lambda: _AnalyzeSess(asset, item, plan))
+    monkeypatch.setattr(
+        ap,
+        "load_owned_plan_persona_sync",
+        lambda _db, current_plan, *, for_update=False: require_plan_persona_owned(
+            current_plan, persona
+        ),
+    )
     monkeypatch.setattr(_settings, "gemini_api_key", gemini_key, raising=False)
     monkeypatch.setattr(
         "app.services.pipeline_trace.pipeline_trace_for", lambda *a, **k: _NullCtx()
@@ -201,13 +234,227 @@ def _patch_analyze_pool_common(monkeypatch, asset: _PoolAsset, *, gemini_key: st
 
     monkeypatch.setattr("app.storage.download_to_file", _download)
     monkeypatch.setattr("app.pipeline.image_clip.image_has_alpha", lambda _path: True)
+    return plan, persona
 
 
 def _variant_now(job: _Job) -> dict:
     return job.assembly_plan["variants"][0]
 
 
+def test_cancelled_matcher_exits_before_transcript_or_agent(monkeypatch):
+    job = _Job(_variant())
+    job.status = "cancelled"
+    before = dict(_variant_now(job))
+    _patch_common(monkeypatch, job, [_Asset()], gemini_key="k")
+    monkeypatch.setattr(
+        "app.services.transcript_source.transcript_source",
+        lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("cancelled transcript read")),
+    )
+    monkeypatch.setattr(
+        "app.services.overlay_autoplace.heuristic_match",
+        lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("cancelled matcher call")),
+    )
+
+    ap.match_overlay_suggestions(JOB_ID, VARIANT_ID, USER_ID, auto_apply=True)
+
+    assert _variant_now(job) == before
+
+
+def test_cancellation_during_match_rejects_final_locked_write(monkeypatch):
+    job = _Job(_variant())
+    assets = [_Asset()]
+
+    def _cancel_before_result_persist(lock_idx: int) -> None:
+        if lock_idx == 2:
+            job.status = "cancelled"
+
+    _patch_common(
+        monkeypatch,
+        job,
+        assets,
+        gemini_key=None,
+        on_locked_get=_cancel_before_result_persist,
+    )
+    words = [{"word": "hello", "start_s": 0.0, "end_s": 0.5}]
+    monkeypatch.setattr("app.services.transcript_source.words_from_variant", lambda _v: words)
+    monkeypatch.setattr(
+        "app.services.transcript_source.transcript_source",
+        lambda _v, **_kw: (words, "hash-cancelled"),
+    )
+    monkeypatch.setattr(
+        "app.services.overlay_autoplace.heuristic_match",
+        lambda *_a, **_kw: [{"asset_id": str(assets[0].id)}],
+    )
+    monkeypatch.setattr(
+        "app.services.overlay_autoplace.build_suggestions",
+        lambda _raw, **_kw: [{"id": "must-not-persist"}],
+    )
+
+    ap.match_overlay_suggestions(JOB_ID, VARIANT_ID, USER_ID)
+
+    variant = _variant_now(job)
+    assert job.status == "cancelled"
+    assert variant["overlay_suggest_status"] == "matching"
+    assert "overlay_suggestions" not in variant
+    assert "overlay_suggest_hash" not in variant
+
+
+def test_superseded_match_attempt_rejects_late_locked_write(monkeypatch):
+    attempt = "attempt-a"
+    job = _Job(_variant(overlay_suggest_attempt_token=attempt))
+    assets = [_Asset()]
+
+    def _supersede_before_result_persist(lock_idx: int) -> None:
+        if lock_idx == 2:
+            _variant_now(job)["overlay_suggest_attempt_token"] = "attempt-b"
+
+    _patch_common(
+        monkeypatch,
+        job,
+        assets,
+        gemini_key=None,
+        on_locked_get=_supersede_before_result_persist,
+    )
+    words = [{"word": "hello", "start_s": 0.0, "end_s": 0.5}]
+    monkeypatch.setattr("app.services.transcript_source.words_from_variant", lambda _v: words)
+    monkeypatch.setattr(
+        "app.services.transcript_source.transcript_source",
+        lambda _v, **_kw: (words, "hash-stale"),
+    )
+    monkeypatch.setattr(
+        "app.services.overlay_autoplace.heuristic_match",
+        lambda *_a, **_kw: [{"asset_id": str(assets[0].id)}],
+    )
+    monkeypatch.setattr(
+        "app.services.overlay_autoplace.build_suggestions",
+        lambda _raw, **_kw: [{"id": "must-not-persist"}],
+    )
+
+    ap.match_overlay_suggestions(
+        JOB_ID,
+        VARIANT_ID,
+        USER_ID,
+        attempt_token=attempt,
+    )
+
+    variant = _variant_now(job)
+    assert variant["overlay_suggest_attempt_token"] == "attempt-b"
+    assert variant["overlay_suggest_status"] == "matching"
+    assert "overlay_suggestions" not in variant
+    assert "overlay_suggest_hash" not in variant
+
+
+def test_cancelled_sfx_autoplace_exits_before_glossary_or_agent(monkeypatch):
+    from app.config import settings as _settings
+
+    job = _Job(_variant())
+    job.status = "cancelled"
+    before = dict(_variant_now(job))
+    _patch_common(monkeypatch, job, [], gemini_key="k")
+    monkeypatch.setattr(_settings, "sfx_autoplace_enabled", True, raising=False)
+    glossary_calls: list[bool] = []
+    monkeypatch.setattr(ap, "_load_glossary", lambda _db: glossary_calls.append(True) or [])
+
+    ap.autoplace_sfx_suggestions(JOB_ID, VARIANT_ID)
+
+    assert glossary_calls == []
+    assert _variant_now(job) == before
+
+
 # ── analyze_pool_asset image alpha persistence ────────────────────────────────
+
+
+def test_pool_asset_fence_locks_plan_persona_item_asset_in_order(monkeypatch) -> None:
+    from app.models import ContentPlan, PlanItem, PlanItemAsset
+
+    plan = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        persona_id=uuid.uuid4(),
+        ownership_epoch=3,
+        ownership_quarantined_at=None,
+    )
+    item = SimpleNamespace(id=uuid.uuid4(), content_plan_id=plan.id)
+    asset = SimpleNamespace(id=uuid.uuid4(), plan_item_id=item.id, user_id=plan.user_id)
+    events: list[str] = []
+
+    class _FenceSession:
+        def get(self, model, _pk, **kwargs):  # noqa: ANN001
+            assert kwargs == {"with_for_update": True}
+            events.append(model.__name__)
+            return {ContentPlan: plan, PlanItem: item, PlanItemAsset: asset}[model]
+
+    monkeypatch.setattr(
+        ap,
+        "load_owned_plan_persona_sync",
+        lambda *_a, **_kw: events.append("Persona") or object(),
+    )
+
+    assert ap._lock_owned_pool_asset(
+        _FenceSession(),
+        plan_id=plan.id,
+        item_id=item.id,
+        asset_id=asset.id,
+        expected_epoch=3,
+    ) == (plan, item, asset)
+    assert events == ["ContentPlan", "Persona", "PlanItem", "PlanItemAsset"]
+
+
+@pytest.mark.parametrize("fence", ["mismatch", "quarantine"])
+def test_analyze_pool_asset_invalid_owner_exits_before_download_or_agent(
+    monkeypatch,
+    fence: str,
+) -> None:
+    asset = _PoolAsset(kind="image")
+    plan, persona = _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    if fence == "mismatch":
+        persona.user_id = uuid.uuid4()
+    else:
+        plan.ownership_quarantined_at = object()
+    downloads: list[str] = []
+    analyses: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.download_to_file",
+        lambda path, _local: downloads.append(path),
+    )
+    monkeypatch.setattr(
+        ap,
+        "_analyze_image",
+        lambda *_a, **_kw: analyses.append("called") or (None, None, None, None),
+    )
+
+    ap.analyze_pool_asset.run(str(asset.id))
+
+    assert downloads == []
+    assert analyses == []
+    assert asset.status == "uploaded"
+    assert asset.analysis is None
+
+
+@pytest.mark.parametrize("fence_change", ["epoch", "quarantine"])
+def test_analyze_pool_asset_discards_output_when_fence_changes_during_analysis(
+    monkeypatch,
+    fence_change: str,
+) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "ready"
+    asset.analysis = {"subject": "old analysis"}
+    plan, _persona = _patch_analyze_pool_common(monkeypatch, asset, gemini_key=None)
+
+    def _pause_then_finish(*_args, **_kwargs):
+        if fence_change == "epoch":
+            plan.ownership_epoch += 1
+        else:
+            plan.ownership_quarantined_at = object()
+        return ({"subject": "must not persist"}, 1.25, (100, 80), False)
+
+    monkeypatch.setattr(ap, "_analyze_image", _pause_then_finish)
+
+    ap.analyze_pool_asset.run(str(asset.id), refresh=True)
+
+    assert asset.status == "ready"
+    assert asset.analysis == {"subject": "old analysis"}
+    assert asset.aspect is None
 
 
 def test_analyze_pool_asset_image_gemini_success_persists_has_alpha(monkeypatch):

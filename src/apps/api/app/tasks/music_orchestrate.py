@@ -48,6 +48,11 @@ from app.services.music_sections import (
     refresh_recipe_cached_for_bounds,
 )
 from app.storage import download_to_file
+from app.tasks._job_cancel_fence import (
+    active_job_for_update,
+    delete_task_owned_outputs,
+    new_task_run_id,
+)
 from app.tasks.template_orchestrate import (
     _analyze_clips_parallel,
     _assemble_clips,
@@ -600,18 +605,18 @@ def _run_music_job(job_id: str) -> None:
 
     # [1] Load job + track
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = active_job_for_update(db, job_id, operation="music_job_start")
         if job is None:
-            log.error("music_job_not_found", job_id=job_id)
+            log.info("music_job_start_skipped", job_id=job_id)
             return
 
         job.status = "processing"
-        db.commit()
 
         music_track_id = job.music_track_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", [])
         lyrics_config_override = all_candidates.get("lyrics_config_override") or None
+        db.commit()
 
     if not clip_paths_gcs:
         raise ValueError("No clip paths found in job")
@@ -764,10 +769,15 @@ def _run_music_job(job_id: str) -> None:
             "lyrics_config_effective": lyrics_config,
         }
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job:
-                job.assembly_plan = plan_data
-                db.commit()
+            job = active_job_for_update(
+                db,
+                job_id,
+                operation="music_job_persist_plan",
+            )
+            if job is None:
+                return
+            job.assembly_plan = plan_data
+            db.commit()
 
         # [9] FFmpeg assemble
         log.info("ffmpeg_assemble_start", job_id=job_id)
@@ -843,26 +853,44 @@ def _run_music_job(job_id: str) -> None:
         # [11] Upload final video
         from app.storage import upload_public_read  # noqa: PLC0415
 
-        output_gcs = f"music-jobs/{job_id}/output.mp4"
+        task_run_id = new_task_run_id()
+        output_gcs = f"music-jobs/{job_id}/task-runs/{task_run_id}/output.mp4"
         # Capture the signed URL — template_orchestrate stores the URL,
         # so the public/admin viewers can use assembly_plan.output_url
         # directly as a <video src>. Was previously discarding this and
         # storing the relative GCS path, which broke direct playback.
-        output_url = upload_public_read(final_path, output_gcs)
+        try:
+            output_url = upload_public_read(final_path, output_gcs)
+        except Exception:
+            delete_task_owned_outputs(job_id, [output_gcs])
+            raise
         log.info("music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
 
     # [12] Mark done
-    with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
-        if job:
-            job.status = "music_ready"
-            existing_plan = job.assembly_plan or {}
-            job.assembly_plan = {
-                **existing_plan,
-                "output_url": output_url,
-                "output_path": output_gcs,
-            }
-            db.commit()
+    finalized = False
+    try:
+        with _sync_session() as db:
+            job = active_job_for_update(
+                db,
+                job_id,
+                operation="music_job_finalize",
+            )
+            if job is not None:
+                job.status = "music_ready"
+                existing_plan = job.assembly_plan or {}
+                job.assembly_plan = {
+                    **existing_plan,
+                    "output_url": output_url,
+                    "output_path": output_gcs,
+                }
+                db.commit()
+                finalized = True
+    except Exception:
+        delete_task_owned_outputs(job_id, [output_gcs])
+        raise
+    if not finalized:
+        delete_task_owned_outputs(job_id, [output_gcs])
+        return
 
     log.info("music_job_done", job_id=job_id)
 
@@ -1353,12 +1381,11 @@ def _run_templated_music_job(job_id: str) -> None:
 
     # [1] Load job + track + recipe
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = active_job_for_update(db, job_id, operation="templated_music_job_start")
         if job is None:
-            log.error("music_job_not_found", job_id=job_id)
+            log.info("templated_music_job_start_skipped", job_id=job_id)
             return
         job.status = "processing"
-        db.commit()
 
         if not job.music_track_id:
             raise ValueError("Job has no music_track_id")
@@ -1384,6 +1411,7 @@ def _run_templated_music_job(job_id: str) -> None:
         lyrics_config_tmpl = _maybe_select_lyric_style_set(
             lyrics_config_tmpl, track.ai_labels, track.title or ""
         )
+        db.commit()
 
     lyrics_cached_tmpl = ensure_fresh_lyrics_cached_for_render(
         track_id=music_track_id_tmpl,
@@ -1623,10 +1651,15 @@ def _run_templated_music_job(job_id: str) -> None:
             "lyrics_config_effective": lyrics_config_tmpl,
         }
         with _sync_session() as db:
-            j = db.get(Job, uuid.UUID(job_id))
-            if j:
-                j.assembly_plan = plan_data
-                db.commit()
+            job = active_job_for_update(
+                db,
+                job_id,
+                operation="templated_music_job_persist_plan",
+            )
+            if job is None:
+                return
+            job.assembly_plan = plan_data
+            db.commit()
 
         # [6] FFmpeg concat — clips are already at output spec, no reframe.
         # _assemble_clips is intentionally bypassed: its phase-2 re-runs every
@@ -1691,22 +1724,40 @@ def _run_templated_music_job(job_id: str) -> None:
             raise RuntimeError("_mix_template_audio produced empty output")
 
         # [8] Upload result
-        output_gcs = f"music-jobs/{job_id}/output.mp4"
-        output_url = upload_public_read(final_path, output_gcs)
+        task_run_id = new_task_run_id()
+        output_gcs = f"music-jobs/{job_id}/task-runs/{task_run_id}/output.mp4"
+        try:
+            output_url = upload_public_read(final_path, output_gcs)
+        except Exception:
+            delete_task_owned_outputs(job_id, [output_gcs])
+            raise
         log.info("templated_music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
 
     # [9] Mark done
-    with _sync_session() as db:
-        j = db.get(Job, uuid.UUID(job_id))
-        if j:
-            j.status = "music_ready"
-            existing = j.assembly_plan or {}
-            j.assembly_plan = {
-                **existing,
-                "output_url": output_url,
-                "output_path": output_gcs,
-            }
-            db.commit()
+    finalized = False
+    try:
+        with _sync_session() as db:
+            job = active_job_for_update(
+                db,
+                job_id,
+                operation="templated_music_job_finalize",
+            )
+            if job is not None:
+                job.status = "music_ready"
+                existing = job.assembly_plan or {}
+                job.assembly_plan = {
+                    **existing,
+                    "output_url": output_url,
+                    "output_path": output_gcs,
+                }
+                db.commit()
+                finalized = True
+    except Exception:
+        delete_task_owned_outputs(job_id, [output_gcs])
+        raise
+    if not finalized:
+        delete_task_owned_outputs(job_id, [output_gcs])
+        return
     log.info("templated_music_job_done", job_id=job_id)
 
 
@@ -1834,11 +1885,16 @@ def _fail_job(job_id: str, error_detail: str) -> None:
     for attempt in range(3):
         try:
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
-                if job:
-                    job.status = "processing_failed"
-                    job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
-                    db.commit()
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="music_job_mark_failed",
+                )
+                if job is None:
+                    return
+                job.status = "processing_failed"
+                job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
+                db.commit()
             return
         except (OperationalError, DBAPIError) as exc:
             if attempt == 2:

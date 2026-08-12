@@ -130,7 +130,15 @@ jobs:
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
           ALLOWED_ORIGINS: '["http://localhost:3000"]'
         run: |
-          python -m alembic upgrade head
+          python -m alembic upgrade 0072
+          python scripts/verify_content_plan_owner_constraint.py seed-mismatch
+          if python -m alembic upgrade 0073; then
+            echo "0073 unexpectedly accepted a cross-owner plan/persona row"
+            exit 1
+          fi
+          python scripts/verify_content_plan_owner_constraint.py repair-mismatch
+          python -m alembic upgrade 0073
+          python scripts/verify_content_plan_owner_constraint.py verify-installed
           python -m alembic downgrade -1
           python -m alembic upgrade head
       - name: Run API tests

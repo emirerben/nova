@@ -203,6 +203,7 @@ def build_generative_job(
     language: str = "en",
     selected_platforms: list[str] | None = None,
     content_plan_item_id: uuid.UUID | None = None,
+    content_plan_ownership_epoch: int | None = None,
     persona_tone: str = "",
     persona_pillars: list[str] | None = None,
     item_theme: str = "",
@@ -238,6 +239,15 @@ def build_generative_job(
     """
     if not clip_paths:
         raise ValueError("At least 1 clip is required")
+    if mode == "content_plan":
+        if content_plan_item_id is None:
+            raise ValueError("content_plan mode requires a plan item")
+        if (
+            isinstance(content_plan_ownership_epoch, bool)
+            or not isinstance(content_plan_ownership_epoch, int)
+            or content_plan_ownership_epoch < 0
+        ):
+            raise ValueError("content_plan mode requires a non-negative ownership epoch")
     _validate_generative_clip_paths(user_id, clip_paths)
     # Declared edit shape (montage default). The orchestrator's archetype dispatch
     # resolves it against the footage and falls back to montage when unsupported.
@@ -330,5 +340,6 @@ def build_generative_job(
         selected_platforms=selected_platforms or list(DEFAULT_PLATFORMS),
         all_candidates=all_candidates,
         content_plan_item_id=content_plan_item_id,
+        content_plan_ownership_epoch=content_plan_ownership_epoch,
         status="queued",
     )

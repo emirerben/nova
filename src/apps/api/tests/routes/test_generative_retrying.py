@@ -109,7 +109,7 @@ async def _status_response_for(monkeypatch: pytest.MonkeyPatch, *, beacon_age_s:
         worker_heartbeat_at=beacon,
     )
 
-    async def _load(job_id, db, user, allowed_modes=None):
+    async def _load(job_id, db, user, allowed_modes=None, **_kwargs):
         return job
 
     monkeypatch.setattr(gj, "_load_generative_job", _load)

@@ -21,7 +21,11 @@ class TestSweepStaleJobsWrapsReaper:
         """Happy path: sweeper returns whatever reap_orphans returns."""
         from app.tasks.maintenance import sweep_stale_jobs
 
-        with patch("app.tasks.maintenance.reap_orphans", return_value=7) as mock_reap:
+        with (
+            patch("app.tasks.maintenance._live_job_ids", return_value=set()),
+            patch("app.tasks.maintenance.reap_orphans", return_value=7) as mock_reap,
+            patch("app.tasks.maintenance.reconcile_stuck_variants"),
+        ):
             # Celery `bind=True` tasks expose .run as the unbound body;
             # call .__wrapped__ or .run with a fake self.
             result = sweep_stale_jobs.run()

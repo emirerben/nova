@@ -245,9 +245,20 @@ def test_add_to_plan_links_both_fk_sides() -> None:
     plan = MagicMock()
     plan.id = uuid.uuid4()
     plan.user_id = user.id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = None
+    persona = MagicMock(id=plan.persona_id, user_id=user.id)
     item = MagicMock()
     item.id = uuid.uuid4()
-    db = _db([_scalar(job), _scalar(plan), _scalar(item)])
+    db = _db(
+        [
+            _scalar(job),
+            _scalar(plan),
+            _scalar(persona),
+            _scalar(item),
+            _scalar(job),
+        ]
+    )
     _override(user, db)
 
     resp = client.post(f"/me/jobs/{job.id}/add-to-plan", json={"day_index": 3})
@@ -283,7 +294,12 @@ def test_add_to_plan_404_when_day_missing() -> None:
     plan = MagicMock()
     plan.id = uuid.uuid4()
     plan.user_id = user.id
-    db = _db([_scalar(job), _scalar(plan), _scalar(None)])  # day not found
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = None
+    persona = MagicMock(id=plan.persona_id, user_id=user.id)
+    db = _db(
+        [_scalar(job), _scalar(plan), _scalar(persona), _scalar(None)]
+    )  # day not found
     _override(user, db)
     resp = client.post(f"/me/jobs/{job.id}/add-to-plan", json={"day_index": 99})
     assert resp.status_code == 404

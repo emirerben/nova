@@ -30,6 +30,13 @@ from app.models import Job
 
 log = structlog.get_logger()
 
+_CANCELLED_STATUS: Final[str] = "cancelled"
+
+
+def _cancelled(job: Job) -> bool:
+    """Cancelled is an immutable terminal state for every phase writer."""
+    return job.status == _CANCELLED_STATUS
+
 
 # Canonical phase names. Keep stable — the frontend maps these to user-facing
 # copy in src/apps/web/src/lib/template-job-phases.ts. Adding a new phase here
@@ -90,8 +97,8 @@ def mark_started(job_id: str | uuid.UUID) -> None:
         return
     try:
         with sync_session() as db:
-            job = db.get(Job, job_uuid)
-            if job is None:
+            job = db.get(Job, job_uuid, with_for_update=True)
+            if job is None or _cancelled(job):
                 return
             now = datetime.now(UTC)
             if job.started_at is None:
@@ -134,6 +141,8 @@ def mark_reattempt(job: Job) -> bool:
     dispatch owns the clock. That is the requested behavior ("every Save restarts
     it"); the per-variant tiles keep their own `render_started_at`.
     """
+    if getattr(job, "status", None) == _CANCELLED_STATUS:
+        return False
     # getattr, not attribute access: this is a best-effort UI concern and callers
     # include lightweight Job stand-ins. A missing attribute means "no run in
     # flight", which is the safe reading — the clock moves.
@@ -194,8 +203,8 @@ def record_phase(
         return
     try:
         with sync_session() as db:
-            job = db.get(Job, job_uuid)
-            if job is None:
+            job = db.get(Job, job_uuid, with_for_update=True)
+            if job is None or _cancelled(job):
                 return
             now = datetime.now(UTC)
             t_offset_ms = None
@@ -255,14 +264,14 @@ def record_sub_phase(
         entry["detail"] = detail
     try:
         with sync_session() as db:
-            job = db.get(Job, job_uuid)
-            if job is None:
+            job = db.get(Job, job_uuid, with_for_update=True)
+            if job is None or _cancelled(job):
                 return
             if job.started_at is not None:
                 entry["t_offset_ms"] = int((now - job.started_at).total_seconds() * 1000)
             stmt = (
                 update(Job)
-                .where(Job.id == job_uuid)
+                .where(Job.id == job_uuid, Job.status != _CANCELLED_STATUS)
                 .values(phase_log=Job.phase_log.op("||")(cast(literal(json.dumps([entry])), JSONB)))
             )
             db.execute(stmt)
@@ -284,8 +293,8 @@ def mark_finished(job_id: str | uuid.UUID) -> None:
         return
     try:
         with sync_session() as db:
-            job = db.get(Job, job_uuid)
-            if job is None:
+            job = db.get(Job, job_uuid, with_for_update=True)
+            if job is None or _cancelled(job):
                 return
             job.finished_at = datetime.now(UTC)
             job.current_phase = None
@@ -359,7 +368,11 @@ def beat_heartbeat(job_id: str | uuid.UUID) -> None:
         from sqlalchemy import func  # noqa: PLC0415
 
         with sync_session() as db:
-            db.execute(update(Job).where(Job.id == job_uuid).values(worker_heartbeat_at=func.now()))
+            db.execute(
+                update(Job)
+                .where(Job.id == job_uuid, Job.status != _CANCELLED_STATUS)
+                .values(worker_heartbeat_at=func.now())
+            )
             db.commit()
     except Exception as exc:  # pragma: no cover — best-effort
         log.warning("job_heartbeat_failed", job_id=str(job_id), error=str(exc))
@@ -412,7 +425,7 @@ def mark_failed_phase(job_id: str | uuid.UUID) -> None:
         with sync_session() as db:
             stmt = (
                 update(Job)
-                .where(Job.id == job_uuid)
+                .where(Job.id == job_uuid, Job.status != _CANCELLED_STATUS)
                 .values(
                     current_phase=None,
                     finished_at=datetime.now(UTC),

@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.music_matcher import _sanitize_text
@@ -232,26 +232,92 @@ async def reset_persona(
     all no-op on a missing persona row — no recreate path. Idempotent: returns 200
     even when the user has no persona yet.
     """
-    from app.models import Job, VideoFeedback  # noqa: PLC0415
+    from app.models import ContentPlan, Job, PlanItem, VideoFeedback  # noqa: PLC0415
 
-    # 1. Sever job → plan_item back-refs BEFORE plan_items are cascade-deleted.
-    #    Without this, the persona delete cascades into plan_items while jobs still
-    #    hold a no-ondelete FK → Postgres NO ACTION violation.
-    await db.execute(
-        update(Job)
-        .where(Job.user_id == user.id, Job.content_plan_item_id.is_not(None))
-        .values(content_plan_item_id=None)
+    # Serialize with all plan/task mutation paths in the canonical order:
+    # ContentPlan -> Persona -> PlanItem -> Job.  The former bulk UPDATE locked
+    # Jobs first and then relied on a Persona cascade, which was the exact
+    # reverse order and could deadlock with rendering/remediation.
+    plans = list(
+        (
+            await db.execute(
+                select(ContentPlan)
+                .where(ContentPlan.user_id == user.id)
+                .order_by(ContentPlan.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
     )
-    # 2. Delete user-scoped feedback (ondelete=CASCADE is from users, not here).
+    persona = (
+        await db.execute(
+            select(PersonaRow).where(PersonaRow.user_id == user.id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if persona is not None and any(plan.persona_id != persona.id for plan in plans):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Profile reset is temporarily unavailable.",
+        )
+
+    plan_ids = [plan.id for plan in plans]
+    items = (
+        list(
+            (
+                await db.execute(
+                    select(PlanItem)
+                    .where(PlanItem.content_plan_id.in_(plan_ids))
+                    .order_by(PlanItem.id)
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if plan_ids
+        else []
+    )
+    item_ids = [item.id for item in items]
+    linked_jobs = (
+        list(
+            (
+                await db.execute(
+                    select(Job)
+                    .where(Job.content_plan_item_id.in_(item_ids))
+                    .order_by(Job.id)
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if item_ids
+        else []
+    )
+    if any(job.user_id != user.id for job in linked_jobs) or any(
+        job.status == "cancelled" for job in linked_jobs
+    ):
+        # A cancelled Job is an immutable forensic tombstone.  Reset cannot
+        # silently rewrite its linkage; account deletion remains the explicit
+        # privacy-erasure path.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Profile reset is temporarily unavailable.",
+        )
+    for job in linked_jobs:
+        job.content_plan_item_id = None
+
+    # Delete user-scoped feedback (ondelete=CASCADE is from users, not here).
     await db.execute(delete(VideoFeedback).where(VideoFeedback.user_id == user.id))
-    # 3. Delete the persona via raw SQL — NOT db.delete(row). Using the ORM
+    # Delete the persona via raw SQL — NOT db.delete(row). Using the ORM
     #    db.delete() triggers SQLAlchemy's cascade handling which tries to SET
     #    persona_id=NULL on content_plans before the row is deleted, violating
     #    the NOT NULL constraint. A raw DELETE lets Postgres's ondelete=CASCADE
     #    handle child rows directly at the DB level.
     result = await db.execute(delete(PersonaRow).where(PersonaRow.user_id == user.id))
     had_persona = result.rowcount > 0
-    # 4. Reset onboarding so the frontend routes back to setup:prescreen.
+    # Reset onboarding so the frontend routes back to setup:prescreen.
     db_user = await db.get(User, user.id)
     if db_user is not None:
         db_user.onboarding_status = "pending"

@@ -16,6 +16,8 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -23,6 +25,7 @@ from unittest.mock import MagicMock, patch
 _ITEM_ID = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
 _PLAN_ID = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
 _PERSONA_ID = "cccccccc-cccc-4ccc-cccc-cccccccccccc"
+_USER_ID = "dddddddd-dddd-4ddd-dddd-dddddddddddd"
 _CLIP = "users/u1/plan/item1/clip.mp4"
 
 _GUIDE = [{"what": "creator to camera", "how": "eye level", "duration_s": 8}]
@@ -43,21 +46,38 @@ def _make_item(*, filming_guide=None, clip_gcs_paths=None, conformance=None, cli
 
 def _make_plan(persona_id=None):
     plan = MagicMock()
+    plan.id = uuid.UUID(_PLAN_ID)
+    plan.user_id = uuid.UUID(_USER_ID)
     plan.persona_id = uuid.UUID(persona_id or _PERSONA_ID)
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
     return plan
 
 
 def _make_persona(*, instruction_level="full"):
     persona = MagicMock()
+    persona.id = uuid.UUID(_PERSONA_ID)
+    persona.user_id = uuid.UUID(_USER_ID)
     persona.style = {"instruction_level": instruction_level, "status": "ready"}
     return persona
+
+
+@pytest.fixture(autouse=True)
+def _owned_persona_loader(monkeypatch: pytest.MonkeyPatch):
+    from app.models import Persona as PersonaRow
+    from app.tasks import conformance_build as task_module
+
+    def _load(session, plan, *, for_update=False):  # noqa: ANN001, ARG001
+        return session.get(PersonaRow, plan.persona_id)
+
+    monkeypatch.setattr(task_module, "load_owned_plan_persona_sync", _load)
 
 
 def _make_session_ctx(item=None, plan=None, persona=None):
     """Return (context_manager, mock_session) for sync_session()."""
     mock_session = MagicMock()
 
-    def _get_side_effect(cls, pk):
+    def _get_side_effect(cls, pk, **_kwargs):
         from app.models import ContentPlan, PlanItem  # noqa: PLC0415
         from app.models import Persona as PersonaRow  # noqa: PLC0415
 
@@ -102,6 +122,34 @@ class TestConformanceBuildKillSwitch:
 
 
 class TestConformanceBuildGuards:
+    def test_owner_mismatch_stops_before_storage_or_agents(self) -> None:
+        """A legacy queued task cannot analyze clips through a foreign Persona."""
+        from app.services.content_plan_persona import PlanPersonaOwnershipError
+        from app.tasks.conformance_build import _run
+
+        item = _make_item()
+        plan = _make_plan()
+        foreign = _make_persona()
+        foreign.user_id = uuid.uuid4()
+        cm, session = _make_session_ctx(item=item, plan=plan, persona=foreign)
+
+        with (
+            patch("app.tasks.conformance_build.sync_session", return_value=cm),
+            patch(
+                "app.tasks.conformance_build.load_owned_plan_persona_sync",
+                side_effect=PlanPersonaOwnershipError(plan),
+            ),
+            patch("app.storage.download_to_file") as download,
+            patch("app.pipeline.agents.gemini_analyzer.gemini_upload_and_wait") as upload,
+            patch("app.agents.conformance_feedback.ConformanceFeedbackAgent") as agent_cls,
+        ):
+            _run(_ITEM_ID)
+
+        download.assert_not_called()
+        upload.assert_not_called()
+        agent_cls.assert_not_called()
+        session.commit.assert_not_called()
+
     def test_empty_filming_guide_skips(self) -> None:
         """filming_guide=[] → task exits without agent call."""
         item = _make_item(filming_guide=[])
@@ -173,7 +221,7 @@ class TestConformanceBuildHappyPath:
         ):
             mock_cfg.conformance_feedback_enabled = True
             analyze_item_conformance.__wrapped__(_ITEM_ID)
-            mock_run.assert_called_once_with(_ITEM_ID)
+            mock_run.assert_called_once_with(_ITEM_ID, expected_ownership_epoch=0)
 
     def test_inner_run_persists_verdict(self) -> None:
         """_run() end-to-end: correct fields set on item.conformance + commit called."""

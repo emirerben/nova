@@ -191,6 +191,11 @@ async def _lock_job(db: AsyncSession, job_id: uuid.UUID) -> Job:
     ).scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+    if job.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="cancelled_job_immutable",
+        )
     return job
 
 
@@ -299,14 +304,33 @@ async def start_omni_asset(
             task_id=f"omni-{asset_id}",
         )
     except Exception as exc:
-        assembly, records = _records(job)
-        records[asset_id].update(
-            status="failed",
-            progress=0.0,
-            error="queue_unavailable",
-        )
-        job.assembly_plan = assembly
-        await db.commit()
+        # The enqueue happens after the queued record commits. Cancellation can
+        # win in that gap, so never reuse the pre-commit ORM snapshot here.
+        # Re-lock and merge only this asset attempt; a cancelled Job tombstone is
+        # immutable even on broker failure recovery.
+        locked_job = (
+            await db.execute(
+                select(Job)
+                .where(Job.id == job.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if locked_job is not None and locked_job.status != "cancelled":
+            assembly, records = _records(locked_job)
+            current = records.get(asset_id)
+            if isinstance(current, dict):
+                current.update(
+                    status="failed",
+                    progress=0.0,
+                    error="queue_unavailable",
+                )
+                locked_job.assembly_plan = assembly
+                await db.commit()
+            else:
+                await db.rollback()
+        else:
+            await db.rollback()
         log.warning("omni_asset.enqueue_failed", job_id=str(job.id), error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -316,6 +340,11 @@ async def start_omni_asset(
 
 
 def get_omni_asset(job: Job, asset_id: str) -> OmniAssetResponse:
+    if job.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="cancelled_job_immutable",
+        )
     _, records = _records(job)
     record = records.get(asset_id)
     if not isinstance(record, dict):

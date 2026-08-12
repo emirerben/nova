@@ -31,6 +31,8 @@ def _owned_plan(
     plan = MagicMock()
     plan.id = uuid.uuid4()
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = None
     plan.plan_status = "ready"
     plan.activation_status = activation
     plan.activation_phase = activation_phase
@@ -45,9 +47,14 @@ def _owned_plan(
 def _db_for(plan) -> AsyncMock:
     db = AsyncMock()
     db.commit = AsyncMock()
-    result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=plan)
-    db.execute = AsyncMock(return_value=result)
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = plan.user_id
+    plan_result = MagicMock()
+    plan_result.scalar_one_or_none = MagicMock(return_value=plan)
+    persona_result = MagicMock()
+    persona_result.scalar_one_or_none = MagicMock(return_value=persona)
+    db.execute = AsyncMock(side_effect=[plan_result, persona_result])
     return db
 
 

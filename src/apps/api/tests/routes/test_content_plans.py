@@ -64,15 +64,27 @@ def _fake_user() -> MagicMock:
     return u
 
 
+def _scalar_result(value) -> MagicMock:  # noqa: ANN001
+    return MagicMock(scalar_one_or_none=MagicMock(return_value=value))
+
+
 def _async_db(scalar_result=None) -> AsyncMock:
     db = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     db.add = MagicMock()
     db.get = AsyncMock(return_value=None)
-    db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=scalar_result))
-    )
+
+    async def _execute(stmt):  # noqa: ANN001
+        value = scalar_result
+        if "FROM personas" in str(stmt):
+            value = getattr(scalar_result, "__dict__", {}).get(
+                "_owned_persona_fixture",
+                scalar_result,
+            )
+        return _scalar_result(value)
+
+    db.execute = AsyncMock(side_effect=_execute)
     return db
 
 
@@ -101,6 +113,7 @@ def test_create_plan_enqueues_when_persona_ready(client: TestClient) -> None:
     persona = MagicMock()
     persona.persona_status = "ready"
     persona.id = uuid.uuid4()
+    persona.user_id = user.id
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: _async_db(scalar_result=persona)
     with (
@@ -115,12 +128,41 @@ def test_create_plan_enqueues_when_persona_ready(client: TestClient) -> None:
     task.delay.assert_called_once()
 
 
+def test_legacy_create_preflights_persona_owner_before_enqueue(client: TestClient) -> None:
+    user = _fake_user()
+    persona = MagicMock()
+    persona.id = uuid.uuid4()
+    persona.user_id = user.id
+    persona.persona_status = "ready"
+    persona.questionnaire = {}
+    foreign_persona = MagicMock()
+    foreign_persona.id = persona.id
+    foreign_persona.user_id = uuid.uuid4()
+
+    db = _async_db()
+    db.execute = AsyncMock(side_effect=[_scalar_result(persona), _scalar_result(foreign_persona)])
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with (
+        patch("app.tasks.content_plan_build.generate_content_plan") as task,
+        patch("app.config.settings") as mock_settings,
+    ):
+        mock_settings.idea_centric_plan_enabled = False
+        resp = client.post("/content-plans", json={"events": "", "horizon_days": 30})
+
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "Content plan is unavailable"}
+    task.delay.assert_not_called()
+
+
 def test_create_plan_no_auto_generate(client: TestClient) -> None:
     """Kill switch ON (default) → idea-centric: plan starts 'ready', no generation task."""
     user = _fake_user()
     persona = MagicMock()
     persona.persona_status = "ready"
     persona.id = uuid.uuid4()
+    persona.user_id = user.id
     persona.idea_seeds = []
     persona.questionnaire = {}
     app.dependency_overrides[get_current_user] = lambda: user
@@ -148,6 +190,42 @@ def test_get_plan_404_when_absent(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_get_plan_owner_mismatch_is_generic_409(client: TestClient) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id)
+    foreign_persona = _persona_mock(plan)
+    foreign_persona.user_id = uuid.uuid4()
+    foreign_persona.persona = {"summary": "foreign secret"}
+    plan._owned_persona_fixture = foreign_persona
+    db = _async_db(scalar_result=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.get("/content-plans")
+
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "Content plan is unavailable"}
+    assert "foreign secret" not in resp.text
+    assert str(foreign_persona.user_id) not in resp.text
+    db.commit.assert_not_awaited()
+
+
+def test_get_plan_quarantine_is_generic_409(client: TestClient) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id)
+    plan.ownership_quarantined_at = datetime.now(UTC)
+    db = _async_db(scalar_result=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.get("/content-plans")
+
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "Content plan is unavailable"}
+    # The plan SELECT is the only query; quarantine blocks before persona load.
+    assert db.execute.await_count == 1
+
+
 def test_patch_item_404_for_other_users_plan(client: TestClient) -> None:
     user = _fake_user()
     item = MagicMock()
@@ -171,6 +249,9 @@ def _plan_mock(user_id: uuid.UUID, *, status: str = "ready") -> MagicMock:
     plan = MagicMock()
     plan.id = uuid.uuid4()
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
     plan.plan_status = status
     plan.horizon_days = 30
     plan.events = None
@@ -181,6 +262,7 @@ def _plan_mock(user_id: uuid.UUID, *, status: str = "ready") -> MagicMock:
     plan.generation_started_at = None
     plan.updated_at = datetime.now(UTC)
     plan.pool = {}
+    plan._owned_persona_fixture = _persona_mock(plan)
     return plan
 
 
@@ -216,10 +298,14 @@ def _plan_item_mock() -> MagicMock:
     return item
 
 
-def _persona_mock() -> MagicMock:
+def _persona_mock(plan: MagicMock | None = None) -> MagicMock:
     persona = MagicMock()
+    if plan is not None:
+        persona.id = plan.persona_id
+        persona.user_id = plan.user_id
     persona.idea_seeds = []
     persona.persona = {}
+    persona.style = {}
     return persona
 
 
@@ -291,7 +377,7 @@ def test_regenerate_enqueues_and_sets_generating(client: TestClient) -> None:
         resp = client.post(f"/content-plans/{plan.id}/regenerate")
     assert resp.status_code == 200
     assert resp.json()["plan_status"] == "generating"
-    task.delay.assert_called_once_with(str(plan.id))
+    task.delay.assert_called_once_with(str(plan.id), 0)
 
 
 def test_regenerate_409_when_already_generating(client: TestClient) -> None:
@@ -315,6 +401,25 @@ def test_regenerate_404_for_other_users_plan(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_regenerate_owner_mismatch_does_not_mutate_or_enqueue(client: TestClient) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id)
+    foreign_persona = _persona_mock(plan)
+    foreign_persona.user_id = uuid.uuid4()
+    plan._owned_persona_fixture = foreign_persona
+    db = _async_db(scalar_result=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.content_plan_build.regenerate_content_plan") as task:
+        resp = client.post(f"/content-plans/{plan.id}/regenerate")
+
+    assert resp.status_code == 409
+    assert plan.plan_status == "ready"
+    db.commit.assert_not_awaited()
+    task.delay.assert_not_called()
+
+
 # ── POST /content-plans/{id}/generate-ideas ──────────────────────────────────
 
 
@@ -331,7 +436,11 @@ def test_generate_ideas_locks_plan_and_enqueues(client: TestClient) -> None:
 
     assert resp.status_code == 200
     assert resp.json()["plan_status"] == "generating"
-    task.delay.assert_called_once_with(str(plan.id), plan.generation_started_at.isoformat())
+    task.delay.assert_called_once_with(
+        str(plan.id),
+        plan.generation_started_at.isoformat(),
+        0,
+    )
     first_stmt = db.execute.call_args_list[0].args[0]
     assert "FOR UPDATE" in str(first_stmt).upper()
 
@@ -376,7 +485,11 @@ def test_generate_ideas_ambiguous_publish_failure_preserves_completed_plan(
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
 
-    def accepted_then_raised(_plan_id: str, _generation_token: str) -> None:
+    def accepted_then_raised(
+        _plan_id: str,
+        _generation_token: str,
+        _ownership_epoch: int,
+    ) -> None:
         plan.plan_status = "ready"
         raise ConnectionError("publish confirmation lost")
 
@@ -401,7 +514,11 @@ def test_generate_ideas_publish_failure_preserves_newer_generating_attempt(
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
 
-    def newer_attempt_started(_plan_id: str, _generation_token: str) -> None:
+    def newer_attempt_started(
+        _plan_id: str,
+        _generation_token: str,
+        _ownership_epoch: int,
+    ) -> None:
         plan.plan_status = "generating"
         plan.generation_started_at = datetime.now(UTC) + timedelta(minutes=1)
         raise ConnectionError("publish confirmation lost")
@@ -458,7 +575,12 @@ async def test_generate_ideas_concurrent_requests_enqueue_once() -> None:
             self.holds_lock = False
 
         async def execute(self, stmt):
-            if "FOR UPDATE" in str(stmt).upper():
+            compiled = str(stmt).upper()
+            if "FROM PERSONAS" in compiled:
+                return MagicMock(
+                    scalar_one_or_none=MagicMock(return_value=plan._owned_persona_fixture)
+                )
+            if "FOR UPDATE" in compiled:
                 await row_lock.acquire()
                 self.holds_lock = True
             return MagicMock(scalar_one_or_none=MagicMock(return_value=plan))
@@ -495,7 +617,11 @@ async def test_generate_ideas_concurrent_requests_enqueue_once() -> None:
     ]
     assert len(successes) == 1
     assert len(conflicts) == 1
-    task.delay.assert_called_once_with(str(plan.id), plan.generation_started_at.isoformat())
+    task.delay.assert_called_once_with(
+        str(plan.id),
+        plan.generation_started_at.isoformat(),
+        0,
+    )
 
 
 # ── start_date activation (T3) ─────────────────────────────────────────────────
@@ -508,10 +634,15 @@ def _task_ctx(plan, persona_row=None) -> MagicMock:
 
     user = MagicMock()
     user.onboarding_status = "plan_ready"
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
+    if persona_row is not None:
+        persona_row.id = plan.persona_id
+        persona_row.user_id = plan.user_id
 
     session = MagicMock()
 
-    def _get(model, _pk):
+    def _get(model, _pk, **_kwargs):
         if model is ContentPlan:
             return plan
         if model is PersonaRow:
@@ -521,6 +652,7 @@ def _task_ctx(plan, persona_row=None) -> MagicMock:
         return None
 
     session.get = MagicMock(side_effect=_get)
+    session.execute.return_value = _scalar_result(persona_row)
     ctx = MagicMock()
     ctx.__enter__ = MagicMock(return_value=session)
     ctx.__exit__ = MagicMock(return_value=False)
@@ -667,6 +799,8 @@ def _pool_plan(user_id: uuid.UUID, pool: dict, items: list) -> MagicMock:
     plan = MagicMock()
     plan.id = uuid.uuid4()
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = None
     plan.plan_status = "ready"
     plan.horizon_days = 30
     plan.events = None
@@ -676,6 +810,7 @@ def _pool_plan(user_id: uuid.UUID, pool: dict, items: list) -> MagicMock:
     plan.generation_started_at = None
     plan.pool = pool
     plan.items = items
+    plan._owned_persona_fixture = _persona_mock(plan)
     return plan
 
 
@@ -721,7 +856,6 @@ def test_get_plan_exposes_current_job_finished_at(client: TestClient) -> None:
     item.current_job_id = uuid.uuid4()
     item.current_job = SimpleNamespace(status="variants_ready", finished_at=finished_at)
     plan = _pool_plan(user.id, {}, [item])
-    plan.persona_id = uuid.uuid4()
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: _async_db(scalar_result=plan)
@@ -823,11 +957,15 @@ def test_pool_matched_count_preserves_valid_match() -> None:
 # ── T3: seed-pool carry (onboarding-fork → create_plan) ──────────────────────
 
 
-def _ready_persona(questionnaire: dict | None = None) -> MagicMock:
+def _ready_persona(
+    user_id: uuid.UUID,
+    questionnaire: dict | None = None,
+) -> MagicMock:
     """A persona in 'ready' state with a real dict questionnaire."""
     persona = MagicMock()
     persona.persona_status = "ready"
     persona.id = uuid.uuid4()
+    persona.user_id = user_id
     # Use a real dict so .get() works correctly (MagicMock.get() returns MagicMock).
     persona.questionnaire = questionnaire if questionnaire is not None else {}
     return persona
@@ -840,7 +978,10 @@ def test_create_plan_carries_durable_onboarding_paths(client: TestClient) -> Non
         "generative-jobs/abc123/sources/clip1.mp4",
         "generative-jobs/abc123/sources/clip2.mp4",
     ]
-    persona = _ready_persona(questionnaire={"onboarding_clip_paths": durable_paths})
+    persona = _ready_persona(
+        user.id,
+        questionnaire={"onboarding_clip_paths": durable_paths},
+    )
     db = _async_db(scalar_result=persona)
 
     # Capture the ContentPlan instance added to the session.
@@ -871,7 +1012,7 @@ def test_create_plan_does_not_carry_ephemeral_paths(client: TestClient) -> None:
     """Ephemeral music-uploads/ paths must NOT be carried to seed_clip_paths."""
     user = _fake_user()
     persona = _ready_persona(
-        questionnaire={"onboarding_clip_paths": ["music-uploads/tmp/clip.mp4"]}
+        user.id, questionnaire={"onboarding_clip_paths": ["music-uploads/tmp/clip.mp4"]}
     )
     db = _async_db(scalar_result=persona)
 
@@ -911,6 +1052,8 @@ def test_attach_seed_clips_still_rejects_wrong_prefix(client: TestClient) -> Non
     plan = MagicMock()
     plan.id = plan_id
     plan.user_id = user.id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = None
     plan.items = []
     plan.pool = {}
     plan.activation_status = "none"
@@ -920,6 +1063,7 @@ def test_attach_seed_clips_still_rejects_wrong_prefix(client: TestClient) -> Non
     plan.events = None
     plan.generation_started_at = None
     plan.start_date = None
+    plan._owned_persona_fixture = _persona_mock(plan)
 
     db = _async_db(scalar_result=plan)
     app.dependency_overrides[get_current_user] = lambda: user

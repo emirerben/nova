@@ -72,24 +72,50 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None, assignmen
     item.voiceover_caption_style = None
     item.edit_format = None
     plan = MagicMock()
+    plan.id = item.content_plan_id
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
     return item, plan
 
 
 def _db_for(item, plan) -> AsyncMock:
+    from app.models import ContentPlan, PlanItem
+    from app.models import Persona as PersonaRow
+
     db = AsyncMock()
     db.commit = AsyncMock()
-    result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=item)
-    db.execute = AsyncMock(return_value=result)
+    db.rollback = AsyncMock()
     persona_mock = MagicMock()
+    persona_mock.id = plan.persona_id
+    persona_mock.user_id = plan.user_id
+    persona_mock.persona = {}
     persona_mock.style = None
-    from app.models import Persona as PersonaRow  # noqa: PLC0415
+    persona_mock.idea_seeds = []
 
-    async def _get_side_effect(cls, pk):
+    def _result(value) -> MagicMock:  # noqa: ANN001
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = value
+        return result
+
+    async def _execute_side_effect(stmt):  # noqa: ANN001
+        descriptions = getattr(stmt, "column_descriptions", ())
+        entity = descriptions[0].get("entity") if descriptions else None
+        if entity is PersonaRow:
+            return _result(persona_mock)
+        if entity is PlanItem:
+            return _result(item)
+        return _result(item)
+
+    db.execute = AsyncMock(side_effect=_execute_side_effect)
+
+    async def _get_side_effect(cls, pk, **_kwargs):  # noqa: ARG001
         if cls is PersonaRow:
             return persona_mock
-        return plan
+        if cls is ContentPlan:
+            return plan
+        return None
 
     db.get = AsyncMock(side_effect=_get_side_effect)
     return db
@@ -315,7 +341,7 @@ def test_attach_clips_happy_path_with_assignments(client: TestClient) -> None:
             },
         )
     assert resp.status_code == 200
-    mock_task.delay.assert_called_once_with(str(item.id))
+    mock_task.delay.assert_called_once_with(str(item.id), plan.ownership_epoch)
     # D7: conformance must be nulled on attach.
     assert item.conformance is None
 
@@ -522,6 +548,40 @@ def test_generate_guide_happy_path(client: TestClient) -> None:
     assert item.filming_guide[0]["what"] == "lace up shoes"
     assert item.user_edited is True
     db.commit.assert_awaited()
+
+
+def test_generate_guide_discards_result_after_ownership_epoch_change(
+    client: TestClient,
+) -> None:
+    """A quarantine/repair racing the agent must fence its stale guide output."""
+    user = _user()
+    item, plan = _owned_item(user.id, filming_guide=[])
+    item.theme = "morning run"
+    item.idea = "5 AM training session"
+    item.edit_format = "montage"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    mock_shot = MagicMock()
+    mock_shot.model_dump.return_value = {
+        "what": "lace up shoes",
+        "how": "close-up",
+        "duration_s": 4,
+    }
+    mock_result = MagicMock(shots=[mock_shot])
+
+    def _run(_input):  # noqa: ANN001
+        plan.ownership_epoch += 1
+        return mock_result
+
+    with patch("app.agents.shot_list_writer.run_shot_list_writer", side_effect=_run):
+        resp = client.post(f"/plan-items/{item.id}/generate-guide")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Content plan is unavailable"
+    assert item.filming_guide == []
+    db.commit.assert_not_awaited()
 
 
 def test_generate_guide_returns_409_when_guide_exists(client: TestClient) -> None:

@@ -23,12 +23,13 @@ from app.agents._schemas.tiktok_analysis import (
 from app.agents.tiktok_analyzer import TikTokAnalyzerAgent
 from app.config import settings
 from app.database import sync_session
-from app.models import OAuthToken, Persona, TikTokPublication
+from app.models import Job, OAuthToken, Persona, TikTokPublication
 from app.services import tiktok_client
 from app.services.tiktok_lifecycle import (
     visibility_after_draft_inbox,
     visibility_after_draft_post,
 )
+from app.services.tiktok_publishable import job_is_terminal_ready
 from app.services.tiktok_tokens import active_access_token_sync
 from app.worker import celery_app
 
@@ -51,12 +52,10 @@ _MAX_RETRIES = 3
 )
 def submit_tiktok_publication(self, publication_id: str) -> None:  # noqa: ANN001
     publication_uuid = uuid.UUID(publication_id)
+    snapshot_to_delete: str | None = None
+    claimed_for_snapshot = False
     with sync_session() as session:
-        row = session.execute(
-            select(TikTokPublication)
-            .where(TikTokPublication.id == publication_uuid)
-            .with_for_update()
-        ).scalar_one_or_none()
+        job, row = _locked_source_job_and_publication(session, publication_uuid)
         if row is None or row.processing_status not in {"queued", "failed"}:
             return
         if row.processing_status == "failed" and not _can_submit_failed(
@@ -73,14 +72,24 @@ def submit_tiktok_publication(self, publication_id: str) -> None:  # noqa: ANN00
             row.next_poll_at = None
             session.commit()
             return
-        row.processing_status = "snapshotting"
-        row.next_poll_at = None
-        row.retryable = False
-        row.failure_code = None
-        row.failure_detail = None
-        session.commit()
-        source_object_path = row.source_object_path
-        source_generation = row.source_generation
+        if job is None or not job_is_terminal_ready(job):
+            snapshot_to_delete = _fail_unsubmitted_source_job(row)
+            session.commit()
+        else:
+            row.processing_status = "snapshotting"
+            row.next_poll_at = None
+            row.retryable = False
+            row.failure_code = None
+            row.failure_detail = None
+            session.commit()
+            source_object_path = row.source_object_path
+            source_generation = row.source_generation
+            claimed_for_snapshot = True
+
+    if snapshot_to_delete:
+        storage.delete_object_best_effort(snapshot_to_delete)
+    if not claimed_for_snapshot:
+        return
 
     snapshot_path = f"tiktok-publish/{publication_id}.mp4"
     try:
@@ -98,28 +107,52 @@ def submit_tiktok_publication(self, publication_id: str) -> None:  # noqa: ANN00
 
     media_token = secrets.token_urlsafe(32)
     now = datetime.now(UTC)
+    source_job_ready = False
     with sync_session() as session:
-        row = session.execute(
-            select(TikTokPublication)
-            .where(TikTokPublication.id == publication_uuid)
-            .with_for_update()
-        ).scalar_one()
-        if row.processing_status != "snapshotting":
-            storage.delete_object_best_effort(snapshot_path)
-            return
-        row.snapshot_object_path = snapshot_path
-        row.media_token_hash = hashlib.sha256(media_token.encode()).hexdigest()
-        row.media_expires_at = now + timedelta(hours=2)
-        row.processing_status = "submitting"
-        session.commit()
-        user_id = row.user_id
-        delivery_mode = row.delivery_mode or "direct_post"
-        post_info = _post_info(row) if delivery_mode == "direct_post" else None
+        job, row = _locked_source_job_and_publication(session, publication_uuid)
+        if row is None or row.processing_status != "snapshotting":
+            pass
+        elif job is None or not job_is_terminal_ready(job):
+            _fail_unsubmitted_source_job(row)
+            session.commit()
+        else:
+            row.snapshot_object_path = snapshot_path
+            row.media_token_hash = hashlib.sha256(media_token.encode()).hexdigest()
+            row.media_expires_at = now + timedelta(hours=2)
+            row.processing_status = "submitting"
+            session.commit()
+            user_id = row.user_id
+            delivery_mode = row.delivery_mode or "direct_post"
+            post_info = _post_info(row) if delivery_mode == "direct_post" else None
+            source_job_ready = True
+
+    if not source_job_ready:
+        storage.delete_object_best_effort(snapshot_path)
+        return
 
     media_url = f"{settings.tiktok_media_base_url.rstrip('/')}/{publication_id}/{media_token}.mp4"
     try:
         with sync_session() as session:
             _, access_token = active_access_token_sync(session, user_id)
+        # Token refresh may perform network I/O. Re-check the linked Job after
+        # it and immediately before the one irreversible provider call.
+        snapshot_to_delete = None
+        provider_submission_ready = False
+        with sync_session() as session:
+            job, row = _locked_source_job_and_publication(session, publication_uuid)
+            if row is None or row.processing_status != "submitting":
+                return
+            if job is None or not job_is_terminal_ready(job):
+                snapshot_to_delete = _fail_unsubmitted_source_job(row)
+                session.commit()
+            else:
+                post_info = _post_info(row)
+                provider_submission_ready = True
+        if snapshot_to_delete:
+            storage.delete_object_best_effort(snapshot_to_delete)
+        if not provider_submission_ready:
+            return
+
         if delivery_mode == "draft_upload":
             publish_id = tiktok_client.initialize_draft_upload(
                 access_token,
@@ -766,6 +799,44 @@ def cleanup_tiktok_publications() -> int:
     return deleted
 
 
+def _locked_source_job_and_publication(
+    session: Any,
+    publication_id: uuid.UUID,
+) -> tuple[Job | None, TikTokPublication | None]:
+    """Lock a publication's Job before the publication itself.
+
+    Admin cancellation uses the same Job -> TikTokPublication order.  The
+    initial unlocked FK lookup is safe because the FK is immutable; the
+    locked publication is revalidated before any mutation.
+    """
+    job_id = session.execute(
+        select(TikTokPublication.job_id).where(TikTokPublication.id == publication_id)
+    ).scalar_one_or_none()
+    if job_id is None:
+        return None, None
+    job = session.get(Job, job_id, with_for_update=True)
+    row = session.execute(
+        select(TikTokPublication).where(TikTokPublication.id == publication_id).with_for_update()
+    ).scalar_one_or_none()
+    if row is None or row.job_id != job_id:
+        return job, None
+    return job, row
+
+
+def _fail_unsubmitted_source_job(row: TikTokPublication) -> str | None:
+    """Fail a receipt before provider submission and detach its media token."""
+    snapshot_path = row.snapshot_object_path
+    row.processing_status = "failed"
+    row.retryable = False
+    row.next_poll_at = None
+    row.failure_code = "source_job_not_ready"
+    row.failure_detail = "The source video is no longer ready to publish"
+    row.snapshot_object_path = None
+    row.media_token_hash = None
+    row.media_expires_at = None
+    return snapshot_path
+
+
 def _post_info(row: TikTokPublication) -> dict[str, Any]:
     return {
         "title": row.title,
@@ -782,30 +853,40 @@ def _post_info(row: TikTokPublication) -> dict[str, Any]:
 def _fail(publication_id: uuid.UUID, code: str, detail: str, *, retryable: bool) -> None:
     schedule_retry = False
     retry_count = 0
+    snapshot_to_delete: str | None = None
     with sync_session() as session:
-        row = session.get(TikTokPublication, publication_id)
+        job, row = _locked_source_job_and_publication(session, publication_id)
         if row is None or row.processing_status in {
             "complete",
             "processing",
             "submission_unknown",
         }:
             return
-        if row.failure_code == "authorization_removed":
+        if row.failure_code in {
+            "authorization_removed",
+            "source_job_cancelled",
+            "source_job_not_ready",
+        }:
             return
-        row.processing_status = "failed"
-        row.failure_code = code[:100]
-        row.failure_detail = detail[:500]
-        row.retryable = retryable and row.retry_count < _MAX_RETRIES
-        if row.retryable:
-            row.retry_count += 1
-            retry_count = row.retry_count
-            schedule_retry = True
-            row.next_poll_at = datetime.now(UTC) + timedelta(
-                seconds=min(300, 30 * (2 ** (retry_count - 1)))
-            )
+        if job is None or not job_is_terminal_ready(job):
+            snapshot_to_delete = _fail_unsubmitted_source_job(row)
         else:
-            row.next_poll_at = None
+            row.processing_status = "failed"
+            row.failure_code = code[:100]
+            row.failure_detail = detail[:500]
+            row.retryable = retryable and row.retry_count < _MAX_RETRIES
+            if row.retryable:
+                row.retry_count += 1
+                retry_count = row.retry_count
+                schedule_retry = True
+                row.next_poll_at = datetime.now(UTC) + timedelta(
+                    seconds=min(300, 30 * (2 ** (retry_count - 1)))
+                )
+            else:
+                row.next_poll_at = None
         session.commit()
+    if snapshot_to_delete:
+        storage.delete_object_best_effort(snapshot_to_delete)
     if schedule_retry:
         _safe_dispatch(
             submit_tiktok_publication,

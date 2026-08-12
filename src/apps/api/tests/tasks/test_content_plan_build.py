@@ -23,7 +23,30 @@ from app.tasks.content_plan_build import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _legacy_task_owner_loader(monkeypatch: pytest.MonkeyPatch):
+    """Keep old mock-session tests focused on their original behavior.
+
+    Ownership-specific regressions below override this loader explicitly. The
+    production loader's compound SQL is covered by the service tests.
+    """
+    from app.services.content_plan_persona import PlanPersonaOwnershipError
+    from app.tasks import content_plan_build as task_module
+
+    def _load(session, plan, *, for_update=False):  # noqa: ANN001, ARG001
+        if not isinstance(getattr(plan, "ownership_epoch", None), int):
+            plan.ownership_epoch = 0
+        persona = session.get(PersonaRow, plan.persona_id)
+        if persona is None:
+            raise PlanPersonaOwnershipError(plan)
+        return persona
+
+    monkeypatch.setattr(task_module, "load_owned_plan_persona_sync", _load)
+    monkeypatch.setattr(task_module, "_lock_plan_items", lambda _session, items: list(items))
+
+
 def _session_with(item, plan, persona_row) -> MagicMock:
+    plan.id = item.content_plan_id
     session = MagicMock()
 
     def _get(model, _pk, **_kw):
@@ -172,9 +195,9 @@ def test_smart_captions_context_is_resolved_and_pinned_at_dispatch() -> None:
     assert mock_build.call_args.kwargs["smart_captions"] == smart_context
 
 
-def test_missing_persona_falls_back_to_empty() -> None:
-    # A plan item whose persona row is gone must NOT block the render — the task
-    # passes empty persona fields and the builder omits the key downstream.
+def test_missing_persona_rejects_before_job_or_queue() -> None:
+    # Missing persona is an invalid plan/persona pair. Never mint a Job with an
+    # empty/default persona snapshot.
     item = MagicMock()
     item.id = uuid.uuid4()
     item.content_plan_id = uuid.uuid4()
@@ -193,14 +216,13 @@ def test_missing_persona_falls_back_to_empty() -> None:
     with (
         patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
         patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
-        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync") as enqueue,
     ):
         generate_plan_item_videos.run(str(item.id))
 
-    kwargs = mock_build.call_args.kwargs
-    assert kwargs["persona_tone"] == ""
-    assert kwargs["persona_pillars"] == []
-    assert kwargs["item_theme"] == "first 5am workout"
+    mock_build.assert_not_called()
+    enqueue.assert_not_called()
+    ctx.__enter__.return_value.add.assert_not_called()
 
 
 # ---- post-generation near-duplicate dedup (_dedup_and_replace) --------------
@@ -449,7 +471,7 @@ def test_generate_persists_filming_guide() -> None:
 
     session = MagicMock()
     session.get = MagicMock(
-        side_effect=lambda model, _pk: {
+        side_effect=lambda model, _pk, **_kwargs: {
             ContentPlan: plan,
             PersonaRow: persona_row,
             __import__("app.models", fromlist=["User"]).User: user,
@@ -574,21 +596,26 @@ def test_persona_posts_per_week_reaches_plan_input() -> None:
 # ── M1 idea_seeds plumbing: persona.idea_seeds[].text → ContentPlanInput ─────
 
 
-def test_locked_persona_serializes_seed_status_updates() -> None:
-    """Plan builds must join the shared persona lock before mutating idea_seeds."""
-    from app.tasks.content_plan_build import _locked_persona  # noqa: PLC0415
+def test_locked_plan_persona_uses_global_lock_order() -> None:
+    """Plan builds lock ContentPlan before the owned Persona writer lock."""
+    from app.tasks.content_plan_build import _lock_owned_plan_persona  # noqa: PLC0415
 
-    persona_id = uuid.uuid4()
+    plan_id = uuid.uuid4()
+    plan = MagicMock()
+    plan.id = plan_id
+    plan.ownership_epoch = 4
     persona_row = MagicMock()
-    result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=persona_row)
     session = MagicMock()
-    session.execute = MagicMock(return_value=result)
+    session.get.return_value = plan
 
-    assert _locked_persona(session, persona_id) is persona_row
-    stmt = session.execute.call_args.args[0]
-    assert "FOR UPDATE" in str(stmt).upper()
-    assert stmt.get_execution_options()["populate_existing"] is True
+    with patch(
+        "app.tasks.content_plan_build.load_owned_plan_persona_sync",
+        return_value=persona_row,
+    ) as load_persona:
+        assert _lock_owned_plan_persona(session, plan_id) == (plan, persona_row)
+
+    session.get.assert_called_once_with(ContentPlan, plan_id, with_for_update=True)
+    load_persona.assert_called_once_with(session, plan, for_update=True)
 
 
 def _gen_session(plan, persona_row) -> MagicMock:
@@ -704,10 +731,13 @@ def _idea_item(day: int = 3, idea: str = "film the 5am start") -> MagicMock:
 def _plan_with_items(items) -> MagicMock:
     plan = MagicMock()
     plan.id = uuid.uuid4()
+    plan.user_id = uuid.uuid4()
     plan.persona_id = uuid.uuid4()
     plan.events = None
     plan.horizon_days = 30
     plan.items = items
+    for item in items:
+        item.content_plan_id = plan.id
     return plan
 
 
@@ -1151,48 +1181,37 @@ def test_generate_ideas_ignores_legacy_scheduled_items_except_exclusions_and_pos
     assert bare.day_index is None
 
 
-def test_generate_ideas_falls_back_to_user_persona_when_plan_persona_is_dangling() -> None:
+def test_generate_ideas_dangling_persona_has_no_owner_fallback() -> None:
     from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
 
     plan_id = str(uuid.uuid4())
     plan = _plan_for_generate(plan_id, [])
 
-    fallback_persona = MagicMock()
-    fallback_persona.persona = _generate_valid_persona("fallback creator")
-
     session = MagicMock()
     session.get = MagicMock(
         side_effect=lambda model, _pk, **_kwargs: {ContentPlan: plan}.get(model)
     )
-    session.execute.return_value = _fallback_result(fallback_persona)
     session.add = MagicMock()
     session.commit = MagicMock()
 
     with (
         patch("app.tasks.content_plan_build.sync_session", return_value=_ctx(session)),
         patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
-        patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
     ):
-        mock_trace.return_value = _ctx(MagicMock())
         mock_agent_cls.return_value.run.return_value = _generated_output(_generated_spec())
 
         generate_ideas_into_plan.run(plan_id)
 
-    agent_input = mock_agent_cls.return_value.run.call_args.args[0]
-    assert agent_input.persona.summary == "fallback creator"
-    assert plan.plan_status == "ready"
-    session.add.assert_called_once()
+    mock_agent_cls.assert_not_called()
+    session.execute.assert_not_called()
+    session.add.assert_not_called()
+    session.commit.assert_not_called()
+    assert plan.plan_status == "generating"
 
 
-def test_generate_ideas_sparse_persona_payload_salvages_to_generic_defaults() -> None:
-    """A persona whose payload fails validation (mid-onboarding state, e.g.
-    only footage_type_bias saved) must not crash OR dead-end the CTA — the
-    task overlays the payload on generic defaults and generates anyway.
-    personas is UNIQUE(user_id), so there is no other row to fall back to."""
-    from app.tasks.content_plan_build import (  # noqa: PLC0415
-        _GENERIC_PERSONA_DEFAULTS,
-        generate_ideas_into_plan,
-    )
+def test_generate_ideas_sparse_persona_fails_before_agent() -> None:
+    """An unready payload cannot be replaced by invented generic context."""
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
 
     plan_id = str(uuid.uuid4())
     plan = _plan_for_generate(plan_id, [])
@@ -1220,14 +1239,14 @@ def test_generate_ideas_sparse_persona_payload_salvages_to_generic_defaults() ->
 
         generate_ideas_into_plan.run(plan_id)
 
-    session.execute.assert_not_called()  # salvaged in place — no fallback query
-    agent_input = mock_agent_cls.return_value.run.call_args.args[0]
-    assert agent_input.persona.summary == _GENERIC_PERSONA_DEFAULTS["summary"]
-    assert plan.plan_status == "ready"
-    session.add.assert_called_once()
+    session.execute.assert_not_called()
+    mock_agent_cls.assert_not_called()
+    assert plan.plan_status == "failed"
+    session.add.assert_not_called()
+    session.commit.assert_called_once()
 
 
-def test_generate_ideas_no_persona_marks_failed_without_writing_item() -> None:
+def test_generate_ideas_no_persona_rejects_without_writing_item() -> None:
     from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
 
     plan_id = str(uuid.uuid4())
@@ -1245,14 +1264,13 @@ def test_generate_ideas_no_persona_marks_failed_without_writing_item() -> None:
         patch("app.tasks.content_plan_build.sync_session", return_value=_ctx(session)),
         patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
         patch.object(generate_ideas_into_plan.request, "retries", 1),
-        pytest.raises(RuntimeError, match="persona is not ready"),
     ):
         generate_ideas_into_plan.run(plan_id)
 
     mock_agent_cls.assert_not_called()
     session.add.assert_not_called()
-    assert plan.plan_status == "failed"
-    session.commit.assert_called_once()
+    assert plan.plan_status == "generating"
+    session.commit.assert_not_called()
 
 
 def test_generate_ideas_agent_failure_retries_without_terminalizing() -> None:
@@ -1370,7 +1388,7 @@ def test_generate_ideas_retry_exhaustion_marks_failed() -> None:
     session.commit.assert_called_once()
 
 
-def test_generate_ideas_setup_failure_after_retry_marks_failed() -> None:
+def test_generate_ideas_setup_failure_without_snapshot_does_not_write() -> None:
     from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
 
     plan_id = str(uuid.uuid4())
@@ -1386,8 +1404,8 @@ def test_generate_ideas_setup_failure_after_retry_marks_failed() -> None:
     ):
         generate_ideas_into_plan.run(plan_id)
 
-    assert plan.plan_status == "failed"
-    session.commit.assert_called_once()
+    assert plan.plan_status == "generating"
+    session.commit.assert_not_called()
 
 
 def test_generate_ideas_stale_delivery_noops_for_terminal_plan() -> None:
@@ -1495,7 +1513,7 @@ def test_generate_ideas_stale_success_does_not_write_after_sibling_terminalizes(
         mock_agent_cls.return_value.run.side_effect = succeed_after_sibling
         generate_ideas_into_plan.run(plan_id)
 
-    final_session.get.assert_called_once_with(ContentPlan, uuid.UUID(plan_id), with_for_update=True)
+    final_session.get.assert_any_call(ContentPlan, uuid.UUID(plan_id), with_for_update=True)
     final_session.add.assert_not_called()
     final_session.commit.assert_not_called()
 
@@ -1538,7 +1556,7 @@ def test_generate_ideas_stale_failure_does_not_overwrite_ready_plan() -> None:
         generate_ideas_into_plan.run(plan_id)
 
     assert plan.plan_status == "ready"
-    failed_transition_session.get.assert_called_once_with(
+    failed_transition_session.get.assert_any_call(
         ContentPlan,
         uuid.UUID(plan_id),
         with_for_update=True,

@@ -34,6 +34,7 @@ def _async_db() -> AsyncMock:
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     db.get = AsyncMock(return_value=None)
+    db.expire_all = MagicMock()
     return db
 
 
@@ -77,7 +78,11 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.voiceover_bed_level = None
     item.voiceover_caption_style = None
     plan = MagicMock()
+    plan.id = item.content_plan_id
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
     return item, plan
 
 
@@ -90,12 +95,19 @@ def _db_for(item, plan, *, assignment=None) -> AsyncMock:
     returns a mock persona with style=None so instruction_level defaults to 'full'.
     """
     db = _async_db()
-    result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=item)
-    db.execute = AsyncMock(return_value=result)
-
     persona_mock = MagicMock()
+    persona_mock.id = plan.persona_id
+    persona_mock.user_id = plan.user_id
+    persona_mock.persona = {}
+    persona_mock.idea_seeds = []
     persona_mock.style = None  # → instruction_level defaults to "full"
+    plan._owned_persona_fixture = persona_mock
+
+    async def _execute(stmt, *_args, **_kwargs):  # noqa: ANN001
+        value = persona_mock if "FROM personas" in str(stmt) else item
+        return MagicMock(scalar_one_or_none=MagicMock(return_value=value))
+
+    db.execute = AsyncMock(side_effect=_execute)
 
     # get() is called with different classes: ContentPlan (returns plan),
     # Persona (returns persona_mock). Use side_effect to differentiate.
@@ -106,7 +118,7 @@ def _db_for(item, plan, *, assignment=None) -> AsyncMock:
         Persona as PersonaRow,
     )
 
-    async def _get_side_effect(cls, pk):
+    async def _get_side_effect(cls, pk, **_kwargs):
         if cls is PersonaRow:
             return persona_mock
         if cls is CreatorStyleAssignment:
@@ -139,7 +151,7 @@ def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
     with _patch_dispatch_ok() as dispatch:
         resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 200
-    dispatch.assert_called_once_with(str(item.id))
+    dispatch.assert_called_once_with(str(item.id), 0)
 
 
 def test_generate_unknown_dispatch_outcome_is_500(client: TestClient) -> None:
@@ -226,7 +238,7 @@ def test_generate_allows_narrated_without_voiceover_when_self_narration_on(
     with _patch_dispatch_ok() as dispatch:
         resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 200
-    dispatch.assert_called_once_with(str(item.id))
+    dispatch.assert_called_once_with(str(item.id), 0)
 
 
 def test_generate_self_narration_on_still_requires_clips(monkeypatch, client: TestClient) -> None:
@@ -257,7 +269,7 @@ def test_generate_allows_narrated_with_voiceover(client: TestClient) -> None:
     with _patch_dispatch_ok() as dispatch:
         resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 200
-    dispatch.assert_called_once_with(str(item.id))
+    dispatch.assert_called_once_with(str(item.id), 0)
 
 
 def test_set_voiceover_stores_path(client: TestClient) -> None:
@@ -332,6 +344,8 @@ def _db_for_pool_attach(item, plan, *, asset_kind):
     async def _execute(query, *args, **kwargs):
         if "plan_item_assets" in str(query):
             return asset_result
+        if "FROM personas" in str(query):
+            return MagicMock(scalar_one_or_none=MagicMock(return_value=plan._owned_persona_fixture))
         return load_result
 
     db.execute = AsyncMock(side_effect=_execute)
@@ -561,7 +575,7 @@ def test_attach_clips_returns_200_immediately(client: TestClient) -> None:
 
     assert resp.status_code == 200
     # Delay was called once with the item id (fire-and-forget).
-    mock_task.delay.assert_called_once_with(str(item.id))
+    mock_task.delay.assert_called_once_with(str(item.id), 0)
 
 
 def test_get_plan_item_returns_instruction_level(client: TestClient) -> None:

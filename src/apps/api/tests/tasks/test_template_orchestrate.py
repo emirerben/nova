@@ -704,6 +704,15 @@ class TestConcatDemuxerPreset:
 
 
 class TestAnalyzeTemplateTask:
+    @pytest.fixture(autouse=True)
+    def _fake_analysis_attempt_redis(self, monkeypatch):
+        fake_redis = MagicMock()
+        fake_redis.incr.return_value = 1
+        monkeypatch.setattr(
+            "app.tasks.template_orchestrate.redis_lib.from_url",
+            lambda *_args, **_kwargs: fake_redis,
+        )
+
     def test_happy_path_sets_ready_status(self):
         from app.tasks.template_orchestrate import analyze_template_task
 
@@ -1819,7 +1828,7 @@ class TestTemplateAudio:
             return ctx
 
         session = MagicMock()
-        session.get.side_effect = lambda model, pk: (
+        session.get.side_effect = lambda model, pk, **_kwargs: (
             mock_template if model is VideoTemplate else mock_job
         )
 
@@ -1913,7 +1922,7 @@ class TestTemplateAudio:
 
         session = MagicMock()
 
-        def _session_get(model, pk):
+        def _session_get(model, pk, **_kwargs):
             if model is VideoTemplate:
                 return mock_template
             if model is MusicTrack:
@@ -2007,7 +2016,7 @@ class TestTemplateAudio:
             return ctx
 
         session = MagicMock()
-        session.get.side_effect = lambda model, pk: (
+        session.get.side_effect = lambda model, pk, **_kwargs: (
             mock_template if model is VideoTemplate else mock_job
         )
 

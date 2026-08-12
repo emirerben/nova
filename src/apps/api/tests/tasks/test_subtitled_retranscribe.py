@@ -34,6 +34,8 @@ class _FakeSession:
 class _FakeJob:
     def __init__(self, assembly_plan=None):
         self.id = uuid.uuid4()
+        self.status = "variants_ready"
+        self.mode = "generative"
         self.assembly_plan = assembly_plan or {}
 
 

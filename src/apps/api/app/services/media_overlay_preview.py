@@ -25,7 +25,11 @@ def is_heif_overlay(path: str, content_type: str = "") -> bool:
     return content_type in {"image/heic", "image/heif"} or ext in {".heic", ".heif"}
 
 
-def convert_heif_overlay_preview(gcs_path: str) -> tuple[str | None, str | None]:
+def convert_heif_overlay_preview(
+    gcs_path: str,
+    *,
+    preview_gcs_path: str | None = None,
+) -> tuple[str | None, str | None]:
     try:
         import pillow_heif  # type: ignore[import]  # noqa: PLC0415
         from PIL import Image, ImageOps  # noqa: PLC0415
@@ -42,7 +46,7 @@ def convert_heif_overlay_preview(gcs_path: str) -> tuple[str | None, str | None]
                     quality=92,
                     optimize=True,
                 )
-            preview_gcs_path = f"{gcs_path}.preview.jpg"
+            preview_gcs_path = preview_gcs_path or f"{gcs_path}.preview.jpg"
             preview_url = storage.upload_public_read(
                 preview_path,
                 preview_gcs_path,

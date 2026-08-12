@@ -34,13 +34,23 @@ from pathlib import Path
 import structlog
 
 from app.database import sync_session as _sync_session
-from app.models import Job, PlanItemAsset, SoundEffect
+from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, SoundEffect
+from app.services.content_plan_persona import (
+    PlanPersonaOwnershipError,
+    load_owned_plan_persona_sync,
+)
 from app.services.job_phases import mark_reattempt, stamp_variant_attempt
 from app.worker import celery_app
 
 log = structlog.get_logger()
 
 _AUTOPLACE_TASK_LIMITS = {"soft_time_limit": 240, "time_limit": 300}
+
+# A manual re-match commits this token before broker publication.  Every write
+# from that task must still see the same token, otherwise a newer request (or
+# broker-failure recovery) owns the variant and the late worker is stale.
+OVERLAY_SUGGEST_ATTEMPT_KEY = "overlay_suggest_attempt_token"
+_NO_OVERLAY_ATTEMPT_FENCE = object()
 
 # Visual blocks replace the base picture during a window and are planned from
 # the spoken transcript, so autoplan only targets speech-spined archetypes.
@@ -64,6 +74,33 @@ def _record(event: str, **fields) -> None:
         pass
 
 
+def _load_uncancelled_job(db, job_id: str, *, for_update: bool = False) -> Job | None:  # noqa: ANN001
+    """Load a Job snapshot, treating cancellation as a terminal tombstone.
+
+    Every Job read-modify-write in this module goes through this helper with
+    ``for_update=True``.  Unlocked entry snapshots use the same cancellation
+    check before any storage, model, or broker work begins.
+    """
+    kwargs = {"with_for_update": True} if for_update else {}
+    job = db.get(Job, uuid.UUID(job_id), **kwargs)
+    if job is None or getattr(job, "status", None) == "cancelled":
+        return None
+    return job
+
+
+def _delete_task_created_frames(job_id: str, object_paths: list[str]) -> None:
+    """Delete exact frame keys created by a cancelled materialization attempt."""
+    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+    for object_path in sorted(set(object_paths)):
+        if not delete_object_best_effort(object_path):
+            log.error(
+                "visual_blocks.cancelled_frame_delete_failed",
+                job_id=job_id,
+                object_path=object_path,
+            )
+
+
 def _materialize_extracted_frames(job_id: str, *, minimum_ready: int = 3) -> None:
     """Persist source-footage frames in the normal replaceable asset pool."""
     from sqlalchemy import func, select  # noqa: PLC0415
@@ -71,7 +108,7 @@ def _materialize_extracted_frames(job_id: str, *, minimum_ready: int = 3) -> Non
     from app import storage  # noqa: PLC0415
 
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = _load_uncancelled_job(db, job_id)
         if job is None or job.content_plan_item_id is None:
             return
         ready = (
@@ -111,6 +148,7 @@ def _materialize_extracted_frames(job_id: str, *, minimum_ready: int = 3) -> Non
     if not source_paths:
         return
     created: list[PlanItemAsset] = []
+    created_object_paths: list[str] = []
     with tempfile.TemporaryDirectory(prefix="nova_extracted_frames_") as tmpdir:
         for clip_index, source_gcs_path in enumerate(source_paths):
             if len(created) >= needed:
@@ -165,6 +203,7 @@ def _materialize_extracted_frames(job_id: str, *, minimum_ready: int = 3) -> Non
                 )
                 try:
                     storage.upload_public_read(frame_path, object_path, content_type="image/jpeg")
+                    created_object_paths.append(object_path)
                     from PIL import Image  # noqa: PLC0415
 
                     with Image.open(frame_path) as image:
@@ -204,10 +243,26 @@ def _materialize_extracted_frames(job_id: str, *, minimum_ready: int = 3) -> Non
                         job_id=job_id,
                         error=str(exc)[:180],
                     )
+    persisted_candidate_paths = {str(asset.gcs_path) for asset in created}
+    unreferenced_paths = [
+        path for path in created_object_paths if path not in persisted_candidate_paths
+    ]
+    if unreferenced_paths:
+        _delete_task_created_frames(job_id, unreferenced_paths)
     if created:
+        persisted = False
         with _sync_session() as db:
-            db.add_all(created)
-            db.commit()
+            # Extraction can take minutes. Revalidate cancellation under the
+            # Job lock before exposing any derived assets in the database.
+            if _load_uncancelled_job(db, job_id, for_update=True) is not None:
+                db.add_all(created)
+                db.commit()
+                persisted = True
+        if not persisted:
+            # Do not hold the Job row lock across storage I/O. These are exact
+            # keys uploaded by this attempt, never paths read from Job state.
+            _delete_task_created_frames(job_id, list(persisted_candidate_paths))
+            return
         _record("visual_blocks_frames_extracted", count=len(created))
 
 
@@ -217,7 +272,7 @@ def _clear_visual_block_attempts(job_id: str, variant_ids: list[str]) -> None:
 
     wanted = set(variant_ids)
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        job = _load_uncancelled_job(db, job_id, for_update=True)
         if job is None:
             return
         variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -259,6 +314,9 @@ def prepare_visual_block_assets(job_id: str, variant_ids: list[str]) -> None:
     if not (settings.visual_blocks_enabled and settings.visual_block_autoplan_enabled):
         _clear_visual_block_attempts(job_id, variant_ids)
         return
+    with _sync_session() as db:
+        if _load_uncancelled_job(db, job_id) is None:
+            return
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     with pipeline_trace_for(job_id):
@@ -267,6 +325,9 @@ def prepare_visual_block_assets(job_id: str, variant_ids: list[str]) -> None:
         except Exception:
             _clear_visual_block_attempts(job_id, variant_ids)
             raise
+        with _sync_session() as db:
+            if _load_uncancelled_job(db, job_id) is None:
+                return
         for index, variant_id in enumerate(variant_ids):
             try:
                 plan_visual_blocks.apply_async(
@@ -297,7 +358,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
         )
 
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            job = _load_uncancelled_job(db, job_id)
             if job is None or job.content_plan_item_id is None:
                 return
             variant = next(
@@ -388,7 +449,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
             # model. Never overwrite a correction or a transcript produced by
             # a concurrent task after this planner's unlocked Whisper read.
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                job = _load_uncancelled_job(db, job_id, for_update=True)
                 variants = list((job.assembly_plan or {}).get("variants") or []) if job else []
                 fresh = next((row for row in variants if row.get("variant_id") == variant_id), None)
                 source_changed = fresh is None or any(
@@ -511,7 +572,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
         # model saw. Validate before consuming the newer render's run-once
         # claim as a terminal no-op.
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            job = _load_uncancelled_job(db, job_id, for_update=True)
             variants = list((job.assembly_plan or {}).get("variants") or []) if job else []
             target = next((row for row in variants if row.get("variant_id") == variant_id), None)
             if target is None:
@@ -534,7 +595,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
         blocks = validate_visual_blocks(blocks, duration_s=duration_s)
 
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            job = _load_uncancelled_job(db, job_id, for_update=True)
             if job is None:
                 return
             variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -593,7 +654,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
             # authored state so the last good video stays ready and autoplan can
             # retry instead of stranding the variant in `rendering` forever.
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                job = _load_uncancelled_job(db, job_id, for_update=True)
                 if job is not None:
                     variants = list((job.assembly_plan or {}).get("variants") or [])
                     target = next(
@@ -829,6 +890,38 @@ def _analyze_video(
         return None, aspect, duration, dims
 
 
+def _plan_ownership_epoch(plan: ContentPlan) -> int:
+    return int(getattr(plan, "ownership_epoch", 0) or 0)
+
+
+def _lock_owned_pool_asset(
+    db,  # noqa: ANN001
+    *,
+    plan_id: uuid.UUID,
+    item_id: uuid.UUID,
+    asset_id: uuid.UUID,
+    expected_epoch: int | None = None,
+) -> tuple[ContentPlan, PlanItem, PlanItemAsset] | None:
+    """Lock and validate Plan -> Persona -> Item -> Asset in global order."""
+    plan = db.get(ContentPlan, plan_id, with_for_update=True)
+    if plan is None:
+        return None
+    load_owned_plan_persona_sync(db, plan, for_update=True)
+    if expected_epoch is not None and _plan_ownership_epoch(plan) != expected_epoch:
+        raise PlanPersonaOwnershipError(plan)
+    item = db.get(PlanItem, item_id, with_for_update=True)
+    if item is None or item.content_plan_id != plan.id:
+        return None
+    asset = db.get(PlanItemAsset, asset_id, with_for_update=True)
+    if (
+        asset is None
+        or asset.plan_item_id != item.id
+        or getattr(asset, "user_id", None) != plan.user_id
+    ):
+        return None
+    return plan, item, asset
+
+
 @celery_app.task(name="app.tasks.autoplace.analyze_pool_asset", **_AUTOPLACE_TASK_LIMITS)
 def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
     """Analyze one pool asset.
@@ -841,11 +934,41 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
     from app.storage import download_to_file  # noqa: PLC0415
 
+    try:
+        aid = uuid.UUID(str(asset_id))
+    except (TypeError, ValueError):
+        log.warning("autoplace.asset_bad_id", asset_id=str(asset_id))
+        return
+
     with _sync_session() as db:
-        asset = db.get(PlanItemAsset, uuid.UUID(asset_id))
-        if asset is None:
+        # Resolve child -> Item first without locks, then acquire the complete
+        # global Plan -> Persona -> Item -> Asset lock chain before the first
+        # write or any download/model work.
+        asset_ref = db.get(PlanItemAsset, aid)
+        if asset_ref is None:
             return
+        item_ref = db.get(PlanItem, asset_ref.plan_item_id)
+        if item_ref is None:
+            return
+        plan_id = item_ref.content_plan_id
+        item_id = item_ref.id
+        try:
+            fenced = _lock_owned_pool_asset(
+                db,
+                plan_id=plan_id,
+                item_id=item_id,
+                asset_id=aid,
+            )
+        except PlanPersonaOwnershipError:
+            log.error("autoplace.asset_invalid_persona", asset_id=asset_id)
+            return
+        if fenced is None:
+            return
+        plan, _item, asset = fenced
+        ownership_epoch = _plan_ownership_epoch(plan)
         scope = str(asset.plan_item_id)
+        gcs_path, kind = asset.gcs_path, asset.kind
+        filename = asset.source_filename or "asset"
         if not refresh:
             asset.status = "analyzing"
             db.commit()
@@ -858,12 +981,6 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
         has_alpha: bool | None = None
         failed = False
         try:
-            with _sync_session() as db:
-                asset = db.get(PlanItemAsset, uuid.UUID(asset_id))
-                if asset is None:
-                    return
-                gcs_path, kind = asset.gcs_path, asset.kind
-                filename = asset.source_filename or "asset"
             with tempfile.TemporaryDirectory() as tmpdir:
                 local = os.path.join(tmpdir, filename.split("/")[-1] or "asset")
                 download_to_file(gcs_path, local)
@@ -876,9 +993,20 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
             failed = True
 
         with _sync_session() as db:
-            asset = db.get(PlanItemAsset, uuid.UUID(asset_id), with_for_update=True)
-            if asset is None:
+            try:
+                fenced = _lock_owned_pool_asset(
+                    db,
+                    plan_id=plan_id,
+                    item_id=item_id,
+                    asset_id=aid,
+                    expected_epoch=ownership_epoch,
+                )
+            except PlanPersonaOwnershipError:
+                log.warning("autoplace.asset_stale_owner", asset_id=asset_id)
                 return
+            if fenced is None:
+                return
+            _plan, _item, asset = fenced
             if failed and analysis is None and aspect is None and duration is None:
                 if refresh:
                     # Refresh must never degrade a working asset (decision C):
@@ -968,16 +1096,34 @@ def _find_variant(job: Job, variant_id: str) -> dict | None:
     return None
 
 
-def _persist_variant_fields(db, job_id: str, variant_id: str, fields: dict) -> dict | None:
+def _overlay_suggest_attempt_matches(variant: dict, attempt_token: str | None) -> bool:
+    """Return whether this worker still owns the variant suggestion attempt."""
+
+    return variant.get(OVERLAY_SUGGEST_ATTEMPT_KEY) == attempt_token
+
+
+def _persist_variant_fields(
+    db,
+    job_id: str,
+    variant_id: str,
+    fields: dict,
+    *,
+    expected_overlay_attempt: str | None | object = _NO_OVERLAY_ATTEMPT_FENCE,
+) -> dict | None:
     """Row-locked read-modify-write of one variant's keys (decision 4A pattern).
     Returns the FRESH variant dict (pre-update) for occupied-interval reads."""
-    job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+    job = _load_uncancelled_job(db, job_id, for_update=True)
     if job is None:
         return None
     variants = list((job.assembly_plan or {}).get("variants") or [])
     fresh = None
     for v in variants:
         if v.get("variant_id") == variant_id:
+            if (
+                expected_overlay_attempt is not _NO_OVERLAY_ATTEMPT_FENCE
+                and v.get(OVERLAY_SUGGEST_ATTEMPT_KEY) != expected_overlay_attempt
+            ):
+                return None
             fresh = dict(v)
             v.update(fields)
             break
@@ -998,6 +1144,7 @@ def match_overlay_suggestions(
     user_id: str,
     auto_apply: bool = False,
     smart_mode: bool = False,
+    attempt_token: str | None = None,
 ) -> None:
     """Match pool assets to this variant's speech.
 
@@ -1024,16 +1171,26 @@ def match_overlay_suggestions(
             # route also sets it on the manual path, but the auto path has no
             # route, and the page's poll continuation keys off this status.
             with _sync_session() as db:
-                _persist_variant_fields(
-                    db, job_id, variant_id, {"overlay_suggest_status": "matching"}
-                )
+                if (
+                    _persist_variant_fields(
+                        db,
+                        job_id,
+                        variant_id,
+                        {"overlay_suggest_status": "matching"},
+                        expected_overlay_attempt=attempt_token,
+                    )
+                    is None
+                ):
+                    return
             # 1. Unlocked read: variant + assets (LLM call must not hold a row lock).
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
+                job = _load_uncancelled_job(db, job_id)
                 if job is None:
                     return
                 variant = _find_variant(job, variant_id)
                 if variant is None:
+                    return
+                if not _overlay_suggest_attempt_matches(variant, attempt_token):
                     return
                 item_id = job.content_plan_item_id
                 duration_s = None
@@ -1073,6 +1230,7 @@ def match_overlay_suggestions(
                         job_id,
                         variant_id,
                         {"overlay_suggest_status": "zero", "overlay_suggestions": None},
+                        expected_overlay_attempt=attempt_token,
                     )
                 return
 
@@ -1104,7 +1262,11 @@ def match_overlay_suggestions(
             if src is None:
                 with _sync_session() as db:
                     _persist_variant_fields(
-                        db, job_id, variant_id, {"overlay_suggest_status": "failed"}
+                        db,
+                        job_id,
+                        variant_id,
+                        {"overlay_suggest_status": "failed"},
+                        expected_overlay_attempt=attempt_token,
                     )
                 _record("autoplace_match_failed", reason="no_transcript", variant_id=variant_id)
                 return
@@ -1181,12 +1343,14 @@ def match_overlay_suggestions(
             deferred_trace: list[tuple[str, dict]] = []
             assets_by_id = {a["id"]: a for a in assets}
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                job = _load_uncancelled_job(db, job_id, for_update=True)
                 if job is None:
                     return
                 variants = list((job.assembly_plan or {}).get("variants") or [])
                 target = next((v for v in variants if v.get("variant_id") == variant_id), None)
                 if target is None:
+                    return
+                if not _overlay_suggest_attempt_matches(target, attempt_token):
                     return
                 # Plan 009: fullscreen data sources, named (eng review E11).
                 # intro windows ← the variant's text_elements timings (montage
@@ -1255,10 +1419,14 @@ def match_overlay_suggestions(
 
                 try:
                     with _sync_session() as db:
-                        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                        job = _load_uncancelled_job(db, job_id, for_update=True)
                         if job is None:
                             return
                         fresh_variant = _find_variant(job, variant_id)
+                        if fresh_variant is None or not _overlay_suggest_attempt_matches(
+                            fresh_variant, attempt_token
+                        ):
+                            return
                         fresh = list((fresh_variant or {}).get("overlay_suggestions") or [])
                         if not fresh:
                             _record(
@@ -1315,7 +1483,11 @@ def match_overlay_suggestions(
             try:
                 with _sync_session() as db:
                     _persist_variant_fields(
-                        db, job_id, variant_id, {"overlay_suggest_status": "failed"}
+                        db,
+                        job_id,
+                        variant_id,
+                        {"overlay_suggest_status": "failed"},
+                        expected_overlay_attempt=attempt_token,
                     )
             except Exception:  # noqa: BLE001
                 pass
@@ -1350,7 +1522,7 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
         try:
             # 1. Unlocked read (the LLM call must not hold a row lock).
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
+                job = _load_uncancelled_job(db, job_id)
                 if job is None:
                     return
                 variant = _find_variant(job, variant_id)
@@ -1476,7 +1648,8 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
                 fields: dict = {"pending_sfx_suggestions": suggestions}
                 if whisper_words:
                     fields["overlay_transcript"] = whisper_words
-                _persist_variant_fields(db, job_id, variant_id, fields)
+                if _persist_variant_fields(db, job_id, variant_id, fields) is None:
+                    return
             _record(
                 "sfx_autoplace_suggested",
                 variant_id=variant_id,

@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.models import ContentPlan, Job, Persona, PlanItem
 
 SETTINGS = "app.config.settings"
 MATCH_TASK = "app.tasks.autoplace.match_overlay_suggestions"
@@ -84,7 +85,15 @@ def _owned_item(user_id: uuid.UUID, *, job):
     item.voiceover_caption_style = None
     item.edit_format = None
     plan = MagicMock()
+    plan.id = item.content_plan_id
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = user_id
+    plan._test_persona = persona
     return item, plan
 
 
@@ -97,12 +106,31 @@ def _job(variants: list[dict]) -> MagicMock:
 
 
 def _db(execute_results: list, plan) -> AsyncMock:
-    """db.execute yields the given fake results in order; db.get (ContentPlan
-    ownership check) always returns `plan`."""
+    """Route-shaped fake preserving Plan -> Persona -> Item -> Job reads."""
+    remaining = list(execute_results)
+    item = remaining[0].scalar_one_or_none() if remaining else None
+
+    async def _execute(stmt):  # noqa: ANN001
+        descriptions = getattr(stmt, "column_descriptions", None) or []
+        entity = descriptions[0].get("entity") if descriptions else None
+        if entity is Persona:
+            return _scalar_result(plan._test_persona)
+        if entity is PlanItem and getattr(stmt, "_for_update_arg", None) is not None:
+            return _scalar_result(item)
+        return remaining.pop(0)
+
+    async def _get(model, _row_id, **_kwargs):  # noqa: ANN001
+        if model is ContentPlan:
+            return plan
+        if model is Job:
+            return item.current_job
+        return None
+
     db = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=execute_results)
-    db.get = AsyncMock(return_value=plan)
+    db.rollback = AsyncMock()
+    db.execute = AsyncMock(side_effect=_execute)
+    db.get = AsyncMock(side_effect=_get)
     return db
 
 
@@ -227,6 +255,9 @@ def test_suggest_overlays_happy_path_commits_and_enqueues(
     _no_real_broker_publish.assert_called_once()
     call = _no_real_broker_publish.call_args
     assert call.kwargs["args"] == [str(job.id), "original_text", str(user.id)]
+    assert call.kwargs["kwargs"] == {
+        "attempt_token": job.assembly_plan["variants"][0]["overlay_suggest_attempt_token"]
+    }
     assert call.kwargs["queue"] == "autoplace-jobs"
 
 
@@ -238,7 +269,12 @@ def test_suggest_overlays_reverts_and_503_when_enqueue_fails(
     job = _job([_variant()])
     item, plan = _owned_item(user.id, job=job)
     db = _db(
-        [_scalar_result(item), _scalar_result(item), _scalar_result(2)],
+        [
+            _scalar_result(item),
+            _scalar_result(item),
+            _scalar_result(2),
+            _scalar_result(item),
+        ],
         plan,
     )
     _override(user, db)
@@ -251,8 +287,76 @@ def test_suggest_overlays_reverts_and_503_when_enqueue_fails(
     assert resp.status_code == 503
     # Status reverted to None (not left stuck at "matching").
     assert job.assembly_plan["variants"][0]["overlay_suggest_status"] is None
+    assert "overlay_suggest_attempt_token" not in job.assembly_plan["variants"][0]
     # Committed twice: the persist-first write and the revert write.
     assert db.commit.await_count >= 2
+
+
+def test_suggest_overlays_enqueue_failure_does_not_rollback_newer_attempt(
+    client: TestClient, _no_real_broker_publish
+):
+    user = _user()
+    job = _job([_variant()])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalar_result(item),
+            _scalar_result(1),
+            _scalar_result(item),
+        ],
+        plan,
+    )
+    _override(user, db)
+
+    def _publish_then_supersede(**_kwargs):
+        variant = job.assembly_plan["variants"][0]
+        variant["overlay_suggest_attempt_token"] = "newer-attempt"
+        raise RuntimeError("broker unreachable")
+
+    _no_real_broker_publish.side_effect = _publish_then_supersede
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch(f"{SETTINGS}.autoplace_queue", "autoplace-jobs"),
+    ):
+        resp = client.post(f"/plan-items/{item.id}/variants/original_text/suggest-overlays")
+
+    assert resp.status_code == 503
+    variant = job.assembly_plan["variants"][0]
+    assert variant["overlay_suggest_status"] == "matching"
+    assert variant["overlay_suggest_attempt_token"] == "newer-attempt"
+    db.rollback.assert_awaited()
+
+
+def test_suggest_overlays_enqueue_failure_does_not_mutate_cancelled_job(
+    client: TestClient, _no_real_broker_publish
+):
+    user = _user()
+    job = _job([_variant()])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalar_result(item),
+            _scalar_result(1),
+            _scalar_result(item),
+        ],
+        plan,
+    )
+    _override(user, db)
+
+    def _publish_then_cancel(**_kwargs):
+        job.status = "cancelled"
+        raise RuntimeError("broker unreachable")
+
+    _no_real_broker_publish.side_effect = _publish_then_cancel
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.post(f"/plan-items/{item.id}/variants/original_text/suggest-overlays")
+
+    assert resp.status_code == 503
+    assert job.status == "cancelled"
+    assert job.assembly_plan["variants"][0]["overlay_suggest_status"] == "matching"
+    db.rollback.assert_awaited()
 
 
 def test_suggest_overlays_zero_ready_assets_400(client: TestClient, _no_real_broker_publish):

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import uuid
 from contextlib import nullcontext
+from copy import deepcopy
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -24,6 +27,7 @@ class _Result:
 
 class _Job:
     def __init__(self):
+        self.status = "processing"
         self.content_plan_item_id = uuid.uuid4()
         self.assembly_plan = {
             "variants": [
@@ -70,8 +74,10 @@ class _Session:
 
 def test_asset_preparation_happens_once_before_variant_fanout(monkeypatch) -> None:
     events: list[tuple[str, object]] = []
+    job = _Job()
     monkeypatch.setattr(settings, "visual_blocks_enabled", True)
     monkeypatch.setattr(settings, "visual_block_autoplan_enabled", True)
+    monkeypatch.setattr(autoplace, "_sync_session", lambda: _Session(job, []))
     monkeypatch.setattr(
         autoplace,
         "_materialize_extracted_frames",
@@ -87,10 +93,110 @@ def test_asset_preparation_happens_once_before_variant_fanout(monkeypatch) -> No
         lambda _job_id: nullcontext(),
     )
 
-    autoplace.prepare_visual_block_assets.run("job-1", ["variant-a", "variant-b"])
+    autoplace.prepare_visual_block_assets.run(JOB_ID, ["variant-a", "variant-b"])
 
-    assert events[0] == ("extract", "job-1")
+    assert events[0] == ("extract", JOB_ID)
     assert [event[0] for event in events] == ["extract", "plan", "plan"]
+
+
+def test_cancelled_asset_preparation_does_not_extract_or_fan_out(monkeypatch) -> None:
+    job = _Job()
+    job.status = "cancelled"
+    extracted: list[str] = []
+    dispatched: list[list[str]] = []
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(settings, "visual_block_autoplan_enabled", True)
+    monkeypatch.setattr(autoplace, "_sync_session", lambda: _Session(job, []))
+    monkeypatch.setattr(
+        autoplace,
+        "_materialize_extracted_frames",
+        lambda job_id: extracted.append(job_id),
+    )
+    monkeypatch.setattr(
+        autoplace.plan_visual_blocks,
+        "apply_async",
+        lambda *, args, queue: dispatched.append(args),
+    )
+
+    autoplace.prepare_visual_block_assets.run(JOB_ID, ["subtitled"])
+
+    assert extracted == []
+    assert dispatched == []
+
+
+def test_cancelled_visual_block_planner_exits_before_transcript_or_agent(monkeypatch) -> None:
+    job = _Job()
+    job.status = "cancelled"
+    before = deepcopy(job.assembly_plan)
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(settings, "visual_block_autoplan_enabled", True)
+    monkeypatch.setattr(autoplace, "_sync_session", lambda: _Session(job, [_Asset()]))
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
+    )
+    monkeypatch.setattr(
+        "app.services.transcript_source.transcript_source",
+        lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("cancelled transcript read")),
+    )
+
+    autoplace.plan_visual_blocks.run(JOB_ID, "subtitled")
+
+    assert job.assembly_plan == before
+
+
+def test_cancelled_frame_materialization_deletes_only_attempt_uploads(monkeypatch) -> None:
+    job = _Job()
+    job.user_id = uuid.uuid4()
+    job.all_candidates = {"clip_paths": ["users/u/source.mp4"]}
+    db = MagicMock()
+    db.get.side_effect = lambda *_a, **_kw: job
+    ready_result = MagicMock()
+    ready_result.scalars.return_value.all.return_value = []
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 0
+    db.execute.side_effect = [ready_result, count_result]
+    ctx = MagicMock()
+    ctx.__enter__.return_value = db
+    ctx.__exit__.return_value = False
+    monkeypatch.setattr(autoplace, "_sync_session", lambda: ctx)
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: SimpleNamespace(duration_s=10.0),
+    )
+    monkeypatch.setattr(
+        autoplace.subprocess,
+        "run",
+        lambda *_a, **_kw: SimpleNamespace(returncode=0),
+    )
+    monkeypatch.setattr(autoplace.os.path, "exists", lambda _path: True)
+    monkeypatch.setattr(autoplace.Path, "read_bytes", lambda _self: b"new-frame")
+    image = MagicMock()
+    image.size = (100, 100)
+    image_ctx = MagicMock()
+    image_ctx.__enter__.return_value = image
+    image_ctx.__exit__.return_value = False
+    monkeypatch.setattr("PIL.Image.open", lambda _path: image_ctx)
+    uploaded: list[str] = []
+
+    def _upload(_local_path: str, object_path: str, **_kwargs) -> None:
+        uploaded.append(object_path)
+        job.status = "cancelled"
+
+    monkeypatch.setattr("app.storage.upload_public_read", _upload)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        autoplace,
+        "_delete_task_created_frames",
+        lambda _job_id, paths: deleted.extend(paths),
+    )
+
+    autoplace._materialize_extracted_frames(JOB_ID, minimum_ready=1)
+
+    assert len(uploaded) == 1
+    assert deleted == uploaded
+    db.add_all.assert_not_called()
+    db.commit.assert_not_called()
 
 
 def test_real_planner_branch_persists_long_video_card_transcript_and_dispatches(

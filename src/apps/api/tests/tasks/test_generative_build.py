@@ -10,6 +10,7 @@ local-render) per CLAUDE.md.
 from __future__ import annotations
 
 import types
+from contextlib import contextmanager
 
 import pytest
 
@@ -17,6 +18,11 @@ import app.tasks.generative_build as gb
 from app.agents.lyrics import LyricsExtractionAgent
 from tests.tasks.conftest import FakeJob as _FakeJob
 from tests.tasks.conftest import patch_job_session as _patch_job_session
+
+
+@contextmanager
+def _accepted_owned_job_fence(_job_id):
+    yield True
 
 
 class _Meta:
@@ -550,17 +556,17 @@ def test_fit_section_noops_on_zero_footage():
 
 
 def test_skia_disabled_fails_loudly(monkeypatch):
-    captured = {}
-
+    job_id = "11111111-1111-1111-1111-111111111111"
+    job = _FakeJob(status="queued", job_id=job_id)
+    _patch_job_session(monkeypatch, job)
     monkeypatch.setattr(gb.settings, "text_renderer_skia_enabled", False, raising=False)
-    monkeypatch.setattr(
-        gb,
-        "_fail_job",
-        lambda jid, msg, failure_reason=None: captured.update(jid=jid, reason=failure_reason),
-    )
-    # Should fail before touching the DB / ingest.
-    gb._run_generative_job("11111111-1111-1111-1111-111111111111")
-    assert captured["reason"] == "skia_disabled"
+    gb._run_generative_job(job_id)
+
+    # The worker must validate/lock the Job before applying even an early
+    # environment failure, so a mismatched content-plan row cannot be mutated.
+    assert job.status == "processing_failed"
+    assert job.failure_reason == "skia_disabled"
+    assert "Skia text renderer" in job.error_detail
 
 
 # ── Terminal status ──────────────────────────────────────────────────────────────
@@ -1915,6 +1921,7 @@ def test_softtimelimit_marks_processing_failed_not_frozen(monkeypatch):
         raise SoftTimeLimitExceeded()
 
     monkeypatch.setattr(gb, "_run_generative_job", _boom)
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
     captured: dict = {}
     monkeypatch.setattr(
         gb,
@@ -2285,10 +2292,11 @@ def _patch_run_generative_job_failure(monkeypatch, exc):
 
 
 def test_phase_instrumentation_trunk_order(monkeypatch):
-    """mark_started is called before _run_generative_job; mark_finished after success.
+    """The task preflights ownership and marks a successful run finished.
 
-    This verifies the top-level orchestrator wires the phase helpers correctly.
-    mark_started is called unconditionally; mark_failed_phase is NOT called on success.
+    mark_started lives inside _run_generative_job, after the locked owner gate;
+    the top-level task must not write it before that gate. mark_failed_phase is
+    not called on success.
     """
     import contextlib
 
@@ -2296,6 +2304,7 @@ def test_phase_instrumentation_trunk_order(monkeypatch):
 
     calls = _patch_phase_fns(monkeypatch)
     _patch_run_generative_job_success(monkeypatch)
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
     monkeypatch.setattr(pt, "pipeline_trace_for", lambda job_id: contextlib.nullcontext())
     # Suppress _fail_job so we can test the happy path without DB
     monkeypatch.setattr(gb, "_fail_job", lambda *a, **k: None, raising=False)
@@ -2303,11 +2312,9 @@ def test_phase_instrumentation_trunk_order(monkeypatch):
     gb.orchestrate_generative_job.run("11111111-1111-1111-1111-111111111111")
 
     fn_names = [c[0] for c in calls]
-    # mark_started must appear before mark_finished; mark_failed_phase must NOT appear.
-    assert "mark_started" in fn_names
+    assert "mark_started" not in fn_names
     assert "mark_finished" in fn_names
     assert "mark_failed_phase" not in fn_names
-    assert fn_names.index("mark_started") < fn_names.index("mark_finished")
 
 
 def test_mark_failed_phase_on_fatal_error(monkeypatch):
@@ -2318,6 +2325,7 @@ def test_mark_failed_phase_on_fatal_error(monkeypatch):
 
     calls = _patch_phase_fns(monkeypatch)
     _patch_run_generative_job_failure(monkeypatch, RuntimeError("fatal"))
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
     monkeypatch.setattr(pt, "pipeline_trace_for", lambda job_id: contextlib.nullcontext())
     monkeypatch.setattr(gb, "_fail_job", lambda *a, **k: None, raising=False)
 
@@ -3732,9 +3740,12 @@ def test_build_generative_job_persists_narrative_shot_count():
         user_id=_uuid.uuid4(),
         clip_paths=["users/u/plan/i/a.mp4", "users/u/plan/i/b.mp4"],
         mode="content_plan",
+        content_plan_item_id=_uuid.uuid4(),
+        content_plan_ownership_epoch=0,
         narrative_shot_count=2,
     )
     assert job.all_candidates["narrative_shot_count"] == 2
+    assert job.content_plan_ownership_epoch == 0
 
 
 def test_build_generative_job_omits_key_when_zero():

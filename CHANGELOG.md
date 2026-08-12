@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Deploy-interrupted renders recover promptly.** Fly now gives Celery the supported five-minute stop budget and remaps deploy termination into Celery's four-minute soft shutdown, restoring unfinished late-acknowledged tasks with a one-minute safety margin instead of waiting for Redis visibility expiry. Celery 5.5+ is required and enforced because older releases do not implement soft shutdown; the existing 1,900-second visibility timeout, worker-loss rejection, late acknowledgements, and stale-job reapers remain backstops.
 - **Plan-item render progress is video-first.** The render headline, elapsed/ETA state, latest analysis step, and completed count now sit beneath the video and variant picker, with the full accessible feed behind a stable “Show analysis steps” disclosure. Controlled variant re-renders remain visible even while the parent item is ready, zero-preview failures retain their setup fallback, and the redundant standalone duration message is removed.
+## [0.26.0.0] — 2026-08-11
+
+### Added
+- **Tenant-safe content plan rendering.** Content plans now fail closed when their linked Persona belongs to another account, with durable ownership epochs, quarantine handling, cancelled-job output fences, and a database-level same-owner constraint.
+- **Migration and regression coverage.** Added staged ownership migrations, PostgreSQL constraint verification, and route/task tests for mismatches, stale workers, cancellation, and dispatch races.
 
 ## [0.25.10.0] — 2026-08-11
 

@@ -56,7 +56,7 @@ from app.pipeline.lyric_injector import _finalize_lyric_audible_window, inject_l
 from app.pipeline.reframe import _encoding_args
 from app.pipeline.text_overlay import FONTS_DIR, generate_animated_overlay_ass
 from app.services.pipeline_trace import record_pipeline_event
-from app.storage import download_to_file, upload_public_read
+from app.storage import delete_object_best_effort, download_to_file, upload_public_read
 
 # Maximum preview duration. The window is anchored at the first lyric line and
 # extended forward up to this many seconds; tracks whose remaining audio after
@@ -574,6 +574,8 @@ def render_lyrics_preview(
     track: Any,
     lyrics_config_effective: dict,
     job_id: str,
+    *,
+    task_run_id: str | None = None,
 ) -> tuple[str, dict]:
     """Render a browser-playable MP4 preview and upload it.
 
@@ -659,10 +661,23 @@ def render_lyrics_preview(
         # admin dashboard now renders three independent style previews. The
         # 24h delete rule in `infra/gcs-lifecycle.json` keys on the
         # `music-lyrics-previews/` prefix so blobs don't accumulate forever.
-        object_path = (
-            f"music-lyrics-previews/{track_id}/{style_segment}/{job_id}/lyrics-preview.mp4"
-        )
-        output_url = upload_public_read(output_path, object_path)
+        if task_run_id:
+            object_path = (
+                f"music-lyrics-previews/{track_id}/{style_segment}/{job_id}/"
+                f"task-runs/{task_run_id}/lyrics-preview.mp4"
+            )
+        else:
+            object_path = (
+                f"music-lyrics-previews/{track_id}/{style_segment}/{job_id}/lyrics-preview.mp4"
+            )
+        try:
+            output_url = upload_public_read(output_path, object_path)
+        except Exception:
+            # Only per-attempt keys are safe cleanup targets.  The legacy
+            # stable path may predate this call, so preserve it on failure.
+            if task_run_id:
+                delete_object_best_effort(object_path)
+            raise
         return output_url, {
             "ass_count": len(ass_files),
             "ffmpeg_cmd": cmd,
