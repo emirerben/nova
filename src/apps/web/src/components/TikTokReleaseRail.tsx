@@ -375,18 +375,19 @@ function PublicationReceipt({
             desktop browser, and it will not appear under Profile → Drafts.
           </p>
           {onDownload && (
-            <p className="mt-3 text-sm leading-relaxed text-[#71717a]">
-              No notification?{" "}
+            <div className="mt-3">
+              <p className="text-sm leading-relaxed text-[#71717a]">
+                No notification? Download the video and post it from the TikTok app yourself.
+              </p>
               <button
                 type="button"
                 onClick={onDownload}
                 disabled={downloadDisabled}
-                className="font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
+                className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {downloadDisabled ? "Preparing…" : "Download the video"}
-              </button>{" "}
-              and post it from the TikTok app yourself.
-            </p>
+              </button>
+            </div>
           )}
           {publication.tiktok_publish_id && (
             <p className="mt-4 text-xs text-[#a1a1aa]">

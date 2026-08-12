@@ -211,7 +211,7 @@ export function TikTokPublishDialog({
     ? !musicConfirmed
       ? "Confirm TikTok's music usage terms."
       : !draftHandoffConfirmed
-        ? "Confirm that you will finish this draft inside TikTok."
+        ? "Confirm that you'll finish this in the TikTok app."
         : null
     : !privacy
       ? "Choose who can watch this video."

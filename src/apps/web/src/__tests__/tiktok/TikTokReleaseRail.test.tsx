@@ -84,6 +84,17 @@ it("labels a simulated receipt as local instead of claiming TikTok is processing
   expect(screen.queryByText("Sending to TikTok")).toBeNull();
 });
 
+it("hides the inbox find-it guidance and download fallback during a simulated draft publish", () => {
+  renderRail(
+    { ...basePublication, delivery_mode: "draft_upload", processing_status: "complete", visibility_status: "draft" },
+    undefined,
+    { simulation: true },
+  );
+
+  expect(screen.queryByText("Where to find it")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Download the video/ })).toBeNull();
+});
+
 it("offers publishing only for a connected account with permission", () => {
   const onPublish = jest.fn();
   const { rerender } = renderRail(null, [], { onPublish });

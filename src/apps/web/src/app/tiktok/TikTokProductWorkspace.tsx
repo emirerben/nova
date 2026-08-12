@@ -65,7 +65,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
 
         <section className="grid gap-3 border-b border-zinc-200 py-6 sm:grid-cols-3" aria-label="Integration status">
           <StatusCard label="Connection" value="TikTok connected" detail="Login Kit + granted scopes" />
-          <StatusCard label="Content Posting" value="Post or draft" detail="Exact approved render" />
+          <StatusCard label="Content Posting" value="Post or inbox" detail="Exact approved render" />
           <StatusCard label="Sandbox review" value="Private testing" detail="Target user only" />
         </section>
 
@@ -137,19 +137,19 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
               {stage === "details" && (
                 <div>
                   <h3 className="text-balance font-display text-2xl">
-                    {deliveryMode === "direct_post" ? "Creator-controlled details" : "TikTok draft handoff"}
+                    {deliveryMode === "direct_post" ? "Creator-controlled details" : "TikTok app inbox handoff"}
                   </h3>
                   <p className="mt-2 text-pretty text-sm leading-relaxed text-[#71717a]">
                     {deliveryMode === "direct_post"
                       ? "Kria suggests copy, but never chooses privacy or enables interactions for the creator."
-                      : "TikTok will send an inbox notification. Open it to edit and finish the post inside TikTok; this step does not publish anything."}
+                      : "TikTok will send a notification to the TikTok app inbox on a phone. Open it there to edit and finish the post; this step does not publish anything."}
                   </p>
 
                   {deliveryMode === "draft_upload" ? (
                     <div className="mt-6 space-y-4">
-                      <ol className="space-y-3 rounded-xl border border-zinc-200 bg-[#f4f4f1] p-4 text-sm" aria-label="TikTok draft handoff steps">
+                      <ol className="space-y-3 rounded-xl border border-zinc-200 bg-[#f4f4f1] p-4 text-sm" aria-label="TikTok app inbox handoff steps">
                         <LifecycleRow label="Kria sends the approved video" detail="TikTok creates an inbox notification for this account." />
-                        <LifecycleRow label="Open TikTok to continue" detail="Choose the notification and finish editing the draft in TikTok." />
+                        <LifecycleRow label="Open the TikTok app to continue" detail="Tap the notification in Inbox and finish editing there." />
                         <LifecycleRow label="You decide whether to post" detail="No TikTok post exists until you complete TikTok's own composer." />
                       </ol>
                       <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 p-4 text-sm focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-600">
@@ -159,7 +159,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                           onChange={(event) => setDraftHandoffConfirmed(event.target.checked)}
                           className="mt-1 accent-lime-600"
                         />
-                        <span>I understand that I must open TikTok and finish this draft there.</span>
+                        <span>I understand I must open the TikTok app on my phone, tap the notification in my Inbox, and finish it there.</span>
                       </label>
                     </div>
                   ) : (
@@ -250,7 +250,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                     onClick={() => setStage("confirm")}
                     className="mt-7 min-h-11 w-full rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {deliveryMode === "direct_post" ? "Review submission" : "Review draft handoff"}
+                    {deliveryMode === "direct_post" ? "Review submission" : "Review handoff"}
                   </button>
                 </div>
               )}
