@@ -900,6 +900,164 @@ describe("applyCopilotOps", () => {
     ]);
   });
 
+  it("undo_last_edit signals historyAction 'undo' without touching the draft when canUndoLastTurn is true", () => {
+    const base = extendedCtx();
+    const res = applyCopilotOps([{ op: "undo_last_edit" }], { ...base, canUndoLastTurn: true });
+
+    expect(res.historyAction).toBe("undo");
+    expect(res.textActions).toEqual([]);
+    expect(res.nextSlots).toBeNull();
+    expect(res.applied).toEqual([]);
+    expect(res.rejected).toEqual([]);
+    expect(res.renderRequest).toBeUndefined();
+  });
+
+  it("undo_last_edit rejects with 'nothing safe to undo' when the staleness guard fails", () => {
+    const base = extendedCtx();
+    // canUndoLastTurn omitted (undefined) — same as a stale undoVersion, a
+    // manual panel edit having moved the stack, or a fresh session with no
+    // prior turn at all.
+    const res = applyCopilotOps([{ op: "undo_last_edit" }], { ...base });
+
+    expect(res.historyAction).toBeUndefined();
+    expect(res.applied).toEqual([]);
+    expect(res.rejected).toMatchObject([
+      { op: "undo_last_edit", reason: "no_effect", detail: "nothing safe to undo" },
+    ]);
+
+    const explicitlyFalse = applyCopilotOps([{ op: "undo_last_edit" }], {
+      ...base,
+      canUndoLastTurn: false,
+    });
+    expect(explicitlyFalse.rejected).toMatchObject([
+      { op: "undo_last_edit", reason: "no_effect", detail: "nothing safe to undo" },
+    ]);
+  });
+
+  it("undo_last_edit is single-op-only, like set_intro_layout", () => {
+    const base = extendedCtx();
+    const res = applyCopilotOps(
+      [
+        { op: "undo_last_edit" },
+        { op: "edit_text", bar_index: 0, text: "new hook" },
+      ],
+      { ...base, canUndoLastTurn: true },
+    );
+    expect(res.historyAction).toBeUndefined();
+    expect(res.rejected).toMatchObject([
+      { op: "undo_last_edit", reason: "capability_disabled" },
+    ]);
+  });
+
+  it("undo_last_edit drops when the history family is not in allowed_op_families", () => {
+    const base = extendedCtx();
+    const res = applyCopilotOps([{ op: "undo_last_edit" }], {
+      ...base,
+      canUndoLastTurn: true,
+      snapshot: {
+        ...base.snapshot,
+        allowed_op_families: base.snapshot.allowed_op_families.filter((f) => f !== "history"),
+      },
+    });
+    expect(res.rejected).toMatchObject([{ op: "undo_last_edit", reason: "capability_disabled" }]);
+  });
+
+  it("repeat_last_edit rejects with 'nothing to repeat yet' when lastAppliedOps is empty", () => {
+    const base = extendedCtx();
+    const res = applyCopilotOps([{ op: "repeat_last_edit" }], { ...base });
+    expect(res.historyAction).toBeUndefined();
+    expect(res.rejected).toMatchObject([
+      { op: "repeat_last_edit", reason: "no_effect", detail: "nothing to repeat yet" },
+    ]);
+  });
+
+  it("repeat_last_edit is single-op-only and available even when undo is stale", () => {
+    const base = extendedCtx();
+    const lastAppliedOps = [{ op: "edit_text" as const, bar_index: 0, text: "second take" }];
+
+    const mixed = applyCopilotOps(
+      [
+        { op: "repeat_last_edit" },
+        { op: "set_title", title: "new title" },
+      ],
+      { ...base, lastAppliedOps, canUndoLastTurn: true },
+    );
+    expect(mixed.historyAction).toBeUndefined();
+    expect(mixed.rejected).toMatchObject([{ op: "repeat_last_edit", reason: "capability_disabled" }]);
+
+    // repeat's own staleness gating is per-op fingerprint validation on the
+    // CURRENT snapshot, not the undo stack — canUndoLastTurn:false must not
+    // block it.
+    const staleUndo = applyCopilotOps([{ op: "repeat_last_edit" }], {
+      ...base,
+      lastAppliedOps,
+      canUndoLastTurn: false,
+    });
+    expect(staleUndo.historyAction).toEqual({ kind: "repeat", ops: lastAppliedOps });
+    expect(staleUndo.textActions).toEqual([{ type: "EDIT_TEXT", id: "bar-1", text: "second take" }]);
+    expect(staleUndo.applied).toEqual([{ label: "Text 1", from: "old hook", to: "second take" }]);
+  });
+
+  it("repeat_last_edit re-runs the prior ops against the CURRENT snapshot and merges the mutation", () => {
+    const base = extendedCtx();
+    const lastAppliedOps = [{ op: "set_title" as const, title: "repeated title" }];
+    const res = applyCopilotOps([{ op: "repeat_last_edit" }], {
+      ...base,
+      lastAppliedOps,
+      canUndoLastTurn: true,
+    });
+    expect(res.nextTitle).toBe("repeated title");
+    expect(res.applied).toEqual([{ label: "Title set", from: "Old title", to: "repeated title" }]);
+    expect(res.historyAction).toEqual({ kind: "repeat", ops: lastAppliedOps });
+    // Provenance stays flat — appliedOps carries the ORIGINAL set_title op,
+    // never the repeat_last_edit wrapper (a later repeat must not recurse on
+    // itself).
+    expect(res.appliedOps).toEqual(lastAppliedOps);
+  });
+
+  it("repeat_last_edit rejects the WHOLE turn when any re-run op fails fingerprint validation, surfacing the rejection normally", () => {
+    const base = extendedCtx();
+    // The prior turn's edit_text op targets bar 0. Simulate the CURRENT
+    // snapshot no longer matching the live bar text (e.g. a manual panel
+    // edit landed between when this turn's snapshot was captured and when
+    // it's applied) — edit_text's mutation-fingerprint check must fail
+    // exactly like it would for a fresh (non-repeat) op.
+    const lastAppliedOps = [{ op: "edit_text" as const, bar_index: 0, text: "stale rewrite" }];
+    const staleSnapshot = {
+      ...base.snapshot,
+      text_bars: base.snapshot.text_bars.map((bar, i) =>
+        i === 0 ? { ...bar, text: "a different value than the live bar" } : bar,
+      ),
+    };
+    const res = applyCopilotOps([{ op: "repeat_last_edit" }], {
+      ...base,
+      snapshot: staleSnapshot,
+      lastAppliedOps,
+      canUndoLastTurn: true,
+    });
+    expect(res.historyAction).toBeUndefined();
+    expect(res.textActions).toEqual([]);
+    expect(res.nextTitle).toBeUndefined();
+    expect(res.rejected).toMatchObject([
+      { op: "edit_text", reason: "user_changed", detail: "text was changed after Nova read it" },
+    ]);
+  });
+
+  it("repeat_last_edit drops when the history family is not in allowed_op_families", () => {
+    const base = extendedCtx();
+    const lastAppliedOps = [{ op: "set_title" as const, title: "repeated title" }];
+    const res = applyCopilotOps([{ op: "repeat_last_edit" }], {
+      ...base,
+      lastAppliedOps,
+      canUndoLastTurn: true,
+      snapshot: {
+        ...base.snapshot,
+        allowed_op_families: base.snapshot.allowed_op_families.filter((f) => f !== "history"),
+      },
+    });
+    expect(res.rejected).toMatchObject([{ op: "repeat_last_edit", reason: "capability_disabled" }]);
+  });
+
   it("maps apply_custom_effect to a renderRequest without touching the draft", () => {
     const base = extendedCtx();
     const snapshot = {

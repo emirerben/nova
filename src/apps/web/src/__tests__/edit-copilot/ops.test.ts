@@ -249,6 +249,20 @@ describe("edit-copilot extended op validation", () => {
       .toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
   });
 
+  it("validates history ops (undo_last_edit/repeat_last_edit) as fieldless and maps them to the history family", () => {
+    expect(validateCopilotOp({ op: "undo_last_edit" }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { op: "undo_last_edit" } });
+    expect(validateCopilotOp({ op: "repeat_last_edit" }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { op: "repeat_last_edit" } });
+    // No payload fields to strip/validate — any extra keys the model sends
+    // are simply ignored, same as open_tool's tool-only shape but with none.
+    expect(validateCopilotOp({ op: "undo_last_edit", stray: "field" }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { op: "undo_last_edit" } });
+
+    expect(copilotOpFamily({ op: "undo_last_edit" })).toBe("history");
+    expect(copilotOpFamily({ op: "repeat_last_edit" })).toBe("history");
+  });
+
   it("validates apply_custom_effect shape-only — deep filter/param checks are server-side", () => {
     const effect = {
       id: "vintage_1",

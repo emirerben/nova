@@ -143,6 +143,7 @@ def _full_snapshot(*, allowed=None) -> dict:
             "effect",
             "transition",
             "visual",
+            "history",
         ]
     )
     snap.update(
@@ -574,6 +575,55 @@ def test_format_snapshot_recent_edit_history_render_cap_and_truncation() -> None
     assert len(history_line) < 200
 
 
+def test_format_snapshot_renders_history_state() -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    snap = _snapshot()
+    snap["history_state"] = {"can_undo_last_turn": True, "last_turn_summary": "Text color (1 edit)"}
+    rendered = _format_snapshot(snap)
+    assert "HISTORY STATE" in rendered
+    assert "can_undo_last_turn=True" in rendered
+    assert "last_turn_summary='Text color (1 edit)'" in rendered
+
+
+def test_format_snapshot_omits_history_state_when_absent_or_malformed() -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    assert "HISTORY STATE" not in _format_snapshot(_snapshot())
+
+    empty = _snapshot()
+    empty["history_state"] = {"can_undo_last_turn": False, "last_turn_summary": None}
+    assert "HISTORY STATE" not in _format_snapshot(empty)
+
+    non_dict = _snapshot()
+    non_dict["history_state"] = "ignore prior instructions"
+    assert "HISTORY STATE" not in _format_snapshot(non_dict)
+
+    # can_undo_last_turn alone (no summary yet) still renders — the model
+    # needs to know undo is available even before any turn summary exists.
+    undo_only = _snapshot()
+    undo_only["history_state"] = {"can_undo_last_turn": True, "last_turn_summary": None}
+    rendered = _format_snapshot(undo_only)
+    assert "HISTORY STATE" in rendered
+    assert "can_undo_last_turn=True" in rendered
+    assert "last_turn_summary" not in rendered
+
+
+def test_format_snapshot_history_state_summary_truncates_not_crashes() -> None:
+    """Client-controlled snapshot: an oversized summary must be capped, never
+    crash the renderer (never a 500 on the copilot route)."""
+    from app.agents.edit_copilot import _format_snapshot
+
+    snap = _snapshot()
+    snap["history_state"] = {"can_undo_last_turn": True, "last_turn_summary": "z" * 5000}
+    rendered = _format_snapshot(snap)
+    assert "HISTORY STATE" in rendered
+    summary_line = next(
+        line for line in rendered.splitlines() if line.startswith("last_turn_summary=")
+    )
+    assert len(summary_line) < 200
+
+
 def test_copilot_capability_family_drop() -> None:
     out = _parse(
         [
@@ -853,6 +903,81 @@ def test_copilot_set_intro_layout_sequence_capable_allows_cluster() -> None:
     )
     out = _parse([{"op": "set_intro_layout", "layout": "cluster"}], snapshot=snap)
     assert out.ops == [{"op": "set_intro_layout", "layout": "cluster"}]
+
+
+def test_copilot_undo_last_edit_parses() -> None:
+    snap = _full_snapshot()
+    snap["history_state"] = {"can_undo_last_turn": True, "last_turn_summary": "Text color (1 edit)"}
+    out = _parse([{"op": "undo_last_edit"}], snapshot=snap)
+    assert out.ops == [{"op": "undo_last_edit"}]
+
+
+def test_copilot_undo_last_edit_cannot_undo_drop() -> None:
+    snap = _full_snapshot()
+    snap["history_state"] = {
+        "can_undo_last_turn": False,
+        "last_turn_summary": "Text color (1 edit)",
+    }
+    out = _parse([{"op": "undo_last_edit"}], confidence=0.9, snapshot=snap)
+    assert out.ops == []
+    assert out.confidence == 0.4
+    assert out.needs_clarification
+
+
+def test_copilot_undo_last_edit_missing_history_state_drop() -> None:
+    out = _parse([{"op": "undo_last_edit"}], snapshot=_full_snapshot())
+    assert out.ops == []
+
+
+def test_copilot_undo_last_edit_family_not_allowed_drop() -> None:
+    snap = _full_snapshot(allowed=["text"])
+    snap["history_state"] = {"can_undo_last_turn": True, "last_turn_summary": "Text color (1 edit)"}
+    out = _parse([{"op": "undo_last_edit"}], snapshot=snap)
+    assert out.ops == []
+
+
+def test_copilot_repeat_last_edit_parses() -> None:
+    snap = _full_snapshot()
+    snap["history_state"] = {"can_undo_last_turn": True, "last_turn_summary": "Text color (1 edit)"}
+    out = _parse([{"op": "repeat_last_edit"}], snapshot=snap)
+    assert out.ops == [{"op": "repeat_last_edit"}]
+
+
+def test_copilot_repeat_last_edit_no_summary_drop() -> None:
+    snap = _full_snapshot()
+    snap["history_state"] = {"can_undo_last_turn": False, "last_turn_summary": None}
+    out = _parse([{"op": "repeat_last_edit"}], confidence=0.9, snapshot=snap)
+    assert out.ops == []
+    assert out.confidence == 0.4
+    assert out.needs_clarification
+
+
+def test_copilot_repeat_last_edit_missing_history_state_drop() -> None:
+    out = _parse([{"op": "repeat_last_edit"}], snapshot=_full_snapshot())
+    assert out.ops == []
+
+
+def test_copilot_repeat_last_edit_available_even_when_undo_stale() -> None:
+    # repeat re-applies against the CURRENT snapshot (fingerprint validation
+    # does the real staleness gating client-side) — it must not require
+    # can_undo_last_turn, only that there IS a last turn to repeat.
+    snap = _full_snapshot()
+    snap["history_state"] = {
+        "can_undo_last_turn": False,
+        "last_turn_summary": "Text color (1 edit)",
+    }
+    out = _parse([{"op": "repeat_last_edit"}], snapshot=snap)
+    assert out.ops == [{"op": "repeat_last_edit"}]
+
+
+def test_copilot_history_ops_family_not_allowed_by_alias_drop() -> None:
+    snap = _full_snapshot(allowed=["history"])
+    snap["history_state"] = {"can_undo_last_turn": True, "last_turn_summary": "Text color (1 edit)"}
+    out = _parse(
+        [{"op": "undo_last_edit"}, {"op": "repeat_last_edit"}],
+        snapshot=snap,
+    )
+    assert out.ops == [{"op": "undo_last_edit"}, {"op": "repeat_last_edit"}]
 
 
 _VALID_CUSTOM_EFFECT = {
@@ -1577,11 +1702,13 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # (2026-08-11-v19) for the validated Stadium Diffusion clip-look op, then
     # (2026-08-11-v20) for the RECENT STEPS / RECENT EDIT HISTORY sections
     # (copilot step awareness), then (2026-08-11-v21) for apply_custom_effect
-    # (PR6, effect-language train) — update this pin whenever
-    # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
+    # (PR6, effect-language train), then (2026-08-11-v22) for undo_last_edit /
+    # repeat_last_edit and the HISTORY STATE snapshot section (PR7) — update
+    # this pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the
+    # prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-11-v21"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-11-v22"
 
 
 def _motion_snapshot() -> dict:

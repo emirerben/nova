@@ -61,6 +61,8 @@ def test_allowlist_pin() -> None:
         "sound_effects": frozenset({"effects_applied"}),
         "audio_mix": frozenset({"voiceover_mixed"}),
         "render_stage": frozenset({"*"}),
+        "custom_effect": frozenset({"burn_start", "burn_done"}),
+        "render": frozenset({"custom_effect_reapply_failed"}),
     }
 
 
@@ -316,6 +318,78 @@ def test_project_nova_steps_read_cap() -> None:
     # Cap keeps the MOST RECENT 40, not the first 40.
     assert steps[-1].id == "assembly:clip_metadata_done:59"
     assert steps[0].id == "assembly:clip_metadata_done:20"
+
+
+def test_custom_effect_burn_events_project_with_nova_voiced_labels() -> None:
+    """Bug 1 (E2E fix): custom-effect render steps must appear in the feed."""
+    t0 = datetime(2026, 8, 11, 10, 0, 0, tzinfo=UTC)
+    job = _job(
+        status="rendering",
+        pipeline_trace=[
+            {
+                "ts": t0.isoformat(),
+                "stage": "custom_effect",
+                "event": "burn_start",
+                "data": {"variant_id": "var_1", "filters": 3},
+            },
+            {
+                "ts": (t0 + timedelta(seconds=5)).isoformat(),
+                "stage": "custom_effect",
+                "event": "burn_done",
+                "data": {"variant_id": "var_1", "filters": 3},
+            },
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert [s.label for s in steps] == ["Applying your custom look", "Custom look applied"]
+    assert [s.kind for s in steps] == ["render", "render"]
+    assert steps[0].detail == ["3 filters"]
+    assert steps[1].detail == ["3 filters"]
+    # variant_id never leaks -- humanizers only ever read `filters`.
+    assert "var_1" not in f"{steps[0].label} {steps[1].label}"
+    # Non-terminal job -> only the chronologically last step is active.
+    assert steps[0].status == "done"
+    assert steps[1].status == "active"
+
+
+def test_custom_effect_reapply_failed_is_visible_and_marked_failed() -> None:
+    """Bug 1 (E2E fix): reapply failures must surface (fail-open != invisible)."""
+    t0 = datetime(2026, 8, 11, 10, 0, 0, tzinfo=UTC)
+    job = _job(
+        status="variants_ready",
+        pipeline_trace=[
+            {
+                "ts": t0.isoformat(),
+                "stage": "render",
+                "event": "custom_effect_reapply_failed",
+                "data": {"variant_id": "var_1", "reason": "burn_failed", "stage": "render"},
+            },
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert len(steps) == 1
+    assert steps[0].label == "Couldn't re-apply your custom look — kept the video without it"
+    assert steps[0].kind == "render"
+    assert steps[0].status == "failed"
+    # The raw validator reason code never leaks into the user-facing copy.
+    assert "burn_failed" not in steps[0].label
+
+
+def test_other_render_stage_events_stay_excluded() -> None:
+    """Only custom_effect_reapply_failed is allowlisted under "render" --
+    unrelated internal events (e.g. fast_reburn_base_probe_failed) that carry
+    base_path must stay dropped."""
+    job = _job(
+        pipeline_trace=[
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "render",
+                "event": "fast_reburn_base_probe_failed",
+                "data": {"base_path": "gs://bucket/private/base.mp4"},
+            }
+        ]
+    )
+    assert project_nova_steps(job) == []
 
 
 def test_unknown_event_within_allowlisted_stage_is_dropped() -> None:
