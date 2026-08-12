@@ -344,6 +344,70 @@ describe("Plan item page — overlay_apply_receipt cleanup", () => {
     jest.useRealTimers();
   });
 
+  it("never shows another variant's receipt when the lookup falls back to job scope", async () => {
+    // The receipt endpoint only filters by variant when the param is sent, so a
+    // variant-less call returns the job's latest publication across ALL
+    // variants. Showing it here would put an unpublished variant into receipt
+    // mode and strip its release actions.
+    mockGetTikTokPublicationReceipt.mockResolvedValue({
+      id: "publication-other-variant",
+      job_id: "job-1",
+      variant_id: "v2",
+      title: "Wrong variant caption",
+      privacy_level: "SELF_ONLY",
+      allow_comment: false,
+      allow_duet: false,
+      allow_stitch: false,
+      creator_nickname: "Kria Studio",
+      processing_status: "complete",
+      visibility_status: "private",
+      public_at: null,
+      retryable: false,
+      failure_code: null,
+      failure_detail: null,
+      latest_metrics: null,
+      metrics_synced_at: null,
+      evaluation_metrics: null,
+      evaluation_captured_at: null,
+      created_at: "2026-08-01T10:00:00Z",
+      updated_at: "2026-08-01T10:00:00Z",
+    });
+    mockListTikTokPublications.mockResolvedValue([]);
+    setData([makeVariant()]);
+
+    await act(async () => {
+      render(<PlanItemPage />);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Wrong variant caption")).toBeNull();
+    expect(screen.queryByText("Published privately")).toBeNull();
+    expect(await screen.findByText("Ready to publish")).toBeInTheDocument();
+  });
+
+  it("refetches publications after the same variant re-renders", async () => {
+    mockGetTikTokPublicationReceipt.mockResolvedValue(null);
+    mockListTikTokPublications.mockResolvedValue([]);
+    setData([makeVariant({ render_finished_at: "2026-06-06T10:02:00Z" })]);
+
+    let view;
+    await act(async () => {
+      view = render(<PlanItemPage />);
+      await Promise.resolve();
+    });
+    const callsBefore = mockGetTikTokPublicationReceipt.mock.calls.length;
+
+    // An edit reburns the SAME variant_id, so render_finished_at is the only
+    // signal that the published cut is no longer the cut on screen.
+    setData([makeVariant({ render_finished_at: "2026-06-06T10:09:00Z" })]);
+    await act(async () => {
+      view.rerender(<PlanItemPage />);
+      await Promise.resolve();
+    });
+
+    expect(mockGetTikTokPublicationReceipt.mock.calls.length).toBeGreaterThan(callsBefore);
+  });
+
   it("fails closed when the canonical receipt lookup fails", async () => {
     mockGetTikTokPublicationReceipt.mockRejectedValue(new Error("temporary receipt lookup failure"));
     mockListTikTokPublications.mockResolvedValue([]);
