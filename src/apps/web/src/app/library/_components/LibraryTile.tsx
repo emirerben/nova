@@ -114,7 +114,7 @@ function TikTokStatus({ publication }: { publication: TikTokPublication }) {
   const label = publication.visibility_status === "public"
     ? "Live on TikTok"
     : publication.visibility_status === "draft"
-      ? "Ready to finish in TikTok"
+      ? "Waiting in your TikTok app inbox"
     : publication.visibility_status === "removed"
       ? "No longer public"
       : publication.visibility_status === "private"
@@ -132,7 +132,7 @@ function TikTokStatus({ publication }: { publication: TikTokPublication }) {
     <div className="mt-3 rounded-lg bg-zinc-50 p-2 text-xs text-[#3f3f46]">
       <p className="font-medium">{label}</p>
       {publication.visibility_status === "draft" ? (
-        <p className="mt-0.5 text-[#71717a]">Open TikTok&apos;s inbox notification to edit and post.</p>
+        <p className="mt-0.5 text-[#71717a]">Open the TikTok app → Inbox → tap the notification. It won&apos;t appear on tiktok.com or under Drafts.</p>
       ) : publication.visibility_status !== "public" ? (
         <p className="mt-0.5 text-[#71717a]">Metrics begin when the post is public.</p>
       ) : null}

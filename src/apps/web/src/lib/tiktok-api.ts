@@ -42,6 +42,8 @@ export interface TikTokPublication {
   delivery_mode?: "direct_post" | "draft_upload";
   /** Optional during the Fly-before-Vercel response-shape rollout. */
   title?: string;
+  /** TikTok's own publish id, for support correlation. Optional for the same rollout reason. */
+  tiktok_publish_id?: string | null;
   privacy_level?: string;
   allow_comment?: boolean;
   allow_duet?: boolean;

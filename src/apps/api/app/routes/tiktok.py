@@ -170,6 +170,7 @@ class PublicationResponse(BaseModel):
     processing_status: str
     visibility_status: str
     public_at: datetime | None
+    tiktok_publish_id: str | None = None
     retryable: bool
     failure_code: str | None
     failure_detail: str | None
@@ -197,6 +198,7 @@ def _publication_response(row: TikTokPublication) -> PublicationResponse:
         processing_status=row.processing_status,
         visibility_status=row.visibility_status,
         public_at=row.public_at,
+        tiktok_publish_id=row.tiktok_publish_id,
         retryable=row.retryable,
         failure_code=row.failure_code,
         failure_detail=row.failure_detail,

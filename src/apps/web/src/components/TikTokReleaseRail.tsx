@@ -63,6 +63,8 @@ export function TikTokReleaseRail({
               pollingStalled={pollingStalled}
               onReceiptRetry={onReceiptRetry}
               simulation={simulation}
+              onDownload={onDownload}
+              downloadDisabled={baking || !videoReady}
             />
             {publication.processing_status === "failed" && !publication.retryable && canPublish && (
               <button
@@ -301,6 +303,8 @@ function PublicationReceipt({
   pollingStalled = false,
   onReceiptRetry,
   simulation = false,
+  onDownload,
+  downloadDisabled = false,
 }: {
   publication: TikTokPublication;
   connection: TikTokConnection | null;
@@ -309,6 +313,8 @@ function PublicationReceipt({
   pollingStalled?: boolean;
   onReceiptRetry?: () => void;
   simulation?: boolean;
+  onDownload?: () => void;
+  downloadDisabled?: boolean;
 }) {
   const status = simulation
     ? {
@@ -345,8 +351,8 @@ function PublicationReceipt({
       <div className="space-y-2 text-sm">
         {publication.delivery_mode === "draft_upload" ? (
           <>
-            <MetaRow label="Destination" value="TikTok drafts" compact />
-            <MetaRow label="Next step" value="Finish in TikTok" compact />
+            <MetaRow label="Destination" value="TikTok app inbox" compact />
+            <MetaRow label="Next step" value="Finish it in the TikTok app" compact />
           </>
         ) : (
           <>
@@ -355,6 +361,40 @@ function PublicationReceipt({
           </>
         )}
       </div>
+      {publication.visibility_status === "draft" && !simulation && (
+        <div className="border-t border-zinc-200 pt-4">
+          <p className="text-sm font-semibold text-[#0c0c0e]">Where to find it</p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-relaxed text-[#3f3f46]">
+            <li>Open the TikTok app on your phone.</li>
+            <li>Tap <span className="font-medium">Inbox</span> at the bottom.</li>
+            <li>Tap the notification about your uploaded video — it opens TikTok&apos;s editor.</li>
+            <li>Add anything you want, then post.</li>
+          </ol>
+          <p className="mt-3 text-sm leading-relaxed text-[#71717a]">
+            This only works in the TikTok mobile app. It will not appear on tiktok.com in a
+            desktop browser, and it will not appear under Profile → Drafts.
+          </p>
+          {onDownload && (
+            <p className="mt-3 text-sm leading-relaxed text-[#71717a]">
+              No notification?{" "}
+              <button
+                type="button"
+                onClick={onDownload}
+                disabled={downloadDisabled}
+                className="font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {downloadDisabled ? "Preparing…" : "Download the video"}
+              </button>{" "}
+              and post it from the TikTok app yourself.
+            </p>
+          )}
+          {publication.tiktok_publish_id && (
+            <p className="mt-4 text-xs text-[#a1a1aa]">
+              TikTok reference: <span className="font-mono">{publication.tiktok_publish_id}</span>
+            </p>
+          )}
+        </div>
+      )}
       {pollingStalled && !simulation && (
         <div className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
           <p>Kria can&apos;t refresh this receipt right now. Your last confirmed TikTok status is still shown.</p>
@@ -574,7 +614,7 @@ function MetaRow({ label, value, compact = false }: { label: string; value: stri
 
 function publicationStatus(publication: TikTokPublication) {
   if (publication.visibility_status === "public") return { title: "Live on TikTok", detail: "TikTok confirmed this post is public.", short: "Live" };
-  if (publication.visibility_status === "draft") return { title: "Ready in TikTok drafts", detail: "Open TikTok's inbox notification to finish editing and post.", short: "Draft ready" };
+  if (publication.visibility_status === "draft") return { title: "Waiting in your TikTok app inbox", detail: "Open the TikTok app on your phone and tap the notification to finish and post it.", short: "In TikTok inbox" };
   if (publication.delivery_mode === "draft_upload" && publication.processing_status === "complete") return { title: "Posted from TikTok", detail: "The creator completed the post inside TikTok; its audience was chosen there.", short: "Posted" };
   if (publication.visibility_status === "private") return { title: "Published privately", detail: "This post is visible only to the audience you selected.", short: "Private" };
   if (publication.visibility_status === "removed") return { title: "No longer public", detail: "TikTok reports that this post is no longer visible.", short: "Removed" };
@@ -631,7 +671,7 @@ function interactionLabel(publication: TikTokPublication) {
 
 function privacyLabel(value?: string) {
   if (!value) return "TikTok audience";
-  if (value === "TIKTOK_DRAFT") return "TikTok draft";
+  if (value === "TIKTOK_DRAFT") return "TikTok app inbox";
   if (value === "SELF_ONLY") return "Only you";
   if (value === "MUTUAL_FOLLOW_FRIENDS") return "Friends";
   if (value === "FOLLOWER_OF_CREATOR") return "Followers";

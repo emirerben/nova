@@ -254,7 +254,7 @@ it("simulates the connected publish flow without calling TikTok APIs", async () 
   }));
 });
 
-it("sends the exact render to TikTok drafts with explicit handoff consent", async () => {
+it("sends the exact render to the TikTok inbox with explicit handoff consent", async () => {
   mockedCreate.mockResolvedValue({
     id: "draft-1",
     job_id: "job-1",
@@ -278,10 +278,10 @@ it("sends the exact render to TikTok drafts with explicit handoff consent", asyn
   fireEvent.click(screen.getByRole("radio", { name: /Finish in TikTok/ }));
   expect(screen.getByText(/TikTok will send an inbox notification/)).not.toBeNull();
   fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
-  fireEvent.click(screen.getByLabelText(/must open TikTok's inbox notification/));
-  fireEvent.click(screen.getByRole("button", { name: "Review draft handoff" }));
-  expect(screen.getByText("Draft handoff summary")).not.toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Send to TikTok drafts" }));
+  fireEvent.click(screen.getByLabelText(/must open the TikTok app on my phone/));
+  fireEvent.click(screen.getByRole("button", { name: "Review handoff" }));
+  expect(screen.getByText("Inbox handoff summary")).not.toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Send to TikTok inbox" }));
 
   await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
   expect(mockedCreate).toHaveBeenCalledWith(expect.objectContaining({
@@ -335,9 +335,9 @@ it("reuses the delivery-mode idempotency key after an ambiguous remount", async 
   await screen.findByText("Creator");
   fireEvent.click(screen.getByRole("radio", { name: /Finish in TikTok/ }));
   fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
-  fireEvent.click(screen.getByLabelText(/must open TikTok's inbox notification/));
-  fireEvent.click(screen.getByRole("button", { name: "Review draft handoff" }));
-  fireEvent.click(screen.getByRole("button", { name: "Send to TikTok drafts" }));
+  fireEvent.click(screen.getByLabelText(/must open the TikTok app on my phone/));
+  fireEvent.click(screen.getByRole("button", { name: "Review handoff" }));
+  fireEvent.click(screen.getByRole("button", { name: "Send to TikTok inbox" }));
   await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
   first.unmount();
 
@@ -345,9 +345,9 @@ it("reuses the delivery-mode idempotency key after an ambiguous remount", async 
   await screen.findByText("Creator");
   fireEvent.click(screen.getByRole("radio", { name: /Finish in TikTok/ }));
   fireEvent.click(screen.getByLabelText(/Music Usage Confirmation/));
-  fireEvent.click(screen.getByLabelText(/must open TikTok's inbox notification/));
-  fireEvent.click(screen.getByRole("button", { name: "Review draft handoff" }));
-  fireEvent.click(screen.getByRole("button", { name: "Send to TikTok drafts" }));
+  fireEvent.click(screen.getByLabelText(/must open the TikTok app on my phone/));
+  fireEvent.click(screen.getByRole("button", { name: "Review handoff" }));
+  fireEvent.click(screen.getByRole("button", { name: "Send to TikTok inbox" }));
   await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(2));
 
   expect(mockedCreate.mock.calls[0][0].idempotency_key).toBe("stable-draft-key");

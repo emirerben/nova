@@ -275,7 +275,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                         <SummaryRow label="Caption" value={caption || "No caption"} />
                       </>
                     ) : (
-                      <SummaryRow label="Next step" value="Open the TikTok inbox notification" />
+                      <SummaryRow label="Next step" value="Open the notification in the TikTok app" />
                     )}
                   </dl>
                   <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row">
@@ -291,7 +291,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                       onClick={() => setStage("receipt")}
                       className="min-h-11 flex-1 rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
                     >
-                      {deliveryMode === "direct_post" ? "Complete demo submission" : "Send demo to TikTok drafts"}
+                      {deliveryMode === "direct_post" ? "Complete demo submission" : "Send demo to TikTok inbox"}
                     </button>
                   </div>
                 </div>
@@ -303,12 +303,12 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                     Demo receipt
                   </div>
                   <h3 className="mt-4 text-balance font-display text-2xl">
-                    {deliveryMode === "direct_post" ? "Published privately on TikTok" : "Ready to finish in TikTok"}
+                    {deliveryMode === "direct_post" ? "Published privately on TikTok" : "Waiting in the TikTok app inbox"}
                   </h3>
                   <p className="mt-2 text-pretty text-sm leading-relaxed text-[#71717a]">
                     {deliveryMode === "direct_post"
                       ? "Processing is complete and visibility is private. Completion never implies public visibility; Kria tracks both states independently."
-                      : "TikTok accepted the video for draft handoff. Open the TikTok inbox notification to continue; Kria has not created a post."}
+                      : "TikTok accepted the video for handoff and sent an inbox notification to the TikTok app on a phone. Open it there to continue — it does not appear on tiktok.com or under Profile → Drafts, and Kria has not created a post."}
                   </p>
                   <ol className="mt-7 space-y-4" aria-label="Demo publication lifecycle">
                     <LifecycleRow label="Immutable snapshot created" detail="Approved generation preserved" />

@@ -7,7 +7,12 @@ they approved by either of TikTok's Content Posting paths:
   access, the API and UI allow only `SELF_ONLY`.
 - **Finish in TikTok** uses Upload API (`video.upload`). TikTok creates an inbox
   notification; the creator opens TikTok and finishes the draft there. Kria
-  never describes a successful upload as a published post.
+  never describes a successful upload as a published post. The notification is
+  visible **only in the TikTok mobile app** — it never creates an entry in the
+  Drafts tab and never appears on tiktok.com in a desktop browser. Kria's UI
+  must say so explicitly wherever this path is surfaced (2026-08-12 incident:
+  a user searched tiktok.com for a delivered video labeled "TikTok drafts" and
+  could not find it — see agents/DECISIONS.md).
 
 Both paths use the same immutable GCS snapshot, generation check, lifecycle
 receipt, and creator music-rights confirmation.
@@ -25,7 +30,7 @@ The OAuth request and the TikTok Developer Portal must show exactly:
 | --- | --- | --- |
 | `user.info.basic` | Identify the connected TikTok account | Login Kit consent and the connected nickname in Kria |
 | `video.publish` | Submit the approved render as a Direct Post | Post now → Only you → processing receipt → private TikTok post |
-| `video.upload` | Send the approved render to TikTok for creator completion | Finish in TikTok → inbox notification → open TikTok draft composer |
+| `video.upload` | Send the approved render to TikTok for creator completion | Finish in TikTok → inbox notification in the TikTok mobile app → open TikTok's composer |
 
 Content Posting API automatically adds both content scopes in TikTok's portal,
 so both must be implemented and recorded. Do **not** add `user.info.profile`,

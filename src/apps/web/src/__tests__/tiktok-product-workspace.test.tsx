@@ -104,10 +104,10 @@ describe("public TikTok product workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review draft handoff" }));
 
     expect(screen.getByRole("heading", { name: "Confirm the TikTok handoff" })).toBeInTheDocument();
-    expect(screen.getByText("Open the TikTok inbox notification")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Send demo to TikTok drafts" }));
+    expect(screen.getByText("Open the notification in the TikTok app")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send demo to TikTok inbox" }));
 
-    expect(screen.getByRole("heading", { name: "Ready to finish in TikTok" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Waiting in the TikTok app inbox" })).toBeInTheDocument();
     expect(screen.getByText("No post created")).toBeInTheDocument();
   });
 

@@ -197,7 +197,7 @@ it("uses account-wide publications for learning but item attempts for history", 
 
 it.each([
   ["private", "complete", "Published privately"],
-  ["draft", "complete", "Ready in TikTok drafts"],
+  ["draft", "complete", "Waiting in your TikTok app inbox"],
   ["removed", "complete", "No longer public"],
   ["unknown", "submission_unknown", "Check TikTok before retrying"],
   ["unknown", "failed", "Publishing failed"],
@@ -210,6 +210,36 @@ it.each([
   });
 
   expect(screen.getByText(heading)).not.toBeNull();
+});
+
+it("names the real destination for an inbox handoff and never claims TikTok's Drafts tab", () => {
+  const onDownload = jest.fn();
+  renderRail(
+    {
+      ...basePublication,
+      delivery_mode: "draft_upload",
+      processing_status: "complete",
+      visibility_status: "draft",
+      tiktok_publish_id: "publish-abc123",
+    },
+    undefined,
+    { onDownload },
+  );
+
+  // Never claims the Drafts tab as the destination.
+  expect(screen.queryAllByText(/TikTok drafts/i)).toHaveLength(0);
+
+  // Names the real place and tells the creator how to reach it.
+  expect(screen.getByText("TikTok app inbox")).not.toBeNull();
+  expect(screen.getAllByText(/Open the TikTok app on your phone/).length).toBeGreaterThan(0);
+  expect(screen.getByText(/Tap the notification about your uploaded video/)).not.toBeNull();
+  expect(screen.getByText(/will not appear on tiktok\.com in a desktop browser/)).not.toBeNull();
+  expect(screen.getByText(/will not appear under Profile → Drafts/)).not.toBeNull();
+  expect(screen.getByText(/publish-abc123/)).not.toBeNull();
+
+  // Manual fallback is reachable from the receipt.
+  fireEvent.click(screen.getByRole("button", { name: "Download the video" }));
+  expect(onDownload).toHaveBeenCalledTimes(1);
 });
 
 it("stops the working state after the creator posts an uploaded draft in TikTok", () => {

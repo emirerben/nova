@@ -989,3 +989,37 @@ drift with no guard).
   idea) pin the desired outputs.
 - **Merge gate:** live judge shadow A/B on a keyed machine (repo
   prompt-change rule) — replay CI guards artifacts, not model behavior.
+
+---
+
+## [2026-08-12] TikTok "drafts" copy named a destination that doesn't exist
+
+A user's Upload API delivery succeeded (prod logs: `inbox/video/init/` 200 OK,
+TikTok pulled the media, `status/fetch` reached a terminal state, the poll
+sweep went quiet) but the receipt said **"Ready in TikTok drafts."** The user
+checked tiktok.com on desktop and could not find the video, and reasonably
+reported it as missing/broken.
+
+**Root cause:** TikTok's Upload API does not write to the Drafts tab at all —
+it pushes a notification into the creator's TikTok **Inbox**, visible only in
+the mobile app. TikTok's own docs require apps to instruct users to "click on
+inbox notifications to continue the editing flow." Kria's dominant copy
+(`TikTokReleaseRail.tsx`, `TikTokPublishDialog.tsx`, `LibraryTile.tsx`,
+`TikTokProductWorkspace.tsx`) said "TikTok drafts" everywhere prominent, and
+never said "phone app only" — contradicting the handful of places that
+correctly said "inbox notification."
+
+**Decision:** Renamed every "TikTok drafts" destination string to name the
+real place (TikTok app inbox), added explicit find-it steps (open the app →
+Inbox → tap the notification; will not appear on tiktok.com or under Profile →
+Drafts) to the receipt and the pre-send confirm step, wired a download
+fallback into the receipt state (previously receipts had no download
+affordance at all), and exposed `tiktok_publish_id` on `GET
+/tiktok/publications/{id}` for support correlation without reading Fly logs.
+Internal identifiers (`delivery_mode="draft_upload"`,
+`privacy_level="TIKTOK_DRAFT"`, `visibility_status="draft"`) were deliberately
+left unchanged — only presentation strings changed, no migration.
+**Revisit if:** TikTok ever ships an API that writes directly to Drafts, or if
+`draft_upload` being the auto-selected default whenever `video.publish` isn't
+granted (`TikTokPublishDialog.tsx`) keeps causing this complaint — that's a
+scope grant-recovery problem, not a copy problem.
