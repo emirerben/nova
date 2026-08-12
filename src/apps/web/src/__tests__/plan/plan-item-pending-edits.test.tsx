@@ -512,4 +512,41 @@ describe("Frozen-frame veil (rendering state on the hero)", () => {
     // …and the video is no longer hidden from assistive tech.
     expect(heroVideoWrapper()).not.toHaveAttribute("aria-hidden");
   });
+
+  it("falls back to the recovery UI (not the veil) when the stale video errors mid-render", async () => {
+    // Regression: the veil used to mount on `rendering && output_url` alone,
+    // without checking `!playbackFailed`. If the stale video's signed URL
+    // expires mid-render, Hero swaps to its "Preview unavailable" recovery
+    // branch — but the veil (absolute inset-0, pointer-events auto) would
+    // still paint on top and swallow every click to "Try again"/"Download".
+    const TS = "2026-06-01T10:00:00Z";
+    const variant = {
+      ...makeServerVariant("v1", "rendering", OUTPUT_URL, TS),
+      render_started_at: TS,
+    };
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: ITEM, job: makeJob({ variants: [variant] }) },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<PlanItemPage />);
+    });
+    expect(await screen.findByLabelText("Rendering new version")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.error(view!.container.querySelector("video")!);
+    });
+
+    // Recovery UI is showing and its actions are reachable (not covered by
+    // the veil)…
+    expect(screen.getByText("Preview unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try video again" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download video" })).toBeInTheDocument();
+    // …and the veil itself is gone, not just visually — it's unmounted.
+    expect(screen.queryByLabelText("Rendering new version")).toBeNull();
+  });
 });

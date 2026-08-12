@@ -4496,6 +4496,12 @@ function Hero({
             src={heroSrc}
             identity={heroIdentity}
             controls
+            // Keep the `controls` attribute (plan-item-live-preview.test.tsx
+            // locates the hero via `video[controls]` mid-render), but pull it
+            // out of tab order while veiled — otherwise a keyboard user can
+            // Tab onto the visually-hidden video and hit Space to resume
+            // audible playback of the stale take (axe aria-hidden-focus).
+            tabIndex={rendering ? -1 : undefined}
             playsInline
             preload="metadata"
             onLoadedData={() => setPlaybackFailed(false)}
@@ -4586,8 +4592,13 @@ function Hero({
           mounted (paused + blurred, above) but this wash makes it unmistakable
           that it is NOT the new result. Deliberately NOT pointer-events-none —
           it must swallow clicks so the paused/blurred controls underneath
-          can't be used mid-render. */}
-      {rendering && variant.output_url && (
+          can't be used mid-render. Gated on !playbackFailed (matching
+          LiveOverlayCardsLayer / HeroOverlayEditor above): if the stale video
+          errors out mid-render (e.g. signed-URL expiry), Hero falls back to
+          the "Preview unavailable / Try again / Download" recovery branch —
+          the veil must not paint over it and swallow those clicks for the
+          rest of the render. */}
+      {rendering && variant.output_url && !playbackFailed && (
         <BeamLoader
           tone="light"
           mode="frame"
