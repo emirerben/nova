@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **fix(tiktok): stop calling the TikTok inbox handoff "TikTok drafts."** TikTok's Upload API (`/v2/post/publish/inbox/video/init/`) delivers to the creator's TikTok **app inbox** as a notification — it never writes to the Drafts tab and never appears on tiktok.com in a desktop browser. Kria's UI called this destination "TikTok drafts" everywhere prominent (release receipt, publish dialog, library tile, the public TikTok-review demo page), so a user whose upload fully succeeded (confirmed by prod logs: init 200 OK, TikTok pulled the media, `status/fetch` reached a terminal state) searched tiktok.com and reported the video missing. Renamed every destination string to name the real place, added explicit find-it steps (open the TikTok app → Inbox → tap the notification) to the receipt and the pre-send confirm step, wired a download fallback into the receipt state (it previously had none), and exposed `tiktok_publish_id` on `GET /tiktok/publications/{id}` for support correlation without reading Fly logs. Internal identifiers (`delivery_mode="draft_upload"`, `privacy_level="TIKTOK_DRAFT"`, `visibility_status="draft"`) are unchanged — presentation only, no migration. New regression test asserts a draft-upload receipt never renders "TikTok drafts" as a destination.
 
+## [0.26.1.0] — 2026-08-12
+
+### Fixed
+- **Re-renders no longer masquerade as the finished video.** While a plan-item variant re-renders, the hero used to keep playing the old output under a faint wash, so users mistook the stale video for the new result. The hero now shows a frozen-frame veil: the old video pauses on its last frame, blurred under an opaque white wash with a lime beam frame and a centered action-aware status ("Applying 'Song'", elapsed clock, real ETA copy — no fabricated progress). The old video is unreachable while veiled (pointer-blocked, unfocusable, screen-reader hidden) and the playback-error recovery UI still wins over the veil. Release-picker thumbnails and the suggestion-rail mini-preview also stop showing stale output mid-render, and the dead `optimisticRenderStatus` state is removed.
+
 ## [0.25.11.0] — 2026-08-12
 
 ### Fixed
