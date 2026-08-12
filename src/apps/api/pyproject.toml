@@ -9,7 +9,9 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111",
     "uvicorn[standard]>=0.29",
-    "celery[redis]>=5.3",
+    # 5.5 introduced worker_soft_shutdown_timeout, which the Fly deploy-stop
+    # policy relies on to restore late-acknowledged renders before hard stop.
+    "celery[redis]>=5.5",
     "redis>=5.0",
     "sqlalchemy>=2.0",
     # SQLAlchemy's async runtime needs greenlet. Without it, anything that
