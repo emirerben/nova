@@ -173,6 +173,7 @@ def test_publication_response_carries_release_receipt_and_frozen_learning_fields
         retryable=False,
         evaluation_metrics={"view_count": 2000, "window_hours": 72},
         evaluation_captured_at=now,
+        tiktok_publish_id="publish-abc123",
         created_at=now,
         updated_at=now,
     )
@@ -189,6 +190,7 @@ def test_publication_response_carries_release_receipt_and_frozen_learning_fields
     assert response.public_at == now
     assert response.evaluation_metrics == {"view_count": 2000, "window_hours": 72}
     assert response.evaluation_captured_at == now
+    assert response.tiktok_publish_id == "publish-abc123"
 
 
 def test_publication_response_tolerates_malformed_legacy_creator_metadata() -> None:
@@ -209,7 +211,9 @@ def test_publication_response_tolerates_malformed_legacy_creator_metadata() -> N
         updated_at=now,
     )
 
-    assert _publication_response(row).creator_nickname is None
+    response = _publication_response(row)
+    assert response.creator_nickname is None
+    assert response.tiktok_publish_id is None
 
 
 @pytest.mark.asyncio
@@ -1033,6 +1037,7 @@ def _session_context(row: TikTokPublication, *, first: bool = False) -> MagicMoc
     job = _job()
     job.id = job_id
     row.job_id = job_id
+
     def _get(model, *args, **kwargs):  # noqa: ANN001, ARG001
         return row if model is TikTokPublication else job
 
