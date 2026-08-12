@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.1.0] — 2026-08-12
+
+### Fixed
+- **Re-renders no longer masquerade as the finished video.** While a plan-item variant re-renders, the hero used to keep playing the old output under a faint wash, so users mistook the stale video for the new result. The hero now shows a frozen-frame veil: the old video pauses on its last frame, blurred under an opaque white wash with a lime beam frame and a centered action-aware status ("Applying 'Song'", elapsed clock, real ETA copy — no fabricated progress). The old video is unreachable while veiled (pointer-blocked, unfocusable, screen-reader hidden) and the playback-error recovery UI still wins over the veil. Release-picker thumbnails and the suggestion-rail mini-preview also stop showing stale output mid-render, and the dead `optimisticRenderStatus` state is removed.
+
 ## [0.25.11.0] — 2026-08-12
 
 ### Fixed
