@@ -556,8 +556,16 @@ export default function SuggestionRail({
           </h3>
 
           {/* 9:16 mini-preview of the selected variant with the kept-suggestion
-              stack as dashed-lime ✦ cards (pragmatic in-card preview). */}
-          {previewUrl && (
+              stack as dashed-lime ✦ cards (pragmatic in-card preview). When the
+              caller withholds previewUrl (e.g. the focused variant is
+              re-rendering — frozen-frame veil), show a shimmer placeholder
+              instead of leaving a hole or a broken/black box. */}
+          {!previewUrl ? (
+            <div
+              aria-hidden="true"
+              className="relative mx-auto my-3 aspect-[9/16] w-32 motion-safe:animate-shimmer overflow-hidden rounded-lg border border-zinc-200 bg-[length:200%_100%] bg-gradient-to-r from-zinc-100 via-zinc-200 to-zinc-100"
+            />
+          ) : (
             <div className="relative mx-auto my-3 aspect-[9/16] w-32 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100">
               <StableVideo
                 ref={miniVideoRef}

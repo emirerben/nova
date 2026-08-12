@@ -91,8 +91,8 @@ import {
 import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
-import { BeamLoader, ProgressTheater, ShimmerSweep } from "@/components/progress";
-import { deriveReceiptText } from "@/components/progress/logic";
+import { BeamLoader, ProgressTheater } from "@/components/progress";
+import { deriveReceiptText, formatElapsed } from "@/components/progress/logic";
 import { StableVideo } from "@/components/StableVideo";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
@@ -2326,7 +2326,14 @@ export default function PlanItemPage() {
                 itemId={itemId}
                 variantId={focused?.variant_id ?? null}
                 suggestionsCapability={focused?.editor_capabilities?.suggestions ?? null}
-                previewUrl={focused?.output_url ?? focused?.base_video_url ?? null}
+                previewUrl={
+                  // Frozen-frame veil: a stale mini-preview mid-render reads as
+                  // "already updated" — withhold it so the rail shows its own
+                  // shimmer placeholder until the re-render lands.
+                  focused?.render_status === "rendering"
+                    ? null
+                    : (focused?.output_url ?? focused?.base_video_url ?? null)
+                }
                 rows={overlaySuggestions.rows}
                 onRowsChange={overlaySuggestions.setRows}
                 keptIds={overlaySuggestions.keptIds}
@@ -3706,9 +3713,6 @@ function FocusedVariantControls({
   const [sfxUploading, setSfxUploading] = useState(false);
 
   // ── Text-elements state (T10 + T6) ────────────────────────────────────────
-  // Optimistic render status per variantId so the UI doesn't freeze on apply
-  // before the server round-trip returns (Part B: plan-item-edit-no-optimistic-state).
-  const [optimisticRenderStatus, setOptimisticRenderStatus] = useState<Record<string, string>>({});
   // Transient error/retry banner shown after a save conflict (409) or failed save.
   const [textApplyError, setTextApplyError] = useState<string | null>(null);
   // Brief note after a TRIM_START clamp (e.g. "Minimum 0.1s") — auto-clears after 2 s.
@@ -3793,9 +3797,8 @@ function FocusedVariantControls({
    * BEFORE triggering the render pass so the burned output takes over without
    * double-compositing previously-uploaded overlay blob URLs.
    *
-   * Part B (plan-item-edit-no-optimistic-state learning): sets optimistic
-   * "rendering" state synchronously so the UI reflects in-flight rendering
-   * before the server round-trip completes.
+   * The actual optimistic "rendering" pin the UI reads is markVariantRendering
+   * below (the pendingEdits fingerprint), not a separate local status map.
    */
   const handleApplyTextElements = useCallback(
     async (variantId: string, elements: TextElementBar[]) => {
@@ -3804,8 +3807,6 @@ function FocusedVariantControls({
         Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
         return {};
       });
-      // Part B: optimistic rendering state so controls show "rendering" immediately.
-      setOptimisticRenderStatus((prev) => ({ ...prev, [variantId]: "rendering" }));
       setTextApplyError(null);
       try {
         // Convert TextElementBar → TextElement for the API. Existing API
@@ -3818,12 +3819,6 @@ function FocusedVariantControls({
         await putTextElements(itemId, variantId, apiElements);
         markVariantRendering(variantId, variant.render_finished_at ?? null);
       } catch (err) {
-        // Clear optimistic state on failure so controls re-enable.
-        setOptimisticRenderStatus((prev) => {
-          const next = { ...prev };
-          delete next[variantId];
-          return next;
-        });
         const msg = err instanceof Error ? err.message : "";
         if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
           // State 1: save conflict — refresh to get latest server state.
@@ -4330,14 +4325,25 @@ function VariantReleasePicker({
                   : "border-zinc-200 bg-white text-[#3f3f46]"
               }`}
             >
-              <video
-                src={value.output_url ?? undefined}
-                muted
-                playsInline
-                preload="metadata"
-                aria-hidden="true"
-                className="aspect-[9/16] h-8 rounded bg-zinc-100 object-cover"
-              />
+              {value.render_status === "rendering" ? (
+                // A re-render is in flight for this thumbnail's variant — the
+                // stale <video> would read as "already updated"; show a
+                // shimmer placeholder instead (frozen-frame veil, secondary
+                // surface).
+                <div
+                  aria-hidden="true"
+                  className="aspect-[9/16] h-8 motion-safe:animate-shimmer rounded bg-[length:200%_100%] bg-gradient-to-r from-zinc-100 via-zinc-200 to-zinc-100"
+                />
+              ) : (
+                <video
+                  src={value.output_url ?? undefined}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  aria-hidden="true"
+                  className="aspect-[9/16] h-8 rounded bg-zinc-100 object-cover"
+                />
+              )}
               Version {index + 1}
             </button>
           );
@@ -4459,24 +4465,44 @@ function Hero({
     setPlaybackRetry(0);
   }, [heroIdentity]);
 
+  // Frozen-frame veil (V2): pause the old video the instant a re-render
+  // starts so it reads as a still frame, not live playback, under the blur.
+  useEffect(() => {
+    if (rendering) {
+      videoRef.current?.pause();
+    }
+  }, [rendering]);
+
   if (!variant) return <SkeletonTile />;
   const failed = variant.render_status === "failed";
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
       {heroSrc && !playbackFailed ? (
-        <StableVideo
-          key={`${heroIdentity}:${playbackRetry}`}
-          ref={videoRef}
-          src={heroSrc}
-          identity={heroIdentity}
-          controls
-          playsInline
-          preload="metadata"
-          onLoadedData={() => setPlaybackFailed(false)}
-          onError={() => setPlaybackFailed(true)}
-          className="h-full w-full object-contain"
-        />
+        // Frozen-frame veil (V2): the video itself keeps its native `controls`
+        // (a live regression test locates it via `video[controls]` mid-render —
+        // see plan-item-live-preview.test.tsx "re-burn in-flight"), but this
+        // wrapper carries `aria-hidden` + the blur/scale veil classes, and the
+        // (non-pointer-events-none) veil painted below intercepts every click,
+        // so the paused/blurred controls underneath are functionally unreachable.
+        <div
+          aria-hidden={rendering || undefined}
+          data-rendering={rendering ? "true" : undefined}
+          className="hero-veil-frame h-full w-full"
+        >
+          <StableVideo
+            key={`${heroIdentity}:${playbackRetry}`}
+            ref={videoRef}
+            src={heroSrc}
+            identity={heroIdentity}
+            controls
+            playsInline
+            preload="metadata"
+            onLoadedData={() => setPlaybackFailed(false)}
+            onError={() => setPlaybackFailed(true)}
+            className="h-full w-full object-contain"
+          />
+        </div>
       ) : heroSrc && playbackFailed ? (
         <div className="flex h-full flex-col items-center justify-center px-5 text-center">
           <p className="font-display text-base leading-tight text-[#0c0c0e] lg:text-2xl">
@@ -4556,20 +4582,21 @@ function Hero({
           onRequestEditCard={onRequestEditCard}
         />
       )}
-      {/* While a re-render runs, keep old video playing under a gentle overlay.
-          pointer-events-none ensures the video controls beneath remain usable. */}
+      {/* Frozen-frame veil (V2): while a re-render runs, the old video stays
+          mounted (paused + blurred, above) but this wash makes it unmistakable
+          that it is NOT the new result. Deliberately NOT pointer-events-none —
+          it must swallow clicks so the paused/blurred controls underneath
+          can't be used mid-render. */}
       {rendering && variant.output_url && (
         <BeamLoader
           tone="light"
           mode="frame"
           strength="medium"
           ariaLabel="Rendering new version"
-          className="pointer-events-none absolute inset-0 rounded-xl"
+          className="absolute inset-0 rounded-xl"
         >
-          <div className="relative h-full w-full">
-            <div className="absolute inset-0 bg-white/25" />
-            <ShimmerSweep tone="light" />
-            <HeroRenderingLabel
+          <div className="hero-veil-wash absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-white/[0.62] px-6 text-center">
+            <RenderingVeilStatus
               startedAt={variant.render_started_at ?? null}
               action={renderingAction}
             />
@@ -4588,72 +4615,62 @@ function Hero({
   );
 }
 
-/** Status label shown during a same-variant re-render, with a stall hint after 5 min.
- *  Shows action-specific copy when `action` is provided (e.g. the picked song name). */
-function HeroRenderingLabel({
+/**
+ * Pure copy logic for the rendering veil: headline + optional ETA subtext,
+ * keyed off elapsed time and the in-flight edit action. Same branch priority
+ * as the pre-veil label this replaces — stall hint first, then action type —
+ * so extracting it here changes nothing about which copy shows when.
+ */
+function renderingCopyFor(
+  action: { type: "song" | "text" | "style" | "other"; label: string } | null | undefined,
+  elapsedMs: number,
+): { headline: string; etaText: string | null } {
+  const STALL_HINT_MS = 300_000; // 5 min
+  if (elapsedMs >= STALL_HINT_MS) {
+    return { headline: "Taking longer than usual…", etaText: null };
+  }
+  // Song swap: full re-render takes ~1-3 min — show the song name + duration hint.
+  if (action?.type === "song") {
+    return { headline: `Applying “${action.label}”`, etaText: "~1–3 min" };
+  }
+  // Text reburn: fast path, a few seconds.
+  if (action?.type === "text") {
+    return { headline: action.label || "Updating text…", etaText: "a few seconds" };
+  }
+  // Style / size / layout / generic re-render.
+  return { headline: action?.label ?? "Rendering new version…", etaText: null };
+}
+
+/** Centered status column inside the frozen-frame veil: an italic Fraunces
+ *  headline (action-aware copy from renderingCopyFor) over a small elapsed
+ *  clock — no fabricated progress, just real time since render_started_at. */
+function RenderingVeilStatus({
   startedAt,
   action,
 }: {
   startedAt: string | null;
   action?: { type: "song" | "text" | "style" | "other"; label: string } | null;
 }) {
-  const STALL_HINT_MS = 300_000; // 5 min
   const [elapsed, setElapsed] = useState(() =>
     startedAt ? Date.now() - new Date(startedAt).getTime() : 0,
   );
   useEffect(() => {
+    setElapsed(startedAt ? Date.now() - new Date(startedAt).getTime() : 0);
     const id = setInterval(() => {
       setElapsed(startedAt ? Date.now() - new Date(startedAt).getTime() : 0);
-    }, 5000);
+    }, 1000);
     return () => clearInterval(id);
   }, [startedAt]);
 
-  if (elapsed >= STALL_HINT_MS) {
-    return (
-      <div className="absolute inset-0 flex flex-col items-center justify-end pb-6 gap-1 text-center">
-        <span className="rounded-full bg-white/80 px-3 py-1 text-xs text-[#3f3f46]">
-          Taking longer than usual…
-        </span>
-      </div>
-    );
-  }
+  const { headline, etaText } = renderingCopyFor(action, elapsed);
 
-  // Song swap: full re-render takes ~1-3 min — show the song name + duration hint.
-  if (action?.type === "song") {
-    return (
-      <div className="absolute inset-0 flex flex-col items-center justify-end pb-6 gap-1.5 text-center">
-        <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-medium text-lime-700 leading-tight max-w-[85%] truncate">
-          Applying &ldquo;{action.label}&rdquo;
-        </span>
-        <span className="rounded-full bg-white/70 px-2.5 py-0.5 text-[10px] text-[#71717a]">
-          ~1–3 min
-        </span>
-      </div>
-    );
-  }
-
-  // Text reburn: fast path, a few seconds.
-  if (action?.type === "text") {
-    return (
-      <div className="absolute inset-0 flex flex-col items-center justify-end pb-6 gap-1 text-center">
-        <span className="rounded-full bg-white/80 px-3 py-1 text-xs text-lime-700">
-          {action.label || "Updating text…"}
-        </span>
-        <span className="rounded-full bg-white/70 px-2.5 py-0.5 text-[10px] text-[#71717a]">
-          a few seconds
-        </span>
-      </div>
-    );
-  }
-
-  // Style / size / layout / generic re-render.
-  const genericLabel = action?.label ?? "Rendering new version…";
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-end pb-6 gap-1 text-center">
-      <span className="rounded-full bg-white/80 px-3 py-1 text-xs text-lime-700">
-        {genericLabel}
-      </span>
-    </div>
+    <>
+      <p className="font-display italic text-xl text-[#0c0c0e]">{headline}</p>
+      <p className="text-xs font-medium text-[#3f3f46]">
+        {etaText ? `${formatElapsed(elapsed)} · ${etaText}` : formatElapsed(elapsed)}
+      </p>
+    </>
   );
 }
 

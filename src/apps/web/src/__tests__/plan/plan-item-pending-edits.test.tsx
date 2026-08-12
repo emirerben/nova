@@ -430,3 +430,86 @@ describe("download-triggered SFX bake failure (C1 regression)", () => {
     await act(async () => { resolveBake(); });
   });
 });
+
+describe("Frozen-frame veil (rendering state on the hero)", () => {
+  // Regression coverage for the V2 "frozen-frame veil" redesign: while a
+  // variant re-renders, the old video stays mounted (paused + blurred, via
+  // the hero-veil-frame wrapper) but is aria-hidden and covered by the
+  // BeamLoader veil (findByLabelText contract from the pendingEdits suite
+  // above is reused, not duplicated). On completion the veil unmounts and
+  // the video wrapper's aria-hidden drops.
+  const ITEM = makeItem();
+  const OUTPUT_URL = "https://cdn/v1.mp4";
+
+  beforeEach(() => {
+    mockSearchParams = new URLSearchParams();
+    window.sessionStorage.clear();
+    jest.clearAllMocks();
+  });
+
+  function heroVideoWrapper(): HTMLElement {
+    const video = document.querySelector<HTMLVideoElement>(
+      "[data-variant-preview] video",
+    );
+    if (!video || !video.parentElement) {
+      throw new Error("Hero video (or its veil wrapper) not found");
+    }
+    return video.parentElement;
+  }
+
+  it("veils the stale video (aria-hidden wrapper + labeled veil) while rendering", async () => {
+    const TS = "2026-06-01T10:00:00Z";
+    const variant = {
+      ...makeServerVariant("v1", "rendering", OUTPUT_URL, TS),
+      render_started_at: TS,
+    };
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: ITEM, job: makeJob({ variants: [variant] }) },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => render(<PlanItemPage />));
+
+    // (b) the veil is present, labeled for assistive tech.
+    expect(await screen.findByLabelText("Rendering new version")).toBeInTheDocument();
+    // (a) the old video's wrapper is hidden from assistive tech (it's a
+    // paused, blurred still frame — not the live result).
+    expect(heroVideoWrapper()).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("un-veils once the poll reports ready with an advanced render_finished_at", async () => {
+    const TS = "2026-06-01T10:00:00Z";
+    const TS2 = "2026-06-01T10:02:30Z";
+    const renderingVariant = {
+      ...makeServerVariant("v1", "rendering", OUTPUT_URL, TS),
+      render_started_at: TS,
+    };
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: ITEM, job: makeJob({ variants: [renderingVariant] }) },
+      error: null,
+      refetch: mockRefetch,
+    });
+    const { rerender } = await act(async () => render(<PlanItemPage />));
+    expect(await screen.findByLabelText("Rendering new version")).toBeInTheDocument();
+
+    const readyVariant = {
+      ...renderingVariant,
+      render_status: "ready",
+      render_finished_at: TS2,
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: ITEM, job: makeJob({ variants: [readyVariant] }) },
+      error: null,
+      refetch: mockRefetch,
+    });
+    await act(async () => { rerender(<PlanItemPage />); });
+
+    // The veil is gone…
+    expect(screen.queryByLabelText("Rendering new version")).toBeNull();
+    // …and the video is no longer hidden from assistive tech.
+    expect(heroVideoWrapper()).not.toHaveAttribute("aria-hidden");
+  });
+});
