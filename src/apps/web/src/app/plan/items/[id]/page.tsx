@@ -2,7 +2,16 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { hasRenderRegistered } from "./render-registration";
 import {
   attachClips,
@@ -1563,8 +1572,36 @@ export default function PlanItemPage() {
   const currentPhase =
     data?.job?.current_phase ??
     (!data?.job?.started_at ? "queued" : null);
-  const theaterIsTerminal = !!(item && isTerminalFn({ item, job: data?.job ?? null }));
-  const theaterIsSuccess = item?.status === "ready";
+  // Variant re-renders deliberately leave the parent job/item ready while the
+  // selected output is rendering. Treat that as live progress so text/song/
+  // style edits get the same compact theater beneath the existing preview.
+  const variantRenderInProgress = variants.some(
+    (candidate) => candidate.render_status === "rendering",
+  );
+  const theaterIsTerminal =
+    !variantRenderInProgress && !!(item && isTerminalFn({ item, job: data?.job ?? null }));
+  const theaterIsSuccess = !variantRenderInProgress && item?.status === "ready";
+  const renderProgress = data?.job && (item.status !== "ready" || variantRenderInProgress) ? (
+    <ProgressTheater
+      phases={GENERATIVE_PHASE_ORDER}
+      phaseLabels={GENERATIVE_PHASE_LABEL}
+      currentPhase={currentPhase}
+      expectedPhaseMs={data.job.expected_phase_durations ?? null}
+      phaseLog={data.job.phase_log ?? null}
+      startedAt={data.job.started_at ?? null}
+      jobCreatedAt={data.job.created_at ?? new Date().toISOString()}
+      isTerminal={theaterIsTerminal}
+      isSuccess={theaterIsSuccess}
+      receiptText={deriveReceiptText(data.job.started_at, data.job.finished_at)}
+      variants={variants}
+      retrying={data.job.retrying ?? false}
+      steps={data.job.steps ?? null}
+      stepsPresentation="disclosure"
+      size="full"
+      tone="light"
+      onRetry={allVariantsFailed && !generating ? handleGenerate : undefined}
+    />
+  ) : null;
 
   return (
     <LightShell size="wide">
@@ -2357,39 +2394,8 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* ProgressTheater — light tone */}
-            {data?.job && item.status !== "ready" && (
-              <div className="mt-8">
-                <ProgressTheater
-                  phases={GENERATIVE_PHASE_ORDER}
-                  phaseLabels={GENERATIVE_PHASE_LABEL}
-                  currentPhase={currentPhase}
-                  expectedPhaseMs={data.job.expected_phase_durations ?? null}
-                  phaseLog={data.job.phase_log ?? null}
-                  startedAt={data.job.started_at ?? null}
-                  jobCreatedAt={data.job.created_at ?? new Date().toISOString()}
-                  isTerminal={theaterIsTerminal}
-                  isSuccess={theaterIsSuccess}
-                  receiptText={deriveReceiptText(data.job.started_at, data.job.finished_at)}
-                  variants={variants}
-                  retrying={data.job.retrying ?? false}
-                  steps={data.job.steps ?? null}
-                  size="full"
-                  tone="light"
-                  onRetry={allVariantsFailed && !generating ? handleGenerate : undefined}
-                >
-                  {null}
-                </ProgressTheater>
-              </div>
-            )}
-            {/* Suppressed while retrying: "Usually 2–3 minutes" directly above
-                the theater's "Hit a snag — retrying" note is two contradictory
-                time signals in one zone. */}
-            {isGenerating && !data?.job?.retrying && (
-              <p className="mt-1 text-xs text-[#a1a1aa]">
-                Usually 2–3 minutes. You can leave this page — we&apos;ll keep rendering.
-              </p>
-            )}
+            {/* With no preview, setup remains the progress/failure fallback. */}
+            {!showResults && renderProgress && <div className="mt-8">{renderProgress}</div>}
             {item.status === "failed" && variants.length === 0 && (
               <p className="mt-2 text-sm text-[#71717a]">
                 Generation failed before any variant rendered. Try generating again.
@@ -2425,6 +2431,7 @@ export default function PlanItemPage() {
             tracks={tracks}
             styleSets={styleSets}
             isGenerating={isGenerating}
+            renderProgress={renderProgress}
             refetch={refetch}
             markVariantRendering={markVariantRendering}
             onError={setError}
@@ -2568,6 +2575,7 @@ function FocusedResults({
   tracks,
   styleSets,
   isGenerating,
+  renderProgress,
   refetch,
   markVariantRendering,
   onError,
@@ -2594,6 +2602,7 @@ function FocusedResults({
   tracks: MusicTrackSummary[];
   styleSets: GenerativeStyleSet[];
   isGenerating: boolean;
+  renderProgress?: ReactNode;
   refetch: () => void;
   markVariantRendering: (variantId: string, priorFinishedAt: string | null) => void;
   /** Surface a user-facing error in the page-level banner (e.g. SFX save/render failures). */
@@ -3280,6 +3289,7 @@ function FocusedResults({
               onSelect={onVariantSelect}
             />
           )}
+          {renderProgress && <div className="mt-6">{renderProgress}</div>}
         </div>
 
         <div className="order-3 lg:pt-3">

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.11.0] — 2026-08-12
+
+### Fixed
+- **Deploy-interrupted renders recover promptly.** Fly now gives Celery the supported five-minute stop budget and remaps deploy termination into Celery's four-minute soft shutdown, restoring unfinished late-acknowledged tasks with a one-minute safety margin instead of waiting for Redis visibility expiry. Celery 5.5+ is required and enforced because older releases do not implement soft shutdown; the existing 1,900-second visibility timeout, worker-loss rejection, late acknowledgements, and stale-job reapers remain backstops.
+- **Plan-item render progress is video-first.** The render headline, elapsed/ETA state, latest analysis step, and completed count now sit beneath the video and variant picker, with the full accessible feed behind a stable “Show analysis steps” disclosure. Controlled variant re-renders remain visible even while the parent item is ready, zero-preview failures retain their setup fallback, and the redundant standalone duration message is removed.
 ## [0.26.0.0] — 2026-08-11
 
 ### Added
