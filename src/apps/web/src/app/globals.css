@@ -299,6 +299,47 @@
   }
 }
 
+/* ── Frozen-frame veil (plan-item hero re-render state) ──────────────────────
+   The old video stays mounted through a re-render — paused (JS) + blurred +
+   scaled up here (scale hides the blur's edge bleed) — under a heavy white
+   wash with a centered status. `.hero-veil-frame` wraps the video; the
+   `data-rendering` attribute (set from React state, not this stylesheet)
+   toggles the blurred/scaled state. `.hero-veil-wash` is the wash + status
+   column itself, which only fades in — its blur/scale/wash STATES apply
+   unconditionally for legibility; only the enter/exit transitions are
+   motion-gated below. */
+.hero-veil-frame {
+  transition: filter 350ms ease-out, transform 350ms ease-out;
+}
+
+.hero-veil-frame[data-rendering="true"] {
+  filter: blur(26px);
+  transform: scale(1.06);
+}
+
+.hero-veil-wash {
+  animation: hero-veil-fade-in 350ms ease-out both;
+}
+
+@keyframes hero-veil-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-veil-frame {
+    transition: none;
+  }
+
+  .hero-veil-wash {
+    animation: none;
+  }
+}
+
 /* Instant-edit intro overlay: visible placeholder + hit target when the
    contentEditable text node is empty (IntroTextPreview). */
 [contenteditable][data-placeholder]:empty::before {
