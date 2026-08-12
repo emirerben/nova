@@ -93,6 +93,22 @@ describe("ProgressTheater — steps feed flag gate", () => {
     expect(within(list).getByText("Rendering variant 1 of 3")).toBeInTheDocument();
   });
 
+  it("forwards the optional disclosure presentation without changing the default", () => {
+    process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED = "true";
+    const { rerender } = render(
+      <ProgressTheater
+        {...baseProps()}
+        steps={steps}
+        stepsPresentation="disclosure"
+      />,
+    );
+    expect(screen.queryByRole("list", { name: /nova ai steps/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show analysis steps" })).toBeInTheDocument();
+
+    rerender(<ProgressTheater {...baseProps()} steps={steps} />);
+    expect(screen.getByRole("list", { name: /nova ai steps/i })).toBeInTheDocument();
+  });
+
   it("passes pending phase labels (beyond currentPhase) into the feed while not terminal", () => {
     process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED = "true";
     render(

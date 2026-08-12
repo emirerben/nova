@@ -9,7 +9,7 @@ import {
 import { computeBarPosition, detailLine, etaLadder, stallTier } from "./logic";
 import { computeAnchors, type NovaStep } from "../../lib/job-phases";
 import { EtaBar } from "./EtaBar";
-import { NovaActivityFeed } from "./NovaActivityFeed";
+import { NovaActivityFeed, type StepsPresentation } from "./NovaActivityFeed";
 import { PhaseChipRow } from "./PhaseChipRow";
 import { StatusHeadline } from "./StatusHeadline";
 
@@ -80,6 +80,9 @@ interface ProgressTheaterProps {
    * exactly as before (byte-identical fallback — this prop is additive).
    */
   steps?: NovaStep[] | null;
+  /** Controls whether the AI-steps feed is fully visible or summarized behind
+   *  a disclosure. Defaults to full for backwards compatibility. */
+  stepsPresentation?: StepsPresentation;
 }
 
 /**
@@ -114,6 +117,7 @@ export function ProgressTheater({
   children,
   tone = "dark",
   steps = null,
+  stepsPresentation = "full",
 }: ProgressTheaterProps) {
   // Elapsed since job start.
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -326,6 +330,7 @@ export function ProgressTheater({
             isSuccess={isSuccess}
             receiptText={receiptText}
             pendingLabels={pendingPhaseLabels}
+            stepsPresentation={stepsPresentation}
           />
           {!stepsReceiptSettled && bandTail}
         </>

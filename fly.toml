@@ -2,17 +2,14 @@
 
 app = "nova-video"
 primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = 300
 
-# NOTE: kill_timeout is intentionally NOT set at the top level — Fly applies
-# the top-level value to the release_command machine too, and as of 2026-05-09
-# Fly caps stop_config.timeout at 5m server-side ("invalid stop_config.timeout,
-# cannot exceed 5 minutes"). Setting it here at 30m breaks deploys.
-# Instead, the 30m drain budget is set per-process in the [[vm]] sections
-# below — api and worker both get 30m, the release_command machine uses
-# Fly's default (which fits the new 5m cap).
-# Why we want 30m for workers: orchestrate_template_job has an 1800s hard
-# timeout, so 30m gives any almost-done FFmpeg run room to finish on deploy
-# instead of being SIGKILL'd and leaving jobs orphaned in status=processing.
+# Fly caps the machine stop timeout at five minutes. Remapping TERM to QUIT
+# lets Celery spend four of those minutes in soft shutdown, then restore any
+# unfinished late-acknowledged task with a one-minute margin before hard stop.
+[env]
+  REMAP_SIGTERM = "SIGQUIT"
 
 [build]
   dockerfile = "Dockerfile"
@@ -142,7 +139,6 @@ primary_region = "iad"
   # the structural fix is moving clip_prefetch off the api process onto
   # the worker pool (which has 6144MB).
   memory_mb = 2048
-  kill_timeout = "30m"
 
 # Beat — tiny VM, schedules periodic tasks (no real CPU/memory needs).
 # Keep at 1 machine; Beat schedule de-duplication across replicas is not
@@ -217,14 +213,3 @@ primary_region = "iad"
   # headroom math while this VM class question is already being revisited
   # under incident pressure.
   memory_mb = 8192
-  kill_timeout = "30m"
-  # SIGTERM (not Fly's SIGINT default) is Celery's clean warm-shutdown signal:
-  # the worker stops consuming new tasks and lets the in-flight task finish
-  # before exiting. Paired with the 30m kill_timeout above, a deploy then gives
-  # a long render (e.g. a multi-clip generative job) a chance to complete and
-  # persist rather than being cut off mid-variant. This is best-effort drain;
-  # the hard guarantee against deploy/OOM kills is the resumable-variant logic
-  # in orchestrate_generative_job (each variant is persisted as it finishes and
-  # reused on the acks_late retry) plus the reaper (#326) clearing any row a
-  # SIGKILL still strands.
-  kill_signal = "SIGTERM"

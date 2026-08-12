@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { NovaStep } from "@/lib/job-phases";
 import { NovaPendingRow, NovaStepRow } from "./NovaStepRow";
+
+export type StepsPresentation = "full" | "disclosure";
 
 interface NovaActivityFeedProps {
   /** Steps in arrival order. Empty/absent ⇒ renders nothing (state a — the
@@ -25,6 +27,9 @@ interface NovaActivityFeedProps {
    *  non-interactive placeholder rows appended after the real steps.
    *  Ignored once isTerminal. */
   pendingLabels?: string[];
+  /** "disclosure" keeps only the latest step and completed count visible
+   *  until the user asks for the full analysis feed. */
+  stepsPresentation?: StepsPresentation;
 }
 
 /**
@@ -46,9 +51,11 @@ export function NovaActivityFeed({
   isSuccess,
   receiptText = "Ready",
   pendingLabels = [],
+  stepsPresentation = "full",
 }: NovaActivityFeedProps) {
   const [manualOverrides, setManualOverrides] = useState<Record<string, boolean>>({});
   const [showFullList, setShowFullList] = useState(false);
+  const listId = useId();
 
   // Announce each newly-arrived step's label exactly once.
   const announcedIdsRef = useRef<Set<string>>(new Set());
@@ -66,6 +73,10 @@ export function NovaActivityFeed({
   const isFailed = isTerminal && !isSuccess;
   const doneCount = steps.filter((s) => s.status === "done").length;
   const totalCount = steps.length;
+  const latestStep =
+    (!isTerminal
+      ? [...steps].reverse().find((step) => step.status === "active")
+      : undefined) ?? steps[steps.length - 1];
 
   function isExpanded(step: NovaStep): boolean {
     if (step.id in manualOverrides) return manualOverrides[step.id];
@@ -82,9 +93,83 @@ export function NovaActivityFeed({
     </span>
   );
 
+  const stepList = (
+    <ul role="list" aria-label="Nova AI steps" className="space-y-0.5">
+      {steps.map((step) => (
+        <NovaStepRow
+          key={step.id}
+          step={step}
+          tone={tone}
+          size={size}
+          expanded={isExpanded(step)}
+          onToggle={() => toggle(step)}
+        />
+      ))}
+      {!isTerminal &&
+        pendingLabels.map((label, idx) => (
+          <NovaPendingRow key={`pending-${idx}`} label={label} tone={tone} size={size} />
+        ))}
+    </ul>
+  );
+
+  if (stepsPresentation === "disclosure") {
+    const successReceipt = isTerminal && isSuccess;
+    const checkColor = tone === "light" ? "text-lime-700" : "text-amber-300";
+    const mutedColor = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
+    const linkColor =
+      tone === "light"
+        ? "text-lime-700 hover:text-lime-800"
+        : "text-amber-300 hover:text-amber-200";
+
+    return (
+      <div>
+        {announceRegion}
+        <p className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm ${mutedColor}`}>
+          <span
+            className={`flex items-center gap-1.5 font-medium ${
+              successReceipt
+                ? checkColor
+                : tone === "light"
+                  ? "text-[#3f3f46]"
+                  : "text-zinc-200"
+            }`}
+          >
+            {successReceipt && <span aria-hidden="true">✓</span>}
+            <span>{successReceipt ? receiptText : latestStep.label}</span>
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>
+            {successReceipt
+              ? `${totalCount} step${totalCount === 1 ? "" : "s"}`
+              : `${doneCount} completed`}
+          </span>
+          <span aria-hidden="true">·</span>
+          <button
+            type="button"
+            onClick={() => setShowFullList((visible) => !visible)}
+            aria-expanded={showFullList}
+            aria-controls={listId}
+            className={`min-h-11 underline underline-offset-2 ${linkColor}`}
+          >
+            {showFullList ? "Hide analysis steps" : "Show analysis steps"}
+          </button>
+        </p>
+        <div id={listId} hidden={!showFullList}>
+          {showFullList && stepList}
+          {showFullList && isFailed && (
+            <p
+              className={`mt-2 text-xs ${tone === "light" ? "text-[#71717a]" : "text-zinc-500"}`}
+            >
+              Completed {doneCount} of {totalCount} steps before stopping
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // State (c): terminal + success collapses into a one-line receipt.
-  // "See what Nova did" toggles the full list back open (and back closed).
-  if (isTerminal && isSuccess && !showFullList) {
+  if (!showFullList && isTerminal && isSuccess) {
     const checkColor = tone === "light" ? "text-lime-700" : "text-amber-300";
     const mutedColor = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
     const linkColor =
@@ -93,7 +178,11 @@ export function NovaActivityFeed({
       <div>
         {announceRegion}
         <p className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm ${mutedColor}`}>
-          <span className={`flex items-center gap-1.5 font-medium ${checkColor}`}>
+          <span
+            className={`flex items-center gap-1.5 font-medium ${
+              checkColor
+            }`}
+          >
             <span aria-hidden="true">✓</span>
             <span>{receiptText}</span>
           </span>
@@ -105,11 +194,14 @@ export function NovaActivityFeed({
           <button
             type="button"
             onClick={() => setShowFullList(true)}
+            aria-expanded="false"
+            aria-controls={listId}
             className={`underline underline-offset-2 ${linkColor}`}
           >
             See what Nova did
           </button>
         </p>
+        <span id={listId} hidden />
       </div>
     );
   }
@@ -117,31 +209,18 @@ export function NovaActivityFeed({
   return (
     <div>
       {announceRegion}
-      <ul role="list" aria-label="Nova AI steps" className="space-y-0.5">
-        {steps.map((step) => (
-          <NovaStepRow
-            key={step.id}
-            step={step}
-            tone={tone}
-            size={size}
-            expanded={isExpanded(step)}
-            onToggle={() => toggle(step)}
-          />
-        ))}
-        {!isTerminal &&
-          pendingLabels.map((label, idx) => (
-            <NovaPendingRow key={`pending-${idx}`} label={label} tone={tone} size={size} />
-          ))}
-      </ul>
+      <div id={listId}>{stepList}</div>
       {isFailed && (
         <p className={`mt-2 text-xs ${tone === "light" ? "text-[#71717a]" : "text-zinc-500"}`}>
           Completed {doneCount} of {totalCount} steps before stopping
         </p>
       )}
-      {isTerminal && isSuccess && showFullList && (
+      {showFullList && isTerminal && isSuccess && (
         <button
           type="button"
           onClick={() => setShowFullList(false)}
+          aria-expanded="true"
+          aria-controls={listId}
           className={`mt-1 text-xs underline underline-offset-2 ${
             tone === "light" ? "text-[#71717a] hover:text-[#0c0c0e]" : "text-zinc-500 hover:text-zinc-200"
           }`}

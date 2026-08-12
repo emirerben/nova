@@ -1,10 +1,17 @@
 import threading
 
+from celery import VERSION as CELERY_VERSION
 from celery import Celery
 from celery.schedules import crontab
 from celery.signals import before_task_publish, task_prerun, task_success, worker_ready
 
 from app.config import settings
+
+if CELERY_VERSION < (5, 5):
+    raise RuntimeError(
+        "Celery 5.5+ is required for deploy-safe worker soft shutdown; "
+        f"found {'.'.join(map(str, CELERY_VERSION))}"
+    )
 
 # CRITICAL: result_backend MUST be redis:// — default rpc:// silently breaks chords
 celery_app = Celery(
@@ -76,6 +83,12 @@ celery_app.conf.update(
     task_acks_late=True,  # requeue on worker death
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,  # don't prefetch — FFmpeg tasks are long
+    # Fly sends SIGTERM and waits 300s (fly.toml). REMAP_SIGTERM=SIGQUIT enters
+    # Celery's soft shutdown: active work gets four minutes to finish, then any
+    # unfinished late-acknowledged task is restored with 60s left before Fly's
+    # hard stop. Enable the same path while idle so reserved work is restored.
+    worker_soft_shutdown_timeout=240.0,
+    worker_enable_soft_shutdown_on_idle=True,
     result_expires=3600,
     # Redis broker visibility_timeout: how long a task can be "in-flight" on a
     # worker before the broker considers it lost and re-delivers to another

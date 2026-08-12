@@ -483,6 +483,110 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
     expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
   });
 
+  it("puts compact render progress after the preview and removes the duplicate duration note", async () => {
+    process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED = "true";
+    const item = makeItem({
+      status: "generating",
+      current_job_id: "job-video-first",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variants = [makeVariant("v1", "ready", "https://cdn/v1.mp4")];
+    const job = makeJob({
+      status: "processing",
+      variants,
+      current_phase: "render_variants",
+      started_at: "2026-06-06T10:00:00Z",
+      steps: [
+        {
+          id: "step-1",
+          ts: "2026-06-06T10:00:01Z",
+          kind: "phase",
+          label: "Analyzed your clips",
+          detail: null,
+          status: "done",
+        },
+        {
+          id: "step-2",
+          ts: "2026-06-06T10:00:02Z",
+          kind: "render",
+          label: "Rendering the final edit",
+          detail: null,
+          status: "active",
+        },
+      ],
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    try {
+      await act(async () => {
+        render(<PlanItemPage />);
+      });
+
+      const preview = document.querySelector("[data-variant-preview]");
+      const disclosure = screen.getByRole("button", { name: "Show analysis steps" });
+      expect(preview).not.toBeNull();
+      expect(
+        (preview?.compareDocumentPosition(disclosure) ?? 0) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(screen.queryByText(/Usually 2–3 minutes/i)).not.toBeInTheDocument();
+    } finally {
+      delete process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED;
+    }
+  });
+
+  it("keeps progress below the preview when a ready item is re-rendering one variant", async () => {
+    process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED = "true";
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-controlled-rerender",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variants = [makeVariant("v1", "rendering", "https://cdn/v1.mp4")];
+    const job = makeJob({
+      status: "variants_ready",
+      variants,
+      current_phase: "render_variants",
+      started_at: "2026-06-06T10:00:00Z",
+      steps: [
+        {
+          id: "step-rerender",
+          ts: "2026-06-06T10:00:02Z",
+          kind: "render",
+          label: "Applying your intro text",
+          detail: null,
+          status: "active",
+        },
+      ],
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    try {
+      await act(async () => {
+        render(<PlanItemPage />);
+      });
+
+      const preview = document.querySelector("[data-variant-preview]");
+      const disclosure = screen.getByRole("button", { name: "Show analysis steps" });
+      expect(
+        (preview?.compareDocumentPosition(disclosure) ?? 0) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(screen.getAllByText("Applying your intro text")).toHaveLength(2);
+      expect(screen.queryByText("Your edits are ready")).not.toBeInTheDocument();
+    } finally {
+      delete process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED;
+    }
+  });
+
   it("test_zero_variants_failed_has_no_duplicate_retry_button: whole-item setup form (not ProgressTheater) owns retry when nothing rendered at all", async () => {
     // variants.length === 0 already gets the Generate button via
     // showSetupControls — ProgressTheater must not also show one there
@@ -510,6 +614,8 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
     });
 
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.getByText("This one didn't render")).toBeInTheDocument();
+    expect(document.querySelector("[data-variant-preview]")).toBeNull();
   });
 });
 

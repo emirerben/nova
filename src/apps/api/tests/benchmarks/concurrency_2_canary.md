@@ -156,11 +156,11 @@ git revert <commit-sha>
 fly deploy --app nova-video --process-group worker
 ```
 
-If a job is mid-render when the rollback fires, Fly waits up to the
-kill_timeout (30m) for it to finish before SIGKILL. The orchestrator's
-1800s Celery hard timeout already bounds runaway encodes, so worst case a
-job is force-killed and the user gets a "processing" status that times out
-on its own.
+If a job is mid-render when the rollback fires, Fly waits up to 300 seconds
+before hard stop. Celery spends the first 240 seconds in soft shutdown, then
+restores any unfinished late-acknowledged task so a replacement worker can
+consume it promptly. The 1,900-second Redis visibility timeout and 60-minute
+stale-job reaper remain final broker and database backstops.
 
 ---
 
