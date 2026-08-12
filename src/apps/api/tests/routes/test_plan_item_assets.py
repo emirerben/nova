@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.models import ContentPlan, Job, Persona, PlanItem
 
 SETTINGS = "app.config.settings"
 
@@ -58,19 +59,47 @@ def _owned_item(user_id: uuid.UUID):
     item.id = uuid.uuid4()
     item.content_plan_id = uuid.uuid4()
     item.current_job = None
+    item.current_job_id = None
     plan = MagicMock()
+    plan.id = item.content_plan_id
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = user_id
+    plan._test_persona = persona
     return item, plan
 
 
 def _db(execute_results: list, plan) -> AsyncMock:
+    remaining = list(execute_results)
+    item = remaining[0].scalar_one_or_none()
+
+    async def _execute(stmt):  # noqa: ANN001
+        descriptions = getattr(stmt, "column_descriptions", None) or []
+        entity = descriptions[0].get("entity") if descriptions else None
+        if entity is Persona:
+            return _scalar_result(plan._test_persona)
+        if entity is PlanItem and getattr(stmt, "_for_update_arg", None) is not None:
+            return _scalar_result(item)
+        return remaining.pop(0)
+
+    async def _get(model, _row_id, **_kwargs):  # noqa: ANN001
+        if model is ContentPlan:
+            return plan
+        if model is Job:
+            return item.current_job
+        return None
+
     db = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     db.add = MagicMock()
     db.delete = AsyncMock()
-    db.execute = AsyncMock(side_effect=execute_results)
-    db.get = AsyncMock(return_value=plan)
+    db.execute = AsyncMock(side_effect=_execute)
+    db.get = AsyncMock(side_effect=_get)
     return db
 
 
@@ -506,6 +535,7 @@ def test_update_context_clears_only_pending_suggestions(client: TestClient):
         ]
     }
     item.current_job = job
+    item.current_job_id = job.id
     db = _db([_scalar_result(item), _scalar_result(asset)], plan)
     _override(user, db)
     with (

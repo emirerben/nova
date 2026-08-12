@@ -32,6 +32,7 @@ import inspect
 import uuid
 from unittest.mock import MagicMock, patch
 
+from app.models import Job, MusicTrack
 from app.routes.music_jobs import CreateMusicJobRequest
 from app.tasks import music_orchestrate
 from app.tasks.music_orchestrate import (
@@ -196,13 +197,12 @@ def test_orchestrate_music_job_track_not_ready_still_calls_fail_job() -> None:
     mock_track.audio_gcs_path = "music/x/audio.m4a"
     mock_track.recipe_cached = None
 
-    call_count = [0]
-
-    def mock_get(model, id_val):
-        call_count[0] += 1
-        if call_count[0] == 1:
+    def mock_get(model, id_val, **kwargs):
+        if model is Job:
             return mock_job
-        return mock_track
+        if model is MusicTrack:
+            return mock_track
+        raise AssertionError(f"unexpected model lookup: {model}")
 
     mock_session = MagicMock()
     mock_session.__enter__ = lambda s: s

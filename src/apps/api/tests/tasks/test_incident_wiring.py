@@ -29,6 +29,11 @@ def test_orchestrator_enters_job_heartbeat(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(gb, "job_heartbeat", _fake_heartbeat)
     monkeypatch.setattr(gb, "mark_started", lambda job_id: None)
     monkeypatch.setattr(gb, "mark_finished", lambda job_id: None)
+    monkeypatch.setattr(
+        gb,
+        "_owned_job_task_fence",
+        lambda job_id: contextlib.nullcontext(True),
+    )
     monkeypatch.setattr(gb, "_run_generative_job", lambda job_id: None)
 
     import app.services.pipeline_trace as pt

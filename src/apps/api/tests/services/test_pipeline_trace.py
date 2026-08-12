@@ -26,9 +26,11 @@ from app.services.pipeline_trace import (
 
 def _fake_engine_capturing():
     captured: list[dict] = []
+    statements: list[str] = []
     conn = MagicMock()
 
-    def _execute(_stmt, params):
+    def _execute(stmt, params):
+        statements.append(str(stmt))
         captured.append(params)
         return MagicMock()
 
@@ -38,6 +40,7 @@ def _fake_engine_capturing():
     ctx_mgr.__exit__ = MagicMock(return_value=False)
     engine = MagicMock()
     engine.begin.return_value = ctx_mgr
+    engine._captured_statements = statements
     return engine, captured
 
 
@@ -86,6 +89,7 @@ def test_record_event_with_bound_job_writes_row():
     assert "beat_snap" in event_json
     assert "slot_snapped" in event_json
     assert "drift_ms" in event_json
+    assert "status <> 'cancelled'" in engine._captured_statements[0]
 
 
 def test_record_event_swallows_db_failure(caplog):

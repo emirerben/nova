@@ -654,7 +654,7 @@ def test_reburn_text_on_base_toggle_on_computes_matte_and_persists_path(monkeypa
     )
     assert result["render_status"] == "ready"
     assert result["intro_behind_subject"] is True
-    assert result["subject_matte_path"] == "generative-jobs/j/base_1_song_text.mp4.matte.v2.mp4"
+    assert result["subject_matte_path"] == f"{result['video_path']}.matte.v2.mp4"
     assert burn_calls[-1]["matte"] == "PROVIDER"
 
 

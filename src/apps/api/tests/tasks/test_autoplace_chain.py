@@ -11,6 +11,7 @@ Plus the shared apply helper (G1-A): overlap drop, suggestion clearing, no commi
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from unittest.mock import MagicMock, patch
 
 from app.services.overlay_apply import apply_suggestions_to_variant
@@ -177,6 +178,30 @@ def _envelope(start: float, end: float, *, sfx: bool = False) -> dict:
             else None
         ),
     }
+
+
+def test_apply_helper_cancelled_job_is_a_strict_noop() -> None:
+    variant = {
+        "variant_id": "original_text",
+        "media_overlays": None,
+        "overlay_suggestions": [_envelope(3.0, 6.0)],
+        "overlay_suggest_status": "ready",
+    }
+    job = _job([variant], item_id=uuid.uuid4())
+    job.status = "cancelled"
+    before = deepcopy(job.assembly_plan)
+
+    with patch("app.routes.generative_jobs.dispatch_set_media_overlays") as dispatch:
+        result = apply_suggestions_to_variant(
+            job,
+            "original_text",
+            list(variant["overlay_suggestions"]),
+            user_id="u",
+        )
+
+    assert result == {"applied": 0, "dropped": 0, "sfx": 0, "dispatched": False}
+    assert job.assembly_plan == before
+    dispatch.assert_not_called()
 
 
 def test_helper_merges_clears_and_dispatches_once() -> None:

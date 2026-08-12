@@ -257,6 +257,7 @@ def reconcile_stuck_variants(
         rows = db.execute(
             select(Job.id, Job.assembly_plan).where(
                 Job.status.notin_(_NON_TERMINAL_STATUSES),
+                Job.status != "cancelled",
                 Job.updated_at < cutoff,
                 Job.updated_at >= lookback,
                 Job.assembly_plan.isnot(None),
@@ -276,7 +277,7 @@ def reconcile_stuck_variants(
             if new_variants != variants:
                 db.execute(
                     update(Job)
-                    .where(Job.id == job_id_val)
+                    .where(Job.id == job_id_val, Job.status != "cancelled")
                     .values(assembly_plan={**assembly_plan, "variants": new_variants})
                 )
                 fixed += 1

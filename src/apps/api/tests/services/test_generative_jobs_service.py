@@ -37,10 +37,12 @@ def test_content_plan_mode_sets_reverse_link() -> None:
         clip_paths=["users/u/plan/i/a.mp4"],
         mode="content_plan",
         content_plan_item_id=item_id,
+        content_plan_ownership_epoch=3,
         variant_policy=CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
     )
     assert job.mode == "content_plan"
     assert job.content_plan_item_id == item_id
+    assert job.content_plan_ownership_epoch == 3
     assert job.all_candidates["variant_policy"] == CONTENT_PLAN_PRIMARY_VARIANT_POLICY
 
 
@@ -57,10 +59,13 @@ def test_public_job_omits_persona_key() -> None:
 
 
 def test_persona_stashed_in_all_candidates() -> None:
+    item_id = uuid.uuid4()
     job = build_generative_job(
         user_id=uuid.uuid4(),
         clip_paths=["users/u/plan/i/a.mp4"],
         mode="content_plan",
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=0,
         persona_tone="no-excuses gym motivation",
         persona_pillars=["morning routines", "discipline"],
         item_theme="first 5am workout",

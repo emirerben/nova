@@ -1,6 +1,7 @@
 """Integration tests for POST /api/waitlist and GET /api/admin/waitlist."""
 
 import itertools
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -43,12 +44,16 @@ async def client(db_engine):
     # Each fixture call gets a unique IP so the rate limiter never sees
     # cross-test request counts from the same "client".
     unique_ip = f"10.{next(_ip_counter) % 256}.0.1"
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        headers={"X-Forwarded-For": unique_ip},
-    ) as c:
-        yield c
+    # Email delivery is explicitly best-effort and is not part of these HTTP/
+    # database assertions. Avoid a real Celery/Redis connection (and its 20s
+    # backend reconnect loop) in this isolated test suite.
+    with patch("app.tasks.email.send_waitlist_confirmation.delay"):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Forwarded-For": unique_ip},
+        ) as c:
+            yield c
     app.dependency_overrides.clear()
 
 

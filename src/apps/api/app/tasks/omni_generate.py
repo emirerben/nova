@@ -38,10 +38,21 @@ _MAX_PROVIDER_REDIRECTS = 3
 _PROVIDER_MEDIA_HOST_SUFFIXES = (".googleapis.com", ".googleusercontent.com")
 
 
+class _CancelledJobWriteRejected(RuntimeError):
+    pass
+
+
+def _delete_rejected_output(path: str) -> None:
+    if not delete_object_best_effort(path):
+        log.error("omni_cancelled_output_delete_failed", storage_path=path)
+
+
 def _locked_job(session, job_id: str) -> Job:  # noqa: ANN001
     job = session.scalar(select(Job).where(Job.id == uuid.UUID(job_id)).with_for_update())
     if job is None:
         raise ValueError("job_not_found")
+    if job.status == "cancelled":
+        raise _CancelledJobWriteRejected("job_cancelled")
     return job
 
 
@@ -57,13 +68,16 @@ def _record(job: Job, asset_id: str) -> tuple[dict, dict]:
 
 
 def _update(job_id: str, asset_id: str, **patch: Any) -> dict:
-    with sync_session() as session:
-        job = _locked_job(session, job_id)
-        assembly, record = _record(job, asset_id)
-        record.update(patch)
-        job.assembly_plan = assembly
-        session.commit()
-        return copy.deepcopy(record)
+    try:
+        with sync_session() as session:
+            job = _locked_job(session, job_id)
+            assembly, record = _record(job, asset_id)
+            record.update(patch)
+            job.assembly_plan = assembly
+            session.commit()
+            return copy.deepcopy(record)
+    except _CancelledJobWriteRejected:
+        return {}
 
 
 def _read(job_id: str, asset_id: str) -> tuple[Job, dict]:
@@ -71,14 +85,20 @@ def _read(job_id: str, asset_id: str) -> tuple[Job, dict]:
         job = session.get(Job, uuid.UUID(job_id))
         if job is None:
             raise ValueError("job_not_found")
+        if job.status == "cancelled":
+            session.expunge(job)
+            return job, {}
         _, record = _record(job, asset_id)
         session.expunge(job)
         return job, copy.deepcopy(record)
 
 
 def _cancelled(job_id: str, asset_id: str) -> bool:
-    _, record = _read(job_id, asset_id)
-    return record.get("status") in {"cancellation_requested", "cancelled"}
+    job, record = _read(job_id, asset_id)
+    return job.status == "cancelled" or record.get("status") in {
+        "cancellation_requested",
+        "cancelled",
+    }
 
 
 def _input_parts(
@@ -291,26 +311,30 @@ def _commit_ready(
     output_url: str,
     duration_s: float,
 ) -> bool:
-    with sync_session() as session:
-        job = _locked_job(session, job_id)
-        assembly, record = _record(job, asset_id)
-        if record.get("status") in {"cancellation_requested", "cancelled"}:
-            record.update(status="cancelled", progress=0.0, error=None)
+    try:
+        with sync_session() as session:
+            job = _locked_job(session, job_id)
+            assembly, record = _record(job, asset_id)
+            if record.get("status") in {"cancellation_requested", "cancelled"}:
+                record.update(status="cancelled", progress=0.0, error=None)
+                job.assembly_plan = assembly
+                session.commit()
+                _delete_rejected_output(storage_path)
+                return False
+            record.update(
+                status="ready",
+                progress=1.0,
+                storage_path=storage_path,
+                output_url=output_url,
+                normalized_duration_s=round(duration_s, 3),
+                error=None,
+            )
             job.assembly_plan = assembly
             session.commit()
-            delete_object_best_effort(storage_path)
-            return False
-        record.update(
-            status="ready",
-            progress=1.0,
-            storage_path=storage_path,
-            output_url=output_url,
-            normalized_duration_s=round(duration_s, 3),
-            error=None,
-        )
-        job.assembly_plan = assembly
-        session.commit()
-        return True
+            return True
+    except _CancelledJobWriteRejected:
+        _delete_rejected_output(storage_path)
+        return False
 
 
 @celery_app.task(
@@ -321,21 +345,24 @@ def _commit_ready(
 def cleanup_unclaimed_omni_asset(*, job_id: str, asset_id: str) -> None:
     """Expire a ready asset that was never claimed into the editor clip pool."""
     storage_path: str | None = None
-    with sync_session() as session:
-        job = _locked_job(session, job_id)
-        assembly, record = _record(job, asset_id)
-        if record.get("status") != "ready" or record.get("operation") is not None:
-            return
-        storage_path = str(record.get("storage_path") or "") or None
-        record.update(
-            status="cancelled",
-            progress=0.0,
-            storage_path=None,
-            output_url=None,
-            error="generated_asset_expired",
-        )
-        job.assembly_plan = assembly
-        session.commit()
+    try:
+        with sync_session() as session:
+            job = _locked_job(session, job_id)
+            assembly, record = _record(job, asset_id)
+            if record.get("status") != "ready" or record.get("operation") is not None:
+                return
+            storage_path = str(record.get("storage_path") or "") or None
+            record.update(
+                status="cancelled",
+                progress=0.0,
+                storage_path=None,
+                output_url=None,
+                error="generated_asset_expired",
+            )
+            job.assembly_plan = assembly
+            session.commit()
+    except _CancelledJobWriteRejected:
+        return
     if storage_path:
         delete_object_best_effort(storage_path)
 

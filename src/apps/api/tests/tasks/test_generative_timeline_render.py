@@ -1317,6 +1317,11 @@ def test_regenerate_task_threads_timeline_override(monkeypatch):
     import app.services.pipeline_trace as pt
 
     monkeypatch.setattr(pt, "pipeline_trace_for", lambda job_id: contextlib.nullcontext())
+    monkeypatch.setattr(
+        gb,
+        "_owned_job_task_fence",
+        lambda job_id: contextlib.nullcontext(True),
+    )
     seen: dict = {}
     monkeypatch.setattr(
         gb,
@@ -1326,7 +1331,7 @@ def test_regenerate_task_threads_timeline_override(monkeypatch):
     )
 
     timeline = [_tl_slot(0)]
-    gb.regenerate_generative_variant.run("j", "song_text", timeline_override=timeline)
+    gb.regenerate_generative_variant.run(JOB_ID, "song_text", timeline_override=timeline)
 
     assert seen["kwargs"]["timeline_override"] == timeline
 

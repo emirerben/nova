@@ -34,6 +34,8 @@ def _user() -> MagicMock:
 def _result(value) -> MagicMock:  # noqa: ANN001
     r = MagicMock()
     r.scalar_one_or_none = MagicMock(return_value=value)
+    if isinstance(value, list):
+        r.scalars.return_value.all.return_value = value
     return r
 
 
@@ -55,6 +57,7 @@ def _plan(user_id: uuid.UUID, items=None) -> MagicMock:
     p.id = uuid.uuid4()
     p.user_id = user_id
     p.persona_id = uuid.uuid4()
+    p.ownership_quarantined_at = None
     p.plan_status = "ready"
     p.horizon_days = 30
     p.events = None
@@ -64,6 +67,7 @@ def _plan(user_id: uuid.UUID, items=None) -> MagicMock:
     p.pool = {}
     p.generation_started_at = None
     p.start_date = None
+    p._owned_persona_fixture = _persona(p)
     return p
 
 
@@ -97,7 +101,11 @@ def _idea_item(user_id: uuid.UUID, *, item_status: str = "idea", current_job_id=
     item.landscape_fit = "fit"
     item.content_mode = None
     plan = MagicMock()
+    plan.id = item.content_plan_id
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = None
+    plan._owned_persona_fixture = _persona(plan)
     return item, plan
 
 
@@ -117,10 +125,14 @@ def _valid_expander_payload() -> dict:
     }
 
 
-def _persona() -> MagicMock:
+def _persona(plan: MagicMock | None = None) -> MagicMock:
     persona = MagicMock()
+    if plan is not None:
+        persona.id = plan.persona_id
+        persona.user_id = plan.user_id
     persona.persona = {"summary": "creator", "content_pillars": ["fitness"]}
     persona.style = {}
+    persona.idea_seeds = []
     return persona
 
 
@@ -168,26 +180,24 @@ def test_add_idea_creates_plan_item_and_seed_mirror(client: TestClient) -> None:
     new_item.voiceover_caption_style = None
     new_item.edit_format = None
 
-    persona = MagicMock()
+    persona = _persona(plan)
     persona.persona = {"summary": "creator"}
     persona.idea_seeds = []
-    persona.style = {}
 
     db = AsyncMock()
     db.commit = AsyncMock()
     db.delete = AsyncMock()
-    db.add = MagicMock()
+    db.add = MagicMock(side_effect=lambda added: setattr(new_item, "id", added.id))
     db.refresh = AsyncMock()
     db.get = AsyncMock(return_value=plan)
-    # Plan lookup → locked persona seed write → reloaded item.
+    # Locked plan → locked persona → locked item set → reloaded item/persona.
     db.execute = AsyncMock(
         side_effect=[
-            MagicMock(
-                scalar_one_or_none=MagicMock(return_value=plan),
-                scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[plan]))),
-            ),
-            MagicMock(scalar_one_or_none=MagicMock(return_value=persona)),
-            MagicMock(scalar_one_or_none=MagicMock(return_value=new_item)),
+            _result(plan),
+            _result(persona),
+            MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))),
+            _result(new_item),
+            _result(persona),
         ]
     )
 
@@ -202,6 +212,36 @@ def test_add_idea_creates_plan_item_and_seed_mirror(client: TestClient) -> None:
     db.commit.assert_awaited()
     persona_stmt = db.execute.call_args_list[1].args[0]
     assert "FOR UPDATE" in str(persona_stmt).upper()
+    item_stmt = db.execute.call_args_list[2].args[0]
+    assert "FOR UPDATE" in str(item_stmt).upper()
+    assert "ORDER BY plan_items.id" in str(item_stmt)
+
+
+def test_add_idea_owner_mismatch_has_no_partial_write(client: TestClient) -> None:
+    user = _user()
+    plan = _plan(user.id, items=[])
+    foreign_persona = _persona(plan)
+    foreign_persona.user_id = uuid.uuid4()
+    foreign_persona.persona = {"summary": "must not leak"}
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.add = MagicMock()
+    db.execute = AsyncMock(side_effect=[_result(plan), _result(foreign_persona)])
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post(
+        f"/plan-items?plan_id={plan.id}",
+        json={"idea": "do not insert me"},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "Content plan is unavailable"}
+    assert "must not leak" not in resp.text
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+    assert db.execute.await_count == 2
 
 
 # ── T12: DELETE refuses active work, detaches terminal jobs ──────────────────
@@ -214,7 +254,7 @@ def test_delete_idea_refuses_with_active_job_and_preserves_seed(client: TestClie
     seed_id = uuid.uuid4().hex
     item.source_idea_seed_id = seed_id
     original_seeds = [{"id": seed_id, "text": item.idea, "status": "in_plan"}]
-    persona = MagicMock()
+    persona = _persona(plan)
     persona.idea_seeds = list(original_seeds)
     # Simulate a live job.
     job = MagicMock()
@@ -225,7 +265,7 @@ def test_delete_idea_refuses_with_active_job_and_preserves_seed(client: TestClie
     db = AsyncMock()
     db.delete = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item)])
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona)])
     db.get = AsyncMock(return_value=plan)
 
     app.dependency_overrides[get_current_user] = lambda: user
@@ -246,13 +286,13 @@ def test_delete_idea_refuses_with_clips_and_preserves_seed(client: TestClient) -
     seed_id = uuid.uuid4().hex
     item.source_idea_seed_id = seed_id
     original_seeds = [{"id": seed_id, "text": item.idea, "status": "in_plan"}]
-    persona = MagicMock()
+    persona = _persona(plan)
     persona.idea_seeds = list(original_seeds)
 
     db = AsyncMock()
     db.delete = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item)])
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona)])
     db.get = AsyncMock(return_value=plan)
 
     app.dependency_overrides[get_current_user] = lambda: user
@@ -285,7 +325,7 @@ def test_delete_ready_idea_with_clips_detaches_library_job_and_removes_seed(
     job.content_plan_item_id = item.id
     item.current_job = job
     other_seed = {"id": uuid.uuid4().hex, "text": "keep me", "status": "pending"}
-    persona = MagicMock()
+    persona = _persona(plan)
     persona.idea_seeds = [
         {"id": seed_id, "text": item.idea, "status": "in_plan"},
         other_seed,
@@ -294,8 +334,12 @@ def test_delete_ready_idea_with_clips_detaches_library_job_and_removes_seed(
     db = AsyncMock()
     db.delete = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(persona), _result(item)])
-    db.get = AsyncMock(side_effect=[plan, plan])
+    db.execute = AsyncMock(
+        side_effect=[_result(item), _result(persona), _result(persona), _result(item)]
+    )
+    db.get = AsyncMock(
+        side_effect=lambda model, _pk, **_kwargs: job if model.__name__ == "Job" else plan
+    )
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -312,11 +356,14 @@ def test_delete_unlinked_idea_succeeds_when_clean(client: TestClient) -> None:
     """An unlinked clean idea deletes without requiring a persona seed."""
     user = _user()
     item, plan = _idea_item(user.id)
+    persona = plan._owned_persona_fixture
 
     db = AsyncMock()
     db.delete = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(item)])
+    db.execute = AsyncMock(
+        side_effect=[_result(item), _result(persona), _result(persona), _result(item)]
+    )
     db.get = AsyncMock(side_effect=[plan, plan])
 
     app.dependency_overrides[get_current_user] = lambda: user
@@ -336,7 +383,7 @@ def test_delete_linked_idea_removes_seed_and_item_atomically(client: TestClient)
     seed_id = uuid.uuid4().hex
     item.source_idea_seed_id = seed_id
     other_seed = {"id": uuid.uuid4().hex, "text": "keep me", "status": "pending"}
-    persona = MagicMock()
+    persona = _persona(plan)
     persona.idea_seeds = [
         {"id": seed_id, "text": item.idea, "status": "in_plan"},
         other_seed,
@@ -345,7 +392,9 @@ def test_delete_linked_idea_removes_seed_and_item_atomically(client: TestClient)
     db = AsyncMock()
     db.delete = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(persona), _result(item)])
+    db.execute = AsyncMock(
+        side_effect=[_result(item), _result(persona), _result(persona), _result(item)]
+    )
     db.get = AsyncMock(side_effect=[plan, plan])
 
     app.dependency_overrides[get_current_user] = lambda: user
@@ -356,43 +405,78 @@ def test_delete_linked_idea_removes_seed_and_item_atomically(client: TestClient)
     assert persona.idea_seeds == [other_seed]
     db.delete.assert_awaited_once_with(item)
     db.commit.assert_awaited_once()
-    persona_stmt = db.execute.call_args_list[1].args[0]
+    persona_stmt = db.execute.call_args_list[2].args[0]
     assert "FOR UPDATE" in str(persona_stmt).upper()
-    item_stmt = db.execute.call_args_list[2].args[0]
+    item_stmt = db.execute.call_args_list[3].args[0]
     assert "FOR UPDATE" in str(item_stmt).upper()
     assert item_stmt.get_execution_options()["populate_existing"] is True
+    locked_plan_call = db.get.await_args_list[1]
+    assert locked_plan_call.kwargs["with_for_update"] is True
+
+
+def test_delete_idea_owner_mismatch_has_no_partial_write(client: TestClient) -> None:
+    user = _user()
+    item, plan = _idea_item(user.id)
+    foreign_persona = _persona(plan)
+    foreign_persona.user_id = uuid.uuid4()
+    item.source_idea_seed_id = uuid.uuid4().hex
+
+    db = AsyncMock()
+    db.delete = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(foreign_persona)])
+    db.get = AsyncMock(return_value=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.delete(f"/plan-items/{item.id}")
+
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "Content plan is unavailable"}
+    db.delete.assert_not_awaited()
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.parametrize("seed_state", ["missing_persona", "missing_entry"])
-def test_delete_linked_idea_tolerates_missing_seed_state(
+def test_delete_linked_idea_fails_closed_on_missing_persona_but_tolerates_missing_seed(
     client: TestClient, seed_state: str
 ) -> None:
-    """Stale provenance never prevents deletion of an otherwise clean item."""
+    """A missing persona fails closed; a stale seed id remains harmless."""
     user = _user()
     item, plan = _idea_item(user.id)
     item.source_idea_seed_id = uuid.uuid4().hex
 
     persona = None
     if seed_state == "missing_entry":
-        persona = MagicMock()
+        persona = _persona(plan)
         persona.idea_seeds = [{"id": uuid.uuid4().hex, "text": "keep me", "status": "pending"}]
         original_seeds = list(persona.idea_seeds)
 
     db = AsyncMock()
     db.delete = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(persona), _result(item)])
+    if persona is None:
+        db.execute = AsyncMock(side_effect=[_result(item), _result(None)])
+    else:
+        db.execute = AsyncMock(
+            side_effect=[_result(item), _result(persona), _result(persona), _result(item)]
+        )
     db.get = AsyncMock(side_effect=[plan, plan])
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
 
     resp = client.delete(f"/plan-items/{item.id}")
-    assert resp.status_code == 204
-    if persona is not None:
+    if persona is None:
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "Content plan is unavailable"
+        db.delete.assert_not_awaited()
+        db.commit.assert_not_awaited()
+    else:
+        assert resp.status_code == 204
         assert persona.idea_seeds == original_seeds
-    db.delete.assert_awaited_once_with(item)
-    db.commit.assert_awaited_once()
+        db.delete.assert_awaited_once_with(item)
+        db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -408,48 +492,41 @@ async def test_concurrent_linked_idea_deletes_preserve_both_removals() -> None:
     first_item.source_idea_seed_id = uuid.uuid4().hex
     second_item.source_idea_seed_id = uuid.uuid4().hex
 
-    persona = MagicMock()
+    persona = _persona(plan)
     persona.idea_seeds = [
         {"id": first_item.source_idea_seed_id, "text": "first", "status": "in_plan"},
         {"id": second_item.source_idea_seed_id, "text": "second", "status": "in_plan"},
     ]
 
-    row_lock = asyncio.Lock()
-    both_at_persona = asyncio.Event()
-    persona_waiters = 0
+    plan_lock = asyncio.Lock()
     deleted_ids: set[uuid.UUID] = set()
 
     class LockedDb:
         def __init__(self, item: MagicMock) -> None:
             self.item = item
-            self.holds_lock = False
+            self.holds_plan_lock = False
 
         async def execute(self, stmt):  # noqa: ANN001, ANN202
-            nonlocal persona_waiters
             compiled = str(stmt).upper()
             if "FROM PLAN_ITEMS" in compiled:
                 return _result(self.item)
 
             assert "FROM PERSONAS" in compiled
-            assert "FOR UPDATE" in compiled
-            persona_waiters += 1
-            if persona_waiters == 2:
-                both_at_persona.set()
-            await both_at_persona.wait()
-            await row_lock.acquire()
-            self.holds_lock = True
             return _result(persona)
 
-        async def get(self, _model, _row_id):  # noqa: ANN001, ANN202
+        async def get(self, _model, _row_id, **kwargs):  # noqa: ANN001, ANN202
+            if kwargs.get("with_for_update"):
+                await plan_lock.acquire()
+                self.holds_plan_lock = True
             return plan
 
         async def delete(self, item: MagicMock) -> None:
             deleted_ids.add(item.id)
 
         async def commit(self) -> None:
-            if self.holds_lock:
-                self.holds_lock = False
-                row_lock.release()
+            if self.holds_plan_lock:
+                self.holds_plan_lock = False
+                plan_lock.release()
 
     await asyncio.gather(
         delete_idea_endpoint(str(first_item.id), user, LockedDb(first_item)),  # type: ignore[arg-type]
@@ -504,11 +581,15 @@ def test_reorder_items_atomic(client: TestClient) -> None:
 
     db = AsyncMock()
     db.commit = AsyncMock()
-    # First execute: load plan for reorder. Second: reload plan for response.
+    persona = plan._owned_persona_fixture
+    # Each plan load is followed by the mandatory persona-owner check.
     db.execute = AsyncMock(
         side_effect=[
-            MagicMock(scalar_one_or_none=MagicMock(return_value=plan)),
-            MagicMock(scalar_one_or_none=MagicMock(return_value=plan)),
+            _result(plan),
+            _result(persona),
+            _result(items),
+            _result(plan),
+            _result(persona),
         ]
     )
     app.dependency_overrides[get_current_user] = lambda: user
@@ -528,11 +609,14 @@ def test_reorder_rejects_foreign_id(client: TestClient) -> None:
     plan, items = _plan_with_items(user.id, n=2)
     foreign_id = str(uuid.uuid4())
     ids = [str(it.id) for it in items] + [foreign_id]  # wrong count too
+    persona = plan._owned_persona_fixture
 
     db = AsyncMock()
     db.execute = AsyncMock(
         side_effect=[
-            MagicMock(scalar_one_or_none=MagicMock(return_value=plan)),
+            _result(plan),
+            _result(persona),
+            _result(items),
         ]
     )
     app.dependency_overrides[get_current_user] = lambda: user
@@ -542,6 +626,33 @@ def test_reorder_rejects_foreign_id(client: TestClient) -> None:
     assert resp.status_code == 400
 
 
+def test_reorder_rejects_duplicate_ids(client: TestClient) -> None:
+    """A same-length list cannot omit an item by repeating another UUID."""
+    user = _user()
+    plan, items = _plan_with_items(user.id, n=2)
+    persona = plan._owned_persona_fixture
+    duplicate_ids = [str(items[0].id), str(items[0].id)]
+
+    db = AsyncMock()
+    db.execute = AsyncMock(
+        side_effect=[
+            _result(plan),
+            _result(persona),
+            _result(items),
+        ]
+    )
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post(
+        f"/content-plans/{plan.id}/reorder",
+        json={"item_ids": duplicate_ids},
+    )
+
+    assert resp.status_code == 400
+    assert "unique item ids" in resp.json()["detail"]
+
+
 # ── T14: POST /plan-items/{id}/expand (propose-only) ─────────────────────────
 
 
@@ -549,13 +660,13 @@ def test_expand_does_not_write_db(client: TestClient) -> None:
     """expand returns a proposal without calling db.add or db.commit."""
     user = _user()
     item, plan = _idea_item(user.id)
-    persona = _persona()
+    persona = _persona(plan)
 
     db = AsyncMock()
     db.commit = AsyncMock()
     db.add = MagicMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
-    db.get = AsyncMock(side_effect=[plan, plan, persona])
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona)])
+    db.get = AsyncMock(return_value=plan)
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -586,21 +697,124 @@ def test_expand_does_not_write_db(client: TestClient) -> None:
     db.commit.assert_not_awaited()
 
 
+def test_item_read_owner_mismatch_is_generic_409(client: TestClient) -> None:
+    user = _user()
+    item, plan = _idea_item(user.id)
+    foreign_persona = _persona(plan)
+    foreign_persona.user_id = uuid.uuid4()
+    foreign_persona.persona = {"summary": "foreign secret"}
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(foreign_persona)])
+    db.get = AsyncMock(return_value=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.get(f"/plan-items/{item.id}")
+
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "Content plan is unavailable"}
+    assert "foreign secret" not in resp.text
+
+
+def test_expand_owner_mismatch_never_calls_agent(client: TestClient) -> None:
+    user = _user()
+    item, plan = _idea_item(user.id)
+    foreign_persona = _persona(plan)
+    foreign_persona.user_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(foreign_persona)])
+    db.get = AsyncMock(return_value=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.agents.idea_expander.IdeaExpanderAgent.run") as run:
+        resp = client.post(f"/plan-items/{item.id}/expand")
+
+    assert resp.status_code == 409
+    run.assert_not_called()
+
+
+def test_advisor_owner_mismatch_never_calls_agent(client: TestClient) -> None:
+    user = _user()
+    item, plan = _idea_item(user.id)
+    foreign_persona = _persona(plan)
+    foreign_persona.user_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(foreign_persona)])
+    db.get = AsyncMock(return_value=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with (
+        patch("app.config.settings.plan_item_advisor_enabled", True),
+        patch("app.agents.plan_item_advisor.PlanItemAdvisorAgent.run") as run,
+    ):
+        resp = client.post(f"/plan-items/{item.id}/agent/turn", json={"answer": "help"})
+
+    assert resp.status_code == 409
+    run.assert_not_called()
+
+
+def test_legacy_generate_owner_mismatch_never_enqueues(client: TestClient) -> None:
+    user = _user()
+    item, plan = _idea_item(user.id, clips=["users/u/clip.mp4"])
+    foreign_persona = _persona(plan)
+    foreign_persona.user_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(foreign_persona)])
+    db.get = AsyncMock(return_value=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with (
+        patch("app.config.settings.PLAN_SYNC_DISPATCH_ENABLED", False),
+        patch("app.tasks.content_plan_build.generate_plan_item_videos") as task,
+    ):
+        resp = client.post(f"/plan-items/{item.id}/generate")
+
+    assert resp.status_code == 409
+    task.delay.assert_not_called()
+
+
+def test_sync_generate_maps_worker_owner_failure_to_generic_409(client: TestClient) -> None:
+    user = _user()
+    item, plan = _idea_item(user.id, clips=["users/u/clip.mp4"])
+    persona = _persona(plan)
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona)])
+    db.get = AsyncMock(return_value=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    dispatch_result = MagicMock(outcome="invalid_persona")
+
+    with (
+        patch("app.config.settings.PLAN_SYNC_DISPATCH_ENABLED", True),
+        patch(
+            "app.tasks.content_plan_build.dispatch_item_render_for",
+            return_value=dispatch_result,
+        ),
+    ):
+        resp = client.post(f"/plan-items/{item.id}/generate")
+
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "Content plan is unavailable"}
+
+
 def test_expand_trims_context_and_derives_voiceover_type_and_content_mode(
     client: TestClient,
 ) -> None:
     """Optional request body is sanitized and threaded to the propose-only agent."""
     user = _user()
     item, plan = _idea_item(user.id)
-    persona = _persona()
+    persona = _persona(plan)
     item.edit_format = "narrated_ready"
     item.content_mode = "existing_footage"
 
     db = AsyncMock()
     db.commit = AsyncMock()
     db.add = MagicMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
-    db.get = AsyncMock(side_effect=[plan, plan, persona])
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona)])
+    db.get = AsyncMock(return_value=plan)
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -637,13 +851,13 @@ def test_expand_empty_context_becomes_empty_agent_context(
     """Empty request bodies keep the old behavior while accepting explicit JSON."""
     user = _user()
     item, plan = _idea_item(user.id)
-    persona = _persona()
+    persona = _persona(plan)
 
     db = AsyncMock()
     db.commit = AsyncMock()
     db.add = MagicMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
-    db.get = AsyncMock(side_effect=[plan, plan, persona])
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona)])
+    db.get = AsyncMock(return_value=plan)
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -672,7 +886,7 @@ def test_expand_empty_guide_after_retry_returns_502_and_does_not_write(
     """If the agent cannot produce shots after clarification, expand fails friendly."""
     user = _user()
     item, plan = _idea_item(user.id)
-    persona = _persona()
+    persona = _persona(plan)
     model_client = _QueuedModelClient(
         {**_valid_expander_payload(), "filming_guide": []},
         {**_valid_expander_payload(), "filming_guide": []},
@@ -681,8 +895,8 @@ def test_expand_empty_guide_after_retry_returns_502_and_does_not_write(
     db = AsyncMock()
     db.commit = AsyncMock()
     db.add = MagicMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
-    db.get = AsyncMock(side_effect=[plan, plan, persona])
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona)])
+    db.get = AsyncMock(return_value=plan)
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -703,7 +917,7 @@ def test_expand_empty_once_then_valid_guide_returns_200(client: TestClient) -> N
     """A sanitized-empty first answer gets one clarification retry."""
     user = _user()
     item, plan = _idea_item(user.id)
-    persona = _persona()
+    persona = _persona(plan)
     model_client = _QueuedModelClient(
         {**_valid_expander_payload(), "filming_guide": []},
         _valid_expander_payload(),
@@ -712,8 +926,8 @@ def test_expand_empty_once_then_valid_guide_returns_200(client: TestClient) -> N
     db = AsyncMock()
     db.commit = AsyncMock()
     db.add = MagicMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
-    db.get = AsyncMock(side_effect=[plan, plan, persona])
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona)])
+    db.get = AsyncMock(return_value=plan)
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -733,11 +947,19 @@ def test_patch_filming_guide_stamps_missing_shot_ids(client: TestClient) -> None
     """Accepting an expand proposal without shot_ids never persists null shot_id."""
     user = _user()
     item, plan = _idea_item(user.id)
-    persona = _persona()
+    persona = _persona(plan)
     db = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(item)])
-    db.get = AsyncMock(side_effect=[plan, plan, plan, persona, plan, persona])
+    db.execute = AsyncMock(
+        side_effect=[
+            _result(item),
+            _result(persona),
+            _result(item),
+            _result(item),
+            _result(persona),
+        ]
+    )
+    db.get = AsyncMock(side_effect=[plan, plan, None])
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -768,12 +990,20 @@ def test_patch_filming_guide_preserves_existing_shot_ids(client: TestClient) -> 
     """Existing shot_ids round-trip through plan item edits unchanged."""
     user = _user()
     item, plan = _idea_item(user.id)
-    persona = _persona()
+    persona = _persona(plan)
     existing_ids = [uuid.uuid4().hex, uuid.uuid4().hex]
     db = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(item)])
-    db.get = AsyncMock(side_effect=[plan, plan, plan, persona, plan, persona])
+    db.execute = AsyncMock(
+        side_effect=[
+            _result(item),
+            _result(persona),
+            _result(item),
+            _result(item),
+            _result(persona),
+        ]
+    )
+    db.get = AsyncMock(side_effect=[plan, plan, None])
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db

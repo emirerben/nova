@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+from app.models import Job
 from app.worker import celery_app
 
 
@@ -41,9 +42,10 @@ def test_lyrics_preview_task_refreshes_stale_cache_before_render(monkeypatch) ->
         def __exit__(self, *_exc):
             return None
 
-        def get(self, model, key):
-            if model is task_mod.Job:
+        def get(self, model, key, **kwargs):
+            if model is Job:
                 assert key == UUID(str(job_id))
+                assert kwargs == {"with_for_update": True}
                 return job
             if model is task_mod.MusicTrack:
                 assert key == track_id
@@ -62,12 +64,13 @@ def test_lyrics_preview_task_refreshes_stale_cache_before_render(monkeypatch) ->
         assert reason == "lyrics_preview"
         return fresh
 
-    def fake_render(render_track, lyrics_config, job_id: str):
+    def fake_render(render_track, lyrics_config, job_id: str, *, task_run_id: str):
         calls.append("render")
         assert render_track is track
         assert render_track.lyrics_cached is fresh
         assert lyrics_config is effective_cfg
         assert job_id == str(job.id)
+        assert task_run_id
         return "https://example.test/preview.mp4", {"preview_start_s": 41.7}
 
     monkeypatch.setattr(task_mod, "_sync_session", lambda: FakeSession())

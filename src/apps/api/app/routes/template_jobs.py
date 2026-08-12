@@ -448,6 +448,7 @@ async def get_template_job_eval(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     assembly_plan = job.assembly_plan or {}
+    cancelled = job.status == "cancelled"
     steps = assembly_plan.get("steps", [])
 
     # Build per-slot eval data
@@ -457,7 +458,7 @@ async def get_template_job_eval(
         slot = step.get("slot", {})
         dur = float(slot.get("target_duration_s", 5.0))
         slot_url = None
-        if app_settings.eval_harness_enabled:
+        if app_settings.eval_harness_enabled and not cancelled:
             slot_url = assembly_plan.get("slot_urls", {}).get(str(i))
 
         slots_eval.append(
@@ -490,8 +491,10 @@ async def get_template_job_eval(
         "job_id": job_id,
         "slots": slots_eval,
         "template_url": template_url,
-        "output_url": assembly_plan.get("output_url"),
-        "comparison_grid_url": assembly_plan.get("comparison_grid_url"),
+        "output_url": None if cancelled else assembly_plan.get("output_url"),
+        "comparison_grid_url": (
+            None if cancelled else assembly_plan.get("comparison_grid_url")
+        ),
     }
 
 
@@ -517,8 +520,8 @@ async def get_template_job_status(
         job_id=str(job.id),
         status=job.status,
         template_id=job.template_id,
-        assembly_plan=job.assembly_plan,
-        error_detail=job.error_detail,
+        assembly_plan=None if job.status == "cancelled" else job.assembly_plan,
+        error_detail=None if job.status == "cancelled" else job.error_detail,
         failure_reason=job.failure_reason,
         current_phase=job.current_phase,
         phase_log=list(job.phase_log or []),
@@ -537,6 +540,7 @@ _SSE_TERMINAL_STATUSES = frozenset(
         "music_ready",
         "processing_failed",
         "done",
+        "cancelled",
     }
 )
 

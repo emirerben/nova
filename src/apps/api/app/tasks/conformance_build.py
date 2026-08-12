@@ -19,9 +19,21 @@ import structlog
 from app.config import settings
 from app.database import sync_session
 from app.models import ContentPlan, PlanItem
+from app.services.content_plan_persona import (
+    PlanPersonaOwnershipError,
+    load_owned_plan_persona_sync,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
+
+
+def _coerce_dispatch_epoch(value: object) -> int | None:
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 @celery_app.task(
@@ -31,18 +43,26 @@ log = structlog.get_logger()
     soft_time_limit=120,
     time_limit=150,
 )
-def analyze_item_conformance(self, plan_item_id: str) -> None:  # noqa: ANN001
+def analyze_item_conformance(
+    self,
+    plan_item_id: str,
+    expected_ownership_epoch: int | None = None,
+) -> None:  # noqa: ANN001
     """Analyze clip conformance for a plan item and persist the verdict.
 
     Best-effort: any exception is caught and logged. The attach response and
     Generate button are completely independent of this task.
     """
+    expected_ownership_epoch = _coerce_dispatch_epoch(expected_ownership_epoch)
+    if expected_ownership_epoch is None:
+        log.error("conformance_build.missing_dispatch_epoch", plan_item_id=plan_item_id)
+        return
     if not settings.conformance_feedback_enabled:
         log.debug("conformance_build.disabled", plan_item_id=plan_item_id)
         return
 
     try:
-        _run(plan_item_id)
+        _run(plan_item_id, expected_ownership_epoch=expected_ownership_epoch)
     except Exception as exc:  # noqa: BLE001
         log.warning(
             "conformance_build.failed",
@@ -51,7 +71,7 @@ def analyze_item_conformance(self, plan_item_id: str) -> None:  # noqa: ANN001
         )
 
 
-def _run(plan_item_id: str) -> None:
+def _run(plan_item_id: str, *, expected_ownership_epoch: int | None = None) -> None:
     """Inner implementation — separated from the task wrapper so best-effort
     wrapping and logging live in one place."""
     from app.agents._model_client import default_client  # noqa: PLC0415
@@ -69,8 +89,32 @@ def _run(plan_item_id: str) -> None:
 
     # ── Load the item and check guards ────────────────────────────────────────
     with sync_session() as session:
-        item = session.get(PlanItem, iid)
-        if item is None:
+        # Resolve the parent without a lock, then snapshot under the global
+        # Plan -> Persona -> PlanItem lock order. Locks are released before any
+        # storage, Gemini, or agent work begins.
+        item_ref = session.get(PlanItem, iid)
+        if item_ref is None:
+            log.warning("conformance_build.missing_item", plan_item_id=plan_item_id)
+            return
+
+        plan = session.get(ContentPlan, item_ref.content_plan_id, with_for_update=True)
+        if plan is None:
+            log.warning("conformance_build.missing_plan", plan_item_id=plan_item_id)
+            return
+        try:
+            persona = load_owned_plan_persona_sync(session, plan, for_update=True)
+        except PlanPersonaOwnershipError:
+            log.error("conformance_build.invalid_persona", plan_item_id=plan_item_id)
+            return
+        if expected_ownership_epoch is not None and (
+            int(getattr(plan, "ownership_epoch", 0) or 0) != expected_ownership_epoch
+        ):
+            log.warning("conformance_build.stale_delivery", plan_item_id=plan_item_id)
+            return
+        content_plan_id = plan.id
+        ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
+        item = session.get(PlanItem, iid, with_for_update=True)
+        if item is None or item.content_plan_id != plan.id:
             log.warning("conformance_build.missing_item", plan_item_id=plan_item_id)
             return
 
@@ -81,7 +125,8 @@ def _run(plan_item_id: str) -> None:
 
         # instruction_level lives in the owning user's personas.style JSONB.
         # Resolve it via the ContentPlan → Persona join, null-safe, default "full".
-        instruction_level = _get_instruction_level(session, item)
+        style = persona.style or {}
+        instruction_level = str(style.get("instruction_level", "full") or "full")
         if instruction_level == "none":
             log.debug(
                 "conformance_build.uninstructed_item",
@@ -226,8 +271,20 @@ def _run(plan_item_id: str) -> None:
 
     # ── Persist verdict ───────────────────────────────────────────────────────
     with sync_session() as session:
-        item = session.get(PlanItem, iid)
-        if item is None:
+        plan = session.get(ContentPlan, content_plan_id, with_for_update=True)
+        if plan is None:
+            log.warning("conformance_build.plan_gone_after_agent", plan_item_id=plan_item_id)
+            return
+        try:
+            load_owned_plan_persona_sync(session, plan, for_update=True)
+        except PlanPersonaOwnershipError:
+            log.warning("conformance_build.stale_owner", plan_item_id=plan_item_id)
+            return
+        if int(getattr(plan, "ownership_epoch", 0) or 0) != ownership_epoch:
+            log.warning("conformance_build.stale_epoch", plan_item_id=plan_item_id)
+            return
+        item = session.get(PlanItem, iid, with_for_update=True)
+        if item is None or item.content_plan_id != plan.id:
             log.warning("conformance_build.item_gone_after_agent", plan_item_id=plan_item_id)
             return
 
@@ -250,9 +307,7 @@ def _run(plan_item_id: str) -> None:
         # replaced (a note-PATCH + attach can race; the older task must not
         # land last). If the analyzed clip is no longer attached, drop it.
         live_paths = {
-            a.get("gcs_path")
-            for a in (item.clip_assignments or [])
-            if isinstance(a, dict)
+            a.get("gcs_path") for a in (item.clip_assignments or []) if isinstance(a, dict)
         }
         if clip_gcs_path not in live_paths:
             log.info(
@@ -291,18 +346,12 @@ def _get_instruction_level(session, item: PlanItem) -> str:
     """Read instruction_level from the owning user's personas.style JSONB.
 
     Null-safe chain: item → ContentPlan → Persona → style → instruction_level.
-    Any missing link → default "full".
+    Missing or invalid ownership raises the shared fail-closed error. Only a
+    matching owner's absent style defaults to "full".
     """
-    from app.models import Persona  # noqa: PLC0415
-
-    try:
-        plan = session.get(ContentPlan, item.content_plan_id)
-        if plan is None:
-            return "full"
-        persona = session.get(Persona, plan.persona_id)
-        if persona is None:
-            return "full"
-        style = persona.style or {}
-        return str(style.get("instruction_level", "full") or "full")
-    except Exception:  # noqa: BLE001
+    plan = session.get(ContentPlan, item.content_plan_id)
+    if plan is None:
         return "full"
+    persona = load_owned_plan_persona_sync(session, plan)
+    style = persona.style or {}
+    return str(style.get("instruction_level", "full") or "full")

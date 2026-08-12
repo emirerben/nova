@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 import uuid
+from datetime import UTC, datetime
 from typing import Literal
 
 import structlog
@@ -12,7 +13,7 @@ from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
@@ -255,6 +256,7 @@ async def import_from_drive(
 
     user_id = str(current_user.id)
     job_id = str(uuid.uuid4())
+    import_task_id = str(uuid.uuid4())
     gcs_path = f"{user_id}/{job_id}/raw.mp4"
 
     # Encrypt the access token before it touches Redis
@@ -270,6 +272,9 @@ async def import_from_drive(
             "drive_filename": body.filename,
             "drive_file_size_bytes": body.file_size_bytes,
         },
+        # Persist before broker publication so admin cancellation can revoke
+        # the import itself, not only the downstream video orchestrator.
+        celery_task_id=import_task_id,
     )
     db.add(job)
     await db.commit()
@@ -280,17 +285,47 @@ async def import_from_drive(
         import_task.apply_async(
             args=[job_id, body.drive_file_id, encrypted_token, gcs_path],
             kwargs={"compress": body.compress},
+            task_id=import_task_id,
         )
     except Exception as exc:
-        # If Celery enqueue fails, mark job as failed so it doesn't stay stuck in "importing"
-        job.status = "processing_failed"
-        job.error_detail = f"Failed to start import: {str(exc)[:200]}"
+        # Broker errors are ambiguous: the task may have been accepted before
+        # the client lost its response. The worker claims ``started_at`` under
+        # the same task token before any Drive I/O. Only an unclaimed matching
+        # row can be failed here; a claimed or cancelled row is immutable.
+        failure = await db.execute(
+            update(Job)
+            .where(
+                Job.id == uuid.UUID(job_id),
+                Job.status == "importing",
+                Job.celery_task_id == import_task_id,
+                Job.started_at.is_(None),
+            )
+            .values(
+                status="processing_failed",
+                finished_at=datetime.now(UTC),
+                failure_reason="drive_import_dispatch_failed",
+                error_detail=f"Failed to start import: {str(exc)[:200]}",
+            )
+        )
         await db.commit()
-        log.error("drive_import_enqueue_failed", job_id=job_id, error=str(exc))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Import service unavailable — try again",
-        ) from exc
+        if failure.rowcount:
+            log.error("drive_import_enqueue_failed", job_id=job_id, error=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Import service unavailable — try again",
+            ) from exc
+
+        current_status = (
+            await db.execute(select(Job.status).where(Job.id == uuid.UUID(job_id)))
+        ).scalar_one_or_none()
+        log.warning(
+            "drive_import_enqueue_ambiguous_task_claimed",
+            job_id=job_id,
+            task_id=import_task_id,
+            status=current_status,
+            error=str(exc),
+        )
+        return DriveImportResponse(job_id=job_id, status=current_status or "importing")
 
     log.info("drive_import_enqueued", job_id=job_id, filename=body.filename)
     return DriveImportResponse(job_id=job_id, status="importing")

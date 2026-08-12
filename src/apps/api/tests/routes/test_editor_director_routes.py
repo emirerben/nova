@@ -12,6 +12,7 @@ from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.main import app
+from app.models import ContentPlan, Job, Persona, PlanItem
 from app.pipeline.speech_cut_state import make_candidate
 from app.routes import plan_items
 from app.routes._director import DirectorSuggestionsResponse
@@ -61,20 +62,45 @@ def _owned(user_id: uuid.UUID, *, owner_id: uuid.UUID | None = None):
     item = MagicMock()
     item.id = uuid.uuid4()
     item.content_plan_id = uuid.uuid4()
+    item.current_job_id = job.id
     item.current_job = job
+    job.content_plan_item_id = item.id
     plan = MagicMock()
+    plan.id = item.content_plan_id
     plan.user_id = owner_id or user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_quarantined_at = None
     user = MagicMock()
     user.id = user_id
     return user, item, plan, job
 
 
 def _install(user, item, plan, *, extra_results=()) -> AsyncMock:  # noqa: ANN001
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = plan.user_id
+    extra_iter = iter(extra_results)
+
+    async def _execute(stmt):  # noqa: ANN001
+        entity = stmt.column_descriptions[0].get("entity")
+        if entity is PlanItem:
+            return _result(item)
+        if entity is Persona:
+            return _result(persona)
+        return _result(next(extra_iter, None))
+
+    async def _get(model, _object_id, **_kwargs):  # noqa: ANN001
+        if model is ContentPlan:
+            return plan
+        if model is Job:
+            return item.current_job
+        if model is PlanItem:
+            return item
+        return None
+
     db = AsyncMock()
-    db.execute = AsyncMock(
-        side_effect=[_result(item), *[_result(value) for value in extra_results]]
-    )
-    db.get = AsyncMock(return_value=plan)
+    db.execute = AsyncMock(side_effect=_execute)
+    db.get = AsyncMock(side_effect=_get)
     db.commit = AsyncMock()
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -240,11 +266,7 @@ def test_director_replaces_spoofed_cut_context_with_server_candidate(
 def test_director_suggestion_rate_limit(client: TestClient, monkeypatch) -> None:
     settings.edit_director_enabled = True
     user, item, plan, _ = _owned(uuid.uuid4())
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=_result(item))
-    db.get = AsyncMock(return_value=plan)
-    app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_db] = lambda: db
+    _install(user, item, plan)
     monkeypatch.setattr(
         plan_items,
         "run_director",
@@ -314,11 +336,7 @@ def test_omni_start_flag_off_and_missing_asset(client: TestClient) -> None:
 
 def test_omni_start_rate_limit(client: TestClient, monkeypatch) -> None:
     user, item, plan, _ = _owned(uuid.uuid4())
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=_result(item))
-    db.get = AsyncMock(return_value=plan)
-    app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_db] = lambda: db
+    _install(user, item, plan)
     response = OmniAssetResponse(
         asset_id="asset-1",
         status="queued",

@@ -10,7 +10,25 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.models import ContentPlan, PlanItem
+
+
+@pytest.fixture(autouse=True)
+def _owned_persona_loader(monkeypatch: pytest.MonkeyPatch):
+    from app.tasks import content_plan_build as task_module
+
+    persona = MagicMock()
+    persona.persona = {"tone": "direct", "content_pillars": []}
+    persona.tiktok_profile = None
+    persona.style = None
+    monkeypatch.setattr(
+        task_module,
+        "load_owned_plan_persona_sync",
+        lambda _session, _plan, *, for_update=False: persona,
+    )
+    monkeypatch.setattr(task_module, "_lock_plan_items", lambda _session, items: list(items))
 
 
 def _make_plan() -> MagicMock:
@@ -22,6 +40,8 @@ def _make_plan() -> MagicMock:
     plan.activation_status = "activating"
     plan.activation_phase = None
     plan.activation_started_at = None
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
     plan.items = []
     return plan
 
@@ -33,7 +53,7 @@ def _session_factory(plan: MagicMock):  # noqa: ANN201
     session.add = MagicMock()
     session.flush = MagicMock()
 
-    def _get(model, pk):  # noqa: ANN001
+    def _get(model, pk, **_kwargs):  # noqa: ANN001
         if model is ContentPlan:
             return plan
         return None

@@ -41,6 +41,11 @@ from app.models import (
     VideoFeedback,
 )
 from app.services import tiktok_client
+from app.services.content_plan_persona import (
+    PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+    PlanPersonaOwnershipError,
+    load_owned_plan_persona,
+)
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.token_crypto import decrypt_token
 from app.storage import signed_download_url, signed_get_url
@@ -75,6 +80,8 @@ def _preview(job: Job) -> tuple[str | None, str | None, str | None]:
     `assembly_plan["variants"][*]["output_url"]` (only "ready" variants have one);
     template/music jobs store a single `assembly_plan["output_url"]`.
     """
+    if job.status == "cancelled":
+        return None, None, None
     plan = job.assembly_plan or {}
     variants = plan.get("variants")
     if isinstance(variants, list):
@@ -305,36 +312,57 @@ async def add_job_to_plan(
     if job is None or job.user_id != user.id:
         # 404 (not 403) so a caller can't probe which job ids exist.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-
     plan = (
         await db.execute(
             select(ContentPlan)
             .where(ContentPlan.user_id == user.id)
             .order_by(ContentPlan.created_at.desc())
             .limit(1)
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if plan is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="No content plan to add to"
         )
+    try:
+        await load_owned_plan_persona(db, plan, for_update=True)
+    except PlanPersonaOwnershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+        ) from exc
 
     item = (
         await db.execute(
             select(PlanItem).where(
                 PlanItem.content_plan_id == plan.id,
                 PlanItem.day_index == body.day_index,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan day not found")
 
-    item.current_job_id = job.id
-    job.content_plan_item_id = item.id
+    # Lock order is Plan -> Persona -> PlanItem -> Job. Re-fetching the Job at
+    # the end makes cancellation and this attachment one atomic winner without
+    # holding the Job lock while resolving the plan target.
+    locked_job = (
+        await db.execute(select(Job).where(Job.id == jid).with_for_update())
+    ).scalar_one_or_none()
+    if locked_job is None or locked_job.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if locked_job.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled videos cannot be added to a plan.",
+        )
+
+    item.current_job_id = locked_job.id
+    locked_job.content_plan_item_id = item.id
     await db.commit()
     log.info("add_job_to_plan", job_id=job_id, day_index=body.day_index, user_id=str(user.id))
-    return _to_library_job(job, content_plan_item_id=str(item.id))
+    return _to_library_job(locked_job, content_plan_item_id=str(item.id))
 
 
 # ── Feedback loop (Phase 2): per-video reactions + plan-level steer notes ─────────
@@ -400,10 +428,19 @@ async def create_feedback(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
         plan = (
-            await db.execute(select(ContentPlan).where(ContentPlan.id == plan_uuid))
+            await db.execute(
+                select(ContentPlan).where(ContentPlan.id == plan_uuid).with_for_update()
+            )
         ).scalar_one_or_none()
         if plan is None or plan.user_id != user.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+        try:
+            await load_owned_plan_persona(db, plan, for_update=True)
+        except PlanPersonaOwnershipError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+            ) from exc
 
     # One-thumb rule: replacing a prior thumb on the same video keeps a single row.
     if job_uuid is not None and body.signal in VIDEO_FEEDBACK_THUMB_SIGNALS:
@@ -507,6 +544,17 @@ async def export_my_data(
         .scalars()
         .all()
     )
+    # Export is still a read boundary: a quarantined or cross-owner plan must
+    # not be serialized merely because this endpoint does not otherwise need
+    # Persona fields.  Validate every parent before loading any child state.
+    try:
+        for plan in plans:
+            await load_owned_plan_persona(db, plan)
+    except PlanPersonaOwnershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+        ) from exc
     plan_ids = [p.id for p in plans]
     items_by_plan: dict[uuid.UUID, list[PlanItem]] = {pid: [] for pid in plan_ids}
     if plan_ids:
@@ -572,7 +620,9 @@ async def export_my_data(
                 "created_at": job.created_at.isoformat(),
                 "transcript": job.transcript,
                 "selected_platforms": job.selected_platforms,
-                "assembly_plan": job.assembly_plan,
+                # Cancellation makes rendered output references private even in
+                # the account export; retain the Job audit metadata around it.
+                "assembly_plan": None if job.status == "cancelled" else job.assembly_plan,
                 "source_media_url": source_url,
             }
         )

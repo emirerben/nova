@@ -23,6 +23,7 @@ import app.routes.generative_jobs as gj
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.models import ContentPlan, Persona, PlanItem
 
 REGEN = "app.tasks.generative_build.regenerate_generative_variant"
 REBURN_NARRATED = "app.tasks.generative_build.reburn_narrated_captions"
@@ -2754,25 +2755,49 @@ def _result(value) -> MagicMock:
 def _owned_item(user_id, *, job):
     item = MagicMock()
     item.id = uuid.uuid4()
+    item.content_plan_id = uuid.uuid4()
     item.theme = "Old title"
     item.current_job = job
     item.current_job_id = job.id
     item.user_edited = False
     plan = MagicMock()
+    plan.id = item.content_plan_id
     plan.user_id = user_id
+    plan.persona_id = uuid.uuid4()
+    plan.ownership_epoch = 0
+    plan.ownership_quarantined_at = None
+    persona = MagicMock()
+    persona.id = plan.persona_id
+    persona.user_id = user_id
+    plan._test_persona = persona
     return item, plan
 
 
 def _db(execute_results: list, plan, job=None) -> AsyncMock:
     db = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(v) for v in execute_results])
+    item = execute_results[0] if execute_results else None
+    extras = list(execute_results[1:])
+
+    async def _execute(stmt):  # noqa: ANN001
+        descriptions = getattr(stmt, "column_descriptions", None) or []
+        entity = descriptions[0].get("entity") if descriptions else None
+        if entity is Persona:
+            return _result(plan._test_persona)
+        if entity is PlanItem:
+            return _result(item)
+        return _result(extras.pop(0) if extras else None)
 
     async def _get(model, _pk, **_kwargs):
         if model is gj.Job:
             return job
-        return plan
+        if model is ContentPlan:
+            return plan
+        if model is PlanItem:
+            return item
+        return None
 
+    db.execute = AsyncMock(side_effect=_execute)
     db.get = AsyncMock(side_effect=_get)
     return db
 
@@ -2830,7 +2855,8 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
     assert item.theme == "Fresh title"
     assert item.user_edited is True
     db.commit.assert_awaited_once()  # ONE transaction for job-JSON + title
-    db.get.assert_any_await(gj.Job, job.id, with_for_update=True)
+    db.get.assert_any_await(ContentPlan, plan.id, populate_existing=True, with_for_update=True)
+    db.get.assert_any_await(gj.Job, job.id, populate_existing=True, with_for_update=True)
     regen.apply_async.assert_called_once()
 
 
@@ -2883,7 +2909,8 @@ def test_endpoint_media_motion_loads_asset_pool_without_visual_block_edit(
 
     assert resp.status_code == 200, resp.text
     assert job.assembly_plan["variants"][0]["motion_scenes"] == [scene]
-    assert db.execute.await_count == 2
+    # Initial + locked PlanItem reads, owned Persona read, and asset-pool read.
+    assert db.execute.await_count == 4
     regen.apply_async.assert_called_once()
 
 

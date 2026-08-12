@@ -36,12 +36,32 @@ from app.routes.plan_items import (
     derive_item_status,
     plan_item_response,
 )
+from app.services.content_plan_persona import (
+    PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+    PlanPersonaOwnershipError,
+    load_owned_plan_persona,
+)
 
 log = structlog.get_logger()
 router = APIRouter()
 
 _PERSONA_READY = ("ready", "edited")
 _STALE_PLAN_GENERATION_AFTER = timedelta(minutes=10)
+
+
+async def _load_plan_persona_or_409(
+    db: AsyncSession,
+    plan: ContentPlan,
+    *,
+    for_update: bool = False,
+) -> PersonaRow:
+    try:
+        return await load_owned_plan_persona(db, plan, for_update=for_update)
+    except PlanPersonaOwnershipError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+        ) from None
 
 
 class CreatePlanBody(BaseModel):
@@ -135,19 +155,44 @@ def _plan_response(
     )
 
 
-async def _repair_stale_plan_generation(plan: ContentPlan, db: AsyncSession) -> None:
+async def _repair_stale_plan_generation(
+    plan: ContentPlan,
+    db: AsyncSession,
+) -> ContentPlan:
     if plan.plan_status != "generating":
-        return
+        return plan
     started_at = plan.generation_started_at or plan.updated_at
     if not isinstance(started_at, datetime):
-        return
+        return plan
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=UTC)
     if datetime.now(UTC) - started_at <= _STALE_PLAN_GENERATION_AFTER:
-        return
+        return plan
 
-    plan.plan_status = "ready" if (plan.items or []) else "failed"
+    # This read path performs a small self-heal, so it must cross the same
+    # ownership/quarantine boundary as explicit mutations.  Re-lock and
+    # re-evaluate from the current row; never commit through the stale GET
+    # snapshot after Transaction A quarantines the plan.
+    locked = await _load_owned_plan(
+        str(plan.id),
+        plan.user_id,
+        db,
+        with_items=True,
+        for_update=True,
+    )
+    if locked.plan_status != "generating":
+        return locked
+    locked_started_at = locked.generation_started_at or locked.updated_at
+    if not isinstance(locked_started_at, datetime):
+        return locked
+    if locked_started_at.tzinfo is None:
+        locked_started_at = locked_started_at.replace(tzinfo=UTC)
+    if datetime.now(UTC) - locked_started_at <= _STALE_PLAN_GENERATION_AFTER:
+        return locked
+
+    locked.plan_status = "ready" if (locked.items or []) else "failed"
     await db.commit()
+    return locked
 
 
 @router.post("", response_model=ContentPlanResponse, status_code=status.HTTP_201_CREATED)
@@ -276,9 +321,16 @@ async def create_plan(
             plan.seed_clip_paths = durable
             await db.commit()
 
+    # A plan-to-persona foreign key does not prove same-tenant ownership.  The
+    # legacy task must never be published until the compound owner check passes.
+    await _load_plan_persona_or_409(db, plan)
+
     from app.tasks.content_plan_build import generate_content_plan  # noqa: PLC0415
 
-    generate_content_plan.delay(str(plan.id))
+    generate_content_plan.delay(
+        str(plan.id),
+        int(getattr(plan, "ownership_epoch", 0) or 0),
+    )
     return ContentPlanResponse(
         id=str(plan.id),
         plan_status=plan.plan_status,
@@ -305,14 +357,12 @@ async def get_plan(
     ).scalar_one_or_none()
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No content plan yet")
-    await _repair_stale_plan_generation(plan, db)
+    persona = await _load_plan_persona_or_409(db, plan)
+    plan = await _repair_stale_plan_generation(plan, db)
     # Include idea_seeds from the linked persona so the plan-home sidebar can show
     # them with their current in_plan status without a separate persona API call.
     # Also build id→text map for T5 provenance badge.
-    persona = await db.get(PersonaRow, plan.persona_id)
-    seeds = (
-        persona.idea_seeds if persona is not None and isinstance(persona.idea_seeds, list) else []
-    )
+    seeds = persona.idea_seeds if isinstance(persona.idea_seeds, list) else []
     idea_seeds = [s for s in seeds if isinstance(s, dict)]
     seed_text_by_id = {
         str(s["id"]): str(s["text"])
@@ -325,7 +375,7 @@ async def get_plan(
         seed_text_by_id=seed_text_by_id,
         persona_content_mode=(
             str(persona.persona.get("content_mode") or "")
-            if persona is not None and isinstance(persona.persona, dict)
+            if isinstance(persona.persona, dict)
             else None
         ),
     )
@@ -344,7 +394,13 @@ async def regenerate_plan(
     (hand-edited or already rendering) are kept verbatim by the task (the "their
     say" rule). 409 if a (re)generation is already in flight.
     """
-    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    plan = await _load_owned_plan(
+        plan_id,
+        user.id,
+        db,
+        with_items=True,
+        for_update=True,
+    )
     if plan.plan_status == "generating":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -352,11 +408,12 @@ async def regenerate_plan(
         )
     plan.plan_status = "generating"
     plan.generation_started_at = datetime.now(UTC)
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     await db.commit()
 
     from app.tasks.content_plan_build import regenerate_content_plan  # noqa: PLC0415
 
-    regenerate_content_plan.delay(str(plan.id))
+    regenerate_content_plan.delay(str(plan.id), ownership_epoch)
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 
@@ -385,6 +442,7 @@ async def generate_ideas_into_plan(
         )
     plan.plan_status = "generating"
     plan.generation_started_at = datetime.now(UTC)
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     await db.commit()
 
     generation_started_at = plan.generation_started_at
@@ -394,7 +452,7 @@ async def generate_ideas_into_plan(
             generate_ideas_into_plan as _gen_ideas_task,
         )
 
-        _gen_ideas_task.delay(str(plan.id), generation_token)
+        _gen_ideas_task.delay(str(plan.id), generation_token, ownership_epoch)
     except Exception as exc:  # noqa: BLE001 — broker/publish failures must terminalize the row
         log.warning(
             "generate_ideas_into_plan.enqueue_failed",
@@ -440,19 +498,8 @@ async def generate_first_week(
     Each item dispatches to the throttled `plan-jobs` queue (concurrency=1), so
     seven items render one-at-a-time rather than OOM-ing the worker (plan T3).
     """
-    try:
-        pid = uuid.UUID(plan_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
-    plan = (
-        await db.execute(
-            select(ContentPlan)
-            .where(ContentPlan.id == pid, ContentPlan.user_id == user.id)
-            .options(selectinload(ContentPlan.items))
-        )
-    ).scalar_one_or_none()
-    if plan is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
 
     from app.tasks.content_plan_build import generate_plan_item_videos  # noqa: PLC0415
 
@@ -462,7 +509,7 @@ async def generate_first_week(
         if item.day_index is None or item.day_index > 7:
             continue
         if item.clip_gcs_paths:
-            generate_plan_item_videos.delay(str(item.id))
+            generate_plan_item_videos.delay(str(item.id), ownership_epoch)
             enqueued += 1
         else:
             skipped += 1
@@ -486,15 +533,31 @@ async def reorder_items(
     The caller must supply ALL item ids for the plan in the desired order.
     Foreign ids (not belonging to this plan) cause a 400.
     """
-    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    # Shared mutation order: ContentPlan -> Persona -> PlanItems sorted by UUID.
+    # Lock the parent/owner pair before the child set so add/delete/reorder cannot
+    # interleave into duplicate or partially-applied positions.
+    plan = await _load_owned_plan(plan_id, user.id, db, for_update=True)
+    items = (
+        (
+            await db.execute(
+                select(PlanItem)
+                .where(PlanItem.content_plan_id == plan.id)
+                .order_by(PlanItem.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
-    item_map = {str(it.id): it for it in plan.items}
+    item_map = {str(it.id): it for it in items}
     incoming = body.item_ids
 
-    if len(incoming) != len(item_map):
+    if len(incoming) != len(item_map) or len(set(incoming)) != len(incoming):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Expected {len(item_map)} item ids, got {len(incoming)}",
+            detail=f"Expected {len(item_map)} unique item ids, got {len(incoming)}",
         )
 
     for iid in incoming:
@@ -534,6 +597,7 @@ async def _load_owned_plan(
     plan = (await db.execute(stmt)).scalar_one_or_none()
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    await _load_plan_persona_or_409(db, plan, for_update=for_update)
     return plan
 
 
@@ -600,7 +664,13 @@ async def attach_seed_clips(
     db: AsyncSession = Depends(get_db),
 ) -> ContentPlanResponse:
     """Record the uploaded seed batch on the plan (validated to the seed prefix)."""
-    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    plan = await _load_owned_plan(
+        plan_id,
+        user.id,
+        db,
+        with_items=True,
+        for_update=True,
+    )
     _validate_seed_clip_prefix(body.clip_gcs_paths, user.id, plan.id)
     plan.seed_clip_paths = list(body.clip_gcs_paths)
     plan.activation_status = "seeding"
@@ -661,7 +731,13 @@ async def attach_pool_clips(
 ) -> ContentPlanResponse:
     """Add uploaded clips to the plan's footage pool and start matching them
     across pending items. New clips MERGE with the existing pool (dedup by path)."""
-    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    plan = await _load_owned_plan(
+        plan_id,
+        user.id,
+        db,
+        with_items=True,
+        for_update=True,
+    )
     expected = f"users/{user.id}/plan-pool/{plan.id}/"
     for p in body.clip_gcs_paths:
         if not p.startswith(expected):
@@ -690,12 +766,13 @@ async def attach_pool_clips(
     pool["clips"] = clips
     pool["status"] = "matching"
     plan.pool = pool
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     await db.commit()
 
     if not was_matching:
         from app.tasks.content_plan_build import match_pool_clips  # noqa: PLC0415
 
-        match_pool_clips.delay(str(plan.id))
+        match_pool_clips.delay(str(plan.id), ownership_epoch)
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 
@@ -706,7 +783,7 @@ async def rematch_pool_clips(
     db: AsyncSession = Depends(get_db),
 ) -> ContentPlanResponse:
     """ "Match again" — re-run pool matching (e.g. after new items free up)."""
-    plan = await _load_owned_plan(plan_id, user.id, db)
+    plan = await _load_owned_plan(plan_id, user.id, db, for_update=True)
     pool = dict(plan.pool or {})
     if not pool.get("clips"):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No pool clips yet")
@@ -714,11 +791,12 @@ async def rematch_pool_clips(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Matching in progress")
     pool["status"] = "matching"
     plan.pool = pool
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     await db.commit()
 
     from app.tasks.content_plan_build import match_pool_clips  # noqa: PLC0415
 
-    match_pool_clips.delay(str(plan.id))
+    match_pool_clips.delay(str(plan.id), ownership_epoch)
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 
@@ -729,7 +807,13 @@ async def activate_plan(
     db: AsyncSession = Depends(get_db),
 ) -> ContentPlanResponse:
     """Kick off clip→item matching + auto-generation for the uploaded seed batch."""
-    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    plan = await _load_owned_plan(
+        plan_id,
+        user.id,
+        db,
+        with_items=True,
+        for_update=True,
+    )
     if plan.plan_status not in _PERSONA_READY:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -746,11 +830,12 @@ async def activate_plan(
             detail="Activation already in progress",
         )
     plan.activation_status = "activating"
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     await db.commit()
 
     from app.tasks.content_plan_build import activate_content_plan  # noqa: PLC0415
 
-    activate_content_plan.delay(str(plan.id))
+    activate_content_plan.delay(str(plan.id), ownership_epoch)
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 

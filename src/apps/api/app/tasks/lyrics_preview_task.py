@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-import uuid
-
 import structlog
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.database import sync_session as _sync_session
-from app.models import Job, MusicTrack
+from app.models import MusicTrack
 from app.pipeline.lyrics_preview import LyricsPreviewInputError, render_lyrics_preview
 from app.services.lyrics_cache_refresh import ensure_fresh_lyrics_cached_for_render
 from app.services.pipeline_trace import pipeline_trace_for
+from app.tasks._job_cancel_fence import (
+    active_job_for_update,
+    delete_task_owned_outputs,
+    new_task_run_id,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -41,9 +44,13 @@ def render_lyrics_preview_task(self, job_id: str) -> None:
     with pipeline_trace_for(job_id):
         try:
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="lyrics_preview_start",
+                )
                 if job is None:
-                    log.error("lyrics_preview_job_not_found", job_id=job_id)
+                    log.info("lyrics_preview_start_skipped", job_id=job_id)
                     return
                 if not job.music_track_id:
                     raise LyricsPreviewInputError("Preview job has no music_track_id.")
@@ -51,10 +58,9 @@ def render_lyrics_preview_task(self, job_id: str) -> None:
                 if track is None:
                     raise LyricsPreviewInputError("Music track not found.")
                 job.status = "processing"
-                db.commit()
-
                 override_payload = job.all_candidates or {}
                 lyrics_config_effective = override_payload.get("lyrics_config_effective") or {}
+                db.commit()
 
             fresh_lyrics_cached = ensure_fresh_lyrics_cached_for_render(
                 track_id=str(track.id),
@@ -64,22 +70,40 @@ def render_lyrics_preview_task(self, job_id: str) -> None:
             )
             track.lyrics_cached = fresh_lyrics_cached
 
+            task_run_id = new_task_run_id()
             output_url, debug_meta = render_lyrics_preview(
-                track, lyrics_config_effective, job_id=job_id
+                track,
+                lyrics_config_effective,
+                job_id=job_id,
+                task_run_id=task_run_id,
             )
 
-            with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
-                if job:
-                    existing = job.assembly_plan or {}
-                    job.status = "music_ready"
-                    job.assembly_plan = {
-                        **existing,
-                        **debug_meta,
-                        "output_url": output_url,
-                        "lyrics_config_effective": lyrics_config_effective,
-                    }
-                    db.commit()
+            output_gcs_path = str(debug_meta.get("output_gcs_path") or "")
+            finalized = False
+            try:
+                with _sync_session() as db:
+                    job = active_job_for_update(
+                        db,
+                        job_id,
+                        operation="lyrics_preview_finalize",
+                    )
+                    if job is not None:
+                        existing = job.assembly_plan or {}
+                        job.status = "music_ready"
+                        job.assembly_plan = {
+                            **existing,
+                            **debug_meta,
+                            "output_url": output_url,
+                            "lyrics_config_effective": lyrics_config_effective,
+                        }
+                        db.commit()
+                        finalized = True
+            except Exception:
+                delete_task_owned_outputs(job_id, [output_gcs_path])
+                raise
+            if not finalized:
+                delete_task_owned_outputs(job_id, [output_gcs_path])
+                return
             log.info("lyrics_preview_done", job_id=job_id)
         except OperationalError:
             raise
@@ -92,11 +116,16 @@ def _fail_preview_job(job_id: str, error_detail: str) -> None:
     for attempt in range(3):
         try:
             with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
-                if job:
-                    job.status = "processing_failed"
-                    job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
-                    db.commit()
+                job = active_job_for_update(
+                    db,
+                    job_id,
+                    operation="lyrics_preview_mark_failed",
+                )
+                if job is None:
+                    return
+                job.status = "processing_failed"
+                job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
+                db.commit()
             return
         except (OperationalError, DBAPIError) as exc:
             if attempt == 2:

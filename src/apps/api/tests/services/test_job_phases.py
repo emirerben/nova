@@ -16,6 +16,8 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.services import job_phases
 
 
@@ -26,6 +28,7 @@ def _mock_job() -> MagicMock:
     job.finished_at = None
     job.current_phase = None
     job.phase_log = []
+    job.status = "processing"
     return job
 
 
@@ -165,3 +168,75 @@ def test_phase_timer_skips_record_on_exception() -> None:
         except ValueError:
             pass
     mock_record.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda job_id: job_phases.mark_started(job_id),
+        lambda job_id: job_phases.record_phase(
+            job_id,
+            job_phases.PHASE_ASSEMBLE,
+            elapsed_ms=99,
+            next_phase=job_phases.PHASE_UPLOAD,
+        ),
+        lambda job_id: job_phases.mark_finished(job_id),
+    ],
+)
+def test_cancelled_job_rejects_whole_phase_operation(operation) -> None:
+    """A late worker phase cannot touch any field after cancellation wins."""
+    job = _mock_job()
+    job.status = "cancelled"
+    job.started_at = "original-start"
+    job.finished_at = "original-finish"
+    job.current_phase = "original-phase"
+    job.phase_log = [{"name": "original"}]
+    session_cm = _patched_session(job)
+
+    with patch.object(job_phases, "sync_session", return_value=session_cm):
+        operation(uuid.uuid4())
+
+    assert job.started_at == "original-start"
+    assert job.finished_at == "original-finish"
+    assert job.current_phase == "original-phase"
+    assert job.phase_log == [{"name": "original"}]
+    session_cm.__enter__.return_value.commit.assert_not_called()
+    assert session_cm.__enter__.return_value.get.call_args.kwargs["with_for_update"] is True
+
+
+def test_cancelled_job_rejects_sub_phase_before_sql_update() -> None:
+    job = _mock_job()
+    job.status = "cancelled"
+    job.phase_log = [{"name": "original"}]
+    session_cm = _patched_session(job)
+
+    with patch.object(job_phases, "sync_session", return_value=session_cm):
+        job_phases.record_sub_phase(uuid.uuid4(), "assemble", "clip_1")
+
+    session = session_cm.__enter__.return_value
+    session.execute.assert_not_called()
+    session.commit.assert_not_called()
+    assert job.phase_log == [{"name": "original"}]
+
+
+def test_mark_reattempt_rejects_cancelled_job() -> None:
+    job = _mock_job()
+    job.status = "cancelled"
+    job.started_at = "original-start"
+
+    assert job_phases.mark_reattempt(job) is False
+    assert job.started_at == "original-start"
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [job_phases.beat_heartbeat, job_phases.mark_failed_phase],
+)
+def test_atomic_phase_updates_exclude_cancelled_status(operation) -> None:
+    session_cm = _patched_session(None)
+    with patch.object(job_phases, "sync_session", return_value=session_cm):
+        operation(uuid.uuid4())
+
+    stmt = session_cm.__enter__.return_value.execute.call_args.args[0]
+    sql = str(stmt)
+    assert "jobs.status !=" in sql

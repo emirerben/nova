@@ -81,6 +81,10 @@ def apply_suggestions_to_variant(
     Returns {"applied": n, "dropped": n, "sfx": n, "dispatched": bool}.
     Mutates job.assembly_plan (with flag_modified) — caller commits.
     """
+    if getattr(job, "status", None) == "cancelled":
+        log.info("apply_suggestions_cancelled_job", job_id=str(job.id), variant_id=variant_id)
+        return {"applied": 0, "dropped": 0, "sfx": 0, "dispatched": False}
+
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
     from app.agents._schemas.overlay_suggestion import (  # noqa: PLC0415
@@ -160,6 +164,9 @@ def apply_suggestions_to_variant(
     variant["overlay_suggest_status"] = None
     variant["overlay_suggest_hash"] = None
     variant["overlay_suggest_wishlist"] = None
+    # Consuming/dismissing a set supersedes its matcher attempt. A worker that
+    # resumes after this locked write must not repopulate the consumed cards.
+    variant.pop("overlay_suggest_attempt_token", None)
     # Apply receipt (plan 009 ARCH-4): apply-time changes are NEVER silent.
     # Fresh per apply; the zero-click task adds its demoted count on top.
     variant["overlay_apply_receipt"] = (

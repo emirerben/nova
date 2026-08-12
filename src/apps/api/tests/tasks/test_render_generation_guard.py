@@ -362,8 +362,14 @@ def test_stale_fast_reburn_deletes_only_its_generation_scoped_outputs(monkeypatc
         "visual_blocks_base_path": f"generative-jobs/{JOB_ID}/visual-blocks/tokold.mp4",
         "motion_base_path": f"generative-jobs/{JOB_ID}/motion/tokold.mp4",
     }
-    job = _FakeJob([_variant("tok-new")])
+    job = _FakeJob([_variant("tok-old")])
     _arm_reburn(monkeypatch, job, stale_result)
+
+    def _finish_after_supersede(**_kwargs):
+        job.assembly_plan["variants"][0]["render_generation_id"] = "tok-new"
+        return dict(stale_result)
+
+    monkeypatch.setattr(gb, "_reburn_text_on_base", _finish_after_supersede)
     deleted: list[str] = []
     monkeypatch.setattr(
         "app.storage.delete_object_best_effort",
@@ -609,7 +615,7 @@ def test_rejected_full_render_cleans_unscoped_derived_caches(monkeypatch):
     job = _FakeJob(
         [
             _variant(
-                "tok-new",
+                "tok-old",
                 text_elements=[{"id": "t1"}],
                 text_elements_user_edited=True,
             )
@@ -626,6 +632,7 @@ def test_rejected_full_render_cleans_unscoped_derived_caches(monkeypatch):
 
     def _reburn(**kwargs):
         kwargs["created_storage_paths"].extend([visual_cache, motion_cache])
+        job.assembly_plan["variants"][0]["render_generation_id"] = "tok-new"
         return {
             "video_path": f"generative-jobs/{JOB_ID}/reburn_tokold.mp4",
             "visual_blocks_base_path": visual_cache,
@@ -697,7 +704,7 @@ def test_post_reburn_exception_cleans_original_full_render_objects(monkeypatch):
 
 
 def test_rejected_failed_full_render_cleans_generation_objects(monkeypatch):
-    job = _FakeJob([_variant("tok-new")])
+    job = _FakeJob([_variant("tok-old")])
     render_result = {
         "ok": False,
         "render_status": "failed",
@@ -706,6 +713,12 @@ def test_rejected_failed_full_render_cleans_generation_objects(monkeypatch):
         "base_video_path": f"generative-jobs/{JOB_ID}/base_tokold.mp4",
     }
     _arm_full_render(monkeypatch, job, render_result)
+
+    def _finish_after_supersede(**_kwargs):
+        job.assembly_plan["variants"][0]["render_generation_id"] = "tok-new"
+        return dict(render_result)
+
+    monkeypatch.setattr(gb, "_render_generative_variant", _finish_after_supersede)
     deleted: list[str] = []
     monkeypatch.setattr(
         "app.storage.delete_object_best_effort",
