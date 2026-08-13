@@ -2830,19 +2830,35 @@ function FocusedResults({
   const [tiktokReceiptRefresh, setTikTokReceiptRefresh] = useState(0);
   const [tiktokPollStalled, setTikTokPollStalled] = useState(false);
   const [tiktokComparisonAvailable, setTikTokComparisonAvailable] = useState(true);
+  // Newest-first by submission time. A slow status poll for an OLDER publication
+  // can resolve after a newer one was created; prepending blindly would make the
+  // settled old row the "latest", which unlocks republish while the new delivery
+  // is still submitting.
+  const mergeTikTokPublication = (
+    current: TikTokPublication[],
+    publication: TikTokPublication,
+  ) => [publication, ...current.filter((value) => value.id !== publication.id)]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
   const upsertTikTokPublication = useCallback((publication: TikTokPublication) => {
-    setTikTokPublications((current) => [
-      publication,
-      ...current.filter((value) => value.id !== publication.id),
-    ]);
-    setAllTikTokPublications((current) => [
-      publication,
-      ...current.filter((value) => value.id !== publication.id),
-    ]);
+    setTikTokPublications((current) => mergeTikTokPublication(current, publication));
+    setAllTikTokPublications((current) => mergeTikTokPublication(current, publication));
   }, []);
+
+  // Bumped ONLY when a publish creates a row the server fetch may not know about
+  // yet. Status polls deliberately do NOT bump: they refresh rows the fetch also
+  // returns, and counting them would make the effect below discard legitimate
+  // variant-switch results and strand the new variant on stale publications.
+  const tiktokPublishWrite = useRef(0);
+  const onTikTokPublished = useCallback((publication: TikTokPublication) => {
+    tiktokPublishWrite.current += 1;
+    upsertTikTokPublication(publication);
+  }, [upsertTikTokPublication]);
 
   useEffect(() => {
     let cancelled = false;
+    const focusedVariantId = variant?.variant_id ?? null;
+    const publishWriteAtStart = tiktokPublishWrite.current;
     setTikTokReceiptState("loading");
     setTikTokPollStalled(false);
     setTikTokComparisonAvailable(true);
@@ -2855,14 +2871,14 @@ function FocusedResults({
       });
     void Promise.all([
       item.current_job_id
-        ? getTikTokPublicationReceipt(item.current_job_id, variant?.variant_id)
+        ? getTikTokPublicationReceipt(item.current_job_id, focusedVariantId ?? undefined)
         : Promise.resolve(null),
       item.current_job_id
-        ? listTikTokPublications({ jobId: item.current_job_id, variantId: variant?.variant_id })
+        ? listTikTokPublications({ jobId: item.current_job_id, variantId: focusedVariantId ?? undefined })
             .then((publications) => publications.filter(
               (publication) =>
                 publication.job_id === item.current_job_id &&
-                (!variant?.variant_id || publication.variant_id === variant.variant_id),
+                (!focusedVariantId || publication.variant_id === focusedVariantId),
             ))
             .catch(() => [])
         : Promise.resolve([] as TikTokPublication[]),
@@ -2872,8 +2888,23 @@ function FocusedResults({
     ])
       .then(([itemPublication, itemHistory, comparisonResult]) => {
         if (cancelled) return;
-        setTikTokPublications(itemPublication
-          ? [itemPublication, ...itemHistory.filter((publication) => publication.id !== itemPublication.id)]
+        // The receipt endpoint only filters by variant when the param is sent,
+        // so a variant-less call returns the job's latest publication across ALL
+        // variants. Trust it as this variant's receipt only when it matches;
+        // otherwise fall back to the already variant-scoped history, so one
+        // variant's publication never becomes another's receipt.
+        const matchedPublication =
+          itemPublication && itemPublication.variant_id === focusedVariantId
+            ? itemPublication
+            : null;
+        // A publish landed while this request was in flight — its result is
+        // already staler than local state. Keep the receipt, drop the response.
+        if (tiktokPublishWrite.current !== publishWriteAtStart) {
+          setTikTokReceiptState("ready");
+          return;
+        }
+        setTikTokPublications(matchedPublication
+          ? [matchedPublication, ...itemHistory.filter((publication) => publication.id !== matchedPublication.id)]
           : itemHistory);
         setAllTikTokPublications(comparisonResult.publications);
         setTikTokComparisonAvailable(comparisonResult.available);
@@ -2883,7 +2914,9 @@ function FocusedResults({
         if (!cancelled) setTikTokReceiptState("error");
       });
     return () => { cancelled = true; };
-  }, [item.current_job_id, variant?.variant_id, tiktokReceiptRefresh]);
+    // render_finished_at: an edit reburns the SAME variant_id, so without it the
+    // receipt goes stale after the creator edits a published video.
+  }, [item.current_job_id, variant?.variant_id, variant?.render_finished_at, tiktokReceiptRefresh]);
   const latestTikTokPublication = tiktokPublications[0] ?? null;
   useEffect(() => {
     if (!latestTikTokPublication || !shouldPollTikTokPublication(latestTikTokPublication)) return;
@@ -3352,6 +3385,7 @@ function FocusedResults({
             baking={baking}
             editHref={editorHref}
             durationSeconds={variant?.duration_s ?? null}
+            renderFinishedAt={variant?.render_finished_at ?? null}
             variantLabel={releaseVariantLabel}
             captionPreview={item.idea}
             onPublish={handlePublish}
@@ -3390,7 +3424,7 @@ function FocusedResults({
               }
             : null}
           onClose={() => setPublishOpen(false)}
-          onPublished={upsertTikTokPublication}
+          onPublished={onTikTokPublished}
         />
       )}
     </div>

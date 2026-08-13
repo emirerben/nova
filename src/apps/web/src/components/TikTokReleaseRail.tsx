@@ -19,6 +19,7 @@ export function TikTokReleaseRail({
   baking,
   editHref,
   durationSeconds,
+  renderFinishedAt = null,
   variantLabel,
   captionPreview,
   onPublish,
@@ -39,6 +40,7 @@ export function TikTokReleaseRail({
   baking: boolean;
   editHref: string | null;
   durationSeconds: number | null;
+  renderFinishedAt?: string | null;
   variantLabel: string;
   captionPreview?: string | null;
   onPublish: () => void;
@@ -50,10 +52,38 @@ export function TikTokReleaseRail({
   const [historyOpen, setHistoryOpen] = useState(false);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
 
+  // A publication row is NOT a reason to take editing away. Only a TERMINAL
+  // failure — TikTok said no and nobody is retrying — leaves the creator with
+  // work to do here, so that one falls back to the full preparation pane with a
+  // note about the last attempt. Everything else keeps the receipt, which owns
+  // its own recovery actions:
+  //   • in flight / landed  — nothing to redo
+  //   • failed && retryable — the worker is resubmitting it itself
+  //   • submission_unknown  — TikTok may ALREADY have the video; the fix is to
+  //     go look, not to fire a second one
+  const isTerminalFailure =
+    publication?.processing_status === "failed" && !publication.retryable;
+  const showReceipt = Boolean(publication) && !isTerminalFailure;
+
+  // The creator re-rendered this variant after the last submission, so the cut
+  // on screen is not the cut that was published.
+  // Both sides are server-issued UTC ISO strings. If either fails to parse we
+  // stay quiet rather than nagging the creator to republish on bad data.
+  const renderedAt = renderFinishedAt ? new Date(renderFinishedAt).getTime() : Number.NaN;
+  const publishedAt = publication ? new Date(publication.created_at).getTime() : Number.NaN;
+  const isStale =
+    Number.isFinite(renderedAt) && Number.isFinite(publishedAt) && renderedAt > publishedAt;
+
+  // Never offer a second submission while the first is still in flight — the
+  // receipt reads "Sending to TikTok" and a publish button next to it would
+  // double-post. Re-publishing is for a settled outcome the creator wants to
+  // supersede, not for a delivery already on its way.
+  const inFlight = publication ? republishWouldRace(publication, simulation) : false;
+
   return (
     <aside className="min-w-0" aria-label="Release desk">
       <div>
-        {publication ? (
+        {showReceipt && publication ? (
           <>
             <PublicationReceipt
               publication={publication}
@@ -64,14 +94,25 @@ export function TikTokReleaseRail({
               onReceiptRetry={onReceiptRetry}
               simulation={simulation}
             />
-            {publication.processing_status === "failed" && !publication.retryable && canPublish && (
+            {canPublish && !inFlight && (
               <button
                 type="button"
                 onClick={onPublish}
                 disabled={baking}
-                className="mt-4 min-h-12 w-full rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
+                // A landed post is a calm state (DESIGN.md §7 D12), so republish
+                // stays secondary — until the creator has edited since posting,
+                // when shipping the new cut IS the point and earns primary weight.
+                className={
+                  isStale
+                    ? "mt-4 min-h-12 w-full rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
+                    : "mt-4 min-h-12 w-full rounded-full border border-zinc-300 bg-white px-5 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
+                }
               >
-                {baking ? "Preparing your video…" : "Review and try again"}
+                {baking
+                  ? "Preparing your video…"
+                  : isStale
+                    ? "Publish updated video"
+                    : "Publish again"}
               </button>
             )}
             {publication.visibility_status === "public" && (
@@ -91,17 +132,25 @@ export function TikTokReleaseRail({
             videoReady={videoReady}
             baking={baking}
             receiptState={receiptState}
-            editHref={editHref}
             durationSeconds={durationSeconds}
             variantLabel={variantLabel}
             captionPreview={captionPreview}
+            failureNote={publication ? buildFailureNote(publication) : null}
             onPublish={onPublish}
-            onDownload={onDownload}
             onConnect={onConnect}
             onReceiptRetry={onReceiptRetry}
             simulation={simulation}
           />
         )}
+        {/* Outside the branch on purpose: editing a video must never depend on
+            its publishing state. */}
+        <ReleaseActionsRow
+          editHref={editHref}
+          onDownload={onDownload}
+          baking={baking}
+          videoReady={videoReady}
+          className="mt-4 lg:mt-7"
+        />
       </div>
 
       {historyOpen && (
@@ -111,18 +160,119 @@ export function TikTokReleaseRail({
   );
 }
 
+/**
+ * Edit + overflow (Download). Rendered in every rail state — a published,
+ * failed, or unpublished video is equally editable.
+ */
+function ReleaseActionsRow({
+  editHref,
+  onDownload,
+  baking,
+  videoReady,
+  className = "",
+}: {
+  editHref: string | null;
+  onDownload: () => void;
+  baking: boolean;
+  videoReady: boolean;
+  className?: string;
+}) {
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  return (
+    <div className={`grid grid-cols-[minmax(0,1fr)_auto] gap-2 ${className}`}>
+      {editHref && (
+        <Link
+          href={editHref}
+          className="inline-flex min-h-12 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
+        >
+          Edit video
+        </Link>
+      )}
+      <div className="relative justify-self-end">
+        <button
+          type="button"
+          aria-label="More video actions"
+          aria-expanded={moreOpen}
+          onClick={() => setMoreOpen((open) => !open)}
+          disabled={baking || !videoReady}
+          className="flex h-12 w-12 items-center justify-center rounded-full border border-zinc-300 bg-white text-lg font-semibold tracking-[0.12em] text-[#0c0c0e] transition-colors hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          ···
+        </button>
+        {moreOpen && videoReady && !baking && (
+          <div className="absolute right-0 top-14 z-20 min-w-40 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.12)]">
+            <button
+              type="button"
+              onClick={() => {
+                setMoreOpen(false);
+                onDownload();
+              }}
+              disabled={baking || !videoReady}
+              className="min-h-11 w-full rounded-lg px-3 text-left text-sm font-medium text-[#0c0c0e] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600 disabled:opacity-50"
+            >
+              {baking ? "Preparing…" : videoReady ? "Download video" : "Video not ready"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * True while TikTok still owes us an outcome for this submission. Single source
+ * of truth for both the receipt's working animation and the re-publish gate —
+ * they must never disagree about whether a delivery is still on its way.
+ */
+function submissionInFlight(publication: TikTokPublication, simulation: boolean): boolean {
+  const isDraftPosted = publication.delivery_mode === "draft_upload" &&
+    publication.processing_status === "complete" &&
+    publication.visibility_status === "unknown";
+  return !simulation && !isDraftPosted &&
+    !["draft", "public", "private", "removed"].includes(publication.visibility_status) &&
+    publication.processing_status !== "failed" &&
+    publication.processing_status !== "submission_unknown";
+}
+
+/**
+ * True while a manual republish would race a delivery we haven't finished.
+ * Deliberately BROADER than `submissionInFlight`: that one answers "should the
+ * receipt animate", and a retryable failure correctly stops the animation. But
+ * the worker is still resubmitting that row on its own (`_can_submit_failed` in
+ * tasks/tiktok.py), so a publish button there would double-post. Two questions,
+ * two predicates — collapsing them is how the duplicate slips through.
+ */
+function republishWouldRace(publication: TikTokPublication, simulation: boolean): boolean {
+  if (publication.processing_status === "failed") return publication.retryable;
+  // TikTok never told us whether it took the first one. Offer the receipt's
+  // "Open TikTok" / "Check status again" recovery instead of a second delivery.
+  if (publication.processing_status === "submission_unknown") return true;
+  return submissionInFlight(publication, simulation);
+}
+
+/**
+ * Only reached for a terminal failure — every other outcome keeps the receipt,
+ * which carries its own status copy.
+ */
+function buildFailureNote(publication: TikTokPublication): { heading: string; detail: string } {
+  return {
+    heading: "Last attempt failed",
+    detail: publication.failure_detail ?? "TikTok could not publish this post. Nothing was posted.",
+  };
+}
+
 function ReleasePreparationPane({
   connection,
   canPublish,
   baking,
   videoReady,
   receiptState,
-  editHref,
   durationSeconds,
   variantLabel,
   captionPreview,
+  failureNote,
   onPublish,
-  onDownload,
   onConnect,
   onReceiptRetry,
   simulation,
@@ -132,17 +282,15 @@ function ReleasePreparationPane({
   baking: boolean;
   videoReady: boolean;
   receiptState: "loading" | "ready" | "error";
-  editHref: string | null;
   durationSeconds: number | null;
   variantLabel: string;
   captionPreview?: string | null;
+  failureNote?: { heading: string; detail: string } | null;
   onPublish: () => void;
-  onDownload: () => void;
   onConnect?: () => void;
   onReceiptRetry?: () => void;
   simulation: boolean;
 }) {
-  const [moreOpen, setMoreOpen] = useState(false);
   const hasContentPostingAccess = Boolean(
     connection?.can_publish || connection?.can_upload_draft,
   );
@@ -153,6 +301,13 @@ function ReleasePreparationPane({
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-700">Release</p>
         {simulation && <p className="text-[11px] font-medium text-[#71717a]">Local preview</p>}
       </div>
+      {/* Sits above the lg:-gated header so a failed attempt is legible on mobile. */}
+      {failureNote && (
+        <div className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
+          <p className="font-medium text-[#0c0c0e]">{failureNote.heading}</p>
+          <p className="mt-1 leading-relaxed">{failureNote.detail}</p>
+        </div>
+      )}
       <div className="hidden gap-3 lg:flex">
         {videoReady && <StatusMark />}
         <div>
@@ -251,44 +406,6 @@ function ReleasePreparationPane({
           {baking ? "Preparing your video…" : "Publish to TikTok"}
         </button>
       )}
-
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-        {editHref && (
-          <Link
-            href={editHref}
-            className="inline-flex min-h-12 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
-          >
-            Edit video
-          </Link>
-        )}
-        <div className="relative justify-self-end">
-          <button
-            type="button"
-            aria-label="More video actions"
-            aria-expanded={moreOpen}
-            onClick={() => setMoreOpen((open) => !open)}
-            disabled={baking || !videoReady}
-            className="flex h-12 w-12 items-center justify-center rounded-full border border-zinc-300 bg-white text-lg font-semibold tracking-[0.12em] text-[#0c0c0e] transition-colors hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            ···
-          </button>
-          {moreOpen && videoReady && !baking && (
-            <div className="absolute right-0 top-14 z-20 min-w-40 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.12)]">
-              <button
-                type="button"
-                onClick={() => {
-                  setMoreOpen(false);
-                  onDownload();
-                }}
-                disabled={baking || !videoReady}
-                className="min-h-11 w-full rounded-lg px-3 text-left text-sm font-medium text-[#0c0c0e] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600 disabled:opacity-50"
-              >
-                {baking ? "Preparing…" : videoReady ? "Download video" : "Video not ready"}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
@@ -317,13 +434,7 @@ function PublicationReceipt({
         short: "Preview",
       }
     : publicationStatus(publication);
-  const isDraftPosted = publication.delivery_mode === "draft_upload" &&
-    publication.processing_status === "complete" &&
-    publication.visibility_status === "unknown";
-  const isWorking = !simulation && !isDraftPosted &&
-    !["draft", "public", "private", "removed"].includes(publication.visibility_status) &&
-    publication.processing_status !== "failed" &&
-    publication.processing_status !== "submission_unknown";
+  const isWorking = submissionInFlight(publication, simulation);
 
   const content = (
     <div className="space-y-5 border-y border-zinc-200 py-5">
