@@ -7,8 +7,12 @@ name: Fly Deploy
 #   flyctl auth token
 # Then add via Settings → Secrets and variables → Actions → New repository secret.
 #
-# The release_command in fly.toml runs `alembic upgrade head` automatically,
-# so migrations ship as part of the deploy. No separate step needed here.
+# The release_command in fly.toml runs migrations automatically, so they ship as
+# part of the deploy and need no separate step here. fly.toml is the source of
+# truth for WHICH revision it targets — normally `upgrade head`, but a staged
+# migration with a data precondition can pin it to an intermediate revision.
+# While it is pinned, TODOS.md carries a P0 to restore it: a green deploy alone
+# is not evidence that the newest migration actually applied.
 on:
   push:
     branches:
