@@ -13,6 +13,10 @@
  */
 
 import { useRef, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEditorPlaybackTime,
+  type EditorPlaybackClock,
+} from "./editor-playback-clock";
 
 export interface MiniStripSegment {
   id: string;
@@ -25,6 +29,7 @@ export interface MiniStripProps {
   segments: MiniStripSegment[];
   durationS: number;
   currentTimeS: number;
+  playbackClock?: EditorPlaybackClock | null;
   selectedClipId?: string | null;
   marks?: Array<{ id: string; startS: number; endS: number; label: string }>;
   selectedMarkId?: string | null;
@@ -74,6 +79,7 @@ export function MiniStrip({
   segments,
   durationS,
   currentTimeS,
+  playbackClock,
   selectedClipId,
   marks = [],
   selectedMarkId,
@@ -82,6 +88,7 @@ export function MiniStrip({
   onSelectClip,
   onSelectMark,
 }: MiniStripProps): JSX.Element | null {
+  const playbackTimeS = useEditorPlaybackTime(playbackClock, currentTimeS);
   const dragRef = useRef<DragState | null>(null);
   /** Swallow the synthetic click that follows a pointer tap we handled. */
   const suppressClickRef = useRef(false);
@@ -236,7 +243,7 @@ export function MiniStrip({
       <div
         aria-hidden="true"
         data-testid="pocket-ministrip-playhead"
-        style={{ left: pct(currentTimeS) }}
+        style={{ left: pct(playbackTimeS) }}
         className="pointer-events-none absolute inset-y-0 w-0.5 bg-lime-600"
       />
     </div>

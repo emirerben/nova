@@ -18,6 +18,10 @@ import {
   type PoolAsset,
 } from "@/lib/plan-api";
 import { creatorBlockPreviewFrame } from "@/lib/motion-preview";
+import {
+  useEditorPlaybackTime,
+  type EditorPlaybackClock,
+} from "./editor-playback-clock";
 
 let canvasKitPromise: Promise<CanvasKit> | null = null;
 let creatorFontPromise: Promise<Uint8Array> | null = null;
@@ -243,6 +247,8 @@ export default function MotionCanvasLayer({
   runtimeHash,
   videoRef,
   assets = [],
+  frameDriven = false,
+  playbackClock,
 }: {
   instances: MotionPresetInstanceV1[];
   currentTime: number;
@@ -252,7 +258,10 @@ export default function MotionCanvasLayer({
   runtimeHash?: string | null;
   videoRef: RefObject<HTMLVideoElement>;
   assets?: PoolAsset[];
+  frameDriven?: boolean;
+  playbackClock?: EditorPlaybackClock | null;
 }) {
+  const sampledTime = useEditorPlaybackTime(playbackClock, currentTime);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const surfaceRef = useRef<Surface | null>(null);
   const kitRef = useRef<CanvasKit | null>(null);
@@ -386,11 +395,11 @@ export default function MotionCanvasLayer({
   }, [compatible, previewHeight, previewWidth, ready, resourcesReady]);
 
   useEffect(() => {
-    if (!playing) drawAtRef.current(currentTime);
-  }, [currentTime, playing, ready]);
+    if (frameDriven || !playing) drawAtRef.current(sampledTime);
+  }, [frameDriven, playing, ready, sampledTime]);
 
   useEffect(() => {
-    if (!playing || !compatible) return;
+    if (frameDriven || !playing || !compatible) return;
 
     const video = videoRef.current;
     if (!video) return;
@@ -412,7 +421,7 @@ export default function MotionCanvasLayer({
     };
     raf = window.requestAnimationFrame(drawMediaTime);
     return () => window.cancelAnimationFrame(raf);
-  }, [compatible, playing, ready, videoRef]);
+  }, [compatible, frameDriven, playing, ready, videoRef]);
 
   if (instances.length === 0) return null;
   return (

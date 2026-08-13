@@ -6,7 +6,11 @@ import React, { forwardRef, useRef, useState } from "react";
  * Safely extract the URL pathname (without query string / signature).
  * Falls back to the raw string on parse error so malformed URLs never throw.
  */
-function safePathname(url: string | null | undefined): string | null {
+export function stableVideoSourceIdentity(
+  url: string | null | undefined,
+  identity?: string,
+): string | null {
+  if (identity !== undefined) return identity ?? null;
   if (!url) return null;
   try {
     return new URL(url).pathname;
@@ -84,8 +88,7 @@ export const StableVideo = forwardRef<HTMLVideoElement, StableVideoProps>(
 
     // Effective identity: explicit prop wins; otherwise strip the query string
     // so the same GCS object produces the same identity regardless of re-signing.
-    const effectiveIdentity: string | null =
-      identity !== undefined ? (identity ?? null) : safePathname(src);
+    const effectiveIdentity = stableVideoSourceIdentity(src, identity);
 
     // Adopt a new src when:
     //   • we've never held anything yet (first load with a real src), OR

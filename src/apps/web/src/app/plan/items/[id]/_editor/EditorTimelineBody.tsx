@@ -50,6 +50,10 @@ import type {
 import Filmstrip, { allocateFilmstripSeekBudget } from "./Filmstrip";
 import { anchoredTimelineScrollLeft } from "./editor-timeline-scroll";
 import {
+  useEditorPlaybackTime,
+  type EditorPlaybackClock,
+} from "./editor-playback-clock";
+import {
   AI_SEQUENCE_BADGE_TOOLTIP,
   deriveLaneRows,
   deriveTextLaneRows,
@@ -153,6 +157,7 @@ export interface EditorTimelineBodyProps {
   /** Real rendered player duration, used to calibrate transition overlap. */
   renderedOutputDurationS?: number | null;
   currentTimeS: number;
+  playbackClock?: EditorPlaybackClock | null;
   /** Zoom factor: 1 = fit-to-width. */
   zoom: number;
   /** Incremented only when the user explicitly presses Fit. */
@@ -342,6 +347,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     timelineProjection,
     renderedOutputDurationS,
     currentTimeS,
+    playbackClock,
     zoom,
     fitRequestKey,
     scaleResetKey,
@@ -530,7 +536,6 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     previousScaleRef.current = { pps, trackW };
   }, [currentTimeS, effectiveDurationS, pps, trackW, viewportW]);
 
-  const playheadPx = secondsToPx(currentTimeS, pps);
   const projectedClipBySlot = new Map(
     timelineProjection.entries
       .filter((entry) => entry.kind === "clip")
@@ -1175,7 +1180,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   </span>
                 </div>
               ))}
-              <Playline px={playheadPx} withHead />
+              <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} withHead />
             </div>
           </div>
           <div
@@ -1195,7 +1200,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 heightPx={textLane.totalHeightPx}
                 testId="editor-text-lane"
               >
-                <Playline px={playheadPx} />
+                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                 {plainTextBars.length === 0 ? (
                   <GhostRow text="Add text from the Text tool" />
                 ) : (
@@ -1314,7 +1319,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   heightPx={captionsLaneHeight}
                   testId="editor-captions-lane"
                 >
-                  <Playline px={playheadPx} />
+                  <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                   <div
                     className={captionsEnabled ? undefined : "opacity-40"}
                     style={{ height: captionsLaneHeight }}
@@ -1389,7 +1394,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 heightPx={visualLane.totalHeightPx}
                 testId="editor-visuals-lane"
               >
-                <Playline px={playheadPx} />
+                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                 {visualBlocks.length === 0 ? (
                   <GhostRow text="Montages and text cards appear here" />
                 ) : (
@@ -1445,7 +1450,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   heightPx={motionLane.totalHeightPx}
                   testId="editor-motion-lane"
                 >
-                  <Playline px={playheadPx} />
+                  <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                   {motionBlocks.length === 0 ? (
                     <GhostRow text="Creator Blocks appear here" />
                   ) : (
@@ -1488,7 +1493,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   heightPx={cameraLane.totalHeightPx}
                   testId="editor-camera-lane"
                 >
-                  <Playline px={playheadPx} />
+                  <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                   {cameraLane.rows.map(
                     ({ item: effect, rowIndex, topPx, heightPx }) => {
                       const left = secondsToPx(effect.start_s, pps);
@@ -1536,7 +1541,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 onDragOver={handleCarouselDragOver}
                 onDrop={handleCarouselDrop}
               >
-                <Playline px={playheadPx} />
+                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                 {clipsLoading ? (
                   <div className="absolute inset-1 rounded bg-zinc-200/60 motion-safe:animate-pulse" />
                 ) : (
@@ -1700,7 +1705,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
 
               {/* ── Sound lane (SFX sub-row above the music bed) ── */}
               <LaneTrack trackW={trackW} heightPx={soundLaneHeight}>
-                <Playline px={playheadPx} />
+                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                 {/* SFX rows above the fixed music bed. */}
                 <div
                   className="absolute inset-x-0 top-0"
@@ -1816,7 +1821,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 heightPx={overlayLane.totalHeightPx}
                 testId="editor-overlays-lane"
               >
-                <Playline px={playheadPx} />
+                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                 {overlays.length === 0 ? (
                   <GhostRow text="Overlays appear here" />
                 ) : (
@@ -1905,16 +1910,21 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
 
 /** One px-positioned playhead segment (line only; head on the ruler copy). */
 function Playline({
-  px,
+  currentTimeS,
+  playbackClock,
+  pps,
   withHead = false,
 }: {
-  px: number;
+  currentTimeS: number;
+  playbackClock?: EditorPlaybackClock | null;
+  pps: number;
   withHead?: boolean;
 }) {
+  const playbackTimeS = useEditorPlaybackTime(playbackClock, currentTimeS);
   return (
     <div
       className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-[#0c0c0e]/80"
-      style={{ left: px }}
+      style={{ left: secondsToPx(playbackTimeS, pps) }}
       aria-hidden
     >
       {withHead && (
