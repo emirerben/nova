@@ -8,6 +8,56 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Persona-owner incident — OPEN (2026-08-13)
+
+### Restore `release_command` to `upgrade head` after the persona-owner repair
+**What:** `fly.toml`'s `release_command` is pinned to `python -m alembic upgrade 0072`
+so release-1 guards could reach production. It MUST go back to `upgrade head` once
+`docs/runbooks/content-plan-persona-owner-repair.md` is complete, or `0073` (the
+composite same-owner FK) never applies and the storage-level tenant invariant
+silently never exists — the exact hole #804 was written to close.
+**Why:** The pin is deliberately invisible at runtime: deploys go green, nothing
+alerts, and the missing constraint only shows up the next time a cross-owner write
+happens. A green deploy is not evidence the invariant is installed.
+**How:** Finish the runbook (Transaction A + B), require the global mismatch audit
+to return zero rows, restore the line, deploy, then verify both constraints exist:
+`SELECT conname FROM pg_constraint WHERE conname IN ('uq_personas_id_user_id',
+'fk_content_plans_persona_owner');`. Then clear `ownership_quarantined_at` without
+resetting `ownership_epoch` and dispatch one corrected render.
+**Effort:** M (CC: ~1h, plus your calls on the affected account's data)
+**Priority:** P0
+**Depends on:** persona-owner remediation for plan `cf1b9f7f-ba7d-4cc7-bd54-afbade5d9784`
+
+### Remediate the one mismatched content plan
+**What:** Plan `cf1b9f7f-…` (created 2026-07-12, status `ready`, 9 items, 4 jobs) has
+`persona_id` pointing at a Persona owned by a different account. Content generated
+for the plan's owner may derive from the other account's private persona data.
+1 of 15 plans; the owner has exactly one Persona, so the runbook's forward repair
+precondition is satisfiable.
+**Why:** This is the live tenant-isolation incident, not just a deploy blocker.
+Until it is repaired the plan returns 409 to its owner (fail-closed guards) and
+`0073` cannot apply.
+**How:** `docs/runbooks/content-plan-persona-owner-repair.md`, Transaction A then B.
+Needs decisions on evidence retention and deletion of already-rendered outputs.
+**Effort:** L (CC: ~2h)
+**Priority:** P0
+**Depends on:** release-1 (`0072`) guards deployed — done by the pin above
+
+### `alembic upgrade head` cannot express a staged two-release migration
+**What:** #804 shipped `0072` and `0073` in one PR while its own runbook required
+them in two separate releases with manual remediation between. Fly's unconditional
+`upgrade head` chained them, `0073` threw, the chain rolled back, and API deploys
+failed for ~24h (4 consecutive, 2026-08-12 11:47 → 2026-08-13 03:32).
+**Why:** Any future migration with a data precondition will reproduce this exactly.
+The runbook's "do not combine these into one Fly release" instruction had no
+mechanism behind it.
+**How:** Options: a CI guard that fails a PR adding 2+ migrations when any contains a
+precondition `raise`; or a `TARGET_REVISION` env var the release command reads so
+staging is config, not a code edit; or require staged migrations to ship as separate PRs.
+**Effort:** M (CC: ~45m)
+**Priority:** P1
+**Depends on:** —
+
 ## Render-worker queue latency — deferrals (plans/014 eng review, 2026-08-04)
 
 Context: the 2026-08-04 "frozen Starting…" incident (plans/014). The single

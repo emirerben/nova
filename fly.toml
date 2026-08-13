@@ -15,7 +15,20 @@ kill_timeout = 300
   dockerfile = "Dockerfile"
 
 [deploy]
-  release_command = "python -m alembic upgrade head"
+  # TEMPORARILY PINNED TO 0072 — restore to "head" once the persona-owner
+  # remediation is complete. See docs/runbooks/content-plan-persona-owner-repair.md.
+  #
+  # 0073 installs the composite same-owner FK and REFUSES to apply while any
+  # mismatched content plan exists. That guard is correct, but the runbook it
+  # ships with requires release 1 (0072: additive epoch/quarantine columns +
+  # fail-closed app guards) to be LIVE before the data can be repaired. Because
+  # this command is unconditionally "upgrade head", 0073 ran in the same release
+  # as 0072, threw, and rolled the whole chain back — so release 1 could never
+  # reach production and API deploys have been failing since 2026-08-12.
+  #
+  # Pinning to 0072 breaks that deadlock: the guards deploy, remediation can run,
+  # then this line goes back to "head" and 0073 lands cleanly.
+  release_command = "python -m alembic upgrade 0072"
 
 # ---------------------------------------------------------------------------
 # Process groups
