@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.27.0.0] — 2026-08-13
+
+### Added
+- **Editor motion can now follow the video frame the creator is actually seeing.** A shared output-timeline clock drives authored text, Creator Blocks, visual blocks, transitions, carousel scenes, camera motion, and both desktop and pocket playheads from decoded video frames. Non-video windows use a display-rate clock, while seeks, stalls, deck swaps, playback-rate changes, music corrections, and background-tab recovery resynchronize against the authoritative media time.
+
+### Changed
+- **Smooth playback no longer makes the whole editor rerender at display refresh rate.** High-frequency time stays inside playback layers and playheads, while the editor shell receives a throttled committed time. Stale callbacks from replaced video decks or rendered sources are rejected, visual-block interpolation uses the renderer's 30fps sampling rules, and authored video motion remains faithful even when reduced-motion is enabled for editor chrome.
+- **The new clock is independently reversible.** `NEXT_PUBLIC_FRAME_DRIVEN_PREVIEW_ENABLED` defaults to off; disabling it preserves the existing playback clock, animation timing, reduced-motion behavior, and saved edits.
+
 ## [0.26.2.1] — 2026-08-13
 
 ### Fixed
