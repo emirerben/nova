@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.1.3] — 2026-08-13
+
+### Fixed
+- **Pressing Generate twice can no longer start the same video twice.** The guard that stops a second render from starting was locking the right database row but then reading a copy of it from memory that predated the lock — so two clicks arriving together could each conclude no render was running, and each start one. The same stale-copy pattern also weakened the ownership fence that stops an out-of-date background worker from writing to a plan. Both now re-read the row they just locked.
+
 ## [0.26.1.1] — 2026-08-12
 
 ### Fixed
