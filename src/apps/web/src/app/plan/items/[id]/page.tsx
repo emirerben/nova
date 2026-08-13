@@ -2646,6 +2646,15 @@ function FocusedResults({
   const textLaneOpen = activeTab === "timeline" && !!variant && variant.text_mode !== "none";
   const requestedTabAppliedRef = useRef<string | null>(null);
 
+  // Frozen-frame veil visibility — lifted from Hero (the only surface that
+  // knows whether the stale video errored) so this component, the single
+  // owner of both Hero and the ProgressTheater (`renderProgress`) mount
+  // points, can enforce "the veil is the sole rendering voice while it's
+  // visible": theater renders below except in the exact window the veil
+  // covers the hero. See the `veilVisible` computation further down, once
+  // `instantEligible` (LiveEditPreview vs. Hero) is known.
+  const [playbackFailed, setPlaybackFailed] = useState(false);
+
   // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
   const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
     variant?.media_overlays ?? [],
@@ -2977,6 +2986,24 @@ function FocusedResults({
   });
   const instantEligible = variant ? isInstantEditEligible(variant) : false;
   const textLaneEligible = variant ? isTextLaneEligible(variant) : false;
+
+  // Mirrors the ternary below that picks LiveEditPreview vs. Hero — only Hero
+  // ever mounts the frozen-frame veil, so the theater must stay untouched
+  // whenever LiveEditPreview (no veil at all) is the active preview surface.
+  const usingLiveEditPreview =
+    instantEligible && !!variant && (activeTab !== "timeline" || textLaneOpen);
+  // Single source of truth for "the veil is covering the hero right now" —
+  // matches the veil's own render gate in Hero (`rendering && output_url &&
+  // !playbackFailed`). ProgressTheater (`renderProgress`, below) is hidden
+  // exactly when this is true, per the "one rendering voice at a time"
+  // contract: elsewhere (no output yet, a non-focused variant rendering,
+  // or the stale video failing to play) the theater is the only indicator.
+  const veilVisible =
+    !usingLiveEditPreview &&
+    !!variant &&
+    variant.render_status === "rendering" &&
+    !!variant.output_url &&
+    !playbackFailed;
 
   // ── Auto-open the Captions tab for caption archetypes (caption-edit
   // discoverability fix) ────────────────────────────────────────────────────
@@ -3319,6 +3346,8 @@ function FocusedResults({
                 onRemoveCard={handleRemoveFailedCard}
                 onRequestEditCard={handleRequestEditCard}
                 onDownload={handleDownload}
+                playbackFailed={playbackFailed}
+                onPlaybackFailedChange={setPlaybackFailed}
               />
             )}
           </div>
@@ -3329,7 +3358,11 @@ function FocusedResults({
               onSelect={onVariantSelect}
             />
           )}
-          {renderProgress && <div className="mt-6">{renderProgress}</div>}
+          {/* Veil-vs-theater dedup: while the frozen-frame veil covers the hero
+              (same-variant reburn, output already present, stale playback OK)
+              it is the sole rendering indicator — don't also show the theater
+              below it with different wording/ETA for the same event. */}
+          {renderProgress && !veilVisible && <div className="mt-6">{renderProgress}</div>}
         </div>
 
         <div className="order-3 lg:pt-3">
@@ -4404,6 +4437,8 @@ function Hero({
   onRemoveCard,
   onRequestEditCard,
   onDownload,
+  playbackFailed,
+  onPlaybackFailedChange,
 }: {
   variant: PlanItemVariant | null;
   generating: boolean;
@@ -4427,10 +4462,14 @@ function Hero({
   onRemoveCard?: (cardId: string) => void;
   onRequestEditCard?: (cardId: string) => void;
   onDownload?: () => void;
+  /** Lifted to FocusedResults (owner of the theater-vs-veil dedup decision):
+   *  the veil is the sole rendering voice while it's visible, and visibility
+   *  depends on this stale-playback-error flag, which only Hero can observe. */
+  playbackFailed: boolean;
+  onPlaybackFailedChange: (failed: boolean) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoTime, setVideoTime] = useState(0);
-  const [playbackFailed, setPlaybackFailed] = useState(false);
   const [playbackRetry, setPlaybackRetry] = useState(0);
 
   // Sync SFX audio elements to the video playhead for instant preview.
@@ -4495,9 +4534,9 @@ function Hero({
       : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
 
   useEffect(() => {
-    setPlaybackFailed(false);
+    onPlaybackFailedChange(false);
     setPlaybackRetry(0);
-  }, [heroIdentity]);
+  }, [heroIdentity, onPlaybackFailedChange]);
 
   // Frozen-frame veil (V2): pause the old video the instant a re-render
   // starts so it reads as a still frame, not live playback, under the blur.
@@ -4538,8 +4577,8 @@ function Hero({
             tabIndex={rendering ? -1 : undefined}
             playsInline
             preload="metadata"
-            onLoadedData={() => setPlaybackFailed(false)}
-            onError={() => setPlaybackFailed(true)}
+            onLoadedData={() => onPlaybackFailedChange(false)}
+            onError={() => onPlaybackFailedChange(true)}
             className="h-full w-full object-contain"
           />
         </div>
@@ -4559,7 +4598,7 @@ function Hero({
               type="button"
               aria-label="Try video again"
               onClick={() => {
-                setPlaybackFailed(false);
+                onPlaybackFailedChange(false);
                 setPlaybackRetry((value) => value + 1);
               }}
               className="min-h-10 rounded-full bg-[#0c0c0e] px-3 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 lg:min-h-11 lg:px-5 lg:text-sm"

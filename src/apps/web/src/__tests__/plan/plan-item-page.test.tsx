@@ -539,7 +539,13 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
     }
   });
 
-  it("keeps progress below the preview when a ready item is re-rendering one variant", async () => {
+  it("shows the veil instead of the theater when a ready item's sole variant reburns with output already present", async () => {
+    // Updated for the veil/theater dedup (v0.26.x): this fixture — the
+    // focused (only) variant "rendering" with an `output_url` already set —
+    // is exactly the frozen-frame veil's visibility condition. Before the
+    // dedup this asserted the theater rendered below the preview (steps
+    // disclosure, doubled step label); now the veil is the SOLE rendering
+    // voice for this case and the theater must not also mount below it.
     process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED = "true";
     const item = makeItem({
       status: "ready",
@@ -574,14 +580,9 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
         render(<PlanItemPage />);
       });
 
-      const preview = document.querySelector("[data-variant-preview]");
-      const disclosure = screen.getByRole("button", { name: "Show analysis steps" });
-      expect(
-        (preview?.compareDocumentPosition(disclosure) ?? 0) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      expect(screen.getAllByText("Applying your intro text")).toHaveLength(2);
-      expect(screen.queryByText("Your edits are ready")).not.toBeInTheDocument();
+      expect(await screen.findByLabelText("Rendering new version")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Show analysis steps" })).not.toBeInTheDocument();
+      expect(screen.queryByText("Applying your intro text")).not.toBeInTheDocument();
     } finally {
       delete process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED;
     }
