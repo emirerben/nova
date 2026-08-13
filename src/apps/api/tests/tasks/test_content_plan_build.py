@@ -614,7 +614,13 @@ def test_locked_plan_persona_uses_global_lock_order() -> None:
     ) as load_persona:
         assert _lock_owned_plan_persona(session, plan_id) == (plan, persona_row)
 
-    session.get.assert_called_once_with(ContentPlan, plan_id, with_for_update=True)
+    # populate_existing is part of the contract, not an incidental kwarg. Without
+    # it, a plan this session already cached unlocked keeps its pre-lock
+    # ownership_epoch, and the epoch check silently passes for a stale worker.
+    # Pin it so the pairing cannot be dropped.
+    session.get.assert_called_once_with(
+        ContentPlan, plan_id, with_for_update=True, populate_existing=True
+    )
     load_persona.assert_called_once_with(session, plan, for_update=True)
 
 
@@ -1513,7 +1519,12 @@ def test_generate_ideas_stale_success_does_not_write_after_sibling_terminalizes(
         mock_agent_cls.return_value.run.side_effect = succeed_after_sibling
         generate_ideas_into_plan.run(plan_id)
 
-    final_session.get.assert_any_call(ContentPlan, uuid.UUID(plan_id), with_for_update=True)
+    final_session.get.assert_any_call(
+        ContentPlan,
+        uuid.UUID(plan_id),
+        with_for_update=True,
+        populate_existing=True,
+    )
     final_session.add.assert_not_called()
     final_session.commit.assert_not_called()
 
@@ -1560,6 +1571,7 @@ def test_generate_ideas_stale_failure_does_not_overwrite_ready_plan() -> None:
         ContentPlan,
         uuid.UUID(plan_id),
         with_for_update=True,
+        populate_existing=True,
     )
     failed_transition_session.commit.assert_not_called()
 

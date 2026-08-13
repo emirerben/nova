@@ -2,10 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.26.1.2] — 2026-08-13
+## [0.26.1.4] — 2026-08-13
 
 ### Fixed
 - **Backend releases reach production again.** API deploys had been failing for about a day, so no server-side change shipped after 2026-08-11. The release step runs every pending database migration at once, and the newest one deliberately refuses to apply while a single content plan still points at another account's persona. That refusal is correct — it is the tenant-isolation guard doing its job — but the repair procedure it ships with requires the previous migration's safety guards to be live first, and running both in one release meant the guards could never land. The release step is now pinned to the guards-only migration so it completes, unblocking the deploy queue; the ownership constraint applies in a follow-up release once the affected plan is repaired. Production was never down: the failed release left the previous image serving.
+
+## [0.26.1.3] — 2026-08-13
+
+### Fixed
+- **Pressing Generate twice can no longer start the same video twice.** The guard that stops a second render from starting was locking the right database row but then reading a copy of it from memory that predated the lock — so two clicks arriving together could each conclude no render was running, and each start one. The same stale-copy pattern also weakened the ownership fence that stops an out-of-date background worker from writing to a plan. Both now re-read the row they just locked.
 
 ## [0.26.1.1] — 2026-08-12
 
