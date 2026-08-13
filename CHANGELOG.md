@@ -9,6 +9,12 @@ All notable changes to this project will be documented in this file.
 - **The release desk stops offering a second post it can't take back.** Republish is withheld whenever another delivery is unresolved — while TikTok is still processing the first one, while our own worker is auto-retrying a failed attempt, and when TikTok never confirmed it received the video at all. That last case keeps its "Open TikTok" and "Check status again" recovery actions instead of a publish button, because the safe move is to go look rather than fire a duplicate. A failed attempt that nobody is retrying returns the full release pane with the reason it failed, so the next try is one click away.
 - **A video no longer shows another version's publishing receipt.** When no specific version was in focus, the receipt lookup fell back to the whole job and could return a different version's publication, putting an unpublished cut into a published state and hiding its actions. The receipt is now accepted only when it belongs to the version on screen, and a slow status check can no longer promote an older publication over a newer one.
 - **Publishing status keeps up with edits.** After editing a published video the page never re-checked its publishing history, so the receipt described a cut that no longer existed. It now refreshes when a re-render finishes, and a status check already in flight can no longer overwrite a publication that was just created.
+
+## [0.26.1.3] — 2026-08-13
+
+### Fixed
+- **Pressing Generate twice can no longer start the same video twice.** The guard that stops a second render from starting was locking the right database row but then reading a copy of it from memory that predated the lock — so two clicks arriving together could each conclude no render was running, and each start one. The same stale-copy pattern also weakened the ownership fence that stops an out-of-date background worker from writing to a plan. Both now re-read the row they just locked.
+
 ## [0.26.1.1] — 2026-08-12
 
 ### Fixed
