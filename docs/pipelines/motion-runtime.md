@@ -52,6 +52,9 @@ offline-render smoke test.
 
 - Browser preview:
   `src/apps/web/src/app/plan/items/[id]/_editor/MotionCanvasLayer.tsx`
+- Shared editor playback clock:
+  `src/apps/web/src/app/plan/items/[id]/_editor/editor-playback-clock.ts`
+  and `useVirtualPreview.ts`
 - Shared evaluator/drawer: `src/packages/motion-runtime/src/`
 - Deno export renderer: `src/packages/motion-runtime/server/`
 - Server validation/composition:
@@ -74,6 +77,16 @@ Both flags default off:
 MOTION_SCENES_ENABLED=false
 NEXT_PUBLIC_MOTION_SCENES_ENABLED=false
 ```
+
+Editor playback timing has a separate, frontend-only rollout flag:
+`NEXT_PUBLIC_FRAME_DRIVEN_PREVIEW_ENABLED=false`. When enabled, the active
+video deck publishes decoded frames through `requestVideoFrameCallback` into a
+shared output-timeline clock; carousel and other non-video windows fall back to
+`requestAnimationFrame`. Motion scenes, authored text, visual blocks, and
+playheads consume that clock without rerendering the editor shell at display
+refresh rate. Every state sampled at `n / 30` matches the export evaluator;
+intermediate browser frames may interpolate continuously. Disabling the flag
+restores the legacy `timeupdate` clock without changing saved scenes.
 
 For the first rollout, deploy the API/worker first, enable the Fly flag, then
 enable the Vercel flag. For a runtime-hash upgrade, disable both flags, drain
