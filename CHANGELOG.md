@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.1.1] — 2026-08-12
+
+### Fixed
+- **One rendering voice at a time.** During a same-variant re-render the item page showed both the frozen-frame veil (in the video) and the below-hero progress theater for the same event, with different wording and time estimates. The theater now hides exactly while the veil is visible, and remains the sole indicator everywhere the veil can't be: first renders with no output yet, re-renders of a non-focused variant, stale-playback failures (where the recovery UI wins), and instant-edit variants previewed through LiveEditPreview.
+
 ## [0.26.1.0] — 2026-08-12
 
 ### Fixed

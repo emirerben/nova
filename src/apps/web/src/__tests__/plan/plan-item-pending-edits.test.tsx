@@ -38,6 +38,7 @@ Object.defineProperty(window, "matchMedia", {
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
+import { GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
 
 process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED = "true";
 
@@ -548,5 +549,139 @@ describe("Frozen-frame veil (rendering state on the hero)", () => {
     expect(screen.getByRole("button", { name: "Download video" })).toBeInTheDocument();
     // …and the veil itself is gone, not just visually — it's unmounted.
     expect(screen.queryByLabelText("Rendering new version")).toBeNull();
+  });
+});
+
+describe("Veil vs theater dedup — veil is the sole rendering voice while visible", () => {
+  // v0.26.1.0 (#809) added the frozen-frame veil on the hero. v0.25.11.0
+  // (#808) separately added ProgressTheater (headline + phase chips/steps +
+  // ETA bar) below the preview, firing whenever ANY variant is rendering. A
+  // same-variant reburn could show BOTH at once — two rendering indicators
+  // with different wording/ETAs for the same event.
+  //
+  // Contract: the veil is the ONLY rendering voice while it's actually
+  // visible (focused variant rendering + output_url already present +
+  // playback OK). The theater stays visible in every case the veil is NOT
+  // showing: no output yet (first render — nothing to veil), a non-focused
+  // variant rendering, or the stale video failing to play (veil yields to
+  // the recovery UI, theater becomes the sole indicator again).
+  const ITEM = makeItem();
+  const OUTPUT_URL = "https://cdn/v1.mp4";
+  const RENDER_VARIANTS_LABEL = GENERATIVE_PHASE_LABEL.render_variants;
+
+  beforeEach(() => {
+    mockSearchParams = new URLSearchParams();
+    window.sessionStorage.clear();
+    jest.clearAllMocks();
+  });
+
+  it("hides the theater while the veil covers the focused variant's reburn", async () => {
+    const TS = "2026-06-01T10:00:00Z";
+    const variant = {
+      ...makeServerVariant("v1", "rendering", OUTPUT_URL, TS),
+      render_started_at: TS,
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item: ITEM,
+        job: makeJob({ variants: [variant], current_phase: "render_variants", started_at: TS }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => render(<PlanItemPage />));
+
+    // The veil is present…
+    expect(await screen.findByLabelText("Rendering new version")).toBeInTheDocument();
+    // …and the theater (which would otherwise render this phase's headline)
+    // is not — it's not just visually redundant, it's unmounted.
+    expect(screen.queryByText(RENDER_VARIANTS_LABEL)).not.toBeInTheDocument();
+  });
+
+  it("keeps the theater when the focused variant is rendering its first take (no output_url yet)", async () => {
+    const TS = "2026-06-01T10:00:00Z";
+    const variant = {
+      ...makeServerVariant("v1", "rendering", null, TS),
+      render_started_at: TS,
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item: ITEM,
+        job: makeJob({ variants: [variant], current_phase: "render_variants", started_at: TS }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => render(<PlanItemPage />));
+
+    // Nothing to veil yet (no output_url) — Hero shows "No preview yet", so
+    // the theater is the only rendering indicator.
+    expect(screen.queryByLabelText("Rendering new version")).toBeNull();
+    expect((await screen.findAllByText(RENDER_VARIANTS_LABEL)).length).toBeGreaterThan(0);
+  });
+
+  it("keeps the theater when a non-focused variant is rendering while the focused one is ready", async () => {
+    const TS = "2026-06-01T10:00:00Z";
+    const TS2 = "2026-06-01T10:01:00Z";
+    const focusedReady = makeServerVariant("v1", "ready", OUTPUT_URL, TS);
+    const otherRendering = {
+      ...makeServerVariant("v2", "rendering", null, TS2),
+      render_started_at: TS2,
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item: ITEM,
+        job: makeJob({
+          variants: [focusedReady, otherRendering],
+          current_phase: "render_variants",
+          started_at: TS2,
+        }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => render(<PlanItemPage />));
+
+    // Focus defaults to the first variant with output_url (v1, ready) — it
+    // has nothing to veil, but a sibling variant is still rendering, so the
+    // theater must still be the visible progress indicator.
+    expect(screen.queryByLabelText("Rendering new version")).toBeNull();
+    expect((await screen.findAllByText(RENDER_VARIANTS_LABEL)).length).toBeGreaterThan(0);
+  });
+
+  it("falls back to the theater once the stale video fails mid-render (recovery UI, not the veil)", async () => {
+    const TS = "2026-06-01T10:00:00Z";
+    const variant = {
+      ...makeServerVariant("v1", "rendering", OUTPUT_URL, TS),
+      render_started_at: TS,
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item: ITEM,
+        job: makeJob({ variants: [variant], current_phase: "render_variants", started_at: TS }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<PlanItemPage />);
+    });
+    expect(await screen.findByLabelText("Rendering new version")).toBeInTheDocument();
+    expect(screen.queryByText(RENDER_VARIANTS_LABEL)).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.error(view!.container.querySelector("video")!);
+    });
+
+    // Recovery UI replaces the frozen hero video, the veil unmounts, and the
+    // theater — now the only rendering indicator — must reappear.
+    expect(screen.getByText("Preview unavailable")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Rendering new version")).toBeNull();
+    expect((await screen.findAllByText(RENDER_VARIANTS_LABEL)).length).toBeGreaterThan(0);
   });
 });
