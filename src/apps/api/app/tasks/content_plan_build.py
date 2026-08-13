@@ -74,7 +74,13 @@ def _lock_owned_plan_persona(
     A changed epoch, quarantine, missing persona, or owner mismatch is the same
     fail-closed condition: no plan-derived write may land.
     """
-    plan = session.get(ContentPlan, plan_id, with_for_update=True)
+    # populate_existing is required, not decorative. When this session already
+    # touched the row without a lock, SQLAlchemy returns the cached instance and
+    # does NOT write the freshly locked row onto it: the SELECT ... FOR UPDATE
+    # serializes correctly, but the Python attributes stay pre-lock. The epoch
+    # comparison below would then read a stale ownership_epoch and wave through
+    # the exact stale worker this fence exists to stop.
+    plan = session.get(ContentPlan, plan_id, with_for_update=True, populate_existing=True)
     if plan is None:
         return None
     persona = load_owned_plan_persona_sync(session, plan, for_update=True)
@@ -87,7 +93,10 @@ def _lock_plan_items(session, items: list[PlanItem]) -> list[PlanItem]:  # noqa:
     """Lock existing items after Plan and Persona, in deterministic id order."""
     locked: list[PlanItem] = []
     for item in sorted(items, key=lambda row: str(row.id)):
-        current = session.get(PlanItem, item.id, with_for_update=True)
+        # Every caller passes list(plan.items) -- already-loaded relationship
+        # objects -- so the identity map is always populated here and the locked
+        # re-read would otherwise hand back pre-lock attribute values.
+        current = session.get(PlanItem, item.id, with_for_update=True, populate_existing=True)
         if current is not None:
             locked.append(current)
     return locked
@@ -856,12 +865,18 @@ def dispatch_item_render_for(
             return DispatchResult("missing_row")
         plan, persona_row = owned
         ownership_epoch = _plan_epoch(plan)
-        item = session.get(PlanItem, item_uuid, with_for_update=True)
+        # The unlocked item_ref read above already cached this row, so without
+        # populate_existing the lock serializes but current_job_id stays at its
+        # pre-lock value -- two concurrent Generate posts would each see None and
+        # each mint a Job, which is the precise duplicate this lock prevents.
+        item = session.get(PlanItem, item_uuid, with_for_update=True, populate_existing=True)
         if item is None or item.content_plan_id != plan.id:
             log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
             return DispatchResult("missing_row")
         if item.current_job_id is not None:
-            current = session.get(Job, item.current_job_id, with_for_update=True)
+            current = session.get(
+                Job, item.current_job_id, with_for_update=True, populate_existing=True
+            )
             if current is not None and current.status not in PLAN_ITEM_JOB_TERMINAL:
                 return DispatchResult("already_active", job_id=str(current.id))
         if not persona_row.persona:
