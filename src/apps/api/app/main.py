@@ -1,4 +1,5 @@
 import re
+import uuid
 
 import structlog
 from fastapi import FastAPI, Request, Response, status
@@ -73,6 +74,27 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
+@app.middleware("http")
+async def request_correlation(request: Request, call_next):  # noqa: ANN001
+    """Give every HTTP hop a unique request ID and preserve the batch ID."""
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    correlation_id = request.headers.get("x-correlation-id") or request_id
+    request.state.request_id = request_id[:128]
+    request.state.correlation_id = correlation_id[:128]
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(
+        request_id=request.state.request_id,
+        correlation_id=request.state.correlation_id,
+    )
+    try:
+        response = await call_next(request)
+    finally:
+        structlog.contextvars.clear_contextvars()
+    response.headers["X-Request-Id"] = request.state.request_id
+    response.headers["X-Correlation-Id"] = request.state.correlation_id
+    return response
+
+
 def _cors_headers_for(request: Request) -> dict[str, str]:
     """Return Access-Control-* headers for the given request's Origin.
 
@@ -100,11 +122,33 @@ def _cors_headers_for(request: Request) -> dict[str, str]:
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    log.exception("unhandled_exception", path=request.url.path, method=request.method)
+    request_id = getattr(request.state, "request_id", None) or request.headers.get(
+        "x-request-id"
+    ) or uuid.uuid4().hex
+    correlation_id = getattr(request.state, "correlation_id", None) or request.headers.get(
+        "x-correlation-id"
+    ) or request_id
+    log.exception(
+        "unhandled_exception",
+        path=request.url.path,
+        method=request.method,
+        request_id=request_id,
+        correlation_id=correlation_id,
+    )
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
-        headers=_cors_headers_for(request),
+        content={
+            "detail": "Kria couldn't complete that request. Retry in a moment.",
+            "code": "internal_error",
+            "retryable": True,
+            "request_id": request_id,
+            "correlation_id": correlation_id,
+        },
+        headers={
+            **_cors_headers_for(request),
+            "X-Request-Id": request_id,
+            "X-Correlation-Id": correlation_id,
+        },
     )
 
 

@@ -20,15 +20,148 @@ Beat or crash the worker.
 from __future__ import annotations
 
 import threading
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import and_, or_, select, text
 
+from app.database import sync_session
+from app.models import PlanItemAsset
 from app.tasks.reaper import _live_job_ids, reap_orphans, reconcile_stuck_variants
 from app.worker import celery_app
 
 log = structlog.get_logger()
+
+# A full 20-file batch can legitimately wait behind ten waves at concurrency 2;
+# each task has a 5-minute hard limit. Do not invalidate healthy broker backlog.
+_POOL_QUEUED_STALE_AFTER = timedelta(minutes=60)
+_POOL_ANALYZING_STALE_AFTER = timedelta(minutes=10)
+_POOL_MAX_ATTEMPTS = 3
+_POOL_RECONCILE_BATCH = 100
+_POOL_RESERVATION_CLEANUP_AFTER = timedelta(minutes=30)
+
+
+def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
+    """Requeue unclaimed analyses and terminalize exhausted/stuck attempts.
+
+    A fresh token fences a late worker from overwriting the retry. Publication
+    happens after commit so a worker can always observe and atomically claim its
+    queued row.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
+
+    current = now or datetime.now(UTC)
+    queued_cutoff = current - _POOL_QUEUED_STALE_AFTER
+    analyzing_cutoff = current - _POOL_ANALYZING_STALE_AFTER
+    to_publish: list[tuple[str, str]] = []
+    expired_paths: list[str] = []
+    touched = 0
+
+    with sync_session() as db:
+        rows = (
+            db.execute(
+                select(PlanItemAsset)
+                .where(
+                    or_(
+                        and_(
+                            PlanItemAsset.status == "preparing",
+                            PlanItemAsset.created_at
+                            <= current - _POOL_RESERVATION_CLEANUP_AFTER,
+                        ),
+                        and_(
+                            PlanItemAsset.status == "queued",
+                            or_(
+                                PlanItemAsset.analysis_last_dispatched_at <= queued_cutoff,
+                                and_(
+                                    PlanItemAsset.analysis_last_dispatched_at.is_(None),
+                                    PlanItemAsset.created_at <= queued_cutoff,
+                                ),
+                            ),
+                        ),
+                        and_(
+                            PlanItemAsset.status == "uploaded",
+                            PlanItemAsset.created_at <= queued_cutoff,
+                        ),
+                        and_(
+                            PlanItemAsset.status == "analyzing",
+                            or_(
+                                PlanItemAsset.analysis_started_at <= analyzing_cutoff,
+                                and_(
+                                    PlanItemAsset.analysis_started_at.is_(None),
+                                    PlanItemAsset.created_at <= analyzing_cutoff,
+                                ),
+                            ),
+                        ),
+                    )
+                )
+                .with_for_update(skip_locked=True)
+                .limit(_POOL_RECONCILE_BATCH)
+            )
+            .scalars()
+            .all()
+        )
+        for asset in rows:
+            touched += 1
+            if asset.status == "preparing":
+                expired_paths.append(asset.gcs_path)
+                db.delete(asset)
+                continue
+            attempts = int(asset.analysis_attempt_count or 0)
+            if attempts >= _POOL_MAX_ATTEMPTS:
+                asset.status = "failed"
+                asset.error_code = "analysis_timed_out"
+                asset.error_detail = "Kria couldn't finish analyzing this file. Try again."
+                asset.error_retryable = True
+                asset.analysis_started_at = None
+                continue
+            token = uuid.uuid4().hex
+            asset.status = "queued"
+            asset.analysis_attempt_token = token
+            asset.analysis_attempt_count = attempts + 1
+            asset.analysis_last_dispatched_at = current
+            asset.analysis_started_at = None
+            asset.error_code = None
+            asset.error_detail = None
+            asset.error_retryable = False
+            to_publish.append((str(asset.id), token))
+        db.commit()
+
+    if expired_paths:
+        from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+        for path in expired_paths:
+            delete_object_best_effort(path)
+
+    for asset_id, token in to_publish:
+        try:
+            analyze_pool_asset.apply_async(
+                args=[asset_id, False, token],
+                queue=settings.pool_asset_analysis_queue,
+            )
+        except Exception as exc:  # noqa: BLE001
+            with sync_session() as db:
+                asset = db.get(PlanItemAsset, uuid.UUID(asset_id), with_for_update=True)
+                if asset is not None and asset.analysis_attempt_token == token:
+                    asset.status = "failed"
+                    asset.error_code = "analysis_temporarily_unavailable"
+                    asset.error_detail = "Kria couldn't restart analyzing this file. Try again."
+                    asset.error_retryable = True
+                    db.commit()
+            log.warning(
+                "pool_asset_requeue_failed",
+                asset_id=asset_id,
+                error_type=type(exc).__name__,
+            )
+    if touched:
+        log.info(
+            "pool_asset_reconciled",
+            count=touched,
+            republished=len(to_publish),
+            expired_reservations=len(expired_paths),
+        )
+    return touched
 
 
 @celery_app.task(
@@ -55,6 +188,10 @@ def sweep_stale_jobs(self) -> int:
     cuts that to 3.
     """
     try:
+        try:
+            reconcile_stale_pool_assets()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("reconcile_stale_pool_assets_failed", error_type=type(exc).__name__)
         live = _live_job_ids(celery_app)
         if live is None:
             # inspect() failed — both functions would no-op anyway; skip

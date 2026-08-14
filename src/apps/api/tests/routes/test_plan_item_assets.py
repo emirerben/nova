@@ -18,6 +18,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
 from app.models import ContentPlan, Job, Persona, PlanItem
+from app.storage import ObjectMetadata
 
 SETTINGS = "app.config.settings"
 
@@ -29,7 +30,21 @@ def _no_real_broker_publish():
     (conftest REDIS_URL) — a sibling worktree worker consumes them with garbage
     args (asset.id is an AsyncMock). Patch the dispatch so tests are isolated AND
     the dispatch contract is finally assertable."""
-    with patch("app.tasks.autoplace.analyze_pool_asset.apply_async") as m:
+    with (
+        patch("app.tasks.autoplace.analyze_pool_asset.apply_async") as m,
+        patch(
+            "app.routes.plan_items.storage.object_metadata",
+            side_effect=lambda path: ObjectMetadata(
+                path=path,
+                generation="7",
+                etag="etag",
+                size=1,
+                content_type="image/png",
+            ),
+        ),
+        patch("app.routes.plan_items.storage.signed_put_url", return_value="https://signed"),
+        patch("app.routes.plan_items.storage.delete_object_generation"),
+    ):
         yield m
 
 
@@ -74,17 +89,22 @@ def _owned_item(user_id: uuid.UUID):
 
 
 def _db(execute_results: list, plan) -> AsyncMock:
-    remaining = list(execute_results)
-    item = remaining[0].scalar_one_or_none()
+    item = execute_results[0].scalar_one_or_none()
+    remaining = list(execute_results[1:])
 
     async def _execute(stmt):  # noqa: ANN001
         descriptions = getattr(stmt, "column_descriptions", None) or []
         entity = descriptions[0].get("entity") if descriptions else None
         if entity is Persona:
             return _scalar_result(plan._test_persona)
-        if entity is PlanItem and getattr(stmt, "_for_update_arg", None) is not None:
+        if entity is PlanItem:
             return _scalar_result(item)
-        return remaining.pop(0)
+        if remaining:
+            return remaining.pop(0)
+        empty = _scalars_result([])
+        empty.scalar_one_or_none = MagicMock(return_value=None)
+        empty.scalar_one = MagicMock(return_value=0)
+        return empty
 
     async def _get(model, _row_id, **_kwargs):  # noqa: ANN001
         if model is ContentPlan:
@@ -147,6 +167,11 @@ def _asset_row(item_id, user_id, *, content_hash="abc123") -> MagicMock:
             {"gcs_path": "users/u/plan/i/pool/f.png", "content_type": "image/png"},
         ),
         ("get", "/assets", None),
+        (
+            "post",
+            "/assets/00000000-0000-0000-0000-0000000000aa/reanalyze",
+            None,
+        ),
         ("patch", "/assets/00000000-0000-0000-0000-0000000000aa/context", {"user_context": "x"}),
         # FIXED uuid, NOT uuid.uuid4(): a fresh uuid per import makes the
         # parametrize id differ across pytest-xdist workers → "Different tests
@@ -173,14 +198,19 @@ def test_all_pool_routes_404_when_flag_off(
 def test_upload_urls_happy_path(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
-    db = _db([_scalar_result(item), _scalar_result(0)], plan)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalar_result(0),
+        ],
+        plan,
+    )
     _override(user, db)
     with (
         patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
-        patch(
-            "app.routes.plan_items.storage.presigned_put_url_for_pool_asset",
-            return_value=("https://signed", f"users/{user.id}/plan/{item.id}/pool/f.png"),
-        ),
+        patch("app.routes.plan_items.storage.delete_object_best_effort"),
     ):
         resp = client.post(
             f"/plan-items/{item.id}/assets/upload-urls",
@@ -199,7 +229,15 @@ def test_upload_urls_happy_path(client: TestClient):
 def test_upload_urls_rejects_bad_content_type(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
-    db = _db([_scalar_result(item), _scalar_result(0)], plan)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalar_result(0),
+        ],
+        plan,
+    )
     _override(user, db)
     with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
         resp = client.post(
@@ -217,7 +255,15 @@ def test_upload_urls_enforces_cap_counting_existing(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
     # 19 existing + 2 requested > 20 → reject
-    db = _db([_scalar_result(item), _scalar_result(19)], plan)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalar_result(19),
+        ],
+        plan,
+    )
     _override(user, db)
     with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
         resp = client.post(
@@ -230,7 +276,55 @@ def test_upload_urls_enforces_cap_counting_existing(client: TestClient):
             },
         )
     assert resp.status_code == 400
-    assert "capped" in resp.json()["detail"]
+    assert resp.json()["detail"] == "Your visuals pool has room for 1 more. Select up to 1."
+
+
+def test_upload_urls_reuses_reservation_and_rotates_interrupted_target(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.client_upload_id = "file-stable"
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    reservation.upload_expires_at = None
+    old_path = reservation.gcs_path
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([]),
+            _scalars_result([reservation]),
+            _scalar_result(1),
+        ],
+        plan,
+    )
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.delete_object_best_effort") as cleanup,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets/upload-urls",
+            headers={"X-Correlation-Id": "batch-stable"},
+            json={
+                "files": [
+                    {
+                        "filename": "f.png",
+                        "content_type": "image/png",
+                        "file_size_bytes": 100,
+                        "client_upload_id": "file-stable",
+                    }
+                ]
+            },
+        )
+    assert resp.status_code == 200
+    target = resp.json()["urls"][0]
+    assert target["reservation_id"] == str(reservation.id)
+    assert target["client_upload_id"] == "file-stable"
+    assert target["gcs_path"] != old_path
+    assert reservation.correlation_id == "batch-stable"
+    cleanup.assert_called_once_with(old_path)
+    db.add.assert_not_called()
 
 
 # ── register ──────────────────────────────────────────────────────────────────
@@ -261,13 +355,69 @@ def test_register_happy_path_commits(client: TestClient, _no_real_broker_publish
     assert resp.status_code == 200
     body = resp.json()
     assert body["kind"] == "image"
-    assert body["status"] == "uploaded"
+    assert body["status"] == "queued"
+    assert body["error_code"] is None
+    assert body["retryable"] is False
     assert body["deduped"] is False
     assert db.add.call_count == 1
     # Silent-rollback trap: the write must be committed (plan 005 decision 4A).
     assert db.commit.await_count >= 1
     # Review C4: analysis IS dispatched (and to a mock, not the real broker).
     assert _no_real_broker_publish.call_count == 1
+
+
+def test_register_rejects_and_deletes_reservation_metadata_mismatch(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    db = _db([_scalar_result(item), _scalar_result(reservation)], plan)
+    _override(user, db)
+    mismatched = ObjectMetadata(
+        path=reservation.gcs_path,
+        generation="11",
+        etag="etag",
+        size=99,
+        content_type="image/png",
+    )
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.object_metadata", return_value=mismatched),
+        patch("app.routes.plan_items.storage.delete_object_generation") as delete_generation,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "reservation_id": str(reservation.id),
+                "gcs_path": reservation.gcs_path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+    assert resp.status_code == 422
+    assert "did not match" in resp.json()["detail"]
+    delete_generation.assert_called_once_with(reservation.gcs_path, generation="11")
+    db.delete.assert_awaited_once_with(reservation)
+
+
+def test_register_dispatch_failure_is_actionable(client: TestClient, _no_real_broker_publish):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db([_scalar_result(item), _scalar_result(None), _scalar_result(0)], plan)
+    _override(user, db)
+    _no_real_broker_publish.side_effect = RuntimeError("redis unavailable")
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.post(f"/plan-items/{item.id}/assets", json=_register_body(user.id, item.id))
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "failed"
+    assert resp.json()["error_code"] == "analysis_temporarily_unavailable"
+    assert resp.json()["retryable"] is True
+    assert "redis" not in resp.json()["error_detail"]
 
 
 def test_register_dedupes_on_content_hash(client: TestClient):
@@ -332,6 +482,54 @@ def test_list_returns_assets_with_display_urls(client: TestClient):
     assert body["max_assets"] == 20
     assert len(body["assets"]) == 2
     assert body["assets"][0]["display_url"] == "https://get"
+
+
+def test_reanalyze_failed_asset_queues_fenced_attempt(client: TestClient, _no_real_broker_publish):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    asset.status = "failed"
+    asset.error_code = "analysis_failed"
+    asset.error_detail = "Try again"
+    asset.error_retryable = True
+    asset.analysis_attempt_count = 3
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_result(asset))
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items._load_owned_item", new=AsyncMock(return_value=item)),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.post(f"/plan-items/{item.id}/assets/{asset.id}/reanalyze")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "queued"
+    assert resp.json()["error_code"] is None
+    assert asset.analysis_attempt_count == 1
+    args = _no_real_broker_publish.call_args.kwargs["args"]
+    assert args[:2] == [str(asset.id), False]
+    assert args[2] == asset.analysis_attempt_token
+
+
+def test_reanalyze_active_asset_is_idempotent(client: TestClient, _no_real_broker_publish):
+    user = _user()
+    item, _plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    asset.status = "analyzing"
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_result(asset))
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items._load_owned_item", new=AsyncMock(return_value=item)),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.post(f"/plan-items/{item.id}/assets/{asset.id}/reanalyze")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "analyzing"
+    _no_real_broker_publish.assert_not_called()
 
 
 def test_list_survives_signing_failure(client: TestClient):

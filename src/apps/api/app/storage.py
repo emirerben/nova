@@ -245,6 +245,7 @@ def presigned_put_url_for_pool_asset(
     plan_item_id: str,
     filename: str,
     content_type: str = "image/png",
+    file_size_bytes: int | None = None,
 ) -> tuple[str, str]:
     """Signed PUT URL for a plan-item pool asset (auto-placement PR0, plan 005).
 
@@ -254,14 +255,18 @@ def presigned_put_url_for_pool_asset(
     sweepable path.
     """
     object_path = f"users/{user_id}/plan/{plan_item_id}/pool/{filename}"
-    bucket = _get_client().bucket(settings.storage_bucket)
-    blob = bucket.blob(object_path)
-    url = blob.generate_signed_url(
-        version="v4",
-        expiration=datetime.timedelta(minutes=15),
-        method="PUT",
-        content_type=content_type,
-    )
+    if file_size_bytes is not None:
+        url = signed_put_url(object_path, content_type, file_size_bytes)
+    else:
+        # Compatibility for callers deployed before reservation metadata.
+        bucket = _get_client().bucket(settings.storage_bucket)
+        blob = bucket.blob(object_path)
+        url = blob.generate_signed_url(
+            version="v4",
+            expiration=datetime.timedelta(minutes=15),
+            method="PUT",
+            content_type=content_type,
+        )
     return url, object_path
 
 
@@ -358,6 +363,16 @@ def delete_object_best_effort(object_path: str) -> bool:
         return True
     except Exception:  # noqa: BLE001 — best-effort cleanup only
         return False
+
+
+def delete_object_generation(object_path: str, *, generation: str) -> None:
+    """Delete exactly the generation validated by registration.
+
+    Unlike best-effort cleanup, callers use this to enforce a security boundary:
+    a replaced object must never cause deletion of newer, unvalidated bytes.
+    """
+    bucket = _get_client().bucket(settings.storage_bucket)
+    bucket.blob(object_path, generation=int(generation)).delete()
 
 
 def delete_prefix_best_effort(prefix: str) -> int:
