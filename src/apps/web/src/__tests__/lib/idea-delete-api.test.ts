@@ -1,6 +1,7 @@
 export {};
 
 const mockGetServerSession = jest.fn();
+let mockThrowNextResponseConstruction = false;
 
 jest.mock("next-auth", () => ({
   getServerSession: mockGetServerSession,
@@ -16,6 +17,9 @@ jest.mock("next/server", () => {
 
     constructor(body: unknown, init?: { status?: number; headers?: unknown }) {
       const status = init?.status ?? 200;
+      if (mockThrowNextResponseConstruction && body instanceof ArrayBuffer) {
+        throw new TypeError("response construction failed");
+      }
       if ([204, 205, 304].includes(status) && body !== null) {
         throw new TypeError(`Invalid response status code ${status}`);
       }
@@ -39,6 +43,7 @@ beforeEach(() => {
   jest.resetModules();
   mockFetch.mockReset();
   mockGetServerSession.mockReset();
+  mockThrowNextResponseConstruction = false;
   process.env = {
     ...originalEnv,
     API_URL: "https://api.example.test",
@@ -48,6 +53,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.restoreAllMocks();
   process.env = originalEnv;
 });
 
@@ -97,6 +103,8 @@ describe("authenticated proxy response transport", () => {
     expect((response as unknown as { body: unknown }).body).toBeNull();
     expect((response as unknown as { headers: HeadersInit }).headers).toEqual({
       "Content-Type": "application/json",
+      "X-Correlation-Id": expect.any(String),
+      "X-Request-Id": expect.any(String),
     });
     expect(arrayBuffer).not.toHaveBeenCalled();
   });
@@ -139,6 +147,8 @@ describe("authenticated proxy response transport", () => {
     );
     expect(Object.fromEntries(forwardedHeaders.entries())).toEqual({
       "content-type": "application/json",
+      "x-correlation-id": expect.any(String),
+      "x-request-id": expect.any(String),
     });
     expect(forwardedHeaders.get("content-encoding")).toBeNull();
     expect(forwardedHeaders.get("content-length")).toBeNull();
@@ -178,7 +188,212 @@ describe("authenticated proxy response transport", () => {
     expect((response as unknown as { body: unknown }).body).toBeNull();
     expect((response as unknown as { headers: HeadersInit }).headers).toEqual({
       "Content-Type": "application/json",
+      "X-Correlation-Id": expect.any(String),
+      "X-Request-Id": expect.any(String),
     });
     expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it("returns a correlated, user-safe 502 when the upstream fetch fails", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockFetch.mockRejectedValueOnce(new TypeError("socket closed"));
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "GET",
+      nextUrl: { search: "" },
+      headers: { get: (name: string) => (name === "x-request-id" ? "req-fetch" : null) },
+      arrayBuffer: jest.fn(),
+    };
+
+    const response = await makeProxyHandlers().GET(
+      request as never,
+      { params: Promise.resolve({ path: ["plan-items", "item-1"] }) },
+    );
+
+    expect(response.status).toBe(502);
+    expect(JSON.parse(String((response as unknown as { body: unknown }).body))).toEqual({
+      detail: "Kria couldn't reach the video service. Retry in a moment.",
+      code: "upstream_unavailable",
+      stage: "upstream_fetch",
+      retryable: true,
+      request_id: "req-fetch",
+      correlation_id: "req-fetch",
+    });
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[api-proxy] boundary failure",
+      expect.objectContaining({
+        correlationId: "req-fetch",
+        stage: "upstream_fetch",
+        errorCode: "upstream_unavailable",
+      }),
+    );
+  });
+
+  it("logs correlated configuration failures with a safe stage and code", async () => {
+    process.env.INTERNAL_API_KEY = "";
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "GET",
+      nextUrl: { search: "" },
+      headers: { get: (name: string) => (name === "x-correlation-id" ? "batch-config" : null) },
+      arrayBuffer: jest.fn(),
+    };
+    const response = await makeProxyHandlers().GET(
+      request as never,
+      { params: Promise.resolve({ path: ["plan-items", "item-1"] }) },
+    );
+    expect(response.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[api-proxy] INTERNAL_API_KEY missing",
+      expect.objectContaining({
+        correlationId: "batch-config",
+        stage: "proxy_config",
+        errorCode: "server_misconfigured",
+      }),
+    );
+  });
+
+  it("returns a correlated 502 when reading the incoming request body fails", async () => {
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "POST",
+      nextUrl: { search: "" },
+      headers: { get: (name: string) => (name === "x-correlation-id" ? "batch-body" : null) },
+      arrayBuffer: jest.fn().mockRejectedValue(new TypeError("body stream closed")),
+    };
+
+    const response = await makeProxyHandlers().POST(
+      request as never,
+      { params: Promise.resolve({ path: ["plan-items", "item-1", "assets"] }) },
+    );
+    const body = JSON.parse(String((response as unknown as { body: unknown }).body));
+    expect(response.status).toBe(502);
+    expect(body).toMatchObject({
+      code: "upstream_unavailable",
+      stage: "request_body",
+      correlation_id: "batch-body",
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes upstream 500 bodies without reading or forwarding them", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const arrayBuffer = jest.fn().mockResolvedValue(Buffer.from("Internal Server Error"));
+    const cancel = jest.fn().mockResolvedValue(undefined);
+    mockFetch.mockResolvedValueOnce({
+      status: 500,
+      arrayBuffer,
+      body: { cancel },
+      headers: new Headers({ "content-type": "text/plain" }),
+    });
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "POST",
+      nextUrl: { search: "" },
+      headers: { get: () => null },
+      arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(0)),
+    };
+
+    const response = await makeProxyHandlers().POST(
+      request as never,
+      { params: Promise.resolve({ path: ["plan-items", "item-1", "assets"] }) },
+    );
+    const body = JSON.parse(String((response as unknown as { body: unknown }).body));
+    expect(response.status).toBe(500);
+    expect(body.detail).toBe("Kria couldn't complete that request. Retry in a moment.");
+    expect(body.detail).not.toMatch(/internal server error/i);
+    expect(body.request_id).toEqual(expect.any(String));
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[api-proxy] upstream server error",
+      expect.objectContaining({
+        stage: "upstream_response",
+        errorCode: "upstream_error",
+      }),
+    );
+  });
+
+  it("preserves an actionable upstream 4xx body", async () => {
+    const detail = {
+      detail: "Images must be 25 MB or smaller.",
+      code: "upload_too_large",
+      stage: "validation",
+      retryable: false,
+    };
+    mockFetch.mockResolvedValueOnce({
+      status: 422,
+      arrayBuffer: jest.fn().mockResolvedValue(Buffer.from(JSON.stringify(detail))),
+      body: null,
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "POST",
+      nextUrl: { search: "" },
+      headers: { get: () => null },
+      arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(0)),
+    };
+
+    const response = await makeProxyHandlers().POST(
+      request as never,
+      { params: Promise.resolve({ path: ["plan-items", "item-1", "assets"] }) },
+    );
+    expect(response.status).toBe(422);
+    expect(JSON.parse(String((response as unknown as { body: unknown }).body))).toEqual(detail);
+  });
+
+  it("turns an upstream response-read failure into a correlated 502", async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      arrayBuffer: jest.fn().mockRejectedValue(new TypeError("decoded body unavailable")),
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "GET",
+      nextUrl: { search: "" },
+      headers: { get: () => null },
+      arrayBuffer: jest.fn(),
+    };
+    const response = await makeProxyHandlers().GET(
+      request as never,
+      { params: Promise.resolve({ path: ["plan-items", "item-1"] }) },
+    );
+    expect(response.status).toBe(502);
+    const body = JSON.parse(String((response as unknown as { body: unknown }).body));
+    expect(body.code).toBe("upstream_unavailable");
+    expect(body.request_id).toEqual(expect.any(String));
+  });
+
+  it("turns response construction failure into a correlated safe 502", async () => {
+    mockThrowNextResponseConstruction = true;
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(8)),
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "GET",
+      nextUrl: { search: "" },
+      headers: { get: () => null },
+      arrayBuffer: jest.fn(),
+    };
+    const response = await makeProxyHandlers().GET(
+      request as never,
+      { params: Promise.resolve({ path: ["plan-items", "item-1"] }) },
+    );
+    expect(response.status).toBe(502);
+    const body = JSON.parse(String((response as unknown as { body: unknown }).body));
+    expect(body).toMatchObject({ code: "upstream_unavailable", stage: "response_finalize" });
   });
 });

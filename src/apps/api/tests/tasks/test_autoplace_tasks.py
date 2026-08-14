@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import uuid
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -165,6 +166,13 @@ class _PoolAsset:
         self.aspect = None
         self.analysis = None
         self.status = "uploaded"
+        self.error_code = None
+        self.error_detail = None
+        self.error_retryable = False
+        self.analysis_attempt_token = None
+        self.analysis_attempt_count = 0
+        self.analysis_last_dispatched_at = None
+        self.analysis_started_at = None
 
 
 class _AnalyzeSess:
@@ -429,6 +437,130 @@ def test_analyze_pool_asset_invalid_owner_exits_before_download_or_agent(
     assert analyses == []
     assert asset.status == "uploaded"
     assert asset.analysis is None
+
+
+def test_analyze_pool_asset_rejects_stale_attempt_token(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "current-attempt"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    downloads: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.download_to_file",
+        lambda path, _local: downloads.append(path),
+    )
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "stale-attempt")
+
+    assert downloads == []
+    assert asset.status == "queued"
+
+
+def test_pool_attempt_token_reads_rolling_deploy_compatible_header(monkeypatch) -> None:
+    task = SimpleNamespace(
+        request=SimpleNamespace(headers={"pool_asset_attempt_token": "attempt-from-header"})
+    )
+    monkeypatch.setattr(ap, "current_task", task)
+
+    assert ap._pool_attempt_token(None) == "attempt-from-header"
+    assert ap._pool_attempt_token("explicit") == "explicit"
+
+
+def test_analyze_pool_asset_discards_late_output_after_attempt_changes(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a, **_kw: None)
+
+    def _late_analysis(*_args):
+        asset.analysis_attempt_token = "attempt-2"
+        return ({"subject": "stale-result"}, 1.0, (100, 100), False)
+
+    monkeypatch.setattr(ap, "_analyze_image", _late_analysis)
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.analysis is None
+    assert asset.analysis_attempt_token == "attempt-2"
+    assert asset.status == "analyzing"
+
+
+def test_analyze_pool_asset_persists_safe_retryable_failure(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr(
+        "app.storage.download_to_file",
+        lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("private provider detail")),
+    )
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.status == "failed"
+    assert asset.error_code == "analysis_temporarily_unavailable"
+    assert asset.error_retryable is True
+    assert "private provider detail" not in asset.error_detail
+
+
+def test_analyze_pool_asset_downloads_verified_generation(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    asset.gcs_generation = "42"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key=None)
+    verified = MagicMock()
+    legacy = MagicMock()
+    monkeypatch.setattr("app.storage.download_generation_to_file", verified)
+    monkeypatch.setattr("app.storage.download_to_file", legacy)
+    monkeypatch.setattr(ap, "_analyze_image", lambda *_a: (None, 1.0, (100, 100), False))
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    verified.assert_called_once()
+    assert verified.call_args.kwargs["generation"] == "42"
+    legacy.assert_not_called()
+
+
+def test_analyze_pool_asset_persists_timeout_then_propagates(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a: None)
+    monkeypatch.setattr(
+        ap,
+        "_analyze_image",
+        lambda *_a: (_ for _ in ()).throw(ap.SoftTimeLimitExceeded()),
+    )
+
+    with pytest.raises(ap.SoftTimeLimitExceeded):
+        ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.status == "failed"
+    assert asset.error_code == "analysis_timed_out"
+    assert asset.error_retryable is True
+
+
+def test_analyze_pool_asset_marks_unreadable_nonretryable(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a: None)
+    monkeypatch.setattr(
+        ap,
+        "_analyze_image",
+        lambda *_a: (_ for _ in ()).throw(ap.AssetUnreadableError()),
+    )
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.status == "failed"
+    assert asset.error_code == "analysis_unreadable"
+    assert asset.error_retryable is False
+    assert "Export it as" in asset.error_detail
 
 
 @pytest.mark.parametrize("fence_change", ["epoch", "quarantine"])

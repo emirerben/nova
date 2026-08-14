@@ -46,6 +46,38 @@ export class FeatureDisabledError extends Error {
   }
 }
 
+export class PlanApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly requestId: string | null;
+  readonly stage: string | null;
+
+  constructor({
+    message,
+    status,
+    code = "request_failed",
+    retryable = false,
+    requestId = null,
+    stage = null,
+  }: {
+    message: string;
+    status: number;
+    code?: string;
+    retryable?: boolean;
+    requestId?: string | null;
+    stage?: string | null;
+  }) {
+    super(message);
+    this.name = "PlanApiError";
+    this.status = status;
+    this.code = code;
+    this.retryable = retryable;
+    this.requestId = requestId;
+    this.stage = stage;
+  }
+}
+
 export interface PersonaQuestionnaire {
   work: string;
   school: string;
@@ -393,9 +425,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 401) throw new NotAuthenticatedError();
   if (!res.ok) {
     let detail = `Request failed (${res.status})`;
+    let code = "request_failed";
+    let retryable = res.status >= 500;
+    let requestId: string | null = null;
+    let stage: string | null = null;
     try {
-      const body = (await res.json()) as { detail?: string };
-      if (body?.detail) detail = body.detail;
+      requestId = res.headers.get("x-request-id");
+    } catch {
+      // Minimal fetch shims in tests/embedded clients may omit Headers.
+    }
+    try {
+      const body = (await res.json()) as {
+        detail?:
+          | string
+          | { detail?: string; message?: string; code?: string; retryable?: boolean; stage?: string };
+        code?: string;
+        retryable?: boolean;
+        request_id?: string;
+        stage?: string;
+      };
+      const nested = typeof body?.detail === "object" ? body.detail : null;
+      if (typeof body?.detail === "string") detail = body.detail;
+      else if (nested?.detail || nested?.message) detail = nested.detail ?? nested.message ?? detail;
+      if (body?.code || nested?.code) code = body.code ?? nested?.code ?? code;
+      if (typeof (body?.retryable ?? nested?.retryable) === "boolean") {
+        retryable = body?.retryable ?? nested?.retryable ?? retryable;
+      }
+      if (body?.request_id) requestId = body.request_id;
+      if (body?.stage || nested?.stage) stage = body.stage ?? nested?.stage ?? null;
     } catch {
       // non-JSON error body; keep the generic message
     }
@@ -406,7 +463,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (res.status === 404 && detail.endsWith("_not_enabled")) {
       throw new FeatureDisabledError(detail);
     }
-    throw new Error(detail);
+    const safeDetail =
+      res.status >= 500 && code === "request_failed"
+        ? "Kria couldn't complete that request. Retry in a moment."
+        : detail;
+    throw new PlanApiError({
+      message: safeDetail,
+      status: res.status,
+      code,
+      retryable,
+      requestId,
+      stage,
+    });
   }
   // Successful DELETE endpoints return no JSON body.
   if (res.status === 204) return undefined as T;
@@ -761,11 +829,16 @@ export async function requestUploadUrls(
 }
 
 /** PUT a file straight to GCS (direct, not through the proxy — avoids buffering bytes). */
-export async function uploadToGcs(uploadUrl: string, file: File): Promise<void> {
+export async function uploadToGcs(
+  uploadUrl: string,
+  file: File,
+  uploadHeaders: Record<string, string> = {},
+  correlationId?: string,
+): Promise<void> {
   try {
     const res = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": uploadContentTypeForFile(file) },
+      headers: { "Content-Type": uploadContentTypeForFile(file), ...uploadHeaders },
       body: file,
     });
     if (!res.ok) throw new Error(`Upload failed (${res.status})`);
@@ -778,7 +851,7 @@ export async function uploadToGcs(uploadUrl: string, file: File): Promise<void> 
     // upload cost twice.
     if (err instanceof TypeError) {
       if (canRelayFallback(file)) {
-        await relaySignedUpload(uploadUrl, file);
+        await relaySignedUpload(uploadUrl, file, uploadHeaders, correlationId);
         return;
       }
       throw new Error(UPLOAD_INTERRUPTED_MESSAGE);
@@ -815,12 +888,26 @@ function canRelayFallback(file: File): boolean {
 }
 
 /** Server-side PUT of `file` to `signedUrl` via the API relay (bucket-CORS bypass). */
-async function relaySignedUpload(signedUrl: string, file: File, signal?: AbortSignal): Promise<void> {
+async function relaySignedUpload(
+  signedUrl: string,
+  file: File,
+  uploadHeaders: Record<string, string> = {},
+  correlationId?: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const form = new FormData();
   form.append("file", file, file.name);
   form.append("signed_url", signedUrl);
   form.append("content_type", uploadContentTypeForFile(file));
-  const res = await fetch(`${PLAN_BASE}/uploads/relay`, { method: "POST", body: form, signal });
+  form.append("file_size_bytes", String(file.size));
+  const ifGenerationMatch = uploadHeaders["x-goog-if-generation-match"];
+  if (ifGenerationMatch) form.append("if_generation_match", ifGenerationMatch);
+  const res = await fetch(`${PLAN_BASE}/uploads/relay`, {
+    method: "POST",
+    body: form,
+    headers: correlationId ? { "X-Correlation-Id": correlationId } : undefined,
+    signal,
+  });
   if (res.status === 401) throw new NotAuthenticatedError();
   if (!res.ok) {
     let detail = `Upload failed (${res.status})`;
@@ -907,7 +994,7 @@ export function uploadToGcsWithProgress(
         }
         // Indeterminate: never surface a made-up percent (DESIGN.md D6).
         onProgress(0.5, true);
-        relaySignedUpload(uploadUrl, file, signal)
+        relaySignedUpload(uploadUrl, file, {}, undefined, signal)
           .then(() => {
             onProgress(1);
             resolve();
@@ -2545,7 +2632,10 @@ export function rematchPoolClips(planId: string): Promise<ContentPlan> {
 export interface PoolAsset {
   id: string;
   kind: "image" | "video";
-  status: string; // "uploaded" | "analyzing" | "ready" | "failed"
+  status: "uploaded" | "queued" | "analyzing" | "ready" | "failed";
+  error_code?: string | null;
+  error_detail?: string | null;
+  retryable?: boolean;
   source_filename: string | null;
   duration_s: number | null;
   aspect: number | null;
@@ -2574,6 +2664,15 @@ export interface PoolAsset {
   source_timestamp_s?: number | null;
 }
 
+export interface PoolAssetUploadTarget {
+  reservation_id: string;
+  client_upload_id: string;
+  upload_url: string;
+  gcs_path: string;
+  expires_at: string;
+  upload_headers: Record<string, string>;
+}
+
 /** Creator Blocks only decode images whose server analysis established a safe bound. */
 export function isBoundedCreatorImageAsset(asset: PoolAsset): boolean {
   return (
@@ -2592,12 +2691,22 @@ export function isBoundedCreatorImageAsset(asset: PoolAsset): boolean {
 /** Signed PUT URLs for pool assets (users/{uid}/plan/{itemId}/pool/, persistent). */
 export async function requestPoolAssetUploadUrls(
   itemId: string,
-  files: { filename: string; content_type: string; file_size_bytes: number }[],
-): Promise<UploadUrl[]> {
-  const res = await request<{ urls: UploadUrl[] }>(`/plan-items/${itemId}/assets/upload-urls`, {
-    method: "POST",
-    body: JSON.stringify({ files }),
-  });
+  files: {
+    filename: string;
+    content_type: string;
+    file_size_bytes: number;
+    client_upload_id: string;
+  }[],
+  correlationId: string,
+): Promise<PoolAssetUploadTarget[]> {
+  const res = await request<{ urls: PoolAssetUploadTarget[] }>(
+    `/plan-items/${itemId}/assets/upload-urls`,
+    {
+      method: "POST",
+      headers: { "X-Correlation-Id": correlationId },
+      body: JSON.stringify({ files }),
+    },
+  );
   return res.urls;
 }
 
@@ -2630,14 +2739,17 @@ export function registerPoolAsset(
   itemId: string,
   body: {
     gcs_path: string;
+    reservation_id?: string | null;
     content_type: string;
     content_hash: string | null;
     source_filename: string | null;
     user_context?: string | null;
   },
+  correlationId?: string,
 ): Promise<PoolAsset> {
   return request<PoolAsset>(`/plan-items/${itemId}/assets`, {
     method: "POST",
+    headers: correlationId ? { "X-Correlation-Id": correlationId } : undefined,
     body: JSON.stringify(body),
   });
 }
@@ -2677,16 +2789,35 @@ export async function uploadPoolAsset(itemId: string, file: File): Promise<PoolA
 }
 
 /** List the item's pool assets + the per-item cap. */
+export interface PoolReservationCapacity {
+  reservation_id: string;
+  release_at: string | null;
+}
+
+export interface PoolAssetsResponse {
+  assets: PoolAsset[];
+  max_assets: number;
+  occupied_assets?: number;
+  active_reservations?: PoolReservationCapacity[];
+}
+
 export function listPoolAssets(
   itemId: string,
-): Promise<{ assets: PoolAsset[]; max_assets: number }> {
-  return request<{ assets: PoolAsset[]; max_assets: number }>(`/plan-items/${itemId}/assets`);
+): Promise<PoolAssetsResponse> {
+  return request<PoolAssetsResponse>(`/plan-items/${itemId}/assets`);
 }
 
 /** Remove an asset from the pool. */
 export function deletePoolAsset(itemId: string, assetId: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/plan-items/${itemId}/assets/${assetId}`, {
     method: "DELETE",
+  });
+}
+
+/** Idempotently retry analysis for a failed or legacy pool asset. */
+export function reanalyzePoolAsset(itemId: string, assetId: string): Promise<PoolAsset> {
+  return request<PoolAsset>(`/plan-items/${itemId}/assets/${assetId}/reanalyze`, {
+    method: "POST",
   });
 }
 

@@ -24,35 +24,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deletePoolAsset,
   listPoolAssets,
-  registerPoolAsset,
-  requestPoolAssetUploadUrls,
-  sha256HexOfFile,
+  reanalyzePoolAsset,
   updatePoolAssetContext,
-  uploadContentTypeForFile,
-  uploadToGcs,
   type PoolAsset,
+  type PoolReservationCapacity,
 } from "@/lib/plan-api";
 import { StableVideo } from "@/components/StableVideo";
-
-// Mirrors ALLOWED_OVERLAY_MIME_TYPES in OverlayLane.tsx (not exported there)
-// and _OVERLAY_ALLOWED_CONTENT_TYPES on the backend.
-const ALLOWED_ASSET_MIME_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "video/mp4",
-  "video/quicktime",
-];
+import {
+  POOL_ASSET_MIME_TYPES,
+  usePoolAssetUploader,
+  type PendingPoolUpload,
+} from "@/app/plan/_hooks/usePoolAssetUploader";
 
 const NOTICE_MS = 4000;
 const UNAVAILABLE_COPY = "Visuals pool isn't available right now.";
 
-// Analysis happens server-side after register (uploaded → analyzing → ready |
+// Analysis happens server-side after register (queued → analyzing → ready |
 // failed) — poll while any asset is mid-pipeline so tiles update in place.
 // Unknown future statuses deliberately DON'T poll (no runaway interval).
 const ASSET_POLL_MS = 5000;
-const NON_TERMINAL_ASSET_STATUSES = new Set(["uploaded", "uploading", "analyzing"]);
+const NON_TERMINAL_ASSET_STATUSES = new Set(["uploaded", "queued", "analyzing"]);
 
 /** Merge a fresh poll snapshot over the current tiles, KEEPING each existing
  *  tile's already-signed `display_url`. `_asset_out` re-signs on every read and
@@ -72,12 +63,6 @@ function mergePreservingUrls(prev: PoolAsset[], next: PoolAsset[]): PoolAsset[] 
 /** Backend flag off → routes 404 with this detail (or a raw 404 wrapper). */
 function isUnavailableError(err: unknown): boolean {
   return err instanceof Error && (/not available/i.test(err.message) || err.message.includes("(404)"));
-}
-
-/** Local tile for an in-flight upload (before the server row exists). */
-interface PendingUpload {
-  localId: string;
-  filename: string;
 }
 
 export default function AssetPool({
@@ -103,8 +88,9 @@ export default function AssetPool({
   const enabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true";
 
   const [assets, setAssets] = useState<PoolAsset[]>([]);
+  const [serverReservations, setServerReservations] = useState<PoolReservationCapacity[]>([]);
+  const [serverOccupiedCount, setServerOccupiedCount] = useState(0);
   const [maxAssets, setMaxAssets] = useState(20);
-  const [pending, setPending] = useState<PendingUpload[]>([]);
   const [unavailable, setUnavailable] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -113,6 +99,7 @@ export default function AssetPool({
   // snapshot would drop each other's clip. Serializing client-side closes the
   // rapid-double-promote race; attachBusy covers the concurrent-upload writer.
   const [promotingId, setPromotingId] = useState<string | null>(null);
+  const [reanalyzingId, setReanalyzingId] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // Bumped on every local list mutation (register append, delete). A poll
@@ -132,6 +119,30 @@ export default function AssetPool({
     noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS);
   }, []);
 
+  const uploader = usePoolAssetUploader({
+    itemId,
+    assetCount: assets.length,
+    maxAssets,
+    onRegistered: (asset) => {
+      listEpoch.current += 1;
+      setAssets((prev) => [...prev.filter((row) => row.id !== asset.id), asset]);
+    },
+    onUnavailable: () => setUnavailable(true),
+    onDeduped: () => showNotice("Already in your pool"),
+    serverReservations,
+    serverOccupiedCount,
+    onReservationFinalized: (reservationId, releasedCapacity) => {
+      setServerReservations((current) =>
+        current.filter((reservation) => reservation.reservation_id !== reservationId),
+      );
+      if (releasedCapacity) {
+        setServerOccupiedCount((current) => Math.max(0, current - 1));
+      }
+    },
+  });
+  const pending = uploader.uploads;
+  const addPoolFiles = uploader.addFiles;
+
   useEffect(() => () => {
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
   }, []);
@@ -139,11 +150,14 @@ export default function AssetPool({
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
+    const startedAtEpoch = listEpoch.current;
     listPoolAssets(itemId)
       .then((res) => {
-        if (cancelled) return;
-        setAssets(res.assets);
+        if (cancelled || startedAtEpoch !== listEpoch.current) return;
+        setAssets((current) => mergePreservingUrls(current, res.assets));
         setMaxAssets(res.max_assets);
+        setServerReservations(res.active_reservations ?? []);
+        setServerOccupiedCount(res.occupied_assets ?? res.assets.length);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -159,7 +173,9 @@ export default function AssetPool({
   // any asset is non-terminal so "Analyzing…" and the subject micro-label
   // appear without a page refresh. The effect tears down (and the interval
   // stops) as soon as every asset reaches ready/failed.
-  const hasNonTerminal = assets.some((a) => NON_TERMINAL_ASSET_STATUSES.has(a.status));
+  const hasNonTerminal =
+    assets.some((a) => NON_TERMINAL_ASSET_STATUSES.has(a.status)) ||
+    serverReservations.some((reservation) => reservation.release_at === null);
   useEffect(() => {
     if (!enabled || unavailable || !hasNonTerminal) return;
     let cancelled = false;
@@ -172,6 +188,8 @@ export default function AssetPool({
           if (cancelled || epoch !== listEpoch.current) return;
           setAssets((prev) => mergePreservingUrls(prev, res.assets));
           setMaxAssets(res.max_assets);
+          setServerReservations(res.active_reservations ?? []);
+          setServerOccupiedCount(res.occupied_assets ?? res.assets.length);
         })
         .catch((err) => {
           if (cancelled) return;
@@ -192,73 +210,11 @@ export default function AssetPool({
   }, [enabled, unavailable, hasNonTerminal, itemId]);
 
   const handleFiles = useCallback(
-    async (fileList: FileList | File[] | null) => {
-      if (!fileList) return;
-      const files = Array.from(fileList).filter((f) =>
-        ALLOWED_ASSET_MIME_TYPES.includes(f.type),
-      );
-      if (files.length === 0) return;
+    (files: FileList | File[] | null) => {
       setUploadError(null);
-
-      const locals: PendingUpload[] = files.map((f, i) => ({
-        localId: `pending-${Date.now()}-${i}-${f.name}`,
-        filename: f.name,
-      }));
-      setPending((prev) => [...prev, ...locals]);
-
-      // Presigned direct-PUT is PRIMARY (R1 / review C9+C14). The multipart
-      // proxy path buffers the whole body through the Next api-proxy, which on
-      // Vercel hits a hard ~4.5MB serverless request-body cap — screen
-      // recordings (up to the backend's 100MB cap) can never reach the API.
-      // Instead: request a signed URL → PUT the bytes straight to GCS →
-      // register the resulting object. uploadToGcs auto-falls-back to the
-      // /uploads/relay proxy on a CORS TypeError (any localhost, whose origin
-      // the bucket CORS config doesn't list), and pool paths
-      // (users/{uid}/plan/{itemId}/pool/) are inside the relay's allowlist —
-      // so this one path covers both prod and localhost with no proxy body cap.
-      //
-      // PROD/PREVIEW PREREQUISITE: the Vercel prod + preview origins must be in
-      // the GCS bucket CORS config for the direct PUT to succeed WITHOUT the
-      // relay. The relay is the fallback, not the happy path — do not change
-      // bucket CORS from here.
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const local = locals[i];
-        try {
-          const [signed] = await requestPoolAssetUploadUrls(itemId, [
-            {
-              filename: file.name,
-              // MUST match what uploadToGcs later PUTs — an empty file.type
-              // signing differently is a GCS 403 SignatureDoesNotMatch.
-              content_type: uploadContentTypeForFile(file),
-              file_size_bytes: file.size,
-            },
-          ]);
-          await uploadToGcs(signed.upload_url, file);
-          // Client-side dedupe hash mirrors the backend multipart path's
-          // sha256 so identical bytes register as deduped (never re-analyzed).
-          const contentHash = await sha256HexOfFile(file);
-          const registered = await registerPoolAsset(itemId, {
-            gcs_path: signed.gcs_path,
-            content_type: uploadContentTypeForFile(file),
-            content_hash: contentHash,
-            source_filename: file.name,
-          });
-          setPending((prev) => prev.filter((p) => p.localId !== local.localId));
-          if (registered.deduped) {
-            showNotice("Already in your pool");
-          } else {
-            listEpoch.current += 1;
-            setAssets((prev) => [...prev, registered]);
-          }
-        } catch (err) {
-          setPending((prev) => prev.filter((p) => p.localId !== local.localId));
-          if (isUnavailableError(err)) setUnavailable(true);
-          else setUploadError(err instanceof Error ? err.message : "Upload failed");
-        }
-      }
+      addPoolFiles(files);
     },
-    [itemId, showNotice],
+    [addPoolFiles],
   );
 
   const handleRemove = useCallback(
@@ -267,6 +223,7 @@ export default function AssetPool({
         await deletePoolAsset(itemId, asset.id);
         listEpoch.current += 1;
         setAssets((prev) => prev.filter((a) => a.id !== asset.id));
+        setServerOccupiedCount((current) => Math.max(0, current - 1));
       } catch (err) {
         if (isUnavailableError(err)) setUnavailable(true);
         else setUploadError(err instanceof Error ? err.message : "Couldn't remove that file");
@@ -308,10 +265,28 @@ export default function AssetPool({
     [itemId, onAssetContextUpdated, showNotice],
   );
 
+  const handleRetryAnalysis = useCallback(
+    async (asset: PoolAsset) => {
+      setReanalyzingId(asset.id);
+      setUploadError(null);
+      try {
+        const updated = await reanalyzePoolAsset(itemId, asset.id);
+        listEpoch.current += 1;
+        setAssets((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : "Kria couldn’t retry that analysis.");
+      } finally {
+        setReanalyzingId(null);
+      }
+    },
+    [itemId],
+  );
+
   if (!enabled) return null;
 
   const count = assets.length;
-  const atCap = count >= maxAssets;
+  const atCap = count + uploader.reservedSlots >= maxAssets;
+  const releasingSlots = Math.max(0, uploader.reservedSlots - pending.length);
   const isEmpty = count === 0 && pending.length === 0;
   const inputId = `asset-pool-input-${itemId}`;
 
@@ -339,7 +314,7 @@ export default function AssetPool({
             id={inputId}
             type="file"
             multiple
-            accept={ALLOWED_ASSET_MIME_TYPES.join(",")}
+            accept={POOL_ASSET_MIME_TYPES.join(",")}
             className="sr-only"
             aria-label="Add visuals to your pool"
             disabled={atCap}
@@ -356,7 +331,7 @@ export default function AssetPool({
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
-                handleFiles(e.dataTransfer.files);
+                if (!atCap) handleFiles(e.dataTransfer.files);
               }}
             >
               <p className="font-display text-[16px] font-medium text-[#0c0c0e]">
@@ -367,11 +342,17 @@ export default function AssetPool({
               </p>
               <button
                 type="button"
+                disabled={atCap}
                 onClick={() => inputRef.current?.click()}
-                className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-0"
+                className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0"
               >
                 Add visuals
               </button>
+              {releasingSlots > 0 && (
+                <p className="mt-2 text-[12px] text-[#71717a]">
+                  Kria is releasing a removed upload slot. You can add another visual when cleanup finishes.
+                </p>
+              )}
             </div>
           ) : (
             <div
@@ -395,19 +376,19 @@ export default function AssetPool({
                       onUseInEdit && asset.gcs_path ? () => handleUseInEdit(asset) : undefined
                     }
                     onSaveContext={(userContext) => handleSaveContext(asset, userContext)}
+                    onRetryAnalysis={() => handleRetryAnalysis(asset)}
+                    retryingAnalysis={reanalyzingId === asset.id}
                     promoting={promotingId === asset.id}
                     promotionDisabled={attachBusy || promotingId !== null}
                   />
                 ))}
-                {pending.map((p) => (
-                  <li
-                    key={p.localId}
-                    className="relative aspect-square overflow-hidden rounded-lg border border-zinc-200 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer"
-                  >
-                    <span className="absolute inset-x-0 bottom-0 truncate px-1.5 py-1 text-[12px] text-[#71717a]">
-                      Uploading…
-                    </span>
-                  </li>
+                {pending.map((upload) => (
+                  <PendingUploadTile
+                    key={upload.localId}
+                    upload={upload}
+                    onRetry={() => uploader.retry(upload.localId)}
+                    onRemove={() => uploader.remove(upload.localId)}
+                  />
                 ))}
                 {/* Add tile — disabled at cap with an inline reason below (never tooltip-only). */}
                 <li>
@@ -424,7 +405,9 @@ export default function AssetPool({
               </ul>
               {atCap && (
                 <p className="mt-2 text-[12px] text-[#71717a]">
-                  Your pool is full — remove a visual to add another.
+                  {releasingSlots > 0
+                    ? "Kria is releasing a removed upload slot. You can add another visual when cleanup finishes."
+                    : "Your pool is full — remove a visual to add another."}
                 </p>
               )}
             </div>
@@ -433,6 +416,16 @@ export default function AssetPool({
           {notice && (
             <p className="mt-2 rounded border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#3f3f46]">
               {notice}
+            </p>
+          )}
+          {uploader.batchMessage && (
+            <p className="mt-2 rounded border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#3f3f46]">
+              {uploader.batchMessage}
+            </p>
+          )}
+          {uploader.summary && (
+            <p className="mt-2 text-[12px] text-[#71717a]" aria-live="polite">
+              {uploader.summary}
             </p>
           )}
           {uploadError && (
@@ -446,12 +439,69 @@ export default function AssetPool({
   );
 }
 
+function PendingUploadTile({
+  upload,
+  onRetry,
+  onRemove,
+}: {
+  upload: PendingPoolUpload;
+  onRetry: () => void;
+  onRemove: () => void;
+}) {
+  if (upload.stage === "failed") {
+    return (
+      <li className="relative flex aspect-square flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-white p-2 text-center">
+        <p className="mb-1 max-w-full truncate text-[11px] font-medium text-[#3f3f46]">
+          {upload.filename}
+        </p>
+        <p className="line-clamp-3 text-[12px] text-[#71717a]">{upload.message}</p>
+        <div className="mt-1 flex gap-2 text-[12px]">
+          {upload.retryable && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="min-h-7 text-lime-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+            >
+              Retry
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onRemove}
+            className="min-h-7 text-[#71717a] underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+          >
+            Remove
+          </button>
+        </div>
+      </li>
+    );
+  }
+  const label =
+    upload.stage === "preparing"
+      ? "Preparing…"
+      : upload.stage === "registering"
+        ? "Adding…"
+        : "Uploading…";
+  return (
+    <li
+      aria-label={`${label} ${upload.filename}`}
+      className="relative aspect-square overflow-hidden rounded-lg border border-zinc-200 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer"
+    >
+      <span className="absolute inset-x-0 bottom-0 truncate px-1.5 py-1 text-[12px] text-[#71717a]">
+        {label}
+      </span>
+    </li>
+  );
+}
+
 function AssetTile({
   asset,
   onRemove,
   inEdit = false,
   onUseInEdit,
   onSaveContext,
+  onRetryAnalysis,
+  retryingAnalysis = false,
   promoting = false,
   promotionDisabled = false,
 }: {
@@ -460,6 +510,8 @@ function AssetTile({
   inEdit?: boolean;
   onUseInEdit?: () => void | Promise<void>;
   onSaveContext: (userContext: string) => void | Promise<void>;
+  onRetryAnalysis: () => void | Promise<void>;
+  retryingAnalysis?: boolean;
   /** THIS tile's promotion is in flight — shows "Adding…" instead of the button. */
   promoting?: boolean;
   /** ANY attach writer is busy (another promotion or a clip upload) — disables the button. */
@@ -491,7 +543,19 @@ function AssetTile({
   if (asset.status === "failed") {
     return (
       <li className="relative flex aspect-square flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-white p-2 text-center">
-        <p className="text-[12px] text-[#71717a]">Couldn&apos;t read this file</p>
+        <p className="text-[12px] text-[#71717a]">
+          {asset.error_detail ?? "Couldn't read this file. Try exporting it again, then retry."}
+        </p>
+        {asset.retryable !== false && (
+          <button
+            type="button"
+            onClick={onRetryAnalysis}
+            disabled={retryingAnalysis}
+            className="mt-1 min-h-11 min-w-11 text-[12px] text-lime-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:opacity-50 sm:min-h-[28px] sm:min-w-[28px]"
+          >
+            {retryingAnalysis ? "Retrying…" : "Retry analysis"}
+          </button>
+        )}
         <button
           type="button"
           onClick={onRemove}
@@ -504,7 +568,7 @@ function AssetTile({
     );
   }
 
-  const busy = asset.status === "analyzing" || asset.status === "uploading";
+  const busy = asset.status === "queued" || asset.status === "analyzing" || asset.status === "uploaded";
   // Detected brand identities (analysis v5) ride the subject line's title
   // attribute — enough to verify detection without new tile chrome.
   const brands = asset.brands ?? [];
@@ -534,7 +598,7 @@ function AssetTile({
             className="truncate"
             title={!busy && brands.length > 0 ? `Brands: ${brands.join(", ")}` : undefined}
           >
-            {busy ? "Analyzing…" : (asset.subject ?? asset.kind)}
+            {busy ? (asset.status === "queued" ? "Queued…" : "Analyzing…") : (asset.subject ?? asset.kind)}
           </span>
           {/* "Use in edit" — video assets only: promotes the pool object to a real
               clip (B-roll / spine candidate). Images stay overlay-only in v1. */}

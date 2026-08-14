@@ -820,11 +820,15 @@ class Settings(BaseSettings):
     # Kill switch: OVERLAY_AUTOPLACE_ENABLED=false → all pool/suggestion routes 404.
     overlay_autoplace_enabled: bool = False
 
-    # Queue for the light autoplace tasks (analysis + matcher — LLM calls, no
-    # ffmpeg). Default "celery" (the default queue) in prod; local dev sets a
-    # DEDICATED queue (e.g. "autoplace-jobs") because sibling worktree workers
-    # share one redis and would grab tasks they don't have registered.
+    # General overlay matcher/planner queue. These tasks can use transcript
+    # fallback and stay on the media-safe render worker in production.
     autoplace_queue: str = "celery"
+    # Upload-time image/video metadata analysis is isolated from renders in Fly.
+    # Roll back by setting POOL_ASSET_ANALYSIS_QUEUE=celery.
+    pool_asset_analysis_queue: str = "celery"
+    # Keep response compatibility during the backend-first rollout. Set true
+    # only after both queued-aware upload surfaces are deployed.
+    pool_asset_queued_status_enabled: bool = False
 
     # Zero-click auto-apply (plan 007, decision D2-B + G3-A): after a plan-item
     # generate render finalizes, matched visuals are burned in WITHOUT review on
