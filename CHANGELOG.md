@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.30.0.1] — 2026-08-14
+
+### Fixed
+- **Visual analysis logs no longer expose creator filenames or provider payloads.** Pool workers use neutral temporary names, keep plan-item IDs out of the Job-owned agent-run table, and reduce persistence failures to a safe exception class while retaining asset, attempt, timing, and batch-correlation diagnostics.
+
 ## [0.30.0.0] — 2026-08-14
 
 ### Added

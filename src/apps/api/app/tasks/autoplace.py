@@ -73,6 +73,20 @@ def _pool_attempt_token(explicit: str | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _analysis_temp_filename(source_filename: str | None, kind: str) -> str:
+    """Keep only an allowlisted media suffix in worker-local paths.
+
+    Shared probe/provider helpers may log their local path.  Carrying the
+    creator's original basename into that path would leak a filename even
+    though the storage URL itself is never logged.
+    """
+    allowed = {".mp4", ".mov"} if kind == "video" else {".jpg", ".jpeg", ".png", ".webp", ".heic"}
+    suffix = Path(source_filename or "").suffix.lower()
+    if suffix not in allowed:
+        suffix = ".mp4" if kind == "video" else ".png"
+    return f"asset{suffix}"
+
+
 def _record(event: str, **fields) -> None:
     try:
         from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
@@ -857,7 +871,7 @@ def _analyze_image(
 
 
 def _analyze_video(
-    local_path: str, job_scope: str
+    local_path: str,
 ) -> tuple[dict | None, float | None, float | None, tuple[int, int] | None]:
     """(analysis, aspect, duration_s, (width, height)) for a video asset."""
     aspect: float | None = None
@@ -890,7 +904,12 @@ def _analyze_video(
         )
 
         file_ref = gemini_upload_and_wait(local_path)
-        meta = analyze_clip(file_ref, job_id=job_scope)
+        # A pool analysis belongs to a PlanItem, not a Job.  Passing the item
+        # UUID as RunContext.job_id makes agent_run persistence violate its Job
+        # FK and can dump SQL parameters (including provider payloads) into the
+        # fallback warning.  The outer pipeline trace and asset correlation ID
+        # remain the authoritative context for this task.
+        meta = analyze_clip(file_ref)
         if getattr(meta, "failed", False):
             raise AnalysisTemporarilyUnavailableError("video analysis provider failed")
         # Persist the content map the trim rule needs (plan 006 §1): every
@@ -1021,7 +1040,7 @@ def analyze_pool_asset(
         gcs_path, kind = asset.gcs_path, asset.kind
         gcs_generation = getattr(asset, "gcs_generation", None)
         correlation_id = getattr(asset, "correlation_id", None)
-        filename = asset.source_filename or "asset"
+        temp_filename = _analysis_temp_filename(asset.source_filename, kind)
         if not refresh:
             current_token = getattr(asset, "analysis_attempt_token", None)
             # Tokened attempts are single-owner. Legacy uploaded rows without a
@@ -1058,7 +1077,7 @@ def analyze_pool_asset(
         persisted_status = "ready" if refresh else "failed"
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                local = os.path.join(tmpdir, filename.split("/")[-1] or "asset")
+                local = os.path.join(tmpdir, temp_filename)
                 if gcs_generation:
                     download_generation_to_file(
                         gcs_path,
@@ -1069,7 +1088,7 @@ def analyze_pool_asset(
                     # Compatibility for legacy assets registered before 0074.
                     download_to_file(gcs_path, local)
                 if kind == "video":
-                    analysis, aspect, duration, dims = _analyze_video(local, scope)
+                    analysis, aspect, duration, dims = _analyze_video(local)
                 else:
                     analysis, aspect, dims, has_alpha = _analyze_image(local, scope)
         except SoftTimeLimitExceeded as exc:

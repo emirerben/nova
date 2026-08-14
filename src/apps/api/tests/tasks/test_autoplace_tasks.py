@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -238,7 +239,10 @@ def _patch_analyze_pool_common(
     )
 
     def _download(_gcs_path: str, local_path: str) -> None:
-        Image.new("RGBA", (4, 2), (255, 0, 0, 128)).save(local_path)
+        if asset.kind == "video":
+            Path(local_path).write_bytes(b"mock video")
+        else:
+            Image.new("RGBA", (4, 2), (255, 0, 0, 128)).save(local_path)
 
     monkeypatch.setattr("app.storage.download_to_file", _download)
     monkeypatch.setattr("app.pipeline.image_clip.image_has_alpha", lambda _path: True)
@@ -521,6 +525,57 @@ def test_analyze_pool_asset_downloads_verified_generation(monkeypatch) -> None:
     verified.assert_called_once()
     assert verified.call_args.kwargs["generation"] == "42"
     legacy.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("source_filename", "kind", "expected"),
+    [
+        ("private campaign name.MOV", "video", "asset.mov"),
+        ("../../customer-secret.JPG", "image", "asset.jpg"),
+        ("unsupported.tiff", "image", "asset.png"),
+        (None, "video", "asset.mp4"),
+    ],
+)
+def test_analysis_temp_filename_never_contains_user_basename(
+    source_filename: str | None,
+    kind: str,
+    expected: str,
+) -> None:
+    assert ap._analysis_temp_filename(source_filename, kind) == expected
+
+
+def test_analyze_video_does_not_treat_plan_item_as_job_owner(monkeypatch) -> None:
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "gemini_api_key", "gemini-key")
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: SimpleNamespace(duration_s=4.0, width=720, height=1280),
+    )
+    file_ref = SimpleNamespace(uri="provider://file", mime_type="video/mp4")
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer.gemini_upload_and_wait",
+        lambda _path: file_ref,
+    )
+    analyze = MagicMock(
+        return_value=SimpleNamespace(
+            failed=False,
+            best_moments=[],
+            detected_subject="test pattern",
+            description="moving shapes",
+            transcript="",
+            brands=[],
+        )
+    )
+    monkeypatch.setattr("app.pipeline.agents.gemini_analyzer.analyze_clip", analyze)
+
+    analysis, aspect, duration, dims = ap._analyze_video("/tmp/asset.mp4")
+
+    analyze.assert_called_once_with(file_ref)
+    assert analysis is not None
+    assert aspect == 0.5625
+    assert duration == 4.0
+    assert dims == (720, 1280)
 
 
 def test_analyze_pool_asset_persists_timeout_then_propagates(monkeypatch) -> None:

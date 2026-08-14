@@ -237,9 +237,12 @@ def test_persist_writes_row_for_uuid_job():
 
 def test_persist_swallows_db_failure(caplog):
     engine = MagicMock()
-    engine.begin.side_effect = RuntimeError("connection refused")
+    engine.begin.side_effect = RuntimeError("private provider payload")
     j = uuid.uuid4()
-    with patch("app.database.sync_engine", engine):
+    with (
+        patch("app.database.sync_engine", engine),
+        patch("app.agents._persistence.log.warning") as warning,
+    ):
         # Must not raise
         persist_agent_run(
             job_id=str(j),
@@ -257,6 +260,13 @@ def test_persist_swallows_db_failure(caplog):
             output_dict=None,
             raw_text=None,
         )
+    warning.assert_called_once_with(
+        "agent_run_persist_failed",
+        agent="t",
+        job_id=str(j),
+        error_type="RuntimeError",
+    )
+    assert "private provider payload" not in str(warning.call_args)
 
 
 def test_persist_handles_unserializable_input():
