@@ -783,9 +783,7 @@ class Persona(Base):
         back_populates="persona", viewonly=True
     )
 
-    __table_args__ = (
-        UniqueConstraint("id", "user_id", name="uq_personas_id_user_id"),
-    )
+    __table_args__ = (UniqueConstraint("id", "user_id", name="uq_personas_id_user_id"),)
 
 
 class ContentPlan(Base):
@@ -798,9 +796,7 @@ class ContentPlan(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    persona_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    persona_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     # Optional user-supplied events that bias generation (trips, launches, exams).
     events: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # generating | ready | failed | edited
@@ -826,14 +822,10 @@ class ContentPlan(Base):
     preference_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Monotonic ownership fence. Long-running plan tasks snapshot this value and
     # must observe the same value before committing any plan-derived result.
-    ownership_epoch: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, server_default="0"
-    )
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     # An operator-set containment fence for ownership-integrity incidents.
     # While populated, all user and worker paths fail closed for this plan.
-    ownership_quarantined_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMPTZ, nullable=True
-    )
+    ownership_quarantined_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     # Footage pool (plan dogfood feedback #4): the post-activation "dump the
     # whole trip" batch. Shape: {"status": "matching"|"matched"|"matched_empty"|
     # "match_failed", "clips": [{"gcs_path": str, "matched_item_id": str|null}],
@@ -855,9 +847,7 @@ class ContentPlan(Base):
     # Read-only for the same reason as Persona.content_plans: the compound
     # relationship shares user_id with the independently writable user
     # relationship.  Callers create plans with explicit user_id + persona_id.
-    persona: Mapped["Persona"] = relationship(
-        back_populates="content_plans", viewonly=True
-    )
+    persona: Mapped["Persona"] = relationship(back_populates="content_plans", viewonly=True)
     items: Mapped[list["PlanItem"]] = relationship(
         back_populates="content_plan", order_by="PlanItem.position"
     )
@@ -1019,17 +1009,23 @@ class PlanItemAsset(Base):
 
     The pool feeds the overlay auto-placement matcher: creators drop screenshots /
     screen recordings here; each row carries the upload location plus (later, PR1a)
-    the persisted analysis output. Rows live under the PERSISTENT
-    `users/{user_id}/plan/{plan_item_id}/pool/` GCS prefix — never a 24h-swept path,
-    because suggestions must never reference sweepable objects.
+    the persisted analysis output. Preparing rows stage under lifecycle-covered
+    `dev-user/`; registration promotes one verified generation into the persistent
+    `users/{user_id}/plan/{plan_item_id}/pool/` prefix before analysis can claim it.
 
-    status lifecycle: uploaded → analyzing → ready | failed  (analysis wiring lands
-    in PR1a; PR0 rows stay "uploaded"). `content_hash` powers upload dedupe — identical
-    bytes reuse the existing row instead of re-analyzing.
+    status lifecycle: preparing → promoting → queued → analyzing → ready | failed. The
+    maintenance-only `cleanup_pending` claim fences expired reservation deletion.
+    (`uploaded` remains a legacy/reconciliation state). `content_hash` powers
+    upload dedupe — identical bytes reuse the existing row instead of re-analyzing.
     """
 
     __tablename__ = "plan_item_assets"
     __table_args__ = (
+        UniqueConstraint(
+            "plan_item_id",
+            "client_upload_id",
+            name="uq_plan_item_assets_item_client_upload",
+        ),
         # List query: WHERE plan_item_id ORDER BY created_at.
         Index("idx_plan_item_assets_item_created", "plan_item_id", "created_at"),
     )
@@ -1049,9 +1045,17 @@ class PlanItemAsset(Base):
     # server-side on register. Dedupe key within one plan item.
     content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Creator-authored hint for niche uploads. Kept separate from analysis so
-    # machine-detected subject/brands stay auditable and re-analysis can change.
-    user_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Stable browser identity for one selected file. New clients reuse it when
+    # refreshing a presign, making reservations idempotent across HTTP retries.
+    # NULL keeps every pre-0074 row compatible with the unique constraint.
+    client_upload_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    upload_content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    upload_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    upload_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # Immutable GCS generation verified during registration. Workers must fetch
+    # this generation, never whichever bytes happen to occupy the path later.
+    gcs_generation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    correlation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Server-side ffprobe results (PR1a wires probing for video assets). The matcher
     # never trusts client-probed values.
     duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -1064,8 +1068,20 @@ class PlanItemAsset(Base):
     # from Nova's generated analysis so matching can prefer user intent without
     # rewriting AI metadata.
     user_context: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # uploaded | analyzing | ready | failed
+    # preparing | promoting | cleanup_pending | uploaded (legacy) | queued |
+    # analyzing | ready | failed
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="uploaded")
+    # Stable, user-safe failure information. Raw provider exceptions stay in
+    # structured logs and are never serialized to creators.
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_retryable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Analysis dispatch/claim fence. A stale worker may finish after a retry;
+    # the token prevents that old attempt from overwriting the newer result.
+    analysis_attempt_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analysis_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    analysis_last_dispatched_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    analysis_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
 

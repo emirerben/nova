@@ -13,6 +13,7 @@
 
 import { getServerSession } from "next-auth";
 import { type NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { authOptions } from "@/lib/auth";
 
 const API_BASE =
@@ -29,7 +30,36 @@ async function proxy(
   const { path } = await params;
   const qs = req.nextUrl.search;
   const prefix = upstreamPrefix ? `${upstreamPrefix}/` : "";
-  const upstream = `${API_BASE}/${prefix}${path.join("/")}${qs}`;
+  const route = `${prefix}${path.join("/")}`;
+  const upstream = `${API_BASE}/${route}${qs}`;
+  const requestId = req.headers.get("x-request-id") ?? randomUUID();
+  const correlationId = req.headers.get("x-correlation-id") ?? requestId;
+
+  const boundaryFailure = (stage: string, err: unknown): NextResponse => {
+    console.error("[api-proxy] boundary failure", {
+      requestId,
+      correlationId,
+      method: req.method,
+      route,
+      stage,
+      errorCode: "upstream_unavailable",
+      errorType: err instanceof Error ? err.name : typeof err,
+    });
+    return NextResponse.json(
+      {
+        detail: "Kria couldn't reach the video service. Retry in a moment.",
+        code: "upstream_unavailable",
+        stage,
+        retryable: true,
+        request_id: requestId,
+        correlation_id: correlationId,
+      },
+      {
+        status: 502,
+        headers: { "X-Request-Id": requestId, "X-Correlation-Id": correlationId },
+      },
+    );
+  };
 
   // Require authentication. The google-upsert call (from the signIn callback) is
   // made server-side with the internal key directly, not through this proxy.
@@ -43,25 +73,45 @@ async function proxy(
   }
 
   if (!INTERNAL_API_KEY) {
+    console.error("[api-proxy] INTERNAL_API_KEY missing", {
+      requestId,
+      correlationId,
+      method: req.method,
+      route,
+      stage: "proxy_config",
+      errorCode: "server_misconfigured",
+    });
     return NextResponse.json(
       {
-        detail:
-          "INTERNAL_API_KEY not set on the web server. " +
-          "Add INTERNAL_API_KEY to src/apps/web/.env.local.",
+        detail: "Kria couldn't reach the video service. Retry in a moment.",
+        code: "server_misconfigured",
+        stage: "proxy_config",
+        retryable: false,
+        request_id: requestId,
+        correlation_id: correlationId,
       },
-      { status: 500 },
+      {
+        status: 500,
+        headers: { "X-Request-Id": requestId, "X-Correlation-Id": correlationId },
+      },
     );
   }
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${INTERNAL_API_KEY}`,
     "X-User-Id": userId,
+    "X-Request-Id": requestId,
+    "X-Correlation-Id": correlationId,
   };
   const contentType = req.headers.get("content-type");
   if (contentType) headers["Content-Type"] = contentType;
 
-  const body =
-    req.method !== "GET" && req.method !== "HEAD" ? await req.arrayBuffer() : undefined;
+  let body: ArrayBuffer | undefined;
+  try {
+    body = req.method !== "GET" && req.method !== "HEAD" ? await req.arrayBuffer() : undefined;
+  } catch (err) {
+    return boundaryFailure("request_body", err);
+  }
 
   let upstreamRes: Response;
   try {
@@ -71,8 +121,40 @@ async function proxy(
       body: body ? Buffer.from(body) : undefined,
     });
   } catch (err) {
-    console.error("[api-proxy] upstream fetch failed", { upstream, error: String(err) });
-    return NextResponse.json({ detail: "Backend unavailable" }, { status: 502 });
+    return boundaryFailure("upstream_fetch", err);
+  }
+
+  if (upstreamRes.status >= 500) {
+    // Do not buffer an upstream exception body: it may contain raw provider or
+    // application details and the creator must only receive the safe envelope.
+    try {
+      await upstreamRes.body?.cancel();
+    } catch {
+      // A body that is already closed is equivalent to cancelled here.
+    }
+    console.error("[api-proxy] upstream server error", {
+      requestId,
+      correlationId,
+      method: req.method,
+      route,
+      upstreamStatus: upstreamRes.status,
+      stage: "upstream_response",
+      errorCode: "upstream_error",
+    });
+    return NextResponse.json(
+      {
+        detail: "Kria couldn't complete that request. Retry in a moment.",
+        code: "upstream_error",
+        stage: "upstream_response",
+        retryable: true,
+        request_id: requestId,
+        correlation_id: correlationId,
+      },
+      {
+        status: upstreamRes.status,
+        headers: { "X-Request-Id": requestId, "X-Correlation-Id": correlationId },
+      },
+    );
   }
 
   // Fetch forbids bodies on HEAD responses and 204/205/304 statuses. Even an
@@ -80,17 +162,23 @@ async function proxy(
   // turning a successful upstream DELETE into a 500 at the proxy boundary.
   const bodylessResponse =
     req.method === "HEAD" || [204, 205, 304].includes(upstreamRes.status);
-  const resBody = bodylessResponse ? null : await upstreamRes.arrayBuffer();
-  return new NextResponse(resBody, {
-    status: upstreamRes.status,
-    // `fetch` decodes compressed upstream bodies but keeps their original
-    // Content-Encoding/Content-Length headers. Forwarding those transport
-    // headers makes the browser try to decode the already-decoded bytes again
-    // (Fly currently serves JSON with zstd), so keep this boundary allowlisted.
-    headers: {
-      "Content-Type": upstreamRes.headers.get("content-type") ?? "application/json",
-    },
-  });
+  try {
+    const resBody = bodylessResponse ? null : await upstreamRes.arrayBuffer();
+    return new NextResponse(resBody, {
+      status: upstreamRes.status,
+      // `fetch` decodes compressed upstream bodies but keeps their original
+      // Content-Encoding/Content-Length headers. Forwarding those transport
+      // headers makes the browser try to decode the already-decoded bytes again
+      // (Fly currently serves JSON with zstd), so keep this boundary allowlisted.
+      headers: {
+        "Content-Type": upstreamRes.headers.get("content-type") ?? "application/json",
+        "X-Request-Id": requestId,
+        "X-Correlation-Id": correlationId,
+      },
+    });
+  } catch (err) {
+    return boundaryFailure("response_finalize", err);
+  }
 }
 
 export const proxyMaxDuration = 60;

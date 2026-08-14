@@ -2,10 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.27.1.0] — 2026-08-14
+## [0.29.1.0] — 2026-08-14
 
 ### Fixed
 - **Content-plan videos keep their generated opening title when lyrics are optional.** A lyric-capable song used to select a lyrics-only version, then start with those lyrics switched off, leaving a valid but nearly empty-looking montage. The primary edit now keeps Nova's generated title visible and offers the matched song's lyrics as an optional editor layer. Turning optional lyrics off still restores the existing baked-lyrics version.
+
+## [0.28.0.1] — 2026-08-14
+
+### Added
+- **Visual uploads now start as one capacity-checked batch and keep moving in parallel.** Kria rejects unsupported or oversized files before networking, reserves the accepted batch in one request, transfers up to three files at once, and registers each completed file immediately so analysis can overlap later uploads. The item page and editor share the same uploader and count pending files toward the 20-visual limit.
+- **Every file now has its own honest progress and recovery path.** Preparing, uploading, registering, queued, analyzing, ready, and failed states stay independent; successful files remain available, transfer retries refresh only their signed reservation, and registration retries reuse the uploaded object instead of sending it again.
+
+### Fixed
+- **Creators no longer see raw “Internal Server Error” upload failures.** The proxy and API client preserve safe actionable validation details, sanitize server failures, attach request and batch correlation IDs, and show stage-specific guidance with Retry or Remove actions plus an accurate batch summary.
+- **The editor now keeps polling queued analysis and explains unreadable versus temporary analysis failures.** Retryable analysis errors offer Retry analysis, unsupported formats name the accepted image/video types, and mixed batches report exactly how many visuals were added or need attention.
+
+## [0.28.0.0] — 2026-08-14
+
+### Added
+- **Visual uploads can now be resumed safely instead of starting over as one opaque batch.** The API reserves capacity before transfer, reuses stable per-file upload identities, verifies the uploaded media's exact type, size, and immutable storage generation, and queues analysis with fenced attempts so late workers cannot overwrite a retry.
+- **Visual analysis has a dedicated, always-on worker ready for a controlled queue switch.** Two analyses can run together without waiting behind video renders; initial routing stays on the existing queue until the new worker is verified healthy, with a one-setting rollback.
+
+### Fixed
+- **Failed visual analysis can no longer look successful or spin forever.** Unreadable files, provider outages, timeouts, broker publication failures, abandoned uploads, and stale attempts now reach safe retryable or terminal states, while a maintenance pass cleans expired reservations and recovers work that was never claimed.
+- **Upload retries cannot leak permanent objects or delete a committed file.** Signed targets now land in lifecycle-covered staging, registration promotes only the verified generation, ambiguous database commits are resolved through a fresh connection before compensation, and Remove keeps capacity charged until exact-generation cleanup succeeds.
+- **Backend failures are now traceable without exposing private details.** Request and batch correlation IDs cross the API and worker boundary, and unexpected errors return safe structured responses instead of raw exception text.
+- **The blocked persona-ownership migration is safe to release again.** A guarded, fingerprinted production repair quarantined the one mismatched plan before moving only its exact owner data; Fly releases once again require every migration through `head` before new processes start.
 
 ## [0.27.0.0] — 2026-08-13
 

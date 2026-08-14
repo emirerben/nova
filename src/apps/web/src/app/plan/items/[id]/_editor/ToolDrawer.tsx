@@ -96,6 +96,8 @@ export default function ToolDrawer({
   visualAssets = [],
   visualTextElements = [],
   visualUploading = false,
+  visualUploadDisabled = false,
+  visualUploadFeedback = null,
   onVisualUpload,
   onAddMontage,
   onAddTextCard,
@@ -167,6 +169,8 @@ export default function ToolDrawer({
     color?: string;
   }>;
   visualUploading?: boolean;
+  visualUploadDisabled?: boolean;
+  visualUploadFeedback?: React.ReactNode;
   onVisualUpload?: (files: File[]) => void;
   onAddMontage?: (assetIds: string[]) => void;
   onAddTextCard?: (preset: "card" | "quote" | "statistic" | "transition") => void;
@@ -461,6 +465,8 @@ export default function ToolDrawer({
             assets={visualAssets}
             textElements={visualTextElements}
             uploading={visualUploading}
+            uploadDisabled={visualUploadDisabled}
+            uploadFeedback={visualUploadFeedback}
             onUpload={onVisualUpload}
             onAddMontage={onAddMontage}
             onAddTextCard={onAddTextCard}
@@ -665,6 +671,8 @@ function VisualsDrawer({
   assets,
   textElements,
   uploading,
+  uploadDisabled,
+  uploadFeedback,
   onUpload,
   onAddMontage,
   onAddTextCard,
@@ -690,6 +698,8 @@ function VisualsDrawer({
     color?: string;
   }>;
   uploading: boolean;
+  uploadDisabled: boolean;
+  uploadFeedback?: React.ReactNode;
   onUpload?: (files: File[]) => void;
   onAddMontage?: (assetIds: string[]) => void;
   onAddTextCard?: (preset: "card" | "quote" | "statistic" | "transition") => void;
@@ -814,20 +824,25 @@ function VisualsDrawer({
           <p className="text-[12px] font-semibold text-[#3f3f46]">Montage assets</p>
           <span className="text-[11px] text-[#71717a]">Choose 3–12</span>
         </div>
-        <label className="mb-3 flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-500">
-          {uploading ? "Uploading visuals…" : "Upload images or videos"}
+        <label className="mb-3 flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-500 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+          {uploading
+            ? "Uploading visuals…"
+            : uploadDisabled
+              ? "Visuals pool is full"
+              : "Upload images or videos"}
           <input
             type="file"
             multiple
             accept={OVERLAY_MIME_TYPES.join(",")}
             className="sr-only"
-            disabled={uploading}
+            disabled={uploading || uploadDisabled}
             onChange={(event) => {
               onUpload?.(Array.from(event.target.files ?? []));
               event.currentTarget.value = "";
             }}
           />
         </label>
+        {uploadFeedback}
         <div className="grid grid-cols-3 gap-2">
           {ready.map((asset) => {
             const selected = selectedAssetIds.includes(asset.id);

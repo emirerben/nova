@@ -8,6 +8,8 @@ tests pin the scope validation that keeps it from being an open relay.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +19,11 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user_or_synthetic
 from app.main import app
 from app.routes.uploads import _validate_relay_url
+
+
+def _md5_b64(payload: bytes) -> str:
+    digest = hashlib.md5(payload, usedforsecurity=False)
+    return base64.b64encode(digest.digest()).decode("ascii")
 
 
 def _user() -> MagicMock:
@@ -185,6 +192,7 @@ def test_relay_treats_ambiguous_412_as_success_when_object_matches(
                 etag="etag",
                 size=len(b"video-bytes"),
                 content_type="video/mp4",
+                md5_hash=_md5_b64(b"video-bytes"),
             ),
         ),
     ):
@@ -202,6 +210,94 @@ def test_relay_treats_ambiguous_412_as_success_when_object_matches(
 
     assert resp.status_code == 200
     assert resp.json() == {"ok": True, "already_uploaded": True}
+
+
+def test_relay_recovers_ambiguous_412_without_explicit_size(client: TestClient) -> None:
+    from app.storage import ObjectMetadata
+
+    user = _user()
+    app.dependency_overrides[get_current_user_or_synthetic] = lambda: user
+    upstream = MagicMock(status_code=412, text="precondition failed")
+    async_client = AsyncMock()
+    async_client.__aenter__ = AsyncMock(return_value=async_client)
+    async_client.__aexit__ = AsyncMock(return_value=False)
+    async_client.put = AsyncMock(return_value=upstream)
+    payload = b"video-bytes"
+    object_path = f"dev-user/{user.id}/generative/abc123def456/clip.mp4"
+
+    with (
+        patch("app.routes.uploads.settings") as mock_settings,
+        patch("httpx.AsyncClient", return_value=async_client),
+        patch(
+            "app.routes.uploads.storage.object_metadata",
+            return_value=ObjectMetadata(
+                path=object_path,
+                generation="1",
+                etag="etag",
+                size=len(payload),
+                content_type="video/mp4",
+                md5_hash=_md5_b64(payload),
+            ),
+        ),
+    ):
+        mock_settings.storage_bucket = "test-bucket"
+        resp = client.post(
+            "/uploads/relay",
+            files={"file": ("clip.mp4", payload, "video/mp4")},
+            data={
+                "signed_url": _signed(object_path),
+                "content_type": "video/mp4",
+                "if_generation_match": "0",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "already_uploaded": True}
+    assert async_client.put.await_args.kwargs["headers"]["Content-Length"] == str(len(payload))
+
+
+def test_relay_rejects_ambiguous_412_when_same_size_bytes_differ(client: TestClient) -> None:
+    from app.storage import ObjectMetadata
+
+    user = _user()
+    app.dependency_overrides[get_current_user_or_synthetic] = lambda: user
+    upstream = MagicMock(status_code=412, text="precondition failed")
+    async_client = AsyncMock()
+    async_client.__aenter__ = AsyncMock(return_value=async_client)
+    async_client.__aexit__ = AsyncMock(return_value=False)
+    async_client.put = AsyncMock(return_value=upstream)
+    payload = b"new-bytes"
+    existing = b"old-bytes"
+    assert len(payload) == len(existing)
+    object_path = f"dev-user/{user.id}/generative/abc123def456/clip.mp4"
+
+    with (
+        patch("app.routes.uploads.settings") as mock_settings,
+        patch("httpx.AsyncClient", return_value=async_client),
+        patch(
+            "app.routes.uploads.storage.object_metadata",
+            return_value=ObjectMetadata(
+                path=object_path,
+                generation="1",
+                etag="etag",
+                size=len(existing),
+                content_type="video/mp4",
+                md5_hash=_md5_b64(existing),
+            ),
+        ),
+    ):
+        mock_settings.storage_bucket = "test-bucket"
+        resp = client.post(
+            "/uploads/relay",
+            files={"file": ("clip.mp4", payload, "video/mp4")},
+            data={
+                "signed_url": _signed(object_path),
+                "content_type": "video/mp4",
+                "if_generation_match": "0",
+            },
+        )
+
+    assert resp.status_code == 502
 
 
 def test_relay_does_not_accept_412_when_existing_object_metadata_differs(
@@ -273,3 +369,4 @@ def test_relay_surfaces_storage_rejection(client: TestClient) -> None:
             data={"signed_url": signed, "content_type": "video/mp4"},
         )
     assert resp.status_code == 502
+    assert async_client.put.await_args.kwargs["headers"]["Content-Length"] == str(len(b"bytes"))
