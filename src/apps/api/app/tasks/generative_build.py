@@ -1364,14 +1364,17 @@ def _run_generative_job_impl(
             # First render only. Re-renders stamp this at DISPATCH instead
             # (`stamp_variant_attempt` in services/job_phases.py) so the tile
             # clock restarts on the Save press rather than inheriting this value.
-            if _update_variant_entry(
-                job_id,
-                variant_id,
-                {
-                    "render_status": "rendering",
-                    "render_started_at": datetime.utcnow().isoformat() + "Z",
-                },
-            ) is False:
+            if (
+                _update_variant_entry(
+                    job_id,
+                    variant_id,
+                    {
+                        "render_status": "rendering",
+                        "render_started_at": datetime.utcnow().isoformat() + "Z",
+                    },
+                )
+                is False
+            ):
                 return {
                     "variant_id": variant_id,
                     "rank": rank,
@@ -1606,26 +1609,29 @@ def _run_generative_job_impl(
         # rules. No-op — mutates nothing — unless both carousel flags are on.
         _author_carousel_moments(initial_specs, job_id=job_id, n_clips=len(clip_metas))
         for spec in initial_specs:
-            if _upsert_variant_entry(
-                job_id,
-                {
-                    "variant_id": spec["variant_id"],
-                    "rank": initial_specs.index(spec) + 1,
-                    "text_mode": spec.get("text_mode", "agent_text"),
-                    "music_track_id": spec["track"].id if spec.get("track") else None,
-                    "track_title": spec["track"].title if spec.get("track") else None,
-                    "render_status": "pending",
-                    "ok": False,
-                    # Seed the authored moment onto the row BEFORE the render even
-                    # starts (not just once `base` persists it below): a crash/OOM
-                    # between here and the first `_upsert_variant_entry(result)`
-                    # would otherwise leave this pending row as the only persisted
-                    # state, and _run_regenerate_variant's `existing.get(...)`
-                    # reads THIS row — so a carousel_moment authored but never
-                    # rendered must still be visible to a re-render.
-                    "carousel_moment": spec.get("carousel_moment"),
-                },
-            ) is False:
+            if (
+                _upsert_variant_entry(
+                    job_id,
+                    {
+                        "variant_id": spec["variant_id"],
+                        "rank": initial_specs.index(spec) + 1,
+                        "text_mode": spec.get("text_mode", "agent_text"),
+                        "music_track_id": spec["track"].id if spec.get("track") else None,
+                        "track_title": spec["track"].title if spec.get("track") else None,
+                        "render_status": "pending",
+                        "ok": False,
+                        # Seed the authored moment onto the row BEFORE the render even
+                        # starts (not just once `base` persists it below): a crash/OOM
+                        # between here and the first `_upsert_variant_entry(result)`
+                        # would otherwise leave this pending row as the only persisted
+                        # state, and _run_regenerate_variant's `existing.get(...)`
+                        # reads THIS row — so a carousel_moment authored but never
+                        # rendered must still be visible to a re-render.
+                        "carousel_moment": spec.get("carousel_moment"),
+                    },
+                )
+                is False
+            ):
                 return
 
         try:
@@ -1650,18 +1656,21 @@ def _run_generative_job_impl(
                 variant_policy=variant_policy,
             )
             for spec in fallback_specs:
-                if _upsert_variant_entry(
-                    job_id,
-                    {
-                        "variant_id": spec["variant_id"],
-                        "rank": fallback_specs.index(spec) + 1,
-                        "text_mode": spec.get("text_mode", "agent_text"),
-                        "music_track_id": spec["track"].id if spec.get("track") else None,
-                        "track_title": spec["track"].title if spec.get("track") else None,
-                        "render_status": "pending",
-                        "ok": False,
-                    },
-                ) is False:
+                if (
+                    _upsert_variant_entry(
+                        job_id,
+                        {
+                            "variant_id": spec["variant_id"],
+                            "rank": fallback_specs.index(spec) + 1,
+                            "text_mode": spec.get("text_mode", "agent_text"),
+                            "music_track_id": spec["track"].id if spec.get("track") else None,
+                            "track_title": spec["track"].title if spec.get("track") else None,
+                            "render_status": "pending",
+                            "ok": False,
+                        },
+                    )
+                    is False
+                ):
                     return
             results = _render_spec_set(fallback_specs, None)
 
@@ -1754,9 +1763,7 @@ def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if (
             job is None
-            or _cancelled_job_write_rejected(
-                job, operation="visual_blocks_autoplace", db=db
-            )
+            or _cancelled_job_write_rejected(job, operation="visual_blocks_autoplace", db=db)
             or job.content_plan_item_id is None
         ):
             return
@@ -3091,9 +3098,7 @@ def _run_media_overlay_pass(
             locked_job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if locked_job is None:
                 return False, False, False, False
-            if _cancelled_job_write_rejected(
-                locked_job, operation="media_overlay_persist", db=db
-            ):
+            if _cancelled_job_write_rejected(locked_job, operation="media_overlay_persist", db=db):
                 return False, False, False, True
             variants = list((locked_job.assembly_plan or {}).get("variants") or [])
             stale_write_skipped = False
@@ -5068,9 +5073,9 @@ def _reburn_text_on_base(
                 upload_key_base=base_gcs_path,
                 duration_s=_te_dur,
                 job_id=job_id,
-                    variant_id=variant_id,
-                    cut_boundaries_s=_variant_slot_boundaries(existing),
-                    created_storage_paths=created_storage_paths,
+                variant_id=variant_id,
+                cut_boundaries_s=_variant_slot_boundaries(existing),
+                created_storage_paths=created_storage_paths,
             )
             _burn_text_for_variant(local_base, _te_burn_dicts, _te_final_path, matte=_te_provider)
             _te_gcs_key = reburn_output_key
@@ -7123,13 +7128,16 @@ def _run_regenerate_variant(
                     existing_music_window_duration_s = active_timeline_duration_s
 
     # Mark this variant as re-rendering so the UI can show a spinner immediately.
-    if _update_variant_entry(
-        job_id,
-        variant_id,
-        {"render_status": "rendering", "ok": False, "error": None},
-        expected_render_gen_id=render_gen_id,
-        outcome="regenerate_start",
-    ) is False:
+    if (
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            {"render_status": "rendering", "ok": False, "error": None},
+            expected_render_gen_id=render_gen_id,
+            outcome="regenerate_start",
+        )
+        is False
+    ):
         return
 
     # ── Fast-reburn path ──────────────────────────────────────────────────────
@@ -7995,9 +8003,7 @@ def _update_variant_entry(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
-        if _cancelled_job_write_rejected(
-            job, operation=outcome or "variant_update", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation=outcome or "variant_update", db=db):
             _delete_cancelled_job_objects(job_id, cancelled_cleanup_paths or [])
             return False
         plan = dict(job.assembly_plan or {})
@@ -8063,6 +8069,13 @@ def _variant_specs(best_track: MusicTrack | None) -> list[dict[str, Any]]:
 
 
 def _content_plan_primary_montage_spec(best_track: MusicTrack | None) -> dict[str, Any]:
+    # Optional lyrics are an editor capability of the track-backed text edit,
+    # not a reason to replace the generated intro. Choosing song_lyrics here
+    # would suppress the intro because its text_mode is "lyrics"; when lyrics
+    # are optional that creates a valid but textless primary output. Flag-off
+    # deliberately keeps the legacy first-renderable-variant selection.
+    if bool(settings.lyrics_optional_enabled) and best_track is not None:
+        return {"variant_id": "song_text", "text_mode": "agent_text", "track": best_track}
     return _variant_specs(best_track)[0]
 
 
@@ -9439,17 +9452,19 @@ def _render_generative_variant(
     lyrics_available = (
         lyrics_variant_renderable(track.lyrics_cached) if track is not None else False
     )
-    # Lyrics-as-optional-elements (LYRICS_OPTIONAL_ENABLED): every render pass
-    # for a song_lyrics variant made while the flag is on skips baking lyrics
-    # into pixels entirely, regardless of the `lyrics_enabled` kwarg — the
-    # variant always renders lyrics-free (clean base, like song_text) and the
-    # editor's Lyrics toggle instead materializes beat-synced lyric lines as
-    # ordinary `role=lyric_line` TextElements (GET .../lyric-seeds) that burn
-    # through the normal fast-text-reburn path on save. This is intentionally
-    # unconditional on `lyrics_enabled` — a variant becomes "new model" the
-    # moment it's (re-)rendered under the flag; flag-off (or a non-lyrics
-    # variant) leaves `effective_lyrics_enabled` untouched, byte-identical.
-    lyrics_optional_active = bool(settings.lyrics_optional_enabled) and text_mode == "lyrics"
+    # Lyrics-as-optional-elements (LYRICS_OPTIONAL_ENABLED): lyrics are a
+    # capability of any track-backed text variant with renderable lyrics. This
+    # includes song_text, whose generated intro remains authoritative while the
+    # editor can materialize beat-synced `role=lyric_line` TextElements on
+    # demand. A legacy song_lyrics variant rendered under the flag also stays
+    # clean. Flag-off leaves both pixels and persisted dict shape unchanged.
+    lyrics_optional_active = bool(
+        settings.lyrics_optional_enabled
+        and (
+            text_mode == "lyrics"
+            or (variant_id == "song_text" and track is not None and lyrics_available)
+        )
+    )
     if lyrics_optional_active:
         effective_lyrics_enabled = False
 
@@ -9573,11 +9588,12 @@ def _render_generative_variant(
         )
     if lyrics_optional_active:
         # Only stamped when the flag actually skipped baking — absent (None
-        # via .get()) for every flag-off render and every non-lyrics variant,
-        # which is what keeps "flag off = byte-identical" true at the dict-
-        # shape level too (same pattern as montage_preset above). Every
-        # reader treats `variant.get("lyrics_baked") is False` as "new model"
-        # and anything else (True/None/absent) as "legacy baked".
+        # via .get()) for every flag-off render and every variant that is not
+        # an optional-lyrics song_lyrics/song_text target. That keeps "flag
+        # off = byte-identical" true at the dict-shape level too (same pattern
+        # as montage_preset above). Every reader treats
+        # `variant.get("lyrics_baked") is False` as "new model" and anything
+        # else (True/None/absent) as "legacy baked".
         base["lyrics_baked"] = False
     variant_t0 = time.monotonic()
     try:
@@ -15561,9 +15577,7 @@ def _claim_speech_cut_finalize(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
-        if _cancelled_job_write_rejected(
-            job, operation="claim_speech_cut_finalize", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation="claim_speech_cut_finalize", db=db):
             return False
         plan = job.assembly_plan or {}
         control = dict(plan.get("speech_cut_control") or {})
@@ -15618,9 +15632,7 @@ def _release_speech_cut_finalize_claim(job_id: str, operation_id: str, attempt_i
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
-        if _cancelled_job_write_rejected(
-            job, operation="release_speech_cut_finalize", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation="release_speech_cut_finalize", db=db):
             return False
         plan = job.assembly_plan or {}
         control = dict(plan.get("speech_cut_control") or {})
@@ -15808,9 +15820,7 @@ def _restore_failed_speech_cut_rerender(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
-        if _cancelled_job_write_rejected(
-            job, operation="restore_failed_speech_cut", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation="restore_failed_speech_cut", db=db):
             return False
         plan = job.assembly_plan or {}
         prior = plan.get("speech_cut_previous_variant")
@@ -16256,9 +16266,7 @@ def _persist_archetype_fallback(job_id: str, declared: str, reason: str | None) 
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return
-        if _cancelled_job_write_rejected(
-            job, operation="persist_archetype_fallback", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation="persist_archetype_fallback", db=db):
             return
         plan = job.assembly_plan or {}
         if reason:
@@ -16290,9 +16298,7 @@ def _set_status(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
-        if _cancelled_job_write_rejected(
-            job, operation=f"set_status:{status}", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation=f"set_status:{status}", db=db):
             return False
         if expected_speech_cut_operation_id and expected_speech_cut_attempt_id:
             control = (job.assembly_plan or {}).get("speech_cut_control") or {}

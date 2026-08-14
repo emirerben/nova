@@ -355,7 +355,20 @@ def test_variant_specs_missing_language_fails_open():
     assert specs[0]["variant_id"] == "song_lyrics"
 
 
-def test_content_plan_primary_montage_prefers_lyrics_when_renderable():
+def test_content_plan_primary_montage_uses_song_text_when_lyrics_are_optional(monkeypatch):
+    monkeypatch.setattr(gb.settings, "lyrics_optional_enabled", True)
+    specs = gb._specs_for_archetype(
+        "montage",
+        _track(),
+        variant_policy=gb.CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+    )
+    assert [s["variant_id"] for s in specs] == ["song_text"]
+    assert specs[0]["text_mode"] == "agent_text"
+    assert specs[0]["track"] is not None
+
+
+def test_content_plan_primary_montage_flag_off_preserves_baked_lyrics(monkeypatch):
+    monkeypatch.setattr(gb.settings, "lyrics_optional_enabled", False)
     specs = gb._specs_for_archetype(
         "montage",
         _track(),
