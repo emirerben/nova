@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.31.0.1] — 2026-08-14
+
+### Fixed
+- **Plan edit now proposes a short story instead of listing every upload as a separate beat.** Related photos and videos are grouped into three to five distinct chapters, while neutral AI drafts can no longer imply that the creator visited, enjoyed, tasted, or felt something unless they wrote that context themselves.
+- **Live proposal evaluation accepts natural chapter names without weakening the quality gate.** Replay fixtures still pin expected vocabulary; live Gemini output is judged semantically for complete-media use, coherent topics, creator direction, safe thoughts, and editability.
+
 ## [0.31.0.0] — 2026-08-14
 
 ### Added

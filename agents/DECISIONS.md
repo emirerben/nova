@@ -1045,6 +1045,11 @@ montage.
   tone, but it may not claim where the creator went, what food tasted like, who was present, or how
   the creator felt without creator-written context. AI thoughts retain `thought_source=ai_draft`
   until the whole proposal is approved; direct user edits switch that thought to `user`.
+- **Proposal beats are chapters, not a file list.** Live evaluation showed the first planner could
+  produce one generic beat per upload and use experiential wording without creator context. The
+  planner now groups at least three distinct topics into no more than five chapters. Its parser
+  strips safe-to-remove sensory modifiers and rejects unsupported personal actions or remaining
+  sensory claims before a draft reaches the creator.
 - **No legacy bypass after enforcement.** Route and task-side dispatch both return
   `proposal_required`, `proposal_draft`, `proposal_stale`, or `proposal_analyzing`. Media mutations
   retain the last approval for comparison and mark the current plan stale. CAS versions prevent a

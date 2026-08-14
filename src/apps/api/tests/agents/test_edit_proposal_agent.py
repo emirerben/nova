@@ -60,6 +60,74 @@ def test_accepts_every_source_for_a_small_upload() -> None:
     assert output.title == "What I noticed in Corfu"
 
 
+def test_rejects_repeated_chapter_topics() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
+    for beat in payload["story_beats"]:
+        beat["topic"] = "Architecture"
+
+    with pytest.raises(SchemaError, match="at least 3 distinct topics"):
+        agent.parse(json.dumps(payload), _input())
+
+
+def test_rejects_more_than_five_chapters() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
+    payload["story_beats"] = [
+        {
+            "topic": f"Chapter {index}",
+            "thought": "A visible detail connects this part of the story.",
+            "media_ids": [f"media-{index}", f"media-{(index + 1) % 7}"],
+            "layout": "fullscreen",
+            "duration_s": 4,
+        }
+        for index in range(6)
+    ]
+
+    with pytest.raises(SchemaError, match="at most 5 items"):
+        agent.parse(json.dumps(payload), _input())
+
+
+def test_rejects_unsupported_personal_draft_without_creator_context() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
+    payload["story_beats"][0]["thought"] = "Enjoying a delicious meal by the water."
+
+    with pytest.raises(SchemaError, match="unsupported personal experience"):
+        agent.parse(json.dumps(payload), _input())
+
+
+def test_rejects_context_free_action_lead() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
+    payload["story_beats"][0]["thought"] = "Exploring the narrow streets at sunset."
+
+    with pytest.raises(SchemaError, match="unsupported personal experience"):
+        agent.parse(json.dumps(payload), _input())
+
+
+def test_neutralizes_context_free_sensory_modifier() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
+    payload["story_beats"][0]["thought"] = "A refreshing ice cream sits beside a tasty pastry."
+
+    output = agent.parse(json.dumps(payload), _input())
+
+    assert output.story_beats[0].thought == "An ice cream sits beside a pastry."
+
+
+def test_creator_context_can_authorize_a_personal_draft() -> None:
+    agent_input = _input()
+    for media in agent_input.media:
+        media.user_context = "I loved this meal by the water."
+    payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
+    payload["story_beats"][0]["thought"] = "I loved this meal by the water."
+
+    output = EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+
+    assert output.story_beats[0].thought == "I loved this meal by the water."
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -68,6 +136,13 @@ def test_accepts_every_source_for_a_small_upload() -> None:
         (
             lambda payload: [beat.update(duration_s=1) for beat in payload["story_beats"]],
             "beat durations do not fit",
+        ),
+        (
+            lambda payload: payload["story_beats"][0].update(
+                thought="one two three four five six seven eight nine ten eleven twelve thirteen "
+                "fourteen fifteen sixteen seventeen eighteen nineteen"
+            ),
+            "exceeds 18 words",
         ),
     ],
 )

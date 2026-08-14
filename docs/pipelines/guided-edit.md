@@ -102,7 +102,8 @@ detail and proposal mutation responses carry the full review payload, keeping li
 
 - State/CAS/digest tests: `tests/services/test_edit_proposals.py`
 - API Generate codes: `tests/routes/test_plan_item_generation.py`
-- Source-diversity parser guard: `tests/agents/test_edit_proposal_agent.py`
+- Source-diversity, distinct-chapter, and observation-only draft guards:
+  `tests/agents/test_edit_proposal_agent.py`
 - Replay/live+judge travel cases: `tests/evals/test_edit_proposal_evals.py`
 - Frontend review flow: `src/__tests__/plan/edit-proposal-card.test.tsx`
 
@@ -116,5 +117,5 @@ pytest tests/evals/test_edit_proposal_evals.py -v
 Run it against Gemini and the judge before changing the prompt:
 
 ```bash
-NOVA_EVAL_MODE=live pytest tests/evals/test_edit_proposal_evals.py -v --with-judge
+NOVA_EVAL_MODE=live pytest tests/evals/test_edit_proposal_evals.py -v --with-judge --allow-cost
 ```
