@@ -3933,6 +3933,36 @@ _POOL_RESERVATION_TTL = timedelta(minutes=15)
 _POOL_RESERVATION_CLEANUP_GRACE = timedelta(minutes=15)
 _MAX_POOL_IMAGE_BYTES = 25 * 1024 * 1024
 _MAX_POOL_VIDEO_BYTES = 512 * 1024 * 1024
+_POOL_REUSABLE_STATUSES = {"uploaded", "queued", "analyzing", "ready", "failed"}
+
+
+def _pool_asset_counts_toward_capacity(now: datetime):
+    """Count committed assets and only reservations still inside their grace window."""
+    reservation_cutoff = now - _POOL_RESERVATION_CLEANUP_GRACE
+    legacy_cutoff = now - (_POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE)
+    return or_(
+        PlanItemAsset.status.notin_({"preparing", "promoting"}),
+        and_(
+            PlanItemAsset.status.in_({"preparing", "promoting"}),
+            or_(
+                PlanItemAsset.upload_expires_at >= reservation_cutoff,
+                and_(
+                    PlanItemAsset.upload_expires_at.is_(None),
+                    PlanItemAsset.created_at >= legacy_cutoff,
+                ),
+            ),
+        ),
+    )
+
+
+def _pool_reservation_is_expired(reservation: PlanItemAsset, now: datetime) -> bool:
+    expires_at = getattr(reservation, "upload_expires_at", None)
+    if isinstance(expires_at, datetime):
+        return expires_at < now - _POOL_RESERVATION_CLEANUP_GRACE
+    created_at = getattr(reservation, "created_at", None)
+    return isinstance(created_at, datetime) and created_at < now - (
+        _POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE
+    )
 
 
 def _require_autoplace() -> None:
@@ -4001,6 +4031,52 @@ async def _cleanup_reserved_pool_path(path: str, *, reservation_id: str) -> None
     )
 
 
+async def _cleanup_expired_pool_reservation(reservation: PlanItemAsset) -> None:
+    """Remove every object an abandoned preparing/promotion claim may own."""
+    targets: list[tuple[str, str | None]] = [
+        (reservation.gcs_path, getattr(reservation, "gcs_generation", None))
+    ]
+    promotion = (
+        (reservation.analysis or {}).get("_upload_promotion")
+        if isinstance(reservation.analysis, dict)
+        else None
+    )
+    if isinstance(promotion, dict):
+        source_path = promotion.get("source_path")
+        source_generation = promotion.get("source_generation")
+        destination_path = promotion.get("destination_path")
+        if isinstance(source_path, str) and source_path:
+            targets[0] = (
+                source_path,
+                str(source_generation) if source_generation else None,
+            )
+        if isinstance(destination_path, str) and destination_path:
+            targets.append((destination_path, None))
+
+    for path, generation in dict.fromkeys(targets):
+        cleaned = await asyncio.to_thread(
+            storage.delete_object_generation_best_effort
+            if generation
+            else storage.delete_object_best_effort,
+            path,
+            **({"generation": str(generation)} if generation else {}),
+        )
+        if not cleaned:
+            log.warning(
+                "pool_asset_reservation_cleanup_failed",
+                reservation_id=str(reservation.id),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "message": "Kria couldn't refresh this upload yet. Retry in a moment.",
+                    "code": "upload_cleanup_temporarily_unavailable",
+                    "retryable": True,
+                    "stage": "reservation_cleanup",
+                },
+            )
+
+
 @router.post("/{item_id}/assets/upload-urls", response_model=PoolUploadUrlsResponse)
 async def create_pool_upload_urls(
     item_id: str,
@@ -4050,7 +4126,7 @@ async def create_pool_upload_urls(
                 select(PlanItemAsset)
                 .where(
                     PlanItemAsset.plan_item_id == item.id,
-                    PlanItemAsset.status == "preparing",
+                    PlanItemAsset.status.in_({"preparing", "promoting"}),
                     or_(
                         PlanItemAsset.upload_expires_at < now - _POOL_RESERVATION_CLEANUP_GRACE,
                         and_(
@@ -4067,7 +4143,7 @@ async def create_pool_upload_urls(
         .all()
     )
     for row in stale:
-        await _cleanup_reserved_pool_path(row.gcs_path, reservation_id=str(row.id))
+        await _cleanup_expired_pool_reservation(row)
         await db.delete(row)
 
     existing_by_client = {
@@ -4095,15 +4171,7 @@ async def create_pool_upload_urls(
                 .select_from(PlanItemAsset)
                 .where(
                     PlanItemAsset.plan_item_id == item.id,
-                    or_(
-                        PlanItemAsset.status != "preparing",
-                        PlanItemAsset.upload_expires_at >= now - _POOL_RESERVATION_CLEANUP_GRACE,
-                        and_(
-                            PlanItemAsset.upload_expires_at.is_(None),
-                            PlanItemAsset.created_at
-                            >= now - (_POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE),
-                        ),
-                    ),
+                    _pool_asset_counts_toward_capacity(now),
                 )
             )
         ).scalar_one()
@@ -4502,6 +4570,27 @@ async def register_pool_asset(
         if reservation is None:
             raise HTTPException(status_code=404, detail="Upload reservation not found.")
         if reservation.status not in {"preparing", "promoting"}:
+            if reservation.status == "uploaded":
+                retry_staging_prefix = f"{_staging_prefix}{reservation.id}/"
+                if body.gcs_path != reservation.gcs_path and not body.gcs_path.startswith(
+                    retry_staging_prefix
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Upload target does not match its reservation.",
+                    )
+                await _queue_pool_asset_analysis(reservation, db)
+                if body.gcs_path.startswith(retry_staging_prefix):
+                    cleaned = await asyncio.to_thread(
+                        storage.delete_object_best_effort,
+                        body.gcs_path,
+                    )
+                    if not cleaned:
+                        log.warning(
+                            "pool_asset_staging_cleanup_deferred",
+                            reservation_id=str(reservation.id),
+                        )
+                return _asset_out(reservation)
             if reservation.status in {"queued", "analyzing", "ready", "failed"}:
                 return _asset_out(reservation)
             raise HTTPException(
@@ -4528,7 +4617,10 @@ async def register_pool_asset(
         if path_owner is not None:
             if path_owner.status in {"preparing", "promoting"}:
                 reservation = path_owner
-            elif path_owner.status in {"uploaded", "queued", "analyzing", "ready", "failed"}:
+            elif path_owner.status == "uploaded":
+                await _queue_pool_asset_analysis(path_owner, db)
+                return _asset_out(path_owner)
+            elif path_owner.status in _POOL_REUSABLE_STATUSES:
                 return _asset_out(path_owner)
             else:
                 raise HTTPException(
@@ -4572,6 +4664,19 @@ async def register_pool_asset(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This upload reservation is no longer available.",
             )
+    if reservation is not None and _pool_reservation_is_expired(reservation, datetime.now(UTC)):
+        await _cleanup_expired_pool_reservation(reservation)
+        await db.delete(reservation)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "This upload link expired. Retry the upload to get a new link.",
+                "code": "upload_reservation_expired",
+                "retryable": True,
+                "stage": "transfer",
+            },
+        )
     if reservation is not None and reservation.gcs_path != body.gcs_path:
         raise HTTPException(
             status_code=409,
@@ -4617,10 +4722,13 @@ async def register_pool_asset(
                     PlanItemAsset.plan_item_id == item.id,
                     PlanItemAsset.content_hash == body.content_hash,
                     PlanItemAsset.id != (reservation.id if reservation else uuid.UUID(int=0)),
+                    PlanItemAsset.status.in_(_POOL_REUSABLE_STATUSES),
                 )
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if existing.status == "uploaded":
+                await _queue_pool_asset_analysis(existing, db)
             cleaned_context = _clean_pool_asset_context(body.user_context)
             if body.user_context is not None and existing.user_context != cleaned_context:
                 existing.user_context = cleaned_context
@@ -4645,7 +4753,10 @@ async def register_pool_asset(
                 await db.execute(
                     select(func.count())
                     .select_from(PlanItemAsset)
-                    .where(PlanItemAsset.plan_item_id == item.id)
+                    .where(
+                        PlanItemAsset.plan_item_id == item.id,
+                        _pool_asset_counts_toward_capacity(datetime.now(UTC)),
+                    )
                 )
             ).scalar_one()
         )
@@ -4890,11 +5001,14 @@ async def upload_pool_asset(
                 .where(
                     PlanItemAsset.plan_item_id == locked_item.id,
                     PlanItemAsset.content_hash == content_hash,
+                    PlanItemAsset.status.in_(_POOL_REUSABLE_STATUSES),
                 )
                 .with_for_update()
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if existing.status == "uploaded":
+                await _queue_pool_asset_analysis(existing, db)
             await db.rollback()
             return _asset_out(existing, deduped=True)
 
@@ -4903,7 +5017,10 @@ async def upload_pool_asset(
                 await db.execute(
                     select(func.count())
                     .select_from(PlanItemAsset)
-                    .where(PlanItemAsset.plan_item_id == locked_item.id)
+                    .where(
+                        PlanItemAsset.plan_item_id == locked_item.id,
+                        _pool_asset_counts_toward_capacity(datetime.now(UTC)),
+                    )
                 )
             ).scalar_one()
         )

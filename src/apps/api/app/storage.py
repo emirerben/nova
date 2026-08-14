@@ -22,6 +22,7 @@ class ObjectMetadata:
     etag: str | None
     size: int
     content_type: str
+    md5_hash: str | None = None
 
 
 def get_gcp_credentials(
@@ -498,6 +499,7 @@ def object_metadata(object_path: str) -> ObjectMetadata:
         etag=blob.etag,
         size=int(blob.size or 0),
         content_type=blob.content_type or "video/mp4",
+        md5_hash=blob.md5_hash,
     )
 
 

@@ -9,6 +9,7 @@ check on register, and the silent-rollback trap (`db.commit` awaited on writes).
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -133,6 +134,26 @@ def _db(execute_results: list, plan) -> AsyncMock:
 def _override(user, db) -> None:
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
+
+
+def _assert_capacity_query_expires_abandoned_reservations(db: AsyncMock) -> None:
+    count_sql = next(
+        str(call.args[0])
+        for call in db.execute.await_args_list
+        if "count(*)" in str(call.args[0]).lower()
+    )
+    assert "plan_item_assets.status NOT IN" in count_sql
+    assert "plan_item_assets.upload_expires_at" in count_sql
+    assert "plan_item_assets.created_at" in count_sql
+
+
+def _assert_dedupe_query_reuses_only_finalized_assets(db: AsyncMock) -> None:
+    dedupe_sql = next(
+        str(call.args[0])
+        for call in db.execute.await_args_list
+        if "AND plan_item_assets.content_hash =" in str(call.args[0])
+    )
+    assert "plan_item_assets.status IN" in dedupe_sql
 
 
 @pytest.fixture()
@@ -598,6 +619,67 @@ def test_upload_urls_keeps_old_target_when_cleanup_must_retry(client: TestClient
     db.commit.assert_not_awaited()
 
 
+def test_upload_urls_cleans_expired_promotion_before_counting_capacity(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "promoting"
+    reservation.client_upload_id = "abandoned-file"
+    reservation.upload_expires_at = datetime.now(UTC) - timedelta(hours=1)
+    source_path = f"dev-user/{user.id}/plan-pool-reservations/{item.id}/{reservation.id}/old.png"
+    destination_path = f"users/{user.id}/plan/{item.id}/pool/{reservation.id}-old.png"
+    reservation.gcs_path = source_path
+    reservation.gcs_generation = None
+    reservation.analysis = {
+        "_upload_promotion": {
+            "source_path": source_path,
+            "source_generation": "42",
+            "destination_path": destination_path,
+        }
+    }
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([reservation]),
+            _scalars_result([]),
+            _scalar_result(0),
+        ],
+        plan,
+    )
+    _override(user, db)
+
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch(
+            "app.routes.plan_items.storage.delete_object_generation_best_effort",
+            return_value=True,
+        ) as exact_cleanup,
+        patch(
+            "app.routes.plan_items.storage.delete_object_best_effort",
+            return_value=True,
+        ) as latest_cleanup,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets/upload-urls",
+            json={
+                "files": [
+                    {
+                        "filename": "new.png",
+                        "content_type": "image/png",
+                        "file_size_bytes": 100,
+                        "client_upload_id": "new-file",
+                    }
+                ]
+            },
+        )
+
+    assert resp.status_code == 200
+    exact_cleanup.assert_called_once_with(source_path, generation="42")
+    latest_cleanup.assert_called_once_with(destination_path)
+    db.delete.assert_awaited_once_with(reservation)
+    _assert_capacity_query_expires_abandoned_reservations(db)
+
+
 # ── register ──────────────────────────────────────────────────────────────────
 
 
@@ -641,6 +723,8 @@ def test_register_happy_path_commits(client: TestClient, _no_real_broker_publish
     publish = _no_real_broker_publish.call_args
     assert publish.kwargs["args"] == [body["id"], False]
     assert publish.kwargs["headers"]["pool_asset_attempt_token"]
+    _assert_capacity_query_expires_abandoned_reservations(db)
+    _assert_dedupe_query_reuses_only_finalized_assets(db)
 
 
 def test_queued_response_maps_to_uploaded_until_frontend_activation(
@@ -725,6 +809,111 @@ def test_reserved_registration_finalizes_once_and_repeat_is_idempotent(
     assert reservation.analysis_attempt_token
     assert reservation.analysis_last_dispatched_at is not None
     _no_real_broker_publish.assert_called_once()
+
+
+def test_reserved_registration_recovers_uploaded_crash_gap(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "uploaded"
+    reservation.analysis_attempt_count = 0
+    reservation.gcs_generation = "84"
+    staging_path = (
+        f"dev-user/{user.id}/plan-pool-reservations/{item.id}/{reservation.id}/original.png"
+    )
+    db = _db([_scalar_result(item), _scalar_result(reservation)], plan)
+    _override(user, db)
+
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+        patch(
+            "app.routes.plan_items.storage.delete_object_best_effort",
+            return_value=True,
+        ) as cleanup,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "reservation_id": str(reservation.id),
+                "gcs_path": staging_path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert reservation.status == "queued"
+    assert reservation.analysis_attempt_token
+    _no_real_broker_publish.assert_called_once()
+    cleanup.assert_called_once_with(staging_path)
+
+
+def test_reserved_registration_rejects_expired_reservation(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.upload_expires_at = datetime.now(UTC) - timedelta(hours=1)
+    reservation.gcs_path = (
+        f"dev-user/{user.id}/plan-pool-reservations/{item.id}/{reservation.id}/expired.png"
+    )
+    db = _db([_scalar_result(item), _scalar_result(reservation)], plan)
+    _override(user, db)
+
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "reservation_id": str(reservation.id),
+                "gcs_path": reservation.gcs_path,
+                "content_type": "image/png",
+            },
+        )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == {
+        "message": "This upload link expired. Retry the upload to get a new link.",
+        "code": "upload_reservation_expired",
+        "retryable": True,
+        "stage": "transfer",
+    }
+    db.delete.assert_awaited_once_with(reservation)
+    _no_real_broker_publish.assert_not_called()
+
+
+def test_dedupe_against_uploaded_asset_dispatches_analysis(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    existing = _asset_row(item.id, user.id, content_hash="hash-1")
+    existing.status = "uploaded"
+    existing.analysis_attempt_count = 0
+    db = _db(
+        [_scalar_result(item), _scalar_result(None), _scalar_result(existing)],
+        plan,
+    )
+    _override(user, db)
+
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json=_register_body(user.id, item.id),
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["deduped"] is True
+    assert existing.status == "queued"
+    _no_real_broker_publish.assert_called_once()
+    _assert_dedupe_query_reuses_only_finalized_assets(db)
 
 
 def test_path_based_client_adopts_preparing_reservation(
@@ -1323,6 +1512,8 @@ def test_multipart_upload_uses_staging_and_shared_registration(client: TestClien
     upload.assert_called_once()
     assert upload.call_args.args[1] == reservation.gcs_path
     register.assert_awaited_once()
+    _assert_capacity_query_expires_abandoned_reservations(db)
+    _assert_dedupe_query_reuses_only_finalized_assets(db)
 
 
 def test_multipart_provider_failure_leaves_lifecycle_covered_reservation(client: TestClient):
