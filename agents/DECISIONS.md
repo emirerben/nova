@@ -989,3 +989,33 @@ drift with no guard).
   idea) pin the desired outputs.
 - **Merge gate:** live judge shadow A/B on a keyed machine (repo
   prompt-change rule) — replay CI guards artifacts, not model behavior.
+
+## [2026-08-14] Optional lyrics must not erase the content-plan intro
+
+A Corfu content-plan item rendered a technically valid 3.2-second sailboat
+video with no visible text. The intro writer had produced “pov: sailboat
+mornings in korfu,” and the selected song had usable lyrics, but two individually
+tested decisions interacted badly: content-plan primary montages chose the
+first renderable music variant (`song_lyrics`), while optional-lyrics mode made
+that variant start with lyrics off. Because a lyrics-mode variant does not burn
+the agent intro, both possible text layers disappeared. The renderer correctly
+produced an MP4; the product contract was wrong.
+
+**Decisions:**
+
+- **A generated intro is the default visible text.** With
+  `LYRICS_OPTIONAL_ENABLED=true`, a track-backed content-plan montage selects
+  `song_text` / `agent_text`, so the authored intro is persisted and burned.
+- **Lyrics are a capability, not a competing variant.** A track-backed
+  `song_text` variant with renderable lyrics is marked `lyrics_baked=false`; the existing
+  lyric-seed endpoint and text-element editor can add lyrics later without
+  replacing the intro. Its API capability follows `LYRICS_OPTIONAL_ENABLED`,
+  not the separate legacy baked-lyrics editor flag.
+- **The kill switch preserves the old path.** With optional lyrics disabled,
+  the selector still takes the first renderable variant, so a lyric-capable
+  track produces legacy `song_lyrics` with baked lyrics and the persisted dict
+  shape remains unchanged.
+- **Test interactions, not only branches.** The critical guard renders a
+  lyric-capable `song_text` under optional-lyrics mode and requires both the
+  Corfu-style intro persistence and the lyric-seed capability. Separate tests
+  continue to pin the legacy flag-off behavior.

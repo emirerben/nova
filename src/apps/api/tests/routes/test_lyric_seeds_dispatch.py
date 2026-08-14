@@ -153,6 +153,27 @@ async def test_lyric_seeds_derives_from_cache_when_no_snapshot(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+async def test_lyric_seeds_are_available_for_track_backed_song_text(monkeypatch) -> None:
+    """Optional lyrics are a capability of song_text, not a separate titleless
+    primary variant."""
+    monkeypatch.setattr(settings, "lyrics_optional_enabled", True, raising=False)
+    job = _job(
+        _variant(
+            variant_id="song_text",
+            text_mode="agent_text",
+            lyrics_available=True,
+            lyrics_enabled=False,
+            lyrics_baked=False,
+        )
+    )
+
+    result = await gj.dispatch_get_lyric_seeds(job, "song_text", _db(_track()))
+
+    assert [element["role"] for element in result["elements"]] == ["lyric_line"]
+    assert result["elements"][0]["text"] == "Hello bright world"
+
+
+@pytest.mark.asyncio
 async def test_lyric_seeds_prefers_snapshot_when_present(monkeypatch) -> None:
     """An anchored `lyric_overlay_snapshot` is used as-is (no re-derivation
     from the lyrics cache, no track_config lookup needed for timing)."""
