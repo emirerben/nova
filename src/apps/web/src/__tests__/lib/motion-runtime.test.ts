@@ -13,8 +13,15 @@ import {
   activeMotionFrameCount,
   activeMotionInstances,
   createCreatorBlockInstance,
+  creatorBlockEntry,
   routeTraceFrame,
-  creatorBlockFrame,
+  creatorBlockFrameV2,
+  continuousCardPose,
+  EVOLVING_TYPE_TIMING,
+  evolvingIconCopies,
+  evolvingTypeFrame,
+  organicPathPoints,
+  stableGraphemes,
   validateMotionInstances,
   type MotionPresetInstanceV1,
 } from "@nova/motion-runtime";
@@ -61,9 +68,9 @@ describe("shared motion runtime", () => {
     ).toBe(false);
   });
 
-  it("publishes exactly eight strict Creator Blocks", () => {
-    expect(CREATOR_BLOCK_CATALOG).toHaveLength(8);
-    expect(new Set(CREATOR_BLOCK_CATALOG.map((entry) => entry.preset_id)).size).toBe(8);
+  it("publishes exactly nine strict Creator Blocks", () => {
+    expect(CREATOR_BLOCK_CATALOG).toHaveLength(9);
+    expect(new Set(CREATOR_BLOCK_CATALOG.map((entry) => entry.preset_id)).size).toBe(9);
     expect(
       validateMotionInstances([
         {
@@ -185,11 +192,159 @@ describe("shared motion runtime", () => {
         });
         expect(validateMotionInstances([instance]).ok).toBe(true);
         for (const frame of [12, 12 + Math.floor(duration * 0.25), 12 + Math.floor(duration * 0.7), 11 + duration]) {
-          expect(Object.values(creatorBlockFrame(instance, frame)).every(Number.isFinite)).toBe(true);
+          const state = creatorBlockFrameV2(instance, frame, entry);
+          expect(Object.values(state).filter((value) => typeof value === "number").every(Number.isFinite)).toBe(true);
         }
       }
     },
   );
+
+  it("evaluates v2 phase joins continuously and names the sole hard-cut event", () => {
+    for (const entry of CREATOR_BLOCK_CATALOG) {
+      for (const easing of ["ease-out-cubic", "ease-in-out-cubic"] as const) {
+        const created = createCreatorBlockInstance({
+          id: `continuity-${entry.preset_id}-${easing}`,
+          presetId: entry.preset_id,
+          startFrame: 0,
+          endFrameExclusive: entry.default_duration_frames,
+          assets: ["a", "b", "c"].map((asset_id) => ({
+            asset_id,
+            gcs_path: `users/u/p/i/pool/${asset_id}.png`,
+          })),
+        });
+        const instance = { ...created, motion: { ...created.motion, easing } };
+        const choreographyEnd = Math.round(entry.base_choreography_frames / instance.motion.speed) - 1;
+        const exitStart = entry.default_duration_frames - entry.fixed_exit_frames;
+        const choreographySamples = [choreographyEnd - 1, choreographyEnd, choreographyEnd + 1]
+          .map((frame) => creatorBlockFrameV2(instance, frame, entry, {
+            offerSwapEvent: entry.preset_id === "offer_swap",
+          }));
+        const exitSamples = [exitStart - 1, exitStart, exitStart + 1]
+          .map((frame) => creatorBlockFrameV2(instance, frame, entry));
+        const choreographyVelocityBefore =
+          choreographySamples[1].choreography - choreographySamples[0].choreography;
+        const choreographyVelocityAfter =
+          choreographySamples[2].choreography - choreographySamples[1].choreography;
+        const exitVelocityBefore = exitSamples[1].opacity - exitSamples[0].opacity;
+        const exitVelocityAfter = exitSamples[2].opacity - exitSamples[1].opacity;
+        expect(Math.abs(choreographyVelocityBefore - choreographyVelocityAfter)).toBeLessThan(0.002);
+        expect(Math.abs(exitVelocityBefore - exitVelocityAfter)).toBeLessThan(0.002);
+        if (entry.preset_id !== "offer_swap") {
+          expect(choreographySamples.every((sample) => sample.choreographyEvent === null)).toBe(true);
+        }
+      }
+    }
+    const offer = createCreatorBlockInstance({
+      id: "offer-event",
+      presetId: "offer_swap",
+      startFrame: 0,
+      endFrameExclusive: 96,
+    });
+    expect(creatorBlockFrameV2(offer, 22, creatorBlockEntry("offer_swap"), { offerSwapEvent: true }).choreographyEvent).toBeNull();
+    expect(creatorBlockFrameV2(offer, 24, creatorBlockEntry("offer_swap"), { offerSwapEvent: true }).choreographyEvent).toBe("offer-swap");
+  });
+
+  it("renders one- and two-frame v2 trims as visible settled static frames", () => {
+    for (const entry of CREATOR_BLOCK_CATALOG) {
+      for (const span of [1, 2]) {
+        const instance = createCreatorBlockInstance({
+          id: `short-${entry.preset_id}-${span}`,
+          presetId: entry.preset_id,
+          startFrame: 4,
+          endFrameExclusive: 4 + span,
+        });
+        for (let frame = instance.start_frame; frame < instance.end_frame_exclusive; frame += 1) {
+          const state = creatorBlockFrameV2(instance, frame, entry);
+          expect(state.phase).toBe("hold");
+          expect(state.opacity).toBe(1);
+        }
+      }
+    }
+  });
+
+  it("uses continuous fractional card positions instead of active-index snapping", () => {
+    for (let index = 0; index < 6; index += 1) {
+      const before = continuousCardPose(0.24999, index, 6);
+      const after = continuousCardPose(0.25001, index, 6);
+      expect(Math.abs(after.x - before.x)).toBeLessThan(0.001);
+      expect(Math.abs(after.depth - before.depth)).toBeLessThan(0.001);
+    }
+  });
+
+  it("keeps Evolving Type at 159 frames with deterministic graphemes, paths, and stagger state", () => {
+    const entry = creatorBlockEntry("evolving_type");
+    const instance = createCreatorBlockInstance({
+      id: "evolving-state",
+      presetId: "evolving_type",
+      startFrame: 0,
+      endFrameExclusive: entry.default_duration_frames,
+    });
+    if (instance.preset_id !== "evolving_type") {
+      throw new Error("Expected an Evolving Type instance");
+    }
+    expect(entry.default_duration_frames).toBe(159);
+    expect(entry.base_choreography_frames + instance.motion.hold_frames + entry.fixed_exit_frames).toBe(159);
+    expect(stableGraphemes("İYİ e\u0301 👩‍🎨")).toEqual(["İ", "Y", "İ", " ", "e\u0301", " ", "👩‍🎨"]);
+    const frames = [0, 18, 48, 88, 110, 128, 141, 158].map((frame) =>
+      evolvingTypeFrame(instance, frame, EVOLVING_TYPE_TIMING),
+    );
+    expect(frames[0].headlineReveal).toBe(0);
+    expect(frames[3].headlineReveal).toBeGreaterThan(0.95);
+    expect(frames[4].icons.every((icon) => icon.grow > 0.99 && icon.morph > 0.99)).toBe(true);
+    expect(frames[5].timeline.phase).toBe("hold");
+    expect(frames.at(-1)?.timeline.opacity).toBe(0);
+    const maximum = {
+      ...instance,
+      params: {
+        ...instance.params,
+        headline: "W".repeat(48),
+        subtitle: "M".repeat(72),
+        icon_count: 5,
+        text_stagger_ms: 45,
+        icon_stagger_ms: 100,
+      },
+    };
+    const settledMaximum = evolvingTypeFrame(maximum, 110, EVOLVING_TYPE_TIMING);
+    expect(settledMaximum.headlineReveal).toBe(1);
+    expect(settledMaximum.subtitleReveal).toBe(1);
+    expect(
+      settledMaximum.icons.every(
+        (icon) => icon.grow === 1 && icon.split === 1 && icon.settle === 1 && icon.morph === 1,
+      ),
+    ).toBe(true);
+    const forwardIcons = evolvingTypeFrame(instance, 45, EVOLVING_TYPE_TIMING).icons;
+    const reverseIcons = evolvingTypeFrame(
+      { ...instance, params: { ...instance.params, order: "reverse" } },
+      45,
+      EVOLVING_TYPE_TIMING,
+    ).icons;
+    const centerOutIcons = evolvingTypeFrame(
+      { ...instance, params: { ...instance.params, order: "center-out" } },
+      45,
+      EVOLVING_TYPE_TIMING,
+    ).icons;
+    expect(forwardIcons[0].grow).toBeGreaterThan(reverseIcons[0].grow);
+    expect(centerOutIcons[1].grow).toBeGreaterThan(centerOutIcons[0].grow);
+    const material = organicPathPoints("organic", 3, 0.67, 0.65)
+      .flatMap((node) => Object.values(node).map((value) => value.toFixed(9)))
+      .join("|");
+    expect(createHash("sha256").update(material).digest("hex")).toBe(
+      "5f181310472e2ff0c3e69626e56d9cea483cbc85e31598023632895415eab326",
+    );
+    expect(
+      organicPathPoints("organic", 3, 0.67, 0.65),
+    ).toEqual(organicPathPoints("organic", 3, 0.67, 0.65));
+    expect(evolvingIconCopies(true, 0)).toEqual([{ direction: 0, alpha: 1 }]);
+    expect(evolvingIconCopies(true, 0.5)).toEqual([
+      { direction: 0, alpha: 0.5 },
+      { direction: -1, alpha: 0.25 },
+      { direction: 1, alpha: 0.25 },
+    ]);
+    expect(evolvingIconCopies(true, 1)).toEqual([
+      { direction: -1, alpha: 0.5 },
+      { direction: 1, alpha: 0.5 },
+    ]);
+  });
 
   it("rejects every Creator Block parameter boundary fail-closed", () => {
     const invalidParams: Array<[string, Record<string, unknown>]> = [
@@ -204,6 +359,7 @@ describe("shared motion runtime", () => {
         { asset_id: "b", gcs_path: "users/u/b.png" },
       ] }],
       ["donut_text", { left_text: "x".repeat(21), right_text: "ok" }],
+      ["evolving_type", { headline: "EVOLVE", subtitle: "NOW", icon_count: 9 }],
     ];
     for (const [preset_id, params] of invalidParams) {
       expect(validateMotionInstances([{ ...scene, preset_id, params }]).ok).toBe(false);
@@ -234,7 +390,7 @@ describe("shared motion runtime", () => {
       surface!.delete();
     }
     expect(MOTION_RUNTIME_HASH).toBe(
-      "motion-v3:ck0.40.0:b2556106:2abfa191:creator-blocks-v2",
+      "motion-v4:ck0.40.0:b2556106:2abfa191:creator-blocks-v3",
     );
   }, 30_000);
 
@@ -268,6 +424,21 @@ describe("shared motion runtime", () => {
       card_stack: { assets: Array.from({ length: 6 }, (_, i) => ({ asset_id: `image-${i}`, gcs_path: `users/u/p/i/pool/${i}.png` })) },
       film_strip: { assets: Array.from({ length: 8 }, (_, i) => ({ asset_id: `image-${i}`, gcs_path: `users/u/p/i/pool/${i}.png` })) },
       donut_text: { left_text: "W".repeat(20), right_text: "M".repeat(20) },
+      evolving_type: {
+        headline: "W".repeat(48),
+        subtitle: "M".repeat(72),
+        icon_count: 5,
+        icon_style: "botanical",
+        text_stagger_ms: 45,
+        icon_stagger_ms: 100,
+        morph_amplitude: 1,
+        density: "high",
+        layout: "spread",
+        order: "center-out",
+        typography_scale: 2,
+        backdrop_opacity: 1,
+        split_icons: true,
+      },
     };
     const pixelInfo = (width: number, height: number) => ({
       width,
@@ -399,7 +570,59 @@ describe("shared motion runtime", () => {
     }
   }, 30_000);
 
-  it("pins all eight Creator Blocks across portrait and landscape frames with trusted resources", async () => {
+  it("isolates Film Strip v2 image alpha from the shared paint state", async () => {
+    const CanvasKit = await CanvasKitInit({
+      locateFile: () => resolve(process.cwd(), "node_modules/canvaskit-wasm/bin/canvaskit.wasm"),
+    });
+    const fixtureSurface = CanvasKit.MakeSurface(32, 32)!;
+    const fixturePaint = new CanvasKit.Paint();
+    fixturePaint.setColor(CanvasKit.Color(255, 255, 255, 1));
+    fixtureSurface.getCanvas().drawRect(CanvasKit.XYWHRect(0, 0, 32, 32), fixturePaint);
+    fixtureSurface.flush();
+    const fixtureImage = fixtureSurface.makeImageSnapshot();
+    const bytes = fixtureImage.encodeToBytes(CanvasKit.ImageFormat.PNG, 100)!;
+    fixtureImage.delete();
+    fixturePaint.delete();
+    fixtureSurface.delete();
+    const resources = createMotionResources(CanvasKit, {
+      font: new Uint8Array(readFileSync(resolve(process.cwd(), "public/fonts/Inter-Bold.ttf"))),
+      images: { a: bytes, b: bytes, c: bytes },
+    });
+    const film = createCreatorBlockInstance({
+      id: "film-alpha",
+      presetId: "film_strip",
+      startFrame: 0,
+      endFrameExclusive: 120,
+      assets: ["a", "b", "c"].map((asset_id) => ({
+        asset_id,
+        gcs_path: `users/u/p/i/${asset_id}.png`,
+      })),
+    });
+    const prior = createCreatorBlockInstance({
+      id: "prior-paint",
+      presetId: "kinetic_word",
+      startFrame: 0,
+      endFrameExclusive: 75,
+    });
+    try {
+      const surface = CanvasKit.MakeSurface(160, 284)!;
+      drawMotionFrame(CanvasKit, surface.getCanvas(), [prior, film], 0, 160, 284, resources);
+      surface.flush();
+      const pixels = surface.getCanvas().readPixels(0, 0, {
+        width: 160,
+        height: 284,
+        colorType: CanvasKit.ColorType.RGBA_8888,
+        alphaType: CanvasKit.AlphaType.Unpremul,
+        colorSpace: CanvasKit.ColorSpace.SRGB,
+      }) as Uint8Array;
+      expect(Math.max(...pixels.filter((_value, index) => index % 4 === 3))).toBe(0);
+      surface.delete();
+    } finally {
+      resources.delete();
+    }
+  }, 30_000);
+
+  it("pins v1 unchanged and keeps all nine v2 blocks byte-identical between Node and Deno", async () => {
     const CanvasKit = await CanvasKitInit({
       locateFile: () => resolve(process.cwd(), "node_modules/canvaskit-wasm/bin/canvaskit.wasm"),
     });
@@ -442,6 +665,7 @@ describe("shared motion runtime", () => {
     const runtimeRoot = resolve(process.cwd(), "../../packages/motion-runtime");
     const fontPath = resolve(process.cwd(), "public/fonts/Inter-Bold.ttf");
     const hashes: string[] = [];
+    const legacyHashes: string[] = [];
     try {
       for (const entry of CREATOR_BLOCK_CATALOG) {
         const instance = createCreatorBlockInstance({
@@ -454,12 +678,20 @@ describe("shared motion runtime", () => {
             gcs_path: `users/user/plan/item/pool/${asset_id}.png`,
           })),
         });
+        const legacyInstance = entry.preset_id === "evolving_type"
+          ? null
+          : (({ motion: _motion, ...legacy }) => ({
+              ...legacy,
+              preset_version: 1 as const,
+            }))(instance);
         for (const [width, height] of [[540, 960], [960, 540]] as const) {
-          const sampledFrames = [
-            Math.max(1, Math.floor(entry.default_duration_frames * 0.08)),
-            Math.floor(entry.default_duration_frames / 2),
-            entry.default_duration_frames - 2,
-          ];
+          const sampledFrames = entry.preset_id === "evolving_type"
+            ? [1, 18, 48, 88, 128, 145, 157]
+            : [
+                Math.max(1, Math.floor(entry.default_duration_frames * 0.08)),
+                Math.floor(entry.default_duration_frames / 2),
+                entry.default_duration_frames - 2,
+              ];
           for (const frame of sampledFrames) {
             const surface = CanvasKit.MakeSurface(width, height)!;
             drawMotionFrame(CanvasKit, surface.getCanvas(), [instance], frame, width, height, resources);
@@ -468,6 +700,27 @@ describe("shared motion runtime", () => {
             const png = image.encodeToBytes(CanvasKit.ImageFormat.PNG, 100)!;
             const nodeHash = createHash("sha256").update(png).digest("hex");
             hashes.push(nodeHash);
+            if (legacyInstance) {
+              const legacySurface = CanvasKit.MakeSurface(width, height)!;
+              drawMotionFrame(
+                CanvasKit,
+                legacySurface.getCanvas(),
+                [legacyInstance as MotionPresetInstanceV1],
+                frame,
+                width,
+                height,
+                resources,
+              );
+              legacySurface.flush();
+              const legacyImage = legacySurface.makeImageSnapshot();
+              legacyHashes.push(
+                createHash("sha256")
+                  .update(legacyImage.encodeToBytes(CanvasKit.ImageFormat.PNG, 100)!)
+                  .digest("hex"),
+              );
+              legacyImage.delete();
+              legacySurface.delete();
+            }
             if (process.env.CREATOR_BLOCK_AUDIT_DIR) {
               mkdirSync(process.env.CREATOR_BLOCK_AUDIT_DIR, { recursive: true });
               writeFileSync(
@@ -514,8 +767,12 @@ describe("shared motion runtime", () => {
       rmSync(parityDir, { recursive: true, force: true });
     }
     expect(createHash("sha256").update(hashes.join("\n")).digest("hex")).toBe(
+      "3438073f49ec75bdb702a098386ba96972bd6afef90c454049b1651557532ba1",
+    );
+    expect(hashes).toHaveLength(62);
+    expect(createHash("sha256").update(legacyHashes.join("\n")).digest("hex")).toBe(
       "fa22e29864411964b467c30988f84f46a95b913bdee894b28909a09b543addf5",
     );
-    expect(hashes).toHaveLength(48);
+    expect(legacyHashes).toHaveLength(48);
   }, 60_000);
 });

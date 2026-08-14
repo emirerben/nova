@@ -50,7 +50,7 @@ import {
   createCreatorBlockInstance,
   MOTION_MAX_INSTANCES,
   type MotionPresetId,
-  type MotionPresetInstanceV1,
+  type MotionPresetInstance,
 } from "@nova/motion-runtime";
 import { CreatorBlockCatalogPreview } from "./MotionCanvasLayer";
 
@@ -91,6 +91,7 @@ export default function ToolDrawer({
   selectedMotionId = null,
   motionAvailable = false,
   motionRuntimeCompatible = true,
+  evolvingTypeEnabled = false,
   onAddMotion,
   onSelectMotion,
   visualAssets = [],
@@ -153,10 +154,11 @@ export default function ToolDrawer({
    *  the autoplace flag + the variant's `suggestions` capability). */
   overlaySuggestions?: React.ReactNode;
   visualBlocks?: VisualBlock[];
-  motionScenes?: MotionPresetInstanceV1[];
+  motionScenes?: MotionPresetInstance[];
   selectedMotionId?: string | null;
   motionAvailable?: boolean;
   motionRuntimeCompatible?: boolean;
+  evolvingTypeEnabled?: boolean;
   onAddMotion?: (presetId: MotionPresetId) => void;
   onSelectMotion?: (id: string) => void;
   visualAssets?: PoolAsset[];
@@ -456,6 +458,7 @@ export default function ToolDrawer({
             selectedSceneId={selectedMotionId}
             available={motionAvailable}
             runtimeCompatible={motionRuntimeCompatible}
+            evolvingTypeEnabled={evolvingTypeEnabled}
             assets={visualAssets}
             onAdd={onAddMotion}
             onSelect={onSelectMotion}
@@ -515,14 +518,16 @@ function MotionPresetsPanel({
   selectedSceneId,
   available,
   runtimeCompatible,
+  evolvingTypeEnabled,
   assets,
   onAdd,
   onSelect,
 }: {
-  scenes: MotionPresetInstanceV1[];
+  scenes: MotionPresetInstance[];
   selectedSceneId: string | null;
   available: boolean;
   runtimeCompatible: boolean;
+  evolvingTypeEnabled: boolean;
   assets: PoolAsset[];
   onAdd?: (presetId: MotionPresetId) => void;
   onSelect?: (id: string) => void;
@@ -542,7 +547,11 @@ function MotionPresetsPanel({
       </div>
       {reason && <p className="text-[11px] text-[#71717a]">{reason}</p>}
       <div className="grid grid-cols-2 gap-3" data-testid="creator-block-grid">
-        {CREATOR_BLOCK_CATALOG.map((entry) => {
+        {CREATOR_BLOCK_CATALOG.filter(
+          (entry) =>
+            entry.preset_id !== "evolving_type" ||
+            evolvingTypeEnabled,
+        ).map((entry) => {
           const readyImages = assets.filter(isBoundedCreatorImageAsset);
           const assetShortage = entry.min_assets > readyImages.length;
           const disabled = !!reason || !onAdd || scenes.length >= MOTION_MAX_INSTANCES || assetShortage;
@@ -634,6 +643,7 @@ function CreatorBlockThumbnail({
     card_stack: "▧ ▧",
     film_strip: "▥",
     donut_text: "CREATE · REPEAT",
+    evolving_type: "EVOLVE\n◌ ◍ ◉",
   };
   const assetIdentity = assets.map((asset) => `${asset.id}:${asset.status}:${asset.gcs_path}`).join("|");
   const instance = useMemo(() => {

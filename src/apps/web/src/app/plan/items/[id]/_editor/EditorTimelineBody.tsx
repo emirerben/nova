@@ -43,6 +43,7 @@ import {
 } from "@/lib/timeline/timeline-scale";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import type { TimelineClip } from "@/lib/generative-api";
+import type { MotionPresetInstance } from "@nova/motion-runtime";
 import type {
   EditorSelection,
   EditorSelectionKind,
@@ -133,6 +134,8 @@ export interface EditorMotionBar {
   label: string;
   start_s: number;
   end_s: number;
+  sourceScene: MotionPresetInstance;
+  readOnly?: boolean;
 }
 
 export type CarouselBlockPosition = "intro" | "middle" | "outro";
@@ -199,6 +202,7 @@ export interface EditorTimelineBodyProps {
   onPreviewMotionTiming?: (
     id: string,
     patch: Pick<EditorMotionBar, "start_s" | "end_s">,
+    origin: EditorMotionBar,
   ) => void;
 
   cameraEffects?: CameraEffect[];
@@ -330,7 +334,7 @@ type ActiveDrag =
       handle: "left" | "right" | "body";
       startTimelineX: number;
       pxPerSecond: number;
-      origin: Pick<EditorMotionBar, "start_s" | "end_s">;
+      origin: EditorMotionBar;
       active: boolean;
     }
   | {
@@ -842,7 +846,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       if (active.kind === "visual") {
         onPreviewVisualTiming?.(active.id, toBaseRange(next));
       } else if (active.kind === "motion") {
-        onPreviewMotionTiming?.(active.id, toBaseRange(next));
+        onPreviewMotionTiming?.(active.id, toBaseRange(next), active.origin);
       } else if (active.kind === "camera") {
         onPreviewCameraTiming?.(active.id, toBaseRange(next));
       } else {
@@ -988,7 +992,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       }),
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
-      origin: { start_s: block.start_s, end_s: block.end_s },
+      origin: block,
       active: false,
     };
   }
@@ -997,7 +1001,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     e: React.PointerEvent<HTMLElement>,
     block: EditorMotionBar,
   ) {
-    if (readOnly) return;
+    if (readOnly || block.readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -1011,7 +1015,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       }),
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
-      origin: { start_s: block.start_s, end_s: block.end_s },
+      origin: block,
       active: false,
     };
   }
@@ -1074,6 +1078,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         "body",
         drag.origin,
       );
+    } else if (drag?.kind === "motion") {
+      onPreviewMotionTiming?.(drag.id, toBaseRange(drag.origin), drag.origin);
     }
     setDragLabel(null);
   }
@@ -1480,12 +1486,12 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           dataKind="motion"
                           dataId={block.id}
                           dataRowIndex={rowIndex}
-                          onPointerDown={(event) => startMotionDrag(event, block)}
+                          onPointerDown={block.readOnly ? undefined : (event) => startMotionDrag(event, block)}
                           onPointerMove={(event) => updateDrag(event.clientX)}
                           onPointerUp={(event) => finishDrag(event, "motion", block.id)}
                           onPointerCancel={cancelDrag}
                           suppressClickRef={suppressClickRef}
-                          showTrimHandles
+                          showTrimHandles={!block.readOnly}
                           className="border border-lime-300 bg-lime-50 text-[#3f3f46]"
                         >
                           <span className="pointer-events-none truncate px-2 text-[10px] font-semibold">{block.label}</span>

@@ -825,6 +825,9 @@ class Settings(BaseSettings):
     # Curated CanvasKit motion-preset lane. The API/worker gate is flipped
     # before NEXT_PUBLIC_MOTION_SCENES_ENABLED so rolling deploys fail closed.
     motion_scenes_enabled: bool = False
+    # Exposure gate for new Evolving Type insertions and motion-control edits.
+    # Persisted instances continue to validate and render while disabled.
+    evolving_type_enabled: bool = False
 
     # Sound-effects glossary + user placement (PR-1 foundation). Admin-curated
     # SFX + user uploads placed at arbitrary timestamps in a plan-item variant.

@@ -1,0 +1,17 @@
+{
+  "version": "5",
+  "specifiers": {
+    "npm:canvaskit-wasm@0.40.0": "0.40.0"
+  },
+  "npm": {
+    "@webgpu/types@0.1.21": {
+      "integrity": "sha512-pUrWq3V5PiSGFLeLxoGqReTZmiiXwY3jRkIG5sLLKjyqNxrwm/04b4nw7LSmGWJcKk59XOM/YRTUwOzo4MMlow=="
+    },
+    "canvaskit-wasm@0.40.0": {
+      "integrity": "sha512-Od2o+ZmoEw9PBdN/yCGvzfu0WVqlufBPEWNG452wY7E9aT8RBE+ChpZF526doOlg7zumO4iCS+RAeht4P0Gbpw==",
+      "dependencies": [
+        "@webgpu/types"
+      ]
+    }
+  }
+}

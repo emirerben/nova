@@ -13,10 +13,10 @@ import {
 import { sequentialSlotLayout } from "@/app/plan/items/[id]/_editor/editor-bar-drag";
 import type { CopilotOpFamily } from "./ops";
 import {
-  CREATOR_BLOCK_CATALOG,
   creatorBlockEntry,
   type MotionPresetInstance,
 } from "@nova/motion-runtime";
+import creatorBlockAiCatalog from "@nova/motion-runtime/ai-catalog";
 
 export const COPILOT_SNAPSHOT_MAX_BYTES = 18000;
 export const COPILOT_BEAT_MARKS_MAX = 60;
@@ -215,17 +215,46 @@ export interface CopilotMotionBlockSnapshot {
   end_s: number;
   palette: MotionPresetInstance["palette"];
   intensity: number;
+  preset_version: 1 | 2;
+  motion?: {
+    speed: number;
+    easing: string;
+    hold_frames: number;
+  };
   params: Record<string, unknown>;
   mutation_fingerprint?: string;
 }
 
 export interface CopilotMotionCatalogSnapshot {
   preset_id: string;
+  preset_version: 2;
   label: string;
   kind: "text" | "media";
   default_duration_s: number;
   min_assets: number;
   defaults: Record<string, unknown>;
+  parameters: Array<{
+    key: string;
+    type: "string" | "string_list" | "asset_list" | "number" | "enum" | "boolean";
+    required: boolean;
+    min_length?: number;
+    max_length?: number;
+    min_items?: number;
+    max_items?: number;
+    minimum?: number;
+    maximum?: number;
+    step?: number;
+    values?: string[];
+  }>;
+  controls: Array<{
+    key: string;
+    type: "number" | "enum" | "boolean";
+    default: number | string | boolean;
+    minimum?: number;
+    maximum?: number;
+    step?: number;
+    values?: string[];
+  }>;
 }
 
 export interface CopilotSfxPlacementSnapshot {
@@ -490,6 +519,7 @@ export interface AllowedOpFamilyOptions {
   transitionsEnabled?: boolean;
   visualBlocksEnabled?: boolean;
   motionScenesEnabled?: boolean;
+  evolvingTypeEnabled?: boolean;
   /** Nova AI sandboxed effect language (PR6) is eligible for THIS variant
    * right now — CUSTOM_EFFECTS_ENABLED (frontend flag) AND a renderable
    * source video AND not read-only. Its own "custom_effect" family,
@@ -919,13 +949,26 @@ export function buildCopilotSnapshot(
   if (allowed.has("motion")) {
     snapshot.motion = {
       available: true,
-      catalog: CREATOR_BLOCK_CATALOG.map((entry) => ({
+      catalog: creatorBlockAiCatalog.presets.filter(
+        (entry) => entry.preset_id !== "evolving_type" || options.evolvingTypeEnabled,
+      ).map((entry) => ({
         preset_id: entry.preset_id,
+        preset_version: entry.preset_version as 2,
         label: entry.label,
-        kind: entry.kind,
+        kind: entry.kind as "text" | "media",
         default_duration_s: roundCopilotNumber(entry.default_duration_frames / 30),
         min_assets: entry.min_assets,
         defaults: JSON.parse(JSON.stringify(entry.defaults)) as Record<string, unknown>,
+        parameters: JSON.parse(JSON.stringify(entry.parameters)) as CopilotMotionCatalogSnapshot["parameters"],
+        controls: entry.controls.map((definition) => ({
+            key: definition.key,
+            type: definition.type as "number" | "enum" | "boolean",
+            default: definition.default as number | string | boolean,
+            ...(definition.minimum === undefined ? {} : { minimum: definition.minimum }),
+            ...(definition.maximum === undefined ? {} : { maximum: definition.maximum }),
+            ...(definition.step === undefined ? {} : { step: definition.step }),
+            ...(definition.values === undefined ? {} : { values: [...definition.values] }),
+          })),
       })),
       blocks: (options.motionScenes ?? []).slice(0, 8).map((scene) => ({
         id: scene.id,
@@ -935,6 +978,10 @@ export function buildCopilotSnapshot(
         end_s: roundCopilotNumber(scene.end_frame_exclusive / 30),
         palette: { ...scene.palette },
         intensity: roundCopilotNumber(scene.intensity),
+        preset_version: scene.preset_version,
+        ...(scene.preset_id !== "route_trace" && scene.preset_version === 2
+          ? { motion: { ...scene.motion } }
+          : {}),
         params:
           scene.preset_id === "card_stack" || scene.preset_id === "film_strip"
             ? { asset_ids: scene.params.assets.map((asset) => asset.asset_id) }

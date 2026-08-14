@@ -11,7 +11,8 @@ from app.config import settings
 from app.pipeline.motion_scene import (
     LEGACY_MOTION_RUNTIME_HASH,
     MOTION_RUNTIME_HASH,
-    PREVIOUS_MOTION_RUNTIME_HASH,
+    MOTION_RUNTIME_V2_HASH,
+    MOTION_RUNTIME_V3_HASH,
 )
 from app.tasks import generative_build as gb
 
@@ -231,7 +232,14 @@ def test_legacy_route_trace_cache_records_the_actual_current_renderer(monkeypatc
     )
 
 
-def test_previous_creator_runtime_is_rebuilt_with_current_renderer(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "persisted_runtime",
+    [MOTION_RUNTIME_V2_HASH, MOTION_RUNTIME_V3_HASH],
+)
+def test_known_creator_runtime_is_rebuilt_with_current_renderer(
+    monkeypatch,
+    persisted_runtime: str,
+) -> None:
     calls: list[dict] = []
     identity: dict = {}
     monkeypatch.setattr(settings, "motion_scenes_enabled", True)
@@ -245,10 +253,10 @@ def test_previous_creator_runtime_is_rebuilt_with_current_renderer(monkeypatch) 
         variant_id="variant-1",
         variant={
             "motion_scenes": [_scene()],
-            "motion_runtime_hash": PREVIOUS_MOTION_RUNTIME_HASH,
+            "motion_runtime_hash": persisted_runtime,
             "motion_base_path": "previous-cache.mp4",
             "motion_base_source_path": "clean-base.mp4",
-            "motion_applied_runtime_hash": PREVIOUS_MOTION_RUNTIME_HASH,
+            "motion_applied_runtime_hash": persisted_runtime,
             "motion_cache_stale": False,
         },
         base_gcs_path="clean-base.mp4",

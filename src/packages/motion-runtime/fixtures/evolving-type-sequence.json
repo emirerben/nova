@@ -1,0 +1,39 @@
+{
+  "width": 540,
+  "height": 960,
+  "runtime_hash": "motion-v4:ck0.40.0:b2556106:2abfa191:creator-blocks-v3",
+  "instances": [
+    {
+      "id": "evolving-type-reference",
+      "preset_id": "evolving_type",
+      "preset_version": 2,
+      "start_frame": 0,
+      "end_frame_exclusive": 159,
+      "palette": { "primary": "#0C0C0E", "accent": "#FFFFFF" },
+      "intensity": 0.72,
+      "motion": {
+        "version": 2,
+        "speed": 1,
+        "easing": "ease-in-out-cubic",
+        "hold_frames": 30
+      },
+      "params": {
+        "headline": "EVOLVE THE IDEA",
+        "subtitle": "Shape, split, and settle into focus",
+        "icon_count": 4,
+        "icon_style": "organic",
+        "text_stagger_ms": 45,
+        "icon_stagger_ms": 70,
+        "morph_amplitude": 0.65,
+        "density": "medium",
+        "layout": "compact",
+        "order": "forward",
+        "typography_scale": 1,
+        "backdrop_opacity": 0.7,
+        "split_icons": true
+      }
+    }
+  ],
+  "output_dir": "/tmp/nova-motion-evolving-sequence",
+  "font_path": "/app/assets/fonts/Inter-Bold.ttf"
+}

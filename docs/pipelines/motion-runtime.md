@@ -20,10 +20,12 @@ base and reapply motion before their text layer.
   colors, intensity, and preset-specific parameters. Each instance is at most
   eight seconds and the union of all active windows is at most eight seconds;
   blocks may be placed anywhere in the video.
-- `creator-blocks.catalog.json` and `motion-scene.schema.json` define the eight
-  Creator Blocks, their immutable IDs, defaults, parameter bounds, asset
-  requirements, and AI exposure. The existing `route_trace` preset remains a
-  separate legacy preset.
+- `creator-blocks.catalog.json` is authoritative for the nine Creator Blocks,
+  their immutable IDs, preset versions, typed controls, timing phases, safe
+  ranges, asset requirements, AI exposure, and complexity weights. The strict
+  `motion-scene.schema.json` and compact `creator-blocks.ai.json` are generated
+  from it; `npm run check:contract` fails on drift. The existing `route_trace`
+  preset remains a separate legacy preset.
 - Media blocks persist only `{asset_id, gcs_path}` pairs from the plan item's
   ready image pool. Save and export revalidate ownership, exact path, status,
   image kind, dimensions, and storage prefix; URLs and video assets are never
@@ -35,18 +37,50 @@ base and reapply motion before their text layer.
   and CanvasKit payload hashes. The editor sends it with every dirty motion
   section. The API rejects a mismatched runtime before changing variant state.
   The legacy v1 hash is accepted only for persisted `route_trace` scenes. The
-  immediately previous Creator Block runtime is also accepted so a visual fix
-  does not strand saved edits; it is rendered with the current runtime and the
-  next save upgrades its hash. Older or unknown hashes fail closed.
+  known persisted Creator runtimes v2, v3, and v4 are accepted so a visual fix
+  does not strand saved edits; they render with the current runtime and the next
+  successful dirty motion save normalizes the global hash to v4. Preset version,
+  not the global hash, owns visual compatibility. Older or unknown hashes fail
+  closed.
 - Browser and worker parity covers the RGBA motion layer for an identical
   output size, integer frame, scene list, and runtime hash. Browser video
   decoding and the final H.264 encode are outside the byte-identical contract.
 
 The Creator Block catalog contains Wild Type, Signal Stack, Flow Field, Cloud
-Break, Offer Flip, Card Stack, Film Strip, and Donut Type. A contract or timing
-change requires a new immutable preset version. Any renderer change requires a
-shared runtime hash change, cross-runtime golden fixtures, and a Docker
-offline-render smoke test.
+Break, Offer Flip, Card Stack, Film Strip, Donut Type, and Evolving Type. New
+insertions use preset v2. Untouched saved v1 blocks keep their exact evaluator;
+content, palette, and timeline changes do not migrate them. Touching a motion
+control upgrades only the selected block to v2. A contract or timing change
+requires a new immutable preset version. Any renderer change requires a shared
+runtime hash change, cross-runtime golden fixtures, and a Docker offline-render
+smoke test.
+
+## Creator Block Motion v2
+
+All v2 blocks expose catalog-backed Speed, Intensity, Easing, and Hold controls.
+Speed retimes the choreography only, keeps `start_frame` fixed, changes only the
+selected block's exclusive end frame, and clamps at the stable base-video
+boundary. Each preset publishes a safe minimum speed so every visible value
+fits the eight-second/240-frame contract; Evolving Type starts at 0.75×. Pointer
+or slider previews do not create history entries, and one completed gesture
+creates one undo record. Carousel projection affects preview coordinates only;
+stored base-timeline frames never ripple.
+
+Evolving Type defaults to 159 frames (111 choreography + 30 hold + 18 exit),
+four deterministic organic icons, 45ms text stagger, 70ms icon stagger, medium
+density, 65% morph amplitude, ease-in-out cubic, and a black/white palette. It
+supports two to five icons, built-in organic/geometric/botanical styles, compact
+or spread layout, forward/reverse/center-out order, icon splitting, typography
+scale, backdrop opacity, independent text/icon stagger, intensity, speed, hold,
+easing, and palette. Its shapes interpolate trusted fixed-topology path points;
+uploaded SVG, arbitrary paths, shaders, scripts, and scene graphs remain invalid.
+
+The v2 audit preserves every preset-v1 formula, including deliberate historical
+choreography. V2 replaces Card Stack's discrete active-card snap with continuous
+poses and isolates Film Strip image alpha from shared paint state. Offer Flip's
+midpoint swap remains an explicit named hard-cut event. All other v2 phase joins
+use deterministic named curves with zero-velocity joins where continuity is
+required.
 
 ## Text Motion v2
 
@@ -124,6 +158,9 @@ read/write roots, a process timeout, and the same schema limits enforced by the
 API. It emits transparent PNGs only for contiguous active intervals; separated
 intervals retain their exact frame offsets without rendering transparent gap
 frames. Overlapping blocks share one interval and are evaluated together.
+The 240-frame active-union limit is paired with a 960 weighted-frame budget,
+so overlapping expensive scenes cannot bypass resource validation. Existing
+preset-v1 scenes retain legacy weight 1.
 FFmpeg composites those segments with `preset=fast` and caches the result below
 authored text. The cache key includes the clean-base generation, runtime hash,
 normalized scenes, and exact referenced asset generations.
@@ -158,6 +195,17 @@ Enable the worker flag before the Vercel flag. When disabled, persisted motion
 config remains round-trippable; Smooth Type displays and renders as settled
 static text instead of disappearing or being deleted.
 
+Evolving Type exposure has its own synchronized flags:
+
+```text
+EVOLVING_TYPE_ENABLED=false
+NEXT_PUBLIC_EVOLVING_TYPE_ENABLED=false
+```
+
+These flags hide and reject new Evolving insertions and edits only. A persisted
+Evolving block remains hydrated, previewed, renderable, saveable alongside
+changes to other blocks, and removable while exposure is disabled.
+
 For the first rollout, deploy the API/worker first, enable the Fly flag, then
 enable the Vercel flag. For a runtime-hash upgrade, disable both flags, drain
 old workers, deploy the backward-compatible runtime or migrate saved scenes,
@@ -171,9 +219,14 @@ an output with its motion silently removed.
 ```bash
 cd src/apps/web
 npm test -- --runInBand src/__tests__/lib/motion-runtime.test.ts
+npm test -- --runInBand src/__tests__/lib/motion-runtime-generated-contract.test.ts
 
 cd ../api
 pytest tests/pipeline/test_motion_scene.py tests/tasks/test_motion_scene_cache.py
+
+cd ../../..
+make verify-editor-timeline
+make verify-motion-performance
 ```
 
 The golden test renders entrance, hold, and exit frames for every Creator Block
@@ -196,10 +249,10 @@ For a human review sheet, keep the same tested frames and write their PNGs:
 cd src/apps/web
 CREATOR_BLOCK_AUDIT_DIR=/tmp/creator-block-audit \
   npm test -- --runInBand src/__tests__/lib/motion-runtime.test.ts \
-  -t "pins all eight"
+  -t "pins all nine"
 ```
 
-Review the middle frame for all eight blocks in both orientations before
+Review the middle frame for all nine blocks in both orientations before
 updating the aggregate hash. A hash update without the semantic quality tests
 and this visual review is not sufficient approval. Docker CI additionally
 renders and pins a real text Creator Block with the production font bundle, so

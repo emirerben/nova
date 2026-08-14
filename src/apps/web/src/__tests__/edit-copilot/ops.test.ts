@@ -24,7 +24,8 @@ const validationSnapshot: CopilotValidationSnapshot = {
   camera_effects: [{ start_s: 0.5, end_s: 2, intensity: 1 }],
   visual_blocks: [{ id: "visual-1" }],
   motion: {
-    blocks: [{ id: "motion-1" }],
+    catalog: [{ preset_id: "card_stack" }, { preset_id: "kinetic_word" }],
+    blocks: [{ id: "motion-1", preset_id: "kinetic_word" }],
     asset_pool: [{ id: "image-1" }, { id: "image-2" }],
   },
 };
@@ -538,8 +539,20 @@ describe("edit-copilot extended op validation", () => {
     expect(validateCopilotOp({
       op: "patch_motion_block",
       motion_id: "motion-1",
-      patch: { params: { text: "NEW" }, intensity: 0.4 },
+      patch: { params: { text: "NEW" }, intensity: 0.4, speed: 2, easing: "ease-out-cubic" },
     }, validationSnapshot)).toMatchObject({ ok: true });
+    expect(validateCopilotOp({
+      op: "patch_motion_block",
+      motion_id: "motion-1",
+      patch: { speed: 8 },
+    }, validationSnapshot)).toMatchObject({ ok: false });
+    expect(validateCopilotOp({
+      op: "add_motion_block",
+      preset_id: "evolving_type",
+      start_s: 0,
+      end_s: 5.3,
+      params: {},
+    }, validationSnapshot)).toMatchObject({ ok: false });
     expect(validateCopilotOp({
       op: "remove_motion_block",
       motion_id: "motion-1",

@@ -4506,9 +4506,9 @@ def _ensure_motion_base(
 
     from app.config import settings as _motion_settings  # noqa: PLC0415
     from app.pipeline.motion_scene import (  # noqa: PLC0415
+        COMPATIBLE_MOTION_RUNTIME_HASHES,
         LEGACY_MOTION_RUNTIME_HASH,
         MOTION_RUNTIME_HASH,
-        PREVIOUS_MOTION_RUNTIME_HASH,
         apply_motion_scenes,
         validate_motion_instances,
     )
@@ -4518,7 +4518,7 @@ def _ensure_motion_base(
     legacy_route_only = required_hash == LEGACY_MOTION_RUNTIME_HASH and all(
         scene.get("preset_id") == "route_trace" for scene in scenes
     )
-    compatible_hash = required_hash in {MOTION_RUNTIME_HASH, PREVIOUS_MOTION_RUNTIME_HASH}
+    compatible_hash = required_hash in COMPATIBLE_MOTION_RUNTIME_HASHES
     if not compatible_hash and not legacy_route_only:
         raise RuntimeError(
             f"motion runtime mismatch: variant requires {required_hash!r}, "

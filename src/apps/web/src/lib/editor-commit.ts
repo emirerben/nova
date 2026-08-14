@@ -32,7 +32,7 @@ import type {
   LookAdjustments,
   LookPreset,
 } from "@/lib/generative-api";
-import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
+import type { MotionPresetInstance } from "@nova/motion-runtime";
 
 const PLAN_BASE = "/api/plan";
 
@@ -138,7 +138,7 @@ export interface EditorCommitRequest {
   /** Full replacement visual-block list. Omit when untouched. */
   visual_blocks?: VisualBlock[];
   /** Curated immutable motion-preset instances; no raw scene graphs or SVG. */
-  motion_scenes?: MotionPresetInstanceV1[];
+  motion_scenes?: MotionPresetInstance[];
   motion_runtime_hash?: string;
   /** Full replacement scene camera-effect list. Omit when untouched. */
   camera_effects?: CameraEffect[];
@@ -301,7 +301,7 @@ export function buildEditorCommitRequest({
   visualBlocksDirty?: boolean;
   visualBlocks?: VisualBlock[];
   motionScenesDirty?: boolean;
-  motionScenes?: MotionPresetInstanceV1[];
+  motionScenes?: MotionPresetInstance[];
   motionRuntimeHash?: string;
   cameraEffectsDirty?: boolean;
   cameraEffects?: CameraEffect[];

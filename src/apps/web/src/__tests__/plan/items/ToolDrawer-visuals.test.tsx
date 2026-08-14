@@ -265,11 +265,12 @@ describe("ToolDrawer Creator Blocks", () => {
     process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED = previousFlag;
   });
 
-  it("shows the eight-item catalog separately from route trace and inserts at the chosen preset", () => {
+  it("shows the eight-item catalog flag-off separately from route trace", () => {
     const onAddMotion = jest.fn();
     renderVisuals({
       motionAvailable: true,
       motionRuntimeCompatible: true,
+      evolvingTypeEnabled: false,
       onAddMotion,
     });
 
@@ -278,6 +279,51 @@ describe("ToolDrawer Creator Blocks", () => {
     expect(onAddMotion).toHaveBeenCalledWith("kinetic_word");
     expect(screen.getByText("Existing effect")).toBeInTheDocument();
     expect(screen.getByText("Route trace")).toBeInTheDocument();
+  });
+
+  it("shows the ninth Evolving Type insertion only when its exposure flag is on", () => {
+    const onAddMotion = jest.fn();
+    renderVisuals({
+      motionAvailable: true,
+      motionRuntimeCompatible: true,
+      evolvingTypeEnabled: true,
+      onAddMotion,
+    });
+
+    expect(screen.getByTestId("creator-block-grid").querySelectorAll("button")).toHaveLength(9);
+    fireEvent.click(screen.getByRole("button", { name: "Evolving Type" }));
+    expect(onAddMotion).toHaveBeenCalledWith("evolving_type");
+  });
+
+  it("keeps a persisted Evolving Type chip selectable when insertion exposure is off", () => {
+    const onSelectMotion = jest.fn();
+    renderVisuals({
+      motionAvailable: true,
+      motionRuntimeCompatible: true,
+      evolvingTypeEnabled: false,
+      onSelectMotion,
+      motionScenes: [{
+        id: "motion-evolving",
+        preset_id: "evolving_type",
+        preset_version: 2,
+        start_frame: 0,
+        end_frame_exclusive: 159,
+        palette: { primary: "#0c0c0e", accent: "#c7ff3d" },
+        intensity: 0.72,
+        motion: { version: 2, speed: 1, easing: "ease-in-out-cubic", hold_frames: 30 },
+        params: {
+          headline: "EVOLVE THE IDEA", subtitle: "Shape, split, and settle into focus",
+          icon_count: 4, icon_style: "organic", text_stagger_ms: 45,
+          icon_stagger_ms: 70, morph_amplitude: 0.65, density: "medium",
+          layout: "compact", order: "forward", typography_scale: 1,
+          backdrop_opacity: 0.7, split_icons: true,
+        },
+      }],
+    });
+
+    expect(screen.queryByTestId("creator-block-grid")?.querySelector('[data-preset="evolving_type"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Evolving Type" }));
+    expect(onSelectMotion).toHaveBeenCalledWith("motion-evolving");
   });
 
   it("keeps media cards visible with an honest minimum-image requirement", () => {
