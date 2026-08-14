@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NoReturn
 
 import structlog
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, status
@@ -29,6 +29,7 @@ from app import storage
 from app.agents._schemas.edit_format import coerce_edit_format
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
+from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
 from app.models import ContentPlan, Job, MusicTrack, Persona, PlanItem, PlanItemAsset
@@ -114,6 +115,12 @@ from app.routes.generative_jobs import (
     visual_block_variant_duration,
 )
 from app.routes.waitlist import get_real_ip
+from app.schemas.edit_proposal import (
+    EditProposalResponse,
+    EditProposalSnapshot,
+    ProposalBrief,
+    parse_edit_proposal,
+)
 from app.schemas.montage_preset import (
     MontagePreset,
     coerce_montage_preset,
@@ -255,6 +262,45 @@ def derive_item_status(item: PlanItem) -> str:
     return "generating"
 
 
+def _edit_proposal_response(item: PlanItem) -> dict | None:
+    proposal = parse_edit_proposal(getattr(item, "edit_proposal", None))
+    if proposal is None:
+        return None
+    payload = proposal.model_dump(mode="json")
+    clip_paths_by_id = {
+        str(assignment.get("media_id")): str(assignment.get("gcs_path"))
+        for assignment in (item.clip_assignments or [])
+        if isinstance(assignment, dict)
+        and assignment.get("media_id")
+        and assignment.get("gcs_path")
+    }
+    asset_path_fragment = f"/plan/{item.id}/pool/"
+    # Preview URLs are response-only decoration. Immutable identity remains the
+    # stored gcs_path + generation; PATCH validation ignores this extra key.
+    for holder in (payload.get("draft"), (payload.get("last_approved") or {}).get("snapshot")):
+        if not isinstance(holder, dict):
+            continue
+        for ref in holder.get("media") or []:
+            if not isinstance(ref, dict) or not ref.get("gcs_path"):
+                continue
+            path = str(ref["gcs_path"])
+            if ref.get("lane") == "clip":
+                safe_to_sign = clip_paths_by_id.get(str(ref.get("media_id"))) == path
+            else:
+                # Pool objects are always promoted under this item's durable
+                # namespace. Never sign an arbitrary path merely because it
+                # appeared in legacy/corrupt proposal JSONB.
+                safe_to_sign = path.startswith("users/") and asset_path_fragment in path
+            if not safe_to_sign:
+                ref["preview_url"] = None
+                continue
+            try:
+                ref["preview_url"] = storage.signed_get_url(path, expiration_minutes=60)
+            except Exception:  # noqa: BLE001 - filename tile remains usable
+                ref["preview_url"] = None
+    return payload
+
+
 class FilmingShotResponse(BaseModel):
     """One shot from the plan item's filming guide.
 
@@ -279,6 +325,9 @@ class ClipAssignmentResponse(BaseModel):
     # True = the footage-pool matcher placed this clip (provisional chip in the
     # UI; conformance suppressed until the user keeps/swaps/replaces it).
     machine_matched: bool = False
+    # Stable server-owned identity used by guided-edit proposals. Null only on
+    # legacy rows that have never been processed by Plan edit.
+    media_id: str | None = None
 
 
 class PlanItemResponse(BaseModel):
@@ -301,6 +350,10 @@ class PlanItemResponse(BaseModel):
     # Per-shot clip assignments. Shape: [{gcs_path, shot_id}]; shot_id=null = pool.
     # Populated since migration 0052; empty list for items with no clips yet.
     clip_assignments: list[ClipAssignmentResponse] = []
+    # Versioned Plan edit envelope. Invalid legacy/corrupt JSON is serialized
+    # as null by _edit_proposal_response; valid state stays OpenAPI-discoverable.
+    edit_proposal: EditProposalResponse | None = None
+    guided_edit_available: bool = False
     status: str
     current_job_id: str | None
     finished_at: datetime | None = None
@@ -356,6 +409,7 @@ class PlanItemResponse(BaseModel):
 def plan_item_response(
     item: PlanItem,
     *,
+    include_edit_proposal: bool = True,
     instruction_level: str = "full",
     content_mode: str = "create_new",
     seed_text_by_id: dict[str, str] | None = None,
@@ -388,6 +442,7 @@ def plan_item_response(
             shot_id=a.get("shot_id") if a.get("shot_id") in live_shot_ids else None,
             user_note=str(a.get("user_note") or ""),
             machine_matched=bool(a.get("machine_matched")),
+            media_id=str(a.get("media_id")) if a.get("media_id") else None,
         )
         for a in raw_assignments
         if isinstance(a, dict) and a.get("gcs_path")
@@ -407,6 +462,8 @@ def plan_item_response(
         filming_guide=shots,
         clip_gcs_paths=list(item.clip_gcs_paths or []),
         clip_assignments=reconciled_assignments,
+        edit_proposal=_edit_proposal_response(item) if include_edit_proposal else None,
+        guided_edit_available=settings.guided_edit_capability_enabled,
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,
         finished_at=item.current_job.finished_at if item.current_job is not None else None,
@@ -1003,6 +1060,11 @@ async def attach_clips(
         for a in (item.clip_assignments or [])
         if isinstance(a, dict) and a.get("gcs_path") and a.get("machine_matched")
     }
+    prior_media_ids: dict[str, str] = {
+        str(a["gcs_path"]): str(a["media_id"])
+        for a in (item.clip_assignments or [])
+        if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
+    }
 
     if body.assignments is not None:
         # Shot-slot uploader path: validate prefix, then validate shot_ids.
@@ -1033,6 +1095,7 @@ async def attach_clips(
                 shot_id=a.shot_id,
                 user_note=(a.user_note or "")[:_MAX_NOTE_CHARS],
                 machine_matched=prior_mm.get((a.gcs_path, a.shot_id), False),
+                media_id=prior_media_ids.get(a.gcs_path),
             )
             for a in body.assignments
         ]
@@ -1045,7 +1108,12 @@ async def attach_clips(
                     detail="Clip path outside this plan item's upload prefix",
                 )
         assignments = [
-            ClipAssignment(gcs_path=p, shot_id=None, machine_matched=prior_mm.get((p, None), False))
+            ClipAssignment(
+                gcs_path=p,
+                shot_id=None,
+                machine_matched=prior_mm.get((p, None), False),
+                media_id=prior_media_ids.get(p),
+            )
             for p in body.clip_gcs_paths
         ]
 
@@ -1281,8 +1349,13 @@ async def set_clip_note(
     for a in assignments:
         entry = dict(a) if isinstance(a, dict) else {}
         if entry.get("gcs_path") == body.gcs_path:
+            prior_note = str(entry.get("user_note") or "")
             entry["user_note"] = note
             entry["machine_matched"] = False
+            if prior_note != note:
+                from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+                mark_edit_proposal_stale(item)
             hit = True
         updated.append(entry)
     if not hit:
@@ -1552,6 +1625,287 @@ async def plan_item_advisor_turn(
     )
 
 
+def _require_guided_edit() -> None:
+    if not settings.guided_edit_capability_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plan edit is not available.",
+        )
+
+
+class DraftEditProposalBody(ProposalBrief):
+    pass
+
+
+class UpdateEditProposalBody(BaseModel):
+    expected_proposal_version: int = Field(ge=1)
+    snapshot: EditProposalSnapshot
+
+
+class ApproveEditProposalBody(BaseModel):
+    expected_proposal_version: int = Field(ge=1)
+
+
+def _proposal_http_conflict(code: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": code, "message": message},
+    )
+
+
+_PROPOSAL_GENERATE_MESSAGES = {
+    "proposal_required": "Plan this edit before generating.",
+    "proposal_draft": "Approve the edit plan before generating.",
+    "proposal_stale": "Your media changed. Plan the edit again before generating.",
+    "proposal_analyzing": "Kria is still planning this edit.",
+}
+
+
+def _raise_proposal_generate_conflict(code: str) -> NoReturn:
+    raise _proposal_http_conflict(code, _PROPOSAL_GENERATE_MESSAGES[code])
+
+
+async def _proposal_media_is_current(
+    item: PlanItem,
+    snapshot: EditProposalSnapshot,
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+) -> bool:
+    """Revalidate ownership + exact object identity before edit or approval."""
+
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        asset_ref_matches,
+        clip_ref_matches,
+    )
+
+    clip_by_id = {
+        str(a.get("media_id")): a
+        for a in (item.clip_assignments or [])
+        if isinstance(a, dict) and a.get("media_id") and a.get("gcs_path")
+    }
+    asset_refs = [ref for ref in snapshot.media if ref.lane == "asset"]
+    asset_by_id: dict[str, PlanItemAsset] = {}
+    if asset_refs:
+        try:
+            asset_uuids = [uuid.UUID(ref.media_id) for ref in asset_refs]
+        except ValueError:
+            return False
+        rows = (
+            (
+                await db.execute(
+                    select(PlanItemAsset).where(
+                        PlanItemAsset.id.in_(asset_uuids),
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.user_id == user_id,
+                        PlanItemAsset.status == "ready",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        asset_by_id = {str(row.id): row for row in rows}
+
+    for ref in snapshot.media:
+        if ref.lane == "clip":
+            assignment = clip_by_id.get(ref.media_id)
+            if not clip_ref_matches(ref, assignment):
+                return False
+        else:
+            asset = asset_by_id.get(ref.media_id)
+            if not asset_ref_matches(ref, asset):
+                return False
+    if snapshot.media:
+        semaphore = asyncio.Semaphore(8)
+
+        async def generation_matches(ref) -> bool:  # noqa: ANN001
+            async with semaphore:
+                try:
+                    metadata = await asyncio.to_thread(storage.object_metadata, ref.gcs_path)
+                except Exception:  # noqa: BLE001 - missing/replaced media is stale
+                    return False
+                return metadata.generation == ref.generation
+
+        if not all(await asyncio.gather(*(generation_matches(ref) for ref in snapshot.media))):
+            return False
+    return True
+
+
+@router.post(
+    "/{item_id}/edit-proposal/draft",
+    response_model=PlanItemResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+@limiter.limit("3/minute", key_func=get_real_ip)
+async def draft_item_edit_proposal(
+    request: Request,
+    item_id: str,
+    body: DraftEditProposalBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Start one token-fenced analysis + proposal attempt for all item media."""
+
+    _ = request
+    _require_guided_edit()
+    item, plan, _persona = await _load_owned_item_context(item_id, user.id, db, for_update=True)
+    current = parse_edit_proposal(item.edit_proposal)
+    if current and current.status in {"analyzing", "drafting"}:
+        # Double-clicks and retries with a lost response converge on the same
+        # attempt instead of publishing another expensive analysis task.
+        return plan_item_response(item)
+    ready_assets = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.status.in_({"queued", "analyzing", "ready"}),
+                )
+            )
+        ).scalar_one()
+    )
+    if not (item.clip_assignments or []) and ready_assets == 0:
+        raise _proposal_http_conflict("proposal_required", "Upload media before planning an edit.")
+
+    from app.schemas.edit_proposal import ProposalFailure  # noqa: PLC0415
+    from app.services.edit_proposals import begin_proposal_attempt  # noqa: PLC0415
+    from app.services.plan_clips import ensure_clip_media_ids  # noqa: PLC0415
+    from app.tasks.edit_proposal_build import draft_edit_proposal  # noqa: PLC0415
+
+    ensure_clip_media_ids(item)
+    proposal = begin_proposal_attempt(item, brief=ProposalBrief.model_validate(body.model_dump()))
+    await db.commit()
+    try:
+        draft_edit_proposal.apply_async(
+            args=[
+                str(item.id),
+                proposal.generation_attempt_id,
+                int(getattr(plan, "ownership_epoch", 0) or 0),
+            ],
+            queue=settings.pool_asset_analysis_queue,
+        )
+    except Exception as exc:  # noqa: BLE001
+        locked = await _load_owned_item(item_id, user.id, db, for_update=True)
+        current = parse_edit_proposal(locked.edit_proposal)
+        if current and current.generation_attempt_id == proposal.generation_attempt_id:
+            failed = current.model_copy(
+                update={
+                    "proposal_version": current.proposal_version + 1,
+                    "status": "failed",
+                    "failure": ProposalFailure(
+                        code="proposal_dispatch_failed",
+                        message="Kria couldn't start planning this edit. Try again.",
+                        retryable=True,
+                    ),
+                }
+            )
+            locked.edit_proposal = failed.model_dump(mode="json")
+            await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "proposal_dispatch_failed",
+                "message": "Kria couldn't start planning this edit. Try again.",
+            },
+        ) from exc
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    return plan_item_response(reloaded)
+
+
+@router.patch("/{item_id}/edit-proposal", response_model=PlanItemResponse)
+async def update_item_edit_proposal(
+    item_id: str,
+    body: UpdateEditProposalBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Save user corrections without allowing media identity substitution."""
+
+    _require_guided_edit()
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    from app.schemas.edit_proposal import canonical_media_digest  # noqa: PLC0415
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        ProposalConflictError,
+        mark_edit_proposal_stale,
+        save_proposal_draft,
+    )
+
+    current = parse_edit_proposal(item.edit_proposal)
+    if (
+        current is None
+        or current.draft is None
+        or current.status not in {"draft", "approved"}
+        or current.media_digest != canonical_media_digest(body.snapshot.media)
+    ):
+        raise _proposal_http_conflict(
+            "proposal_stale", "The uploaded media no longer matches this edit plan."
+        )
+    if not await _proposal_media_is_current(item, body.snapshot, db, user_id=user.id):
+        mark_edit_proposal_stale(item)
+        await db.commit()
+        raise _proposal_http_conflict(
+            "proposal_stale", "The uploaded media changed. Plan the edit again."
+        )
+    try:
+        save_proposal_draft(
+            item,
+            expected_version=body.expected_proposal_version,
+            # Media metadata is server-owned. The client may edit the story,
+            # text, ordering, and layout, but cannot smuggle arbitrary analysis
+            # or context into the approved render snapshot.
+            snapshot=body.snapshot.model_copy(update={"media": current.draft.media}),
+        )
+    except ProposalConflictError as exc:
+        raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+    await db.commit()
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    return plan_item_response(reloaded)
+
+
+@router.post("/{item_id}/edit-proposal/approve", response_model=PlanItemResponse)
+async def approve_item_edit_proposal(
+    item_id: str,
+    body: ApproveEditProposalBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Approve only the current, exact-media draft under the item lock."""
+
+    _require_guided_edit()
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        ProposalConflictError,
+        approve_proposal,
+        mark_edit_proposal_stale,
+    )
+
+    current = parse_edit_proposal(item.edit_proposal)
+    if current is None or current.draft is None:
+        raise _proposal_http_conflict("proposal_draft", "Plan the edit before approving it.")
+    if current.status == "stale":
+        raise _proposal_http_conflict(
+            "proposal_stale", "The uploaded media changed. Plan the edit again."
+        )
+    if current.status != "draft":
+        raise _proposal_http_conflict("proposal_draft", "Review the current draft before approval.")
+    if not await _proposal_media_is_current(item, current.draft, db, user_id=user.id):
+        mark_edit_proposal_stale(item)
+        await db.commit()
+        raise _proposal_http_conflict(
+            "proposal_stale", "The uploaded media changed. Plan the edit again."
+        )
+    try:
+        approve_proposal(item, expected_version=body.expected_proposal_version)
+    except ProposalConflictError as exc:
+        raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+    await db.commit()
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    return plan_item_response(reloaded)
+
+
 @router.post("/{item_id}/generate", response_model=PlanItemResponse)
 async def generate_item(
     item_id: str,
@@ -1569,6 +1923,12 @@ async def generate_item(
     # no-speech clip set falls back to montage WITH a persisted, user-visible reason.
     from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS  # noqa: PLC0415
     from app.config import settings  # noqa: PLC0415
+
+    if settings.guided_edit_enforcement_enabled:
+        from app.services.edit_proposals import proposal_generate_error  # noqa: PLC0415
+
+        if proposal_error := proposal_generate_error(item):
+            _raise_proposal_generate_conflict(proposal_error)
 
     if (
         (item.edit_format or "") in NARRATED_EDIT_FORMATS
@@ -1651,6 +2011,13 @@ async def generate_item(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The render couldn't be queued — give it another go",
         )
+    if result.outcome in {
+        "proposal_required",
+        "proposal_draft",
+        "proposal_stale",
+        "proposal_analyzing",
+    }:
+        _raise_proposal_generate_conflict(result.outcome)
     if result.outcome not in ("dispatched", "already_active"):
         # A future/unknown outcome must never read as success (review CA3/M1) —
         # the silent-no-op class this whole feature exists to kill.
@@ -3977,7 +4344,11 @@ def _require_autoplace() -> None:
 def _require_asset_pool() -> None:
     from app.config import settings as _settings  # noqa: PLC0415
 
-    if not (_settings.overlay_autoplace_enabled or _settings.visual_blocks_enabled):
+    if not (
+        _settings.overlay_autoplace_enabled
+        or _settings.visual_blocks_enabled
+        or _settings.guided_edit_capability_enabled
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Visual asset pool not available."
         )
@@ -4732,6 +5103,9 @@ async def register_pool_asset(
             cleaned_context = _clean_pool_asset_context(body.user_context)
             if body.user_context is not None and existing.user_context != cleaned_context:
                 existing.user_context = cleaned_context
+                from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+                mark_edit_proposal_stale(item)
                 await db.commit()
                 await db.refresh(existing)
             same_retained_object = existing.gcs_path == body.gcs_path and str(
@@ -4877,6 +5251,9 @@ async def register_pool_asset(
     asset.analysis = None
     asset.correlation_id = request.state.correlation_id or asset.correlation_id
     asset.status = "uploaded" if staging_cleanup is not None else "queued"
+    from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+    mark_edit_proposal_stale(item)
     if staging_cleanup is not None:
         promoted_asset_id = asset.id
         promoted_path = asset.gcs_path
@@ -5332,6 +5709,9 @@ async def delete_pool_asset(
             ).scalar_one()
         )
         if fresh_shared_count:
+            from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+            mark_edit_proposal_stale(locked_item)
             await db.delete(locked_asset)
             await db.commit()
             return {"ok": True, "removed_suggestions": removed}
@@ -5357,6 +5737,9 @@ async def delete_pool_asset(
                 },
             )
         asset = locked_asset
+    from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+    mark_edit_proposal_stale(locked_item if shared_count == 0 else item)
     await db.delete(asset)
     await db.commit()
     return {"ok": True, "removed_suggestions": removed}
@@ -5464,7 +5847,12 @@ async def update_pool_asset_context(
     ).scalar_one_or_none()
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    prior_context = asset.user_context
     asset.user_context = body.user_context
+    from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+    if prior_context != asset.user_context:
+        mark_edit_proposal_stale(item)
     locked_job = (
         await db.get(
             Job,

@@ -1,6 +1,7 @@
 """Tests for Settings.normalize_postgres_scheme and asyncpg_database_url."""
 
 import pytest
+from pydantic import ValidationError
 
 
 @pytest.fixture()
@@ -21,9 +22,7 @@ class TestNormalizePostgresScheme:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_postgres_scheme_is_rewritten(self, monkeypatch):
-        monkeypatch.setenv(
-            "DATABASE_URL", "postgres://u:p@host:5432/db"
-        )
+        monkeypatch.setenv("DATABASE_URL", "postgres://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
@@ -32,9 +31,7 @@ class TestNormalizePostgresScheme:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_postgresql_scheme_unchanged(self, monkeypatch):
-        monkeypatch.setenv(
-            "DATABASE_URL", "postgresql://u:p@host:5432/db"
-        )
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
@@ -46,9 +43,7 @@ class TestAsyncpgDatabaseUrl:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_scheme_swap(self, monkeypatch):
-        monkeypatch.setenv(
-            "DATABASE_URL", "postgresql://u:p@host:5432/db"
-        )
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
@@ -70,9 +65,7 @@ class TestAsyncpgDatabaseUrl:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_no_sslmode_no_ssl_param(self, monkeypatch):
-        monkeypatch.setenv(
-            "DATABASE_URL", "postgresql://u:p@host:5432/db"
-        )
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
@@ -93,3 +86,25 @@ class TestAsyncpgDatabaseUrl:
         # sslmode is removed, but existing ssl=prefer is preserved
         assert "sslmode" not in url
         assert "ssl=prefer" in url
+
+
+class TestGuidedEditRolloutSafety:
+    @pytest.mark.usefixtures("_clean_env")
+    def test_enforcement_requires_capability(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
+        monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "false")
+        monkeypatch.setenv("GUIDED_EDIT_ENFORCEMENT_ENABLED", "true")
+        from app.config import Settings
+
+        with pytest.raises(ValidationError, match="requires guided edit capability"):
+            Settings()
+
+    @pytest.mark.usefixtures("_clean_env")
+    def test_enforcement_is_unavailable_before_strict_renderer(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
+        monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "true")
+        monkeypatch.setenv("GUIDED_EDIT_ENFORCEMENT_ENABLED", "true")
+        from app.config import Settings
+
+        with pytest.raises(ValidationError, match="requires the strict story renderer"):
+            Settings()

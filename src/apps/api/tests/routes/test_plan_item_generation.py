@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.schemas.edit_proposal import EditProposal, ProposalBrief
 from app.tasks.content_plan_build import DispatchResult
 
 
@@ -137,6 +138,68 @@ def test_generate_requires_clips(client: TestClient) -> None:
     app.dependency_overrides[get_db] = lambda: db
     resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 409
+
+
+def test_collection_shape_omits_full_proposal_and_preview_signing(monkeypatch) -> None:
+    from app.routes import plan_items as routes  # noqa: PLC0415
+
+    user = _user()
+    item, _plan = _owned_item(user.id)
+    item.clip_assignments = []
+    item.edit_proposal = EditProposal(
+        proposal_version=1,
+        generation_attempt_id="attempt-1",
+        status="analyzing",
+    ).model_dump(mode="json")
+    monkeypatch.setattr(
+        routes,
+        "_edit_proposal_response",
+        lambda _item: (_ for _ in ()).throw(AssertionError("must not sign list previews")),
+    )
+
+    response = routes.plan_item_response(item, include_edit_proposal=False)
+
+    assert response.edit_proposal is None
+
+
+@pytest.mark.parametrize(
+    ("proposal_status", "expected_code"),
+    [
+        (None, "proposal_required"),
+        ("analyzing", "proposal_analyzing"),
+        ("drafting", "proposal_analyzing"),
+        ("draft", "proposal_draft"),
+        ("failed", "proposal_draft"),
+        ("stale", "proposal_stale"),
+    ],
+)
+def test_generate_returns_explicit_proposal_gate_codes(
+    monkeypatch,
+    client: TestClient,
+    proposal_status: str | None,
+    expected_code: str,
+) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_proposal = None
+    if proposal_status is not None:
+        item.edit_proposal = EditProposal(
+            proposal_version=1,
+            generation_attempt_id="attempt-1",
+            status=proposal_status,
+            brief=ProposalBrief(),
+        ).model_dump(mode="json")
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == expected_code
 
 
 def test_generate_enqueues_when_clips_present(client: TestClient) -> None:

@@ -1019,3 +1019,36 @@ produced an MP4; the product contract was wrong.
   lyric-capable `song_text` under optional-lyrics mode and requires both the
   Corfu-style intro persistence and the lyric-seed capability. Separate tests
   continue to pin the legacy flag-off behavior.
+
+## [2026-08-14] Guided edits require an approved, exact-media proposal
+
+The Corfu incident was not only missing text. Initial generation treated one attached sailboat
+clip as the story while twelve separately stored travel assets remained advisory overlay material.
+Trying to make overlay placement more aggressive would preserve the wrong abstraction: food,
+architecture, streets, and beaches are primary story moments, not decorations over a one-clip
+montage.
+
+**Decisions:**
+
+- **Approve the story before rendering.** Plan items get one versioned `edit_proposal` envelope
+  with a live draft and retained last approval. Direction, goal, pace, duration, title, media,
+  layouts, ordered beats, and thoughts become reviewable product data rather than implicit LLM
+  decisions inside the renderer.
+- **Unify references, not storage.** Attached clips and `PlanItemAsset` rows stay in their existing
+  lanes. A proposal-level `MediaRef` union gives both stable IDs and immutable storage generations.
+  Legacy clip assignments receive an ID only when Plan edit first processes them.
+- **Object identity is part of approval.** The canonical media digest includes lane, stable ID,
+  path, generation, kind, and content hash. Generate re-reads storage generations and snapshots the
+  approval under the Plan → Persona → PlanItem → Job lock order. A changed generation is stale even
+  when its filename is unchanged.
+- **AI thoughts remain visibly provisional.** The planner may describe visible qualities and infer
+  tone, but it may not claim where the creator went, what food tasted like, who was present, or how
+  the creator felt without creator-written context. AI thoughts retain `thought_source=ai_draft`
+  until the whole proposal is approved; direct user edits switch that thought to `user`.
+- **No legacy bypass after enforcement.** Route and task-side dispatch both return
+  `proposal_required`, `proposal_draft`, `proposal_stale`, or `proposal_analyzing`. Media mutations
+  retain the last approval for comparison and mark the current plan stale. CAS versions prevent a
+  second tab from overwriting a newer edit.
+- **Planning and rendering ship dark and separately.** PR 2 can persist and snapshot proposals but
+  does not claim to render them. Capability, frontend, and enforcement switches all default off;
+  enforcement waits for PR 3's strict story assembler and the exact Corfu preview.

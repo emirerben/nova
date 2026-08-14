@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.31.0.0] — 2026-08-14
+
+### Added
+- **Plan edit turns all uploaded photos and videos into a reviewable story before rendering.** Creators can choose a story, montage, or text-led direction; describe their goal; set pace and length; then review the proposed title, sequence, layouts, and editable thought moments. AI-written thoughts are clearly marked as drafts and never become approved personal claims without review.
+- **Approved plans keep exact media identities and survive later comparison.** Each proposal has a versioned draft and last-approved snapshot across both attached clips and supporting visuals. Upload, removal, replacement, or context changes mark the plan stale instead of silently generating from different material.
+
+### Changed
+- **The guided-edit path ships dark until strict story rendering is ready.** Backend capability and the frontend review flow can be deployed separately, but this release structurally rejects proposal enforcement so an operator cannot accidentally approve a plan and render the old simple montage. The next renderer release can unlock Generate only after strict assembly and receipt verification exist.
+
 ## [0.30.0.1] — 2026-08-14
 
 ### Fixed

@@ -31,6 +31,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import "@testing-library/jest-dom";
 
 process.env.NEXT_PUBLIC_SUBTITLED_ENABLED = "true";
+process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED = "true";
 
 // Mock next/navigation
 jest.mock("next/navigation", () => ({
@@ -118,7 +119,15 @@ jest.mock("@/app/library/_components/FeedbackButtons", () => ({
 }));
 jest.mock("@/app/plan/_components/AssetPool", () => ({
   __esModule: true,
-  default: () => <div data-testid="asset-pool" />,
+  default: ({ onMutated }: { onMutated?: () => void }) => (
+    <div data-testid="asset-pool">
+      {onMutated ? (
+        <button type="button" onClick={onMutated}>
+          Simulate asset mutation
+        </button>
+      ) : null}
+    </div>
+  ),
 }));
 jest.mock("@/app/plan/_components/SuggestionRail", () => ({
   __esModule: true,
@@ -176,6 +185,63 @@ function makeItem(overrides = {}) {
     smart_captions_available: false,
     smart_captions_unavailable_reason: "feature_disabled",
     ...overrides,
+  };
+}
+
+function makeGuidedProposal(status: "analyzing" | "draft" | "approved" | "stale") {
+  const snapshot = {
+    direction: "guided_story",
+    goal: "Tell the Corfu story",
+    pace: "balanced",
+    duration_s: 24,
+    title: "What I noticed in Corfu",
+    media: [
+      {
+        lane: "clip",
+        media_id: "clip-1",
+        gcs_path: "users/u1/plan/test-item-id/corfu.mp4",
+        generation: "1",
+        kind: "video",
+        source_filename: "corfu.mp4",
+        user_context: "",
+        analysis: {},
+      },
+    ],
+    story_beats: [
+      {
+        beat_id: "beat-1",
+        topic: "Coast",
+        thought: "The water set the pace.",
+        thought_source: "ai_draft",
+        media_ids: ["clip-1"],
+        layout: "fullscreen",
+        duration_s: 4,
+      },
+    ],
+  };
+  return {
+    schema_version: 1,
+    proposal_version: 2,
+    generation_attempt_id: "attempt-1",
+    media_digest: "a".repeat(64),
+    status,
+    brief: {
+      direction: "guided_story",
+      goal: "Tell the Corfu story",
+      pace: "balanced",
+      duration_s: 24,
+    },
+    draft: snapshot,
+    last_approved:
+      status === "approved" || status === "stale"
+        ? {
+            proposal_version: 2,
+            media_digest: "a".repeat(64),
+            approved_at: "2026-08-14T10:00:00Z",
+            snapshot,
+          }
+        : null,
+    failure: null,
   };
 }
 
@@ -1070,6 +1136,93 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
       expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
     });
     expect(mockUpdatePlanItem).not.toHaveBeenCalled();
+  });
+});
+
+describe("PlanItemPage — guided edit Generate gating", () => {
+  function guidedItem(editProposal: ReturnType<typeof makeGuidedProposal> | null) {
+    return makeItem({
+      status: "awaiting_clips",
+      edit_format: "montage",
+      guided_edit_available: true,
+      edit_proposal: editProposal,
+      clip_gcs_paths: ["users/u1/plan/test-item-id/corfu.mp4"],
+      clip_assignments: [
+        {
+          media_id: "clip-1",
+          gcs_path: "users/u1/plan/test-item-id/corfu.mp4",
+          shot_id: null,
+          user_note: "",
+        },
+      ],
+    });
+  }
+
+  beforeEach(() => {
+    mockGeneratePlanItem.mockReset();
+    mockRefetch.mockReset();
+  });
+
+  it.each([
+    [null, "Plan this edit before generating."],
+    [makeGuidedProposal("analyzing"), "Nova is still planning this edit."],
+    [makeGuidedProposal("draft"), "Review and approve the edit plan first."],
+    [makeGuidedProposal("stale"), "Your media changed — plan the edit again."],
+  ])("blocks Generate until the proposal is current and approved", async (proposal, hint) => {
+    const item = guidedItem(proposal);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
+    expect(screen.getByText(hint)).toBeInTheDocument();
+  });
+
+  it("enables Generate for a current approved proposal", async () => {
+    const item = guidedItem(makeGuidedProposal("approved"));
+    mockGeneratePlanItem.mockResolvedValue(item);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const generate = screen.getByRole("button", { name: /generate video/i });
+    expect(generate).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(generate);
+    });
+
+    await waitFor(() => {
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+  });
+
+  it("refreshes the proposal after an asset-pool mutation", async () => {
+    const item = guidedItem(makeGuidedProposal("approved"));
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Simulate asset mutation" }));
+    expect(mockRefetch).toHaveBeenCalledTimes(1);
   });
 });
 

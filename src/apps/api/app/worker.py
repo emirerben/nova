@@ -40,6 +40,7 @@ celery_app = Celery(
         "app.tasks.conformance_build",
         "app.tasks.transcript_analyze",
         "app.tasks.autoplace",
+        "app.tasks.edit_proposal_build",
         "app.tasks.omni_generate",
         "app.tasks.tiktok",
         "app.tasks.account_lifecycle",

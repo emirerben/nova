@@ -949,6 +949,21 @@ def _analyze_video(
         raise AnalysisTemporarilyUnavailableError("video analysis provider failed") from exc
 
 
+# Public reuse boundary for other media-understanding workflows. Keep the
+# private implementations above so existing task-local monkeypatches and
+# regression tests remain stable while callers avoid importing task internals.
+def analyze_pool_image(
+    local_path: str, job_scope: str
+) -> tuple[dict | None, float | None, tuple[int, int] | None, bool]:
+    return _analyze_image(local_path, job_scope)
+
+
+def analyze_pool_video(
+    local_path: str, job_scope: str
+) -> tuple[dict | None, float | None, float | None, tuple[int, int] | None]:
+    return _analyze_video(local_path, job_scope)
+
+
 def _plan_ownership_epoch(plan: ContentPlan) -> int:
     return int(getattr(plan, "ownership_epoch", 0) or 0)
 

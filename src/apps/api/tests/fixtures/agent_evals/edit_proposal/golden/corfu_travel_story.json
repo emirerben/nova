@@ -1,0 +1,24 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.0.0",
+  "input": {
+    "idea": "Korfu",
+    "theme": "Corfu trip",
+    "direction": "guided_story",
+    "goal": "Show what stood out about the food, town, and coast",
+    "pace": "balanced",
+    "target_duration_s": 24,
+    "media": [
+      {"media_id":"m1","lane":"clip","kind":"video","subject":"sailboat on blue water"},
+      {"media_id":"m2","lane":"asset","kind":"image","subject":"ice cream close-up"},
+      {"media_id":"m3","lane":"asset","kind":"image","subject":"restaurant table"},
+      {"media_id":"m4","lane":"asset","kind":"video","subject":"walk through old town"},
+      {"media_id":"m5","lane":"asset","kind":"image","subject":"arched stone building"},
+      {"media_id":"m6","lane":"asset","kind":"video","subject":"swimming by the coast"},
+      {"media_id":"m7","lane":"asset","kind":"image","subject":"sunset over boats"},
+      {"media_id":"m8","lane":"asset","kind":"image","subject":"narrow colorful street"}
+    ]
+  },
+  "raw_text": "{\"title\":\"What stood out in Corfu\",\"duration_s\":24,\"story_beats\":[{\"topic\":\"Food\",\"thought\":\"Small details made each food stop visually distinct.\",\"media_ids\":[\"m2\",\"m3\"],\"layout\":\"fullscreen\",\"duration_s\":5},{\"topic\":\"Town and architecture\",\"thought\":\"Arches and narrow streets kept changing the view.\",\"media_ids\":[\"m4\",\"m5\",\"m8\"],\"layout\":\"fullscreen\",\"duration_s\":8},{\"topic\":\"Coast\",\"thought\":\"Water, boats, and sunset give the story a slower finish.\",\"media_ids\":[\"m1\",\"m6\",\"m7\"],\"layout\":\"fullscreen\",\"duration_s\":9}]}",
+  "meta": {"source":"hand_authored_golden","expected_topics":["food","town","coast"]}
+}

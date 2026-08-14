@@ -289,6 +289,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.idea_expander import IdeaExpanderAgent
 
         return IdeaExpanderAgent
+    if agent_name == "nova.plan.edit_proposal":
+        from app.agents.edit_proposal import EditProposalAgent
+
+        return EditProposalAgent
     if agent_name == "nova.plan.clip_plan_matcher":
         from app.agents.clip_plan_matcher import ClipPlanMatcherAgent
 
