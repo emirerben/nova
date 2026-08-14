@@ -587,9 +587,7 @@ def test_upload_urls_keeps_old_target_when_cleanup_must_retry(client: TestClient
     db = _db(
         [
             _scalar_result(item),
-            _scalars_result([]),
             _scalars_result([reservation]),
-            _scalar_result(1),
         ],
         plan,
     )
@@ -1552,7 +1550,15 @@ def test_list_returns_assets_with_display_urls(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
     rows = [_asset_row(item.id, user.id), _asset_row(item.id, user.id, content_hash="h2")]
-    db = _db([_scalar_result(item), _scalars_result(rows)], plan)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result(rows),
+            _scalars_result([]),
+            _scalar_result(2),
+        ],
+        plan,
+    )
     _override(user, db)
     with (
         patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
@@ -1563,7 +1569,73 @@ def test_list_returns_assets_with_display_urls(client: TestClient):
     body = resp.json()
     assert body["max_assets"] == 20
     assert len(body["assets"]) == 2
+    assert body["occupied_assets"] == 2
+    assert body["active_reservations"] == []
     assert body["assets"][0]["display_url"] == "https://get"
+
+
+def test_list_exposes_authoritative_hidden_reservation_capacity(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.upload_expires_at = datetime.now(UTC) + timedelta(minutes=15)
+    reservation.created_at = datetime.now(UTC)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([reservation]),
+        ],
+        plan,
+    )
+    _override(user, db)
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.get(f"/plan-items/{item.id}/assets")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["assets"] == []
+    assert body["occupied_assets"] == 1
+    assert body["active_reservations"] == [
+        {
+            "reservation_id": str(reservation.id),
+            "release_at": (reservation.upload_expires_at + timedelta(minutes=15))
+            .isoformat()
+            .replace("+00:00", "Z"),
+        }
+    ]
+
+
+def test_list_keeps_cleanup_pending_reservation_until_maintenance_releases_it(
+    client: TestClient,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "cleanup_pending"
+    reservation.upload_expires_at = datetime.now(UTC) - timedelta(hours=1)
+    reservation.created_at = datetime.now(UTC) - timedelta(hours=2)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([reservation]),
+        ],
+        plan,
+    )
+    _override(user, db)
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.get(f"/plan-items/{item.id}/assets")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["assets"] == []
+    assert body["occupied_assets"] == 1
+    assert body["active_reservations"] == [
+        {
+            "reservation_id": str(reservation.id),
+            "release_at": None,
+        }
+    ]
 
 
 def test_reanalyze_failed_asset_queues_fenced_attempt(client: TestClient, _no_real_broker_publish):

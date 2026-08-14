@@ -57,6 +57,26 @@ function renderVisuals(overrides: Partial<ComponentProps<typeof ToolDrawer>> = {
 }
 
 describe("ToolDrawer visual blocks", () => {
+  it("keeps upload recovery visible without disabling the picker after a failed file", () => {
+    renderVisuals({
+      visualUploading: false,
+      visualUploadFeedback: (
+        <div>
+          <p>broken.mov</p>
+          <p>Upload interrupted. Check your connection and retry.</p>
+          <button type="button">Retry</button>
+          <button type="button">Remove</button>
+        </div>
+      ),
+    });
+
+    expect(screen.getByText("broken.mov")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/upload images or videos/i)).toBeEnabled();
+    expect(screen.queryByText("Uploading visuals…")).toBeNull();
+  });
+
   it("creates a montage from the user's ordered asset selection", () => {
     const onAddMontage = jest.fn();
     renderVisuals({ onAddMontage });

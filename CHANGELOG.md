@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.28.0.1] — 2026-08-14
+
+### Added
+- **Visual uploads now start as one capacity-checked batch and keep moving in parallel.** Kria rejects unsupported or oversized files before networking, reserves the accepted batch in one request, transfers up to three files at once, and registers each completed file immediately so analysis can overlap later uploads. The item page and editor share the same uploader and count pending files toward the 20-visual limit.
+- **Every file now has its own honest progress and recovery path.** Preparing, uploading, registering, queued, analyzing, ready, and failed states stay independent; successful files remain available, transfer retries refresh only their signed reservation, and registration retries reuse the uploaded object instead of sending it again.
+
+### Fixed
+- **Creators no longer see raw “Internal Server Error” upload failures.** The proxy and API client preserve safe actionable validation details, sanitize server failures, attach request and batch correlation IDs, and show stage-specific guidance with Retry or Remove actions plus an accurate batch summary.
+- **The editor now keeps polling queued analysis and explains unreadable versus temporary analysis failures.** Retryable analysis errors offer Retry analysis, unsupported formats name the accepted image/video types, and mixed batches report exactly how many visuals were added or need attention.
+
 ## [0.28.0.0] — 2026-08-14
 
 ### Added
