@@ -640,8 +640,9 @@ class Settings(BaseSettings):
 
     lyrics_optional_enabled: bool = Field(
         default=False,
-        description="Lyrics stop being baked into song_lyrics renders: the variant "
-        "renders lyrics-free (clean base, like song_text) and stamps "
+        description="Lyrics become an optional capability of track-backed song_text: "
+        "the generated intro stays, lyrics are not baked, and "
+        "the variant stamps "
         "lyrics_baked=False + lyrics_enabled=False. The editor's Lyrics toggle "
         "(default OFF) then instantly materializes beat-synced lyric lines as "
         "ordinary editable `role=lyric_line` TextElements via GET "

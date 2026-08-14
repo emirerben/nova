@@ -1137,11 +1137,7 @@ async def _load_generative_job(
         plan = await db.get(
             ContentPlan,
             item_ref.content_plan_id,
-            **(
-                {"populate_existing": True, "with_for_update": True}
-                if with_for_update
-                else {}
-            ),
+            **({"populate_existing": True, "with_for_update": True} if with_for_update else {}),
         )
         if plan is None:
             raise HTTPException(
@@ -2137,8 +2133,15 @@ def _variant_lyrics_capable(variant: dict) -> bool:
 
 
 def _lyrics_capabilities(variant: dict) -> dict:
+    from app.config import settings  # noqa: PLC0415
+
     enabled = _variant_lyrics_enabled(variant)
-    if not _LYRICS_EDITOR_ENABLED:
+    elements_model = variant.get("lyrics_baked") is False
+    optional_song_text = elements_model and variant.get("variant_id") == "song_text"
+    editor_enabled = bool(
+        _LYRICS_EDITOR_ENABLED or (settings.lyrics_optional_enabled and optional_song_text)
+    )
+    if not editor_enabled:
         reason = "disabled"
     elif not variant.get("music_track_id"):
         reason = "no_track"
@@ -2147,10 +2150,10 @@ def _lyrics_capabilities(variant: dict) -> dict:
     else:
         reason = None
     return {
-        "editable": bool(_LYRICS_EDITOR_ENABLED and enabled and reason is None),
+        "editable": bool(editor_enabled and enabled and reason is None),
         "enabled": enabled,
         "can_toggle_on": bool(
-            _LYRICS_EDITOR_ENABLED
+            editor_enabled
             and (variant.get("text_mode") == "lyrics" or variant.get("lyrics_available") is True)
             and reason is None
         ),
@@ -2160,7 +2163,7 @@ def _lyrics_capabilities(variant: dict) -> dict:
         # via GET .../lyric-seeds). "baked" = every other variant (legacy renders,
         # and any render made while the flag was off) — lyrics are permanently
         # burned into pixels and the lyric_line projection stays read-only.
-        "lyrics_model": "elements" if variant.get("lyrics_baked") is False else "baked",
+        "lyrics_model": "elements" if elements_model else "baked",
     }
 
 

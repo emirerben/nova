@@ -102,6 +102,7 @@ def _render_lyrics_variant(
     tmp_path,
     *,
     lyrics_enabled: bool | None = None,
+    track=None,
 ) -> dict:
     mix_calls: list = []
     _patch_render_helpers(monkeypatch, mix_calls)
@@ -110,7 +111,12 @@ def _render_lyrics_variant(
     return gb._render_generative_variant(
         job_id="j",
         rank=1,
-        spec={"variant_id": "song_lyrics", "rank": 1, "text_mode": "lyrics", "track": _track()},
+        spec={
+            "variant_id": "song_lyrics",
+            "rank": 1,
+            "text_mode": "lyrics",
+            "track": _track() if track is None else track,
+        },
         clip_metas=[_Meta("c1")],
         clip_id_to_local={"c1": "/x.mp4"},
         clip_id_to_gcs={"c1": "users/u/plan/i/x.mp4"},
@@ -120,6 +126,46 @@ def _render_lyrics_variant(
         agent_form={},
         variant_dir=str(vdir),
         lyrics_enabled=lyrics_enabled,
+    )
+
+
+def _render_song_text_variant(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict:
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+    import app.pipeline.text_overlay_skia as skia
+
+    def _fake_burn(_input, _overlays, output, _tmpdir, **_kwargs):
+        with open(output, "wb") as rendered:
+            rendered.write(b"intro-burned-output")
+
+    monkeypatch.setattr(skia, "burn_text_overlays_skia", _fake_burn)
+    monkeypatch.setattr(
+        gb,
+        "_resolve_subject_matte_for_burn",
+        lambda *, overlays, **_kwargs: (None, None, overlays),
+    )
+    vdir = tmp_path / "song-text"
+    vdir.mkdir()
+    return gb._render_generative_variant(
+        job_id="j",
+        rank=1,
+        spec={
+            "variant_id": "song_text",
+            "rank": 1,
+            "text_mode": "agent_text",
+            "track": _track(),
+        },
+        clip_metas=[_Meta("c1")],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "users/u/plan/i/x.mp4"},
+        probe_map={},
+        available_footage_s=6.0,
+        agent_text=types.SimpleNamespace(
+            text="pov: sailboat mornings in korfu",
+            highlight_word="korfu",
+        ),
+        agent_form={"effect": "karaoke-line"},
+        variant_dir=str(vdir),
     )
 
 
@@ -181,6 +227,54 @@ def test_lyrics_optional_flag_on_skips_injection_and_bakes_false(
     # Same clean-base upload mechanism song_text uses — text-free, ready for
     # fast reburn once the user saves materialized lyric elements.
     assert res["base_video_path"] == "generative-jobs/j/base_1_song_lyrics.mp4"
+
+
+def test_lyrics_optional_keeps_legacy_song_lyrics_clean_when_cache_disappears(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Compatibility guard: the optional flag historically classified every
+    lyrics-mode render as unbaked, even if its track later lost lyric metadata."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "lyrics_optional_enabled", True, raising=False)
+    monkeypatch.setattr(
+        gb,
+        "_inject_lyrics",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("_inject_lyrics called")),
+    )
+    track = _track()
+    track.lyrics_cached = None
+
+    res = _render_lyrics_variant(monkeypatch, tmp_path, track=track)
+
+    assert res["ok"] is True
+    assert res["lyrics_available"] is False
+    assert res["lyrics_enabled"] is False
+    assert res["lyrics_baked"] is False
+
+
+def test_song_text_keeps_generated_intro_and_exposes_optional_lyric_seeds(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Critical interaction: a lyric-capable content-plan primary render keeps
+    its generated intro while remaining an elements-model lyric target."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "lyrics_optional_enabled", True, raising=False)
+
+    res = _render_song_text_variant(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    assert res["variant_id"] == "song_text"
+    assert res["text_mode"] == "agent_text"
+    assert res["intro_text"] == "pov: sailboat mornings in korfu"
+    assert res["intro_highlight_word"] == "korfu"
+    assert res["lyrics_available"] is True
+    assert res["lyrics_enabled"] is False
+    assert res["lyrics_baked"] is False
+    assert res["base_video_path"] == "generative-jobs/j/base_1_song_text.mp4"
 
 
 def test_lyrics_optional_flag_off_ignores_flag_stays_legacy(
