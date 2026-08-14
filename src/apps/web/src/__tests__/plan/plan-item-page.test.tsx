@@ -245,47 +245,12 @@ function makeGuidedProposal(status: "analyzing" | "draft" | "approved" | "stale"
   };
 }
 
-describe("PlanItemPage — Smart captions availability", () => {
-  beforeEach(() => {
-    mockUpdatePlanItem.mockReset();
-    mockRefetch.mockReset();
-  });
-
-  it("shows the server-authorized switch and persists the per-video choice", async () => {
+describe("PlanItemPage — Smart captions (default-on, no toggle)", () => {
+  it("never renders a Smart captions switch — the capability is server-decided", async () => {
     const item = makeItem({
       edit_format: "subtitled",
       smart_captions_available: true,
       smart_captions_unavailable_reason: null,
-    });
-    mockUpdatePlanItem.mockResolvedValue({ ...item, smart_captions_enabled: true });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    const smartSwitch = screen.getByRole("switch", { name: "Smart captions" });
-    expect(smartSwitch).toHaveAttribute("aria-checked", "false");
-
-    await act(async () => {
-      fireEvent.click(smartSwitch);
-    });
-
-    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
-      smart_captions_enabled: true,
-    });
-    expect(mockRefetch).toHaveBeenCalled();
-  });
-
-  it("does not expose the switch when the backend capability denies it", async () => {
-    const item = makeItem({
-      edit_format: "subtitled",
-      smart_captions_available: false,
-      smart_captions_unavailable_reason: "not_assigned",
     });
     mockUsePolledJobStatus.mockReturnValue({
       data: { item, job: null },
@@ -298,65 +263,7 @@ describe("PlanItemPage — Smart captions availability", () => {
     });
 
     expect(screen.queryByRole("switch", { name: "Smart captions" })).toBeNull();
-  });
-
-  it("lets the creator disable automatic SFX without disabling Smart captions", async () => {
-    const item = makeItem({
-      edit_format: "subtitled",
-      smart_captions_enabled: true,
-      smart_sound_design_enabled: true,
-      smart_captions_available: true,
-      smart_captions_unavailable_reason: null,
-    });
-    mockUpdatePlanItem.mockResolvedValue({
-      ...item,
-      smart_sound_design_enabled: false,
-    });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    expect(screen.getByText("Sound design")).toBeInTheDocument();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Off" }));
-    });
-
-    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
-      smart_sound_design_enabled: false,
-    });
-  });
-
-  it("keeps the choice unchanged and shows an error when persistence fails", async () => {
-    const item = makeItem({
-      edit_format: "subtitled",
-      smart_captions_available: true,
-      smart_captions_unavailable_reason: null,
-    });
-    mockUpdatePlanItem.mockRejectedValue(new Error("conflict"));
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("switch", { name: "Smart captions" }));
-    });
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Couldn't update Smart captions — try again.",
-    );
-    expect(mockRefetch).not.toHaveBeenCalled();
+    expect(screen.queryByText("Sound design")).toBeNull();
   });
 });
 

@@ -684,7 +684,11 @@ def _dispatch_item_render(
     smart_context = resolve_smart_captions_context_sync(
         user_id=plan.user_id,
         edit_format=str(item.edit_format or "montage"),
-        requested=getattr(item, "smart_captions_enabled", False) is True,
+        # Smart captions are default-on (2026-08-14): the per-item toggle was
+        # removed from the UI, so eligibility is decided entirely by the
+        # resolver's server gate ladder (kill switch, subtitled format,
+        # creator assignment / fleet default preset).
+        requested=True,
         sound_design_enabled=(getattr(item, "smart_sound_design_enabled", None) is not False),
         db=session,
     )
