@@ -93,6 +93,42 @@ describe("EditorTimelineBody — AI sequence row marker", () => {
     render(<EditorTimelineBody {...baseProps([PLAIN_TEXT_BAR])} />);
     expect(screen.queryByLabelText("AI sequence")).not.toBeInTheDocument();
   });
+
+  it("forwards one immutable text-drag origin through every trim preview", () => {
+    const onPreviewTextTiming = jest.fn();
+    render(
+      <EditorTimelineBody
+        {...baseProps([PLAIN_TEXT_BAR])}
+        onPreviewTextTiming={onPreviewTextTiming}
+      />,
+    );
+    const bar = screen.getByRole("button", { name: /Text row 1, Big title/ });
+    Object.defineProperties(bar, {
+      setPointerCapture: { value: jest.fn(), configurable: true },
+      hasPointerCapture: { value: jest.fn(() => true), configurable: true },
+      releasePointerCapture: { value: jest.fn(), configurable: true },
+    });
+    jest.spyOn(bar, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 120, top: 0, bottom: 24, width: 120, height: 24,
+      x: 0, y: 0, toJSON: () => ({}),
+    });
+    const scroller = screen.getByTestId("editor-timeline-lanes-scroll");
+    jest.spyOn(scroller, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 600, top: 0, bottom: 240, width: 600, height: 240,
+      x: 0, y: 0, toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(bar, { pointerId: 7, clientX: 119 });
+    fireEvent.pointerMove(bar, { pointerId: 7, clientX: 80 });
+    fireEvent.pointerMove(bar, { pointerId: 7, clientX: 110 });
+    fireEvent.pointerUp(bar, { pointerId: 7, clientX: 110 });
+
+    expect(onPreviewTextTiming).toHaveBeenCalledTimes(2);
+    for (const call of onPreviewTextTiming.mock.calls) {
+      expect(["left", "right", "body"]).toContain(call[2]);
+      expect(call[3]).toStrictEqual(PLAIN_TEXT_BAR);
+    }
+  });
 });
 
 describe("EditorTimelineBody — Creator Blocks lane", () => {

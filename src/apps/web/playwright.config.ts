@@ -14,7 +14,8 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "E2E_FIXTURES=true npm run dev -- -p 4310",
+    command:
+      "E2E_FIXTURES=true NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED=true npm run dev -- -p 4310",
     url: "http://localhost:4310/dev-qa/clips",
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
@@ -52,7 +53,7 @@ export default defineConfig({
     },
     {
       name: "desktop-editor",
-      testMatch: /editor-timeline\.spec\.ts/,
+      testMatch: /(editor-timeline|text-motion)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 1440, height: 900 },

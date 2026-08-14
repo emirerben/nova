@@ -49,6 +49,7 @@ _SKIA_EFFECTS = {
     "static",
     "typewriter",
     "stream-in",
+    "smooth-type",
     "staggered-slice",
     "ink-reveal",
     "handwriting",
@@ -932,7 +933,14 @@ def build_overlays_from_text_elements(
             pos_x_frac = None
             pos_y_frac = None
 
+        from app.config import settings as _settings  # noqa: PLC0415
+
+        elem_motion = getattr(elem, "motion", None)
         effect = elem.effect or _DEFAULT_EFFECT
+        if effect == "smooth-type" and (
+            not _settings.text_motion_v2_enabled or elem_motion is None
+        ):
+            effect = "static"
         text_color = elem.color or _DEFAULT_TEXT_COLOR
         highlight_color_v = elem.highlight_color or _DEFAULT_HIGHLIGHT_COLOR
         text_anchor = elem.alignment or _DEFAULT_ANCHOR
@@ -943,6 +951,11 @@ def build_overlays_from_text_elements(
         # yet (concurrent lane) — absent field reads as False, byte-identical.
         elem_behind_subject = bool(getattr(elem, "behind_subject", False))
         elem_theme_transition = getattr(elem, "theme_transition", None)
+
+        def attach_motion(overlay: dict) -> None:
+            if elem_motion is None or not _settings.text_motion_v2_enabled:
+                return
+            overlay["motion"] = elem_motion.model_dump(exclude_none=True)
 
         def attach_glow(overlay: dict) -> None:
             if elem.glow_color is not None:
@@ -967,6 +980,9 @@ def build_overlays_from_text_elements(
                 overlay["vertical_anchor"] = "center"
             attach_glow(overlay)
             attach_theme_transition(overlay)
+            attach_motion(overlay)
+            if elem.effect == "smooth-type" and effect == "static":
+                overlay["shape_text"] = True
 
         # text_case: transform the display text AND any stored karaoke word
         # timings (their `text` keys are what _draw_karaoke_line burns).
@@ -991,7 +1007,17 @@ def build_overlays_from_text_elements(
         # ── reveal_s: produce [reveal, hold] pair (directly authored only) ───
         # Adapter-sourced elements never set reveal_s (legacy burn dicts don't
         # carry it); those come back as two pre-split TextElements already.
-        if elem.reveal_s is not None and effect != "static" and elem_theme_transition is None:
+        v2_timing_authoritative = (
+            _settings.text_motion_v2_enabled
+            and elem_motion is not None
+            and elem_motion.version == 2
+        )
+        if (
+            elem.reveal_s is not None
+            and effect != "static"
+            and elem_theme_transition is None
+            and not v2_timing_authoritative
+        ):
             reveal_end = min(max(0.0, float(elem.reveal_s)), elem.end_s)
 
             reveal = build_intro_overlay(

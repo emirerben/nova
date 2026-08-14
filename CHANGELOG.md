@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.30.0.0] — 2026-08-14
+
+### Added
+- **Smooth Type brings polished, readable text reveals to every compatible editor surface.** Creators can tune its speed, intensity, easing, stagger, reveal order, direction, travel, blur, reveal ramp, and hold from the desktop editor, pocket inspector, and instant-edit flow. Other Text Motion v2 effects expose only the details they support, including overshoot for pop/bounce and cursor style/blink rate for typed effects.
+
+### Changed
+- **Text motion now previews the same state that exports at every 30fps sample.** TypeScript and Skia share normalized timing, easing, phase rounding, Unicode grapheme behavior, full-run shaping, bidirectional reveal order, wrapping, and font fallback so multilingual text stays stable while animating.
+- **Retiming is safer and fully reversible.** Motion changes resize only the selected overlay, trims consume hold before accelerating up to 4× and clamp to a valid settle window, one gesture creates one undo record, and legacy edits keep their original timing until explicitly upgraded.
+- **Long and complex animations fail closed before rendering.** Settled holds are hard-linked to avoid redundant frames, weighted scene limits cover overlapping, behind-subject, sequence, and theme-transition cases, and dual rollout flags preserve saved configuration while falling back to settled static text when Text Motion v2 is disabled.
+
 ## [0.29.1.0] — 2026-08-14
 
 ### Fixed

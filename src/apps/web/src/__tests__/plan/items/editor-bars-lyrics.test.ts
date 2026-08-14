@@ -113,6 +113,23 @@ describe("barsToTextElements includeLyrics option (lyrics-optional elements mode
 });
 
 describe("editor bar transition metadata", () => {
+  it("persists an explicit reset to legacy timing", () => {
+    const element: TextElement = {
+      id: "motion-reset",
+      text: "Legacy again",
+      start_s: 0,
+      end_s: 2,
+      role: "generative_intro",
+      effect: "fade-in",
+      motion: { version: 2, speed: 2 },
+    };
+    const bars = seedBarsFromVariant(variant([element])).map((bar) => ({
+      ...bar,
+      motion: null,
+    }));
+    expect(barsToTextElements(bars, new Map([[element.id, element]]))[0].motion).toBeNull();
+  });
+
   it("preserves a generated reveal endpoint and schedule through save and reload", () => {
     const sequence: TextElement = {
       id: "scheduled-text",

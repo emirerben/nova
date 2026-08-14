@@ -1,17 +1,32 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { TextElement } from "@/lib/plan-api";
 import { animationStateAt } from "@/lib/overlay-animation";
+import { smoothTypeLineProgresses } from "@/lib/text-motion-v2";
 import {
   CANVAS_H,
   resolveTextElementsLayout,
+  shrinkToFit,
   type TextElementLayout,
 } from "@/lib/overlay-layout";
 import { resolveClusterCssFont } from "@/lib/overlay-constants";
+import { ensureClusterFontLoaded, makeCanvasMeasureAt } from "@/lib/canvas-measure";
+import { textMotionGraphemeCount } from "@/lib/text-motion-v2";
 import { FONT_FACES } from "@/lib/font-faces";
 import { HandwritingText } from "@/components/HandwritingText";
 import { textShadowBleedPx, textShadowCss } from "@/lib/text-shadow";
+
+function firstStrongDirectionIsRtl(text: string): boolean {
+  for (const character of text) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if ((codePoint >= 0x0590 && codePoint <= 0x08ff) || (codePoint >= 0xfb1d && codePoint <= 0xfdff)) {
+      return true;
+    }
+    if (character.toUpperCase() !== character.toLowerCase()) return false;
+  }
+  return false;
+}
 
 export function textElementAnchorTransform(alignment: TextElementLayout["alignment"]): string {
   if (alignment === "left") return "translate(0, -50%)";
@@ -87,6 +102,56 @@ export function textElementContentStyle({
   };
 }
 
+/** Resolve the same greedy visual rows the Skia Smooth Type path masks.
+ * Measurement stays at 1080x1920 canvas scale and runs only when layout
+ * changes, never on high-frequency playback ticks. */
+export function smoothTypePreviewLayout(
+  layout: TextElementLayout,
+): { lines: string[]; sizePx: number } {
+  const font = resolveClusterCssFont(layout.fontFamily);
+  const baseMeasureAt = makeCanvasMeasureAt(font.family, font.weight, font.style);
+  const measureAt = (sizePx: number) => {
+    const measure = baseMeasureAt(sizePx);
+    const spacingPx = layout.letterSpacingEm * sizePx;
+    return (text: string) =>
+      measure(text) + Math.max(0, textMotionGraphemeCount(text) - 1) * spacingPx;
+  };
+  return shrinkToFit(
+    layout.text,
+    measureAt,
+    Math.trunc(layout.sizePx),
+    layout.maxWidthPx,
+  );
+}
+
+/** Re-measure wrapped Smooth Type rows after their authored fonts finish
+ * loading. Without this revision, a cold editor can cache fallback-font rows
+ * for the whole session even though the visible text later swaps fonts. */
+export function useSmoothTypeFontRevision(layouts: TextElementLayout[]): number {
+  const requests = useMemo(
+    () => layouts
+      .filter((layout) => layout.effect === "smooth-type")
+      .map((layout) => ({ fontFamily: layout.fontFamily, sizePx: layout.sizePx })),
+    [layouts],
+  );
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    if (requests.length === 0) return;
+    let active = true;
+    void Promise.all(
+      requests.map((request) =>
+        ensureClusterFontLoaded(request.fontFamily, request.sizePx),
+      ),
+    ).then(() => {
+      if (active) setRevision((current) => current + 1);
+    });
+    return () => {
+      active = false;
+    };
+  }, [requests]);
+  return revision;
+}
+
 export function TextElementOverlayContent({
   layout,
   fontSize,
@@ -94,7 +159,11 @@ export function TextElementOverlayContent({
   canvasPixelCssSize = `${100 / CANVAS_H}cqh`,
   reserveText,
   showCursor = false,
+  cursorStyle = "bar",
   revealProgress,
+  revealOrigin = "forward",
+  revealLines,
+  lineRevealProgresses,
   children,
 }: {
   layout: TextElementLayout;
@@ -104,8 +173,12 @@ export function TextElementOverlayContent({
   canvasPixelCssSize?: string;
   reserveText?: string | null;
   showCursor?: boolean;
+  cursorStyle?: "none" | "bar" | "block" | "underscore";
   /** Apply write-on progress to ink-reveal or centerline handwriting. */
   revealProgress?: number;
+  revealOrigin?: "forward" | "reverse" | "center-out";
+  revealLines?: string[];
+  lineRevealProgresses?: number[];
   children?: ReactNode;
 }) {
   const content = children ?? layout.text;
@@ -115,6 +188,45 @@ export function TextElementOverlayContent({
     strokeWidth,
     canvasPixelCssSize,
   });
+  if (lineRevealProgresses) {
+    const lines = revealLines ?? layout.text.split("\n");
+    return (
+      <div style={sharedStyle}>
+        {lines.map((line, index) => {
+          const progress = lineRevealProgresses[index] ?? 1;
+          const rtl = firstStrongDirectionIsRtl(line);
+          const physicalOrigin = revealOrigin === "center-out"
+            ? "center-out"
+            : (revealOrigin === "forward") === rtl
+              ? "right"
+              : "left";
+          const inset = (1 - progress) * 100;
+          const clipPath = progress >= 1
+            ? undefined
+            : physicalOrigin === "center-out"
+              ? `inset(-0.4em ${inset / 2}% -0.4em ${inset / 2}%)`
+              : physicalOrigin === "right"
+                ? `inset(-0.4em 0 -0.4em ${inset}%)`
+                : `inset(-0.4em ${inset}% -0.4em 0)`;
+          return (
+            <span
+              key={`${index}:${line}`}
+              data-smooth-type-line={index}
+              style={{
+                display: "block",
+                whiteSpace: "pre",
+                wordBreak: "normal",
+                clipPath,
+                willChange: clipPath ? "clip-path" : undefined,
+              }}
+            >
+              {line || "\u00a0"}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
   if (layout.effect === "handwriting") {
     return (
       <div
@@ -175,11 +287,24 @@ export function TextElementOverlayContent({
             glowBleed,
           );
           const leftBleed = `calc(${-leftBleedPx} * ${canvasPixelCssSize})`;
+          const rightBleed = `calc(${-rightBleedPx} * ${canvasPixelCssSize})`;
           const topBleed = `calc(${-topBleedPx} * ${canvasPixelCssSize})`;
           const bottomBleed = `calc(${-bottomBleedPx} * ${canvasPixelCssSize})`;
           const rightInset = `calc(${(1 - revealProgress) * 100}% + ${
             (1 - revealProgress) * leftBleedPx - revealProgress * rightBleedPx
           } * ${canvasPixelCssSize})`;
+          const leftInset = `calc(${(1 - revealProgress) * 100}% + ${
+            (1 - revealProgress) * rightBleedPx - revealProgress * leftBleedPx
+          } * ${canvasPixelCssSize})`;
+          const centeredInset = `calc(${(1 - revealProgress) * 50}% - ${
+            revealProgress * Math.max(leftBleedPx, rightBleedPx)
+          } * ${canvasPixelCssSize})`;
+          const horizontalInsets: [string, string] =
+            revealOrigin === "reverse"
+              ? [rightBleed, leftInset]
+              : revealOrigin === "center-out"
+                ? [centeredInset, centeredInset]
+                : [rightInset, leftBleed];
           return {
             display: "inline-block",
             width: "max-content",
@@ -187,7 +312,7 @@ export function TextElementOverlayContent({
             clipPath:
               revealProgress >= 1
                 ? undefined
-                : `inset(${topBleed} ${rightInset} ${bottomBleed} ${leftBleed})`,
+                : `inset(${topBleed} ${horizontalInsets[0]} ${bottomBleed} ${horizontalInsets[1]})`,
             willChange: revealProgress >= 1 ? undefined : "clip-path",
           };
         })();
@@ -199,7 +324,9 @@ export function TextElementOverlayContent({
         <span>{content}</span>
         {showCursor && (
           <span aria-hidden style={{ position: "relative", display: "inline-block", width: 0 }}>
-            <span style={{ position: "absolute", left: "0.2em" }}>|</span>
+            <span style={{ position: "absolute", left: "0.2em" }}>
+              {cursorStyle === "block" ? "▮" : cursorStyle === "underscore" ? "_" : "|"}
+            </span>
           </span>
         )}
         <span aria-hidden data-reveal-remainder style={{ visibility: "hidden" }}>
@@ -231,19 +358,6 @@ export function TextElementOverlayContent({
   );
 }
 
-function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => setReduced(media.matches);
-    update();
-    media.addEventListener?.("change", update);
-    return () => media.removeEventListener?.("change", update);
-  }, []);
-  return reduced;
-}
-
 export default function TextElementOverlayLayer({
   elements,
   currentTime,
@@ -251,8 +365,21 @@ export default function TextElementOverlayLayer({
   elements: TextElement[];
   currentTime?: number;
 }) {
-  const layouts = resolveTextElementsLayout(elements);
-  const reducedMotion = usePrefersReducedMotion();
+  const motionV2Enabled = process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED === "true";
+  const layouts = useMemo(() => resolveTextElementsLayout(elements), [elements]);
+  const elementById = useMemo(
+    () => new Map(elements.map((element) => [element.id, element])),
+    [elements],
+  );
+  const smoothFontRevision = useSmoothTypeFontRevision(layouts);
+  const smoothPreviewById = useMemo(() => {
+    void smoothFontRevision;
+    return new Map(
+      layouts
+        .filter((layout) => (elementById.get(layout.id)?.effect ?? layout.effect) === "smooth-type")
+        .map((layout) => [layout.id, smoothTypePreviewLayout(layout)]),
+    );
+  }, [elementById, layouts, smoothFontRevision]);
   const visible =
     currentTime === undefined
       ? layouts
@@ -264,33 +391,76 @@ export default function TextElementOverlayLayer({
       style={{ containerType: "size" } as CSSProperties}
     >
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
-      {visible.map((layout) => (
-        <div
-          key={layout.id}
-          className="absolute select-none"
-          style={textElementWrapperStyle({ layout })}
-        >
-          <TextElementOverlayContent
-            layout={layout}
-            fontSize={`${(layout.sizePx / CANVAS_H) * 100}cqh`}
-            strokeWidth={
-              layout.strokeWidth > 0 ? `${(layout.strokeWidth / CANVAS_H) * 100}cqh` : null
-            }
-            revealProgress={
-              layout.effect === "handwriting" || layout.effect === "ink-reveal"
-                ? reducedMotion || currentTime === undefined
-                  ? 1
-                  : animationStateAt(
-                      layout.effect,
+      {visible.map((layout) => {
+        const element = elementById.get(layout.id);
+        const smoothPreview = smoothPreviewById.get(layout.id);
+        const smoothLines = smoothPreview?.lines ?? layout.text.split("\n");
+        const effect = element?.effect ?? layout.effect ?? "static";
+        const animation = currentTime === undefined
+          ? animationStateAt("static", 0, 1, layout.text)
+          : animationStateAt(
+              effect,
+              currentTime - layout.start_s,
+              Math.max(0.01, layout.end_s - layout.start_s),
+              layout.text,
+              {
+                motion: element?.motion,
+                motionV2Enabled,
+              },
+            );
+        const baseStyle = textElementWrapperStyle({ layout });
+        const fixedReveal = effect === "typewriter" || effect === "stream-in";
+        const hasTransformMotion =
+          animation.xTranslate !== 0 || animation.yTranslate !== 0 || animation.scale !== 1;
+        return (
+          <div
+            key={layout.id}
+            className="absolute select-none"
+            style={{
+              ...baseStyle,
+              opacity: animation.alpha,
+              filter: animation.blurPx > 0.01
+                ? `blur(${(animation.blurPx / CANVAS_H) * 100}cqh)`
+                : undefined,
+              transform: hasTransformMotion
+                ? `${baseStyle.transform ?? ""} translate(${(animation.xTranslate / CANVAS_H) * 100}cqh, ${(animation.yTranslate / CANVAS_H) * 100}cqh) scale(${animation.scale})`
+                : baseStyle.transform,
+            }}
+          >
+            <TextElementOverlayContent
+              layout={layout}
+              fontSize={`${((smoothPreview?.sizePx ?? layout.sizePx) / CANVAS_H) * 100}cqh`}
+              strokeWidth={
+                layout.strokeWidth > 0 ? `${(layout.strokeWidth / CANVAS_H) * 100}cqh` : null
+              }
+              reserveText={fixedReveal ? layout.text : null}
+              showCursor={animation.showCursor}
+              cursorStyle={animation.cursorStyle}
+              revealProgress={
+                effect === "handwriting" || effect === "ink-reveal" || effect === "smooth-type"
+                  ? animation.revealProgress
+                  : undefined
+              }
+              revealOrigin={animation.revealOrigin}
+              revealLines={smoothLines}
+              lineRevealProgresses={
+                effect === "smooth-type" &&
+                motionV2Enabled &&
+                element?.motion?.version === 2 &&
+                currentTime !== undefined
+                  ? smoothTypeLineProgresses(
+                      smoothLines,
                       currentTime - layout.start_s,
-                      Math.max(0, layout.end_s - layout.start_s),
-                      layout.text,
-                    ).revealProgress
-                : undefined
-            }
-          />
-        </div>
-      ))}
+                      element?.motion,
+                    )
+                  : undefined
+              }
+            >
+              {animation.visibleText}
+            </TextElementOverlayContent>
+          </div>
+        );
+      })}
     </div>
   );
 }

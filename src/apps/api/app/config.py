@@ -235,6 +235,10 @@ class Settings(BaseSettings):
     # base before captions, so captions stay topmost.
     subtitled_text_lane_enabled: bool = False
 
+    # Text Motion v2 evaluator + Smooth Type renderer. Persisted configs are
+    # retained while disabled; Smooth Type renders as settled static text.
+    text_motion_v2_enabled: bool = False
+
     # Subtitled caption correction: after whisper, an LLM fixes each cue's spelling /
     # grammar / case-endings (whisper mishears Turkish morphology) while preserving cue
     # timing. Best-effort — a failure leaves cues untouched. Kill switch: set False to

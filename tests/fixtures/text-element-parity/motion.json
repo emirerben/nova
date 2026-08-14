@@ -1,0 +1,122 @@
+{
+  "cases": [
+    {
+      "name": "smooth-type-defaults",
+      "element": {
+        "id": "motion-default",
+        "text": "AB",
+        "start_s": 0,
+        "end_s": 1.2,
+        "effect": "smooth-type",
+        "motion": { "version": 2 }
+      },
+      "expected": {
+        "grapheme_count": 2,
+        "settle_s": 0.165,
+        "total_s": 1.165,
+        "samples": [
+          {
+            "t": 0,
+            "alpha": 0.3,
+            "x_translate": 0,
+            "y_translate": -12.6,
+            "blur_px": 2.8,
+            "reveal_progress": 0,
+            "reveal_origin": "forward",
+            "settled": false
+          },
+          {
+            "t": 0.16666666666666666,
+            "alpha": 1,
+            "x_translate": 0,
+            "y_translate": 0,
+            "blur_px": 0,
+            "reveal_progress": 1,
+            "reveal_origin": "forward",
+            "settled": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "unicode-clusters-and-reverse-custom-motion",
+      "element": {
+        "id": "motion-unicode",
+        "text": "👩‍💻é",
+        "start_s": 1,
+        "end_s": 4,
+        "effect": "smooth-type",
+        "motion": {
+          "version": 2,
+          "speed": 4,
+          "intensity": 1,
+          "easing": "linear",
+          "stagger_ms": 250,
+          "order": "reverse",
+          "direction": "right",
+          "travel_px": 100,
+          "blur_px": 12,
+          "hold_s": 2,
+          "exit_s": 0.5,
+          "reveal_ramp_ms": 400,
+          "future_curve_detail": { "amount": 0.75 }
+        }
+      },
+      "expected": {
+        "grapheme_count": 2,
+        "settle_s": 0.1625,
+        "total_s": 2.6625,
+        "samples": [
+          {
+            "t": 0.1,
+            "alpha": 0.6,
+            "x_translate": 40,
+            "y_translate": 0,
+            "blur_px": 4.8,
+            "reveal_progress": 0.6625,
+            "reveal_origin": "reverse",
+            "settled": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "multiline-separator-shares-the-complete-run-clock",
+      "element": {
+        "id": "motion-multiline",
+        "text": "A\nB",
+        "start_s": 0,
+        "end_s": 1.3,
+        "effect": "smooth-type",
+        "motion": { "version": 2 }
+      },
+      "expected": {
+        "grapheme_count": 3,
+        "settle_s": 0.21,
+        "total_s": 1.21,
+        "samples": [
+          {
+            "t": 0.2,
+            "alpha": 1,
+            "x_translate": 0,
+            "y_translate": 0,
+            "blur_px": 0,
+            "reveal_progress": 1,
+            "reveal_origin": "forward",
+            "settled": true
+          }
+        ],
+        "line_samples": [
+          {
+            "t": 0.1,
+            "progresses": [0.998046875, 0.3300781249999998]
+          },
+          {
+            "t": 0.2,
+            "progresses": [1, 1]
+          }
+        ]
+      }
+    }
+  ]
+}

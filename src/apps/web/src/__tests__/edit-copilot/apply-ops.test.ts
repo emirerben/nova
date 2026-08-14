@@ -52,6 +52,8 @@ function ctx(over: {
   slots?: DraftSlot[];
   capabilities?: Parameters<typeof buildCopilotSnapshot>[3];
   extras?: Parameters<typeof buildCopilotSnapshot>[5];
+  videoDurationS?: number;
+  textMotionV2Enabled?: boolean;
 } = {}) {
   const bars = over.bars ?? [bar(), bar({ id: "bar-2", text: "second", start_s: 3, end_s: 5 })];
   const slots = over.slots ?? [
@@ -65,6 +67,8 @@ function ctx(over: {
     slots,
     snapshot: buildCopilotSnapshot(bars, slots, clips, capabilities, [], over.extras),
     capabilities,
+    videoDurationS: over.videoDurationS,
+    textMotionV2Enabled: over.textMotionV2Enabled,
     makeTextBarId: () => "new-text",
     makeSlotKey: (s: DraftSlot) => `${s.key}-split`,
   };
@@ -192,6 +196,82 @@ describe("applyCopilotOps", () => {
     expect(remove.textActions).toEqual([]);
     expect(remove.rejected).toEqual([
       expect.objectContaining({ detail: "Lyric timing is locked to the vocal." }),
+    ]);
+  });
+
+  it("migrates explicit Copilot effects and retimes v2 trims", () => {
+    const legacy = ctx({ videoDurationS: 10, textMotionV2Enabled: true });
+    const selected = applyCopilotOps(
+      [{ op: "patch_text_style", bar_index: 0, patch: { effect: "smooth-type" } }],
+      legacy,
+    );
+    expect(selected.rejected).toEqual([]);
+    expect(selected.textActions).toEqual([
+      {
+        type: "PATCH_BAR",
+        id: "bar-1",
+        patch: expect.objectContaining({
+          effect: "smooth-type",
+          motion: expect.objectContaining({ version: 2 }),
+        }),
+      },
+    ]);
+
+    const motion = {
+      version: 2 as const,
+      speed: 1,
+      intensity: 1,
+      easing: "ease-out-cubic" as const,
+      stagger_ms: 45,
+      order: "forward" as const,
+      direction: "up" as const,
+      travel_px: 10,
+      overshoot: 0,
+      blur_px: 3,
+      cursor: "none" as const,
+      cursor_blink_hz: 2,
+      hold_s: 2,
+      exit_s: 0,
+      reveal_ramp_ms: 120,
+    };
+    const animatedBars = [bar({ effect: "smooth-type", motion, start_s: 0, end_s: 3 })];
+    const trimmed = applyCopilotOps(
+      [{ op: "set_text_timing", bar_index: 0, end_s: 1 }],
+      ctx({ bars: animatedBars, videoDurationS: 10, textMotionV2Enabled: true }),
+    );
+    expect(trimmed.textActions).toEqual([
+      {
+        type: "PATCH_BAR",
+        id: "bar-1",
+        patch: expect.objectContaining({
+          end_s: 1,
+          motion: expect.objectContaining({ hold_s: expect.any(Number) }),
+        }),
+      },
+    ]);
+
+    const retexted = applyCopilotOps(
+      [{ op: "edit_text", bar_index: 0, text: "A much longer animated line" }],
+      ctx({ bars: animatedBars, videoDurationS: 10, textMotionV2Enabled: true }),
+    );
+    expect(retexted.textActions).toEqual([
+      {
+        type: "PATCH_BAR",
+        id: "bar-1",
+        patch: expect.objectContaining({
+          text: "A much longer animated line",
+          end_s: expect.any(Number),
+        }),
+      },
+    ]);
+
+    const disabled = applyCopilotOps(
+      [{ op: "patch_text_style", bar_index: 0, patch: { effect: "smooth-type" } }],
+      ctx({ textMotionV2Enabled: false }),
+    );
+    expect(disabled.textActions).toEqual([]);
+    expect(disabled.rejected).toEqual([
+      expect.objectContaining({ reason: "capability_disabled" }),
     ]);
   });
 

@@ -184,6 +184,8 @@ export interface EditorTimelineBodyProps {
   onPreviewTextTiming?: (
     id: string,
     patch: Pick<TextElementBar, "start_s" | "end_s">,
+    handle: "left" | "right" | "body",
+    origin: TextElementBar,
   ) => void;
 
   visualBlocks: EditorVisualBlockBar[];
@@ -281,7 +283,7 @@ type ActiveDrag =
       handle: "left" | "right" | "body";
       startTimelineX: number;
       pxPerSecond: number;
-      origin: Pick<TextElementBar, "start_s" | "end_s">;
+      origin: TextElementBar;
       active: boolean;
     }
   | {
@@ -746,7 +748,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         deltaS,
         videoDurationS: effectiveDurationS,
       });
-      onPreviewTextTiming?.(active.id, toBaseRange(next));
+      onPreviewTextTiming?.(active.id, toBaseRange(next), active.handle, active.origin);
       setDragLabel({
         x: clientX,
         y: window.innerHeight - 118,
@@ -874,7 +876,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       }),
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
-      origin: { start_s: bar.start_s, end_s: bar.end_s },
+      origin: bar,
       active: false,
     };
   }
@@ -1065,6 +1067,13 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     dragRef.current = null;
     if (drag?.kind === "clip") {
       setFilmstripSlots(slots);
+    } else if (drag?.kind === "text") {
+      onPreviewTextTiming?.(
+        drag.id,
+        { start_s: drag.origin.start_s, end_s: drag.origin.end_s },
+        "body",
+        drag.origin,
+      );
     }
     setDragLabel(null);
   }

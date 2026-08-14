@@ -87,6 +87,7 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "dissolve-out",
         "bounce",
         "slide-in",
+        "smooth-type",
     }
 )
 
@@ -138,6 +139,7 @@ PARITY_VERIFIED_FIELDS: frozenset[str] = frozenset(
         "stroke_width",
         "alignment",
         "effect",
+        "motion",
         # Gated style fields (T11) — each has a shared parity fixture:
         "text_case",  # tests/fixtures/text-element-parity/text_case.json
         "letter_spacing",  # tests/fixtures/text-element-parity/letter_spacing.json
@@ -181,6 +183,7 @@ _BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
     "staggered-slice": "staggered-slice",
     "ink-reveal": "ink-reveal",
     "handwriting": "handwriting",
+    "smooth-type": "smooth-type",
 }
 
 # Map from burn-dict text_anchor value → TextElement alignment.
@@ -225,6 +228,28 @@ class ThemeTransition(BaseModel):
             return None
         s = str(v).strip()
         return s[:4] or None
+
+
+class TextMotionConfigV2(BaseModel):
+    """Optional authored motion. Extra keys survive older-client round trips."""
+
+    model_config = ConfigDict(extra="allow")
+
+    version: Literal[2] = 2
+    speed: float | None = Field(default=None, ge=0.25, le=4.0)
+    intensity: float | None = Field(default=None, ge=0.0, le=1.0)
+    easing: Literal["linear", "ease-out-cubic", "ease-in-out-cubic"] | None = None
+    stagger_ms: float | None = Field(default=None, ge=0.0, le=250.0)
+    order: Literal["forward", "reverse", "center-out"] | None = None
+    direction: Literal["none", "up", "down", "left", "right"] | None = None
+    travel_px: float | None = Field(default=None, ge=0.0, le=600.0)
+    overshoot: float | None = Field(default=None, ge=0.0, le=1.0)
+    blur_px: float | None = Field(default=None, ge=0.0, le=12.0)
+    cursor_style: Literal["none", "bar", "block", "underscore"] | None = None
+    cursor_blink_ms: float | None = Field(default=None, ge=100.0, le=2000.0)
+    hold_s: float | None = Field(default=None, ge=0.0, le=3600.0)
+    exit_s: float | None = Field(default=None, ge=0.0, le=2.0)
+    reveal_ramp_ms: float | None = Field(default=None, ge=40.0, le=400.0)
 
 
 class TextElement(BaseModel):
@@ -347,11 +372,16 @@ class TextElement(BaseModel):
             "dissolve-out",
             "bounce",
             "slide-in",
+            "smooth-type",
         ]
         | None
     ) = Field(
         default="static",
         description="Animation effect.",
+    )
+    motion: TextMotionConfigV2 | None = Field(
+        default=None,
+        description="Optional v2 timing/customization. None preserves exact legacy timing.",
     )
     theme_transition: ThemeTransition | None = Field(
         default=None,
@@ -790,6 +820,8 @@ def _burn_dict_to_text_element(
     word_timings = burn_dict.get("word_timings")
 
     behind_subject = bool(burn_dict.get("behind_subject"))
+    raw_motion = burn_dict.get("motion")
+    motion = raw_motion if isinstance(raw_motion, dict) else None
 
     # source_params: preserve key generator params for round-trip safety (A2)
     source_params: dict = {
@@ -824,6 +856,7 @@ def _burn_dict_to_text_element(
             max_width_frac=max_width_frac,
             alignment=alignment,  # type: ignore[arg-type]
             effect=effect,  # type: ignore[arg-type]
+            motion=motion,
             theme_transition=theme_transition,
             fade_out_ms=fade_out_ms,
             word_timings=word_timings,

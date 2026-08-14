@@ -14,6 +14,7 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     fonts-dejavu-core \
+    fonts-noto-color-emoji \
     libmagic1 \
     libgl1 \
     libegl1 \

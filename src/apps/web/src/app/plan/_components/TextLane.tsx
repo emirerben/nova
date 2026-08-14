@@ -24,7 +24,7 @@ import {
   type TextElementBar,
 } from "@/lib/timeline/text-timeline-reducer";
 import { Playhead } from "@/lib/timeline/Playhead";
-import { INTRO_ANIMATIONS, INTRO_FONTS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
+import { INTRO_FONTS, TEXT_ELEMENT_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
 import {
   inferTextBoxPosition,
   resolveTextElementYFrac,
@@ -37,6 +37,16 @@ import {
   textBoxScreenXFrac,
 } from "@/app/plan/items/[id]/_editor/editor-smart-placement";
 import type { PlanItemVariant } from "@/lib/plan-api";
+import TextMotionControls from "@/components/text-motion/TextMotionControls";
+import {
+  motionPatchForConfig,
+  motionPatchForEffect,
+  motionPatchForText,
+  textMotionHasControls,
+} from "@/lib/text-motion-v2";
+
+const TEXT_MOTION_V2_UI_ENABLED =
+  process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED === "true";
 
 // ── Re-export so callers can import the type from this file ───────────────────
 
@@ -274,7 +284,12 @@ export default function TextLane({
       const rawEnd = clampSeconds(drag.origEndS + deltaS, durationSeconds);
       const clampedEnd = Math.max(drag.origStartS + MIN_DUR_S, rawEnd);
       if (Math.abs(clampedEnd - bar.end_s) > 0.01) {
-        dispatch({ type: "TRIM_END", id, end_s: clampedEnd });
+        dispatch({
+          type: "TRIM_END",
+          id,
+          end_s: clampedEnd,
+          video_duration_s: durationSeconds,
+        });
       }
       // State 4: notify parent when right-trim was clamped to minimum duration.
       if (rawEnd < drag.origStartS + MIN_DUR_S) onTrimClamped?.();
@@ -285,7 +300,12 @@ export default function TextLane({
         clampSeconds(intendedStart, drag.origEndS - MIN_DUR_S),
       );
       if (Math.abs(newStart - bar.start_s) > 0.01) {
-        dispatch({ type: "TRIM_START", id, start_s: newStart });
+        dispatch({
+          type: "TRIM_START",
+          id,
+          start_s: newStart,
+          video_duration_s: durationSeconds,
+        });
       }
       // State 4: notify parent when left-trim was clamped to minimum duration.
       if (intendedStart > drag.origEndS - MIN_DUR_S) onTrimClamped?.();
@@ -579,7 +599,9 @@ const PANEL_SIZE_PRESETS: Array<{ label: string; value: string }> = [
 
 const PANEL_EFFECTS: Array<{ label: string; value: string }> = [
   { label: "Static", value: "static" },
-  ...INTRO_ANIMATIONS,
+  ...TEXT_ELEMENT_ANIMATIONS.filter(
+    (animation) => animation.value !== "smooth-type" || TEXT_MOTION_V2_UI_ENABLED,
+  ),
   { label: "Karaoke", value: "karaoke-line" },
 ];
 const PANEL_THEME_TRANSITIONS: Array<{ label: string; value: string }> = [
@@ -632,6 +654,7 @@ function TextPropertyPanel({
   // Controlled hex inputs — draft avoids dispatching on every keystroke
   const [colorDraft, setColorDraft] = useState(bar.color ?? "");
   const [hlDraft, setHlDraft]       = useState(bar.highlight_color ?? "");
+  const motionGestureBefore = useRef<TextElementBar | null>(null);
 
   // Sync drafts when bar changes externally (undo / redo / reset from API)
   useEffect(() => setColorDraft(bar.color ?? ""),         [bar.color]);
@@ -679,9 +702,14 @@ function TextPropertyPanel({
         </label>
         <textarea
           value={bar.text}
-          onChange={(e) =>
-            dispatch({ type: "EDIT_TEXT", id: bar.id, text: e.target.value })
-          }
+          onChange={(e) => {
+            const motionPatch = motionPatchForText(bar, e.target.value, durationSeconds);
+            if (motionPatch.end_s === undefined) {
+              dispatch({ type: "EDIT_TEXT", id: bar.id, text: e.target.value });
+            } else {
+              patch(motionPatch);
+            }
+          }}
           maxLength={500}
           rows={3}
           className="w-full text-xs bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1.5 text-zinc-900 placeholder-zinc-400 focus:border-amber-400 focus:outline-none resize-none leading-relaxed"
@@ -928,8 +956,8 @@ function TextPropertyPanel({
         </div>
       </div>
 
-      {/* Effect */}
-      <div>
+      {/* Lyric timing/effects stay locked to the vocal-derived lane. */}
+      {!isLyric && <div>
         <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
           Effect
         </label>
@@ -938,7 +966,13 @@ function TextPropertyPanel({
             <button
               key={opt.value}
               type="button"
-              onClick={() => patch({ effect: opt.value })}
+              onClick={() =>
+                patch(
+                  TEXT_MOTION_V2_UI_ENABLED
+                    ? motionPatchForEffect(bar, opt.value, durationSeconds)
+                    : { effect: opt.value },
+                )
+              }
               aria-pressed={bar.effect === opt.value}
               className={`min-h-11 rounded px-2 py-1 text-[10px] transition-colors sm:min-h-0 ${
                 bar.effect === opt.value
@@ -950,7 +984,42 @@ function TextPropertyPanel({
             </button>
           ))}
         </div>
-      </div>
+      </div>}
+
+      {!isLyric && TEXT_MOTION_V2_UI_ENABLED && bar.motion?.version === 2 &&
+        bar.effect && textMotionHasControls(bar.effect) && (
+          <TextMotionControls
+            compact
+            effect={bar.effect}
+            motion={bar.motion}
+            onChange={(motionPatch) => {
+              dispatch({
+                type: "COMMIT_PREVIEW_BAR",
+                id: bar.id,
+                before: motionGestureBefore.current ?? bar,
+                patch: motionPatchForConfig(bar, motionPatch, durationSeconds),
+              });
+              motionGestureBefore.current = null;
+            }}
+            onPreview={(motionPatch) =>
+              dispatch({
+                type: "PREVIEW_BAR",
+                id: bar.id,
+                patch: motionPatchForConfig(bar, motionPatch, durationSeconds),
+              })
+            }
+            onBegin={() => {
+              motionGestureBefore.current = bar;
+            }}
+            onResetLegacy={() =>
+              patch(
+                bar.effect === "smooth-type"
+                  ? { effect: "static", motion: null }
+                  : { motion: null },
+              )
+            }
+          />
+        )}
 
       {/* Theme transition */}
       <div>
