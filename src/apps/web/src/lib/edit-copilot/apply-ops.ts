@@ -14,6 +14,11 @@ import type {
 import { normalizeCameraEffect } from "@/lib/camera-effects";
 import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
 import { defaultLookAdjustments } from "@/lib/look-presets";
+import {
+  motionPatchForEffect,
+  motionPatchForManualEnd,
+  motionPatchForText,
+} from "@/lib/text-motion-v2";
 import type { AcceptedSuggestionRef } from "@/lib/editor-commit";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import {
@@ -159,6 +164,8 @@ export interface ApplyCopilotOpsContext {
   capabilities?: EditorCapabilities | null;
   grid?: number[];
   videoDurationS?: number;
+  /** Explicit for deterministic tests; defaults to the build-time rollout flag. */
+  textMotionV2Enabled?: boolean;
   sfx?: SoundEffectPlacement[];
   sfxCatalog?: SoundEffectSummary[];
   overlays?: MediaOverlay[];
@@ -709,6 +716,8 @@ export function applyCopilotOps(
   let historyAction: ApplyCopilotOpsResult["historyAction"];
   const grid = ctx.grid ?? [];
   const videoDurationS = ctx.videoDurationS ?? Math.max(60, ctx.snapshot.total_duration_s);
+  const textMotionV2Enabled =
+    ctx.textMotionV2Enabled ?? process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED === "true";
   const allowedFamilies = new Set(ctx.snapshot.allowed_op_families);
   let nextSlots: DraftSlot[] | null = null;
   let workingSlots = ctx.slots;
@@ -863,7 +872,15 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "text was changed after Nova read it"));
         continue;
       }
-      textActions.push({ type: "EDIT_TEXT", id: bar.id, text: op.text });
+      textActions.push(
+        bar.role === "lyric_line" || !textMotionV2Enabled || bar.motion?.version !== 2
+          ? { type: "EDIT_TEXT", id: bar.id, text: op.text }
+          : {
+              type: "PATCH_BAR",
+              id: bar.id,
+              patch: motionPatchForText(bar, op.text, videoDurationS),
+            },
+      );
       applied.push({ label: `Text ${op.bar_index + 1}`, from: bar.text, to: op.text });
     } else if (op.op === "patch_text_style") {
       const snap = textSnapAt(ctx.snapshot, op.bar_index);
@@ -875,6 +892,17 @@ export function applyCopilotOps(
       const stylePatch = applyStylePatch(op.patch);
       const { patch, stripped } =
         bar.role === "lyric_line" ? clampLyricStylePatch(stylePatch) : stylePatch;
+      const motionPatch =
+        textMotionV2Enabled && typeof patch.effect === "string" && bar.role !== "lyric_line"
+          ? motionPatchForEffect(bar, patch.effect, videoDurationS)
+          : null;
+      if (patch.effect === "smooth-type" && !textMotionV2Enabled) {
+        rejected.push(
+          reject(op.op, labelForOp(op), "capability_disabled", "Text Motion v2 is disabled."),
+        );
+        continue;
+      }
+      const effectivePatch = motionPatch ? { ...patch, ...motionPatch } : patch;
       const patchKeys = Object.keys(patch) as TextStylePatchKey[];
       if (patchKeys.length === 0) {
         rejected.push(
@@ -893,7 +921,7 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "style was changed after Nova read it"));
         continue;
       }
-      textActions.push({ type: "PATCH_BAR", id: bar.id, patch });
+      textActions.push({ type: "PATCH_BAR", id: bar.id, patch: effectivePatch });
       for (const key of patchKeys) {
         applied.push({
           label: key === "size_px" ? "Size" : key,
@@ -926,7 +954,14 @@ export function applyCopilotOps(
         endS: span.endS ?? bar.end_s,
         videoDurationS,
       });
-      textActions.push({ type: "PATCH_BAR", id: bar.id, patch: next });
+      const retimed = textMotionV2Enabled
+        ? motionPatchForManualEnd({ ...bar, ...next }, next.end_s, videoDurationS)
+        : { end_s: next.end_s };
+      textActions.push({
+        type: "PATCH_BAR",
+        id: bar.id,
+        patch: { ...next, ...retimed },
+      });
       applied.push({
         label: `Text ${op.bar_index + 1} timing`,
         from: `${fmtSeconds(bar.start_s)}-${fmtSeconds(bar.end_s)}`,

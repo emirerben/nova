@@ -1137,11 +1137,7 @@ async def _load_generative_job(
         plan = await db.get(
             ContentPlan,
             item_ref.content_plan_id,
-            **(
-                {"populate_existing": True, "with_for_update": True}
-                if with_for_update
-                else {}
-            ),
+            **({"populate_existing": True, "with_for_update": True} if with_for_update else {}),
         )
         if plan is None:
             raise HTTPException(
@@ -3443,6 +3439,18 @@ def validate_text_elements_payload(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail=f"Element {elem.id}: end_s must be greater than start_s.",
                     )
+            from app.pipeline.text_motion_v2 import text_motion_complexity_error  # noqa: PLC0415
+
+            complexity_error = (
+                text_motion_complexity_error(list(coerced))
+                if settings.text_motion_v2_enabled
+                else None
+            )
+            if complexity_error is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=complexity_error,
+                )
             validated = [e.model_dump() for e in coerced]
             validated = append_ai_text_tombstones(variant, validated)
     elif variant.get("text_elements_user_edited"):

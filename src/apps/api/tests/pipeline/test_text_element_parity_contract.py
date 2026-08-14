@@ -33,6 +33,14 @@ from app.pipeline.generative_overlays import (
     resolve_line_spacing,
     resolve_max_width_frac,
 )
+from app.pipeline.text_motion_v2 import (
+    grapheme_count,
+    round_output_frame,
+    settle_duration_s,
+    smooth_type_line_progresses,
+    smooth_type_state_at,
+    total_duration_s,
+)
 from app.pipeline.text_overlay import CANVAS_W
 from app.pipeline.text_overlay_skia import _wrap_text_to_lines
 
@@ -40,7 +48,7 @@ from app.pipeline.text_overlay_skia import _wrap_text_to_lines
 FIXTURES_DIR = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "text-element-parity"
 
 # Fields whose gate is THIS suite (base fields predate the D17 mechanism).
-GATED_STYLE_FIELDS = {"text_case", "letter_spacing", "line_spacing", "max_width_frac"}
+GATED_STYLE_FIELDS = {"text_case", "letter_spacing", "line_spacing", "max_width_frac", "motion"}
 NUMERIC_TOLERANCE = 1e-9
 
 
@@ -215,6 +223,51 @@ def test_horizontal_box_geometry_reaches_the_burn_dict(
     assert overlay["position_x_frac"] == pytest.approx(x_frac)
     assert overlay["max_width_frac"] == pytest.approx(0.4)
     assert overlay["vertical_anchor"] == "center"
+
+
+@pytest.mark.parametrize("case", _load_fixture("motion")["cases"], ids=lambda c: c["name"])
+def test_motion_timing_and_frame_state_matches_fixture(case: dict) -> None:
+    element = TextElement.model_validate(case["element"])
+    raw_motion = element.motion.model_dump() if element.motion else None
+    expected = case["expected"]
+    assert grapheme_count(element.text) == expected["grapheme_count"]
+    assert settle_duration_s(element.effect or "static", element.text, raw_motion) == pytest.approx(
+        expected["settle_s"], abs=NUMERIC_TOLERANCE
+    )
+    assert total_duration_s(element.effect or "static", element.text, raw_motion) == pytest.approx(
+        expected["total_s"], abs=NUMERIC_TOLERANCE
+    )
+    for sample in expected["samples"]:
+        state = smooth_type_state_at(element.text, sample["t"], raw_motion)
+        assert state.alpha == pytest.approx(sample["alpha"], abs=NUMERIC_TOLERANCE)
+        assert state.x_translate == pytest.approx(sample["x_translate"], abs=NUMERIC_TOLERANCE)
+        assert state.y_translate == pytest.approx(sample["y_translate"], abs=NUMERIC_TOLERANCE)
+        assert state.blur_px == pytest.approx(sample["blur_px"], abs=NUMERIC_TOLERANCE)
+        assert state.reveal_progress == pytest.approx(
+            sample["reveal_progress"], abs=NUMERIC_TOLERANCE
+        )
+        assert state.reveal_origin == sample["reveal_origin"]
+        assert state.settled is sample["settled"]
+    for sample in expected.get("line_samples", []):
+        assert smooth_type_line_progresses(
+            element.text.split("\n"), sample["t"], raw_motion
+        ) == pytest.approx(sample["progresses"], abs=NUMERIC_TOLERANCE)
+
+
+def test_motion_unknown_fields_survive_full_model_round_trip() -> None:
+    case = _load_fixture("motion")["cases"][1]
+    element = TextElement.model_validate(case["element"])
+    assert element.model_dump()["motion"]["future_curve_detail"] == {"amount": 0.75}
+
+
+def test_motion_frame_rounding_and_logical_line_order() -> None:
+    assert round_output_frame(0.15) == pytest.approx(5 / 30)
+    forward = smooth_type_line_progresses(["FIRST", "SECOND"], 0.2, {"version": 2})
+    reverse = smooth_type_line_progresses(
+        ["FIRST", "SECOND"], 0.2, {"version": 2, "order": "reverse"}
+    )
+    assert forward[0] > forward[1]
+    assert reverse[1] > reverse[0]
 
 
 # ── letter_spacing ────────────────────────────────────────────────────────────

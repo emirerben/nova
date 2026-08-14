@@ -8,6 +8,11 @@
  * past/future arrays). Simpler because text bars have no beat-grid math.
  */
 
+import {
+  motionPatchForManualEnd,
+  type TextMotionConfigV2,
+} from "@/lib/text-motion-v2";
+
 export const TEXT_HISTORY_LIMIT = 50;
 
 // ── Domain type ───────────────────────────────────────────────────────────────
@@ -44,6 +49,8 @@ export interface TextElementBar {
   glow_color?: string | null;
   glow_strength?: number | null;
   effect?: string;
+  /** Optional v2 motion. Undefined preserves legacy timing byte-for-byte. */
+  motion?: TextMotionConfigV2 | null;
   /** Theme/scene transition layer, independent from the text animation effect. */
   theme_transition?: { type: "giant-title-wipe"; target_glyph?: string | null } | null;
   /** Optional renderer fade tail in milliseconds. Editorial sequence blocks
@@ -155,9 +162,9 @@ export type TextEditorAction =
   /** Move a bar left/right (drag-body): changes start_s, keeps duration. */
   | { type: "MOVE_BAR"; id: string; start_s: number }
   /** Drag the left edge (trim start): changes start_s only. */
-  | { type: "TRIM_START"; id: string; start_s: number }
+  | { type: "TRIM_START"; id: string; start_s: number; video_duration_s?: number }
   /** Drag the right edge (trim end): changes end_s only. */
-  | { type: "TRIM_END"; id: string; end_s: number }
+  | { type: "TRIM_END"; id: string; end_s: number; video_duration_s?: number }
   /** Remove a bar. */
   | { type: "DELETE_BAR"; id: string }
   /**
@@ -182,6 +189,19 @@ export type TextEditorAction =
   | {
       type: "PATCH_BAR";
       id: string;
+      patch: Partial<Omit<TextElementBar, "id" | "role">>;
+    }
+  /** High-frequency visual preview without adding an undo entry. */
+  | {
+      type: "PREVIEW_BAR";
+      id: string;
+      patch: Partial<Omit<TextElementBar, "id" | "role">>;
+    }
+  /** Commit a preview gesture while recording its pre-gesture bar exactly once. */
+  | {
+      type: "COMMIT_PREVIEW_BAR";
+      id: string;
+      before: TextElementBar;
       patch: Partial<Omit<TextElementBar, "id" | "role">>;
     }
   /**
@@ -313,7 +333,11 @@ export function textReducer(
       const next = state.bars.map((b) => {
         if (b.id !== action.id) return b;
         const newStart = Math.max(0, Math.min(action.start_s, b.end_s - 0.1));
-        return shiftRevealTiming(b, Math.round(newStart * 10) / 10);
+        const shifted = shiftRevealTiming(b, Math.round(newStart * 10) / 10);
+        return {
+          ...shifted,
+          ...motionPatchForManualEnd(shifted, shifted.end_s, action.video_duration_s),
+        };
       });
       return withHistory(state, next);
     }
@@ -323,7 +347,11 @@ export function textReducer(
       const next = state.bars.map((b) => {
         if (b.id !== action.id) return b;
         const newEnd = Math.max(b.start_s + 0.1, action.end_s);
-        return { ...b, end_s: Math.round(newEnd * 10) / 10 };
+        const roundedEnd = Math.round(newEnd * 10) / 10;
+        return {
+          ...b,
+          ...motionPatchForManualEnd(b, roundedEnd, action.video_duration_s),
+        };
       });
       return withHistory(state, next);
     }
@@ -411,6 +439,23 @@ export function textReducer(
         b.id === action.id ? patchBarWithRevealTiming(b, patch) : b,
       );
       return withHistory(state, next);
+    }
+
+    case "PREVIEW_BAR": {
+      const next = state.bars.map((bar) =>
+        bar.id === action.id ? patchBarWithRevealTiming(bar, action.patch) : bar,
+      );
+      return { ...state, bars: next };
+    }
+
+    case "COMMIT_PREVIEW_BAR": {
+      const beforeBars = state.bars.map((bar) => (bar.id === action.id ? action.before : bar));
+      const next = state.bars.map((bar) =>
+        bar.id === action.id ? patchBarWithRevealTiming(bar, action.patch) : bar,
+      );
+      const past = [...state.past, beforeBars];
+      if (past.length > TEXT_HISTORY_LIMIT) past.shift();
+      return { bars: next, past, future: [] };
     }
 
     case "PATCH_BARS": {

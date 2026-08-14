@@ -166,6 +166,14 @@ export const INTRO_ANIMATIONS: IntroAnimation[] = [
   { value: "none",       label: "None"       },
 ];
 
+/** TextElement-only vocabulary. The legacy intro edit session cannot persist
+ * motion config, so Smooth Type is exposed only in TextElement inspectors. */
+export const TEXT_ELEMENT_ANIMATIONS: IntroAnimation[] = [
+  ...INTRO_ANIMATIONS.slice(0, -1),
+  { value: "smooth-type", label: "Smooth type" },
+  INTRO_ANIMATIONS[INTRO_ANIMATIONS.length - 1],
+];
+
 export interface ThemeTransitionOption {
   value: string;
   label: string;

@@ -10,6 +10,9 @@ Seeded from the #296 class (prod jobs `ff0d2e1c` / `89cde014` — `text_anchor="
 rendered "It's not just luck" as "s not just luck"). When you add a new
 anchor/position/effect field to the burn dict, add a fixture exercising it.
 
+`smooth_type.json` exercises the Text Motion v2 burn payload, stable shaped-run
+reveal, bounded whole-layer blur, and the default one-second hold.
+
 `high_visibility_shadow.json` explicitly selects `shadow_style="high_visibility"`
 and pins the opt-in dual-shadow profile in both white and yellow at every reference
 calibration size (48/60/88/128px).

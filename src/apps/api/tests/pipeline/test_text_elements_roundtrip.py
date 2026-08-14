@@ -996,9 +996,72 @@ class TestSecurityGuards:
             "ink-reveal",
             "handwriting",
             "dissolve-out",
+            "smooth-type",
         ):
             elem = TextElement(text="test", start_s=0, end_s=1, effect=effect)
             assert elem.effect == effect
+
+    def test_smooth_type_flag_off_compiles_static_but_retains_motion(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "text_motion_v2_enabled", False)
+        elem = TextElement(
+            text="SMOOTH",
+            start_s=0,
+            end_s=2,
+            effect="smooth-type",
+            motion={"version": 2, "speed": 1.5, "future_knob": "preserved"},
+        )
+        [overlay] = build_overlays_from_text_elements([elem], video_duration_s=2)
+        assert overlay["effect"] == "static"
+        assert "motion" not in overlay
+        assert elem.motion is not None
+        assert elem.motion.speed == 1.5
+        assert elem.motion.model_extra["future_knob"] == "preserved"
+
+    def test_text_motion_flag_off_preserves_legacy_effect_math(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "text_motion_v2_enabled", False)
+        elem = TextElement(
+            text="FADE",
+            start_s=0,
+            end_s=2,
+            effect="fade-in",
+            motion={"version": 2, "speed": 4, "intensity": 0},
+        )
+        [overlay] = build_overlays_from_text_elements([elem], video_duration_s=2)
+        assert overlay["effect"] == "fade-in"
+        assert "motion" not in overlay
+
+    def test_smooth_type_flag_on_compiles_animated(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "text_motion_v2_enabled", True)
+        elem = TextElement(
+            text="SMOOTH", start_s=0, end_s=2, effect="smooth-type", motion={"version": 2}
+        )
+        [overlay] = build_overlays_from_text_elements([elem], video_duration_s=2)
+        assert overlay["effect"] == "smooth-type"
+        assert overlay["motion"]["version"] == 2
+
+    def test_v2_motion_ignores_stale_legacy_reveal_split(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "text_motion_v2_enabled", True)
+        elem = TextElement(
+            text="ONE CONTINUOUS WINDOW",
+            start_s=0,
+            end_s=3,
+            reveal_s=0.25,
+            effect="smooth-type",
+            motion={"version": 2},
+        )
+        overlays = build_overlays_from_text_elements([elem], video_duration_s=3)
+        assert len(overlays) == 1
+        assert overlays[0]["effect"] == "smooth-type"
+        assert overlays[0]["start_s"] == 0
+        assert overlays[0]["end_s"] == 3
 
     def test_dissolve_out_roundtrips_to_the_burn_dict(self):
         elem = TextElement(text="VANISH", start_s=0, end_s=3, effect="dissolve-out")
@@ -1473,6 +1536,215 @@ def test_append_ai_text_tombstones_skips_lyric_projections():
         append_ai_text_tombstones(_lyric_snapshot_variant(), [], include_lyric_projection=True)
         == []
     )
+
+
+def test_smooth_type_rejects_excessive_unique_frame_complexity(monkeypatch):
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "text_motion_v2_enabled", True)
+
+    with pytest.raises(Exception) as exc:
+        gj.validate_text_elements_payload(
+            {"variant_id": "v1", "lyrics_baked": False},
+            [
+                {
+                    "id": "expensive",
+                    "role": "generative_intro",
+                    "text": "x" * 500,
+                    "start_s": 0,
+                    "end_s": 30,
+                    "effect": "smooth-type",
+                    "motion": {
+                        "version": 2,
+                        "speed": 0.25,
+                        "stagger_ms": 250,
+                        "reveal_ramp_ms": 400,
+                    },
+                }
+            ],
+            require_base=False,
+            strict_drop=True,
+        )
+    assert exc.value.status_code == 422
+    assert "240-frame motion budget" in str(exc.value.detail)
+
+
+def test_smooth_type_rejects_weighted_overlap_complexity(monkeypatch):
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "text_motion_v2_enabled", True)
+
+    elements = [
+        {
+            "id": f"motion-{index}",
+            "role": "generative_intro",
+            "text": "x" * 35,
+            "start_s": 0,
+            "end_s": 8,
+            "effect": "smooth-type",
+            "motion": {"version": 2, "speed": 1, "stagger_ms": 45},
+        }
+        for index in range(8)
+    ]
+    with pytest.raises(Exception) as exc:
+        gj.validate_text_elements_payload(
+            {"variant_id": "v1", "lyrics_baked": False},
+            elements,
+            require_base=False,
+            strict_drop=True,
+        )
+    assert exc.value.status_code == 422
+    assert "active motion complexity budget" in str(exc.value.detail)
+
+
+def test_smooth_type_without_motion_compiles_as_settled_static(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "text_motion_v2_enabled", True)
+    overlays = build_overlays_from_text_elements(
+        [
+            TextElement(
+                id="missing-motion",
+                text="STATIC",
+                start_s=0,
+                end_s=2,
+                effect="smooth-type",
+            )
+        ],
+        video_duration_s=2,
+    )
+    assert len(overlays) == 1
+    assert overlays[0]["effect"] == "static"
+    assert overlays[0]["shape_text"] is True
+    assert "motion" not in overlays[0]
+
+
+def test_manual_extension_hold_over_ten_seconds_round_trips() -> None:
+    element = TextElement.model_validate(
+        {
+            "id": "long-hold",
+            "text": "WAIT",
+            "start_s": 0,
+            "end_s": 30,
+            "effect": "smooth-type",
+            "motion": {"version": 2, "hold_s": 29.5},
+        }
+    )
+    assert element.motion is not None
+    assert element.motion.hold_s == pytest.approx(29.5)
+    assert element.model_dump()["motion"]["hold_s"] == pytest.approx(29.5)
+
+
+def test_smooth_type_behind_subject_counts_every_matte_frame(monkeypatch):
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "text_motion_v2_enabled", True)
+    with pytest.raises(Exception) as exc:
+        gj.validate_text_elements_payload(
+            {"variant_id": "v1", "lyrics_baked": False},
+            [
+                {
+                    "id": "matte-motion",
+                    "role": "generative_intro",
+                    "text": "SHORT",
+                    "start_s": 0,
+                    "end_s": 12,
+                    "effect": "smooth-type",
+                    "motion": {"version": 2},
+                    "behind_subject": True,
+                }
+            ],
+            require_base=False,
+            strict_drop=True,
+        )
+    assert exc.value.status_code == 422
+    assert "240-frame motion budget" in str(exc.value.detail)
+
+
+def test_long_slow_typewriter_is_rejected_by_shared_v2_motion_budget(monkeypatch):
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "text_motion_v2_enabled", True)
+    with pytest.raises(Exception) as exc:
+        gj.validate_text_elements_payload(
+            {"variant_id": "v1", "lyrics_baked": False},
+            [
+                {
+                    "id": "long-typewriter",
+                    "role": "generative_intro",
+                    "text": "A" * 500,
+                    "start_s": 0,
+                    "end_s": 59,
+                    "effect": "typewriter",
+                    "motion": {"version": 2, "speed": 0.25, "hold_s": 0},
+                }
+            ],
+            require_base=False,
+            strict_drop=True,
+        )
+    assert exc.value.status_code == 422
+    assert "Text motion exceeds" in str(exc.value.detail)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"theme_transition": {"type": "giant-title-wipe"}},
+        {"role": "generative_sequence", "fade_out_ms": 2000},
+    ],
+)
+def test_v2_motion_budget_counts_non_linkable_transition_frames(monkeypatch, extra):
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "text_motion_v2_enabled", True)
+    element = {
+        "id": "transition-motion",
+        "role": "generative_intro",
+        "text": "A" * 72,
+        "start_s": 0,
+        "end_s": 12,
+        "effect": "typewriter",
+        "motion": {"version": 2, "speed": 1, "hold_s": 0},
+        **extra,
+    }
+    with pytest.raises(Exception) as exc:
+        gj.validate_text_elements_payload(
+            {"variant_id": "v1", "lyrics_baked": False},
+            [element],
+            require_base=False,
+            strict_drop=True,
+        )
+    assert exc.value.status_code == 422
+    assert "Text motion exceeds" in str(exc.value.detail)
+
+
+def test_text_motion_complexity_gate_is_inert_during_rollout_rollback(monkeypatch):
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "text_motion_v2_enabled", False)
+    validated, _ = gj.validate_text_elements_payload(
+        {"variant_id": "v1", "lyrics_baked": False},
+        [
+            {
+                "id": "retained-static",
+                "role": "generative_intro",
+                "text": "x" * 500,
+                "start_s": 0,
+                "end_s": 30,
+                "effect": "smooth-type",
+                "motion": {"version": 2, "speed": 0.25, "stagger_ms": 250},
+            }
+        ],
+        require_base=False,
+        strict_drop=True,
+    )
+    assert validated[0]["motion"]["version"] == 2
 
 
 def test_lyric_projection_merge_dedupes_by_source_identity():

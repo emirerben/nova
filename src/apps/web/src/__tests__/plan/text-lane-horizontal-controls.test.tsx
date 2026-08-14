@@ -46,6 +46,13 @@ function latestBar(onChange: jest.Mock): TextElementBar {
 }
 
 describe("TextLane horizontal controls", () => {
+  it("does not expose effect or motion timing controls for lyric bars", () => {
+    renderLane(makeBar({ role: "lyric_line", effect: "smooth-type", motion: { version: 2 } }));
+
+    expect(screen.queryByText("Effect")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Speed")).not.toBeInTheDocument();
+  });
+
   it("offers and applies the shared Staggered slice animation", async () => {
     const onChange = renderLane(makeBar({ effect: "static" }));
 

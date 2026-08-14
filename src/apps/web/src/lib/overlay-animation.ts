@@ -8,6 +8,16 @@
  * Update both when the Python constants change.
  */
 
+import {
+  easeTextMotion,
+  authoredTextMotionTimeS,
+  effectBaseDurationS,
+  normalizeTextMotion,
+  roundTextMotionFrame,
+  smoothTypeStateAt,
+  textMotionGraphemes,
+} from "@/lib/text-motion-v2";
+
 export interface AnimationState {
   /** Uniform scale applied at the text block's anchor point. 1.0 = no scale. */
   scale: number;
@@ -15,6 +25,8 @@ export interface AnimationState {
   alpha: number;
   /** Vertical offset in canvas px (1080-wide). Positive = down. */
   yTranslate: number;
+  /** Horizontal offset in canvas px. */
+  xTranslate: number;
   /** Horizontal scale origin offset from text anchor in canvas px. */
   scaleOriginX: number;
   /** Vertical scale origin offset from text anchor in canvas px. */
@@ -23,10 +35,15 @@ export interface AnimationState {
   visibleText: string;
   /** Whether a zero-width streaming cursor should be drawn after visibleText. */
   showCursor: boolean;
+  cursorStyle: "none" | "bar" | "block" | "underscore";
   /** Left-to-right painted-text reveal. 0 = fully clipped, 1 = settled. */
   revealProgress: number;
   /** Exit dissolve progress 0-1. Preview-only; text layout stays unchanged. */
   dissolveProgress: number;
+  /** Whole painted layer blur in canvas px. */
+  blurPx: number;
+  /** Clip expansion origin for stable full-run reveals. */
+  revealOrigin: "forward" | "reverse" | "center-out";
 }
 
 export interface AnimationTimingOptions {
@@ -34,6 +51,8 @@ export interface AnimationTimingOptions {
   revealScheduleS?: unknown;
   /** Element start in the same absolute coordinate space as the schedule. */
   absoluteStartS?: number;
+  motion?: import("@/lib/text-motion-v2").TextMotionConfigV2 | null;
+  motionV2Enabled?: boolean;
 }
 
 /** Normalize the renderer's absolute typewriter schedule to element-local time. */
@@ -167,12 +186,20 @@ export function staggeredSliceStateAt(
   text: string,
   tLocal: number,
   durationS: number,
+  motion?: import("@/lib/text-motion-v2").TextMotionConfigV2 | null,
 ): StaggeredSliceState {
   const normalized = normalizeAnimatedRevealText(text);
   const logicalLines = normalized.split("\n");
   const choreographyS = staggeredSliceChoreographyS(normalized);
   const settleS = staggeredSliceSettleS(normalized);
-  const t = staggeredSliceNominalTime(tLocal, durationS, settleS, choreographyS);
+  const v2 = motion?.version === 2 ? normalizeTextMotion("staggered-slice", motion) : null;
+  const t = staggeredSliceNominalTime(
+    v2 ? authoredTextMotionTimeS("staggered-slice", normalized, tLocal, v2) : tLocal,
+    v2 ? settleS : durationS,
+    settleS,
+    choreographyS,
+  );
+  const intensity = v2?.intensity ?? 1;
 
   const lines = logicalLines.map<StaggeredSliceLineState>((line, lineIndex) => {
     if (lineIndex === 0) {
@@ -208,9 +235,9 @@ export function staggeredSliceStateAt(
           const progress = timedProgress(t, start, STAGGERED_SLICE_GLYPH_DURATION_S);
           return {
             grapheme,
-            opacity: progress,
-            translateYEm: 0.18 * (1 - progress),
-            rotateDeg: (glyphIndex % 2 === 0 ? -4 : 4) * (1 - progress),
+            opacity: 1 - (1 - progress) * intensity,
+            translateYEm: 0.18 * (1 - progress) * intensity,
+            rotateDeg: (glyphIndex % 2 === 0 ? -4 : 4) * (1 - progress) * intensity,
           };
         }),
       };
@@ -235,9 +262,9 @@ export function staggeredSliceStateAt(
         );
         return {
           grapheme,
-          opacity: progress,
-          translateYEm: 0.18 * (1 - progress),
-          rotateDeg: (glyphIndex % 2 === 0 ? -4 : 4) * (1 - progress),
+          opacity: 1 - (1 - progress) * intensity,
+          translateYEm: 0.18 * (1 - progress) * intensity,
+          rotateDeg: (glyphIndex % 2 === 0 ? -4 : 4) * (1 - progress) * intensity,
         };
       }),
     };
@@ -417,12 +444,16 @@ function identityAnimationState(text: string): AnimationState {
     scale: 1.0,
     alpha: 1.0,
     yTranslate: 0.0,
+    xTranslate: 0.0,
     scaleOriginX: 0.0,
     scaleOriginY: 0.0,
     visibleText: text,
     showCursor: false,
+    cursorStyle: "bar",
     revealProgress: 1.0,
     dissolveProgress: 0,
+    blurPx: 0,
+    revealOrigin: "forward",
   };
 }
 
@@ -511,66 +542,127 @@ export function animationStateAt(
     scale,
     alpha,
     yTranslate,
+    xTranslate,
     scaleOriginX,
     scaleOriginY,
     visibleText,
     showCursor,
+    cursorStyle,
     revealProgress,
     dissolveProgress,
+    blurPx,
+    revealOrigin,
   } = identityAnimationState(text);
 
+  if (effect === "smooth-type") {
+    if (timing?.motionV2Enabled !== true || timing.motion?.version !== 2) {
+      return identityAnimationState(text);
+    }
+    // The eager timing import is cycle-safe: the timing module is DOM-free and
+    // does not import this evaluator.
+    const state = smoothTypeStateAt(text, tLocal, timing.motion);
+    const motion = normalizeTextMotion("smooth-type", timing.motion);
+    const exitS = Math.min(durationS, roundTextMotionFrame(motion.exit_s));
+    const exitStartS = durationS - exitS;
+    const exitAlpha =
+      exitS > 0 && tLocal >= exitStartS
+        ? 1 - easeTextMotion(
+            (tLocal - exitStartS) / Math.max(exitS, 1e-6),
+            "ease-in-out-cubic",
+          )
+        : 1;
+    return {
+      ...identityAnimationState(text),
+      alpha: state.alpha * exitAlpha,
+      xTranslate: state.xTranslate,
+      yTranslate: state.yTranslate,
+      blurPx: state.blurPx,
+      revealProgress: state.revealProgress,
+      revealOrigin: state.revealOrigin,
+    };
+  }
+
+  const hasV2Motion = timing?.motionV2Enabled === true && timing.motion?.version === 2;
+  const v2 = hasV2Motion ? normalizeTextMotion(effect, timing.motion) : null;
+  const effectT = v2 ? authoredTextMotionTimeS(effect, text, tLocal, v2) : tLocal;
+  const choreographyDurationS = v2 ? effectBaseDurationS(effect, text, v2) : durationS;
+  const effectEase = (progress: number) =>
+    v2 ? easeTextMotion(progress, v2.easing) : easeOutCubic(progress);
+
   if (effect === "scale-up") {
-    const window = durationS > 0.6 ? 0.6 : Math.max(durationS, 0.01);
-    const progress = Math.min(1.0, tLocal / window);
-    scale = 0.6 + 0.4 * easeOutCubic(progress);
+    const window = choreographyDurationS > 0.6 ? 0.6 : Math.max(choreographyDurationS, 0.01);
+    const progress = Math.min(1.0, effectT / window);
+    scale = 0.6 + 0.4 * effectEase(progress);
   } else if (effect === "fade-in") {
-    const window = durationS > 0.4 ? 0.4 : Math.max(durationS, 0.01);
-    const progress = Math.min(1.0, tLocal / window);
-    alpha = easeOutCubic(progress);
+    const window = choreographyDurationS > 0.4 ? 0.4 : Math.max(choreographyDurationS, 0.01);
+    const progress = Math.min(1.0, effectT / window);
+    alpha = effectEase(progress);
   } else if (effect === "typewriter") {
     const revealText = normalizeAnimatedRevealText(text);
-    const schedule = normalizeTypewriterRevealSchedule(
-      timing?.revealScheduleS,
-      timing?.absoluteStartS ?? 0,
-    );
+    // A v2 edit owns its complete timing window. Preserve a persisted legacy
+    // schedule for rollback, but never let it truncate the new grapheme clock.
+    const schedule = v2
+      ? null
+      : normalizeTypewriterRevealSchedule(
+          timing?.revealScheduleS,
+          timing?.absoluteStartS ?? 0,
+        );
     if (schedule) {
       const codePoints = Array.from(revealText);
-      const revealedSteps = Math.max(1, schedule.filter((atS) => atS <= tLocal).length);
+      const revealedSteps = Math.max(1, schedule.filter((atS) => atS <= effectT).length);
       const visibleChars = Math.max(
         1,
         Math.ceil((codePoints.length * revealedSteps) / schedule.length),
       );
       visibleText = codePoints.slice(0, visibleChars).join("");
+    } else if (v2) {
+      const graphemes = textMotionGraphemes(revealText);
+      const visibleClusters = Math.max(1, Math.floor(effectT * 12.0) + 1);
+      visibleText = graphemes.slice(0, visibleClusters).join("");
     } else {
       // Generic and user-authored typewriter elements retain the legacy speed.
       const CHARS_PER_S = 12.0;
-      const visibleChars = Math.max(1, Math.floor(tLocal * CHARS_PER_S) + 1);
+      const visibleChars = Math.max(1, Math.floor(effectT * CHARS_PER_S) + 1);
       visibleText = revealText.slice(0, visibleChars);
+    }
+    if (v2) {
+      cursorStyle = v2.cursor_style;
+      showCursor =
+        cursorStyle !== "none" &&
+        visibleText.length < revealText.length &&
+        Math.floor((effectT * 1000) / v2.cursor_blink_ms) % 2 === 0;
     }
   } else if (effect === "stream-in") {
     const revealText = normalizeAnimatedRevealText(text);
     const WORDS_PER_S = 6.0;
     const words = Array.from(revealText.matchAll(/\S+/g));
-    const n = Math.max(1, Math.floor(tLocal * WORDS_PER_S) + 1);
+    const n = Math.max(1, Math.floor(effectT * WORDS_PER_S) + 1);
     const lastVisibleWord = words[Math.min(n, words.length) - 1];
     visibleText = lastVisibleWord
       ? revealText.slice(0, (lastVisibleWord.index ?? 0) + lastVisibleWord[0].length)
       : "";
-    if (n < words.length && Math.floor(tLocal * 2) % 2 === 0) {
+    const blinkMs = v2?.cursor_blink_ms ?? 500;
+    cursorStyle = v2?.cursor_style ?? "bar";
+    if (cursorStyle !== "none" && n < words.length && Math.floor((effectT * 1000) / blinkMs) % 2 === 0) {
       showCursor = true;
     }
   } else if (effect === "slide-up" || effect === "slide-down") {
-    const animateFor = Math.min(0.35, durationS * 0.5);
-    const progress = animateFor > 0 ? Math.min(1.0, tLocal / animateFor) : 1.0;
-    const eased = easeOutCubic(progress);
-    const direction = effect === "slide-up" ? -1.0 : 1.0;
-    yTranslate = direction * 220.0 * (1.0 - eased);
+    const animateFor = v2 ? choreographyDurationS : Math.min(0.35, durationS * 0.5);
+    const progress = animateFor > 0 ? Math.min(1.0, effectT / animateFor) : 1.0;
+    const eased = effectEase(progress);
+    const distance = v2?.travel_px ?? 220;
+    const direction = v2?.direction ?? (effect === "slide-up" ? "up" : "down");
+    if (direction === "left") xTranslate = -distance * (1 - eased);
+    else if (direction === "right") xTranslate = distance * (1 - eased);
+    else if (direction === "up") yTranslate = -distance * (1 - eased);
+    else if (direction === "down") yTranslate = distance * (1 - eased);
   } else if (effect === "pop-in") {
-    scale = popInScaleAt(tLocal, durationS);
+    scale = popInScaleAt(effectT, choreographyDurationS);
+    if (v2 && scale > 1) scale = 1 + (scale - 1) * (v2.overshoot / 0.15);
   } else if (effect === "bounce") {
-    const animateFor = Math.min(0.5, durationS * 0.8);
-    if (tLocal < animateFor) {
-      const p = tLocal / animateFor;
+    const animateFor = v2 ? choreographyDurationS : Math.min(0.5, durationS * 0.8);
+    if (effectT < animateFor) {
+      const p = effectT / animateFor;
       if (p < 0.36) {
         scale = 1.0 + 0.25 * (p / 0.36);
       } else if (p < 0.72) {
@@ -579,12 +671,42 @@ export function animationStateAt(
         scale = 0.90 + 0.10 * ((p - 0.72) / 0.28);
       }
     }
+    if (v2 && scale > 1) scale = 1 + (scale - 1) * (v2.overshoot / 0.15);
     // else scale = 1.0 (identity)
   } else if (effect === "handwriting" || effect === "ink-reveal") {
-    revealProgress = handwritingProgressAt(tLocal, durationS);
+    revealProgress = handwritingProgressAt(effectT, choreographyDurationS);
+    if (v2) revealProgress = easeTextMotion(revealProgress, v2.easing);
   } else if (effect === "dissolve-out") {
-    dissolveProgress = dissolveOutProgressAt(tLocal, durationS);
+    dissolveProgress = dissolveOutProgressAt(effectT, choreographyDurationS);
     alpha = dissolveOutAlphaAt(dissolveProgress);
+  }
+
+  if (v2) {
+    const intensity = v2.intensity;
+    scale = 1 + (scale - 1) * intensity;
+    alpha = 1 - (1 - alpha) * intensity;
+    xTranslate *= intensity;
+    yTranslate *= intensity;
+    revealProgress = 1 - (1 - revealProgress) * intensity;
+    if (effect === "typewriter" || effect === "stream-in") {
+      const fullText = normalizeAnimatedRevealText(text);
+      const fullClusters = textMotionGraphemes(fullText);
+      const animatedCount = textMotionGraphemes(visibleText).length;
+      const visibleCount = Math.min(
+        fullClusters.length,
+        Math.ceil(animatedCount + (fullClusters.length - animatedCount) * (1 - intensity)),
+      );
+      visibleText = fullClusters.slice(0, visibleCount).join("");
+      if (visibleCount >= fullClusters.length) showCursor = false;
+    }
+    const exitS = Math.min(durationS, roundTextMotionFrame(v2.exit_s));
+    const exitStartS = durationS - exitS;
+    if (exitS > 0 && tLocal >= exitStartS) {
+      alpha *= 1 - easeTextMotion(
+        (tLocal - exitStartS) / Math.max(exitS, 1e-6),
+        "ease-in-out-cubic",
+      );
+    }
   }
   // "none", "static", "karaoke-line", "lyric-line", "font-cycle", unknown → identity
 
@@ -592,12 +714,16 @@ export function animationStateAt(
     scale,
     alpha,
     yTranslate,
+    xTranslate,
     scaleOriginX,
     scaleOriginY,
     visibleText,
     showCursor,
+    cursorStyle,
     revealProgress,
     dissolveProgress,
+    blurPx,
+    revealOrigin,
   };
 }
 

@@ -37,6 +37,7 @@ export const PARITY_VERIFIED_FIELDS = [
   "shadow_enabled",
   "alignment",
   "effect",
+  "motion", // tests/fixtures/text-element-parity/motion.json
   // ── T11 gated style fields ──────────────────────────────────────────────
   // Each entry below passed the D17 gate in the same PR that added it:
   // shared fixture tests/fixtures/text-element-parity/<field>.json, asserted

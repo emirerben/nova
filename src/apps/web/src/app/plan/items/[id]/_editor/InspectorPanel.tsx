@@ -19,7 +19,7 @@
  */
 
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
-import { INTRO_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
+import { TEXT_ELEMENT_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
 import {
   LETTER_SPACING_MAX_EM,
   LETTER_SPACING_MIN_EM,
@@ -52,6 +52,13 @@ import {
 } from "@/lib/camera-effects";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
+import TextMotionControls from "@/components/text-motion/TextMotionControls";
+import {
+  motionPatchForConfig,
+  motionPatchForEffect,
+  textMotionHasControls,
+  type TextMotionConfigV2,
+} from "@/lib/text-motion-v2";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { LookAdjustments, LookPreset } from "@/lib/generative-api";
 import {
@@ -95,6 +102,7 @@ const EDITABLE_ROW_FIELDS = new Set([
   "font_family",
   "size_px",
   "effect",
+  "motion",
   "theme_transition",
   "color",
   "shadow_enabled",
@@ -118,6 +126,8 @@ const EDITOR_TEXT_SIZE_MAX = 300;
 
 const TEXT_BEHIND_SUBJECT_UI_ENABLED =
   process.env.NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED === "true";
+const TEXT_MOTION_V2_UI_ENABLED =
+  process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED === "true";
 
 /** How the panel is hosted. Every sub-inspector's CloseX reads this so sheet
  *  mode can drop the internal close buttons (the Sheet owns close; deselection
@@ -162,6 +172,9 @@ export default function InspectorPanel({
   contentRef,
   onEditText,
   onPatch,
+  onPreviewTextMotion,
+  onBeginTextMotion,
+  onCommitTextMotion,
   onSetTextBoxPosition,
   boxPositionXFrac,
   onPatchTextTiming,
@@ -232,6 +245,9 @@ export default function InspectorPanel({
   contentRef: React.RefObject<HTMLTextAreaElement>;
   onEditText: (text: string) => void;
   onPatch: (patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onPreviewTextMotion?: (patch: Partial<TextMotionConfigV2>) => void;
+  onBeginTextMotion?: () => void;
+  onCommitTextMotion?: (patch: Partial<TextMotionConfigV2>) => void;
   onSetTextBoxPosition?: (position: TextBoxHorizontalPosition) => void;
   boxPositionXFrac?: number;
   onPatchTextTiming: (patch: { start_s?: number; end_s?: number }) => void;
@@ -344,9 +360,13 @@ export default function InspectorPanel({
           contentRef={contentRef}
           onEditText={onEditText}
           onPatch={onPatch}
+          onPreviewTextMotion={onPreviewTextMotion}
+          onBeginTextMotion={onBeginTextMotion}
+          onCommitTextMotion={onCommitTextMotion}
           onSetTextBoxPosition={onSetTextBoxPosition}
           boxPositionXFrac={boxPositionXFrac}
           onPatchTiming={onPatchTextTiming}
+          videoDurationS={motionDurationS}
           smartPlaceAvailable={smartPlaceAvailable}
           onSmartPlace={onSmartPlace}
           onMergeCaptionCue={onMergeCaptionCue}
@@ -1239,9 +1259,13 @@ function TextInspector({
   contentRef,
   onEditText,
   onPatch,
+  onPreviewTextMotion,
+  onBeginTextMotion,
+  onCommitTextMotion,
   onSetTextBoxPosition,
   boxPositionXFrac,
   onPatchTiming,
+  videoDurationS,
   smartPlaceAvailable,
   onSmartPlace,
   onMergeCaptionCue,
@@ -1255,9 +1279,13 @@ function TextInspector({
   contentRef: React.RefObject<HTMLTextAreaElement>;
   onEditText: (text: string) => void;
   onPatch: (patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onPreviewTextMotion?: (patch: Partial<TextMotionConfigV2>) => void;
+  onBeginTextMotion?: () => void;
+  onCommitTextMotion?: (patch: Partial<TextMotionConfigV2>) => void;
   onSetTextBoxPosition?: (position: TextBoxHorizontalPosition) => void;
   boxPositionXFrac?: number;
   onPatchTiming: (patch: { start_s?: number; end_s?: number }) => void;
+  videoDurationS: number;
   smartPlaceAvailable: boolean;
   onSmartPlace?: () => void;
   onMergeCaptionCue?: (direction: "prev" | "next") => void;
@@ -1701,20 +1729,55 @@ function TextInspector({
             <select
               aria-label="Animation"
               value={bar.effect ?? "none"}
-              onChange={(e) => onPatch({ effect: e.target.value })}
+              onChange={(e) =>
+                onPatch(
+                  TEXT_MOTION_V2_UI_ENABLED
+                    ? motionPatchForEffect(bar, e.target.value, videoDurationS)
+                    : { effect: e.target.value },
+                )
+              }
               className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
             >
-              {/* Preserve an effect value outside the picker list (e.g. "static"). */}
-              {bar.effect && !INTRO_ANIMATIONS.some((a) => a.value === bar.effect) && (
+              {bar.effect === "smooth-type" && !TEXT_MOTION_V2_UI_ENABLED && (
+                <option value="smooth-type" disabled>Smooth type (saved; unavailable)</option>
+              )}
+              {/* Preserve an effect value outside the visible picker list (e.g. "static"). */}
+              {bar.effect &&
+                bar.effect !== "smooth-type" &&
+                !TEXT_ELEMENT_ANIMATIONS.some((a) => a.value === bar.effect) && (
                 <option value={bar.effect}>{bar.effect}</option>
               )}
-              {INTRO_ANIMATIONS.map((a) => (
+              {TEXT_ELEMENT_ANIMATIONS.filter(
+                (animation) =>
+                  animation.value !== "smooth-type" || TEXT_MOTION_V2_UI_ENABLED,
+              ).map((a) => (
                 <option key={a.value} value={a.value}>
                   {a.label}
                 </option>
               ))}
             </select>
           </label>
+
+          {TEXT_MOTION_V2_UI_ENABLED && bar.motion?.version === 2 &&
+            bar.effect && textMotionHasControls(bar.effect) && (
+              <TextMotionControls
+                effect={bar.effect}
+                motion={bar.motion}
+                onChange={(motionPatch) =>
+                  (onCommitTextMotion ?? ((patch) =>
+                    onPatch(motionPatchForConfig(bar, patch, videoDurationS))))(motionPatch)
+                }
+                onPreview={onPreviewTextMotion}
+                onBegin={onBeginTextMotion}
+                onResetLegacy={() =>
+                  onPatch(
+                    bar.effect === "smooth-type"
+                      ? { effect: "static", motion: null }
+                      : { motion: null },
+                  )
+                }
+              />
+            )}
 
           <label className="mt-3 block text-[12px] font-semibold text-[#3f3f46]">
             Theme transition

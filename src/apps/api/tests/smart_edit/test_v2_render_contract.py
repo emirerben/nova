@@ -508,6 +508,19 @@ def test_renderer_matches_shared_absolute_typewriter_schedule_fixture() -> None:
         )
 
 
+def test_v2_typewriter_ignores_legacy_schedule_and_reveals_whole_graphemes() -> None:
+    assert (
+        _typewriter_visible_text_at(
+            "👩‍💻A",
+            t_local=0.0,
+            raw_schedule=None,
+            start_s=0.0,
+            grapheme_mode=True,
+        )
+        == "👩‍💻"
+    )
+
+
 def test_music_and_sfx_share_one_voice_safe_stream_copy_graph() -> None:
     effect = SoundEffectPlacement(
         id="tick",

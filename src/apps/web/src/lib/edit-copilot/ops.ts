@@ -335,6 +335,7 @@ const ALLOWED_EFFECTS = new Set([
   "pop-in",
   "scale-up",
   "typewriter",
+  "smooth-type",
   "stream-in",
   "staggered-slice",
   "ink-reveal",

@@ -130,6 +130,13 @@ import {
   textReducer,
   type TextElementBar,
 } from "@/lib/timeline/text-timeline-reducer";
+import {
+  motionPatchForConfig,
+  motionPatchForManualEnd,
+  motionPatchForEffect,
+  motionPatchForText,
+  type TextMotionConfigV2,
+} from "@/lib/text-motion-v2";
 import { InkButton } from "@/components/ui/InkButton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
@@ -281,6 +288,8 @@ const MOTION_SCENES_UI_ENABLED =
   process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED === "true";
 const FRAME_DRIVEN_PREVIEW_ENABLED =
   process.env.NEXT_PUBLIC_FRAME_DRIVEN_PREVIEW_ENABLED === "true";
+const TEXT_MOTION_V2_UI_ENABLED =
+  process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED === "true";
 // Nova AI sandboxed effect language (PR6, effect-language train). Dual-flag
 // with the backend's CUSTOM_EFFECTS_ENABLED (app/config.py) — Fly first,
 // then Vercel, per this repo's dual-flag convention.
@@ -2546,6 +2555,18 @@ export default function EditorShell({
       if (readOnly) return;
       const target = state.bars.find((bar) => bar.id === id);
       let patchToApply = patch;
+      if (
+        target &&
+        !isCaptionBar(target) &&
+        TEXT_MOTION_V2_UI_ENABLED &&
+        typeof patch.effect === "string" &&
+        !Object.prototype.hasOwnProperty.call(patch, "motion")
+      ) {
+        patchToApply = {
+          ...patch,
+          ...motionPatchForEffect(target, patch.effect, duration),
+        };
+      }
       if (isCaptionBar(target)) {
         const hasCaptionCuePatch =
           Object.prototype.hasOwnProperty.call(patch, "start_s") ||
@@ -2589,11 +2610,41 @@ export default function EditorShell({
     },
     [
       history,
+      duration,
       lyricsOptionalActive,
       readOnly,
       state.bars,
       variant,
     ],
+  );
+
+  const beginTextMotionGesture = useCallback(() => {
+    if (!readOnly) history.record();
+  }, [history, readOnly]);
+
+  const previewSelectedTextMotion = useCallback(
+    (motionPatch: Partial<TextMotionConfigV2>) => {
+      if (!selectedBar || readOnly) return;
+      dispatch({
+        type: "PREVIEW_BAR",
+        id: selectedBar.id,
+        patch: motionPatchForConfig(selectedBar, motionPatch, duration),
+      });
+    },
+    [duration, readOnly, selectedBar],
+  );
+
+  const commitSelectedTextMotion = useCallback(
+    (motionPatch: Partial<TextMotionConfigV2>) => {
+      if (!selectedBar || readOnly) return;
+      setTextDirty(true);
+      dispatch({
+        type: "PREVIEW_BAR",
+        id: selectedBar.id,
+        patch: motionPatchForConfig(selectedBar, motionPatch, duration),
+      });
+    },
+    [duration, readOnly, selectedBar],
   );
 
   /**
@@ -2960,16 +3011,27 @@ export default function EditorShell({
     : undefined;
 
   const previewTextTiming = useCallback(
-    (id: string, patch: Pick<TextElementBar, "start_s" | "end_s">) => {
+    (
+      id: string,
+      patch: Pick<TextElementBar, "start_s" | "end_s">,
+      handle: "left" | "right" | "body",
+      origin: TextElementBar,
+    ) => {
       if (readOnly) return;
       if (state.bars.find((bar) => bar.id === id)?.role === "lyric_line") return;
       setTextDirty(true);
       dispatch({
         type: "RESET",
-        bars: state.bars.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+        bars: state.bars.map((bar) => {
+          if (bar.id !== id) return bar;
+          const next = { ...origin, ...patch };
+          return handle === "body"
+            ? next
+            : { ...next, ...motionPatchForManualEnd(next, next.end_s, duration) };
+        }),
       });
     },
-    [readOnly, state.bars],
+    [duration, readOnly, state.bars],
   );
 
   const patchSelectedTextTiming = useCallback(
@@ -2981,7 +3043,15 @@ export default function EditorShell({
         videoDurationS: duration,
       });
       if (!rangesDiffer(selectedBar, next)) return;
-      patchBar(selectedBar.id, next);
+      const motionTimingPatch =
+        patch.end_s !== undefined || patch.start_s !== undefined
+          ? motionPatchForManualEnd(
+              { ...selectedBar, start_s: next.start_s },
+              next.end_s,
+              duration,
+            )
+          : {};
+      patchBar(selectedBar.id, { ...next, ...motionTimingPatch });
     },
     [duration, patchBar, readOnly, selectedBar],
   );
@@ -3516,7 +3586,11 @@ export default function EditorShell({
         }),
         preset,
       });
-      dispatch({ type: "ADD_TEXT", bar });
+      const authoredBar =
+        TEXT_MOTION_V2_UI_ENABLED && preset !== DEFAULT_TEXT_PRESET && preset.fields.effect
+          ? { ...bar, ...motionPatchForEffect(bar, preset.fields.effect, duration) }
+          : bar;
+      dispatch({ type: "ADD_TEXT", bar: authoredBar });
       selectText(bar.id);
     },
     [
@@ -3600,22 +3674,35 @@ export default function EditorShell({
         setToast("Add text first, then apply a style.");
         return;
       }
-      const patch: Partial<Omit<TextElementBar, "id" | "role">> = {
+      const basePatch: Partial<Omit<TextElementBar, "id" | "role">> = {
         font_family: styleSet.font_family ?? styleSet.intro?.font_family ?? undefined,
         color: styleSet.text_color ?? styleSet.intro?.text_color ?? undefined,
         highlight_color:
           styleSet.highlight_color ?? styleSet.intro?.highlight_color ?? undefined,
         stroke_width: styleSet.intro?.stroke_width ?? undefined,
-        effect: styleSet.effect ?? styleSet.intro?.effect ?? undefined,
       };
+      const nextEffect = styleSet.effect ?? styleSet.intro?.effect ?? undefined;
       history.record();
       if (lyricsOptionalActive || targetBars.some((bar) => !isLyricBar(bar))) {
         setTextDirty(true);
       }
-      targetBars.forEach((b) => dispatch({ type: "PATCH_BAR", id: b.id, patch }));
+      targetBars.forEach((b) =>
+        dispatch({
+          type: "PATCH_BAR",
+          id: b.id,
+          patch: {
+            ...basePatch,
+            ...(nextEffect
+              ? TEXT_MOTION_V2_UI_ENABLED && !isLyricBar(b)
+                ? motionPatchForEffect(b, nextEffect, duration)
+                : { effect: nextEffect }
+              : {}),
+          },
+        }),
+      );
       setAppliedStyleSetId(styleSet.id);
     },
-    [readOnly, visibleTextBars, lyricsOptionalActive, history],
+    [duration, readOnly, visibleTextBars, lyricsOptionalActive, history],
   );
 
   // Legacy lyrics-variant restyle for flag-off clients: route through the
@@ -3650,12 +3737,17 @@ export default function EditorShell({
     (preset: TextPreset) => {
       if (selectedBar) {
         // Apply to the selected element.
+        const nextEffect = preset.fields.effect ?? undefined;
         patchBar(selectedBar.id, {
           font_family: preset.fields.font_family ?? undefined,
           color: preset.fields.color ?? undefined,
           highlight_color: preset.fields.highlight_color ?? undefined,
           stroke_width: preset.fields.stroke_width ?? 0,
-          effect: preset.fields.effect ?? undefined,
+          ...(nextEffect
+            ? TEXT_MOTION_V2_UI_ENABLED && !isLyricBar(selectedBar)
+              ? motionPatchForEffect(selectedBar, nextEffect, duration)
+              : { effect: nextEffect }
+            : {}),
         });
       } else {
         // No selection → create a text element at the playhead with this
@@ -3663,7 +3755,7 @@ export default function EditorShell({
         addTextAtPlayhead(preset);
       }
     },
-    [selectedBar, patchBar, addTextAtPlayhead],
+    [duration, selectedBar, patchBar, addTextAtPlayhead],
   );
 
   const nextVisualBlockWindow = useCallback(
@@ -6485,12 +6577,19 @@ export default function EditorShell({
               } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
                 setTextDirty(true);
               }
-              dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
+              dispatch({
+                type: "PATCH_BAR",
+                id: selectedBar.id,
+                patch: motionPatchForText(selectedBar, text, previewDuration),
+              });
             }
           }}
           onPatch={(patch) => {
             if (selectedBar) patchBar(selectedBar.id, patch);
           }}
+          onPreviewTextMotion={previewSelectedTextMotion}
+          onBeginTextMotion={beginTextMotionGesture}
+          onCommitTextMotion={commitSelectedTextMotion}
           onSetTextBoxPosition={setSelectedTextBoxPosition}
           boxPositionXFrac={selectedTextBoxScreenXFrac}
           onPatchTextTiming={patchSelectedTextTiming}
@@ -6741,7 +6840,11 @@ export default function EditorShell({
             } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
               setTextDirty(true);
             }
-            dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
+            dispatch({
+              type: "PATCH_BAR",
+              id: selectedBar.id,
+              patch: motionPatchForText(selectedBar, text, previewDuration),
+            });
           }
         }}
         onPickPreset={pickPreset}
@@ -6885,12 +6988,19 @@ export default function EditorShell({
                 } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
                   setTextDirty(true);
                 }
-                dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
+                dispatch({
+                  type: "PATCH_BAR",
+                  id: selectedBar.id,
+                  patch: motionPatchForText(selectedBar, text, previewDuration),
+                });
               }
             }}
             onPatch={(patch) => {
               if (selectedBar) patchBar(selectedBar.id, patch);
             }}
+            onPreviewTextMotion={previewSelectedTextMotion}
+            onBeginTextMotion={beginTextMotionGesture}
+            onCommitTextMotion={commitSelectedTextMotion}
             onSetTextBoxPosition={setSelectedTextBoxPosition}
             boxPositionXFrac={selectedTextBoxScreenXFrac}
             onPatchTextTiming={patchSelectedTextTiming}

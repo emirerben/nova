@@ -2,22 +2,27 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { staggeredSliceSettleS, staggeredSliceStateAt } from "@/lib/overlay-animation";
+import { textMotionRendererSettleS, type TextMotionConfigV2 } from "@/lib/text-motion-v2";
 
 function useSmoothPlaybackTime({
   text,
   tLocal,
   durationS,
   playing,
+  motion,
 }: {
   text: string;
   tLocal: number;
   durationS: number;
   playing: boolean;
+  motion?: TextMotionConfigV2 | null;
 }) {
   const [frameTime, setFrameTime] = useState(tLocal);
   const anchorRef = useRef({ timeS: tLocal, nowMs: 0 });
   const rafRef = useRef<number | null>(null);
-  const settleS = Math.min(durationS, staggeredSliceSettleS(text));
+  const settleS = motion?.version === 2
+    ? Math.min(durationS, textMotionRendererSettleS("staggered-slice", text, motion))
+    : Math.min(durationS, staggeredSliceSettleS(text));
 
   // Native media `timeupdate` is deliberately coarse. Treat each event as an
   // authoritative sync point, then interpolate only this overlay between them.
@@ -56,6 +61,7 @@ export function StaggeredSliceText({
   playing = false,
   style,
   className,
+  motion,
 }: {
   text: string;
   tLocal: number;
@@ -63,9 +69,10 @@ export function StaggeredSliceText({
   playing?: boolean;
   style?: CSSProperties;
   className?: string;
+  motion?: TextMotionConfigV2 | null;
 }) {
-  const playbackTime = useSmoothPlaybackTime({ text, tLocal, durationS, playing });
-  const state = staggeredSliceStateAt(text, playbackTime, durationS);
+  const playbackTime = useSmoothPlaybackTime({ text, tLocal, durationS, playing, motion });
+  const state = staggeredSliceStateAt(text, playbackTime, durationS, motion);
 
   return (
     <div

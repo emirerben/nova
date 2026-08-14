@@ -291,6 +291,7 @@ export function convertApiTextElements(
     glow_color: el.glow_color ?? undefined,
     glow_strength: el.glow_strength ?? undefined,
     effect: el.effect ?? undefined,
+    motion: el.motion ?? undefined,
     theme_transition: el.theme_transition ?? undefined,
     fade_out_ms: el.fade_out_ms ?? undefined,
     reveal_s: el.reveal_s ?? undefined,
@@ -598,6 +599,9 @@ function barsToTextElementsInternal(
         glow_color: bar.glow_color ?? original?.glow_color ?? null,
         glow_strength: bar.glow_strength ?? original?.glow_strength ?? null,
         effect: (bar.effect as TextElement["effect"]) ?? null,
+        motion: Object.prototype.hasOwnProperty.call(bar, "motion")
+          ? (bar.motion ?? null)
+          : (original?.motion ?? null),
         theme_transition: bar.theme_transition ?? null,
         fade_out_ms: bar.fade_out_ms ?? original?.fade_out_ms ?? null,
         reveal_s: bar.reveal_s ?? original?.reveal_s ?? null,

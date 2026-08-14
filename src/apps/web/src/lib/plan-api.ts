@@ -21,6 +21,7 @@ export type { CarouselMoment } from "@/lib/generative-api";
 import type { ArchetypeFallback } from "@/lib/plan-generate-gate";
 import type { CopilotOp } from "@/lib/edit-copilot/ops";
 import type { CopilotSnapshot } from "@/lib/edit-copilot/snapshot";
+import type { TextMotionConfigV2 } from "@/lib/text-motion-v2";
 
 const PLAN_BASE = "/api/plan";
 
@@ -1254,7 +1255,10 @@ export interface TextElement {
     | "dissolve-out"
     | "bounce"
     | "slide-in"
+    | "smooth-type"
     | null;
+  /** Optional v2 motion. Absence is the exact legacy timing contract. */
+  motion?: TextMotionConfigV2 | null;
   theme_transition?: {
     type: "giant-title-wipe";
     target_glyph?: string | null;

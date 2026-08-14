@@ -61,13 +61,19 @@ import {
   themeTransitionStateAt,
 } from "@/lib/overlay-animation";
 import { INTRO_FONTS, MAX_INTRO_S, type OverlayCanvas } from "@/lib/overlay-constants";
+import { smoothTypeLineProgresses, textMotionPreviewDurationS } from "@/lib/text-motion-v2";
 import { StableVideo, stableVideoSourceIdentity } from "@/components/StableVideo";
 import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
 import {
   TextElementOverlayContent,
+  smoothTypePreviewLayout,
   textElementContentStyle,
   textElementWrapperStyle,
+  useSmoothTypeFontRevision,
 } from "../components/TextElementOverlayLayer";
+
+const TEXT_MOTION_V2_UI_ENABLED =
+  process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED === "true";
 import { StaggeredSliceText } from "@/components/variant-editor/StaggeredSliceText";
 import {
   clampMediaOverlayPosition,
@@ -446,6 +452,15 @@ export default function EditorCanvas({
 
   const layouts = useMemo(() => resolveTextElementsLayout(elements, canvas), [elements, canvas]);
   const barById = useMemo(() => new Map(bars.map((b) => [b.id, b])), [bars]);
+  const smoothFontRevision = useSmoothTypeFontRevision(layouts);
+  const smoothPreviewById = useMemo(() => {
+    void smoothFontRevision;
+    return new Map(
+      layouts
+        .filter((layout) => (barById.get(layout.id)?.effect ?? layout.effect) === "smooth-type")
+        .map((layout) => [layout.id, smoothTypePreviewLayout(layout)]),
+    );
+  }, [barById, layouts, smoothFontRevision]);
 
   const visibleAt = (timeS: number) =>
     layouts.filter((layout) => {
@@ -1585,14 +1600,22 @@ export default function EditorCanvas({
                       ? EDITOR_STAGE_Z.selectionHandle
                       : EDITOR_STAGE_Z.textOverlay;
                   const effect = bar?.effect ?? "static";
+                  const animationDurationS = textMotionPreviewDurationS(
+                    layout.end_s - layout.start_s,
+                    bar?.motion,
+                    TEXT_MOTION_V2_UI_ENABLED,
+                    MAX_INTRO_S,
+                  );
                   const animation = animationStateAt(
                     effect,
                     Math.max(0, frameTime - layout.start_s),
-                    Math.min(MAX_INTRO_S, Math.max(0.01, layout.end_s - layout.start_s)),
+                    animationDurationS,
                     layout.text,
                     {
                       revealScheduleS: bar?.source_params?.reveal_schedule_s,
                       absoluteStartS: layout.start_s,
+                      motion: bar?.motion,
+                      motionV2Enabled: TEXT_MOTION_V2_UI_ENABLED,
                     },
                   );
                   const transition = themeTransitionStateAt(
@@ -1617,6 +1640,10 @@ export default function EditorCanvas({
                     maxWidthFrac,
                     zIndex,
                   });
+                  const smoothPreview = smoothPreviewById.get(layout.id);
+                  const motionFontPx = smoothPreview
+                    ? (smoothPreview.sizePx / canvas.h) * stageSize.h
+                    : fontPx;
                   return (
                     <div
                       key={layout.id}
@@ -1632,13 +1659,17 @@ export default function EditorCanvas({
                       style={{
                         ...baseStyle,
                         opacity: animation.alpha * transition.alpha * fadeOutAlpha,
-                        filter:
+                        filter: [
                           !settleAuthoredMotion && animation.dissolveProgress > 0
                             ? `url(#${DISSOLVE_PREVIEW_FILTER_ID})`
-                            : undefined,
-                        transform: `${baseStyle.transform ?? ""} translateY(${
-                          (animation.yTranslate / canvas.h) * stageSize.h
-                        }px) scale(${
+                            : null,
+                          !settleAuthoredMotion && animation.blurPx > 0.01
+                            ? `blur(${(animation.blurPx / canvas.h) * stageSize.h}px)`
+                            : null,
+                        ].filter(Boolean).join(" ") || undefined,
+                        transform: `${baseStyle.transform ?? ""} translate(${
+                          (animation.xTranslate / canvas.w) * stageSize.w
+                        }px, ${(animation.yTranslate / canvas.h) * stageSize.h}px) scale(${
                           animation.scale *
                           transition.scale *
                           (settleAuthoredMotion
@@ -1668,11 +1699,9 @@ export default function EditorCanvas({
                         <StaggeredSliceText
                           text={layout.text}
                           tLocal={frameTime - layout.start_s}
-                          durationS={Math.min(
-                            MAX_INTRO_S,
-                            Math.max(0.01, layout.end_s - layout.start_s),
-                          )}
+                          durationS={animationDurationS}
                           playing={playing}
+                          motion={TEXT_MOTION_V2_UI_ENABLED ? bar?.motion : null}
                           style={textElementContentStyle({
                             layout,
                             fontSize: `${fontPx}px`,
@@ -1683,7 +1712,7 @@ export default function EditorCanvas({
                       ) : (
                         <TextElementOverlayContent
                           layout={{ ...layout, effect: effect as TextElement["effect"] }}
-                          fontSize={`${fontPx}px`}
+                          fontSize={`${motionFontPx}px`}
                           strokeWidth={strokePx > 0 ? `${strokePx}px` : null}
                           canvasPixelCssSize={`${stageSize.h / canvas.h}px`}
                           reserveText={
@@ -1692,11 +1721,25 @@ export default function EditorCanvas({
                               : null
                           }
                           showCursor={animation.showCursor}
+                          cursorStyle={animation.cursorStyle}
                           revealProgress={
-                            effect === "handwriting" || effect === "ink-reveal"
+                            effect === "handwriting" || effect === "ink-reveal" || effect === "smooth-type"
                               ? settleAuthoredMotion
                                 ? 1
                                 : animation.revealProgress
+                              : undefined
+                          }
+                          revealOrigin={animation.revealOrigin}
+                          revealLines={smoothPreview?.lines}
+                          lineRevealProgresses={
+                            effect === "smooth-type" &&
+                            TEXT_MOTION_V2_UI_ENABLED &&
+                            !settleAuthoredMotion
+                              ? smoothTypeLineProgresses(
+                                  smoothPreview?.lines ?? layout.text.split("\n"),
+                                  frameTime - layout.start_s,
+                                  bar?.motion,
+                                )
                               : undefined
                           }
                         >
