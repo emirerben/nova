@@ -208,6 +208,10 @@ import ToolRail, { type EditorTool } from "./ToolRail";
 import type { SongWindowState } from "./SongWindowSelector";
 import PresetGrid, { presetMatchesFields } from "./PresetGrid";
 import { useVirtualPreview } from "./useVirtualPreview";
+import {
+  createEditorPlaybackClock,
+  type EditorPlaybackClock,
+} from "./editor-playback-clock";
 import { useEditorLayoutMode } from "./useEditorLayoutMode";
 import type { EditorLayoutMode } from "./useEditorLayoutMode";
 import {
@@ -275,6 +279,8 @@ const VISUAL_BLOCKS_UI_ENABLED =
   process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
 const MOTION_SCENES_UI_ENABLED =
   process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED === "true";
+const FRAME_DRIVEN_PREVIEW_ENABLED =
+  process.env.NEXT_PUBLIC_FRAME_DRIVEN_PREVIEW_ENABLED === "true";
 // Nova AI sandboxed effect language (PR6, effect-language train). Dual-flag
 // with the backend's CUSTOM_EFFECTS_ENABLED (app/config.py) — Fly first,
 // then Vercel, per this repo's dual-flag convention.
@@ -922,7 +928,25 @@ export default function EditorShell({
   const [sessionHasCopilotEdits, setSessionHasCopilotEdits] = useState(false);
   const [copilotSaveNoticeDismissed, setCopilotSaveNoticeDismissed] = useState(true);
   const panEnabled = zoomPct > 100;
-  const [currentTime, setCurrentTime] = useState(0);
+  const playbackClockRef = useRef<EditorPlaybackClock | null>(null);
+  if (FRAME_DRIVEN_PREVIEW_ENABLED && playbackClockRef.current == null) {
+    playbackClockRef.current = createEditorPlaybackClock(0);
+  }
+  const playbackClock = playbackClockRef.current;
+  const [currentTime, setCommittedCurrentTime] = useState(0);
+  const setCurrentTime = useCallback(
+    (timeS: number) => {
+      playbackClock?.publish(timeS);
+      setCommittedCurrentTime(timeS);
+    },
+    [playbackClock],
+  );
+  // Playback sources publish decoded-frame time separately. Their native
+  // timeupdate cadence only commits transport/scrub state and must not move
+  // authored layers ahead of the frame actually on screen.
+  const commitPlaybackTime = useCallback((timeS: number) => {
+    setCommittedCurrentTime(timeS);
+  }, []);
   const outputToBaseTimeRef = useRef<(seconds: number) => number>((seconds) => seconds);
   const baseToOutputTimeRef = useRef<(seconds: number) => number>((seconds) => seconds);
   const [pendingCopilotFocus, setPendingCopilotFocus] =
@@ -1778,9 +1802,9 @@ export default function EditorShell({
   // Referentially stable across renders unless the block's position/duration
   // actually changes: `useVirtualPreview`'s `timeline` is a `useMemo` keyed on
   // this object's IDENTITY (see virtual-timeline splice deps), and EditorShell
-  // re-renders on every `currentTime` tick during playback (`onTimeUpdate:
-  // setCurrentTime` below). A fresh object literal here on every render broke
-  // that memo, rebuilding the whole virtual timeline dozens of times a second
+  // re-renders on throttled committed-time ticks during playback. A fresh
+  // object literal here on every render would still break that memo, rebuilding
+  // the whole virtual timeline on each transport commit
   // and re-firing useVirtualPreview's mapping effect (keyed on `timeline`) on
   // every tick — which redundantly re-seeks/re-loads the ACTIVE deck outside
   // the carousel window on every render, fighting its own smooth playback.
@@ -1818,7 +1842,9 @@ export default function EditorShell({
     musicStartS: virtualMusicStartS,
     soundMuted,
     musicTrackActive: effectiveAudioTrackId != null,
-    onTimeUpdate: setCurrentTime,
+    frameDriven: FRAME_DRIVEN_PREVIEW_ENABLED,
+    onFrameTimeUpdate: playbackClock?.publish,
+    onTimeUpdate: commitPlaybackTime,
     onDuration: () => {},
     onPlayingChange: setPlaying,
     onSourceError: handleVirtualSourceError,
@@ -2099,6 +2125,7 @@ export default function EditorShell({
     [
       duration,
       seekVirtualPreview,
+      setCurrentTime,
       virtualPreview.timeline.totalDurationS,
       virtualPreviewActive,
     ],
@@ -5605,6 +5632,7 @@ export default function EditorShell({
     timelineProjection: virtualPreview.timeline,
     renderedOutputDurationS: duration,
     currentTimeS: currentTime,
+    playbackClock,
     zoom,
     fitRequestKey: timelineFitRequestKey,
     scaleResetKey: timelineVariantId,
@@ -6110,6 +6138,7 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            playbackClock={playbackClock}
             lookPreset="none"
             virtualDeckLookPresets={virtualDeckLookPresets}
             virtualDeckLookAdjustments={virtualDeckLookAdjustments}
@@ -6135,7 +6164,7 @@ export default function EditorShell({
                 setLightSheetOpen(true);
               }
             }}
-            onTimeUpdate={setCurrentTime}
+            onTimeUpdate={commitPlaybackTime}
             onDuration={setDuration}
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
@@ -6404,6 +6433,7 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            playbackClock={playbackClock}
             lookPreset="none"
             virtualDeckLookPresets={virtualDeckLookPresets}
             virtualDeckLookAdjustments={virtualDeckLookAdjustments}
@@ -6418,7 +6448,7 @@ export default function EditorShell({
             onPatchBar={patchBar}
             onPatchOverlay={patchOverlay}
             onFocusContent={focusContent}
-            onTimeUpdate={setCurrentTime}
+            onTimeUpdate={commitPlaybackTime}
             onDuration={setDuration}
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
@@ -6535,6 +6565,7 @@ export default function EditorShell({
                   segments={miniStripSegments}
                   durationS={virtualPreview.timeline.totalDurationS || timelineDuration || previewDuration}
                   currentTimeS={currentTime}
+                  playbackClock={playbackClock}
                   selectedClipId={selection?.kind === "clip" ? selection.id : null}
                   marks={[
                     ...localMotionScenes.map((scene) => ({

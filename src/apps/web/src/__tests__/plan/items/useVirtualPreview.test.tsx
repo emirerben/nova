@@ -2,7 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 
 import type { DraftSlot } from "@/app/generative/timeline-math";
-import { useVirtualPreview } from "@/app/plan/items/[id]/_editor/useVirtualPreview";
+import {
+  mapDeckMediaTimeToVirtualTime,
+  useVirtualPreview,
+} from "@/app/plan/items/[id]/_editor/useVirtualPreview";
 import type { VirtualCarouselSplice } from "@/app/plan/items/[id]/_editor/virtual-timeline";
 
 const SLOT: DraftSlot = {
@@ -66,6 +69,8 @@ function Harness({
   onTimeUpdate = NOOP_TIME_UPDATE,
   slots = ONE_SLOT,
   carousel = NO_CAROUSEL,
+  frameDriven = false,
+  onFrameTimeUpdate,
 }: {
   onPlayingChange: (playing: boolean) => void;
   soundMuted?: boolean;
@@ -76,6 +81,8 @@ function Harness({
   onTimeUpdate?: (timeS: number) => void;
   slots?: DraftSlot[];
   carousel?: VirtualCarouselSplice | null;
+  frameDriven?: boolean;
+  onFrameTimeUpdate?: (timeS: number) => void;
 }) {
   const preview = useVirtualPreview({
     enabled: true,
@@ -89,6 +96,8 @@ function Harness({
     musicStartS: 55.71,
     soundMuted,
     musicTrackActive,
+    frameDriven,
+    onFrameTimeUpdate,
     onTimeUpdate,
     onDuration: NOOP_DURATION,
     onPlayingChange,
@@ -115,9 +124,293 @@ function Harness({
       <button type="button" onClick={preview.pause}>
         pause
       </button>
+      <button type="button" onClick={preview.toggle}>
+        toggle
+      </button>
     </>
   );
 }
+
+describe("frame-driven output clock", () => {
+  let callbacks: Map<HTMLVideoElement, VideoFrameRequestCallback[]>;
+  let requestSpy: jest.SpiedFunction<HTMLVideoElement["requestVideoFrameCallback"]>;
+
+  beforeEach(() => {
+    callbacks = new Map();
+    jest.spyOn(window.HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    jest.spyOn(window.HTMLMediaElement.prototype, "play").mockImplementation(() => Promise.resolve());
+    jest.spyOn(window.HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    Object.defineProperty(window.HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      writable: true,
+      value: function requestVideoFrameCallback(this: HTMLVideoElement, callback: VideoFrameRequestCallback) {
+        callbacks.set(this, [...(callbacks.get(this) ?? []), callback]);
+        return callbacks.get(this)?.length ?? 0;
+      },
+    });
+    Object.defineProperty(window.HTMLVideoElement.prototype, "cancelVideoFrameCallback", {
+      configurable: true,
+      writable: true,
+      value: jest.fn(),
+    });
+    requestSpy = jest.spyOn(window.HTMLVideoElement.prototype, "requestVideoFrameCallback");
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    delete (window.HTMLVideoElement.prototype as Partial<HTMLVideoElement>)
+      .requestVideoFrameCallback;
+    delete (window.HTMLVideoElement.prototype as Partial<HTMLVideoElement>)
+      .cancelVideoFrameCallback;
+  });
+
+  it("maps decoded source media time onto the canonical output timeline", () => {
+    expect(mapDeckMediaTimeToVirtualTime({ startS: 4, durationS: 2, inS: 1.4 }, 2.15))
+      .toBeCloseTo(4.75, 8);
+    expect(mapDeckMediaTimeToVirtualTime({ startS: 4, durationS: 2, inS: 1.4 }, 0))
+      .toBe(4);
+    expect(mapDeckMediaTimeToVirtualTime({ startS: 4, durationS: 2, inS: 1.4 }, 99))
+      .toBe(6);
+    for (let frame = 0; frame <= 60; frame += 1) {
+      expect(
+        mapDeckMediaTimeToVirtualTime(
+          { startS: 4, durationS: 2, inS: 1.4 },
+          1.4 + frame / 30,
+        ),
+      ).toBeCloseTo(4 + frame / 30, 10);
+    }
+  });
+
+  it("does not publish a video transport target before a decoded frame confirms it", () => {
+    const onFrameTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        frameDriven
+        onFrameTimeUpdate={onFrameTimeUpdate}
+      />,
+    );
+    onFrameTimeUpdate.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    expect(onFrameTimeUpdate).not.toHaveBeenCalled();
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const callback = callbacks.get(deckA)?.at(-1);
+    act(() => callback?.(0, { mediaTime: 2.4 } as VideoFrameCallbackMetadata));
+    expect(onFrameTimeUpdate).toHaveBeenLastCalledWith(expect.closeTo(1, 8));
+  });
+
+  it("publishes decoded-frame time without committing every browser frame", () => {
+    const onFrameTimeUpdate = jest.fn();
+    const onTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        frameDriven
+        onFrameTimeUpdate={onFrameTimeUpdate}
+        onTimeUpdate={onTimeUpdate}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    onFrameTimeUpdate.mockClear();
+    onTimeUpdate.mockClear();
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const callback = callbacks.get(deckA)?.at(-1);
+    expect(callback).toBeDefined();
+    act(() => callback?.(0, { mediaTime: 2.15 } as VideoFrameCallbackMetadata));
+
+    expect(onFrameTimeUpdate).toHaveBeenLastCalledWith(expect.closeTo(0.75, 8));
+    expect(onTimeUpdate).not.toHaveBeenCalled();
+  });
+
+  it("keeps timeupdate as a commit/resync signal without advancing authored frames", () => {
+    const onFrameTimeUpdate = jest.fn();
+    const onTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        frameDriven
+        onFrameTimeUpdate={onFrameTimeUpdate}
+        onTimeUpdate={onTimeUpdate}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    onFrameTimeUpdate.mockClear();
+    onTimeUpdate.mockClear();
+
+    deckA.currentTime = 2.4;
+    fireEvent.timeUpdate(deckA);
+
+    expect(onTimeUpdate).toHaveBeenLastCalledWith(expect.closeTo(1, 8));
+    expect(onFrameTimeUpdate).not.toHaveBeenCalled();
+  });
+
+  it("falls back to timeupdate without inventing browser frames when rVFC is unavailable", () => {
+    Object.defineProperty(window.HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+    const onFrameTimeUpdate = jest.fn();
+    const onTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        frameDriven
+        onFrameTimeUpdate={onFrameTimeUpdate}
+        onTimeUpdate={onTimeUpdate}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    onFrameTimeUpdate.mockClear();
+    onTimeUpdate.mockClear();
+
+    deckA.currentTime = 2.4;
+    fireEvent.timeUpdate(deckA);
+
+    expect(onTimeUpdate).toHaveBeenLastCalledWith(expect.closeTo(1, 8));
+    expect(onFrameTimeUpdate).toHaveBeenLastCalledWith(expect.closeTo(1, 8));
+  });
+
+  it("rejects a queued callback from the outgoing deck after a deck swap", () => {
+    const onFrameTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        frameDriven
+        onFrameTimeUpdate={onFrameTimeUpdate}
+        slots={TWO_SLOTS}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const staleCallback = callbacks.get(deckA)?.at(-1);
+    deckA.currentTime = 3.4;
+    fireEvent.ended(deckA);
+    onFrameTimeUpdate.mockClear();
+
+    act(() => staleCallback?.(0, { mediaTime: 3.1 } as VideoFrameCallbackMetadata));
+    expect(onFrameTimeUpdate).not.toHaveBeenCalled();
+  });
+
+  it("keeps decoded-frame callbacks on the active deck during an overlap", () => {
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        frameDriven
+        onFrameTimeUpdate={jest.fn()}
+        slots={TRANSITION_SLOTS}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const deckB = screen.getByTestId("deck-b") as HTMLVideoElement;
+    const activeCallback = callbacks.get(deckA)?.at(-1);
+
+    act(() =>
+      activeCallback?.(0, {
+        mediaTime: SLOT.inS + 1.75,
+      } as VideoFrameCallbackMetadata),
+    );
+
+    expect(callbacks.get(deckB)).toBeUndefined();
+  });
+
+  it("invalidates queued frames on pause and starts a fresh generation on resume", () => {
+    const onFrameTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        frameDriven
+        onFrameTimeUpdate={onFrameTimeUpdate}
+      />,
+    );
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    const staleCallback = callbacks.get(deckA)?.at(-1);
+    const requestsBeforePause = requestSpy.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "pause" }));
+    onFrameTimeUpdate.mockClear();
+    act(() => staleCallback?.(0, { mediaTime: 2.4 } as VideoFrameCallbackMetadata));
+    expect(onFrameTimeUpdate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    expect(requestSpy.mock.calls.length).toBeGreaterThan(requestsBeforePause);
+  });
+
+  it("resamples authoritative media time after seek and playback-rate changes", () => {
+    const onFrameTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        frameDriven
+        onFrameTimeUpdate={onFrameTimeUpdate}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+
+    onFrameTimeUpdate.mockClear();
+    deckA.currentTime = 2.4;
+    fireEvent.seeked(deckA);
+    expect(onFrameTimeUpdate).toHaveBeenLastCalledWith(expect.closeTo(1, 8));
+
+    onFrameTimeUpdate.mockClear();
+    deckA.currentTime = 2.9;
+    fireEvent.rateChange(deckA);
+    expect(onFrameTimeUpdate).toHaveBeenLastCalledWith(expect.closeTo(1.5, 8));
+  });
+
+  it("recovers from a background-tab callback gap using authoritative media time", () => {
+    const visibilityDescriptor = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    const onFrameTimeUpdate = jest.fn();
+    try {
+      render(
+        <Harness
+          onPlayingChange={jest.fn()}
+          frameDriven
+          onFrameTimeUpdate={onFrameTimeUpdate}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "play" }));
+      const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+      deckA.currentTime = 2.65;
+      onFrameTimeUpdate.mockClear();
+
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: "visible",
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+
+      expect(onFrameTimeUpdate).toHaveBeenLastCalledWith(expect.closeTo(1.25, 8));
+    } finally {
+      if (visibilityDescriptor) {
+        Object.defineProperty(document, "visibilityState", visibilityDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "visibilityState");
+      }
+    }
+  });
+
+  it("preserves the legacy clock and schedules no decoded-frame callbacks when flag-off", () => {
+    const onTimeUpdate = jest.fn();
+    render(<Harness onPlayingChange={jest.fn()} onTimeUpdate={onTimeUpdate} />);
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    expect(requestSpy).not.toHaveBeenCalled();
+    onTimeUpdate.mockClear();
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    deckA.currentTime = 2.4;
+    fireEvent.seeked(deckA);
+    fireEvent.rateChange(deckA);
+    expect(onTimeUpdate).not.toHaveBeenCalled();
+  });
+});
 
 describe("useVirtualPreview music transport", () => {
   let playSpy: ReturnType<typeof jest.spyOn>;
@@ -573,6 +866,39 @@ describe("useVirtualPreview carousel-window clock (bug fix: frozen transport)", 
     expect(playsOn(deckB)).toBe(0);
   });
 
+  it("publishes display-rate frame samples but throttles shell commits in a frame-driven block", () => {
+    const onTimeUpdate = jest.fn();
+    const onFrameTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        onTimeUpdate={onTimeUpdate}
+        onFrameTimeUpdate={onFrameTimeUpdate}
+        frameDriven
+        slots={TWO_SLOTS}
+        carousel={CAROUSEL}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    onTimeUpdate.mockClear();
+    onFrameTimeUpdate.mockClear();
+
+    act(() => {
+      jest.advanceTimersByTime(100);
+    });
+
+    expect(onFrameTimeUpdate.mock.calls.length).toBeGreaterThan(2);
+    expect(onTimeUpdate).not.toHaveBeenCalled();
+    const lastFrame = onFrameTimeUpdate.mock.calls.at(-1)?.[0] as number;
+    expect(lastFrame).toBeGreaterThan(0.05);
+    expect(lastFrame).toBeLessThan(0.2);
+
+    act(() => {
+      jest.advanceTimersByTime(150);
+    });
+    expect(onTimeUpdate).toHaveBeenCalledTimes(1);
+  });
+
   it("hands off to the next deck at the correct boundary once the block ends, and stops advancing on its own after that", () => {
     const onTimeUpdate = jest.fn();
     render(
@@ -625,6 +951,27 @@ describe("useVirtualPreview carousel-window clock (bug fix: frozen transport)", 
       jest.advanceTimersByTime(1000);
     });
     expect(onTimeUpdate.mock.calls.length).toBe(callsAtPause);
+  });
+
+  it("uses transport state to toggle pause inside a non-video window", () => {
+    const onPlayingChange = jest.fn();
+    const onTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={onPlayingChange}
+        onTimeUpdate={onTimeUpdate}
+        slots={TWO_SLOTS}
+        carousel={CAROUSEL}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    act(() => jest.advanceTimersByTime(250));
+    fireEvent.click(screen.getByRole("button", { name: "toggle" }));
+
+    expect(onPlayingChange).toHaveBeenLastCalledWith(false);
+    const callsAtPause = onTimeUpdate.mock.calls.length;
+    act(() => jest.advanceTimersByTime(500));
+    expect(onTimeUpdate).toHaveBeenCalledTimes(callsAtPause);
   });
 
   // Bug #2 (visual E2E): "with a staged carousel block, scrubbing OUTSIDE its
