@@ -79,6 +79,34 @@ The browser clips a fully laid-out DOM run. Skia draws shaped full-line
 substrings or split combining marks, emoji ZWJ sequences, ligatures, Arabic,
 bidi text, or Turkish characters.
 
+The persisted `motion` contract accepts these optional fields in addition to
+`version: 2`:
+
+| Field | Persisted values | Editor control |
+| --- | --- | --- |
+| `speed` | `0.25–4` | `0.25–4×` |
+| `intensity` | `0–1` | `0–100%` |
+| `easing` | `linear`, `ease-out-cubic`, `ease-in-out-cubic` | Same enum |
+| `stagger_ms` | `0–250` | `0–250ms` |
+| `order` | `forward`, `reverse`, `center-out` | Same enum |
+| `direction` | `none`, `up`, `down`, `left`, `right` | Same enum |
+| `travel_px` | `0–600` | `0–300px` |
+| `overshoot` | `0–1` | `0–100%` |
+| `blur_px` | `0–12` | `0–12px` |
+| `cursor_style` | `none`, `bar`, `block`, `underscore` | Same enum |
+| `cursor_blink_ms` | `100–2000` | `100–2000ms` |
+| `hold_s` | `0–3600` | `0–10s` |
+| `exit_s` | `0–2` | Persisted/rendered; no editor control |
+| `reveal_ramp_ms` | `40–400` | `40–400ms` |
+
+Speed and intensity are primary controls for every v2-capable effect. Advanced
+controls are capability-gated: Smooth Type exposes easing, stagger, order,
+direction, travel, blur, reveal ramp, and hold; slide effects expose easing,
+direction, travel, and hold; fade/scale, ink-reveal, and handwriting expose
+easing and hold; pop/bounce expose overshoot and hold; typewriter/stream-in
+expose cursor style, blink rate, and hold; staggered-slice exposes hold only.
+Unsupported controls stay hidden and are not preview-only or render-only UI.
+
 ## Runtime paths
 
 - Browser preview:

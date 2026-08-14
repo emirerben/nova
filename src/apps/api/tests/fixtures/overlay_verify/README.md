@@ -10,8 +10,10 @@ Seeded from the #296 class (prod jobs `ff0d2e1c` / `89cde014` — `text_anchor="
 rendered "It's not just luck" as "s not just luck"). When you add a new
 anchor/position/effect field to the burn dict, add a fixture exercising it.
 
-`smooth_type.json` exercises the Text Motion v2 burn payload, stable shaped-run
-reveal, bounded whole-layer blur, and the default one-second hold.
+`smooth_type.json` exercises the Text Motion v2 burn payload and settled
+shaped-run layout through the real Skia/FFmpeg path. The verifier samples at
+95% of the overlay window, so active reveal, blur, and hold timing are covered
+by the dedicated renderer/parity suites rather than this settled-frame fixture.
 
 `high_visibility_shadow.json` explicitly selects `shadow_style="high_visibility"`
 and pins the opt-in dual-shadow profile in both white and yellow at every reference
