@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage as gcs
 from google.oauth2 import service_account
 
@@ -21,6 +22,7 @@ class ObjectMetadata:
     etag: str | None
     size: int
     content_type: str
+    md5_hash: str | None = None
 
 
 def get_gcp_credentials(
@@ -120,6 +122,30 @@ def signed_put_url(
             "content-length": str(file_size_bytes),
             "x-goog-if-generation-match": "0",
         },
+    )
+
+
+def signed_put_url_legacy(
+    object_path: str,
+    content_type: str,
+    file_size_bytes: int,
+    expiration_minutes: int = 15,
+) -> str:
+    """Sign a PUT compatible with clients that send only Content-Type.
+
+    Browsers and the relay set Content-Length automatically but deployed pre-0.28
+    code cannot add the new generation header. Keep the exact byte ceiling in
+    the signature. Callers must use a lifecycle-covered staging key and promote
+    only the verified generation into persistent storage.
+    """
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=expiration_minutes),
+        method="PUT",
+        content_type=content_type,
+        headers={"content-length": str(file_size_bytes)},
     )
 
 
@@ -240,31 +266,6 @@ def upload_local_file(local_path: str, object_path: str, content_type: str) -> N
     bucket.blob(object_path).upload_from_filename(local_path, content_type=content_type)
 
 
-def presigned_put_url_for_pool_asset(
-    user_id: str,
-    plan_item_id: str,
-    filename: str,
-    content_type: str = "image/png",
-) -> tuple[str, str]:
-    """Signed PUT URL for a plan-item pool asset (auto-placement PR0, plan 005).
-
-    Lands under `users/{user_id}/plan/{plan_item_id}/pool/...` — the PERSISTENT
-    `users/` namespace (NOT swept by the 24h GCS delete rule). Overlay suggestions
-    reference these objects long after upload, so they must never live on a
-    sweepable path.
-    """
-    object_path = f"users/{user_id}/plan/{plan_item_id}/pool/{filename}"
-    bucket = _get_client().bucket(settings.storage_bucket)
-    blob = bucket.blob(object_path)
-    url = blob.generate_signed_url(
-        version="v4",
-        expiration=datetime.timedelta(minutes=15),
-        method="PUT",
-        content_type=content_type,
-    )
-    return url, object_path
-
-
 def presigned_put_url_for_sfx(
     user_id: str,
     plan_item_id: str,
@@ -356,7 +357,32 @@ def delete_object_best_effort(object_path: str) -> bool:
         bucket = _get_client().bucket(settings.storage_bucket)
         bucket.blob(object_path).delete()
         return True
+    except NotFound:
+        # Deletion is idempotently complete when the object never arrived or
+        # was already removed by an earlier cleanup attempt.
+        return True
     except Exception:  # noqa: BLE001 — best-effort cleanup only
+        return False
+
+
+def delete_object_generation(object_path: str, *, generation: str) -> None:
+    """Delete exactly the generation validated by registration.
+
+    Unlike best-effort cleanup, callers use this to enforce a security boundary:
+    a replaced object must never cause deletion of newer, unvalidated bytes.
+    """
+    bucket = _get_client().bucket(settings.storage_bucket)
+    bucket.blob(object_path, generation=int(generation)).delete()
+
+
+def delete_object_generation_best_effort(object_path: str, *, generation: str) -> bool:
+    """Idempotently delete one immutable generation without touching replacements."""
+    try:
+        delete_object_generation(object_path, generation=generation)
+        return True
+    except NotFound:
+        return True
+    except Exception:  # noqa: BLE001 — caller retains a durable cleanup claim
         return False
 
 
@@ -473,6 +499,7 @@ def object_metadata(object_path: str) -> ObjectMetadata:
         etag=blob.etag,
         size=int(blob.size or 0),
         content_type=blob.content_type or "video/mp4",
+        md5_hash=blob.md5_hash,
     )
 
 
@@ -485,12 +512,18 @@ def copy_object_generation(
     """Copy exactly one source generation, failing if the render changed."""
     bucket = _get_client().bucket(settings.storage_bucket)
     src_blob = bucket.blob(src_object_path, generation=int(source_generation))
-    bucket.copy_blob(
-        src_blob,
-        bucket,
-        dst_object_path,
-        if_source_generation_match=int(source_generation),
-    )
+    try:
+        bucket.copy_blob(
+            src_blob,
+            bucket,
+            dst_object_path,
+            if_source_generation_match=int(source_generation),
+            if_generation_match=0,
+        )
+    except PreconditionFailed:
+        # A prior attempt may have copied successfully but lost its response.
+        # Destination names are reservation-unique and never client-writable.
+        pass
     return object_metadata(dst_object_path)
 
 

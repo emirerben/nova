@@ -159,3 +159,145 @@ def test_signed_put_url_pins_exact_content_type():
         "content-length": "12345",
         "x-goog-if-generation-match": "0",
     }
+
+
+def test_legacy_signed_put_requires_only_content_type():
+    fake_blob = MagicMock()
+    fake_blob.generate_signed_url.return_value = "https://storage.example/upload"
+    fake_bucket = MagicMock()
+    fake_bucket.blob.return_value = fake_blob
+    fake_client = MagicMock()
+    fake_client.bucket.return_value = fake_bucket
+
+    with patch.object(storage, "_get_client", return_value=fake_client):
+        url = storage.signed_put_url_legacy(
+            "users/u/plan/i/pool/x.png",
+            "image/png",
+            123,
+        )
+
+    assert url == "https://storage.example/upload"
+    kwargs = fake_blob.generate_signed_url.call_args.kwargs
+    assert kwargs["content_type"] == "image/png"
+    assert kwargs["headers"] == {"content-length": "123"}
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [(None, True), (storage.NotFound("gone"), True), (RuntimeError("private"), False)],
+)
+def test_delete_object_best_effort_is_idempotent(failure, expected):  # noqa: ANN001
+    blob = MagicMock()
+    if failure is not None:
+        blob.delete.side_effect = failure
+    bucket = MagicMock()
+    bucket.blob.return_value = blob
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        assert storage.delete_object_best_effort("users/u/plan/i/pool/x") is expected
+
+
+def test_delete_object_generation_pins_exact_generation():
+    blob = MagicMock()
+    bucket = MagicMock()
+    bucket.blob.return_value = blob
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        storage.delete_object_generation("users/u/plan/i/pool/x", generation="42")
+
+    bucket.blob.assert_called_once_with("users/u/plan/i/pool/x", generation=42)
+    blob.delete.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [(None, True), (storage.NotFound("gone"), True), (RuntimeError("private"), False)],
+)
+def test_delete_object_generation_best_effort_is_exact_and_idempotent(
+    failure,
+    expected,  # noqa: ANN001
+):
+    blob = MagicMock()
+    if failure is not None:
+        blob.delete.side_effect = failure
+    bucket = MagicMock()
+    bucket.blob.return_value = blob
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        assert (
+            storage.delete_object_generation_best_effort("users/u/plan/i/pool/x", generation="42")
+            is expected
+        )
+
+    bucket.blob.assert_called_once_with("users/u/plan/i/pool/x", generation=42)
+
+
+def test_copy_object_generation_pins_source_and_returns_destination_metadata():
+    source = MagicMock()
+    destination = MagicMock(
+        generation=84,
+        etag="etag",
+        size=123,
+        content_type="image/png",
+    )
+    bucket = MagicMock()
+    bucket.blob.return_value = source
+    bucket.get_blob.return_value = destination
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        result = storage.copy_object_generation(
+            "dev-user/u/staging/x",
+            "users/u/plan/i/pool/x",
+            source_generation="42",
+        )
+
+    bucket.blob.assert_called_once_with("dev-user/u/staging/x", generation=42)
+    bucket.copy_blob.assert_called_once_with(
+        source,
+        bucket,
+        "users/u/plan/i/pool/x",
+        if_source_generation_match=42,
+        if_generation_match=0,
+    )
+    assert result.generation == "84"
+    assert result.path == "users/u/plan/i/pool/x"
+
+
+def test_copy_object_generation_recovers_lost_response_idempotently():
+    source = MagicMock()
+    destination = MagicMock(
+        generation=84,
+        etag="etag",
+        size=123,
+        content_type="image/png",
+    )
+    bucket = MagicMock()
+    bucket.blob.return_value = source
+    bucket.copy_blob.side_effect = storage.PreconditionFailed("destination exists")
+    bucket.get_blob.return_value = destination
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        result = storage.copy_object_generation(
+            "dev-user/u/staging/x",
+            "users/u/plan/i/pool/x",
+            source_generation="42",
+        )
+
+    assert result.generation == "84"
+    bucket.copy_blob.assert_called_once_with(
+        source,
+        bucket,
+        "users/u/plan/i/pool/x",
+        if_source_generation_match=42,
+        if_generation_match=0,
+    )
