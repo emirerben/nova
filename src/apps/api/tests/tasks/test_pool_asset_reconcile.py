@@ -35,6 +35,9 @@ class _Session:
     def delete(self, row):  # noqa: ANN001
         self.deleted.append(row)
 
+    def get(self, _model, row_id, **_kwargs):  # noqa: ANN001
+        return next((row for row in self.rows if row.id == row_id), None)
+
 
 def _asset(*, attempts: int):
     return SimpleNamespace(
@@ -111,3 +114,41 @@ def test_reconcile_deletes_expired_reservation_and_object(monkeypatch) -> None:
     assert maintenance.reconcile_stale_pool_assets(now=now) == 1
     assert session.deleted == [asset]
     cleanup.assert_called_once_with(asset.gcs_path)
+
+
+def test_reconcile_keeps_expired_reservation_when_object_cleanup_fails(monkeypatch) -> None:
+    asset = _asset(attempts=0)
+    asset.status = "preparing"
+    session = _Session([asset])
+
+    @contextmanager
+    def _session():
+        yield session
+
+    cleanup = MagicMock(return_value=False)
+    monkeypatch.setattr(maintenance, "sync_session", _session)
+    monkeypatch.setattr("app.storage.delete_object_best_effort", cleanup)
+
+    now = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
+    assert maintenance.reconcile_stale_pool_assets(now=now) == 1
+    assert session.deleted == []
+    cleanup.assert_called_once_with(asset.gcs_path)
+
+
+def test_reconcile_publish_failure_becomes_safe_retryable_failure(monkeypatch) -> None:
+    asset = _asset(attempts=1)
+    session = _Session([asset])
+
+    @contextmanager
+    def _session():
+        yield session
+
+    publish = MagicMock(side_effect=RuntimeError("private broker detail"))
+    monkeypatch.setattr(maintenance, "sync_session", _session)
+    monkeypatch.setattr("app.tasks.autoplace.analyze_pool_asset.apply_async", publish)
+
+    assert maintenance.reconcile_stale_pool_assets(now=datetime.now(UTC)) == 1
+    assert asset.status == "failed"
+    assert asset.error_code == "analysis_temporarily_unavailable"
+    assert asset.error_retryable is True
+    assert "private broker detail" not in asset.error_detail

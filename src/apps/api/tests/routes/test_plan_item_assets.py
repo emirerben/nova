@@ -327,6 +327,50 @@ def test_upload_urls_reuses_reservation_and_rotates_interrupted_target(client: T
     db.add.assert_not_called()
 
 
+def test_upload_urls_keeps_old_target_when_cleanup_must_retry(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.client_upload_id = "file-stable"
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    old_path = reservation.gcs_path
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([]),
+            _scalars_result([reservation]),
+            _scalar_result(1),
+        ],
+        plan,
+    )
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.delete_object_best_effort", return_value=False),
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets/upload-urls",
+            json={
+                "files": [
+                    {
+                        "filename": "f.png",
+                        "content_type": "image/png",
+                        "file_size_bytes": 100,
+                        "client_upload_id": "file-stable",
+                    }
+                ]
+            },
+        )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["retryable"] is True
+    assert resp.json()["detail"]["stage"] == "reservation_cleanup"
+    assert reservation.gcs_path == old_path
+    db.commit.assert_not_awaited()
+
+
 # ── register ──────────────────────────────────────────────────────────────────
 
 
@@ -366,6 +410,63 @@ def test_register_happy_path_commits(client: TestClient, _no_real_broker_publish
     assert _no_real_broker_publish.call_count == 1
 
 
+def test_reserved_registration_finalizes_once_and_repeat_is_idempotent(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.client_upload_id = "file-stable"
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    reservation.correlation_id = "batch-original"
+    reservation.analysis_attempt_count = 0
+    first_db = _db(
+        [_scalar_result(item), _scalar_result(reservation), _scalar_result(None)],
+        plan,
+    )
+    _override(user, first_db)
+    metadata = ObjectMetadata(
+        path=reservation.gcs_path,
+        generation="42",
+        etag="etag",
+        size=100,
+        content_type="image/png",
+    )
+    payload = {
+        "reservation_id": str(reservation.id),
+        "gcs_path": reservation.gcs_path,
+        "content_type": "image/png",
+        "content_hash": "hash",
+    }
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.object_metadata", return_value=metadata),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        first = client.post(
+            f"/plan-items/{item.id}/assets",
+            headers={"X-Correlation-Id": "batch-retry"},
+            json=payload,
+        )
+
+        second_db = _db([_scalar_result(item), _scalar_result(reservation)], plan)
+        _override(user, second_db)
+        second = client.post(f"/plan-items/{item.id}/assets", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["id"] == second.json()["id"] == str(reservation.id)
+    assert reservation.status == "queued"
+    assert reservation.gcs_generation == "42"
+    assert reservation.correlation_id == "batch-retry"
+    assert reservation.analysis_attempt_token
+    assert reservation.analysis_last_dispatched_at is not None
+    _no_real_broker_publish.assert_called_once()
+
+
 def test_register_rejects_and_deletes_reservation_metadata_mismatch(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
@@ -402,6 +503,50 @@ def test_register_rejects_and_deletes_reservation_metadata_mismatch(client: Test
     db.delete.assert_awaited_once_with(reservation)
 
 
+def test_register_cleanup_failure_keeps_reservation_retryable(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    db = _db([_scalar_result(item), _scalar_result(reservation)], plan)
+    _override(user, db)
+    mismatched = ObjectMetadata(
+        path=reservation.gcs_path,
+        generation="11",
+        etag="etag",
+        size=99,
+        content_type="image/png",
+    )
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.object_metadata", return_value=mismatched),
+        patch(
+            "app.routes.plan_items.storage.delete_object_generation",
+            side_effect=RuntimeError("private storage detail"),
+        ),
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "reservation_id": str(reservation.id),
+                "gcs_path": reservation.gcs_path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == {
+        "message": "Kria couldn't finish cleaning up this upload. Retry in a moment.",
+        "code": "upload_cleanup_temporarily_unavailable",
+        "retryable": True,
+        "stage": "registration_cleanup",
+    }
+    db.delete.assert_not_awaited()
+
+
 def test_register_dispatch_failure_is_actionable(client: TestClient, _no_real_broker_publish):
     user = _user()
     item, plan = _owned_item(user.id)
@@ -429,6 +574,7 @@ def test_register_dedupes_on_content_hash(client: TestClient):
     with (
         patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
         patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+        patch("app.routes.plan_items.storage.delete_object_generation") as delete_generation,
     ):
         resp = client.post(f"/plan-items/{item.id}/assets", json=_register_body(user.id, item.id))
     assert resp.status_code == 200
@@ -437,6 +583,10 @@ def test_register_dedupes_on_content_hash(client: TestClient):
     assert body["id"] == str(existing.id)
     # Dedupe path adds no row.
     assert db.add.call_count == 0
+    delete_generation.assert_called_once_with(
+        f"users/{user.id}/plan/{item.id}/pool/f.png",
+        generation="7",
+    )
 
 
 def test_register_rejects_foreign_prefix(client: TestClient):

@@ -1013,9 +1013,9 @@ class PlanItemAsset(Base):
     `users/{user_id}/plan/{plan_item_id}/pool/` GCS prefix — never a 24h-swept path,
     because suggestions must never reference sweepable objects.
 
-    status lifecycle: queued → analyzing → ready | failed (`uploaded` remains a
-    legacy/reconciliation state). `content_hash` powers upload dedupe — identical
-    bytes reuse the existing row instead of re-analyzing.
+    status lifecycle: preparing → queued → analyzing → ready | failed
+    (`uploaded` remains a legacy/reconciliation state). `content_hash` powers
+    upload dedupe — identical bytes reuse the existing row instead of re-analyzing.
     """
 
     __tablename__ = "plan_item_assets"
@@ -1055,9 +1055,6 @@ class PlanItemAsset(Base):
     # this generation, never whichever bytes happen to occupy the path later.
     gcs_generation: Mapped[str | None] = mapped_column(Text, nullable=True)
     correlation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Creator-authored hint for niche uploads. Kept separate from analysis so
-    # machine-detected subject/brands stay auditable and re-analysis can change.
-    user_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Server-side ffprobe results (PR1a wires probing for video assets). The matcher
     # never trusts client-probed values.
     duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)

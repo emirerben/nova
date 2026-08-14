@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from google.api_core.exceptions import NotFound
 from google.cloud import storage as gcs
 from google.oauth2 import service_account
 
@@ -360,6 +361,10 @@ def delete_object_best_effort(object_path: str) -> bool:
     try:
         bucket = _get_client().bucket(settings.storage_bucket)
         bucket.blob(object_path).delete()
+        return True
+    except NotFound:
+        # Deletion is idempotently complete when the object never arrived or
+        # was already removed by an earlier cleanup attempt.
         return True
     except Exception:  # noqa: BLE001 — best-effort cleanup only
         return False

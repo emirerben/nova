@@ -3928,6 +3928,26 @@ class PoolUploadUrlsResponse(BaseModel):
     urls: list[PoolUploadTarget]
 
 
+async def _cleanup_reserved_pool_path(path: str, *, reservation_id: str) -> None:
+    """Require idempotent cleanup before forgetting or rotating a reservation path."""
+    cleaned = await asyncio.to_thread(storage.delete_object_best_effort, path)
+    if cleaned:
+        return
+    log.warning(
+        "pool_asset_reservation_cleanup_failed",
+        reservation_id=reservation_id,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "message": "Kria couldn't refresh this upload yet. Retry in a moment.",
+            "code": "upload_cleanup_temporarily_unavailable",
+            "retryable": True,
+            "stage": "reservation_cleanup",
+        },
+    )
+
+
 @router.post("/{item_id}/assets/upload-urls", response_model=PoolUploadUrlsResponse)
 async def create_pool_upload_urls(
     item_id: str,
@@ -3965,8 +3985,8 @@ async def create_pool_upload_urls(
         .scalars()
         .all()
     )
-    stale_paths = [row.gcs_path for row in stale]
     for row in stale:
+        await _cleanup_reserved_pool_path(row.gcs_path, reservation_id=str(row.id))
         await db.delete(row)
 
     existing_by_client = {
@@ -4021,7 +4041,6 @@ async def create_pool_upload_urls(
         correlation_id=correlation_id,
     )
     reservations: list[PlanItemAsset] = []
-    superseded_paths: list[str] = []
     for f, client_upload_id in zip(body.files, client_ids, strict=True):
         if f.content_type not in _OVERLAY_ALLOWED_CONTENT_TYPES:
             raise HTTPException(
@@ -4060,7 +4079,10 @@ async def create_pool_upload_urls(
             # Rotate the create-only object key on every presign refresh. An
             # interrupted PUT may have committed bytes even though fetch threw;
             # reusing that path would make generation-match=0 fail forever.
-            superseded_paths.append(reservation.gcs_path)
+            await _cleanup_reserved_pool_path(
+                reservation.gcs_path,
+                reservation_id=str(reservation.id),
+            )
             safe_name = f"{uuid.uuid4().hex}-{f.filename.split('/')[-1]}"
             reservation.gcs_path = f"users/{user.id}/plan/{item.id}/pool/{safe_name}"
         else:
@@ -4082,8 +4104,6 @@ async def create_pool_upload_urls(
         reservation.correlation_id = correlation_id
         reservations.append(reservation)
     await db.commit()
-    for path in [*stale_paths, *superseded_paths]:
-        await asyncio.to_thread(storage.delete_object_best_effort, path)
 
     urls: list[PoolUploadTarget] = []
     for reservation in reservations:
@@ -4114,6 +4134,36 @@ class RegisterAssetBody(BaseModel):
     content_hash: str | None = None
     source_filename: str | None = None
     user_context: str | None = Field(default=None, max_length=_MAX_POOL_CONTEXT_CHARS)
+
+
+async def _delete_verified_pool_upload(
+    gcs_path: str,
+    generation: str,
+    *,
+    reservation_id: str | None,
+) -> None:
+    """Delete validated bytes without losing the row needed to retry cleanup."""
+    try:
+        await asyncio.to_thread(
+            storage.delete_object_generation,
+            gcs_path,
+            generation=generation,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "pool_asset_generation_cleanup_failed",
+            reservation_id=reservation_id,
+            error_type=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "message": "Kria couldn't finish cleaning up this upload. Retry in a moment.",
+                "code": "upload_cleanup_temporarily_unavailable",
+                "retryable": True,
+                "stage": "registration_cleanup",
+            },
+        ) from exc
 
 
 class PoolAssetOut(BaseModel):
@@ -4350,16 +4400,14 @@ async def register_pool_asset(
         or metadata.size > limit
     )
     if mismatch:
-        try:
-            await asyncio.to_thread(
-                storage.delete_object_generation,
-                body.gcs_path,
-                generation=metadata.generation,
-            )
-        finally:
-            if reservation is not None:
-                await db.delete(reservation)
-                await db.commit()
+        await _delete_verified_pool_upload(
+            body.gcs_path,
+            metadata.generation,
+            reservation_id=str(reservation.id) if reservation else None,
+        )
+        if reservation is not None:
+            await db.delete(reservation)
+            await db.commit()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="The uploaded file did not match the selected file. Choose it again and retry.",
@@ -4381,10 +4429,10 @@ async def register_pool_asset(
                 existing.user_context = cleaned_context
                 await db.commit()
                 await db.refresh(existing)
-            await asyncio.to_thread(
-                storage.delete_object_generation,
+            await _delete_verified_pool_upload(
                 body.gcs_path,
-                generation=metadata.generation,
+                metadata.generation,
+                reservation_id=str(reservation.id) if reservation else None,
             )
             if reservation is not None:
                 await db.delete(reservation)
@@ -4401,10 +4449,10 @@ async def register_pool_asset(
             ).scalar_one()
         )
         if count >= _MAX_POOL_ASSETS:
-            await asyncio.to_thread(
-                storage.delete_object_generation,
+            await _delete_verified_pool_upload(
                 body.gcs_path,
-                generation=metadata.generation,
+                metadata.generation,
+                reservation_id=None,
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
