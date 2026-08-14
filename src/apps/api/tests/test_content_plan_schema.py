@@ -284,8 +284,7 @@ def test_content_plan_persona_owner_constraints_registered() -> None:
     persona_owner_key = next(
         constraint
         for constraint in personas.constraints
-        if isinstance(constraint, UniqueConstraint)
-        and constraint.name == "uq_personas_id_user_id"
+        if isinstance(constraint, UniqueConstraint) and constraint.name == "uq_personas_id_user_id"
     )
     assert tuple(persona_owner_key.columns.keys()) == ("id", "user_id")
 
@@ -343,9 +342,7 @@ def test_persona_content_plan_navigation_is_viewonly_and_owner_joined() -> None:
 
 
 def test_0071_adds_durable_ownership_fence_columns(monkeypatch) -> None:
-    migration = importlib.import_module(
-        "app.migrations.versions.0072_content_plan_ownership_fence"
-    )
+    migration = importlib.import_module("app.migrations.versions.0072_content_plan_ownership_fence")
     added: list[tuple[str, object]] = []
 
     monkeypatch.setattr(
@@ -375,9 +372,7 @@ def test_0071_adds_durable_ownership_fence_columns(monkeypatch) -> None:
 
 @pytest.mark.parametrize("used_fences", [1, 2])
 def test_0071_refuses_to_erase_used_ownership_fences(monkeypatch, used_fences: int) -> None:
-    migration = importlib.import_module(
-        "app.migrations.versions.0072_content_plan_ownership_fence"
-    )
+    migration = importlib.import_module("app.migrations.versions.0072_content_plan_ownership_fence")
     dropped: list[tuple[str, str]] = []
 
     class _Result:
@@ -401,9 +396,7 @@ def test_0071_refuses_to_erase_used_ownership_fences(monkeypatch, used_fences: i
 
 
 def test_0071_downgrade_removes_an_unused_fence(monkeypatch) -> None:
-    migration = importlib.import_module(
-        "app.migrations.versions.0072_content_plan_ownership_fence"
-    )
+    migration = importlib.import_module("app.migrations.versions.0072_content_plan_ownership_fence")
     dropped: list[tuple[str, str]] = []
 
     class _Result:
@@ -490,9 +483,7 @@ class _0072Bind:
     ) -> None:
         self.events = events
         self.catalog_rows = (
-            [dict(row) for row in _0072_CATALOG_ROWS]
-            if catalog_rows is None
-            else catalog_rows
+            [dict(row) for row in _0072_CATALOG_ROWS] if catalog_rows is None else catalog_rows
         )
         self.mismatch = mismatch
         self.legacy_rows = (
@@ -584,18 +575,13 @@ def test_0072_upgrade_enforces_owner_invariant_before_dropping_legacy_fk(
     legacy_drop = next(
         event
         for event in events
-        if event[:3]
-        == ("drop", "content_plans_persona_id_fkey", "content_plans")
+        if event[:3] == ("drop", "content_plans_persona_id_fkey", "content_plans")
     )
     assert legacy_drop[3]["type_"] == "foreignkey"
 
-    normalized_sql = [
-        " ".join(event[1].lower().split()) for event in events if event[0] == "sql"
-    ]
+    normalized_sql = [" ".join(event[1].lower().split()) for event in events if event[0] == "sql"]
     assert any("set local lock_timeout" in sql and "5s" in sql for sql in normalized_sql)
-    assert any(
-        "set local statement_timeout" in sql and "30s" in sql for sql in normalized_sql
-    )
+    assert any("set local statement_timeout" in sql and "30s" in sql for sql in normalized_sql)
     mismatch_index = next(
         index
         for index, event in enumerate(events)
@@ -709,9 +695,7 @@ def test_0072_upgrade_aborts_when_owner_column_type_drifted(monkeypatch) -> None
         ],
     ],
 )
-def test_0072_upgrade_rejects_legacy_fk_catalog_drift(
-    monkeypatch, legacy_rows: list[dict]
-) -> None:
+def test_0072_upgrade_rejects_legacy_fk_catalog_drift(monkeypatch, legacy_rows: list[dict]) -> None:
     migration = importlib.import_module(
         "app.migrations.versions.0073_content_plan_persona_owner_invariant"
     )
@@ -740,8 +724,7 @@ def test_0072_downgrade_validates_legacy_fk_before_removing_owner_invariant(
     add_index = next(
         index
         for index, event in enumerate(events)
-        if event[0] == "sql"
-        and "add constraint content_plans_persona_id_fkey" in event[1].lower()
+        if event[0] == "sql" and "add constraint content_plans_persona_id_fkey" in event[1].lower()
     )
     validate_index = next(
         index
@@ -752,8 +735,7 @@ def test_0072_downgrade_validates_legacy_fk_before_removing_owner_invariant(
     composite_drop = next(
         event
         for event in events
-        if event[:3]
-        == ("drop", "fk_content_plans_persona_owner", "content_plans")
+        if event[:3] == ("drop", "fk_content_plans_persona_owner", "content_plans")
     )
     unique_drop = next(
         event for event in events if event[:3] == ("drop", "uq_personas_id_user_id", "personas")
@@ -778,9 +760,7 @@ def test_0072_downgrade_checks_schema_before_recreating_legacy_fk(monkeypatch) -
     with pytest.raises(RuntimeError, match="precondition|schema|column|catalog"):
         migration.downgrade()
 
-    assert not any(
-        event[0] == "sql" and "add constraint" in event[1].lower() for event in events
-    )
+    assert not any(event[0] == "sql" and "add constraint" in event[1].lower() for event in events)
     assert not any(event[0] == "drop" for event in events)
 
 
