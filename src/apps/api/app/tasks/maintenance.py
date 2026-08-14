@@ -39,7 +39,8 @@ _POOL_QUEUED_STALE_AFTER = timedelta(minutes=60)
 _POOL_ANALYZING_STALE_AFTER = timedelta(minutes=10)
 _POOL_MAX_ATTEMPTS = 3
 _POOL_RECONCILE_BATCH = 100
-_POOL_RESERVATION_CLEANUP_AFTER = timedelta(minutes=30)
+_POOL_RESERVATION_TTL = timedelta(minutes=15)
+_POOL_RESERVATION_CLEANUP_GRACE = timedelta(minutes=15)
 
 
 def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
@@ -55,8 +56,8 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
     current = now or datetime.now(UTC)
     queued_cutoff = current - _POOL_QUEUED_STALE_AFTER
     analyzing_cutoff = current - _POOL_ANALYZING_STALE_AFTER
-    to_publish: list[tuple[str, str]] = []
-    expired_reservations: list[tuple[uuid.UUID, str, datetime]] = []
+    to_publish: list[tuple[str, str, str | None]] = []
+    expired_reservations: list[tuple[uuid.UUID, str]] = []
     touched = 0
 
     with sync_session() as db:
@@ -67,8 +68,18 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                     or_(
                         and_(
                             PlanItemAsset.status == "preparing",
-                            PlanItemAsset.created_at <= current - _POOL_RESERVATION_CLEANUP_AFTER,
+                            or_(
+                                PlanItemAsset.upload_expires_at
+                                <= current - _POOL_RESERVATION_CLEANUP_GRACE,
+                                and_(
+                                    PlanItemAsset.upload_expires_at.is_(None),
+                                    PlanItemAsset.created_at
+                                    <= current
+                                    - (_POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE),
+                                ),
+                            ),
                         ),
+                        PlanItemAsset.status == "cleanup_pending",
                         and_(
                             PlanItemAsset.status == "queued",
                             or_(
@@ -103,8 +114,12 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
         )
         for asset in rows:
             touched += 1
-            if asset.status == "preparing":
-                expired_reservations.append((asset.id, asset.gcs_path, asset.created_at))
+            if asset.status in {"preparing", "cleanup_pending"}:
+                # Claim cleanup before releasing the row lock. Registration
+                # accepts only preparing rows, so it cannot promote bytes after
+                # this transaction commits and before storage deletion.
+                asset.status = "cleanup_pending"
+                expired_reservations.append((asset.id, asset.gcs_path))
                 continue
             attempts = int(asset.analysis_attempt_count or 0)
             if attempts >= _POOL_MAX_ATTEMPTS:
@@ -123,14 +138,14 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
             asset.error_code = None
             asset.error_detail = None
             asset.error_retryable = False
-            to_publish.append((str(asset.id), token))
+            to_publish.append((str(asset.id), token, getattr(asset, "correlation_id", None)))
         db.commit()
 
     expired_cleaned = 0
     if expired_reservations:
         from app.storage import delete_object_best_effort  # noqa: PLC0415
 
-        for asset_id, path, created_at in expired_reservations:
+        for asset_id, path in expired_reservations:
             if not delete_object_best_effort(path):
                 log.warning("pool_asset_reservation_cleanup_deferred", asset_id=str(asset_id))
                 continue
@@ -138,19 +153,22 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                 asset = db.get(PlanItemAsset, asset_id, with_for_update=True)
                 if (
                     asset is not None
-                    and asset.status == "preparing"
+                    and asset.status == "cleanup_pending"
                     and asset.gcs_path == path
-                    and asset.created_at == created_at
                 ):
                     db.delete(asset)
                     db.commit()
                     expired_cleaned += 1
 
-    for asset_id, token in to_publish:
+    for asset_id, token, correlation_id in to_publish:
         try:
+            task_headers = {"pool_asset_attempt_token": token}
+            if correlation_id:
+                task_headers["x-correlation-id"] = correlation_id
             analyze_pool_asset.apply_async(
-                args=[asset_id, False, token],
+                args=[asset_id, False],
                 queue=settings.pool_asset_analysis_queue,
+                headers=task_headers,
             )
         except Exception as exc:  # noqa: BLE001
             with sync_session() as db:

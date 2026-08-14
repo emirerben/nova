@@ -74,13 +74,19 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
+def _safe_trace_id(value: str | None) -> str | None:
+    if value and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value):
+        return value
+    return None
+
+
 @app.middleware("http")
 async def request_correlation(request: Request, call_next):  # noqa: ANN001
     """Give every HTTP hop a unique request ID and preserve the batch ID."""
-    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
-    correlation_id = request.headers.get("x-correlation-id") or request_id
-    request.state.request_id = request_id[:128]
-    request.state.correlation_id = correlation_id[:128]
+    request_id = _safe_trace_id(request.headers.get("x-request-id")) or uuid.uuid4().hex
+    correlation_id = _safe_trace_id(request.headers.get("x-correlation-id")) or request_id
+    request.state.request_id = request_id
+    request.state.correlation_id = correlation_id
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(
         request_id=request.state.request_id,
@@ -122,12 +128,16 @@ def _cors_headers_for(request: Request) -> dict[str, str]:
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    request_id = getattr(request.state, "request_id", None) or request.headers.get(
-        "x-request-id"
-    ) or uuid.uuid4().hex
-    correlation_id = getattr(request.state, "correlation_id", None) or request.headers.get(
-        "x-correlation-id"
-    ) or request_id
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or _safe_trace_id(request.headers.get("x-request-id"))
+        or uuid.uuid4().hex
+    )
+    correlation_id = (
+        getattr(request.state, "correlation_id", None)
+        or _safe_trace_id(request.headers.get("x-correlation-id"))
+        or request_id
+    )
     log.exception(
         "unhandled_exception",
         path=request.url.path,

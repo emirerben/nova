@@ -456,6 +456,36 @@ def test_analyze_pool_asset_rejects_stale_attempt_token(monkeypatch) -> None:
     assert asset.status == "queued"
 
 
+def test_pool_attempt_token_reads_rolling_deploy_compatible_header(monkeypatch) -> None:
+    task = SimpleNamespace(
+        request=SimpleNamespace(headers={"pool_asset_attempt_token": "attempt-from-header"})
+    )
+    monkeypatch.setattr(ap, "current_task", task)
+
+    assert ap._pool_attempt_token(None) == "attempt-from-header"
+    assert ap._pool_attempt_token("explicit") == "explicit"
+
+
+def test_analyze_pool_asset_discards_late_output_after_attempt_changes(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a, **_kw: None)
+
+    def _late_analysis(*_args):
+        asset.analysis_attempt_token = "attempt-2"
+        return ({"subject": "stale-result"}, 1.0, (100, 100), False)
+
+    monkeypatch.setattr(ap, "_analyze_image", _late_analysis)
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.analysis is None
+    assert asset.analysis_attempt_token == "attempt-2"
+    assert asset.status == "analyzing"
+
+
 def test_analyze_pool_asset_persists_safe_retryable_failure(monkeypatch) -> None:
     asset = _PoolAsset(kind="image")
     asset.status = "queued"

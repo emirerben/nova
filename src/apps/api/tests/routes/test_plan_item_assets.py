@@ -151,6 +151,8 @@ def _asset_row(item_id, user_id, *, content_hash="abc123") -> MagicMock:
     a.analysis = None
     a.user_context = None
     a.status = "uploaded"
+    a.gcs_generation = None
+    a.correlation_id = None
     return a
 
 
@@ -160,7 +162,11 @@ def _asset_row(item_id, user_id, *, content_hash="abc123") -> MagicMock:
 @pytest.mark.parametrize(
     ("method", "path_suffix", "body"),
     [
-        ("post", "/assets/upload-urls", {"files": []}),
+        (
+            "post",
+            "/assets/upload-urls",
+            {"files": [{"filename": "x.png", "content_type": "image/png", "file_size_bytes": 1}]},
+        ),
         (
             "post",
             "/assets",
@@ -251,6 +257,139 @@ def test_upload_urls_rejects_bad_content_type(client: TestClient):
     assert resp.status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("files", "status_code"),
+    [
+        ([], 422),
+        (
+            [
+                {
+                    "filename": "a.png",
+                    "content_type": "image/png",
+                    "file_size_bytes": 1,
+                    "client_upload_id": "same",
+                },
+                {
+                    "filename": "b.png",
+                    "content_type": "image/png",
+                    "file_size_bytes": 1,
+                    "client_upload_id": "same",
+                },
+            ],
+            422,
+        ),
+        ([{"filename": "a.png", "content_type": "image/png", "file_size_bytes": 0}], 422),
+        (
+            [
+                {
+                    "filename": "a.png",
+                    "content_type": "image/png",
+                    "file_size_bytes": 25 * 1024 * 1024 + 1,
+                }
+            ],
+            422,
+        ),
+        (
+            [
+                {
+                    "filename": "a.mp4",
+                    "content_type": "video/mp4",
+                    "file_size_bytes": 512 * 1024 * 1024 + 1,
+                }
+            ],
+            422,
+        ),
+    ],
+)
+def test_upload_urls_rejects_invalid_batch_before_storage_changes(
+    client: TestClient,
+    files: list[dict],
+    status_code: int,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db([_scalar_result(item)], plan)
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.delete_object_best_effort") as cleanup,
+        patch("app.routes.plan_items.storage.signed_put_url") as signed,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets/upload-urls",
+            json={"files": files},
+        )
+
+    assert resp.status_code == status_code
+    cleanup.assert_not_called()
+    signed.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+def test_upload_urls_rejects_more_than_capacity_before_route_work(client: TestClient):
+    user = _user()
+    load_owned = AsyncMock()
+    _override(user, AsyncMock())
+    files = [
+        {
+            "filename": f"{index}.png",
+            "content_type": "image/png",
+            "file_size_bytes": 1,
+            "client_upload_id": f"file-{index}",
+        }
+        for index in range(21)
+    ]
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items._load_owned_item", new=load_owned),
+    ):
+        resp = client.post(
+            f"/plan-items/{uuid.uuid4()}/assets/upload-urls",
+            json={"files": files},
+        )
+
+    assert resp.status_code == 422
+    load_owned.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("content_type", "size"),
+    [("image/png", 25 * 1024 * 1024), ("video/mp4", 512 * 1024 * 1024)],
+)
+def test_upload_urls_accepts_exact_size_limits(
+    client: TestClient,
+    content_type: str,
+    size: int,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalar_result(0),
+        ],
+        plan,
+    )
+    _override(user, db)
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets/upload-urls",
+            json={
+                "files": [
+                    {
+                        "filename": "asset",
+                        "content_type": content_type,
+                        "file_size_bytes": size,
+                    }
+                ]
+            },
+        )
+
+    assert resp.status_code == 200
+
+
 def test_upload_urls_enforces_cap_counting_existing(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
@@ -279,7 +418,7 @@ def test_upload_urls_enforces_cap_counting_existing(client: TestClient):
     assert resp.json()["detail"] == "Your visuals pool has room for 1 more. Select up to 1."
 
 
-def test_upload_urls_reuses_reservation_and_rotates_interrupted_target(client: TestClient):
+def test_upload_urls_reuses_reservation_target_without_orphaning_old_url(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
     reservation = _asset_row(item.id, user.id)
@@ -321,7 +460,7 @@ def test_upload_urls_reuses_reservation_and_rotates_interrupted_target(client: T
     target = resp.json()["urls"][0]
     assert target["reservation_id"] == str(reservation.id)
     assert target["client_upload_id"] == "file-stable"
-    assert target["gcs_path"] != old_path
+    assert target["gcs_path"] == old_path
     assert reservation.correlation_id == "batch-stable"
     cleanup.assert_called_once_with(old_path)
     db.add.assert_not_called()
@@ -388,8 +527,11 @@ def _register_body(user_id, item_id, **overrides) -> dict:
 def test_register_happy_path_commits(client: TestClient, _no_real_broker_publish):
     user = _user()
     item, plan = _owned_item(user.id)
-    # execute order: load item, dedupe lookup (None), count (0)
-    db = _db([_scalar_result(item), _scalar_result(None), _scalar_result(0)], plan)
+    # execute order: load item, path owner, dedupe lookup, count.
+    db = _db(
+        [_scalar_result(item), _scalar_result(None), _scalar_result(None), _scalar_result(0)],
+        plan,
+    )
     _override(user, db)
     with (
         patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
@@ -408,6 +550,9 @@ def test_register_happy_path_commits(client: TestClient, _no_real_broker_publish
     assert db.commit.await_count >= 1
     # Review C4: analysis IS dispatched (and to a mock, not the real broker).
     assert _no_real_broker_publish.call_count == 1
+    publish = _no_real_broker_publish.call_args
+    assert publish.kwargs["args"] == [body["id"], False]
+    assert publish.kwargs["headers"]["pool_asset_attempt_token"]
 
 
 def test_reserved_registration_finalizes_once_and_repeat_is_idempotent(
@@ -464,6 +609,51 @@ def test_reserved_registration_finalizes_once_and_repeat_is_idempotent(
     assert reservation.correlation_id == "batch-retry"
     assert reservation.analysis_attempt_token
     assert reservation.analysis_last_dispatched_at is not None
+    _no_real_broker_publish.assert_called_once()
+
+
+def test_path_based_client_adopts_preparing_reservation(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    reservation.analysis_attempt_count = 0
+    db = _db(
+        [_scalar_result(item), _scalar_result(reservation), _scalar_result(None)],
+        plan,
+    )
+    _override(user, db)
+    metadata = ObjectMetadata(
+        path=reservation.gcs_path,
+        generation="42",
+        etag="etag",
+        size=100,
+        content_type="image/png",
+    )
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.object_metadata", return_value=metadata),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "gcs_path": reservation.gcs_path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["id"] == str(reservation.id)
+    assert reservation.status == "queued"
+    assert reservation.gcs_generation == "42"
+    db.add.assert_not_called()
     _no_real_broker_publish.assert_called_once()
 
 
@@ -547,10 +737,35 @@ def test_register_cleanup_failure_keeps_reservation_retryable(client: TestClient
     db.delete.assert_not_awaited()
 
 
+def test_register_rejects_cleanup_claimed_reservation(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "cleanup_pending"
+    db = _db([_scalar_result(item), _scalar_result(reservation)], plan)
+    _override(user, db)
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "reservation_id": str(reservation.id),
+                "gcs_path": reservation.gcs_path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+
+    assert resp.status_code == 409
+    assert "no longer available" in resp.json()["detail"]
+
+
 def test_register_dispatch_failure_is_actionable(client: TestClient, _no_real_broker_publish):
     user = _user()
     item, plan = _owned_item(user.id)
-    db = _db([_scalar_result(item), _scalar_result(None), _scalar_result(0)], plan)
+    db = _db(
+        [_scalar_result(item), _scalar_result(None), _scalar_result(None), _scalar_result(0)],
+        plan,
+    )
     _override(user, db)
     _no_real_broker_publish.side_effect = RuntimeError("redis unavailable")
     with (
@@ -569,7 +784,7 @@ def test_register_dedupes_on_content_hash(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
     existing = _asset_row(item.id, user.id, content_hash="hash-1")
-    db = _db([_scalar_result(item), _scalar_result(existing)], plan)
+    db = _db([_scalar_result(item), _scalar_result(None), _scalar_result(existing)], plan)
     _override(user, db)
     with (
         patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
@@ -589,6 +804,29 @@ def test_register_dedupes_on_content_hash(client: TestClient):
     )
 
 
+def test_legacy_registration_retry_never_deletes_retained_generation(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    existing = _asset_row(item.id, user.id, content_hash="hash-1")
+    existing.gcs_path = f"users/{user.id}/plan/{item.id}/pool/f.png"
+    existing.gcs_generation = "7"
+    db = _db([_scalar_result(item), _scalar_result(existing)], plan)
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+        patch("app.routes.plan_items.storage.delete_object_generation") as delete_generation,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json=_register_body(user.id, item.id),
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["id"] == str(existing.id)
+    delete_generation.assert_not_called()
+
+
 def test_register_rejects_foreign_prefix(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
@@ -605,7 +843,10 @@ def test_register_rejects_foreign_prefix(client: TestClient):
 def test_register_enforces_cap(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
-    db = _db([_scalar_result(item), _scalar_result(None), _scalar_result(20)], plan)
+    db = _db(
+        [_scalar_result(item), _scalar_result(None), _scalar_result(None), _scalar_result(20)],
+        plan,
+    )
     _override(user, db)
     with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
         resp = client.post(f"/plan-items/{item.id}/assets", json=_register_body(user.id, item.id))
@@ -658,9 +899,10 @@ def test_reanalyze_failed_asset_queues_fenced_attempt(client: TestClient, _no_re
     assert resp.json()["status"] == "queued"
     assert resp.json()["error_code"] is None
     assert asset.analysis_attempt_count == 1
-    args = _no_real_broker_publish.call_args.kwargs["args"]
+    publish = _no_real_broker_publish.call_args.kwargs
+    args = publish["args"]
     assert args[:2] == [str(asset.id), False]
-    assert args[2] == asset.analysis_attempt_token
+    assert publish["headers"] == {"pool_asset_attempt_token": asset.analysis_attempt_token}
 
 
 def test_reanalyze_active_asset_is_idempotent(client: TestClient, _no_real_broker_publish):
@@ -679,6 +921,25 @@ def test_reanalyze_active_asset_is_idempotent(client: TestClient, _no_real_broke
         resp = client.post(f"/plan-items/{item.id}/assets/{asset.id}/reanalyze")
     assert resp.status_code == 200
     assert resp.json()["status"] == "analyzing"
+    _no_real_broker_publish.assert_not_called()
+
+
+def test_reanalyze_rejects_unverified_reservation(client: TestClient, _no_real_broker_publish):
+    user = _user()
+    item, _plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    asset.status = "preparing"
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_result(asset))
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items._load_owned_item", new=AsyncMock(return_value=item)),
+    ):
+        resp = client.post(f"/plan-items/{item.id}/assets/{asset.id}/reanalyze")
+
+    assert resp.status_code == 409
+    assert asset.status == "preparing"
     _no_real_broker_publish.assert_not_called()
 
 

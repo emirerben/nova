@@ -35,6 +35,7 @@ from pathlib import Path
 
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
+from celery import current_task
 
 from app.database import sync_session as _sync_session
 from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, SoundEffect
@@ -62,6 +63,14 @@ _NO_OVERLAY_ATTEMPT_FENCE = object()
 # fabricated blocks baked into its render (prod job 96771038 got an unwanted
 # opening montage on a montage edit this way).
 VISUAL_BLOCK_AUTOPLAN_ARCHETYPES = frozenset({"talking_head", "narrated", "subtitled"})
+
+
+def _pool_attempt_token(explicit: str | None) -> str | None:
+    if explicit is not None:
+        return explicit
+    headers = getattr(getattr(current_task, "request", None), "headers", None) or {}
+    value = headers.get("pool_asset_attempt_token")
+    return value if isinstance(value, str) else None
 
 
 def _record(event: str, **fields) -> None:
@@ -966,6 +975,11 @@ def analyze_pool_asset(
     flickers off; only the analysis payload is swapped on success. A failed
     refresh keeps the previous working analysis (never degrades a ready asset).
     """
+    # Keep the broker payload compatible with pre-0.28 workers during the
+    # rolling deploy: the fence travels in a Celery header, not a third
+    # positional argument. Direct task invocations may still pass it.
+    attempt_token = _pool_attempt_token(attempt_token)
+
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
     from app.storage import download_generation_to_file, download_to_file  # noqa: PLC0415
 

@@ -159,3 +159,34 @@ def test_signed_put_url_pins_exact_content_type():
         "content-length": "12345",
         "x-goog-if-generation-match": "0",
     }
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [(None, True), (storage.NotFound("gone"), True), (RuntimeError("private"), False)],
+)
+def test_delete_object_best_effort_is_idempotent(failure, expected):  # noqa: ANN001
+    blob = MagicMock()
+    if failure is not None:
+        blob.delete.side_effect = failure
+    bucket = MagicMock()
+    bucket.blob.return_value = blob
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        assert storage.delete_object_best_effort("users/u/plan/i/pool/x") is expected
+
+
+def test_delete_object_generation_pins_exact_generation():
+    blob = MagicMock()
+    bucket = MagicMock()
+    bucket.blob.return_value = blob
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        storage.delete_object_generation("users/u/plan/i/pool/x", generation="42")
+
+    bucket.blob.assert_called_once_with("users/u/plan/i/pool/x", generation=42)
+    blob.delete.assert_called_once_with()

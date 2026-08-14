@@ -50,6 +50,7 @@ def _asset(*, attempts: int):
         error_code=None,
         error_detail=None,
         error_retryable=False,
+        correlation_id="batch-correlation",
         created_at=datetime(2026, 8, 14, 8, 0, tzinfo=UTC),
         gcs_path=f"users/u/plan/i/pool/{uuid.uuid4()}.png",
     )
@@ -73,8 +74,12 @@ def test_reconcile_requeues_with_new_fenced_attempt(monkeypatch) -> None:
     assert asset.analysis_attempt_count == 2
     assert asset.analysis_attempt_token != "old"
     publish.assert_called_once_with(
-        args=[str(asset.id), False, asset.analysis_attempt_token],
+        args=[str(asset.id), False],
         queue="autoplace-jobs",
+        headers={
+            "pool_asset_attempt_token": asset.analysis_attempt_token,
+            "x-correlation-id": "batch-correlation",
+        },
     )
 
 
@@ -132,7 +137,30 @@ def test_reconcile_keeps_expired_reservation_when_object_cleanup_fails(monkeypat
     now = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
     assert maintenance.reconcile_stale_pool_assets(now=now) == 1
     assert session.deleted == []
+    assert asset.status == "cleanup_pending"
     cleanup.assert_called_once_with(asset.gcs_path)
+
+
+def test_reconcile_does_not_delete_reservation_renewed_during_cleanup(monkeypatch) -> None:
+    asset = _asset(attempts=0)
+    asset.status = "preparing"
+    old_path = asset.gcs_path
+    session = _Session([asset])
+
+    @contextmanager
+    def _session():
+        yield session
+
+    def _cleanup(path: str) -> bool:
+        assert path == old_path
+        asset.gcs_path = "users/u/plan/i/pool/renewed.png"
+        return True
+
+    monkeypatch.setattr(maintenance, "sync_session", _session)
+    monkeypatch.setattr("app.storage.delete_object_best_effort", _cleanup)
+
+    assert maintenance.reconcile_stale_pool_assets(now=datetime(2026, 8, 14, 9, tzinfo=UTC)) == 1
+    assert session.deleted == []
 
 
 def test_reconcile_publish_failure_becomes_safe_retryable_failure(monkeypatch) -> None:

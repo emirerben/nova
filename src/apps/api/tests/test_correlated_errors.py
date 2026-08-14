@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 
 import pytest
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.main import request_correlation, unhandled_exception_handler
+from app.main import app, request_correlation, unhandled_exception_handler
 
 
 def _request(headers: list[tuple[bytes, bytes]] | None = None) -> Request:
@@ -58,8 +59,8 @@ async def test_fastapi_unhandled_error_is_safe_and_correlated() -> None:
         ([], True, 32),
         (
             [(b"x-request-id", b"r" * 200), (b"x-correlation-id", b"c" * 200)],
-            False,
-            128,
+            True,
+            32,
         ),
     ],
 )
@@ -82,3 +83,34 @@ async def test_request_middleware_generates_or_truncates_ids_on_real_response(
     assert (request_id == correlation_id) is same_ids
     assert request.state.request_id == request_id
     assert request.state.correlation_id == correlation_id
+
+
+def test_real_unhandled_response_is_safe_correlated_and_cors_readable() -> None:
+    path = "/__tests__/correlated-error"
+
+    async def _raise_private_error() -> None:
+        raise RuntimeError("private database detail")
+
+    app.add_api_route(path, _raise_private_error, methods=["GET"])
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get(
+                path,
+                headers={
+                    "Origin": "https://www.usekria.com",
+                    "X-Request-Id": "request-123",
+                    "X-Correlation-Id": "batch-456",
+                },
+            )
+    finally:
+        app.router.routes[:] = [
+            route for route in app.router.routes if getattr(route, "path", None) != path
+        ]
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "internal_error"
+    assert response.headers["x-request-id"] == "request-123"
+    assert response.headers["x-correlation-id"] == "batch-456"
+    assert response.headers["access-control-allow-origin"] == "https://www.usekria.com"
+    assert response.headers["access-control-allow-credentials"] == "true"
+    assert "private database detail" not in response.text

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 
 def test_0074_upgrade_and_downgrade_are_symmetric(monkeypatch) -> None:
@@ -68,3 +69,9 @@ def test_0074_upgrade_and_downgrade_are_symmetric(monkeypatch) -> None:
     assert len(executed) == 1
     assert "status = 'failed'" in str(executed[0])
     assert "error_retryable = true" in str(executed[0])
+
+
+def test_alembic_commits_each_revision_independently() -> None:
+    env_source = (Path(__file__).parents[1] / "app" / "migrations" / "env.py").read_text()
+
+    assert env_source.count("transaction_per_migration=True") == 2

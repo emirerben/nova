@@ -20,7 +20,7 @@ import structlog
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, status
 from fastapi import UploadFile as MultipartFile
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
@@ -3877,7 +3877,7 @@ async def transcript_recorded(
 _MAX_POOL_ASSETS = 20  # plan 005 finding 9: cap + dedupe keep analysis spend bounded
 _MAX_POOL_CONTEXT_CHARS = 500
 _POOL_RESERVATION_TTL = timedelta(minutes=15)
-_POOL_RESERVATION_CLEANUP_AFTER = timedelta(minutes=30)
+_POOL_RESERVATION_CLEANUP_GRACE = timedelta(minutes=15)
 _MAX_POOL_IMAGE_BYTES = 25 * 1024 * 1024
 _MAX_POOL_VIDEO_BYTES = 512 * 1024 * 1024
 
@@ -3905,14 +3905,14 @@ def _asset_kind_for_content_type(content_type: str) -> str:
 
 
 class PoolUploadFile(BaseModel):
-    filename: str
+    filename: str = Field(min_length=1, max_length=255)
     content_type: str
     file_size_bytes: int
     client_upload_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class PoolUploadUrlsBody(BaseModel):
-    files: list[PoolUploadFile]
+    files: list[PoolUploadFile] = Field(min_length=1, max_length=_MAX_POOL_ASSETS)
 
 
 class PoolUploadTarget(BaseModel):
@@ -3959,16 +3959,37 @@ async def create_pool_upload_urls(
     """Signed PUT URLs for pool assets (same content-type set as overlay cards)."""
     _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
-    if not body.files:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide files")
     now = datetime.now(UTC)
-    correlation_id = (request.headers.get("x-correlation-id") or uuid.uuid4().hex)[:128]
+    correlation_id = request.state.correlation_id
     client_ids = [f.client_upload_id or uuid.uuid4().hex for f in body.files]
     if len(set(client_ids)) != len(client_ids):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Each selected file needs a unique upload ID.",
         )
+    # Validate the entire batch before object cleanup or reservation mutation.
+    # A bad later entry must not rotate an earlier retry target and then roll
+    # its database update back while the old object is already gone.
+    for f in body.files:
+        if f.content_type not in _OVERLAY_ALLOWED_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported asset content type: {f.content_type}",
+            )
+        limit = (
+            _MAX_POOL_VIDEO_BYTES
+            if _asset_kind_for_content_type(f.content_type) == "video"
+            else _MAX_POOL_IMAGE_BYTES
+        )
+        if f.file_size_bytes <= 0 or f.file_size_bytes > limit:
+            max_label = "512 MB" if limit == _MAX_POOL_VIDEO_BYTES else "25 MB"
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{_asset_kind_for_content_type(f.content_type).title()} files must be "
+                    f"{max_label} or smaller."
+                ),
+            )
 
     stale = (
         (
@@ -3977,7 +3998,14 @@ async def create_pool_upload_urls(
                 .where(
                     PlanItemAsset.plan_item_id == item.id,
                     PlanItemAsset.status == "preparing",
-                    PlanItemAsset.created_at < now - _POOL_RESERVATION_CLEANUP_AFTER,
+                    or_(
+                        PlanItemAsset.upload_expires_at < now - _POOL_RESERVATION_CLEANUP_GRACE,
+                        and_(
+                            PlanItemAsset.upload_expires_at.is_(None),
+                            PlanItemAsset.created_at
+                            < now - (_POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE),
+                        ),
+                    ),
                 )
                 .with_for_update()
             )
@@ -4016,7 +4044,12 @@ async def create_pool_upload_urls(
                     PlanItemAsset.plan_item_id == item.id,
                     or_(
                         PlanItemAsset.status != "preparing",
-                        PlanItemAsset.created_at >= now - _POOL_RESERVATION_CLEANUP_AFTER,
+                        PlanItemAsset.upload_expires_at >= now - _POOL_RESERVATION_CLEANUP_GRACE,
+                        and_(
+                            PlanItemAsset.upload_expires_at.is_(None),
+                            PlanItemAsset.created_at
+                            >= now - (_POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE),
+                        ),
                     ),
                 )
             )
@@ -4037,30 +4070,11 @@ async def create_pool_upload_urls(
         "pool_asset_upload_urls_requested",
         item_id=str(item.id),
         batch_size=len(body.files),
-        request_id=request.headers.get("x-request-id"),
+        request_id=request.state.request_id,
         correlation_id=correlation_id,
     )
     reservations: list[PlanItemAsset] = []
     for f, client_upload_id in zip(body.files, client_ids, strict=True):
-        if f.content_type not in _OVERLAY_ALLOWED_CONTENT_TYPES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported asset content type: {f.content_type}",
-            )
-        limit = (
-            _MAX_POOL_VIDEO_BYTES
-            if _asset_kind_for_content_type(f.content_type) == "video"
-            else _MAX_POOL_IMAGE_BYTES
-        )
-        if f.file_size_bytes <= 0 or f.file_size_bytes > limit:
-            max_label = "512 MB" if limit == _MAX_POOL_VIDEO_BYTES else "25 MB"
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"{_asset_kind_for_content_type(f.content_type).title()} files must be "
-                    f"{max_label} or smaller."
-                ),
-            )
         reservation = existing_by_client.get(client_upload_id)
         if reservation is not None:
             if reservation.status != "preparing":
@@ -4076,15 +4090,13 @@ async def create_pool_upload_urls(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="This upload retry does not match the originally selected file.",
                 )
-            # Rotate the create-only object key on every presign refresh. An
-            # interrupted PUT may have committed bytes even though fetch threw;
-            # reusing that path would make generation-match=0 fail forever.
+            # Keep one durable key per reservation. Previously issued signed
+            # URLs cannot be revoked; rotating the key let a late PUT recreate
+            # an untracked object in the persistent pool prefix.
             await _cleanup_reserved_pool_path(
                 reservation.gcs_path,
                 reservation_id=str(reservation.id),
             )
-            safe_name = f"{uuid.uuid4().hex}-{f.filename.split('/')[-1]}"
-            reservation.gcs_path = f"users/{user.id}/plan/{item.id}/pool/{safe_name}"
         else:
             safe_name = f"{uuid.uuid4().hex}-{f.filename.split('/')[-1]}"
             gcs_path = f"users/{user.id}/plan/{item.id}/pool/{safe_name}"
@@ -4300,9 +4312,13 @@ async def _queue_pool_asset_analysis(
     await db.refresh(asset)
 
     try:
+        task_headers = {"pool_asset_attempt_token": attempt_token}
+        if asset.correlation_id:
+            task_headers["x-correlation-id"] = asset.correlation_id
         analyze_pool_asset.apply_async(
-            args=[str(asset.id), False, attempt_token],
+            args=[str(asset.id), False],
             queue=_settings.pool_asset_analysis_queue,
+            headers=task_headers,
         )
         log.info(
             "pool_asset_analysis_queued",
@@ -4374,12 +4390,44 @@ async def register_pool_asset(
         if reservation is None:
             raise HTTPException(status_code=404, detail="Upload reservation not found.")
         if reservation.status != "preparing":
-            return _asset_out(reservation)
-        if reservation.gcs_path != body.gcs_path:
+            if reservation.status in {"queued", "analyzing", "ready", "failed"}:
+                return _asset_out(reservation)
             raise HTTPException(
-                status_code=409,
-                detail="Upload target does not match its reservation.",
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This upload reservation is no longer available.",
             )
+    else:
+        # Compatibility for deployed path-based clients, with an ownership
+        # fence: a path already referenced by this item is never treated as a
+        # disposable new upload. Adopt a preparing reservation or return the
+        # finalized asset idempotently; cleanup-only states stay unavailable.
+        path_owner = (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.user_id == user.id,
+                    PlanItemAsset.gcs_path == body.gcs_path,
+                )
+                .with_for_update()
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if path_owner is not None:
+            if path_owner.status == "preparing":
+                reservation = path_owner
+            elif path_owner.status in {"uploaded", "queued", "analyzing", "ready", "failed"}:
+                return _asset_out(path_owner)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This upload reservation is no longer available.",
+                )
+    if reservation is not None and reservation.gcs_path != body.gcs_path:
+        raise HTTPException(
+            status_code=409,
+            detail="Upload target does not match its reservation.",
+        )
 
     try:
         metadata = await asyncio.to_thread(storage.object_metadata, body.gcs_path)
@@ -4429,11 +4477,15 @@ async def register_pool_asset(
                 existing.user_context = cleaned_context
                 await db.commit()
                 await db.refresh(existing)
-            await _delete_verified_pool_upload(
-                body.gcs_path,
-                metadata.generation,
-                reservation_id=str(reservation.id) if reservation else None,
-            )
+            same_retained_object = existing.gcs_path == body.gcs_path and str(
+                getattr(existing, "gcs_generation", "")
+            ) == str(metadata.generation)
+            if not same_retained_object:
+                await _delete_verified_pool_upload(
+                    body.gcs_path,
+                    metadata.generation,
+                    reservation_id=str(reservation.id) if reservation else None,
+                )
             if reservation is not None:
                 await db.delete(reservation)
                 await db.commit()
@@ -4472,9 +4524,7 @@ async def register_pool_asset(
     asset.gcs_generation = metadata.generation
     asset.upload_content_type = expected_type
     asset.upload_size_bytes = metadata.size
-    asset.correlation_id = (
-        request.headers.get("x-correlation-id") or asset.correlation_id or uuid.uuid4().hex
-    )[:128]
+    asset.correlation_id = request.state.correlation_id or asset.correlation_id
     asset.status = "queued"
     await _queue_pool_asset_analysis(asset, db)
     return _asset_out(asset)
@@ -4641,7 +4691,7 @@ async def list_pool_assets(
                 select(PlanItemAsset)
                 .where(
                     PlanItemAsset.plan_item_id == item.id,
-                    PlanItemAsset.status != "preparing",
+                    PlanItemAsset.status.notin_({"preparing", "cleanup_pending"}),
                 )
                 .order_by(PlanItemAsset.created_at)
             )
@@ -4684,6 +4734,11 @@ async def reanalyze_pool_asset(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
     if asset.status in {"queued", "analyzing", "ready"}:
         return _asset_out(asset)
+    if asset.status not in {"failed", "uploaded"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This upload must finish before analysis can start.",
+        )
     await _queue_pool_asset_analysis(asset, db, reset_attempts=True)
     return _asset_out(asset)
 

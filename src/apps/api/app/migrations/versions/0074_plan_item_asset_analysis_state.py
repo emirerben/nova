@@ -64,9 +64,10 @@ def upgrade() -> None:
         ["status", "analysis_last_dispatched_at", "analysis_started_at"],
     )
     op.create_index(
-        "idx_plan_item_assets_reservation_expiry",
+        "idx_plan_item_assets_preparing_expiry",
         "plan_item_assets",
-        ["status", "upload_expires_at"],
+        ["upload_expires_at"],
+        postgresql_where=sa.text("status = 'preparing'"),
     )
     op.execute(
         sa.text(
@@ -85,7 +86,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("idx_plan_item_assets_reservation_expiry", table_name="plan_item_assets")
+    op.drop_index("idx_plan_item_assets_preparing_expiry", table_name="plan_item_assets")
     op.drop_index("idx_plan_item_assets_analysis_state", table_name="plan_item_assets")
     op.drop_constraint(
         "uq_plan_item_assets_item_client_upload",
