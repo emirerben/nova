@@ -1,31 +1,129 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import {
   CREATOR_BLOCK_CATALOG,
   MOTION_FPS,
+  creatorBlockControl,
   creatorBlockEntry,
-  type MotionPresetInstanceV1,
+  type CreatorBlockMotionConfigV2,
+  type MotionPresetInstance,
   type MotionPresetPatch,
 } from "@nova/motion-runtime";
 import { isBoundedCreatorImageAsset, type PoolAsset } from "@/lib/plan-api";
+
+export interface CreatorBlockMotionControlPatch {
+  motion?: Partial<CreatorBlockMotionConfigV2>;
+  intensity?: number;
+  params?: Record<string, unknown>;
+}
+
+function MotionRange({
+  label,
+  value,
+  min,
+  max,
+  step,
+  suffix,
+  onBegin,
+  onPreview,
+  onCommit,
+  onCancel,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  suffix: string;
+  onBegin: () => void;
+  onPreview: (value: number) => void;
+  onCommit: (value: number) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const activeRef = useRef(false);
+  const initialRef = useRef(value);
+  useEffect(() => setDraft(value), [value]);
+  const begin = () => {
+    if (activeRef.current) return;
+    activeRef.current = true;
+    initialRef.current = value;
+    onBegin();
+  };
+  const commit = () => {
+    if (!activeRef.current) return;
+    activeRef.current = false;
+    if (Math.abs(draft - initialRef.current) > 1e-9) onCommit(draft);
+    else onCancel();
+  };
+  const cancel = () => {
+    if (!activeRef.current) return;
+    activeRef.current = false;
+    setDraft(initialRef.current);
+    onCancel();
+  };
+  return (
+    <label className="block text-[11px] text-[#71717a]">
+      <span className="flex items-center justify-between">
+        <span>{label}</span>
+        <span className="tabular-nums">{draft}{suffix}</span>
+      </span>
+      <input
+        aria-label={label}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={draft}
+        onPointerDown={begin}
+        onKeyDown={begin}
+        onChange={(event) => {
+          begin();
+          const next = Number(event.target.value);
+          setDraft(next);
+          onPreview(next);
+        }}
+        onPointerUp={commit}
+        onPointerCancel={cancel}
+        onKeyUp={commit}
+        onBlur={commit}
+        className="mt-2 h-11 w-full accent-lime-500 sm:h-auto"
+      />
+    </label>
+  );
+}
 
 export default function MotionInspector({
   scene,
   durationS,
   assets,
+  evolvingTypeEnabled,
   showClose = true,
   onPatch,
+  onPatchMotionControl,
+  onBeginMotionControl,
+  onPreviewMotionControl,
+  onCommitMotionControl,
+  onCancelMotionControl,
   onRemove,
   onClose,
 }: {
-  scene: MotionPresetInstanceV1;
+  scene: MotionPresetInstance;
   durationS: number;
   assets: PoolAsset[];
+  evolvingTypeEnabled: boolean;
   showClose?: boolean;
   onPatch: (id: string, patch: MotionPresetPatch) => void;
+  onPatchMotionControl: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onBeginMotionControl: () => void;
+  onPreviewMotionControl: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onCommitMotionControl: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onCancelMotionControl: () => void;
   onRemove: (id: string) => void;
   onClose: () => void;
 }) {
+  const controlsEditable = scene.preset_id !== "evolving_type" || evolvingTypeEnabled;
   const label = scene.preset_id === "route_trace"
     ? "Route trace"
     : CREATOR_BLOCK_CATALOG.find((entry) => entry.preset_id === scene.preset_id)?.label;
@@ -53,34 +151,52 @@ export default function MotionInspector({
         )}
       </div>
 
-      {scene.preset_id !== "route_trace" && (
+      {scene.preset_id === "evolving_type" && !evolvingTypeEnabled && (
+        <p className="mt-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] leading-relaxed text-[#52525b]">
+          This saved Evolving Type block is preserved. Enable Evolving Type to edit its controls.
+        </p>
+      )}
+
+      {scene.preset_id !== "route_trace" && controlsEditable && (
         <fieldset className="mt-5">
           <legend className="text-[12px] font-semibold text-[#3f3f46]">Content</legend>
           <CreatorBlockFields scene={scene} assets={assets} onPatch={onPatch} />
         </fieldset>
       )}
+      {scene.preset_id === "route_trace" && (
+        <fieldset className="mt-5 border-t border-zinc-200 pt-4">
+          <legend className="text-[12px] font-semibold text-[#3f3f46]">Motion</legend>
+          <label className="mt-3 block text-[11px] text-[#71717a]">
+            <span className="flex items-center justify-between">
+              <span>Intensity</span>
+              <span className="tabular-nums">{Math.round(scene.intensity * 100)}%</span>
+            </span>
+            <input
+              aria-label="Intensity"
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={scene.intensity}
+              onChange={(event) => onPatch(scene.id, { intensity: Number(event.target.value) })}
+              className="mt-2 h-11 w-full accent-lime-500 sm:h-auto"
+            />
+          </label>
+        </fieldset>
+      )}
 
-      <fieldset className="mt-5 border-t border-zinc-200 pt-4">
-        <legend className="text-[12px] font-semibold text-[#3f3f46]">Motion</legend>
-        <label className="mt-3 block text-[11px] text-[#71717a]">
-          <span className="flex items-center justify-between">
-            <span>Intensity</span>
-            <span className="tabular-nums">{Math.round(scene.intensity * 100)}%</span>
-          </span>
-          <input
-            aria-label="Intensity"
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={scene.intensity}
-            onChange={(event) => onPatch(scene.id, { intensity: Number(event.target.value) })}
-            className="mt-2 w-full accent-lime-500"
-          />
-        </label>
-      </fieldset>
+      {scene.preset_id !== "route_trace" && controlsEditable && (
+        <CreatorBlockMotionFields
+          scene={scene}
+          onPatch={onPatchMotionControl}
+          onBegin={onBeginMotionControl}
+          onPreview={onPreviewMotionControl}
+          onCommit={onCommitMotionControl}
+          onCancel={onCancelMotionControl}
+        />
+      )}
 
-      <fieldset className="mt-5 border-t border-zinc-200 pt-4">
+      {controlsEditable && <fieldset className="mt-5 border-t border-zinc-200 pt-4">
         <legend className="text-[12px] font-semibold text-[#3f3f46]">Timing</legend>
         <div className="mt-3 grid grid-cols-2 gap-3">
           <label className="text-[10px] text-[#71717a]">
@@ -127,9 +243,9 @@ export default function MotionInspector({
             />
           </label>
         </div>
-      </fieldset>
+      </fieldset>}
 
-      <fieldset className="mt-5 border-t border-zinc-200 pt-4">
+      {controlsEditable && <fieldset className="mt-5 border-t border-zinc-200 pt-4">
         <legend className="text-[12px] font-semibold text-[#3f3f46]">Colors</legend>
         <div className="mt-3 grid grid-cols-2 gap-3">
           {(["primary", "accent"] as const).map((slot) => (
@@ -150,7 +266,7 @@ export default function MotionInspector({
             </label>
           ))}
         </div>
-      </fieldset>
+      </fieldset>}
 
       <button
         type="button"
@@ -168,7 +284,7 @@ function CreatorBlockFields({
   assets,
   onPatch,
 }: {
-  scene: Exclude<MotionPresetInstanceV1, { preset_id: "route_trace" }>;
+  scene: Exclude<MotionPresetInstance, { preset_id: "route_trace" }>;
   assets: PoolAsset[];
   onPatch: (id: string, patch: MotionPresetPatch) => void;
 }) {
@@ -198,6 +314,12 @@ function CreatorBlockFields({
     <>
       {textField("Headline", "headline", scene.params.headline, parameter("headline").max_length!)}
       {textField("Kicker", "kicker", scene.params.kicker ?? "", parameter("kicker").max_length!)}
+    </>
+  );
+  if (scene.preset_id === "evolving_type") return (
+    <>
+      {textField("Headline", "headline", scene.params.headline, parameter("headline").max_length!)}
+      {textField("Subtitle", "subtitle", scene.params.subtitle, parameter("subtitle").max_length!)}
     </>
   );
   if (scene.preset_id === "offer_swap") return (
@@ -288,5 +410,173 @@ function CreatorBlockFields({
         </ol>
       )}
     </div>
+  );
+}
+
+function controlLabel(key: string): string {
+  const labels: Record<string, string> = {
+    hold_frames: "Hold",
+    icon_count: "Icon count",
+    icon_style: "Icon style",
+    text_stagger_ms: "Text stagger",
+    icon_stagger_ms: "Icon stagger",
+    morph_amplitude: "Morph amplitude",
+    typography_scale: "Typography scale",
+    backdrop_opacity: "Backdrop opacity",
+    split_icons: "Split icons",
+  };
+  return labels[key] ?? key.replace(/_/g, " ").replace(/^./, (char) => char.toUpperCase());
+}
+
+function CreatorBlockMotionFields({
+  scene,
+  onPatch,
+  onBegin,
+  onPreview,
+  onCommit,
+  onCancel,
+}: {
+  scene: Exclude<MotionPresetInstance, { preset_id: "route_trace" }>;
+  onPatch: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onBegin: () => void;
+  onPreview: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onCommit: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onCancel: () => void;
+}) {
+  const entry = creatorBlockEntry(scene.preset_id);
+  const defaults = entry.motion_defaults;
+  const motion = scene.preset_version === 2 ? scene.motion : defaults;
+  const speed = creatorBlockControl(entry, "speed")!;
+  const intensity = creatorBlockControl(entry, "intensity")!;
+  const hold = creatorBlockControl(entry, "hold_frames")!;
+  const easing = creatorBlockControl(entry, "easing")!;
+  const advancedParams = entry.parameters.filter((parameter) =>
+    parameter.type === "number" || parameter.type === "enum" || parameter.type === "boolean",
+  );
+  return (
+    <fieldset className="mt-5 border-t border-zinc-200 pt-4">
+      <legend className="text-[12px] font-semibold text-[#3f3f46]">Motion</legend>
+      <div className="mt-3 space-y-3">
+        <MotionRange
+          label="Speed"
+          value={motion.speed}
+          min={speed.minimum!}
+          max={speed.maximum!}
+          step={speed.step!}
+          suffix="×"
+          onBegin={onBegin}
+          onPreview={(value) => onPreview(scene.id, { motion: { speed: value } })}
+          onCommit={(value) => onCommit(scene.id, { motion: { speed: value } })}
+          onCancel={onCancel}
+        />
+        <MotionRange
+          label="Intensity"
+          value={Math.round(scene.intensity * 100)}
+          min={Math.round(intensity.minimum! * 100)}
+          max={Math.round(intensity.maximum! * 100)}
+          step={Math.max(1, Math.round(intensity.step! * 100))}
+          suffix="%"
+          onBegin={onBegin}
+          onPreview={(value) => onPreview(scene.id, { intensity: value / 100 })}
+          onCommit={(value) => onCommit(scene.id, { intensity: value / 100 })}
+          onCancel={onCancel}
+        />
+      </div>
+      <details className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50/60 px-3 py-2">
+        <summary className="flex min-h-11 cursor-pointer select-none items-center text-[12px] font-semibold text-[#3f3f46] sm:min-h-0">
+          Advanced motion
+        </summary>
+        <div className="mt-3 space-y-3">
+          <label className="block text-[11px] text-[#71717a]">
+            Easing
+            <select
+              aria-label="Motion easing"
+              value={motion.easing}
+              onChange={(event) => onPatch(scene.id, {
+                motion: { easing: event.target.value as CreatorBlockMotionConfigV2["easing"] },
+              })}
+              className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px]"
+            >
+              {(easing.values ?? []).map((value) => (
+                <option key={value} value={value}>{controlLabel(value)}</option>
+              ))}
+            </select>
+          </label>
+          <MotionRange
+            label="Hold"
+            value={motion.hold_frames}
+            min={hold.minimum!}
+            max={hold.maximum!}
+            step={hold.step!}
+            suffix="f"
+            onBegin={onBegin}
+            onPreview={(value) => onPreview(scene.id, { motion: { hold_frames: value } })}
+            onCommit={(value) => onCommit(scene.id, { motion: { hold_frames: value } })}
+            onCancel={onCancel}
+          />
+          {advancedParams.map((parameter) => {
+            const value = (scene.params as unknown as Record<string, unknown>)[parameter.key];
+            if (parameter.type === "number" && typeof value === "number") {
+              const percent = parameter.maximum === 1 && parameter.minimum === 0;
+              return (
+                <MotionRange
+                  key={parameter.key}
+                  label={controlLabel(parameter.key)}
+                  value={percent ? Math.round(value * 100) : value}
+                  min={percent ? 0 : parameter.minimum!}
+                  max={percent ? 100 : parameter.maximum!}
+                  step={percent ? Math.max(1, Math.round(parameter.step! * 100)) : parameter.step!}
+                  suffix={percent ? "%" : parameter.key.endsWith("_ms") ? "ms" : ""}
+                  onBegin={onBegin}
+                  onPreview={(next) => onPreview(scene.id, {
+                    params: { [parameter.key]: percent ? next / 100 : next },
+                  })}
+                  onCommit={(next) => onCommit(scene.id, {
+                    params: { [parameter.key]: percent ? next / 100 : next },
+                  })}
+                  onCancel={onCancel}
+                />
+              );
+            }
+            if (parameter.type === "enum" && typeof value === "string") {
+              return (
+                <label key={parameter.key} className="block text-[11px] text-[#71717a]">
+                  {controlLabel(parameter.key)}
+                  <select
+                    aria-label={controlLabel(parameter.key)}
+                    value={value}
+                    onChange={(event) => onPatch(scene.id, {
+                      params: { [parameter.key]: event.target.value },
+                    })}
+                    className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px]"
+                  >
+                    {(parameter.values ?? []).map((option) => (
+                      <option key={option} value={option}>{controlLabel(option)}</option>
+                    ))}
+                  </select>
+                </label>
+              );
+            }
+            if (parameter.type === "boolean" && typeof value === "boolean") {
+              return (
+                <label key={parameter.key} className="flex min-h-11 items-center justify-between text-[11px] text-[#71717a]">
+                  {controlLabel(parameter.key)}
+                  <input
+                    aria-label={controlLabel(parameter.key)}
+                    type="checkbox"
+                    checked={value}
+                    onChange={(event) => onPatch(scene.id, {
+                      params: { [parameter.key]: event.target.checked },
+                    })}
+                    className="h-5 w-5 accent-lime-500"
+                  />
+                </label>
+              );
+            }
+            return null;
+          })}
+        </div>
+      </details>
+    </fieldset>
   );
 }

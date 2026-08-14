@@ -44,7 +44,7 @@ import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import type { CameraEffect, MediaOverlay, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
-import type { MotionPresetInstanceV1, MotionPresetPatch } from "@nova/motion-runtime";
+import type { MotionPresetInstance, MotionPresetPatch } from "@nova/motion-runtime";
 import {
   CAMERA_EFFECT_MAX_DURATION_S,
   CAMERA_EFFECT_MAX_INTENSITY,
@@ -91,7 +91,7 @@ import {
 } from "./editor-bars";
 import PresetGrid from "./PresetGrid";
 import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
-import MotionInspector from "./MotionInspector";
+import MotionInspector, { type CreatorBlockMotionControlPatch } from "./MotionInspector";
 import CarouselPanel, { type CarouselPanelControl } from "./CarouselPanel";
 
 /** Fields with dedicated (potentially editable) rows in this panel. */
@@ -162,6 +162,7 @@ export default function InspectorPanel({
   motionScene = null,
   motionDurationS = 0,
   motionAssets = [],
+  evolvingTypeEnabled = false,
   cameraEffect = null,
   carousel = null,
   tab,
@@ -191,6 +192,11 @@ export default function InspectorPanel({
   onRecordOverlay,
   onDeleteOverlay,
   onPatchMotion = () => {},
+  onPatchMotionControl = () => {},
+  onBeginMotionControl = () => {},
+  onPreviewMotionControl = () => {},
+  onCommitMotionControl = () => {},
+  onCancelMotionControl = () => {},
   onRemoveMotion = () => {},
   onPatchCameraEffect = () => {},
   onDeleteCameraEffect = () => {},
@@ -225,9 +231,10 @@ export default function InspectorPanel({
   clipTiming: InspectorClipTiming | null;
   sfx: SoundEffectPlacement | null;
   overlay: MediaOverlay | null;
-  motionScene?: MotionPresetInstanceV1 | null;
+  motionScene?: MotionPresetInstance | null;
   motionDurationS?: number;
   motionAssets?: PoolAsset[];
+  evolvingTypeEnabled?: boolean;
   cameraEffect?: CameraEffect | null;
   carousel?: CarouselPanelControl | null;
   tab: InspectorTab;
@@ -264,6 +271,11 @@ export default function InspectorPanel({
   onRecordOverlay: () => void;
   onDeleteOverlay: (id: string) => void;
   onPatchMotion?: (id: string, patch: MotionPresetPatch) => void;
+  onPatchMotionControl?: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onBeginMotionControl?: () => void;
+  onPreviewMotionControl?: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onCommitMotionControl?: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onCancelMotionControl?: () => void;
   onRemoveMotion?: (id: string) => void;
   onPatchCameraEffect?: (id: string, patch: Partial<CameraEffect>) => void;
   onDeleteCameraEffect?: (id: string) => void;
@@ -408,8 +420,14 @@ export default function InspectorPanel({
           scene={motionScene}
           durationS={motionDurationS}
           assets={motionAssets}
+          evolvingTypeEnabled={evolvingTypeEnabled}
           showClose={presentation === "panel"}
           onPatch={onPatchMotion}
+          onPatchMotionControl={onPatchMotionControl}
+          onBeginMotionControl={onBeginMotionControl}
+          onPreviewMotionControl={onPreviewMotionControl}
+          onCommitMotionControl={onCommitMotionControl}
+          onCancelMotionControl={onCancelMotionControl}
           onRemove={onRemoveMotion}
           onClose={onClose}
         />

@@ -188,7 +188,10 @@ import {
   sequentialSlotLayout,
 } from "./editor-bar-drag";
 import TransportBar from "./TransportBar";
-import type { EditorTimelineBodyProps } from "./EditorTimelineBody";
+import type {
+  EditorMotionBar,
+  EditorTimelineBodyProps,
+} from "./EditorTimelineBody";
 import EditorCanvas from "./EditorCanvas";
 import OverlaySuggestions from "./OverlaySuggestions";
 import { usePoolAssetUploader } from "@/app/plan/_hooks/usePoolAssetUploader";
@@ -251,15 +254,21 @@ import {
 } from "./useEditorOverlaySuggestions";
 import {
   creatorBlockEntry,
+  creatorBlockDurationFramesV2,
   createCreatorBlockInstance,
   MOTION_FPS,
   MOTION_MAX_INSTANCES,
   MOTION_RUNTIME_HASH,
+  isCompatiblePersistedMotionRuntimeHash,
+  retimeCreatorBlockManualSpan,
+  retimeCreatorBlockSpeed,
+  upgradeCreatorBlockInstanceToV2,
   validateMotionInstances,
   type MotionPresetId,
-  type MotionPresetInstanceV1,
+  type MotionPresetInstance,
   type MotionPresetPatch,
 } from "@nova/motion-runtime";
+import type { CreatorBlockMotionControlPatch } from "./MotionInspector";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
 
@@ -286,6 +295,8 @@ const VISUAL_BLOCKS_UI_ENABLED =
   process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
 const MOTION_SCENES_UI_ENABLED =
   process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED === "true";
+const EVOLVING_TYPE_PUBLIC_ENABLED =
+  process.env.NEXT_PUBLIC_EVOLVING_TYPE_ENABLED === "true";
 const FRAME_DRIVEN_PREVIEW_ENABLED =
   process.env.NEXT_PUBLIC_FRAME_DRIVEN_PREVIEW_ENABLED === "true";
 const TEXT_MOTION_V2_UI_ENABLED =
@@ -732,7 +743,7 @@ export default function EditorShell({
   const [localSfxAudioUrls, setLocalSfxAudioUrls] = useState<Record<string, string>>({});
   const [localOverlays, setLocalOverlays] = useState<MediaOverlay[]>([]);
   const [localVisualBlocks, setLocalVisualBlocks] = useState<VisualBlock[]>([]);
-  const [localMotionScenes, setLocalMotionScenes] = useState<MotionPresetInstanceV1[]>([]);
+  const [localMotionScenes, setLocalMotionScenes] = useState<MotionPresetInstance[]>([]);
   const [localCameraEffects, setLocalCameraEffects] = useState<CameraEffect[]>([]);
   // AI-suggestion provenance (Overlays drawer): accepted envelope id + the
   // overlay card id it staged. Kept OFF the MediaOverlay objects — the save
@@ -749,6 +760,10 @@ export default function EditorShell({
   const [overlaysDirty, setOverlaysDirty] = useState(false);
   const [visualBlocksDirty, setVisualBlocksDirty] = useState(false);
   const [motionScenesDirty, setMotionScenesDirty] = useState(false);
+  const motionControlGestureOriginRef = useRef<{
+    document: EditorDocument;
+    motionScenesDirty: boolean;
+  } | null>(null);
   const [cameraEffectsDirty, setCameraEffectsDirty] = useState(false);
   const [mixLevel, setMixLevel] = useState<number | null>(null);
   const [mixDirty, setMixDirty] = useState(false);
@@ -1204,6 +1219,8 @@ export default function EditorShell({
   // Save disabled + every mutating command no-ops. The server's honest reason
   // is surfaced verbatim.
   const capabilities = variant?.editor_capabilities;
+  const evolvingTypeExposureEnabled =
+    EVOLVING_TYPE_PUBLIC_ENABLED && capabilities?.evolving_type === true;
   const readOnly =
     !!capabilities &&
     capabilities.text_elements === false &&
@@ -1362,7 +1379,10 @@ export default function EditorShell({
   const motionRuntimeCompatible =
     capabilities?.motion_scenes_reason !== "motion_runtime_mismatch" &&
     (!capabilities?.motion_runtime_hash ||
-      capabilities.motion_runtime_hash === MOTION_RUNTIME_HASH);
+      isCompatiblePersistedMotionRuntimeHash(
+        capabilities.motion_runtime_hash,
+        localMotionScenes.every((scene) => scene.preset_id === "route_trace"),
+      ));
   const motionPreviewRuntimeHash = motionRuntimeCompatible
     ? MOTION_RUNTIME_HASH
     : (capabilities?.motion_required_runtime_hash ?? "unsupported-motion-runtime");
@@ -1372,12 +1392,17 @@ export default function EditorShell({
       !MOTION_SCENES_UI_ENABLED ||
       capabilities?.motion_scenes === false ||
       !motionRuntimeCompatible ||
+      (presetId === "evolving_type" && !evolvingTypeExposureEnabled) ||
       localMotionScenes.length >= MOTION_MAX_INSTANCES
     ) {
       return;
     }
-    const motionDuration =
-      duration > 0 ? duration : Math.max(0, Number(variant?.duration_s ?? 0));
+    const baseLayoutDuration = sequentialSlotLayout(slots, clip.state.grid).totalDurationS;
+    const motionDuration = baseLayoutDuration > 0
+      ? baseLayoutDuration
+      : duration > 0
+        ? duration
+        : Math.max(0, Number(variant?.duration_s ?? 0));
     const durationFrames = Math.max(1, Math.round(motionDuration * MOTION_FPS));
     const baseCurrentTime = outputToBaseTimeRef.current(currentTime);
     let startFrame = Math.max(
@@ -1395,7 +1420,7 @@ export default function EditorShell({
       startFrame = Math.max(0, durationFrames - 2 * MOTION_FPS);
       endFrame = durationFrames;
     }
-    let candidate: MotionPresetInstanceV1 =
+    let candidate: MotionPresetInstance =
       presetId === "route_trace"
         ? {
         id: `motion-${crypto.randomUUID()}`,
@@ -1423,7 +1448,7 @@ export default function EditorShell({
       candidate = {
         ...candidate,
         end_frame_exclusive: candidate.end_frame_exclusive - 1,
-      } as MotionPresetInstanceV1;
+      } as MotionPresetInstance;
     }
     if (!validateMotionInstances([...localMotionScenes, candidate], durationFrames).ok) return;
     history.record();
@@ -1438,7 +1463,10 @@ export default function EditorShell({
     history,
     localMotionScenes,
     motionRuntimeCompatible,
+    evolvingTypeExposureEnabled,
     poolAssets,
+    slots,
+    clip.state.grid,
     pocketActive,
     readOnly,
     select,
@@ -1449,24 +1477,145 @@ export default function EditorShell({
   const patchMotionScene = useCallback(
     (id: string, patch: MotionPresetPatch) => {
       if (readOnly || capabilities?.motion_scenes === false) return;
-      const candidate = localMotionScenes.map((scene) =>
-        scene.id === id ? ({ ...scene, ...patch } as MotionPresetInstanceV1) : scene,
-      );
+      const target = localMotionScenes.find((scene) => scene.id === id);
+      if (target?.preset_id === "evolving_type" && !evolvingTypeExposureEnabled) return;
+      const baseLayoutDuration = sequentialSlotLayout(slots, clip.state.grid).totalDurationS;
       const durationFrames = Math.max(
         1,
-        Math.round((duration || variant?.duration_s || 60) * MOTION_FPS),
+        Math.round((baseLayoutDuration || duration || variant?.duration_s || 60) * MOTION_FPS),
       );
+      const candidate = localMotionScenes.map((scene) => {
+        if (scene.id !== id) return scene;
+        const {
+          start_frame: requestedStart,
+          end_frame_exclusive: requestedEnd,
+          ...nonTimingPatch
+        } = patch;
+        const patched = { ...scene, ...nonTimingPatch } as MotionPresetInstance;
+        if (
+          patched.preset_id !== "route_trace" &&
+          (requestedStart !== undefined || requestedEnd !== undefined)
+        ) {
+          return retimeCreatorBlockManualSpan(
+            patched,
+            requestedStart ?? scene.start_frame,
+            requestedEnd ?? scene.end_frame_exclusive,
+            durationFrames,
+          ) as MotionPresetInstance;
+        }
+        return {
+          ...patched,
+          ...(requestedStart === undefined ? {} : { start_frame: requestedStart }),
+          ...(requestedEnd === undefined ? {} : { end_frame_exclusive: requestedEnd }),
+        } as MotionPresetInstance;
+      });
       const validation = validateMotionInstances(candidate, durationFrames);
       if (!validation.ok) {
         setToast(validation.errors[0] ?? "That Creator Block edit is outside the allowed range.");
         return;
       }
-      history.record(`motion:${id}`);
+      history.record();
       setLocalMotionScenes(candidate);
       setMotionScenesDirty(true);
     },
-    [capabilities?.motion_scenes, duration, history, localMotionScenes, readOnly, variant?.duration_s],
+    [capabilities?.motion_scenes, clip.state.grid, duration, evolvingTypeExposureEnabled, history, localMotionScenes, readOnly, slots, variant?.duration_s],
   );
+
+  const motionDurationFrames = useCallback(() => {
+    const baseLayoutDuration = sequentialSlotLayout(slots, clip.state.grid).totalDurationS;
+    return Math.max(
+      1,
+      Math.round((baseLayoutDuration || duration || variant?.duration_s || 60) * MOTION_FPS),
+    );
+  }, [clip.state.grid, duration, slots, variant?.duration_s]);
+
+  const buildMotionControlScenes = useCallback((
+    id: string,
+    patch: CreatorBlockMotionControlPatch,
+  ): MotionPresetInstance[] | null => {
+    const videoEndFrame = motionDurationFrames();
+    const index = localMotionScenes.findIndex((scene) => scene.id === id);
+    const current = index >= 0 ? localMotionScenes[index] : null;
+    if (!current || current.preset_id === "route_trace") return null;
+    if (current.preset_id === "evolving_type" && !evolvingTypeExposureEnabled) return null;
+    let next = upgradeCreatorBlockInstanceToV2(current);
+    if (patch.motion?.speed !== undefined) {
+      next = retimeCreatorBlockSpeed(next, patch.motion.speed, videoEndFrame);
+    }
+    if (patch.motion) {
+      const motion = { ...next.motion, ...patch.motion, version: 2 as const };
+      next = {
+        ...next,
+        motion,
+        ...(patch.motion.speed !== undefined || patch.motion.hold_frames !== undefined
+          ? {
+              end_frame_exclusive: Math.max(
+                next.start_frame + 1,
+                Math.min(videoEndFrame, next.start_frame + creatorBlockDurationFramesV2(next, motion)),
+              ),
+            }
+          : {}),
+      };
+    }
+    if (patch.intensity !== undefined) next = { ...next, intensity: patch.intensity };
+    if (patch.params) {
+      next = { ...next, params: { ...next.params, ...patch.params } } as typeof next;
+    }
+    const candidate = localMotionScenes.map((scene, sceneIndex) =>
+      sceneIndex === index ? next : scene,
+    );
+    const validation = validateMotionInstances(candidate, videoEndFrame);
+    if (!validation.ok) {
+      setToast(validation.errors[0] ?? "That Creator Block edit is outside the allowed range.");
+      return null;
+    }
+    return candidate;
+  }, [evolvingTypeExposureEnabled, localMotionScenes, motionDurationFrames]);
+
+  const beginMotionControl = useCallback(() => {
+    if (readOnly || capabilities?.motion_scenes === false) return;
+    if (motionControlGestureOriginRef.current) return;
+    motionControlGestureOriginRef.current = {
+      document: getCurrent(),
+      motionScenesDirty,
+    };
+  }, [capabilities?.motion_scenes, getCurrent, motionScenesDirty, readOnly]);
+
+  const previewMotionControl = useCallback((id: string, patch: CreatorBlockMotionControlPatch) => {
+    if (readOnly || capabilities?.motion_scenes === false) return;
+    const candidate = buildMotionControlScenes(id, patch);
+    if (!candidate) return;
+    setLocalMotionScenes(candidate);
+    setMotionScenesDirty(true);
+  }, [buildMotionControlScenes, capabilities?.motion_scenes, readOnly]);
+
+  const commitMotionControl = useCallback((id: string, patch: CreatorBlockMotionControlPatch) => {
+    const origin = motionControlGestureOriginRef.current;
+    if (origin) {
+      history.recordDocument(origin.document);
+      motionControlGestureOriginRef.current = null;
+    } else {
+      history.record();
+    }
+    previewMotionControl(id, patch);
+  }, [history, previewMotionControl]);
+
+  const cancelMotionControl = useCallback(() => {
+    const origin = motionControlGestureOriginRef.current;
+    if (!origin) return;
+    motionControlGestureOriginRef.current = null;
+    setLocalMotionScenes(origin.document.motionScenes ?? []);
+    setMotionScenesDirty(origin.motionScenesDirty);
+  }, []);
+
+  const patchMotionControl = useCallback((id: string, patch: CreatorBlockMotionControlPatch) => {
+    if (readOnly || capabilities?.motion_scenes === false) return;
+    const candidate = buildMotionControlScenes(id, patch);
+    if (!candidate) return;
+    history.record();
+    setLocalMotionScenes(candidate);
+    setMotionScenesDirty(true);
+  }, [buildMotionControlScenes, capabilities?.motion_scenes, history, readOnly]);
 
   const removeMotionScene = useCallback(
     (id: string) => {
@@ -3374,30 +3523,44 @@ export default function EditorShell({
   );
 
   const previewMotionTiming = useCallback(
-    (id: string, patch: { start_s: number; end_s: number }) => {
+    (
+      id: string,
+      patch: { start_s: number; end_s: number },
+      origin: EditorMotionBar,
+    ) => {
       if (readOnly || capabilities?.motion_scenes === false) return;
+      const target = origin.sourceScene;
+      if (!target || (target.preset_id === "evolving_type" && !evolvingTypeExposureEnabled)) {
+        return;
+      }
       setLocalMotionScenes((scenes) => {
-        const candidate = scenes.map((scene) =>
-          scene.id === id
-            ? ({
-                ...scene,
-                start_frame: Math.max(0, Math.round(patch.start_s * MOTION_FPS)),
-                end_frame_exclusive: Math.max(
-                  Math.round(patch.start_s * MOTION_FPS) + 1,
-                  Math.round(patch.end_s * MOTION_FPS),
-                ),
-              } as MotionPresetInstanceV1)
-            : scene,
+        const durationFrames = motionDurationFrames();
+        const requestedStart = Math.max(0, Math.round(patch.start_s * MOTION_FPS));
+        const requestedEnd = Math.max(
+          requestedStart + 1,
+          Math.round(patch.end_s * MOTION_FPS),
         );
-        const durationFrames = Math.max(
-          1,
-          Math.round((duration || variant?.duration_s || 60) * MOTION_FPS),
-        );
+        const candidate = scenes.map((scene) => {
+          if (scene.id !== id) return scene;
+          if (target.preset_id === "route_trace") {
+            return {
+              ...target,
+              start_frame: requestedStart,
+              end_frame_exclusive: requestedEnd,
+            } as MotionPresetInstance;
+          }
+          return retimeCreatorBlockManualSpan(
+            target,
+            requestedStart,
+            requestedEnd,
+            durationFrames,
+          ) as MotionPresetInstance;
+        });
         return validateMotionInstances(candidate, durationFrames).ok ? candidate : scenes;
       });
       setMotionScenesDirty(true);
     },
-    [capabilities?.motion_scenes, duration, readOnly, variant?.duration_s],
+    [capabilities?.motion_scenes, evolvingTypeExposureEnabled, motionDurationFrames, readOnly],
   );
 
   const previewOverlayPatch = useCallback(
@@ -4244,7 +4407,7 @@ export default function EditorShell({
       openTools,
       // Slot-less variants (subtitled) have a 0 layout total — the real video
       // duration keeps every timing clamp from collapsing at_s values to 0.
-      videoDurationS: duration,
+      videoDurationS: timelineDuration,
       sfxPlacements: localSfx,
       sfxCatalog: sfxGlossaryEffects,
       // Speech marks describe the PERSISTED render's timeline — hide them while
@@ -4276,6 +4439,7 @@ export default function EditorShell({
       motionScenes: localMotionScenes,
       motionScenesEnabled:
         MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes === true,
+      evolvingTypeEnabled: evolvingTypeExposureEnabled,
       readOnly: readOnly || allowedFamilies.length === 0,
       // PR1 (backend, parallel) wires an actual render-step source into this
       // context; recentEditHistory always comes from the hook's own message
@@ -4307,6 +4471,7 @@ export default function EditorShell({
     effectiveMusicTitle,
     effectiveMusicTrackId,
     dirty,
+    evolvingTypeExposureEnabled,
     history.canUndo,
     history.version,
     localOverlays,
@@ -4318,7 +4483,7 @@ export default function EditorShell({
     musicTracks,
     overlaySuggestions.rows,
     poolAssets,
-    duration,
+    timelineDuration,
     readOnly,
     sfxGlossaryEffects,
     slots,
@@ -4348,7 +4513,8 @@ export default function EditorShell({
         snapshot,
         capabilities,
         grid: clip.state.grid,
-        videoDurationS: duration,
+        videoDurationS: timelineDuration,
+        evolvingTypeEnabled: evolvingTypeExposureEnabled,
         sfx: localSfx,
         sfxCatalog: sfxGlossaryEffects,
         overlays: localOverlays,
@@ -4382,6 +4548,7 @@ export default function EditorShell({
       carouselMoment,
       clip.state.grid,
       effectiveMusicTrackId,
+      evolvingTypeExposureEnabled,
       history.canUndo,
       history.version,
       localOverlays,
@@ -4392,7 +4559,7 @@ export default function EditorShell({
       mixLevel,
       overlaySuggestions.rows,
       poolAssets,
-      duration,
+      timelineDuration,
       sfxGlossaryEffects,
       slots,
       state.bars,
@@ -5020,7 +5187,7 @@ export default function EditorShell({
       if (!scene) return;
       const deltaFrames = Math.round(deltaS * MOTION_FPS);
       const span = scene.end_frame_exclusive - scene.start_frame;
-      const durationFrames = Math.max(1, Math.round(duration * MOTION_FPS));
+      const durationFrames = motionDurationFrames();
       const startFrame = Math.max(
         0,
         Math.min(durationFrames - span, scene.start_frame + deltaFrames),
@@ -5031,7 +5198,7 @@ export default function EditorShell({
         end_frame_exclusive: startFrame + span,
       });
     },
-    [duration, localMotionScenes, patchMotionScene, readOnly, selection],
+    [localMotionScenes, motionDurationFrames, patchMotionScene, readOnly, selection],
   );
 
   // Transport enablement (plan §6).
@@ -5904,6 +6071,8 @@ export default function EditorShell({
           : creatorBlockEntry(scene.preset_id).label,
       start_s: scene.start_frame / MOTION_FPS,
       end_s: scene.end_frame_exclusive / MOTION_FPS,
+      sourceScene: scene,
+      readOnly: scene.preset_id === "evolving_type" && !evolvingTypeExposureEnabled,
     })),
     showMotionBlocks:
       MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes !== false,
@@ -6508,6 +6677,7 @@ export default function EditorShell({
               selectedMotionId={selection?.kind === "motion" ? selection.id : null}
               motionAvailable={capabilities?.motion_scenes === true}
               motionRuntimeCompatible={motionRuntimeCompatible}
+              evolvingTypeEnabled={evolvingTypeExposureEnabled}
               onAddMotion={addMotionScene}
               onSelectMotion={(id) => selectElement("motion", id)}
               visualAssets={poolAssets}
@@ -6588,6 +6758,7 @@ export default function EditorShell({
               selectedMotionId={selection?.kind === "motion" ? selection.id : null}
               motionAvailable={capabilities?.motion_scenes === true}
               motionRuntimeCompatible={motionRuntimeCompatible}
+              evolvingTypeEnabled={evolvingTypeExposureEnabled}
               onAddMotion={addMotionScene}
               onSelectMotion={(id) => selectElement("motion", id)}
               visualAssets={poolAssets}
@@ -6706,8 +6877,9 @@ export default function EditorShell({
           sfx={selectedSfx}
           overlay={selectedOverlay}
           motionScene={selectedMotionScene}
-          motionDurationS={previewDuration}
+          motionDurationS={timelineDuration}
           motionAssets={poolAssets}
+          evolvingTypeEnabled={evolvingTypeExposureEnabled}
           cameraEffect={selectedCameraEffect}
           carousel={carouselInspectorControl}
           tab={inspectorTab}
@@ -6752,6 +6924,11 @@ export default function EditorShell({
           onRecordOverlay={recordTimelineDrag}
           onDeleteOverlay={removeOverlay}
           onPatchMotion={patchMotionScene}
+          onPatchMotionControl={patchMotionControl}
+          onBeginMotionControl={beginMotionControl}
+          onPreviewMotionControl={previewMotionControl}
+          onCommitMotionControl={commitMotionControl}
+          onCancelMotionControl={cancelMotionControl}
           onRemoveMotion={removeMotionScene}
           onPatchCameraEffect={patchCameraEffect}
           onDeleteCameraEffect={deleteCameraEffect}
@@ -7074,6 +7251,7 @@ export default function EditorShell({
             selectedMotionId={selection?.kind === "motion" ? selection.id : null}
             motionAvailable={capabilities?.motion_scenes === true}
             motionRuntimeCompatible={motionRuntimeCompatible}
+            evolvingTypeEnabled={evolvingTypeExposureEnabled}
             onAddMotion={addMotionScene}
             onSelectMotion={(id) => selectElement("motion", id)}
             visualAssets={poolAssets}
@@ -7120,8 +7298,9 @@ export default function EditorShell({
             sfx={selectedSfx}
             overlay={selectedOverlay}
             motionScene={selectedMotionScene}
-            motionDurationS={previewDuration}
+            motionDurationS={timelineDuration}
             motionAssets={poolAssets}
+            evolvingTypeEnabled={evolvingTypeExposureEnabled}
             cameraEffect={selectedCameraEffect}
             carousel={carouselInspectorControl}
             tab={inspectorTab}
@@ -7165,6 +7344,11 @@ export default function EditorShell({
             onRecordOverlay={recordTimelineDrag}
             onDeleteOverlay={removeOverlay}
             onPatchMotion={patchMotionScene}
+            onPatchMotionControl={patchMotionControl}
+            onBeginMotionControl={beginMotionControl}
+            onPreviewMotionControl={previewMotionControl}
+            onCommitMotionControl={commitMotionControl}
+            onCancelMotionControl={cancelMotionControl}
             onRemoveMotion={removeMotionScene}
             onPatchCameraEffect={patchCameraEffect}
             onDeleteCameraEffect={deleteCameraEffect}

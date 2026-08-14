@@ -36,7 +36,7 @@ import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
 import type { CarouselMoment } from "@/lib/generative-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { DraftSlot } from "@/app/generative/timeline-math";
-import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
+import type { MotionPresetInstance } from "@nova/motion-runtime";
 
 export type EditorOrientation = "portrait" | "landscape";
 
@@ -50,7 +50,7 @@ export interface EditorDocument {
   sfx?: SoundEffectPlacement[];
   overlays?: MediaOverlay[];
   visualBlocks?: VisualBlock[];
-  motionScenes?: MotionPresetInstanceV1[];
+  motionScenes?: MotionPresetInstance[];
   cameraEffects?: CameraEffect[];
   captionMeta?: CopilotCaptionMetaSnapshot | null;
   captionMetaDirty?: boolean;
@@ -225,7 +225,7 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
           ? { visualBlocks: doc.visualBlocks as VisualBlock[] }
           : {}),
         ...(Array.isArray(doc.motionScenes)
-          ? { motionScenes: doc.motionScenes as MotionPresetInstanceV1[] }
+          ? { motionScenes: doc.motionScenes as MotionPresetInstance[] }
           : {}),
         captionMeta:
           doc.captionMeta && typeof doc.captionMeta === "object"
@@ -304,6 +304,8 @@ export interface EditorHistory {
    * same pre-mutation state). Pass a coalesce `tag` for typing bursts.
    */
   record: (tag?: string | null) => number;
+  /** Record an explicit pre-change document after a preview gesture commits. */
+  recordDocument: (doc: EditorDocument, tag?: string | null) => number;
   undo: () => void;
   redo: () => void;
   /** Drop the whole stack (Save — no undoing into a pre-persist world). */
@@ -338,9 +340,9 @@ export function useEditorHistory(opts: {
     setHist(next);
   }, []);
 
-  const record = useCallback(
-    (tag: string | null = null) => {
-      const nextHist = recordSnapshot(histRef.current, getCurrentRef.current(), tag);
+  const recordDocument = useCallback(
+    (doc: EditorDocument, tag: string | null = null) => {
+      const nextHist = recordSnapshot(histRef.current, doc, tag);
       const changed = nextHist !== histRef.current;
       commit(nextHist);
       if (!changed) return versionRef.current;
@@ -349,6 +351,11 @@ export function useEditorHistory(opts: {
       return versionRef.current;
     },
     [commit],
+  );
+
+  const record = useCallback(
+    (tag: string | null = null) => recordDocument(getCurrentRef.current(), tag),
+    [recordDocument],
   );
 
   // Any history mutation (not just record) advances version — the copilot's
@@ -382,6 +389,7 @@ export function useEditorHistory(opts: {
 
   return {
     record,
+    recordDocument,
     undo,
     redo,
     clear,

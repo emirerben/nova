@@ -1,4 +1,4 @@
-import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
+import type { MotionPresetInstance } from "@nova/motion-runtime";
 
 /**
  * API client for content-plan endpoints (Phase 3+).
@@ -1514,6 +1514,10 @@ export interface EditorCapabilities {
   overlays?: boolean;
   visual_blocks?: boolean;
   motion_scenes?: boolean;
+  /** Backend half of the dual Evolving Type rollout gate. New insertion and
+   * editing require this plus NEXT_PUBLIC_EVOLVING_TYPE_ENABLED; persisted
+   * blocks remain visible/removable independently. */
+  evolving_type?: boolean;
   motion_runtime_hash?: string | null;
   motion_required_runtime_hash?: string | null;
   camera_effects?: boolean;
@@ -1643,7 +1647,7 @@ export interface PlanItemVariant {
   // is what makes a variant instant-edit-eligible. Absent on lyrics/legacy.
   base_video_url?: string | null;
   base_video_path?: string | null;
-  motion_scenes?: MotionPresetInstanceV1[] | null;
+  motion_scenes?: MotionPresetInstance[] | null;
   motion_runtime_hash?: string | null;
   motion_applied_runtime_hash?: string | null;
   motion_cache_stale?: boolean;

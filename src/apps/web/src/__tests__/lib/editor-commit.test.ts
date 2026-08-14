@@ -9,7 +9,7 @@ import {
 import type { TextElement, VisualBlock } from "@/lib/plan-api";
 import {
   MOTION_RUNTIME_HASH,
-  type MotionPresetInstanceV1,
+  type MotionPresetInstance,
 } from "@nova/motion-runtime";
 
 const element: TextElement = {
@@ -348,7 +348,7 @@ describe("buildEditorCommitRequest", () => {
   });
 
   it("sends motion scenes with the exact runtime compatibility token", () => {
-    const scene: MotionPresetInstanceV1 = {
+    const scene: MotionPresetInstance = {
       id: "motion-1",
       preset_id: "card_stack",
       preset_version: 1,

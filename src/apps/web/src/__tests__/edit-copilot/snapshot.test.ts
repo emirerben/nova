@@ -7,6 +7,7 @@ import {
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
+import { createCreatorBlockInstance } from "@nova/motion-runtime";
 
 function bar(over: Partial<TextElementBar> = {}): TextElementBar {
   return {
@@ -995,6 +996,7 @@ describe("Creator Block snapshot", () => {
 
     expect(snapshot.allowed_op_families).toContain("motion");
     expect(snapshot.motion?.catalog).toHaveLength(8);
+    expect(snapshot.motion?.catalog.every((entry) => entry.preset_version === 2)).toBe(true);
     expect(snapshot.motion?.blocks[0]).toMatchObject({
       id: "motion-1",
       preset_id: "kinetic_word",
@@ -1006,5 +1008,38 @@ describe("Creator Block snapshot", () => {
     expect(snapshot.motion?.blocks[0].mutation_fingerprint).toMatch(/^m1-/);
     expect(JSON.stringify(snapshot)).not.toContain("mutation_fingerprint");
     expect(JSON.stringify(snapshot.motion)).not.toContain("gcs_path");
+  });
+
+  it("filters Evolving Type insertion flag-off but retains persisted block state", () => {
+    const evolving = createCreatorBlockInstance({
+      id: "motion-evolving",
+      presetId: "evolving_type",
+      startFrame: 0,
+      endFrameExclusive: 159,
+    });
+    const off = buildCopilotSnapshot(
+      [bar()], [slot()], [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true, motion_scenes: true }, [],
+      { motionScenesEnabled: true, evolvingTypeEnabled: false, motionScenes: [evolving] },
+    );
+    expect(off.motion?.catalog).toHaveLength(8);
+    expect(off.motion?.catalog.some((entry) => entry.preset_id === "evolving_type")).toBe(false);
+    expect(off.motion?.blocks[0]).toMatchObject({
+      id: "motion-evolving",
+      preset_id: "evolving_type",
+      preset_version: 2,
+      motion: { speed: 1, easing: "ease-in-out-cubic", hold_frames: 30 },
+    });
+
+    const on = buildCopilotSnapshot(
+      [bar()], [slot()], [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true, motion_scenes: true }, [],
+      { motionScenesEnabled: true, evolvingTypeEnabled: true },
+    );
+    expect(on.motion?.catalog).toHaveLength(9);
+    expect(on.motion?.catalog.find((entry) => entry.preset_id === "evolving_type")?.controls)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ key: "speed", minimum: 0.75 })]));
+    expect(on.motion?.catalog.find((entry) => entry.preset_id === "evolving_type")?.preset_version)
+      .toBe(2);
   });
 });

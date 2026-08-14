@@ -93,7 +93,7 @@ import {
 } from "./editor-smart-placement";
 import VisualBlocksLayer from "./VisualBlocksLayer";
 import MotionCanvasLayer from "./MotionCanvasLayer";
-import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
+import type { MotionPresetInstance } from "@nova/motion-runtime";
 import {
   useEditorPlaybackTime,
   type EditorPlaybackClock,
@@ -272,7 +272,7 @@ export default function EditorCanvas({
   bars: TextElementBar[];
   mediaOverlays?: MediaOverlay[];
   visualBlocks?: VisualBlock[];
-  motionScenes?: MotionPresetInstanceV1[];
+  motionScenes?: MotionPresetInstance[];
   motionRuntimeHash?: string | null;
   cameraEffects?: CameraEffect[];
   visualAssets?: PoolAsset[];
