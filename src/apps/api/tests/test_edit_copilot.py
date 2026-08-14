@@ -1703,12 +1703,14 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # (2026-08-11-v20) for the RECENT STEPS / RECENT EDIT HISTORY sections
     # (copilot step awareness), then (2026-08-11-v21) for apply_custom_effect
     # (PR6, effect-language train), then (2026-08-11-v22) for undo_last_edit /
-    # repeat_last_edit and the HISTORY STATE snapshot section (PR7) — update
+    # repeat_last_edit and the HISTORY STATE snapshot section (PR7), then
+    # (2026-08-14-v23) for catalog-backed Creator Block Motion v2 controls and
+    # normalized existing-block motion state — update
     # this pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the
     # prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-11-v22"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-14-v23"
 
 
 def _motion_snapshot() -> dict:
