@@ -12,6 +12,12 @@ All notable changes to this project will be documented in this file.
 - **Existing edits keep their original look until motion is explicitly changed.** Preset-v1 formulas remain immutable, content/palette/timeline edits do not migrate them, motion-control edits upgrade only the selected block, and saved v2/v3/v4 runtimes remain compatible with v4 normalization on save.
 - **Creator motion is safer under heavy scenes and rollbacks.** Catalog-generated schemas fail on drift, dual rollout flags keep persisted Evolving blocks renderable but read-only when hidden, and weighted validation plus production/browser performance gates bound overlapping scenes and media resources before render.
 
+## [0.31.0.1] — 2026-08-14
+
+### Fixed
+- **Plan edit now proposes a short story instead of listing every upload as a separate beat.** Related photos and videos are grouped into three to five distinct chapters, while neutral AI drafts can no longer imply that the creator visited, enjoyed, tasted, or felt something unless they wrote that context themselves.
+- **Live proposal evaluation accepts natural chapter names without weakening the quality gate.** Replay fixtures still pin expected vocabulary; live Gemini output is judged semantically for complete-media use, coherent topics, creator direction, safe thoughts, and editability.
+
 ## [0.31.0.0] — 2026-08-14
 
 ### Added

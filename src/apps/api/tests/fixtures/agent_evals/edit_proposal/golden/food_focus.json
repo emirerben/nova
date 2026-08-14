@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.edit_proposal",
-  "prompt_version": "1.0.0",
+  "prompt_version": "1.0.1",
   "input": {
     "idea": "Corfu food notes",
     "theme": "Food and place",

@@ -36,6 +36,11 @@ def test_edit_proposal_eval(
         f"  failures: {result.structural_failures}\n  error: {result.error}"
     )
     assert result.output is not None
-    topics = {beat["topic"].lower() for beat in result.output["story_beats"]}
-    expected_topics = set(fixture.meta.get("expected_topics") or [])
-    assert all(any(expected in topic for topic in topics) for expected in expected_topics)
+    if eval_mode == "live":
+        assert with_judge, "live edit-proposal evals require semantic judge coverage"
+    if eval_mode == "replay":
+        # Golden cassettes pin the intended chapter vocabulary. Live outputs are
+        # allowed natural synonyms and are scored for semantic coverage by the judge.
+        topics = {beat["topic"].lower() for beat in result.output["story_beats"]}
+        expected_topics = set(fixture.meta.get("expected_topics") or [])
+        assert all(any(expected in topic for topic in topics) for expected in expected_topics)
