@@ -21,21 +21,14 @@
 import { useRef } from "react";
 import { StableVideo } from "@/components/StableVideo";
 import {
+  POOL_ASSET_MIME_TYPES,
+  type PendingPoolUpload,
+} from "@/app/plan/_hooks/usePoolAssetUploader";
+import {
   type OverlaySuggestion,
   type PoolAsset,
 } from "@/lib/plan-api";
 import type { EditorOverlaySuggestionsState } from "./useEditorOverlaySuggestions";
-
-// Mirrors ALLOWED_ASSET_MIME_TYPES in AssetPool.tsx and
-// _OVERLAY_ALLOWED_CONTENT_TYPES on the backend.
-const POOL_MIME_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "video/mp4",
-  "video/quicktime",
-];
 
 const UNAVAILABLE_COPY = "AI suggestions aren't available right now.";
 
@@ -59,12 +52,6 @@ export function hedgedReason(row: OverlaySuggestion): string {
   return row.reason;
 }
 
-/** Local tile for an in-flight upload (before the server row exists). */
-export interface PendingUpload {
-  localId: string;
-  filename: string;
-}
-
 const EMPTY_SUGGESTIONS: EditorOverlaySuggestionsState = {
   phase: "idle",
   rows: [],
@@ -82,10 +69,16 @@ export default function OverlaySuggestions({
   assets = [],
   maxAssets = 20,
   pending = [],
+  reservedSlots = pending.length,
   poolUnavailable = false,
   poolError = null,
+  poolMessage = null,
+  poolSummary = null,
   onFiles = () => {},
+  onRetryPending = () => {},
+  onRemovePending = () => {},
   onRemoveAsset = () => {},
+  onRetryAsset = () => {},
   onAccept,
   onSeek,
 }: {
@@ -94,11 +87,17 @@ export default function OverlaySuggestions({
   suggestions?: EditorOverlaySuggestionsState;
   assets?: PoolAsset[];
   maxAssets?: number;
-  pending?: PendingUpload[];
+  pending?: PendingPoolUpload[];
+  reservedSlots?: number;
   poolUnavailable?: boolean;
   poolError?: string | null;
+  poolMessage?: string | null;
+  poolSummary?: string | null;
   onFiles?: (fileList: FileList | File[] | null) => void;
+  onRetryPending?: (localId: string) => void;
+  onRemovePending?: (localId: string) => void;
   onRemoveAsset?: (asset: PoolAsset) => void;
+  onRetryAsset?: (asset: PoolAsset) => void;
   /** Hand the accepted envelope to EditorShell (undo-recorded overlay + sfx). */
   onAccept: (suggestion: OverlaySuggestion) => void;
   /** Seek the editor transport (rows seek to max(0, start_s − 1)). */
@@ -120,7 +119,8 @@ export default function OverlaySuggestions({
   const assetById = new Map(assets.map((a) => [a.id, a]));
   const readyAssetCount = assets.filter((a) => a.status === "ready").length;
   const isEmptyPool = assets.length === 0 && pending.length === 0;
-  const atCap = assets.length >= maxAssets;
+  const atCap = assets.length + reservedSlots >= maxAssets;
+  const releasingSlots = Math.max(0, reservedSlots - pending.length);
   const suggestDisabled = readyAssetCount === 0 || suggestions.phase === "matching";
   const { phase, rows, wishlist } = suggestions;
 
@@ -135,7 +135,7 @@ export default function OverlaySuggestions({
         ref={inputRef}
         type="file"
         multiple
-        accept={POOL_MIME_TYPES.join(",")}
+        accept={POOL_ASSET_MIME_TYPES.join(",")}
         className="hidden"
         aria-label="Add visuals to your pool"
         disabled={atCap}
@@ -153,25 +153,54 @@ export default function OverlaySuggestions({
           </p>
           <button
             type="button"
+            disabled={atCap}
             onClick={() => inputRef.current?.click()}
-            className="mt-2 inline-flex min-h-11 items-center rounded-lg border border-zinc-200 bg-white px-4 text-[12px] text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+            className="mt-2 inline-flex min-h-11 items-center rounded-lg border border-zinc-200 bg-white px-4 text-[12px] text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Add visuals
           </button>
+          {atCap && (
+            <p className="mt-2 text-[12px] text-[#71717a]">
+              {releasingSlots > 0
+                ? "Kria is releasing a removed upload slot. You can add another visual when cleanup finishes."
+                : "Your pool is full — remove a visual to add another."}
+            </p>
+          )}
         </div>
       ) : (
         <>
           <ul className="flex flex-wrap gap-1.5" data-testid="suggestion-pool-strip">
             {assets.map((asset) => (
-              <PoolThumb key={asset.id} asset={asset} onRemove={() => onRemoveAsset(asset)} />
-            ))}
-            {pending.map((p) => (
-              <li
-                key={p.localId}
-                aria-label={`Uploading ${p.filename}`}
-                className="h-12 w-12 overflow-hidden rounded-md border border-zinc-200 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer"
+              <PoolThumb
+                key={asset.id}
+                asset={asset}
+                onRemove={() => onRemoveAsset(asset)}
+                onRetry={() => onRetryAsset(asset)}
               />
             ))}
+            {pending.map((p) => {
+              const stageLabel =
+                p.stage === "failed"
+                  ? "Failed"
+                  : p.stage === "preparing"
+                    ? "Preparing"
+                    : p.stage === "registering"
+                      ? "Adding"
+                      : "Uploading";
+              return (
+                <li
+                  key={p.localId}
+                  aria-label={`${stageLabel} ${p.filename}`}
+                  className={
+                    p.stage === "failed"
+                      ? "flex h-12 w-12 items-center justify-center overflow-hidden rounded-md border border-dashed border-zinc-300 bg-white text-[9px] text-[#71717a]"
+                      : "flex h-12 w-12 items-end justify-center overflow-hidden rounded-md border border-zinc-200 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] pb-1 text-[9px] text-[#71717a] motion-safe:animate-shimmer"
+                  }
+                >
+                  {stageLabel}
+                </li>
+              );
+            })}
             <li>
               <button
                 type="button"
@@ -186,14 +215,89 @@ export default function OverlaySuggestions({
           </ul>
           {atCap && (
             <p className="mt-1.5 text-[12px] text-[#71717a]">
-              Your pool is full — remove a visual to add another.
+              {releasingSlots > 0
+                ? "Kria is releasing a removed upload slot. You can add another visual when cleanup finishes."
+                : "Your pool is full — remove a visual to add another."}
             </p>
           )}
+          {pending
+            .filter((upload) => upload.stage === "failed")
+            .map((upload) => (
+              <div
+                key={`${upload.localId}-error`}
+                className="mt-2 rounded border border-dashed border-zinc-300 bg-white px-3 py-2 text-[12px] text-[#71717a]"
+              >
+                <p className="font-medium text-[#3f3f46]">{upload.filename}</p>
+                <p>{upload.message}</p>
+                <div className="mt-1 flex gap-3">
+                  {upload.retryable && (
+                    <button
+                      type="button"
+                      onClick={() => onRetryPending(upload.localId)}
+                      className="min-h-7 text-lime-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                    >
+                      Retry
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onRemovePending(upload.localId)}
+                    className="min-h-7 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          {assets
+            .filter((asset) => asset.status === "failed")
+            .map((asset) => (
+              <div
+                key={`${asset.id}-analysis-error`}
+                className="mt-2 rounded border border-dashed border-zinc-300 bg-white px-3 py-2 text-[12px] text-[#71717a]"
+              >
+                <p className="font-medium text-[#3f3f46]">
+                  {asset.source_filename ?? "This visual"}
+                </p>
+                <p>
+                  {asset.error_detail ??
+                    "Couldn't read this file. Try exporting it again, then retry."}
+                </p>
+                <div className="mt-1 flex gap-3">
+                  {asset.retryable !== false && (
+                    <button
+                      type="button"
+                      onClick={() => onRetryAsset(asset)}
+                      className="min-h-7 text-lime-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                    >
+                      Retry analysis
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onRemoveAsset(asset)}
+                    className="min-h-7 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
         </>
       )}
       {poolError && (
         <p className="mt-2 rounded border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#3f3f46]">
           {poolError}
+        </p>
+      )}
+      {poolMessage && (
+        <p className="mt-2 rounded border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#3f3f46]">
+          {poolMessage}
+        </p>
+      )}
+      {poolSummary && (
+        <p className="mt-2 text-[12px] text-[#71717a]" aria-live="polite">
+          {poolSummary}
         </p>
       )}
 
@@ -287,23 +391,34 @@ export default function OverlaySuggestions({
   );
 }
 
-function PoolThumb({ asset, onRemove }: { asset: PoolAsset; onRemove: () => void }) {
+function PoolThumb({
+  asset,
+  onRemove,
+  onRetry,
+}: {
+  asset: PoolAsset;
+  onRemove: () => void;
+  onRetry: () => void;
+}) {
   const label = asset.source_filename ?? asset.subject ?? "this file";
-  const busy = asset.status === "analyzing" || asset.status === "uploading" || asset.status === "uploaded";
+  const busy =
+    asset.status === "queued" || asset.status === "analyzing" || asset.status === "uploaded";
   return (
     <li className="group relative h-12 w-12 overflow-hidden rounded-md border border-zinc-200 bg-white">
       {asset.status === "failed" ? (
         <div
           className="flex h-full w-full items-center justify-center border border-dashed border-zinc-300 text-[10px] text-[#71717a]"
-          title="Couldn't read this file"
+          title={asset.error_detail ?? "Kria couldn't analyze this file"}
         >
           !
         </div>
       ) : busy || !asset.display_url ? (
         <div
-          className="h-full w-full bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer"
-          title="Analyzing…"
-        />
+          className="flex h-full w-full items-center justify-center bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] text-[9px] text-[#71717a] motion-safe:animate-shimmer"
+          title={asset.status === "queued" ? "Queued…" : "Analyzing…"}
+        >
+          {asset.status === "queued" ? "Queued" : "Analyzing"}
+        </div>
       ) : asset.kind === "video" ? (
         <StableVideo
           src={asset.display_url}
@@ -324,6 +439,16 @@ function PoolThumb({ asset, onRemove }: { asset: PoolAsset; onRemove: () => void
       >
         ×
       </button>
+      {asset.status === "failed" && asset.retryable !== false && (
+        <button
+          type="button"
+          onClick={onRetry}
+          aria-label={`Retry analysis for ${label}`}
+          className="absolute bottom-0.5 left-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white/90 text-[11px] text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+        >
+          ↻
+        </button>
+      )}
     </li>
   );
 }

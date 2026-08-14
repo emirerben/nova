@@ -5077,9 +5077,16 @@ async def upload_pool_asset(
                 pass
 
 
+class PoolReservationCapacity(BaseModel):
+    reservation_id: str
+    release_at: datetime | None = None
+
+
 class PoolAssetsResponse(BaseModel):
     assets: list[PoolAssetOut]
     max_assets: int = _MAX_POOL_ASSETS
+    occupied_assets: int = 0
+    active_reservations: list[PoolReservationCapacity] = Field(default_factory=list)
 
 
 @router.get("/{item_id}/assets", response_model=PoolAssetsResponse)
@@ -5090,21 +5097,46 @@ async def list_pool_assets(
 ) -> PoolAssetsResponse:
     _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db)
-    assets = (
+    rows = (
         (
             await db.execute(
                 select(PlanItemAsset)
-                .where(
-                    PlanItemAsset.plan_item_id == item.id,
-                    PlanItemAsset.status.notin_({"preparing", "promoting", "cleanup_pending"}),
-                )
+                .where(PlanItemAsset.plan_item_id == item.id)
                 .order_by(PlanItemAsset.created_at)
             )
         )
         .scalars()
         .all()
     )
-    return PoolAssetsResponse(assets=[_asset_out(a) for a in assets])
+    now = datetime.now(UTC)
+    hidden_statuses = {"preparing", "promoting", "cleanup_pending"}
+    capacity_rows = [
+        row
+        for row in rows
+        if row.status not in {"preparing", "promoting"}
+        or not _pool_reservation_is_expired(row, now)
+    ]
+    assets = [row for row in rows if row.status not in hidden_statuses]
+    hidden_capacity_rows = [row for row in capacity_rows if row.status in hidden_statuses]
+    reservations = []
+    for row in hidden_capacity_rows:
+        release_at = None
+        if row.status == "cleanup_pending":
+            # Cleanup owns this reservation until its exact object generation is
+            # deleted.  The original upload expiry is not a release guarantee.
+            release_at = None
+        elif row.upload_expires_at is not None:
+            release_at = row.upload_expires_at + _POOL_RESERVATION_CLEANUP_GRACE
+        elif row.created_at is not None and row.status in {"preparing", "promoting"}:
+            release_at = row.created_at + _POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE
+        reservations.append(
+            PoolReservationCapacity(reservation_id=str(row.id), release_at=release_at)
+        )
+    return PoolAssetsResponse(
+        assets=[_asset_out(a) for a in assets],
+        occupied_assets=len(capacity_rows),
+        active_reservations=reservations,
+    )
 
 
 @router.post("/{item_id}/assets/{asset_id}/reanalyze", response_model=PoolAssetOut)

@@ -181,6 +181,27 @@ describe("hedgedReason", () => {
   });
 });
 
+describe("authoritative reservation capacity", () => {
+  it("disables and explains the empty-pool CTA while a hidden reservation releases", () => {
+    render(
+      <OverlaySuggestions
+        assets={[]}
+        maxAssets={1}
+        pending={[]}
+        reservedSlots={1}
+        onAccept={jest.fn()}
+        onSeek={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Add visuals" })).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Kria is releasing a removed upload slot. You can add another visual when cleanup finishes.",
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("OverlaySuggestions — rows from a pending ready set", () => {
   function readyRoutes(suggestions: unknown[], extra: Record<string, unknown> = {}) {
     return mockFetch((method, url) => {
@@ -312,6 +333,81 @@ describe("OverlaySuggestions — pool gating", () => {
 
     expect(screen.getByRole("button", { name: /place visuals for me/i })).toBeDisabled();
     expect(screen.getByText("Add at least one visual first")).toBeInTheDocument();
+  });
+
+  it("renders queued distinctly and keeps it in the editor's pending capacity", async () => {
+    mockFetch((method, url) => {
+      if (method === "GET" && url === ASSETS_URL) {
+        return jsonResponse({ assets: [makeAsset({ status: "queued" })], max_assets: 1 });
+      }
+      if (method === "GET" && url === SUGGESTIONS_URL) {
+        return jsonResponse(suggestionsResponse());
+      }
+      return undefined;
+    });
+    await renderSection();
+
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /place visuals for me/i })).toBeDisabled();
+  });
+
+  it("counts local pending uploads toward capacity and renders stage plus batch guidance", async () => {
+    mockFetch((method, url) => {
+      if (method === "GET" && url === ASSETS_URL) {
+        return jsonResponse({ assets: [], max_assets: 1 });
+      }
+      if (method === "GET" && url === SUGGESTIONS_URL) {
+        return jsonResponse(suggestionsResponse());
+      }
+      return undefined;
+    });
+    await renderSection({
+      maxAssets: 1,
+      pending: [
+        {
+          localId: "pending-1",
+          filename: "empty-mime.mov",
+          stage: "registering",
+          message: null,
+          retryable: false,
+        },
+      ],
+      poolMessage: "Some files weren’t added. Export them as JPG, PNG, WebP, HEIC/HEIF, MP4, or MOV.",
+      poolSummary: "0 of 1 added.",
+    });
+
+    expect(screen.getByLabelText("Adding empty-mime.mov")).toHaveTextContent("Adding");
+    expect(screen.getByRole("button", { name: "Add visuals" })).toBeDisabled();
+    expect(screen.getByText(/pool is full — remove a visual/i)).toBeInTheDocument();
+    expect(screen.getByText(/export them as JPG, PNG, WebP, HEIC\/HEIF, MP4, or MOV/i)).toBeInTheDocument();
+    expect(screen.getByText("0 of 1 added.")).toBeInTheDocument();
+  });
+
+  it("shows a user-safe analysis failure with retry and remove actions", async () => {
+    const failed = makeAsset({
+      status: "failed",
+      source_filename: "broken.mov",
+      error_detail: "Kria couldn't analyze this file. Try exporting it again.",
+      retryable: true,
+    });
+    mockFetch((method, url) => {
+      if (method === "GET" && url === ASSETS_URL) {
+        return jsonResponse({ assets: [failed], max_assets: 20 });
+      }
+      if (method === "GET" && url === SUGGESTIONS_URL) {
+        return jsonResponse(suggestionsResponse());
+      }
+      return undefined;
+    });
+    const onRetryAsset = jest.fn();
+    const onRemoveAsset = jest.fn();
+    await renderSection({ onRetryAsset, onRemoveAsset });
+
+    expect(screen.getByText("Kria couldn't analyze this file. Try exporting it again.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry analysis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(onRetryAsset).toHaveBeenCalledWith(expect.objectContaining({ source_filename: "broken.mov" }));
+    expect(onRemoveAsset).toHaveBeenCalledWith(expect.objectContaining({ source_filename: "broken.mov" }));
   });
 });
 

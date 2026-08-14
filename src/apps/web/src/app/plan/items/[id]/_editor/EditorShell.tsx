@@ -34,11 +34,9 @@ import {
   NotAuthenticatedError,
   confirmOverlayUploads,
   listPoolAssets,
-  registerPoolAsset,
+  reanalyzePoolAsset,
   retimeVisualBlock,
   requestOverlayUploadUrls,
-  requestPoolAssetUploadUrls,
-  sha256HexOfFile,
   updatePoolAssetContext,
   uploadToGcs,
   type CameraEffect,
@@ -49,6 +47,7 @@ import {
   type PlanItem,
   type PlanItemVariant,
   type PoolAsset,
+  type PoolReservationCapacity,
   type CaptionCue,
   type CaptionLanguage,
   setPlanItemCaptionLanguage,
@@ -184,7 +183,8 @@ import {
 import TransportBar from "./TransportBar";
 import type { EditorTimelineBodyProps } from "./EditorTimelineBody";
 import EditorCanvas from "./EditorCanvas";
-import OverlaySuggestions, { type PendingUpload } from "./OverlaySuggestions";
+import OverlaySuggestions from "./OverlaySuggestions";
+import { usePoolAssetUploader } from "@/app/plan/_hooks/usePoolAssetUploader";
 import { computeReseedSections } from "./editor-reseed";
 import InspectorPanel from "./InspectorPanel";
 import InspectorRail, { type InspectorTab } from "./InspectorRail";
@@ -354,15 +354,6 @@ function retimeLinkedTextBar(
         newDuration,
   };
 }
-const POOL_MIME_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "video/mp4",
-  "video/quicktime",
-];
-
 type LyricsCapability = NonNullable<
   NonNullable<PlanItemVariant["editor_capabilities"]>["lyrics"]
 >;
@@ -1006,10 +997,37 @@ export default function EditorShell({
   const musicHydratedVariantIdRef = useRef<string | null>(null);
   const [overlayUploading, setOverlayUploading] = useState(false);
   const [poolAssets, setPoolAssets] = useState<PoolAsset[]>([]);
+  const [serverPoolReservations, setServerPoolReservations] = useState<
+    PoolReservationCapacity[]
+  >([]);
+  const [serverPoolOccupiedCount, setServerPoolOccupiedCount] = useState(0);
   const [maxPoolAssets, setMaxPoolAssets] = useState(20);
-  const [pendingPoolUploads, setPendingPoolUploads] = useState<PendingUpload[]>([]);
   const [poolUnavailable, setPoolUnavailable] = useState(false);
   const [poolError, setPoolError] = useState<string | null>(null);
+  const poolListEpoch = useRef(0);
+  const poolPollInFlight = useRef(false);
+  const poolUploader = usePoolAssetUploader({
+    itemId,
+    assetCount: poolAssets.length,
+    maxAssets: maxPoolAssets,
+    onRegistered: (asset) => {
+      poolListEpoch.current += 1;
+      setPoolAssets((prev) => [...prev.filter((row) => row.id !== asset.id), asset]);
+    },
+    onUnavailable: () => setPoolUnavailable(true),
+    serverReservations: serverPoolReservations,
+    serverOccupiedCount: serverPoolOccupiedCount,
+    onReservationFinalized: (reservationId, releasedCapacity) => {
+      setServerPoolReservations((current) =>
+        current.filter((reservation) => reservation.reservation_id !== reservationId),
+      );
+      if (releasedCapacity) {
+        setServerPoolOccupiedCount((current) => Math.max(0, current - 1));
+      }
+    },
+  });
+  const pendingPoolUploads = poolUploader.uploads;
+  const addPoolFiles = poolUploader.addFiles;
 
   // Clip slots — the shell's local working state for split/delete (seeded from
   // the shared clip-timeline handle, then edited locally; persisted via
@@ -2300,12 +2318,21 @@ export default function EditorShell({
   useEffect(() => {
     if (!overlayPoolShouldLoad) return;
     let cancelled = false;
+    const startedAtEpoch = poolListEpoch.current;
     listPoolAssets(itemId)
       .then((res) => {
-        if (cancelled) return;
-        setPoolAssets(res.assets);
+        if (cancelled || poolListEpoch.current !== startedAtEpoch) return;
+        setPoolAssets((current) =>
+          res.assets.map((fresh) => {
+            const existing = current.find((row) => row.id === fresh.id);
+            return existing?.display_url ? { ...fresh, display_url: existing.display_url } : fresh;
+          }),
+        );
         setMaxPoolAssets(res.max_assets);
+        setServerPoolReservations(res.active_reservations ?? []);
+        setServerPoolOccupiedCount(res.occupied_assets ?? res.assets.length);
         setPoolUnavailable(false);
+        setPoolError(null);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -2317,18 +2344,33 @@ export default function EditorShell({
     };
   }, [itemId, overlayPoolShouldLoad]);
 
-  const hasBusyPoolAssets = poolAssets.some(
-    (a) => a.status === "analyzing" || a.status === "uploaded" || a.status === "uploading",
-  );
+  const hasBusyPoolAssets =
+    poolAssets.some(
+      (a) => a.status === "queued" || a.status === "analyzing" || a.status === "uploaded",
+    ) || serverPoolReservations.some((reservation) => reservation.release_at === null);
   useEffect(() => {
     if (!overlayPoolShouldLoad || !hasBusyPoolAssets || poolUnavailable) return;
     const id = setInterval(() => {
+      if (poolPollInFlight.current) return;
+      poolPollInFlight.current = true;
+      const startedAtEpoch = poolListEpoch.current;
       listPoolAssets(itemId)
         .then((res) => {
-          setPoolAssets(res.assets);
+          if (poolListEpoch.current !== startedAtEpoch) return;
+          setPoolAssets((current) =>
+            res.assets.map((fresh) => {
+              const existing = current.find((row) => row.id === fresh.id);
+              return existing?.display_url ? { ...fresh, display_url: existing.display_url } : fresh;
+            }),
+          );
           setMaxPoolAssets(res.max_assets);
+          setServerPoolReservations(res.active_reservations ?? []);
+          setServerPoolOccupiedCount(res.occupied_assets ?? res.assets.length);
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          poolPollInFlight.current = false;
+        });
     }, SUGGESTION_POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [hasBusyPoolAssets, itemId, overlayPoolShouldLoad, poolUnavailable]);
@@ -2346,51 +2388,21 @@ export default function EditorShell({
   });
 
   const handlePoolFiles = useCallback(
-    (fileList: FileList | File[] | null) => {
-      if (!fileList) return;
-      const files = Array.from(fileList).filter((f) => POOL_MIME_TYPES.includes(f.type));
-      if (files.length === 0) return;
+    (files: FileList | File[] | null) => {
       setPoolError(null);
-
-      const locals: PendingUpload[] = files.map((f, i) => ({
-        localId: `pending-${Date.now()}-${i}-${f.name}`,
-        filename: f.name,
-      }));
-      setPendingPoolUploads((prev) => [...prev, ...locals]);
-
-      void (async () => {
-        for (let i = 0; i < files.length; i++) {
-          const file = files[i];
-          const local = locals[i];
-          try {
-            const [signed] = await requestPoolAssetUploadUrls(itemId, [
-              { filename: file.name, content_type: file.type, file_size_bytes: file.size },
-            ]);
-            await uploadToGcs(signed.upload_url, file);
-            const contentHash = await sha256HexOfFile(file);
-            const registered = await registerPoolAsset(itemId, {
-              gcs_path: signed.gcs_path,
-              content_type: file.type,
-              content_hash: contentHash,
-              source_filename: file.name,
-            });
-            setPendingPoolUploads((prev) => prev.filter((p) => p.localId !== local.localId));
-            if (!registered.deduped) setPoolAssets((prev) => [...prev, registered]);
-          } catch (err) {
-            setPendingPoolUploads((prev) => prev.filter((p) => p.localId !== local.localId));
-            if (isUnavailableError(err)) setPoolUnavailable(true);
-            else setPoolError(err instanceof Error ? err.message : "Upload failed");
-          }
-        }
-      })();
+      addPoolFiles(files);
     },
-    [itemId],
+    [addPoolFiles],
   );
 
   const handleRemovePoolAsset = useCallback(
     (asset: PoolAsset) => {
       void deletePoolAsset(itemId, asset.id)
-        .then(() => setPoolAssets((prev) => prev.filter((a) => a.id !== asset.id)))
+        .then(() => {
+          poolListEpoch.current += 1;
+          setPoolAssets((prev) => prev.filter((a) => a.id !== asset.id));
+          setServerPoolOccupiedCount((current) => Math.max(0, current - 1));
+        })
         .catch((err) => {
           if (isUnavailableError(err)) setPoolUnavailable(true);
           else setPoolError(err instanceof Error ? err.message : "Couldn't remove that file");
@@ -2399,9 +2411,27 @@ export default function EditorShell({
     [itemId],
   );
 
+  const handleRetryPoolAsset = useCallback(
+    (asset: PoolAsset) => {
+      void reanalyzePoolAsset(itemId, asset.id)
+        .then((updated) => {
+          poolListEpoch.current += 1;
+          setPoolAssets((prev) =>
+            prev.map((row) => (row.id === updated.id ? updated : row)),
+          );
+        })
+        .catch((err) => {
+          if (isUnavailableError(err)) setPoolUnavailable(true);
+          else setPoolError(err instanceof Error ? err.message : "Kria couldn’t retry that analysis.");
+        });
+    },
+    [itemId],
+  );
+
   const handleSavePoolAssetContext = useCallback(
     async (asset: PoolAsset, userContext: string) => {
       const updated = await updatePoolAssetContext(itemId, asset.id, userContext || null);
+      poolListEpoch.current += 1;
       setPoolAssets((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       overlaySuggestions.clearLocal();
     },
@@ -5560,6 +5590,112 @@ export default function EditorShell({
     return `${missing.join(", ").replace(/, ([^,]*)$/, " and $1")} preview after Save`;
   })();
 
+  const releasingPoolSlots = Math.max(
+    0,
+    poolUploader.reservedSlots - pendingPoolUploads.length,
+  );
+  const poolAtCapacity = poolAssets.length + poolUploader.reservedSlots >= maxPoolAssets;
+  const visualUploadFeedback =
+    poolError ||
+    poolUploader.batchMessage ||
+    poolUploader.summary ||
+    releasingPoolSlots > 0 ||
+    pendingPoolUploads.length > 0 ||
+    poolAssets.some((asset) => asset.status !== "ready") ? (
+      <div className="mb-3 space-y-2 text-[12px] text-[#71717a]">
+        {poolError && (
+          <p className="rounded border border-zinc-200 bg-white px-3 py-2 text-[#3f3f46]">
+            {poolError}
+          </p>
+        )}
+        {poolUploader.batchMessage && (
+          <p className="rounded border border-zinc-200 bg-white px-3 py-2 text-[#3f3f46]">
+            {poolUploader.batchMessage}
+          </p>
+        )}
+        {poolUploader.summary && <p aria-live="polite">{poolUploader.summary}</p>}
+        {releasingPoolSlots > 0 && (
+          <p className="rounded border border-zinc-200 bg-white px-3 py-2 text-[#3f3f46]">
+            Kria is releasing a removed upload slot. You can add another visual when cleanup finishes.
+          </p>
+        )}
+        {pendingPoolUploads.map((upload) => (
+          <div key={upload.localId} className="rounded border border-dashed border-zinc-300 p-2">
+            <p className="truncate font-medium text-[#3f3f46]">{upload.filename}</p>
+            <p>
+              {upload.stage === "failed"
+                ? upload.message
+                : upload.stage === "preparing"
+                  ? "Preparing upload…"
+                  : upload.stage === "registering"
+                    ? "Adding to your visuals…"
+                    : "Uploading…"}
+            </p>
+            {upload.stage === "failed" && (
+              <div className="mt-1 flex gap-3">
+                {upload.retryable && (
+                  <button
+                    type="button"
+                    aria-label={`Retry ${upload.filename}`}
+                    onClick={() => poolUploader.retry(upload.localId)}
+                    className="min-h-7 text-lime-700 underline underline-offset-2"
+                  >
+                    Retry
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label={`Remove ${upload.filename}`}
+                  onClick={() => poolUploader.remove(upload.localId)}
+                  className="min-h-7 underline underline-offset-2"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+        {poolAssets
+          .filter((asset) => asset.status !== "ready")
+          .map((asset) => (
+            <div key={asset.id} className="rounded border border-dashed border-zinc-300 p-2">
+              <p className="truncate font-medium text-[#3f3f46]">
+                {asset.source_filename ?? "This visual"}
+              </p>
+              <p>
+                {asset.status === "queued"
+                  ? "Queued for analysis…"
+                  : asset.status === "analyzing" || asset.status === "uploaded"
+                    ? "Analyzing…"
+                    : asset.error_detail ?? "Kria couldn't analyze this file. Try again."}
+              </p>
+              {asset.status === "failed" && (
+                <div className="mt-1 flex gap-3">
+                  {asset.retryable !== false && (
+                    <button
+                      type="button"
+                      aria-label={`Retry analysis ${asset.source_filename ?? "visual"}`}
+                      onClick={() => handleRetryPoolAsset(asset)}
+                      className="min-h-7 text-lime-700 underline underline-offset-2"
+                    >
+                      Retry analysis
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${asset.source_filename ?? "visual"}`}
+                    onClick={() => handleRemovePoolAsset(asset)}
+                    className="min-h-7 underline underline-offset-2"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+      </div>
+    ) : null;
+
   // AI suggestions inside the Overlays drawer — dual-gated (frontend flag +
   // the variant's honest capability). A false capability (e.g.
   // song_or_lyric_variant) renders NOTHING: no dead chrome in the drawer.
@@ -5569,10 +5705,16 @@ export default function EditorShell({
       assets={poolAssets}
       maxAssets={maxPoolAssets}
       pending={pendingPoolUploads}
+      reservedSlots={poolUploader.reservedSlots}
       poolUnavailable={poolUnavailable}
       poolError={poolError}
+      poolMessage={poolUploader.batchMessage}
+      poolSummary={poolUploader.summary}
       onFiles={handlePoolFiles}
+      onRetryPending={poolUploader.retry}
+      onRemovePending={poolUploader.remove}
       onRemoveAsset={handleRemovePoolAsset}
+      onRetryAsset={handleRetryPoolAsset}
       onAccept={handleAcceptSuggestion}
       onSeek={seekPlaybackTo}
     />
@@ -6278,7 +6420,9 @@ export default function EditorShell({
               onSelectMotion={(id) => selectElement("motion", id)}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
-              visualUploading={pendingPoolUploads.length > 0}
+              visualUploading={poolUploader.busy}
+              visualUploadDisabled={poolAtCapacity}
+              visualUploadFeedback={visualUploadFeedback}
               onVisualUpload={handlePoolFiles}
               onAddMontage={addMontageBlock}
               onAddTextCard={addTextCard}
@@ -6356,7 +6500,9 @@ export default function EditorShell({
               onSelectMotion={(id) => selectElement("motion", id)}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
-              visualUploading={pendingPoolUploads.length > 0}
+              visualUploading={poolUploader.busy}
+              visualUploadDisabled={poolAtCapacity}
+              visualUploadFeedback={visualUploadFeedback}
               onVisualUpload={handlePoolFiles}
               onAddMontage={addMontageBlock}
               onAddTextCard={addTextCard}
@@ -6829,7 +6975,9 @@ export default function EditorShell({
             onSelectMotion={(id) => selectElement("motion", id)}
             visualAssets={poolAssets}
             visualTextElements={state.bars}
-            visualUploading={pendingPoolUploads.length > 0}
+            visualUploading={poolUploader.busy}
+            visualUploadDisabled={poolAtCapacity}
+            visualUploadFeedback={visualUploadFeedback}
             onVisualUpload={handlePoolFiles}
             onAddMontage={addMontageBlock}
             onAddTextCard={addTextCard}
