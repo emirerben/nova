@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.27.1.0] — 2026-08-14
+
+### Fixed
+- **Content-plan videos keep their generated opening title when lyrics are optional.** A lyric-capable song used to select a lyrics-only version, then start with those lyrics switched off, leaving a valid but nearly empty-looking montage. The primary edit now keeps Nova's generated title visible and offers the matched song's lyrics as an optional editor layer. Turning optional lyrics off still restores the existing baked-lyrics version.
+
 ## [0.27.0.0] — 2026-08-13
 
 ### Added
