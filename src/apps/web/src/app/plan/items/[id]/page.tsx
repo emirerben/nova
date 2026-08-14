@@ -74,6 +74,7 @@ import { resolveSfxPreviewUrls, sfxUrlKey } from "@/lib/sfx-preview-urls";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
 import AskKriaPanel from "./components/AskKriaPanel";
+import SetupPicker from "./components/SetupPicker";
 import {
   getGenerativeStyleSets,
   type GenerativeStyleSet,
@@ -202,20 +203,9 @@ type PendingEdit = {
   targetGeneration?: string | null;
 };
 
-// Edit-style picker copy, keyed by `edit_format`. NOTE: "Talking to camera" here
-// is a DIFFERENT namespace than persona.footage_type_bias="talking_head" (see
-// the persona/onboarding footage options, which use the same
-// phrase for a persona-level content preference, not an edit style). Do not
-// merge these two label maps — they answer different questions.
-const EDIT_FORMAT_LABELS: Record<string, { label: string; desc: string }> = {
-  montage: { label: "Montage", desc: "Multiple clips cut to music" },
-  narrated_planned: { label: "Voiceover", desc: "Tell the story with narration" },
-  subtitled: { label: "Talking to camera", desc: "You on screen, with auto subtitles" },
-  talking_head: {
-    label: "Talking-head B-roll",
-    desc: "Use a spoken clip as the spine, with other clips cut in",
-  },
-};
+// Edit-style picker copy lives in components/SetupPicker (TYPE_COPY). NOTE:
+// "Talking to camera" there is a DIFFERENT namespace than
+// persona.footage_type_bias="talking_head".
 
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
 // applied-fit display (post-render).
@@ -224,72 +214,8 @@ const LANDSCAPE_FIT_OPTIONS: { value: "fit" | "fill"; label: string; desc: strin
   { value: "fill", label: "Fill", desc: "Crop to fill the vertical frame" },
 ];
 
-const MONTAGE_PRESET_OPTIONS: { value: MontagePreset; label: string; desc: string }[] = [
-  { value: "classic", label: "Classic", desc: "Full-screen cuts in sequence" },
-  { value: "masonry", label: "Masonry collage", desc: "Rounded clips on a white wall" },
-  { value: "polaroid_wall", label: "Polaroid wall", desc: "Oversized photo cards on a wall" },
-];
 const COLLAGE_MONTAGE_PRESETS = new Set<MontagePreset>(["masonry", "polaroid_wall"]);
 
-function MontagePresetPreview({ value }: { value: MontagePreset }) {
-  if (value === "polaroid_wall") {
-    const cards = [
-      ["left-[4%] top-[9%] h-[44%] w-[24%] rotate-[-4deg]", "bg-lime-200"],
-      ["left-[32%] top-[4%] h-[29%] w-[44%] rotate-[2deg]", "bg-sky-200"],
-      ["left-[80%] top-[8%] h-[39%] w-[25%] rotate-[5deg]", "bg-rose-200"],
-      ["left-[36%] top-[36%] h-[55%] w-[31%] rotate-[-2deg]", "bg-amber-200"],
-      ["left-[4%] top-[61%] h-[27%] w-[29%] rotate-[3deg]", "bg-zinc-200"],
-      ["left-[72%] top-[55%] h-[31%] w-[37%] rotate-[-3deg]", "bg-indigo-200"],
-    ] as const;
-    return (
-      <div className="relative h-24 overflow-hidden rounded-lg border border-zinc-200 bg-white">
-        <div className="absolute inset-y-0 left-0 w-[136%] motion-safe:animate-[montage-masonry-pan_2.8s_ease-in-out_infinite_alternate]">
-          {cards.map(([pos, color], idx) => (
-            <span
-              key={idx}
-              className={`absolute rounded-[9px] bg-white p-[5px] pb-[13px] shadow-sm ring-1 ring-black/5 ${pos}`}
-            >
-              <span className={`block h-full w-full rounded-[6px] ${color}`} />
-            </span>
-          ))}
-        </div>
-        <span className="absolute left-1/2 top-1/2 h-6 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/80 blur-sm" />
-      </div>
-    );
-  }
-
-  if (value === "masonry") {
-    const tiles = [
-      ["left-[4%] top-[9%] h-[50%] w-[24%]", "bg-lime-200"],
-      ["left-[32%] top-[7%] h-[25%] w-[36%]", "bg-sky-200"],
-      ["left-[72%] top-[12%] h-[48%] w-[25%]", "bg-rose-200"],
-      ["left-[7%] top-[64%] h-[24%] w-[36%]", "bg-zinc-200"],
-      ["left-[48%] top-[39%] h-[50%] w-[25%]", "bg-amber-200"],
-      ["left-[78%] top-[67%] h-[23%] w-[35%]", "bg-indigo-200"],
-    ] as const;
-    return (
-      <div className="relative h-24 overflow-hidden rounded-lg border border-zinc-200 bg-white">
-        <div className="absolute inset-y-0 left-0 w-[132%] motion-safe:animate-[montage-masonry-pan_2.8s_ease-in-out_infinite_alternate]">
-          {tiles.map(([pos, color], idx) => (
-            <span
-              key={idx}
-              className={`absolute rounded-[10px] ${pos} ${color} shadow-sm ring-1 ring-black/5`}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative h-24 overflow-hidden rounded-lg border border-zinc-200 bg-[#0c0c0e]">
-      <span className="absolute inset-1 rounded-md bg-[linear-gradient(135deg,#bef264,#38bdf8)] motion-safe:animate-[montage-classic-a_3.6s_steps(1,end)_infinite]" />
-      <span className="absolute inset-1 rounded-md bg-[linear-gradient(135deg,#fb7185,#facc15)] motion-safe:animate-[montage-classic-b_3.6s_steps(1,end)_infinite]" />
-      <span className="absolute inset-1 rounded-md bg-[linear-gradient(135deg,#a78bfa,#22c55e)] motion-safe:animate-[montage-classic-c_3.6s_steps(1,end)_infinite]" />
-      <span className="absolute bottom-2 left-1/2 h-1 w-10 -translate-x-1/2 rounded-full bg-white/80" />
-    </div>
-  );
-}
 
 const VIDEO_UPLOAD_ACCEPT = "video/mp4,video/quicktime";
 const AUDIO_UPLOAD_ACCEPT = "audio/*,.mp3,.m4a,.mp4,.wav,.webm,.ogg,.aac";
@@ -1673,167 +1599,26 @@ export default function PlanItemPage() {
               className="mb-4 mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-zinc-400 focus:outline-none"
             />
 
-            {/* Format picker — shown when item hasn't started generating */}
+            {/* TYPE / STYLE accordion — poster cards collapse to receipts after
+                each choice (design: Paper "Item page — Format card explorations"). */}
             {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
-              <div className="mb-4">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Edit style
-                </p>
-                {/* Stack on mobile (3 cards don't fit a 375px row), equal columns from sm:. */}
-                <div className="grid gap-2 sm:grid-flow-col sm:auto-cols-fr">
-                  {(
-                    [
-                      { value: "montage", ...EDIT_FORMAT_LABELS.montage },
-                      ...(isTalkingHead
-                        ? [{ value: "talking_head", ...EDIT_FORMAT_LABELS.talking_head }]
-                        : []),
-                      { value: "narrated_planned", ...EDIT_FORMAT_LABELS.narrated_planned },
-                      ...(SUBTITLED_ENABLED
-                        ? [{ value: "subtitled", ...EDIT_FORMAT_LABELS.subtitled }]
-                        : []),
-                    ] as { value: string; label: string; desc: string }[]
-                  ).map(({ value, label, desc }) => {
-                    const active = resolvedFormat === value;
-                    return (
-                      <button
-                        key={label}
-                        type="button"
-                        onClick={async () => {
-                          if (active) return;
-                          await updatePlanItem(item.id, {
-                            edit_format: value,
-                          }).catch(() => null);
-                          refetch();
-                        }}
-                        className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          active
-                            ? "border-lime-400 bg-lime-50"
-                            : "border-zinc-200 bg-white hover:border-zinc-300"
-                        }`}
-                      >
-                        <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
-                          {label}
-                        </span>
-                        <span className="mt-0.5 text-xs text-[#71717a]">{desc}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Narrated sub-mode picker */}
-                {isNarrated && (
-                  <div className="mt-3 flex gap-2">
-                    {(
-                      [
-                        { value: "narrated_planned", label: "Planning to film", desc: "Get a step guide, then film each shot" },
-                        { value: "narrated_ready",   label: "I have the videos", desc: "Upload clips and we'll match them to your voice" },
-                      ] as { value: string; label: string; desc: string }[]
-                    ).map(({ value, label, desc }) => {
-                      const active = isNarratedReady
-                        ? value === "narrated_ready"
-                        : value === "narrated_planned";
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={async () => {
-                            if (active) return;
-                            await updatePlanItem(item.id, { edit_format: value }).catch(() => null);
-                            refetch();
-                          }}
-                          className={`flex flex-1 flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
-                            active
-                              ? "border-zinc-900 bg-zinc-900"
-                              : "border-zinc-200 bg-white hover:border-zinc-300"
-                          }`}
-                        >
-                          <span className={`text-xs font-semibold ${active ? "text-white" : "text-[#0c0c0e]"}`}>
-                            {label}
-                          </span>
-                          <span className={`mt-0.5 text-[11px] ${active ? "text-zinc-400" : "text-zinc-400"}`}>{desc}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Montage sub-mode picker — "Planning to film" vs "I already have footage".
-                    Flips the per-item content_mode override so the user can skip shot-plan
-                    generation and go straight to the pool uploader. Only shown when Montage
-                    is the active style (narrated + subtitled have no content_mode sub-modes). */}
-                {isMontage && (
-                  <div className="mt-3 space-y-3">
-                    <div className="flex gap-2">
-                      {(
-                        [
-                          { value: "create_new",       label: "Planning to film",        desc: "Get a shot plan, film each shot" },
-                          { value: "existing_footage", label: "I already have footage",  desc: "Skip the plan — just upload your footage" },
-                        ] as { value: "create_new" | "existing_footage"; label: string; desc: string }[]
-                      ).map(({ value, label, desc }) => {
-                        // "I already have footage" is active when content_mode is explicitly
-                        // existing_footage; otherwise "Planning to film" is the default.
-                        const active = value === "existing_footage"
-                          ? contentMode === "existing_footage"
-                          : contentMode !== "existing_footage";
-                        return (
-                          <button
-                            key={value}
-                            type="button"
-                            onClick={async () => {
-                              if (active) return;
-                              await updatePlanItem(item.id, { content_mode: value }).catch(() => null);
-                              refetch();
-                            }}
-                            className={`flex flex-1 flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
-                              active
-                                ? "border-zinc-900 bg-zinc-900"
-                                : "border-zinc-200 bg-white hover:border-zinc-300"
-                            }`}
-                          >
-                            <span className={`text-xs font-semibold ${active ? "text-white" : "text-[#0c0c0e]"}`}>
-                              {label}
-                            </span>
-                            <span className={`mt-0.5 text-[11px] ${active ? "text-zinc-400" : "text-zinc-400"}`}>{desc}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <div>
-                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                        Preset
-                      </p>
-                      <div className="grid gap-2 sm:grid-cols-3">
-                        {MONTAGE_PRESET_OPTIONS.map(({ value, label, desc }) => {
-                          const active = montagePreset === value;
-                          return (
-                            <button
-                              key={value}
-                              type="button"
-                              onClick={async () => {
-                                if (active) return;
-                                await updatePlanItem(item.id, { montage_preset: value }).catch(() => null);
-                                refetch();
-                              }}
-                              className={`flex flex-col rounded-xl border p-2 text-left transition-colors ${
-                                active
-                                  ? "border-lime-400 bg-lime-50"
-                                  : "border-zinc-200 bg-white hover:border-zinc-300"
-                              }`}
-                            >
-                              <MontagePresetPreview value={value} />
-                              <span className={`mt-2 text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
-                                {label}
-                              </span>
-                              <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <SetupPicker
+                resolvedFormat={resolvedFormat}
+                isNarratedReady={isNarratedReady}
+                contentMode={contentMode}
+                montagePreset={montagePreset}
+                subtitledEnabled={SUBTITLED_ENABLED}
+                showTalkingHead={isTalkingHead}
+                startCollapsed={
+                  (item.clip_gcs_paths?.length ?? 0) > 0 ||
+                  (item.filming_guide?.length ?? 0) > 0 ||
+                  Boolean(item.voiceover_gcs_path)
+                }
+                onPatch={async (updates) => {
+                  await updatePlanItem(item.id, updates).catch(() => null);
+                  refetch();
+                }}
+              />
             )}
 
             {/* Landscape-clip fit picker — only appears once a wide clip is detected on

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-53 -92 110 100">
+  <!-- Outline loading variant of the approved Kria mark (D1 portrait fan).
+       Identical geometry + masks to kria-mark-lime.svg — frames stroked, not
+       filled, so the negative-space gaps between frames are preserved.
+       The lime-600 comet travels the FRONT frame's border via
+       stroke-dashoffset in code; here it is frozen at the top-right corner. -->
+  <defs>
+    <mask id="behind-mid-and-front">
+      <rect x="-70" y="-110" width="150" height="140" fill="#fff"/>
+      <rect x="-22" y="-79" width="48" height="78" rx="13" fill="#000"/>
+      <rect x="-22" y="-79" width="48" height="78" rx="13" fill="#000" transform="rotate(24)"/>
+    </mask>
+    <mask id="behind-front">
+      <rect x="-70" y="-110" width="150" height="140" fill="#fff"/>
+      <rect x="-22" y="-79" width="48" height="78" rx="13" fill="#000" transform="rotate(24)"/>
+    </mask>
+  </defs>
+  <g fill="none" stroke="#D9F99D" stroke-width="4">
+    <g mask="url(#behind-mid-and-front)">
+      <rect x="-19" y="-76" width="42" height="72" rx="10" transform="rotate(-24)"/>
+    </g>
+    <g mask="url(#behind-front)">
+      <rect x="-19" y="-76" width="42" height="72" rx="10"/>
+    </g>
+    <rect x="-19" y="-76" width="42" height="72" rx="10" transform="rotate(24)"/>
+  </g>
+</svg>

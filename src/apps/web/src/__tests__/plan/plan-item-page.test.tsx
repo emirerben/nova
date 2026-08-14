@@ -316,26 +316,25 @@ describe("PlanItemPage — masonry collage item UX", () => {
     return render(<PlanItemPage />);
   }
 
-  it("renders preset preview tiles instead of text-only cards", async () => {
+  it("renders STYLE tiles with real imagery instead of text-only cards", async () => {
     await act(async () => {
       renderMasonryItem({ montage_preset: "classic" });
     });
 
-    expect(
-      screen
-        .getByText("Classic")
-        .previousElementSibling?.querySelector('[class*="montage-classic-a"]'),
-    ).not.toBeNull();
-    expect(
-      screen
-        .getByText("Masonry collage")
-        .previousElementSibling?.querySelector('[class*="montage-masonry-pan"]'),
-    ).not.toBeNull();
-    expect(
-      screen
-        .getByText("Polaroid wall")
-        .previousElementSibling?.querySelector('[class*="pb-"]'),
-    ).not.toBeNull();
+    // Item has a filming guide, so the accordion starts collapsed on receipts.
+    // Reopen STYLE via its receipt's Change (second receipt), which shows the
+    // shelf with real placeholder footage per tile.
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "Change" })[1]);
+    });
+    const shelf = screen.getByRole("radiogroup", { name: "Style" });
+    for (const src of [
+      "/plan/style-tiles/classic.jpg",
+      "/plan/style-tiles/masonry.jpg",
+      "/plan/style-tiles/polaroid.jpg",
+    ]) {
+      expect(shelf.querySelector(`img[src="${src}"]`)).not.toBeNull();
+    }
   });
 
   it.each(["masonry", "polaroid_wall"])(
