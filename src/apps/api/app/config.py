@@ -1,8 +1,10 @@
 import json
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+GUIDED_STORY_RENDERER_READY = False
 
 
 class Settings(BaseSettings):
@@ -660,6 +662,30 @@ class Settings(BaseSettings):
         "LYRICS_OPTIONAL_ENABLED=false --app nova-video` + "
         "`fly machine restart <id>` for the API and worker — no deploy needed.",
     )
+
+    guided_edit_capability_enabled: bool = Field(
+        default=False,
+        description="Expose the Plan edit draft/edit/approve API. This is the backend "
+        "capability switch; keep it off until the review UI and strict story renderer "
+        "are deployed. Read by the API, so changing it requires an API restart.",
+    )
+    guided_edit_enforcement_enabled: bool = Field(
+        default=False,
+        description="Require a current approved guided-edit proposal before Generate. "
+        "Independent from capability so rollout can deploy endpoints first. Read by "
+        "the API and synchronous dispatch worker; changing it requires API and worker "
+        "restarts. Never enable before strict story rendering is live.",
+    )
+
+    @model_validator(mode="after")
+    def reject_guided_edit_before_strict_renderer(self) -> "Settings":
+        """Make the PR2 dark-launch sequence structurally impossible to skip."""
+
+        if self.guided_edit_enforcement_enabled and not self.guided_edit_capability_enabled:
+            raise ValueError("guided edit enforcement requires guided edit capability")
+        if self.guided_edit_enforcement_enabled and not GUIDED_STORY_RENDERER_READY:
+            raise ValueError("guided edit enforcement requires the strict story renderer")
+        return self
 
     # agent_run retention (days). Rows with job_id IS NOT NULL and
     # created_at older than this are deleted by the daily

@@ -1049,6 +1049,45 @@ export function generatePlanItem(itemId: string): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/generate`, { method: "POST" });
 }
 
+export function draftEditProposal(
+  itemId: string,
+  brief: {
+    direction: EditProposalDirection;
+    goal: string;
+    pace: EditProposalPace;
+    duration_s: number;
+  },
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/edit-proposal/draft`, {
+    method: "POST",
+    body: JSON.stringify(brief),
+  });
+}
+
+export function updateEditProposal(
+  itemId: string,
+  expectedProposalVersion: number,
+  snapshot: EditProposalSnapshot,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/edit-proposal`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      expected_proposal_version: expectedProposalVersion,
+      snapshot,
+    }),
+  });
+}
+
+export function approveEditProposal(
+  itemId: string,
+  expectedProposalVersion: number,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/edit-proposal/approve`, {
+    method: "POST",
+    body: JSON.stringify({ expected_proposal_version: expectedProposalVersion }),
+  });
+}
+
 /** Patch one shot in the filming guide (editable text, duration, clip_count). */
 export function updatePlanItemShot(
   itemId: string,
@@ -2498,6 +2537,81 @@ export interface ClipAssignment {
   user_note?: string;
   /** True = the footage-pool matcher placed this clip (provisional chip). */
   machine_matched?: boolean;
+  /** Stable server-owned identity used by guided-edit proposals. */
+  media_id?: string | null;
+}
+
+export type EditProposalStatus =
+  | "analyzing"
+  | "drafting"
+  | "draft"
+  | "approved"
+  | "stale"
+  | "failed";
+export type EditProposalDirection = "guided_story" | "fast_montage" | "text_explainer";
+export type EditProposalPace = "relaxed" | "balanced" | "fast";
+
+export interface EditProposalMediaRef {
+  lane: "clip" | "asset";
+  media_id: string;
+  gcs_path: string;
+  generation: string;
+  kind: "image" | "video";
+  source_filename: string;
+  duration_s?: number | null;
+  aspect?: number | null;
+  content_hash?: string | null;
+  user_context: string;
+  analysis: Record<string, unknown>;
+  /** Signed at response time; never persisted or sent as media identity. */
+  preview_url?: string | null;
+}
+
+export interface EditProposalBeat {
+  beat_id: string;
+  topic: string;
+  thought: string;
+  thought_source: "ai_draft" | "user";
+  media_ids: string[];
+  layout: "fullscreen" | "supporting_card";
+  duration_s: number;
+}
+
+export interface EditProposalSnapshot {
+  direction: EditProposalDirection;
+  goal: string;
+  pace: EditProposalPace;
+  duration_s: number;
+  title: string;
+  media: EditProposalMediaRef[];
+  story_beats: EditProposalBeat[];
+}
+
+export interface EditProposal {
+  schema_version: 1;
+  proposal_version: number;
+  generation_attempt_id: string;
+  media_digest: string | null;
+  status: EditProposalStatus;
+  brief: {
+    direction: EditProposalDirection;
+    goal: string;
+    pace: EditProposalPace;
+    duration_s: number;
+  };
+  draft: EditProposalSnapshot | null;
+  last_approved: {
+    proposal_version: number;
+    media_digest: string;
+    approved_at: string;
+    snapshot: EditProposalSnapshot;
+  } | null;
+  failure: { code: string; message: string; retryable: boolean } | null;
+}
+
+export interface PlanItem {
+  edit_proposal?: EditProposal | null;
+  guided_edit_available?: boolean;
 }
 
 // Conformance trust fields (echo-back evidence + dismissal/contest state).

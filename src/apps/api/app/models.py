@@ -935,6 +935,10 @@ class PlanItem(Base):
     # clip_gcs_paths is ALWAYS derived from this list (shots-first, pool after) via
     # set_item_clips in app/services/plan_clips.py — the single writer.
     clip_assignments: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # Reviewable guided-edit plan. One versioned envelope keeps the live draft
+    # and last approval together so media changes can mark it stale without
+    # erasing the creator's prior decision. NULL until Plan edit is used.
+    edit_proposal: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # ConformanceFeedbackAgent result at clip-attach time (best-effort, display-only).
     # {verdict, confidence, summary, mismatches[], suggestions[]}. NULL until
     # CONFORMANCE_FEEDBACK_ENABLED=True and the agent runs; never blocks Generate.

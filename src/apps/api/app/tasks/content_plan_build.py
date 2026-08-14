@@ -525,6 +525,10 @@ DispatchOutcome = Literal[
     "invalid_persona",
     "missing_row",
     "publish_failed",
+    "proposal_required",
+    "proposal_draft",
+    "proposal_stale",
+    "proposal_analyzing",
 ]
 
 
@@ -617,6 +621,7 @@ def _dispatch_item_render(
 
     `item.clip_gcs_paths` must already be set on the session before calling.
     """
+    from app.config import settings  # noqa: PLC0415
     from app.schemas.montage_preset import coerce_montage_preset  # noqa: PLC0415
     from app.services.generative_jobs import (  # noqa: PLC0415
         CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
@@ -627,6 +632,22 @@ def _dispatch_item_render(
         resolve_smart_captions_context_sync,
     )
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
+
+    approved_proposal: dict | None = None
+    if settings.guided_edit_enforcement_enabled:
+        from app.services.edit_proposals import (  # noqa: PLC0415
+            mark_edit_proposal_stale,
+            validate_approved_proposal_media_sync,
+        )
+
+        proposal_error, approved_proposal = validate_approved_proposal_media_sync(
+            session, item, owner_id=plan.user_id
+        )
+        if proposal_error:
+            if proposal_error == "proposal_stale":
+                mark_edit_proposal_stale(item)
+                session.commit()
+            return DispatchResult(proposal_error)
 
     content_plan_id = plan.id
     plan_item_id = item.id
@@ -705,6 +726,24 @@ def _dispatch_item_render(
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
         return DispatchResult("invalid_clips")
+    if approved_proposal is not None:
+        snapshot = dict(job.assembly_plan or {})
+        snapshot["guided_edit"] = {
+            "proposal_version": approved_proposal["proposal_version"],
+            "media_digest": approved_proposal["media_digest"],
+            "approved_proposal": approved_proposal["snapshot"],
+            "media_identities": [
+                {
+                    "lane": ref["lane"],
+                    "media_id": ref["media_id"],
+                    "gcs_path": ref["gcs_path"],
+                    "generation": ref["generation"],
+                    "kind": ref["kind"],
+                }
+                for ref in approved_proposal["snapshot"]["media"]
+            ],
+        }
+        job.assembly_plan = snapshot
     # Caller holds Plan -> Persona -> PlanItem locks and has revalidated this
     # exact epoch. Job is last in the global lock/write order.
     if _plan_epoch(plan) != ownership_epoch:

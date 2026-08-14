@@ -71,6 +71,7 @@ export default function AssetPool({
   onUseInEdit,
   attachBusy = false,
   onAssetContextUpdated,
+  onMutated,
 }: {
   itemId: string;
   /** gcs_paths already attached as clips — flips a promoted tile to "In edit ✓". */
@@ -84,8 +85,12 @@ export default function AssetPool({
   attachBusy?: boolean;
   /** Context edits clear pending AI suggestions; parent clears lifted local rows. */
   onAssetContextUpdated?: (asset: PoolAsset) => void;
+  /** Any successful pool mutation can stale an approved guided-edit proposal. */
+  onMutated?: () => void;
 }) {
-  const enabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true";
+  const guidedEditEnabled = process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
+  const enabled =
+    process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true" || guidedEditEnabled;
 
   const [assets, setAssets] = useState<PoolAsset[]>([]);
   const [serverReservations, setServerReservations] = useState<PoolReservationCapacity[]>([]);
@@ -126,6 +131,7 @@ export default function AssetPool({
     onRegistered: (asset) => {
       listEpoch.current += 1;
       setAssets((prev) => [...prev.filter((row) => row.id !== asset.id), asset]);
+      onMutated?.();
     },
     onUnavailable: () => setUnavailable(true),
     onDeduped: () => showNotice("Already in your pool"),
@@ -224,12 +230,13 @@ export default function AssetPool({
         listEpoch.current += 1;
         setAssets((prev) => prev.filter((a) => a.id !== asset.id));
         setServerOccupiedCount((current) => Math.max(0, current - 1));
+        onMutated?.();
       } catch (err) {
         if (isUnavailableError(err)) setUnavailable(true);
         else setUploadError(err instanceof Error ? err.message : "Couldn't remove that file");
       }
     },
-    [itemId],
+    [itemId, onMutated],
   );
 
   // Set lookup: the tile grid re-renders on every job-status poll tick, so keep
@@ -256,13 +263,14 @@ export default function AssetPool({
         listEpoch.current += 1;
         setAssets((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
         onAssetContextUpdated?.(updated);
+        onMutated?.();
         showNotice(userContext.trim() ? "Context saved — re-match visuals when ready" : "Context cleared");
       } catch (err) {
         if (isUnavailableError(err)) setUnavailable(true);
         else setUploadError(err instanceof Error ? err.message : "Couldn't save context");
       }
     },
-    [itemId, onAssetContextUpdated, showNotice],
+    [itemId, onAssetContextUpdated, onMutated, showNotice],
   );
 
   const handleRetryAnalysis = useCallback(
@@ -335,10 +343,14 @@ export default function AssetPool({
               }}
             >
               <p className="font-display text-[16px] font-medium text-[#0c0c0e]">
-                Drop the screenshots you mention in your script
+                {guidedEditEnabled
+                  ? "Add the photos and videos that belong in this story"
+                  : "Drop the screenshots you mention in your script"}
               </p>
               <p className="mt-1 text-[12px] text-[#71717a]">
-                Screenshots and screen recordings — Kria will place them on your video for you.
+                {guidedEditEnabled
+                  ? "Nova will understand these alongside your main clips before proposing the edit."
+                  : "Screenshots and screen recordings — Kria will place them on your video for you."}
               </p>
               <button
                 type="button"

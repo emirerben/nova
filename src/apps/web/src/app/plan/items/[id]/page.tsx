@@ -139,6 +139,7 @@ import {
   type PickerEditFormat,
 } from "@/lib/edit-format";
 import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
+import EditProposalCard from "./components/EditProposalCard";
 import { TikTokPublishDialog } from "@/components/TikTokPublishDialog";
 import { TikTokReleaseRail } from "@/components/TikTokReleaseRail";
 import {
@@ -190,6 +191,7 @@ const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRa
 // and the server's editor_capabilities are unconditionally present; this flag
 // only controls whether the entry point is shown.
 const TIKTOK_EDITOR_ENABLED = process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED === "true";
+const GUIDED_EDIT_ENABLED = process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
 
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 const TIKTOK_POLL_MAX_FAILURES = 3;
@@ -724,6 +726,14 @@ export default function PlanItemPage() {
         pending.size === 0 &&
         item.status !== "generating" &&
         !(item.current_job_id && item.status !== "ready" && item.status !== "failed");
+
+      if (
+        GUIDED_EDIT_ENABLED &&
+        item.guided_edit_available === true &&
+        (item.edit_proposal?.status === "analyzing" || item.edit_proposal?.status === "drafting")
+      ) {
+        return false;
+      }
 
       // Keep polling while a just-dispatched render hasn't minted its Job yet.
       // Uses hasRenderRegistered(), not a bare current_job_id check — on a
@@ -1546,7 +1556,8 @@ export default function PlanItemPage() {
   // voiceover; the footage's own audio drives the edit.
   const selfNarrationEnabled =
     process.env.NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED === "true";
-  // Button + hint from ONE decision so they can never disagree (plan-generate-gate).
+  // Existing upload/format rules come from one decision; guided-edit approval
+  // composes a second explicit gate immediately below.
   const gate = generateGate({
     generating,
     isGenerating,
@@ -1562,6 +1573,16 @@ export default function PlanItemPage() {
     isInstructed,
     shotsLeft,
   });
+  const guidedEditActive = GUIDED_EDIT_ENABLED && item.guided_edit_available === true;
+  const guidedEditApproved = item.edit_proposal?.status === "approved";
+  const guidedEditHint =
+    item.edit_proposal?.status === "stale"
+      ? "Your media changed — plan the edit again."
+      : item.edit_proposal?.status === "analyzing" || item.edit_proposal?.status === "drafting"
+        ? "Nova is still planning this edit."
+        : item.edit_proposal?.status === "draft"
+          ? "Review and approve the edit plan first."
+          : "Plan this edit before generating.";
   // "Your narrated render became a montage" explanation (no_speech etc.) —
   // persisted by the orchestrator, surfaced here so the swap is never silent.
   const fallbackBanner = narrationFallbackBanner(
@@ -2306,12 +2327,26 @@ export default function PlanItemPage() {
                 attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
                 onUseInEdit={promotePoolAsset}
                 attachBusy={uploading || uploaderBusy || hasActivePoolUploads}
+                onMutated={() => {
+                  forceFreshFetchRef.current = true;
+                  refetch();
+                }}
                 onAssetContextUpdated={(updated) => {
                   overlaySuggestions.setRows([]);
                   overlaySuggestions.setKeptIds(new Set());
                   setSuggestionPoolAssets((prev) =>
                     prev.map((asset) => (asset.id === updated.id ? updated : asset)),
                   );
+                }}
+              />
+            )}
+
+            {guidedEditActive && (
+              <EditProposalCard
+                item={item}
+                onChanged={() => {
+                  forceFreshFetchRef.current = true;
+                  refetch();
                 }}
               />
             )}
@@ -2349,11 +2384,14 @@ export default function PlanItemPage() {
               />
             )}
 
-            {/* Generate + hint caption — both from generateGate (plan-generate-gate)
-                so the disabled state and its explanation can never disagree. */}
+            {/* Generate + hint caption compose the shared upload/format gate with
+                the guided-edit approval gate. */}
             {!isGenerating && (
               <div className="mt-4 space-y-2">
-                <InkButton onClick={handleGenerate} disabled={gate.disabled}>
+                <InkButton
+                  onClick={handleGenerate}
+                  disabled={gate.disabled || (guidedEditActive && !guidedEditApproved)}
+                >
                   {generating
                     ? "Starting…"
                     : uploaderBusy
@@ -2363,7 +2401,9 @@ export default function PlanItemPage() {
                 {/* #71717a, not the faint #a1a1aa: this line now carries must-read
                     gating copy (why the button is off / what drives the edit) —
                     DESIGN.md §8 keeps faint ink decorative-only. */}
-                <p className="text-center text-sm text-[#71717a]">{gate.hint}</p>
+                <p className="text-center text-sm text-[#71717a]">
+                  {guidedEditActive && !guidedEditApproved ? guidedEditHint : gate.hint}
+                </p>
               </div>
             )}
 

@@ -94,9 +94,11 @@ function listRoute(assets: unknown[], maxAssets = 20) {
       : undefined;
 }
 
-async function renderPool() {
+async function renderPool(
+  props: Omit<React.ComponentProps<typeof AssetPool>, "itemId"> = {},
+) {
   await act(async () => {
-    render(<AssetPool itemId="item-1" />);
+    render(<AssetPool itemId="item-1" {...props} />);
   });
 }
 
@@ -144,6 +146,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
 
   it("upload-urls → direct GCS PUT → register; tile appears; NO proxy body cap", async () => {
     process.env[FLAG] = "true";
+    const onMutated = jest.fn();
     const registered = makeAsset({ subject: "settings toggle" });
     let putBody: unknown = null;
     let putHeaders: HeadersInit | undefined;
@@ -177,7 +180,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
       }
       return undefined;
     });
-    await renderPool();
+    await renderPool({ onMutated });
 
     const input = screen.getByLabelText(/add visuals to your pool/i);
     const file = new File(["png-bytes"], "shot.png", { type: "image/png" });
@@ -188,6 +191,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     await waitFor(() => {
       expect(screen.getByText("settings toggle")).toBeInTheDocument();
     });
+    expect(onMutated).toHaveBeenCalledTimes(1);
 
     // The bytes went straight to GCS via a direct PUT — never buffered through
     // the Next api-proxy multipart upload (that's the Vercel 4.5MB cap path).
@@ -1301,6 +1305,7 @@ describe("AssetPool — cap", () => {
 describe("AssetPool — delete", () => {
   it("calls DELETE and removes the tile", async () => {
     process.env[FLAG] = "true";
+    const onMutated = jest.fn();
     const asset = makeAsset({ id: "asset-del", source_filename: "gone.png", subject: "toggle" });
     let deleteCalled = false;
     mockFetch((method, url) => {
@@ -1313,7 +1318,7 @@ describe("AssetPool — delete", () => {
       }
       return undefined;
     });
-    await renderPool();
+    await renderPool({ onMutated });
     expect(screen.getByText("toggle")).toBeInTheDocument();
     expect(screen.getByLabelText(/add visuals to your pool/i)).toBeDisabled();
 
@@ -1322,6 +1327,7 @@ describe("AssetPool — delete", () => {
     });
 
     expect(deleteCalled).toBe(true);
+    expect(onMutated).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(screen.queryByText("toggle")).toBeNull();
     });
@@ -1744,6 +1750,7 @@ describe("AssetPool — brand micro-label (analysis v5)", () => {
 describe("AssetPool — creator context", () => {
   it("labels user context separately from Nova analysis and saves edits", async () => {
     process.env[FLAG] = "true";
+    const onMutated = jest.fn();
     const asset = makeAsset({
       id: "asset-context",
       status: "ready",
@@ -1771,7 +1778,13 @@ describe("AssetPool — creator context", () => {
       return undefined;
     });
     await act(async () => {
-      render(<AssetPool itemId="item-1" onAssetContextUpdated={onAssetContextUpdated} />);
+      render(
+        <AssetPool
+          itemId="item-1"
+          onAssetContextUpdated={onAssetContextUpdated}
+          onMutated={onMutated}
+        />,
+      );
     });
 
     expect(screen.getByText("You")).toBeInTheDocument();
@@ -1788,6 +1801,7 @@ describe("AssetPool — creator context", () => {
       expect(onAssetContextUpdated).toHaveBeenCalledWith(updated);
     });
     expect(patchBody).toEqual({ user_context: "Use this when I mention churn" });
+    expect(onMutated).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Use this when I mention churn")).toBeInTheDocument();
   });
 });

@@ -2093,6 +2093,40 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
         return check_overlay_format_matcher(output)
+    if agent_name == "nova.plan.edit_proposal":
+        known = {media.media_id for media in input.media}
+        used = {media_id for beat in output.story_beats for media_id in beat.media_ids}
+        failures: list[str] = []
+        if not used <= known:
+            failures.append("story references unknown media")
+        if len(used) < min(7, len(known)):
+            failures.append("story does not use enough distinct sources")
+        input_kinds = {media.kind for media in input.media}
+        used_kinds = {media.kind for media in input.media if media.media_id in used}
+        if len(input_kinds) > 1 and used_kinds != input_kinds:
+            failures.append("story does not use both photos and videos")
+        if input.direction in {"guided_story", "text_explainer"}:
+            if len(output.story_beats) < min(3, len(input.media)):
+                failures.append("guided story has fewer than three beats")
+            if any(not beat.thought.strip() for beat in output.story_beats):
+                failures.append("guided story has an empty thought")
+        for index, beat in enumerate(output.story_beats):
+            if len(beat.thought.split()) > 18:
+                failures.append(f"beat {index}: thought exceeds 18 words")
+        unsupported_personal_claims = (
+            "i ate",
+            "i tasted",
+            "we went",
+            "we stayed",
+            "my favorite",
+            "i felt",
+        )
+        if not any(media.user_context.strip() for media in input.media):
+            for index, beat in enumerate(output.story_beats):
+                lowered = beat.thought.lower()
+                if any(claim in lowered for claim in unsupported_personal_claims):
+                    failures.append(f"beat {index}: invents an unsupported personal experience")
+        return failures
     if agent_name == "nova.compose.overlay_placement":
         return check_overlay_placement(output, input)
     if agent_name == "nova.compose.intro_writer":

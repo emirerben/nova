@@ -589,6 +589,10 @@ clean-base contract.
 
 ## Local smoke test
 
+The review-before-render contract for media-aware plan items is documented in
+[`guided-edit.md`](guided-edit.md). Its approval snapshot is intentionally dark until the strict
+story assembler consumes it.
+
 ```bash
 make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 ```
