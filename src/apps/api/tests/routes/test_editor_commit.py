@@ -3476,6 +3476,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "visual_blocks": False,
         "motion_scenes": False,
         "motion_runtime_hash": None,
+        "evolving_type": False,
         "camera_effects": False,
         "background_music": False,
         "automatic_cut": False,
@@ -4047,6 +4048,39 @@ def _motion_text_scene() -> dict:
     }
 
 
+def _evolving_type_scene() -> dict:
+    return {
+        "id": "evolving-1",
+        "preset_id": "evolving_type",
+        "preset_version": 2,
+        "start_frame": 0,
+        "end_frame_exclusive": 159,
+        "palette": {"primary": "#000000", "accent": "#FFFFFF"},
+        "intensity": 0.72,
+        "params": {
+            "headline": "EVOLVE THE IDEA",
+            "subtitle": "Shape, split, and settle into focus",
+            "icon_count": 4,
+            "icon_style": "organic",
+            "text_stagger_ms": 45,
+            "icon_stagger_ms": 70,
+            "morph_amplitude": 0.65,
+            "density": "medium",
+            "layout": "compact",
+            "order": "forward",
+            "typography_scale": 1,
+            "backdrop_opacity": 0.7,
+            "split_icons": True,
+        },
+        "motion": {
+            "version": 2,
+            "speed": 1,
+            "easing": "ease-in-out-cubic",
+            "hold_frames": 30,
+        },
+    }
+
+
 @pytest.mark.parametrize(
     ("scene", "visual_assets", "asset_identities"),
     [
@@ -4265,19 +4299,24 @@ def test_editor_commit_accepts_legacy_hash_only_for_persisted_route_trace(monkey
     assert exc.value.status_code == 409
 
 
-def test_editor_commit_upgrades_previous_creator_runtime_hash(monkeypatch):
+@pytest.mark.parametrize(
+    "persisted_hash_name", ["MOTION_RUNTIME_V2_HASH", "MOTION_RUNTIME_V3_HASH"]
+)
+def test_editor_commit_upgrades_known_creator_runtime_hash(monkeypatch, persisted_hash_name):
     from app.config import settings
-    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH, PREVIOUS_MOTION_RUNTIME_HASH
+    from app.pipeline import motion_scene
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
 
     _arm(monkeypatch)
     monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    persisted_hash = getattr(motion_scene, persisted_hash_name)
     job = _job()
     gj.prepare_editor_commit(
         job,
         "song_text",
         _commit_req(
             motion_scenes=[_motion_media_scene()],
-            motion_runtime_hash=PREVIOUS_MOTION_RUNTIME_HASH,
+            motion_runtime_hash=persisted_hash,
         ),
         visual_assets=_visual_assets(("a1", "a2")),
     )
@@ -4417,19 +4456,141 @@ def test_editor_motion_capability_fails_closed_for_unsupported_persisted_runtime
     assert capabilities["motion_required_runtime_hash"] == "unsupported-runtime"
 
 
-def test_editor_motion_capability_accepts_previous_creator_runtime(monkeypatch):
+@pytest.mark.parametrize(
+    "persisted_hash_name", ["MOTION_RUNTIME_V2_HASH", "MOTION_RUNTIME_V3_HASH"]
+)
+def test_editor_motion_capability_accepts_known_creator_runtime(monkeypatch, persisted_hash_name):
     from app.config import settings
-    from app.pipeline.motion_scene import PREVIOUS_MOTION_RUNTIME_HASH
+    from app.pipeline import motion_scene
 
     _arm(monkeypatch)
     monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
     job = _job(
         motion_scenes=[_motion_media_scene()],
-        motion_runtime_hash=PREVIOUS_MOTION_RUNTIME_HASH,
+        motion_runtime_hash=getattr(motion_scene, persisted_hash_name),
     )
     capabilities = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
     assert capabilities["motion_scenes"] is True
     assert capabilities["motion_scenes_reason"] is None
+
+
+def test_editor_capabilities_gate_evolving_type_exposure_only(monkeypatch):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "evolving_type_enabled", False, raising=False)
+    job = _job(
+        motion_scenes=[_motion_scene()],
+        motion_runtime_hash=MOTION_RUNTIME_HASH,
+    )
+
+    capabilities = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert capabilities["motion_scenes"] is True
+    assert capabilities["evolving_type"] is False
+
+    monkeypatch.setattr(settings, "evolving_type_enabled", True, raising=False)
+    capabilities = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert capabilities["motion_scenes"] is True
+    assert capabilities["evolving_type"] is True
+
+
+def test_editor_commit_evolving_type_flag_off_preserves_but_cannot_add_or_edit(
+    monkeypatch,
+):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "evolving_type_enabled", False, raising=False)
+    evolving = {**_evolving_type_scene(), "end_frame_exclusive": 90}
+
+    candidate = _job()
+    before = copy.deepcopy(candidate.assembly_plan)
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            candidate,
+            "song_text",
+            _commit_req(
+                motion_scenes=[evolving],
+                motion_runtime_hash=MOTION_RUNTIME_HASH,
+            ),
+        )
+    assert exc.value.detail == {"code": "evolving_type_disabled"}
+    assert candidate.assembly_plan == before
+
+    existing_route = _motion_scene()
+    persisted = _job(
+        motion_scenes=[evolving, existing_route],
+        motion_runtime_hash=MOTION_RUNTIME_HASH,
+    )
+    changed_route = {**existing_route, "intensity": 0.4}
+    gj.prepare_editor_commit(
+        persisted,
+        "song_text",
+        _commit_req(
+            motion_scenes=[evolving, changed_route],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+        ),
+    )
+    assert persisted.assembly_plan["variants"][0]["motion_scenes"] == [
+        evolving,
+        changed_route,
+    ]
+
+    before = copy.deepcopy(persisted.assembly_plan)
+    edited_evolving = {
+        **evolving,
+        "params": {**evolving["params"], "headline": "CHANGED"},
+    }
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            persisted,
+            "song_text",
+            _commit_req(
+                motion_scenes=[edited_evolving, changed_route],
+                motion_runtime_hash=MOTION_RUNTIME_HASH,
+            ),
+        )
+    assert exc.value.detail == {"code": "evolving_type_disabled"}
+    assert persisted.assembly_plan == before
+
+
+def test_editor_commit_evolving_type_flag_on_accepts_new_and_flag_off_allows_removal(
+    monkeypatch,
+):
+    from app.config import settings
+    from app.pipeline.motion_scene import MOTION_RUNTIME_HASH
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "evolving_type_enabled", True, raising=False)
+    evolving = {**_evolving_type_scene(), "end_frame_exclusive": 90}
+    job = _job()
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[evolving],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+        ),
+    )
+    assert job.assembly_plan["variants"][0]["motion_scenes"] == [evolving]
+
+    monkeypatch.setattr(settings, "evolving_type_enabled", False, raising=False)
+    current = job.assembly_plan["variants"][0]
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            motion_scenes=[],
+            motion_runtime_hash=MOTION_RUNTIME_HASH,
+            base_generation=gj.variant_render_baseline(current),
+        ),
+    )
+    assert job.assembly_plan["variants"][0]["motion_scenes"] is None
 
 
 def test_editor_motion_capability_supports_lyrics_captions_and_landscape_with_clean_base(

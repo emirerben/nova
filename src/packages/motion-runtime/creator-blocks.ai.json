@@ -1,0 +1,818 @@
+{
+  "catalog_version": 2,
+  "presets": [
+    {
+      "preset_id": "kinetic_word",
+      "preset_version": 2,
+      "label": "Wild Type",
+      "kind": "text",
+      "default_duration_frames": 75,
+      "min_assets": 0,
+      "palette_defaults": {
+        "primary": "#0C0C0E",
+        "accent": "#C7FF3D"
+      },
+      "parameters": [
+        {
+          "key": "text",
+          "type": "string",
+          "required": true,
+          "min_length": 1,
+          "max_length": 32
+        }
+      ],
+      "controls": [
+        {
+          "key": "speed",
+          "type": "number",
+          "required": true,
+          "default": 1,
+          "minimum": 0.25,
+          "maximum": 4,
+          "step": 0.05,
+          "storage": "motion"
+        },
+        {
+          "key": "easing",
+          "type": "enum",
+          "required": true,
+          "default": "ease-in-out-cubic",
+          "values": [
+            "ease-out-cubic",
+            "ease-in-out-cubic"
+          ],
+          "storage": "motion"
+        },
+        {
+          "key": "intensity",
+          "type": "number",
+          "required": true,
+          "default": 0.72,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05,
+          "storage": "instance"
+        },
+        {
+          "key": "hold_frames",
+          "type": "number",
+          "required": true,
+          "default": 30,
+          "minimum": 0,
+          "maximum": 114,
+          "step": 1,
+          "integer": true,
+          "storage": "motion"
+        }
+      ],
+      "defaults": {
+        "text": "MAKE IT WILD"
+      },
+      "motion_defaults": {
+        "speed": 1,
+        "easing": "ease-in-out-cubic",
+        "intensity": 0.72,
+        "hold_frames": 30
+      }
+    },
+    {
+      "preset_id": "tag_stack",
+      "preset_version": 2,
+      "label": "Signal Stack",
+      "kind": "text",
+      "default_duration_frames": 120,
+      "min_assets": 0,
+      "palette_defaults": {
+        "primary": "#0C0C0E",
+        "accent": "#C7FF3D"
+      },
+      "parameters": [
+        {
+          "key": "labels",
+          "type": "string_list",
+          "required": true,
+          "min_items": 2,
+          "max_items": 6,
+          "max_length": 24
+        }
+      ],
+      "controls": [
+        {
+          "key": "speed",
+          "type": "number",
+          "required": true,
+          "default": 1,
+          "minimum": 0.5,
+          "maximum": 4,
+          "step": 0.05,
+          "storage": "motion"
+        },
+        {
+          "key": "easing",
+          "type": "enum",
+          "required": true,
+          "default": "ease-in-out-cubic",
+          "values": [
+            "ease-out-cubic",
+            "ease-in-out-cubic"
+          ],
+          "storage": "motion"
+        },
+        {
+          "key": "intensity",
+          "type": "number",
+          "required": true,
+          "default": 0.72,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05,
+          "storage": "instance"
+        },
+        {
+          "key": "hold_frames",
+          "type": "number",
+          "required": true,
+          "default": 30,
+          "minimum": 0,
+          "maximum": 78,
+          "step": 1,
+          "integer": true,
+          "storage": "motion"
+        }
+      ],
+      "defaults": {
+        "labels": [
+          "SPATIAL",
+          "GENERATIVE",
+          "IN MOTION"
+        ]
+      },
+      "motion_defaults": {
+        "speed": 1,
+        "easing": "ease-in-out-cubic",
+        "intensity": 0.72,
+        "hold_frames": 30
+      }
+    },
+    {
+      "preset_id": "flow_field",
+      "preset_version": 2,
+      "label": "Flow Field",
+      "kind": "text",
+      "default_duration_frames": 90,
+      "min_assets": 0,
+      "palette_defaults": {
+        "primary": "#0C0C0E",
+        "accent": "#C7FF3D"
+      },
+      "parameters": [
+        {
+          "key": "headline",
+          "type": "string",
+          "required": true,
+          "min_length": 1,
+          "max_length": 40
+        },
+        {
+          "key": "kicker",
+          "type": "string",
+          "required": false,
+          "min_length": 0,
+          "max_length": 24
+        }
+      ],
+      "controls": [
+        {
+          "key": "speed",
+          "type": "number",
+          "required": true,
+          "default": 1,
+          "minimum": 0.25,
+          "maximum": 4,
+          "step": 0.05,
+          "storage": "motion"
+        },
+        {
+          "key": "easing",
+          "type": "enum",
+          "required": true,
+          "default": "ease-in-out-cubic",
+          "values": [
+            "ease-out-cubic",
+            "ease-in-out-cubic"
+          ],
+          "storage": "motion"
+        },
+        {
+          "key": "intensity",
+          "type": "number",
+          "required": true,
+          "default": 0.72,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05,
+          "storage": "instance"
+        },
+        {
+          "key": "hold_frames",
+          "type": "number",
+          "required": true,
+          "default": 30,
+          "minimum": 0,
+          "maximum": 54,
+          "step": 1,
+          "integer": true,
+          "storage": "motion"
+        }
+      ],
+      "defaults": {
+        "headline": "FLOW FIELD",
+        "kicker": "MOVE DIFFERENT"
+      },
+      "motion_defaults": {
+        "speed": 1,
+        "easing": "ease-in-out-cubic",
+        "intensity": 0.72,
+        "hold_frames": 30
+      }
+    },
+    {
+      "preset_id": "cloud_break",
+      "preset_version": 2,
+      "label": "Cloud Break",
+      "kind": "text",
+      "default_duration_frames": 105,
+      "min_assets": 0,
+      "palette_defaults": {
+        "primary": "#0C0C0E",
+        "accent": "#C7FF3D"
+      },
+      "parameters": [
+        {
+          "key": "lines",
+          "type": "string_list",
+          "required": true,
+          "min_items": 2,
+          "max_items": 5,
+          "max_length": 28
+        }
+      ],
+      "controls": [
+        {
+          "key": "speed",
+          "type": "number",
+          "required": true,
+          "default": 1,
+          "minimum": 0.3,
+          "maximum": 4,
+          "step": 0.05,
+          "storage": "motion"
+        },
+        {
+          "key": "easing",
+          "type": "enum",
+          "required": true,
+          "default": "ease-in-out-cubic",
+          "values": [
+            "ease-out-cubic",
+            "ease-in-out-cubic"
+          ],
+          "storage": "motion"
+        },
+        {
+          "key": "intensity",
+          "type": "number",
+          "required": true,
+          "default": 0.72,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05,
+          "storage": "instance"
+        },
+        {
+          "key": "hold_frames",
+          "type": "number",
+          "required": true,
+          "default": 30,
+          "minimum": 0,
+          "maximum": 32,
+          "step": 1,
+          "integer": true,
+          "storage": "motion"
+        }
+      ],
+      "defaults": {
+        "lines": [
+          "DARK CLOUD",
+          "BREAKS OPEN"
+        ]
+      },
+      "motion_defaults": {
+        "speed": 1,
+        "easing": "ease-in-out-cubic",
+        "intensity": 0.72,
+        "hold_frames": 30
+      }
+    },
+    {
+      "preset_id": "offer_swap",
+      "preset_version": 2,
+      "label": "Offer Flip",
+      "kind": "text",
+      "default_duration_frames": 96,
+      "min_assets": 0,
+      "palette_defaults": {
+        "primary": "#0C0C0E",
+        "accent": "#C7FF3D"
+      },
+      "parameters": [
+        {
+          "key": "primary_text",
+          "type": "string",
+          "required": true,
+          "min_length": 1,
+          "max_length": 24
+        },
+        {
+          "key": "alternate_text",
+          "type": "string",
+          "required": true,
+          "min_length": 1,
+          "max_length": 24
+        }
+      ],
+      "controls": [
+        {
+          "key": "speed",
+          "type": "number",
+          "required": true,
+          "default": 1,
+          "minimum": 0.25,
+          "maximum": 4,
+          "step": 0.05,
+          "storage": "motion"
+        },
+        {
+          "key": "easing",
+          "type": "enum",
+          "required": true,
+          "default": "ease-in-out-cubic",
+          "values": [
+            "ease-out-cubic",
+            "ease-in-out-cubic"
+          ],
+          "storage": "motion"
+        },
+        {
+          "key": "intensity",
+          "type": "number",
+          "required": true,
+          "default": 0.72,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05,
+          "storage": "instance"
+        },
+        {
+          "key": "hold_frames",
+          "type": "number",
+          "required": true,
+          "default": 30,
+          "minimum": 0,
+          "maximum": 30,
+          "step": 1,
+          "integer": true,
+          "storage": "motion"
+        }
+      ],
+      "defaults": {
+        "primary_text": "50% OFF",
+        "alternate_text": "THIS WEEK"
+      },
+      "motion_defaults": {
+        "speed": 1,
+        "easing": "ease-in-out-cubic",
+        "intensity": 0.72,
+        "hold_frames": 30
+      }
+    },
+    {
+      "preset_id": "card_stack",
+      "preset_version": 2,
+      "label": "Card Stack",
+      "kind": "media",
+      "default_duration_frames": 120,
+      "min_assets": 2,
+      "palette_defaults": {
+        "primary": "#0C0C0E",
+        "accent": "#C7FF3D"
+      },
+      "parameters": [
+        {
+          "key": "assets",
+          "type": "asset_list",
+          "required": true,
+          "min_items": 2,
+          "max_items": 6
+        }
+      ],
+      "controls": [
+        {
+          "key": "speed",
+          "type": "number",
+          "required": true,
+          "default": 1,
+          "minimum": 0.5,
+          "maximum": 4,
+          "step": 0.05,
+          "storage": "motion"
+        },
+        {
+          "key": "easing",
+          "type": "enum",
+          "required": true,
+          "default": "ease-in-out-cubic",
+          "values": [
+            "ease-out-cubic",
+            "ease-in-out-cubic"
+          ],
+          "storage": "motion"
+        },
+        {
+          "key": "intensity",
+          "type": "number",
+          "required": true,
+          "default": 0.72,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05,
+          "storage": "instance"
+        },
+        {
+          "key": "hold_frames",
+          "type": "number",
+          "required": true,
+          "default": 30,
+          "minimum": 0,
+          "maximum": 78,
+          "step": 1,
+          "integer": true,
+          "storage": "motion"
+        }
+      ],
+      "defaults": {
+        "assets": []
+      },
+      "motion_defaults": {
+        "speed": 1,
+        "easing": "ease-in-out-cubic",
+        "intensity": 0.72,
+        "hold_frames": 30
+      }
+    },
+    {
+      "preset_id": "film_strip",
+      "preset_version": 2,
+      "label": "Film Strip",
+      "kind": "media",
+      "default_duration_frames": 120,
+      "min_assets": 3,
+      "palette_defaults": {
+        "primary": "#0C0C0E",
+        "accent": "#C7FF3D"
+      },
+      "parameters": [
+        {
+          "key": "assets",
+          "type": "asset_list",
+          "required": true,
+          "min_items": 3,
+          "max_items": 8
+        }
+      ],
+      "controls": [
+        {
+          "key": "speed",
+          "type": "number",
+          "required": true,
+          "default": 1,
+          "minimum": 0.5,
+          "maximum": 4,
+          "step": 0.05,
+          "storage": "motion"
+        },
+        {
+          "key": "easing",
+          "type": "enum",
+          "required": true,
+          "default": "ease-in-out-cubic",
+          "values": [
+            "ease-out-cubic",
+            "ease-in-out-cubic"
+          ],
+          "storage": "motion"
+        },
+        {
+          "key": "intensity",
+          "type": "number",
+          "required": true,
+          "default": 0.72,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05,
+          "storage": "instance"
+        },
+        {
+          "key": "hold_frames",
+          "type": "number",
+          "required": true,
+          "default": 30,
+          "minimum": 0,
+          "maximum": 78,
+          "step": 1,
+          "integer": true,
+          "storage": "motion"
+        }
+      ],
+      "defaults": {
+        "assets": []
+      },
+      "motion_defaults": {
+        "speed": 1,
+        "easing": "ease-in-out-cubic",
+        "intensity": 0.72,
+        "hold_frames": 30
+      }
+    },
+    {
+      "preset_id": "donut_text",
+      "preset_version": 2,
+      "label": "Donut Type",
+      "kind": "text",
+      "default_duration_frames": 120,
+      "min_assets": 0,
+      "palette_defaults": {
+        "primary": "#0C0C0E",
+        "accent": "#C7FF3D"
+      },
+      "parameters": [
+        {
+          "key": "left_text",
+          "type": "string",
+          "required": true,
+          "min_length": 1,
+          "max_length": 20
+        },
+        {
+          "key": "right_text",
+          "type": "string",
+          "required": true,
+          "min_length": 1,
+          "max_length": 20
+        }
+      ],
+      "controls": [
+        {
+          "key": "speed",
+          "type": "number",
+          "required": true,
+          "default": 1,
+          "minimum": 0.5,
+          "maximum": 4,
+          "step": 0.05,
+          "storage": "motion"
+        },
+        {
+          "key": "easing",
+          "type": "enum",
+          "required": true,
+          "default": "ease-in-out-cubic",
+          "values": [
+            "ease-out-cubic",
+            "ease-in-out-cubic"
+          ],
+          "storage": "motion"
+        },
+        {
+          "key": "intensity",
+          "type": "number",
+          "required": true,
+          "default": 0.72,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05,
+          "storage": "instance"
+        },
+        {
+          "key": "hold_frames",
+          "type": "number",
+          "required": true,
+          "default": 30,
+          "minimum": 0,
+          "maximum": 78,
+          "step": 1,
+          "integer": true,
+          "storage": "motion"
+        }
+      ],
+      "defaults": {
+        "left_text": "CREATE",
+        "right_text": "REPEAT"
+      },
+      "motion_defaults": {
+        "speed": 1,
+        "easing": "ease-in-out-cubic",
+        "intensity": 0.72,
+        "hold_frames": 30
+      }
+    },
+    {
+      "preset_id": "evolving_type",
+      "preset_version": 2,
+      "label": "Evolving Type",
+      "kind": "text",
+      "default_duration_frames": 159,
+      "min_assets": 0,
+      "palette_defaults": {
+        "primary": "#0C0C0E",
+        "accent": "#FFFFFF"
+      },
+      "parameters": [
+        {
+          "key": "headline",
+          "type": "string",
+          "required": true,
+          "min_length": 1,
+          "max_length": 48
+        },
+        {
+          "key": "subtitle",
+          "type": "string",
+          "required": true,
+          "min_length": 1,
+          "max_length": 72
+        },
+        {
+          "key": "icon_count",
+          "type": "number",
+          "required": true,
+          "minimum": 2,
+          "maximum": 5,
+          "step": 1,
+          "integer": true
+        },
+        {
+          "key": "icon_style",
+          "type": "enum",
+          "required": true,
+          "values": [
+            "organic",
+            "geometric",
+            "botanical"
+          ]
+        },
+        {
+          "key": "text_stagger_ms",
+          "type": "number",
+          "required": true,
+          "minimum": 0,
+          "maximum": 45,
+          "step": 5,
+          "integer": true
+        },
+        {
+          "key": "icon_stagger_ms",
+          "type": "number",
+          "required": true,
+          "minimum": 0,
+          "maximum": 100,
+          "step": 5,
+          "integer": true
+        },
+        {
+          "key": "morph_amplitude",
+          "type": "number",
+          "required": true,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05
+        },
+        {
+          "key": "density",
+          "type": "enum",
+          "required": true,
+          "values": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        {
+          "key": "layout",
+          "type": "enum",
+          "required": true,
+          "values": [
+            "compact",
+            "spread"
+          ]
+        },
+        {
+          "key": "order",
+          "type": "enum",
+          "required": true,
+          "values": [
+            "forward",
+            "reverse",
+            "center-out"
+          ]
+        },
+        {
+          "key": "typography_scale",
+          "type": "number",
+          "required": true,
+          "minimum": 0.5,
+          "maximum": 2,
+          "step": 0.05
+        },
+        {
+          "key": "backdrop_opacity",
+          "type": "number",
+          "required": true,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05
+        },
+        {
+          "key": "split_icons",
+          "type": "boolean",
+          "required": true
+        }
+      ],
+      "controls": [
+        {
+          "key": "speed",
+          "type": "number",
+          "required": true,
+          "default": 1,
+          "minimum": 0.75,
+          "maximum": 4,
+          "step": 0.05,
+          "storage": "motion"
+        },
+        {
+          "key": "easing",
+          "type": "enum",
+          "required": true,
+          "default": "ease-in-out-cubic",
+          "values": [
+            "ease-out-cubic",
+            "ease-in-out-cubic"
+          ],
+          "storage": "motion"
+        },
+        {
+          "key": "intensity",
+          "type": "number",
+          "required": true,
+          "default": 0.72,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05,
+          "storage": "instance"
+        },
+        {
+          "key": "hold_frames",
+          "type": "number",
+          "required": true,
+          "default": 30,
+          "minimum": 0,
+          "maximum": 74,
+          "step": 1,
+          "integer": true,
+          "storage": "motion"
+        }
+      ],
+      "defaults": {
+        "headline": "EVOLVE THE IDEA",
+        "subtitle": "Shape, split, and settle into focus",
+        "icon_count": 4,
+        "icon_style": "organic",
+        "text_stagger_ms": 45,
+        "icon_stagger_ms": 70,
+        "morph_amplitude": 0.65,
+        "density": "medium",
+        "layout": "compact",
+        "order": "forward",
+        "typography_scale": 1,
+        "backdrop_opacity": 0.7,
+        "split_icons": true
+      },
+      "motion_defaults": {
+        "speed": 1,
+        "easing": "ease-in-out-cubic",
+        "intensity": 0.72,
+        "hold_frames": 30
+      }
+    }
+  ]
+}

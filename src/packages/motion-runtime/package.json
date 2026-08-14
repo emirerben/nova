@@ -7,7 +7,12 @@
     ".": "./src/index.ts",
     "./canvaskit": "./src/canvaskit.ts",
     "./schema": "./motion-scene.schema.json",
-    "./catalog": "./creator-blocks.catalog.json"
+    "./catalog": "./creator-blocks.catalog.json",
+    "./ai-catalog": "./src/ai-catalog.ts"
+  },
+  "scripts": {
+    "generate:contract": "node scripts/generate-contract.mjs",
+    "check:contract": "node scripts/generate-contract.mjs --check"
   },
   "peerDependencies": {
     "canvaskit-wasm": "0.40.0"

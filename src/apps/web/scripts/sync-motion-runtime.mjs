@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,19 @@ const expected = "2abfa191f92f0aee6e0c8e3ff9612294a7721a40761216867c1c059e7993c9
 const expectedJavascript =
   "b2556106b80c5ff3041f3888d55e602636e1812c98cf77a72e7c328c8036c838";
 const checkOnly = process.argv.includes("--check");
+
+const contractGenerator = resolve(
+  here,
+  "../../../packages/motion-runtime/scripts/generate-contract.mjs",
+);
+const contractCheck = spawnSync(process.execPath, [contractGenerator, "--check"], {
+  encoding: "utf8",
+});
+if (contractCheck.status !== 0) {
+  throw new Error(
+    `Motion contract generation drift:\n${contractCheck.stderr || contractCheck.stdout}`,
+  );
+}
 
 const bytes = await readFile(source);
 const actual = createHash("sha256").update(bytes).digest("hex");

@@ -4989,9 +4989,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     caption_reason = CAPTION_TAB_COPY if archetype == "subtitled" else None
     from app.config import settings  # noqa: PLC0415
     from app.pipeline.motion_scene import (  # noqa: PLC0415
+        COMPATIBLE_MOTION_RUNTIME_HASHES,
         LEGACY_MOTION_RUNTIME_HASH,
         MOTION_RUNTIME_HASH,
-        PREVIOUS_MOTION_RUNTIME_HASH,
     )
 
     # Plan 010: caption archetypes get the manual SFX/overlay lanes — the caption
@@ -5027,10 +5027,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         legacy_route_only = persisted_motion_hash == LEGACY_MOTION_RUNTIME_HASH and all(
             scene.get("preset_id") == "route_trace" for scene in persisted_motion_scenes
         )
-        compatible_hash = persisted_motion_hash in {
-            MOTION_RUNTIME_HASH,
-            PREVIOUS_MOTION_RUNTIME_HASH,
-        }
+        compatible_hash = persisted_motion_hash in COMPATIBLE_MOTION_RUNTIME_HASHES
         if not compatible_hash and not legacy_route_only:
             motion_scenes_reason = "motion_runtime_mismatch"
     # AI overlay suggestions (plans 005-009): mirrors the suggest-overlays route's
@@ -5100,6 +5097,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "visual_blocks": visual_blocks_reason is None,
         "motion_scenes": motion_scenes_reason is None,
         "motion_runtime_hash": MOTION_RUNTIME_HASH if settings.motion_scenes_enabled else None,
+        "evolving_type": settings.evolving_type_enabled,
         **(
             {"motion_required_runtime_hash": persisted_motion_hash}
             if persisted_motion_hash is not None
@@ -6356,10 +6354,10 @@ def prepare_editor_commit(
     if payload.motion_scenes is not None:
         from app.config import settings as _settings_motion  # noqa: PLC0415
         from app.pipeline.motion_scene import (  # noqa: PLC0415
+            COMPATIBLE_MOTION_RUNTIME_HASHES,
             LEGACY_MOTION_RUNTIME_HASH,
             MOTION_FPS,
             MOTION_RUNTIME_HASH,
-            PREVIOUS_MOTION_RUNTIME_HASH,
             validate_motion_instances,
         )
 
@@ -6368,10 +6366,7 @@ def prepare_editor_commit(
         legacy_route_only = payload.motion_runtime_hash == LEGACY_MOTION_RUNTIME_HASH and all(
             scene.get("preset_id") == "route_trace" for scene in payload.motion_scenes
         )
-        compatible_hash = payload.motion_runtime_hash in {
-            MOTION_RUNTIME_HASH,
-            PREVIOUS_MOTION_RUNTIME_HASH,
-        }
+        compatible_hash = payload.motion_runtime_hash in COMPATIBLE_MOTION_RUNTIME_HASHES
         if not compatible_hash and not legacy_route_only:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -6407,6 +6402,21 @@ def prepare_editor_commit(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=str(exc),
                 ) from exc
+            if not _settings_motion.evolving_type_enabled:
+                persisted_by_id = {
+                    str(scene.get("id")): scene
+                    for scene in variant.get("motion_scenes") or []
+                    if isinstance(scene, dict) and scene.get("preset_id") == "evolving_type"
+                }
+                for scene in validated_motion_scenes:
+                    if scene.get("preset_id") != "evolving_type":
+                        continue
+                    persisted = persisted_by_id.get(str(scene.get("id")))
+                    if persisted != scene:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={"code": "evolving_type_disabled"},
+                        )
             assets = visual_assets or {}
             for scene in validated_motion_scenes:
                 if scene.get("preset_id") not in {"card_stack", "film_strip"}:

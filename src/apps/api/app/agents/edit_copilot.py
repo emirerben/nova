@@ -213,7 +213,17 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "set_visual_fade": frozenset({"visual_block_index", "transition_in", "transition_out"}),
     "apply_speech_cut_candidate": frozenset({"candidate_id"}),
     "add_motion_block": frozenset(
-        {"preset_id", "start_s", "end_s", "params", "palette", "intensity"}
+        {
+            "preset_id",
+            "start_s",
+            "end_s",
+            "params",
+            "palette",
+            "intensity",
+            "speed",
+            "easing",
+            "hold_frames",
+        }
     ),
     "patch_motion_block": frozenset({"motion_id", "patch"}),
     "remove_motion_block": frozenset({"motion_id"}),
@@ -369,7 +379,7 @@ _VALID_CAPTION_STYLE = {"sentence", "word"}
 _VALID_OPEN_TOOLS = {"text", "visuals", "sounds", "overlays", "styles"}
 
 
-def _load_motion_preset_params() -> dict[str, dict[str, tuple[str, int, int, int]]]:
+def _load_motion_preset_params() -> dict[str, dict[str, dict[str, Any]]]:
     """Project the immutable Creator Block catalog into the Copilot contract."""
     source = Path(__file__).resolve()
     candidates = (
@@ -383,11 +393,11 @@ def _load_motion_preset_params() -> dict[str, dict[str, tuple[str, int, int, int
     if catalog_path is None:
         raise RuntimeError("Creator Block catalog is missing")
     catalog = json.loads(catalog_path.read_text())
-    rules: dict[str, dict[str, tuple[str, int, int, int]]] = {}
+    rules: dict[str, dict[str, dict[str, Any]]] = {}
     for preset in catalog["presets"]:
         if not preset.get("ai_exposed"):
             continue
-        preset_rules: dict[str, tuple[str, int, int, int]] = {}
+        preset_rules: dict[str, dict[str, Any]] = {}
         for parameter in preset["parameters"]:
             parameter_type = parameter["type"]
             key = "asset_ids" if parameter_type == "asset_list" else parameter["key"]
@@ -395,21 +405,48 @@ def _load_motion_preset_params() -> dict[str, dict[str, tuple[str, int, int, int
                 "string": "text" if parameter["required"] else "optional_text",
                 "string_list": "list",
                 "asset_list": "assets",
+                "number": "number",
+                "enum": "enum",
+                "boolean": "boolean",
             }[parameter_type]
-            if parameter_type == "string":
-                minimum = parameter.get("min_length", 0)
-                maximum = parameter["max_length"]
-                item_maximum = 0
-            else:
-                minimum = parameter["min_items"]
-                maximum = parameter["max_items"]
-                item_maximum = parameter.get("max_length", 0)
-            preset_rules[key] = (kind, minimum, maximum, item_maximum)
+            preset_rules[key] = {**parameter, "kind": kind}
         rules[preset["preset_id"]] = preset_rules
     return rules
 
 
 _MOTION_PRESET_PARAMS = _load_motion_preset_params()
+
+
+def _load_motion_preset_controls() -> dict[str, dict[str, dict[str, Any]]]:
+    """Resolve per-preset control bounds from the same generated catalog."""
+    source = Path(__file__).resolve()
+    candidates = (
+        Path("/app/motion-runtime/creator-blocks.catalog.json"),
+        *(
+            parent / "packages" / "motion-runtime" / "creator-blocks.catalog.json"
+            for parent in source.parents
+        ),
+    )
+    catalog_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if catalog_path is None:
+        raise RuntimeError("Creator Block catalog is missing")
+    catalog = json.loads(catalog_path.read_text())
+    definitions = {str(control["key"]): dict(control) for control in catalog["control_definitions"]}
+    resolved: dict[str, dict[str, dict[str, Any]]] = {}
+    for preset in catalog["presets"]:
+        controls: dict[str, dict[str, Any]] = {}
+        for key in preset.get("supported_controls", []):
+            if key not in definitions:
+                raise RuntimeError(f"Creator Block control {key!r} is missing")
+            controls[key] = {
+                **definitions[key],
+                **preset.get("control_overrides", {}).get(key, {}),
+            }
+        resolved[str(preset["preset_id"])] = controls
+    return resolved
+
+
+_MOTION_PRESET_CONTROLS = _load_motion_preset_controls()
 _OVERLAY_PATCH_FIELDS = frozenset(
     {
         "start_s",
@@ -710,20 +747,30 @@ def _format_snapshot(snapshot: dict) -> str:
         blocks = motion.get("blocks") if isinstance(motion.get("blocks"), list) else []
         assets = motion.get("asset_pool") if isinstance(motion.get("asset_pool"), list) else []
         lines.append("\nCREATOR BLOCK CATALOG (immutable IDs; copy preset_id exactly):")
-        for entry in catalog[:8]:
+        for entry in catalog[:12]:
             if not isinstance(entry, dict):
                 continue
             default_params = _clean_prompt_data(
                 json.dumps(entry.get("defaults") or {}, ensure_ascii=False),
                 max_chars=240,
             )
+            controls = _clean_prompt_data(
+                json.dumps(entry.get("controls") or [], ensure_ascii=False),
+                max_chars=500,
+            )
+            parameters = _clean_prompt_data(
+                json.dumps(entry.get("parameters") or [], ensure_ascii=False),
+                max_chars=700,
+            )
             lines.append(
                 f"- preset_id={_clean_prompt_data(entry.get('preset_id'), max_chars=40)!r} "
+                f"preset_version={_clean_prompt_data(entry.get('preset_version'), max_chars=4)!r} "
                 f"label={_clean_prompt_data(entry.get('label'), max_chars=40)!r} "
                 f"kind={_clean_prompt_data(entry.get('kind'), max_chars=20)!r} "
                 f"default_duration_s={_fmt_round3(_first_number(entry, ('default_duration_s',)))} "
                 f"min_assets={_clean_prompt_data(entry.get('min_assets'), max_chars=8)!r} "
-                f"default_params={default_params!r}"
+                f"default_params={default_params!r} controls={controls!r} "
+                f"parameters={parameters!r}"
             )
         lines.append("EXISTING CREATOR BLOCKS (copy motion_id exactly for patch/remove):")
         if not blocks:
@@ -731,6 +778,9 @@ def _format_snapshot(snapshot: dict) -> str:
         for block in blocks[:8]:
             if not isinstance(block, dict):
                 continue
+            motion_config = block.get("motion")
+            if not isinstance(motion_config, dict):
+                motion_config = {}
             params = _clean_prompt_data(
                 json.dumps(block.get("params") or {}, ensure_ascii=False),
                 max_chars=300,
@@ -738,9 +788,14 @@ def _format_snapshot(snapshot: dict) -> str:
             lines.append(
                 f"- motion_id={_clean_prompt_data(block.get('id'), max_chars=80)!r} "
                 f"preset_id={_clean_prompt_data(block.get('preset_id'), max_chars=40)!r} "
+                f"preset_version={_clean_prompt_data(block.get('preset_version'), max_chars=4)!r} "
                 f"label={_clean_prompt_data(block.get('label'), max_chars=40)!r} "
                 f"timing={_fmt_round3(_first_number(block, ('start_s',)))}-"
                 f"{_fmt_round3(_first_number(block, ('end_s',)))}s "
+                f"speed={_fmt_num(_first_number(motion_config, ('speed',)))} "
+                f"easing={_clean_prompt_data(motion_config.get('easing'), max_chars=30)!r} "
+                f"hold_frames={_fmt_num(_first_number(motion_config, ('hold_frames',)))} "
+                f"intensity={_fmt_num(_first_number(block, ('intensity',)))} "
                 f"params={params!r}"
             )
         lines.append(
@@ -1890,20 +1945,33 @@ def _coerce_payload(
             if not isinstance(patch, dict) or not patch:
                 state.invalid_value()
                 return None
-            allowed_patch = {"start_s", "end_s", "palette", "intensity", "params"}
+            allowed_patch = {
+                "start_s",
+                "end_s",
+                "palette",
+                "intensity",
+                "params",
+                "speed",
+                "easing",
+                "hold_frames",
+            }
             if any(key not in allowed_patch for key in patch):
                 state.invalid_value()
                 return None
             clean_patch: dict[str, Any] = {}
-            for key in ("start_s", "end_s", "intensity"):
+            for key in ("start_s", "end_s"):
                 if key in patch:
                     value = _as_float(patch[key])
                     if value is None:
                         state.invalid_value()
                         return None
-                    clean_patch[key] = (
-                        max(0.0, min(1.0, value)) if key == "intensity" else max(0.0, value)
-                    )
+                    clean_patch[key] = max(0.0, value)
+            if "intensity" in patch:
+                intensity = _clean_motion_control(str(preset_id), "intensity", patch["intensity"])
+                if intensity is None:
+                    state.invalid_value()
+                    return None
+                clean_patch["intensity"] = intensity
             if "palette" in patch:
                 palette = _clean_motion_palette(patch["palette"])
                 if palette is None:
@@ -1918,6 +1986,14 @@ def _coerce_payload(
                     state.invalid_value()
                     return None
                 clean_patch["params"] = params
+            for key in ("speed", "easing", "hold_frames"):
+                if key not in patch:
+                    continue
+                control = _clean_motion_control(str(preset_id), key, patch[key])
+                if control is None:
+                    state.invalid_value()
+                    return None
+                clean_patch[key] = control
             start_s = clean_patch.get("start_s", _as_float(current.get("start_s")))
             end_s = clean_patch.get("end_s", _as_float(current.get("end_s")))
             if not _valid_motion_timing(start_s, end_s, snapshot):
@@ -1942,6 +2018,20 @@ def _coerce_payload(
                 out["palette"] = palette
             if "intensity" not in out:
                 out["intensity"] = 0.72
+            else:
+                intensity = _clean_motion_control(str(preset_id), "intensity", out["intensity"])
+                if intensity is None:
+                    state.invalid_value()
+                    return None
+                out["intensity"] = intensity
+            for key in ("speed", "easing", "hold_frames"):
+                if key not in out:
+                    continue
+                control = _clean_motion_control(str(preset_id), key, out[key])
+                if control is None:
+                    state.invalid_value()
+                    return None
+                out[key] = control
         if not _motion_active_union_valid(name, out, blocks):
             state.invalid_value()
             return None
@@ -2048,6 +2138,27 @@ def _clean_motion_palette(value: object) -> dict[str, str] | None:
     return {"primary": primary.upper(), "accent": accent.upper()}
 
 
+def _clean_motion_control(preset_id: str, key: str, value: object) -> Any | None:
+    rule = _MOTION_PRESET_CONTROLS.get(preset_id, {}).get(key)
+    if rule is None:
+        return None
+    if rule["type"] == "enum":
+        return value if isinstance(value, str) and value in rule.get("values", []) else None
+    if rule["type"] != "number":
+        return None
+    number = _as_float(value)
+    minimum = float(rule["minimum"])
+    maximum = float(rule["maximum"])
+    if number is None or not minimum <= number <= maximum:
+        return None
+    if rule.get("integer") and not number.is_integer():
+        return None
+    step = float(rule.get("step", 0))
+    if step and abs(round((number - minimum) / step) * step + minimum - number) > 1e-8:
+        return None
+    return int(number) if rule.get("integer") else number
+
+
 def _clean_motion_params(
     preset_id: str,
     value: object,
@@ -2058,7 +2169,7 @@ def _clean_motion_params(
     rules = _MOTION_PRESET_PARAMS.get(preset_id)
     if rules is None or not isinstance(value, dict) or any(key not in rules for key in value):
         return None
-    required = {key for key, (kind, _, _, _) in rules.items() if kind != "optional_text"}
+    required = {key for key, rule in rules.items() if rule.get("required")}
     if not partial and not required.issubset(value):
         return None
     if partial and not value:
@@ -2070,13 +2181,19 @@ def _clean_motion_params(
     }
     cleaned: dict[str, Any] = {}
     for key, raw in value.items():
-        kind, minimum, maximum, item_maximum = rules[key]
+        rule = rules[key]
+        kind = rule["kind"]
         if kind in {"text", "optional_text"}:
+            minimum = int(rule.get("min_length", 0))
+            maximum = int(rule["max_length"])
             text = _clean_user_text(raw, max_chars=maximum)
             if text is None or len(text) < minimum:
                 return None
             cleaned[key] = text
         elif kind == "list":
+            minimum = int(rule["min_items"])
+            maximum = int(rule["max_items"])
+            item_maximum = int(rule.get("max_length", 0))
             if not isinstance(raw, list) or not minimum <= len(raw) <= maximum:
                 return None
             items = [_clean_user_text(item, max_chars=item_maximum) for item in raw]
@@ -2084,6 +2201,8 @@ def _clean_motion_params(
                 return None
             cleaned[key] = items
         elif kind == "assets":
+            minimum = int(rule["min_items"])
+            maximum = int(rule["max_items"])
             if not isinstance(raw, list) or not minimum <= len(raw) <= maximum:
                 return None
             if any(not isinstance(item, str) or item not in eligible_assets for item in raw):
@@ -2091,6 +2210,26 @@ def _clean_motion_params(
             if len(set(raw)) != len(raw):
                 return None
             cleaned[key] = list(raw)
+        elif kind == "number":
+            number = _as_float(raw)
+            minimum = float(rule["minimum"])
+            maximum = float(rule["maximum"])
+            if number is None or not minimum <= number <= maximum:
+                return None
+            if rule.get("integer") and not number.is_integer():
+                return None
+            step = float(rule.get("step", 0))
+            if step and abs(round((number - minimum) / step) * step + minimum - number) > 1e-8:
+                return None
+            cleaned[key] = int(number) if rule.get("integer") else number
+        elif kind == "enum":
+            if not isinstance(raw, str) or raw not in rule.get("values", []):
+                return None
+            cleaned[key] = raw
+        elif kind == "boolean":
+            if not isinstance(raw, bool):
+                return None
+            cleaned[key] = raw
     return cleaned
 
 
