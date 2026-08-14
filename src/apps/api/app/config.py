@@ -822,6 +822,9 @@ class Settings(BaseSettings):
     # Upload-time image/video metadata analysis is isolated from renders in Fly.
     # Roll back by setting POOL_ASSET_ANALYSIS_QUEUE=celery.
     pool_asset_analysis_queue: str = "celery"
+    # Keep response compatibility during the backend-first rollout. Set true
+    # only after both queued-aware upload surfaces are deployed.
+    pool_asset_queued_status_enabled: bool = False
 
     # Zero-click auto-apply (plan 007, decision D2-B + G3-A): after a plan-item
     # generate render finalizes, matched visuals are burned in WITHOUT review on

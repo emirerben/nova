@@ -1009,11 +1009,11 @@ class PlanItemAsset(Base):
 
     The pool feeds the overlay auto-placement matcher: creators drop screenshots /
     screen recordings here; each row carries the upload location plus (later, PR1a)
-    the persisted analysis output. Rows live under the PERSISTENT
-    `users/{user_id}/plan/{plan_item_id}/pool/` GCS prefix — never a 24h-swept path,
-    because suggestions must never reference sweepable objects.
+    the persisted analysis output. Preparing rows stage under lifecycle-covered
+    `dev-user/`; registration promotes one verified generation into the persistent
+    `users/{user_id}/plan/{plan_item_id}/pool/` prefix before analysis can claim it.
 
-    status lifecycle: preparing → queued → analyzing → ready | failed. The
+    status lifecycle: preparing → promoting → queued → analyzing → ready | failed. The
     maintenance-only `cleanup_pending` claim fences expired reservation deletion.
     (`uploaded` remains a legacy/reconciliation state). `content_hash` powers
     upload dedupe — identical bytes reuse the existing row instead of re-analyzing.
@@ -1068,7 +1068,8 @@ class PlanItemAsset(Base):
     # from Nova's generated analysis so matching can prefer user intent without
     # rewriting AI metadata.
     user_context: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # preparing | cleanup_pending | uploaded (legacy) | queued | analyzing | ready | failed
+    # preparing | promoting | cleanup_pending | uploaded (legacy) | queued |
+    # analyzing | ready | failed
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="uploaded")
     # Stable, user-safe failure information. Raw provider exceptions stay in
     # structured logs and are never serialized to creators.

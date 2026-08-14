@@ -322,7 +322,7 @@ def test_attach_clips_rejects_foreign_prefix(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
-def _db_for_pool_attach(item, plan, *, asset_kind):
+def _db_for_pool_attach(item, plan, *, asset_kind, asset_status="ready"):
     """_db_for + a second execute() result for the pool-promotion kind check.
     asset_kind None → no PlanItemAsset row found (deleted/foreign object)."""
     db = _db_for(item, plan)
@@ -335,6 +335,7 @@ def _db_for_pool_attach(item, plan, *, asset_kind):
             MagicMock(
                 gcs_path=f"users/{plan.user_id}/plan/{item.id}/pool/asset.bin",
                 kind=asset_kind,
+                status=asset_status,
             )
         ]
     asset_result.scalars = MagicMock(return_value=rows)
@@ -405,6 +406,27 @@ def test_attach_clips_rejects_pool_path_without_asset_row(client: TestClient) ->
         f"/plan-items/{item.id}/clips",
         json={"clip_gcs_paths": [pool_path]},
     )
+    assert resp.status_code == 422
+
+
+def test_attach_clips_rejects_pool_asset_being_deleted(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    pool_path = f"users/{user.id}/plan/{item.id}/pool/asset.bin"
+    db = _db_for_pool_attach(
+        item,
+        plan,
+        asset_kind="video",
+        asset_status="cleanup_pending",
+    )
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post(
+        f"/plan-items/{item.id}/clips",
+        json={"clip_gcs_paths": [pool_path]},
+    )
+
     assert resp.status_code == 422
 
 

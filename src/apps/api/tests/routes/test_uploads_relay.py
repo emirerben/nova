@@ -273,3 +273,4 @@ def test_relay_surfaces_storage_rejection(client: TestClient) -> None:
             data={"signed_url": signed, "content_type": "video/mp4"},
         )
     assert resp.status_code == 502
+    assert async_client.put.await_args.kwargs["headers"]["Content-Length"] == str(len(b"bytes"))

@@ -43,7 +43,14 @@ def _no_real_broker_publish():
             ),
         ),
         patch("app.routes.plan_items.storage.signed_put_url", return_value="https://signed"),
+        patch("app.routes.plan_items.storage.signed_put_url_legacy", return_value="https://signed"),
         patch("app.routes.plan_items.storage.delete_object_generation"),
+        patch(
+            "app.routes.plan_items.storage.delete_object_generation_best_effort",
+            return_value=True,
+        ),
+        patch("app.routes.plan_items.storage.delete_object_best_effort", return_value=True),
+        patch(f"{SETTINGS}.pool_asset_queued_status_enabled", True),
     ):
         yield m
 
@@ -229,7 +236,88 @@ def test_upload_urls_happy_path(client: TestClient):
     assert resp.status_code == 200
     body = resp.json()
     assert body["urls"][0]["upload_url"] == "https://signed"
-    assert body["urls"][0]["gcs_path"].startswith(f"users/{user.id}/plan/{item.id}/pool/")
+    assert body["urls"][0]["gcs_path"].startswith(
+        f"dev-user/{user.id}/plan-pool-reservations/{item.id}/"
+    )
+
+
+def test_upload_urls_preserves_deployed_content_type_only_client(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalar_result(0),
+        ],
+        plan,
+    )
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_put_url") as strict,
+        patch(
+            "app.routes.plan_items.storage.signed_put_url_legacy",
+            return_value="https://legacy-signed",
+        ) as legacy,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets/upload-urls",
+            json={
+                "files": [
+                    {"filename": "f.png", "content_type": "image/png", "file_size_bytes": 100}
+                ]
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["urls"][0]["upload_headers"] == {}
+    assert resp.json()["urls"][0]["gcs_path"].startswith("dev-user/")
+    legacy.assert_called_once()
+    strict.assert_not_called()
+
+
+def test_upload_urls_stable_client_id_uses_strict_persistent_target(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalar_result(0),
+        ],
+        plan,
+    )
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch(
+            "app.routes.plan_items.storage.signed_put_url", return_value="https://strict"
+        ) as strict,
+        patch("app.routes.plan_items.storage.signed_put_url_legacy") as legacy,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets/upload-urls",
+            json={
+                "files": [
+                    {
+                        "filename": "f.png",
+                        "content_type": "image/png",
+                        "file_size_bytes": 100,
+                        "client_upload_id": "stable-file",
+                    }
+                ]
+            },
+        )
+
+    assert resp.status_code == 200
+    target = resp.json()["urls"][0]
+    assert target["gcs_path"].startswith(f"dev-user/{user.id}/plan-pool-reservations/{item.id}/")
+    assert target["upload_headers"] == {"x-goog-if-generation-match": "0"}
+    strict.assert_called_once()
+    legacy.assert_not_called()
 
 
 def test_upload_urls_rejects_bad_content_type(client: TestClient):
@@ -555,6 +643,33 @@ def test_register_happy_path_commits(client: TestClient, _no_real_broker_publish
     assert publish.kwargs["headers"]["pool_asset_attempt_token"]
 
 
+def test_queued_response_maps_to_uploaded_until_frontend_activation(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db(
+        [_scalar_result(item), _scalar_result(None), _scalar_result(None), _scalar_result(0)],
+        plan,
+    )
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch(f"{SETTINGS}.pool_asset_queued_status_enabled", False),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json=_register_body(user.id, item.id),
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "uploaded"
+    queued_asset = db.add.call_args.args[0]
+    assert queued_asset.status == "queued"
+
+
 def test_reserved_registration_finalizes_once_and_repeat_is_idempotent(
     client: TestClient,
     _no_real_broker_publish,
@@ -655,6 +770,324 @@ def test_path_based_client_adopts_preparing_reservation(
     assert reservation.gcs_generation == "42"
     db.add.assert_not_called()
     _no_real_broker_publish.assert_called_once()
+
+
+def test_legacy_staging_registration_promotes_verified_generation(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.gcs_path = (
+        f"dev-user/{user.id}/plan-pool-reservations/{item.id}/{reservation.id}/legacy.png"
+    )
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    reservation.analysis_attempt_count = 0
+    db = _db(
+        [_scalar_result(item), _scalar_result(reservation), _scalar_result(None)],
+        plan,
+    )
+    _override(user, db)
+    source = ObjectMetadata(
+        path=reservation.gcs_path,
+        generation="42",
+        etag="etag",
+        size=100,
+        content_type="image/png",
+    )
+
+    def _promote(source_path, destination_path, *, source_generation):  # noqa: ANN001
+        assert source_path == source.path
+        assert source_generation == "42"
+        return ObjectMetadata(
+            path=destination_path,
+            generation="84",
+            etag="promoted",
+            size=100,
+            content_type="image/png",
+        )
+
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.object_metadata", return_value=source),
+        patch("app.routes.plan_items.storage.copy_object_generation", side_effect=_promote) as copy,
+        patch("app.routes.plan_items.storage.delete_object_generation") as cleanup,
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        first = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "gcs_path": source.path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+
+        retry_db = _db(
+            [_scalar_result(item), _scalar_result(None), _scalar_result(reservation)],
+            plan,
+        )
+        _override(user, retry_db)
+        retry = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "gcs_path": source.path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+
+    assert first.status_code == 200
+    assert retry.status_code == 200
+    assert first.json()["id"] == retry.json()["id"] == str(reservation.id)
+    assert reservation.gcs_path.startswith(f"users/{user.id}/plan/{item.id}/pool/")
+    assert reservation.gcs_generation == "84"
+    copy.assert_called_once()
+    cleanup.assert_called_once_with(source.path, generation="42")
+
+
+def test_staging_promotion_commit_failure_keeps_durable_cleanup_claim(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.gcs_path = (
+        f"dev-user/{user.id}/plan-pool-reservations/{item.id}/{reservation.id}/legacy.png"
+    )
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    db = _db(
+        [_scalar_result(item), _scalar_result(reservation), _scalar_result(None)],
+        plan,
+    )
+    db.commit.side_effect = [None, RuntimeError("private database detail")]
+    _override(user, db)
+    source = ObjectMetadata(
+        path=reservation.gcs_path,
+        generation="42",
+        etag="etag",
+        size=100,
+        content_type="image/png",
+    )
+
+    def _promote(_source_path, destination_path, *, source_generation):  # noqa: ANN001
+        assert source_generation == "42"
+        return ObjectMetadata(
+            path=destination_path,
+            generation="84",
+            etag="promoted",
+            size=100,
+            content_type="image/png",
+        )
+
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.object_metadata", return_value=source),
+        patch("app.routes.plan_items.storage.copy_object_generation", side_effect=_promote),
+        patch("app.routes.plan_items._pool_promotion_is_durable", return_value=False),
+        patch("app.routes.plan_items.storage.delete_object_generation_best_effort") as cleanup,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "gcs_path": source.path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["code"] == "registration_temporarily_unavailable"
+    cleanup.assert_not_called()
+    _no_real_broker_publish.assert_not_called()
+
+
+def test_staging_copy_failure_leaves_durable_promotion_cleanup_claim(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.gcs_path = (
+        f"dev-user/{user.id}/plan-pool-reservations/{item.id}/{reservation.id}/legacy.png"
+    )
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    db = _db(
+        [_scalar_result(item), _scalar_result(reservation), _scalar_result(None)],
+        plan,
+    )
+    _override(user, db)
+    source = ObjectMetadata(
+        path=reservation.gcs_path,
+        generation="42",
+        etag="etag",
+        size=100,
+        content_type="image/png",
+    )
+
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.object_metadata", return_value=source),
+        patch(
+            "app.routes.plan_items.storage.copy_object_generation",
+            side_effect=ConnectionError("copy response lost"),
+        ),
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "gcs_path": source.path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+
+    assert resp.status_code == 503
+    assert reservation.status == "promoting"
+    assert reservation.analysis["_upload_promotion"] == {
+        "source_path": source.path,
+        "source_generation": "42",
+        "destination_path": (f"users/{user.id}/plan/{item.id}/pool/{reservation.id}-x.png"),
+    }
+    assert db.commit.await_count == 1
+    _no_real_broker_publish.assert_not_called()
+
+
+def test_staging_registration_retry_resumes_durable_promotion_claim(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    source_path = f"dev-user/{user.id}/plan-pool-reservations/{item.id}/{reservation.id}/legacy.png"
+    destination_path = f"users/{user.id}/plan/{item.id}/pool/{reservation.id}-x.png"
+    reservation.status = "promoting"
+    reservation.gcs_path = source_path
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    reservation.analysis_attempt_count = 0
+    reservation.analysis = {
+        "_upload_promotion": {
+            "source_path": source_path,
+            "source_generation": "42",
+            "destination_path": destination_path,
+        }
+    }
+    db = _db(
+        [_scalar_result(item), _scalar_result(reservation), _scalar_result(None)],
+        plan,
+    )
+    _override(user, db)
+    source = ObjectMetadata(
+        path=source_path,
+        generation="42",
+        etag="etag",
+        size=100,
+        content_type="image/png",
+    )
+    destination = ObjectMetadata(
+        path=destination_path,
+        generation="84",
+        etag="promoted",
+        size=100,
+        content_type="image/png",
+    )
+
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.object_metadata", return_value=source),
+        patch(
+            "app.routes.plan_items.storage.copy_object_generation",
+            return_value=destination,
+        ) as copy,
+        patch("app.routes.plan_items.storage.delete_object_generation"),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "reservation_id": str(reservation.id),
+                "gcs_path": source_path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert reservation.gcs_path == destination_path
+    assert reservation.gcs_generation == "84"
+    assert reservation.analysis is None
+    copy.assert_called_once_with(source_path, destination_path, source_generation="42")
+    _no_real_broker_publish.assert_called_once()
+
+
+def test_staging_promotion_ambiguous_commit_preserves_durable_generation(
+    client: TestClient,
+    _no_real_broker_publish,
+):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    reservation.gcs_path = (
+        f"dev-user/{user.id}/plan-pool-reservations/{item.id}/{reservation.id}/legacy.png"
+    )
+    reservation.upload_content_type = "image/png"
+    reservation.upload_size_bytes = 100
+    db = _db(
+        [_scalar_result(item), _scalar_result(reservation), _scalar_result(None)],
+        plan,
+    )
+    db.commit.side_effect = [None, ConnectionError("ack lost after commit")]
+    _override(user, db)
+    source = ObjectMetadata(
+        path=reservation.gcs_path,
+        generation="42",
+        etag="etag",
+        size=100,
+        content_type="image/png",
+    )
+
+    def _promote(_source_path, destination_path, *, source_generation):  # noqa: ANN001
+        assert source_generation == "42"
+        return ObjectMetadata(
+            path=destination_path,
+            generation="84",
+            etag="promoted",
+            size=100,
+            content_type="image/png",
+        )
+
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.object_metadata", return_value=source),
+        patch("app.routes.plan_items.storage.copy_object_generation", side_effect=_promote),
+        patch("app.routes.plan_items._pool_promotion_is_durable", return_value=True),
+        patch("app.routes.plan_items.storage.delete_object_generation_best_effort") as cleanup,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json={
+                "gcs_path": source.path,
+                "content_type": "image/png",
+                "content_hash": "hash",
+            },
+        )
+
+    assert resp.status_code == 503
+    cleanup.assert_not_called()
+    db.rollback.assert_awaited_once()
+    _no_real_broker_publish.assert_not_called()
 
 
 def test_register_rejects_and_deletes_reservation_metadata_mismatch(client: TestClient):
@@ -852,6 +1285,73 @@ def test_register_enforces_cap(client: TestClient):
         resp = client.post(f"/plan-items/{item.id}/assets", json=_register_body(user.id, item.id))
     assert resp.status_code == 400
     assert "capped" in resp.json()["detail"]
+
+
+def test_multipart_upload_uses_staging_and_shared_registration(client: TestClient):
+    from app.routes import plan_items as routes  # noqa: PLC0415
+
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db(
+        [_scalar_result(item), _scalar_result(None), _scalar_result(0)],
+        plan,
+    )
+    _override(user, db)
+
+    async def _register(_item_id, body, _request, _user, _db):  # noqa: ANN001
+        reservation = db.add.call_args.args[0]
+        assert reservation.status == "preparing"
+        assert body.reservation_id == str(reservation.id)
+        reservation.status = "queued"
+        return routes._asset_out(reservation)
+
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.upload_local_file") as upload,
+        patch("app.routes.plan_items.register_pool_asset", side_effect=_register) as register,
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets/upload",
+            files={"file": ("x.png", b"png-bytes", "image/png")},
+        )
+
+    assert resp.status_code == 200
+    reservation = db.add.call_args.args[0]
+    assert reservation.gcs_path.startswith(f"dev-user/{user.id}/plan-pool-reservations/{item.id}/")
+    assert not reservation.gcs_path.startswith("users/")
+    upload.assert_called_once()
+    assert upload.call_args.args[1] == reservation.gcs_path
+    register.assert_awaited_once()
+
+
+def test_multipart_provider_failure_leaves_lifecycle_covered_reservation(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db(
+        [_scalar_result(item), _scalar_result(None), _scalar_result(0)],
+        plan,
+    )
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch(
+            "app.routes.plan_items.storage.upload_local_file",
+            side_effect=ConnectionError("provider detail"),
+        ),
+        patch("app.routes.plan_items.register_pool_asset") as register,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets/upload",
+            files={"file": ("x.png", b"png-bytes", "image/png")},
+        )
+
+    assert resp.status_code == 500
+    reservation = db.add.call_args.args[0]
+    assert reservation.status == "preparing"
+    assert reservation.gcs_path.startswith("dev-user/")
+    assert db.commit.await_count == 1
+    register.assert_not_awaited()
 
 
 # ── list ──────────────────────────────────────────────────────────────────────
@@ -1176,13 +1676,205 @@ def test_delete_removes_asset_and_commits(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
     asset = _asset_row(item.id, user.id)
-    db = _db([_scalar_result(item), _scalar_result(asset)], plan)
+    asset.gcs_generation = "42"
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalar_result(asset),
+            _scalar_result(0),
+            _scalar_result(asset),
+            _scalar_result(0),
+        ],
+        plan,
+    )
     _override(user, db)
-    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch(
+            "app.routes.plan_items.storage.delete_object_generation_best_effort",
+            return_value=True,
+        ) as cleanup,
+    ):
         resp = client.delete(f"/plan-items/{item.id}/assets/{asset.id}")
     assert resp.status_code == 200
+    cleanup.assert_called_once_with(asset.gcs_path, generation="42")
     db.delete.assert_awaited_once_with(asset)
-    assert db.commit.await_count >= 1
+    assert db.commit.await_count == 2
+
+
+def test_delete_retains_quota_claim_when_persistent_cleanup_fails(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    asset.gcs_generation = "42"
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalar_result(asset),
+            _scalar_result(0),
+            _scalar_result(asset),
+            _scalar_result(0),
+        ],
+        plan,
+    )
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch(
+            "app.routes.plan_items.storage.delete_object_generation_best_effort",
+            return_value=False,
+        ),
+    ):
+        resp = client.delete(f"/plan-items/{item.id}/assets/{asset.id}")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["code"] == "asset_cleanup_temporarily_unavailable"
+    assert asset.status == "cleanup_pending"
+    db.delete.assert_not_awaited()
+    assert db.commit.await_count == 1
+
+
+def test_delete_rechecks_references_after_cleanup_claim_commit(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.clip_gcs_paths = []
+    item.clip_assignments = []
+    asset = _asset_row(item.id, user.id)
+    asset.gcs_generation = "42"
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalar_result(asset),
+            _scalar_result(0),
+            _scalar_result(asset),
+        ],
+        plan,
+    )
+
+    async def _commit():
+        if db.commit.await_count == 1:
+            item.clip_gcs_paths = [asset.gcs_path]
+            item.clip_assignments = [{"gcs_path": asset.gcs_path, "shot_id": None}]
+
+    db.commit.side_effect = _commit
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.delete_object_generation_best_effort") as cleanup,
+    ):
+        resp = client.delete(f"/plan-items/{item.id}/assets/{asset.id}")
+
+    assert resp.status_code == 409
+    assert asset.status == "uploaded"
+    assert "_pool_cleanup_previous_status" not in (asset.analysis or {})
+    cleanup.assert_not_called()
+    db.delete.assert_not_awaited()
+    assert db.commit.await_count == 2
+
+
+def test_delete_shared_generation_keeps_bytes(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    asset.gcs_generation = "42"
+    db = _db([_scalar_result(item), _scalar_result(asset), _scalar_result(1)], plan)
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.delete_object_generation_best_effort") as cleanup,
+    ):
+        resp = client.delete(f"/plan-items/{item.id}/assets/{asset.id}")
+
+    assert resp.status_code == 200
+    cleanup.assert_not_called()
+    db.delete.assert_awaited_once_with(asset)
+    assert db.commit.await_count == 1
+
+
+@pytest.mark.parametrize("reference_kind", ["clip_assignment", "accepted_overlay"])
+def test_delete_rejects_durable_edit_references(client: TestClient, reference_kind: str):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    asset.gcs_generation = "42"
+    if reference_kind == "clip_assignment":
+        item.clip_gcs_paths = [asset.gcs_path]
+        item.clip_assignments = [{"gcs_path": asset.gcs_path, "shot_id": None}]
+    else:
+        job = MagicMock()
+        job.status = "variants_ready"
+        job.raw_storage_path = "users/u/other.mp4"
+        job.assembly_plan = {
+            "variants": [
+                {
+                    "media_overlays": [
+                        {"src_gcs_path": asset.gcs_path, "source": "overlay_suggestion"}
+                    ]
+                }
+            ]
+        }
+        item.current_job = job
+        item.current_job_id = job.id
+    db = _db([_scalar_result(item), _scalar_result(asset)], plan)
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.delete_object_generation_best_effort") as cleanup,
+    ):
+        resp = client.delete(f"/plan-items/{item.id}/assets/{asset.id}")
+
+    assert resp.status_code == 409
+    cleanup.assert_not_called()
+    db.delete.assert_not_awaited()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_overlay_writes_reject_cleanup_pending_pool_path():
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    from app.routes.plan_items import _require_ready_pool_paths  # noqa: PLC0415
+
+    user = _user()
+    item, _plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    asset.status = "cleanup_pending"
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalars_result([asset]))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _require_ready_pool_paths(
+            item_id=str(item.id),
+            user_id=user.id,
+            payload={"media_overlays": [{"src_gcs_path": asset.gcs_path}]},
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 409
+
+
+def test_asset_delete_fences_inflight_matcher_before_it_can_persist_stale_path():
+    from app.routes.plan_items import _clear_suggestions_for_asset  # noqa: PLC0415
+
+    job = MagicMock()
+    job.assembly_plan = {
+        "variants": [
+            {
+                "variant_id": "v1",
+                "overlay_suggest_status": "matching",
+                "overlay_suggest_attempt_token": "attempt-before-delete",
+                "overlay_suggestions": None,
+            }
+        ]
+    }
+
+    with patch("sqlalchemy.orm.attributes.flag_modified") as dirty:
+        assert _clear_suggestions_for_asset(job, str(uuid.uuid4())) == 0
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["overlay_suggest_status"] is None
+    assert "overlay_suggest_attempt_token" not in variant
+    dirty.assert_called_once_with(job, "assembly_plan")
 
 
 def test_delete_404_when_asset_missing(client: TestClient):
@@ -1193,6 +1885,21 @@ def test_delete_404_when_asset_missing(client: TestClient):
     with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
         resp = client.delete(f"/plan-items/{item.id}/assets/{uuid.uuid4()}")
     assert resp.status_code == 404
+
+
+def test_delete_rejects_live_reservation_without_freeing_capacity(client: TestClient):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    reservation = _asset_row(item.id, user.id)
+    reservation.status = "preparing"
+    db = _db([_scalar_result(item), _scalar_result(reservation)], plan)
+    _override(user, db)
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.delete(f"/plan-items/{item.id}/assets/{reservation.id}")
+
+    assert resp.status_code == 409
+    db.delete.assert_not_awaited()
+    db.commit.assert_not_awaited()
 
 
 # ── ownership ─────────────────────────────────────────────────────────────────

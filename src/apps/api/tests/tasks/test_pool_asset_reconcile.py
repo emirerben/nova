@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from app.models import Job, PlanItem, PlanItemAsset
 from app.tasks import maintenance
 
 
@@ -42,6 +43,7 @@ class _Session:
 def _asset(*, attempts: int):
     return SimpleNamespace(
         id=uuid.uuid4(),
+        plan_item_id=uuid.uuid4(),
         status="queued",
         analysis_attempt_token="old",
         analysis_attempt_count=attempts,
@@ -139,6 +141,97 @@ def test_reconcile_keeps_expired_reservation_when_object_cleanup_fails(monkeypat
     assert session.deleted == []
     assert asset.status == "cleanup_pending"
     cleanup.assert_called_once_with(asset.gcs_path)
+
+
+def test_reconcile_cleanup_pending_finalized_asset_deletes_exact_generation(monkeypatch) -> None:
+    asset = _asset(attempts=0)
+    asset.status = "cleanup_pending"
+    asset.gcs_generation = "42"
+    session = _Session([asset])
+
+    @contextmanager
+    def _session():
+        yield session
+
+    cleanup = MagicMock(return_value=True)
+    monkeypatch.setattr(maintenance, "sync_session", _session)
+    monkeypatch.setattr("app.storage.delete_object_generation_best_effort", cleanup)
+
+    assert maintenance.reconcile_stale_pool_assets(now=datetime.now(UTC)) == 1
+    assert session.deleted == [asset]
+    cleanup.assert_called_once_with(asset.gcs_path, generation="42")
+
+
+def test_reconcile_stale_promotion_cleans_source_and_unknown_destination(monkeypatch) -> None:
+    asset = _asset(attempts=0)
+    asset.status = "promoting"
+    asset.upload_expires_at = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
+    asset.gcs_generation = None
+    source_path = asset.gcs_path
+    destination_path = "users/u/plan/i/pool/reservation-x.png"
+    asset.analysis = {
+        "_upload_promotion": {
+            "source_path": source_path,
+            "source_generation": "42",
+            "destination_path": destination_path,
+        }
+    }
+    session = _Session([asset])
+
+    @contextmanager
+    def _session():
+        yield session
+
+    exact_cleanup = MagicMock(return_value=True)
+    latest_cleanup = MagicMock(return_value=True)
+    monkeypatch.setattr(maintenance, "sync_session", _session)
+    monkeypatch.setattr("app.storage.delete_object_generation_best_effort", exact_cleanup)
+    monkeypatch.setattr("app.storage.delete_object_best_effort", latest_cleanup)
+
+    assert maintenance.reconcile_stale_pool_assets(now=datetime(2026, 8, 14, 9, 0, tzinfo=UTC)) == 1
+    assert session.deleted == [asset]
+    exact_cleanup.assert_called_once_with(source_path, generation="42")
+    latest_cleanup.assert_called_once_with(destination_path)
+
+
+def test_reconcile_cleanup_retry_restores_asset_when_edit_gained_reference(monkeypatch) -> None:
+    asset = _asset(attempts=0)
+    asset.status = "cleanup_pending"
+    asset.gcs_generation = "42"
+    asset.plan_item_id = uuid.uuid4()
+    asset.analysis = {"subject": "screen", "_pool_cleanup_previous_status": "ready"}
+    item = SimpleNamespace(
+        id=asset.plan_item_id,
+        current_job_id=None,
+        clip_gcs_paths=[asset.gcs_path],
+        clip_assignments=[{"gcs_path": asset.gcs_path, "shot_id": None}],
+    )
+    session = _Session([asset])
+
+    def _get(model, row_id, **_kwargs):  # noqa: ANN001
+        if model is PlanItemAsset and row_id == asset.id:
+            return asset
+        if model is PlanItem and row_id == item.id:
+            return item
+        if model is Job:
+            return None
+        return None
+
+    session.get = _get
+
+    @contextmanager
+    def _session():
+        yield session
+
+    exact_cleanup = MagicMock(return_value=True)
+    monkeypatch.setattr(maintenance, "sync_session", _session)
+    monkeypatch.setattr("app.storage.delete_object_generation_best_effort", exact_cleanup)
+
+    assert maintenance.reconcile_stale_pool_assets(now=datetime.now(UTC)) == 1
+    assert asset.status == "ready"
+    assert asset.analysis == {"subject": "screen"}
+    assert session.deleted == []
+    exact_cleanup.assert_not_called()
 
 
 def test_reconcile_does_not_delete_reservation_renewed_during_cleanup(monkeypatch) -> None:

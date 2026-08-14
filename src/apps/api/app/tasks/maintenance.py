@@ -27,7 +27,7 @@ import structlog
 from sqlalchemy import and_, or_, select, text
 
 from app.database import sync_session
-from app.models import PlanItemAsset
+from app.models import Job, PlanItem, PlanItemAsset
 from app.tasks.reaper import _live_job_ids, reap_orphans, reconcile_stuck_variants
 from app.worker import celery_app
 
@@ -57,7 +57,16 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
     queued_cutoff = current - _POOL_QUEUED_STALE_AFTER
     analyzing_cutoff = current - _POOL_ANALYZING_STALE_AFTER
     to_publish: list[tuple[str, str, str | None]] = []
-    expired_reservations: list[tuple[uuid.UUID, str]] = []
+    expired_reservations: list[
+        tuple[
+            uuid.UUID,
+            uuid.UUID,
+            str,
+            str | None,
+            list[tuple[str, str | None]],
+            str | None,
+        ]
+    ] = []
     touched = 0
 
     with sync_session() as db:
@@ -67,7 +76,7 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                 .where(
                     or_(
                         and_(
-                            PlanItemAsset.status == "preparing",
+                            PlanItemAsset.status.in_({"preparing", "promoting"}),
                             or_(
                                 PlanItemAsset.upload_expires_at
                                 <= current - _POOL_RESERVATION_CLEANUP_GRACE,
@@ -114,12 +123,44 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
         )
         for asset in rows:
             touched += 1
-            if asset.status in {"preparing", "cleanup_pending"}:
+            if asset.status in {"preparing", "promoting", "cleanup_pending"}:
                 # Claim cleanup before releasing the row lock. Registration
-                # accepts only preparing rows, so it cannot promote bytes after
+                # accepts only preparing/promoting rows, so it cannot write after
                 # this transaction commits and before storage deletion.
+                generation = getattr(asset, "gcs_generation", None)
+                cleanup_targets: list[tuple[str, str | None]] = [(asset.gcs_path, generation)]
+                promotion = (
+                    (getattr(asset, "analysis", None) or {}).get("_upload_promotion")
+                    if isinstance(getattr(asset, "analysis", None), dict)
+                    else None
+                )
+                cleanup_previous_status = (
+                    (getattr(asset, "analysis", None) or {}).get("_pool_cleanup_previous_status")
+                    if isinstance(getattr(asset, "analysis", None), dict)
+                    else None
+                )
+                if isinstance(promotion, dict):
+                    source_path = promotion.get("source_path")
+                    source_generation = promotion.get("source_generation")
+                    destination_path = promotion.get("destination_path")
+                    if isinstance(source_path, str) and source_path:
+                        cleanup_targets[0] = (
+                            source_path,
+                            str(source_generation) if source_generation else None,
+                        )
+                    if isinstance(destination_path, str) and destination_path:
+                        cleanup_targets.append((destination_path, None))
                 asset.status = "cleanup_pending"
-                expired_reservations.append((asset.id, asset.gcs_path))
+                expired_reservations.append(
+                    (
+                        asset.id,
+                        asset.plan_item_id,
+                        asset.gcs_path,
+                        generation,
+                        cleanup_targets,
+                        str(cleanup_previous_status) if cleanup_previous_status else None,
+                    )
+                )
                 continue
             attempts = int(asset.analysis_attempt_count or 0)
             if attempts >= _POOL_MAX_ATTEMPTS:
@@ -143,22 +184,81 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
 
     expired_cleaned = 0
     if expired_reservations:
-        from app.storage import delete_object_best_effort  # noqa: PLC0415
+        from app.services.pool_asset_refs import (  # noqa: PLC0415
+            item_references_pool_path,
+            job_references_pool_asset,
+        )
+        from app.storage import (  # noqa: PLC0415
+            delete_object_best_effort,
+            delete_object_generation_best_effort,
+        )
 
-        for asset_id, path in expired_reservations:
-            if not delete_object_best_effort(path):
-                log.warning("pool_asset_reservation_cleanup_deferred", asset_id=str(asset_id))
-                continue
+        for (
+            asset_id,
+            plan_item_id,
+            path,
+            generation,
+            cleanup_targets,
+            previous_status,
+        ) in expired_reservations:
             with sync_session() as db:
+                item = (
+                    db.get(PlanItem, plan_item_id, with_for_update=True)
+                    if previous_status
+                    else None
+                )
                 asset = db.get(PlanItemAsset, asset_id, with_for_update=True)
-                if (
+                if not (
                     asset is not None
                     and asset.status == "cleanup_pending"
                     and asset.gcs_path == path
+                    and str(getattr(asset, "gcs_generation", None) or "") == str(generation or "")
                 ):
-                    db.delete(asset)
-                    db.commit()
-                    expired_cleaned += 1
+                    continue
+                if previous_status:
+                    job = (
+                        db.get(Job, item.current_job_id, with_for_update=True)
+                        if item is not None and item.current_job_id is not None
+                        else None
+                    )
+                    if item is not None and (
+                        item_references_pool_path(item, asset.gcs_path)
+                        or (
+                            job is not None
+                            and job.status != "cancelled"
+                            and job_references_pool_asset(
+                                job,
+                                asset_id=str(asset.id),
+                                gcs_path=asset.gcs_path,
+                            )
+                        )
+                    ):
+                        restored = dict(asset.analysis) if isinstance(asset.analysis, dict) else {}
+                        restored.pop("_pool_cleanup_previous_status", None)
+                        asset.analysis = restored or None
+                        asset.status = previous_status
+                        db.commit()
+                        continue
+                cleaned = True
+                for cleanup_path, cleanup_generation in dict.fromkeys(cleanup_targets):
+                    target_cleaned = (
+                        delete_object_generation_best_effort(
+                            cleanup_path, generation=str(cleanup_generation)
+                        )
+                        if cleanup_generation
+                        else delete_object_best_effort(cleanup_path)
+                    )
+                    cleaned = target_cleaned and cleaned
+                if not cleaned:
+                    log.warning("pool_asset_reservation_cleanup_deferred", asset_id=str(asset_id))
+                    continue
+                if asset.gcs_path != path or str(
+                    getattr(asset, "gcs_generation", None) or ""
+                ) != str(generation or ""):
+                    continue
+                db.delete(asset)
+                db.commit()
+                expired_cleaned += 1
 
     for asset_id, token, correlation_id in to_publish:
         try:

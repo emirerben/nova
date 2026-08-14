@@ -67,7 +67,7 @@ def upgrade() -> None:
         "idx_plan_item_assets_preparing_expiry",
         "plan_item_assets",
         ["upload_expires_at"],
-        postgresql_where=sa.text("status = 'preparing'"),
+        postgresql_where=sa.text("status IN ('preparing', 'promoting', 'cleanup_pending')"),
     )
     op.execute(
         sa.text(

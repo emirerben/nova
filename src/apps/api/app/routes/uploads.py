@@ -689,8 +689,12 @@ async def relay_signed_upload(
             yield chunk
 
     upstream_headers = {"Content-Type": content_type}
-    if file_size_bytes is not None:
-        upstream_headers["Content-Length"] = str(file_size_bytes)
+    effective_size = file_size_bytes if file_size_bytes is not None else file.size
+    if effective_size is not None:
+        # Deployed pre-0.28 clients omit the form size, but UploadFile has the
+        # parsed multipart size. Forward it so exact-length signed pool staging
+        # URLs remain compatible without weakening their storage-side ceiling.
+        upstream_headers["Content-Length"] = str(effective_size)
     if if_generation_match is not None:
         upstream_headers["x-goog-if-generation-match"] = if_generation_match
 

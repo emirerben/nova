@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Failed visual analysis can no longer look successful or spin forever.** Unreadable files, provider outages, timeouts, broker publication failures, abandoned uploads, and stale attempts now reach safe retryable or terminal states, while a maintenance pass cleans expired reservations and recovers work that was never claimed.
+- **Upload retries cannot leak permanent objects or delete a committed file.** Signed targets now land in lifecycle-covered staging, registration promotes only the verified generation, ambiguous database commits are resolved through a fresh connection before compensation, and Remove keeps capacity charged until exact-generation cleanup succeeds.
 - **Backend failures are now traceable without exposing private details.** Request and batch correlation IDs cross the API and worker boundary, and unexpected errors return safe structured responses instead of raw exception text.
 - **The blocked persona-ownership migration is safe to release again.** A guarded, fingerprinted production repair quarantined the one mismatched plan before moving only its exact owner data; Fly releases once again require every migration through `head` before new processes start.
 
