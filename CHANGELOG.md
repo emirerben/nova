@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.0.0] — 2026-08-14
+
+### Added
+- **Creator Blocks now have precise, reusable motion controls.** New blocks support speed, intensity, easing, hold, and preset-specific advanced details in the desktop and pocket inspectors, while Nova AI can read and edit the same catalog-backed controls.
+- **Evolving Type adds a polished 5.3-second kinetic composition.** Creators can customize its headline, subtitle, organic icon choreography, reveal order, density, layout, typography, backdrop, and palette while preview and export share the same deterministic 30fps state.
+
+### Changed
+- **Existing edits keep their original look until motion is explicitly changed.** Preset-v1 formulas remain immutable, content/palette/timeline edits do not migrate them, motion-control edits upgrade only the selected block, and saved v2/v3/v4 runtimes remain compatible with v4 normalization on save.
+- **Creator motion is safer under heavy scenes and rollbacks.** Catalog-generated schemas fail on drift, dual rollout flags keep persisted Evolving blocks renderable but read-only when hidden, and weighted validation plus production/browser performance gates bound overlapping scenes and media resources before render.
+
 ## [0.31.0.0] — 2026-08-14
 
 ### Added
