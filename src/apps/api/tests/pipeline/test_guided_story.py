@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -438,6 +441,85 @@ def test_selected_source_with_wrong_format_is_rejected(tmp_path, monkeypatch) ->
         _download_selected(plan, str(tmp_path))
 
     assert exc.value.code == "guided_story_media_replaced"
+
+
+def test_selected_heic_is_normalized_without_changing_source_receipt(tmp_path, monkeypatch) -> None:
+    import pillow_heif
+    from PIL import Image
+
+    pillow_heif.register_heif_opener()
+    source = tmp_path / "uploaded.heic"
+    try:
+        Image.new("RGB", (80, 120), (24, 120, 180)).save(source, format="HEIF")
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"local pillow-heif cannot encode HEIF: {exc}")
+    source_bytes = source.read_bytes()
+
+    def download(_path: str, local: str, *, generation: str) -> None:
+        assert generation == "12"
+        shutil.copy2(source, local)
+
+    monkeypatch.setattr("app.storage.download_generation_to_file", download)
+    plan = {
+        "selected_media_ids": ["corfu-photo"],
+        "story_timeline": [
+            {
+                "media_id": "corfu-photo",
+                "gcs_path": "users/u/corfu.HEIC",
+                "generation": "12",
+                "kind": "image",
+            }
+        ],
+    }
+
+    local_by_id, receipts = _download_selected(plan, str(tmp_path))
+
+    render_source = Path(local_by_id["corfu-photo"])
+    assert render_source.suffix == ".jpg"
+    with Image.open(render_source) as image:
+        assert image.format == "JPEG"
+        assert image.size == (80, 120)
+    assert receipts[0]["bytes"] == len(source_bytes)
+    assert receipts[0]["sha256"] == hashlib.sha256(source_bytes).hexdigest()
+
+
+def test_selected_transparent_image_preserves_alpha_and_source_receipt(
+    tmp_path, monkeypatch
+) -> None:
+    from PIL import Image
+
+    source = tmp_path / "uploaded.webp"
+    image = Image.new("RGBA", (80, 120), (24, 120, 180, 255))
+    image.putpixel((0, 0), (24, 120, 180, 0))
+    image.save(source, format="WEBP", lossless=True)
+    source_bytes = source.read_bytes()
+
+    def download(_path: str, local: str, *, generation: str) -> None:
+        assert generation == "13"
+        shutil.copy2(source, local)
+
+    monkeypatch.setattr("app.storage.download_generation_to_file", download)
+    plan = {
+        "selected_media_ids": ["transparent-card"],
+        "story_timeline": [
+            {
+                "media_id": "transparent-card",
+                "gcs_path": "users/u/card.webp",
+                "generation": "13",
+                "kind": "image",
+            }
+        ],
+    }
+
+    local_by_id, receipts = _download_selected(plan, str(tmp_path))
+
+    render_source = Path(local_by_id["transparent-card"])
+    assert render_source.suffix == ".png"
+    with Image.open(render_source) as normalized:
+        assert normalized.format == "PNG"
+        assert normalized.getchannel("A").getextrema() == (0, 255)
+    assert receipts[0]["bytes"] == len(source_bytes)
+    assert receipts[0]["sha256"] == hashlib.sha256(source_bytes).hexdigest()
 
 
 def test_video_window_beyond_downloaded_duration_is_rejected(monkeypatch) -> None:

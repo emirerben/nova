@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.2.1] — 2026-08-15
+
+### Fixed
+- **Approved guided edits now render iPhone HEIC and HEIF photos.** Kria keeps the exact uploaded source identity for verification, while decoding each story photo into an orientation-corrected render input before applying motion. A valid HEIC photo can no longer stop the edit with “This one didn't render.”
+
 ## [0.33.2.0] — 2026-08-15
 
 ### Fixed

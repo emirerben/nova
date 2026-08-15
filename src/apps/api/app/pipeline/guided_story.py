@@ -743,7 +743,7 @@ def _attach_silent_aac(source: str, output: str) -> None:
 
 
 def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str], list[dict]]:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image, ImageOps  # noqa: PLC0415
 
     from app.storage import download_generation_to_file  # noqa: PLC0415
 
@@ -754,6 +754,33 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
         pillow_heif.register_heif_opener()
     except Exception:  # noqa: BLE001
         pass
+
+    def normalize_image_for_render(source: str) -> str:
+        """Decode once with Pillow and hand FFmpeg an image2-safe input.
+
+        HEIC/HEIF is decoded successfully by Pillow, but FFmpeg selects its
+        dedicated HEIF demuxer for the original path. That demuxer rejects the
+        image2-only ``-loop`` option used by the story motion renderer. Keep the
+        downloaded source untouched for the identity receipt and create a
+        separate, EXIF-corrected JPEG/PNG solely for rendering.
+        """
+        with Image.open(source) as opened:
+            image = ImageOps.exif_transpose(opened)
+            image.load()
+            has_alpha = "A" in image.getbands() or "transparency" in image.info
+            if has_alpha:
+                render_path = f"{os.path.splitext(source)[0]}_render.png"
+                image.convert("RGBA").save(render_path, format="PNG", optimize=False)
+            else:
+                render_path = f"{os.path.splitext(source)[0]}_render.jpg"
+                image.convert("RGB").save(
+                    render_path,
+                    format="JPEG",
+                    quality=95,
+                    subsampling=0,
+                    optimize=False,
+                )
+        return render_path
 
     def prepare(entry: tuple[int, str]) -> tuple[str, str, dict]:
         index, media_id = entry
@@ -811,7 +838,20 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
     # approved media order in the receipt.
     with ThreadPoolExecutor(max_workers=min(_MEDIA_PREP_MAX_WORKERS, len(selected))) as pool:
         prepared = list(pool.map(prepare, selected))
-    local_by_id = {media_id: local for media_id, local, _receipt in prepared}
+    local_by_id: dict[str, str] = {}
+    # Decode images serially after the bounded parallel download/probe phase.
+    # Large phone photos can occupy tens of megabytes when decoded, so this
+    # avoids multiplying peak worker memory by the download concurrency.
+    for media_id, local, receipt in prepared:
+        if receipt["kind"] == "image":
+            try:
+                local = normalize_image_for_render(local)
+            except Exception as exc:  # noqa: BLE001
+                raise GuidedStoryError(
+                    "guided_story_media_replaced",
+                    f"Approved media {media_id} has the wrong format.",
+                ) from exc
+        local_by_id[media_id] = local
     receipts = [receipt for _media_id, _local, receipt in prepared]
     return local_by_id, receipts
 
