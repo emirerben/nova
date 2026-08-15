@@ -971,9 +971,9 @@ def analyze_pool_image(
 
 
 def analyze_pool_video(
-    local_path: str, job_scope: str
+    local_path: str,
 ) -> tuple[dict | None, float | None, float | None, tuple[int, int] | None]:
-    return _analyze_video(local_path, job_scope)
+    return _analyze_video(local_path)
 
 
 def _plan_ownership_epoch(plan: ContentPlan) -> int:
