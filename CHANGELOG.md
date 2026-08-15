@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.1.1] — 2026-08-15
+
+### Fixed
+- **Plan edit can understand an attached video and finish the proposal.** The planner now calls the shared video analyzer through its privacy-safe interface, so mixed photo and video trips no longer stop with “Kria couldn't plan this edit.”
+
 ## [0.33.1.0] — 2026-08-15
 
 ### Fixed

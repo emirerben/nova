@@ -147,6 +147,34 @@ def test_analysis_merge_preserves_concurrent_clip_editorial_changes() -> None:
     assert merged[0]["analysis"] == {"subject": "coast"}
 
 
+def test_clip_video_analysis_uses_privacy_safe_reuse_boundary(monkeypatch) -> None:
+    media_id = str(uuid.uuid4())
+    generation = "42"
+    path = "users/u/plan/i/corfu.mov"
+    video_analysis = []
+
+    def _analyze(local_path: str):
+        video_analysis.append(local_path)
+        return {"subject": "Corfu coast"}, 0.5625, 4.0, (720, 1280)
+
+    monkeypatch.setattr("app.tasks.autoplace.analyze_pool_video", _analyze)
+    monkeypatch.setattr(
+        "app.storage.object_metadata",
+        lambda _path: SimpleNamespace(content_type="video/quicktime", generation=generation),
+    )
+    monkeypatch.setattr("app.storage.download_generation_to_file", lambda *_a, **_kw: None)
+
+    entry, ref = proposal_build._analyze_clip_assignment(
+        {"media_id": media_id, "gcs_path": path},
+        {},
+    )
+
+    assert len(video_analysis) == 1
+    assert entry["analysis"]["subject"] == "Corfu coast"
+    assert ref.media_id == media_id
+    assert ref.generation == generation
+
+
 def test_soft_timeout_persists_retryable_failure_before_reraising(monkeypatch) -> None:
     item_id = uuid.uuid4()
     owner_id = uuid.uuid4()

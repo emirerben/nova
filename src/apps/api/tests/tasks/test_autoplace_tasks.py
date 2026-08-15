@@ -642,6 +642,15 @@ def test_analyze_video_does_not_treat_plan_item_as_job_owner(monkeypatch) -> Non
     assert dims == (720, 1280)
 
 
+def test_analyze_pool_video_reuses_privacy_safe_single_argument_boundary(monkeypatch) -> None:
+    expected = ({"subject": "coast"}, 0.5625, 4.0, (720, 1280))
+    analyze = MagicMock(return_value=expected)
+    monkeypatch.setattr(ap, "_analyze_video", analyze)
+
+    assert ap.analyze_pool_video("/tmp/asset.mp4") == expected
+    analyze.assert_called_once_with("/tmp/asset.mp4")
+
+
 def test_analyze_pool_asset_persists_timeout_then_propagates(monkeypatch) -> None:
     asset = _PoolAsset(kind="image")
     asset.status = "queued"

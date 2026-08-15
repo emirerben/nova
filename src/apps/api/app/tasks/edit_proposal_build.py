@@ -149,7 +149,7 @@ def _analyze_clip_assignment(raw: dict, pool_by_path: dict[str, MediaRef]) -> tu
                     analysis.update({"width": dims[0], "height": dims[1]})
                 analysis["has_alpha"] = has_alpha
             else:
-                result, aspect, duration, dims = analyze_pool_video(local, media_id)
+                result, aspect, duration, dims = analyze_pool_video(local)
                 analysis = result or {}
                 if dims:
                     analysis.update({"width": dims[0], "height": dims[1]})
