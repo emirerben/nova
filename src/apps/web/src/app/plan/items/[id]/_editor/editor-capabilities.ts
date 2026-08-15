@@ -106,9 +106,19 @@ export function editorReasonCopy(reason: string | null | undefined): string {
   if (reason === "motion_clean_base_unavailable") {
     return "this edit has no reusable clean video base for Creator Blocks";
   }
+  if (reason === "guided_story_edit_unsupported") {
+    return "change the story in Plan edit, approve it, then generate again";
+  }
   if (reason === "duration_unknown") return "re-render this legacy edit before adding visual blocks";
   if (reason === "no_video") return "waiting for this edit to finish rendering";
   return reason;
+}
+
+export function canEditIntroControls(
+  capabilities: EditorCapabilities | null | undefined,
+  readOnly: boolean,
+): boolean {
+  return !readOnly && capabilities?.intro_controls !== false;
 }
 
 /**

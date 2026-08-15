@@ -106,6 +106,11 @@ def _arm(monkeypatch, *, object_exists=True):
     monkeypatch.setattr(settings, "overlay_autoplace_enabled", False, raising=False)
     monkeypatch.setattr(settings, "subtitled_text_lane_enabled", False, raising=False)
     monkeypatch.setattr(gj.storage, "object_exists", lambda p: object_exists)
+    monkeypatch.setattr(
+        gj.storage,
+        "signed_download_url",
+        lambda path, filename, **_kwargs: f"https://signed/{filename}",
+    )
     # _variants_for_response re-signs base_video_path on read — keep it local.
     monkeypatch.setattr(gj, "signed_get_url", lambda p, ttl=None: f"https://signed/{p}")
 
@@ -2811,6 +2816,33 @@ def teardown_function() -> None:
     app.dependency_overrides.clear()
 
 
+def test_guided_editor_route_preflights_before_title_validation(
+    client: TestClient, monkeypatch
+) -> None:
+    _arm(monkeypatch)
+    user = _user()
+    job = _job(
+        variant_id="guided_story",
+        resolved_archetype="guided_story",
+        duration_s=18.0,
+        story_timeline=[{"beat_id": "food"}],
+        text_elements=[dict(_VALID_ELEMENT)],
+    )
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    response = client.post(
+        f"/plan-items/{item.id}/variants/guided_story/editor-commit",
+        json={"title": "", "base_generation": "2026-07-01T00:00:00Z"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "guided_story_edit_unsupported"
+    db.commit.assert_not_awaited()
+
+
 def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> None:
     _arm(monkeypatch)
     user = _user()
@@ -3461,6 +3493,140 @@ def test_track_swap_clears_lyric_overrides_even_if_stale_client_echoes_them(
 def _caps(job, variant_id: str) -> dict:
     v = next(v for v in gj._variants_for_response(job) if v.get("variant_id") == variant_id)
     return v["editor_capabilities"]
+
+
+def test_guided_story_advertises_only_text_reburn(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="guided_story",
+        resolved_archetype="guided_story",
+        duration_s=18.0,
+        story_timeline=[{"beat_id": "food"}],
+        text_elements=[dict(_VALID_ELEMENT)],
+    )
+
+    caps = _caps(job, "guided_story")
+
+    assert caps["text_elements"] is True
+    assert caps["swap_song"] is False
+    assert caps["intro_controls"] is False
+    assert caps["lyrics"]["editable"] is False
+    assert caps["orientation"]["editable"] is False
+    for name in (
+        "timeline",
+        "split_clips",
+        "mix",
+        "sfx",
+        "overlays",
+        "visual_blocks",
+        "motion_scenes",
+        "camera_effects",
+        "background_music",
+        "suggestions",
+        "carousel",
+    ):
+        assert caps[name] is False
+
+
+def test_guided_story_rejects_legacy_edit_before_mutation(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="guided_story",
+        resolved_archetype="guided_story",
+        duration_s=18.0,
+        story_timeline=[{"beat_id": "food"}],
+        text_elements=[dict(_VALID_ELEMENT)],
+    )
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "guided_story",
+            _commit_req(title="A different intro"),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "guided_story_edit_unsupported"
+    assert job.assembly_plan == before
+
+
+def test_guided_story_accepts_text_element_only_commit(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="guided_story",
+        resolved_archetype="guided_story",
+        duration_s=18.0,
+        story_timeline=[{"beat_id": "food"}],
+        text_elements=[dict(_VALID_ELEMENT)],
+        render_receipt={"expected_text_ids": [_VALID_ELEMENT["id"]]},
+    )
+    updated = dict(_VALID_ELEMENT, text="The food felt worth slowing down for")
+
+    staged = gj.prepare_editor_commit(
+        job,
+        "guided_story",
+        _commit_req(text_elements=[updated]),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["text_elements"][0]["text"] == updated["text"]
+    assert staged["has_render_section"] is True
+    assert staged["new_track_id"] is None
+
+
+def test_guided_story_rejects_deleting_approved_text_synchronously(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="guided_story",
+        resolved_archetype="guided_story",
+        duration_s=18.0,
+        story_timeline=[{"beat_id": "food"}],
+        text_elements=[dict(_VALID_ELEMENT)],
+        render_receipt={"expected_text_ids": [_VALID_ELEMENT["id"]]},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "guided_story",
+            _commit_req(text_elements=[]),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "guided_story_text_required"
+
+
+@pytest.mark.parametrize(
+    "elements",
+    [
+        [dict(_VALID_ELEMENT, text="   ")],
+        [dict(_VALID_ELEMENT), dict(_VALID_ELEMENT)],
+        [dict(_VALID_ELEMENT, font_family="not-a-real-font")],
+    ],
+)
+def test_guided_story_direct_text_write_cannot_drop_approved_layer(monkeypatch, elements):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="guided_story",
+        resolved_archetype="guided_story",
+        duration_s=18.0,
+        story_timeline=[{"beat_id": "food"}],
+        text_elements=[dict(_VALID_ELEMENT)],
+        render_receipt={"expected_text_ids": [_VALID_ELEMENT["id"]]},
+    )
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException):
+        gj.dispatch_set_text_elements(
+            job,
+            "guided_story",
+            elements=elements,
+            render=False,
+            publish=False,
+        )
+
+    assert job.assembly_plan == before
 
 
 def test_capabilities_montage_song_text_all_on(monkeypatch):

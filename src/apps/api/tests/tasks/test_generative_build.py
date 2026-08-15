@@ -4873,6 +4873,42 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     assert v["caption_position_user_edited"] is True
     # subtitled: the language must survive or the editor chip + re-transcribe lose it.
     assert v["caption_language"] == "tr"
+
+
+def test_finalize_job_preserves_guided_story_receipt(monkeypatch):
+    """Strict approval evidence must survive the finalizer whitelist."""
+    import uuid
+
+    job = _FakeJob(assembly_plan={"guided_edit": {"proposal_version": 9}})
+    _patch_job_session(monkeypatch, job)
+    result = {
+        "variant_id": "guided_story",
+        "rank": 1,
+        "text_mode": "agent_text",
+        "ok": True,
+        "render_status": "ready",
+        "output_url": "u",
+        "video_path": "generative-jobs/j/guided.mp4",
+        "resolved_archetype": "guided_story",
+        "story_timeline": [{"beat_id": "food", "media_id": "photo-1"}],
+        "proposal_version": 9,
+        "media_digest": "a" * 64,
+        "render_receipt": {"verified": True, "actual_media_ids": ["photo-1"]},
+        "duration_s": 24.0,
+    }
+
+    gb._finalize_job(str(uuid.uuid4()), [result])
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["story_timeline"] == [{"beat_id": "food", "media_id": "photo-1"}]
+    assert variant["proposal_version"] == 9
+    assert variant["media_digest"] == "a" * 64
+    assert variant["render_receipt"] == {
+        "verified": True,
+        "actual_media_ids": ["photo-1"],
+    }
+    assert variant["duration_s"] == 24.0
+    assert job.assembly_plan["guided_edit"] == {"proposal_version": 9}
     assert job.status == "variants_ready"
 
 

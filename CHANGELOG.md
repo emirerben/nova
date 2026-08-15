@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.0.0] — 2026-08-15
+
+### Added
+- **Approved Plan edits now render as the complete story the creator reviewed.** Nova builds one 15–30 second vertical edit directly from the approved photos, videos, order, title, thoughts, layouts, pace, and goal, including first-class supporting cards and music selected from the whole story.
+- **Every finished guided story carries a strict, machine-readable receipt.** The receipt proves that every required beat, source, and text moment appeared with the approved storage identities and duration before Nova marks the video ready.
+
+### Changed
+- **A guided edit can never silently fall back to a simple montage.** Missing, replaced, mistimed, or dropped media and text now fail with a plain-language reason instead of publishing an incomplete video.
+- **Later wording edits preserve the approved story.** The editor can change guided-story text while structural controls remain locked; fast text reburns use the exact verified clean base and record the new output identity.
+- **The release remains dark until the production Corfu preview passes.** Renderer readiness is now available, but capability, frontend, and enforcement switches all stay off for deployment and can only be enabled in sequence after acceptance testing.
+
 ## [0.32.0.0] — 2026-08-14
 
 ### Added

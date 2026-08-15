@@ -1057,3 +1057,35 @@ montage.
 - **Planning and rendering ship dark and separately.** PR 2 can persist and snapshot proposals but
   does not claim to render them. Capability, frontend, and enforcement switches all default off;
   enforcement waits for PR 3's strict story assembler and the exact Corfu preview.
+
+## [2026-08-14] Approved guided stories render as their own strict timeline
+
+The proposal contract is now executable. An approved plan no longer becomes hints for the legacy
+montage matcher: it compiles once into a task-owned execution plan and renders directly from every
+selected photo/video beat.
+
+**Decisions:**
+
+- **Approval is the render program.** The compiler keeps the proposal version, media digest, ordered
+  beat/media IDs, exact source and music storage generations, source windows, layouts, wording,
+  duration, typography, transition policy, and whole-story music match. Redelivery reuses the saved
+  plan rather than making fresh creative decisions.
+- **Duration and transitions are reconciled before FFmpeg.** Beat durations are weights under the
+  approved top-level target. Crossfade inputs are extended by the overlap they consume, so the final
+  duration remains the approved duration; impossible short-source combinations fail instead of
+  dropping media.
+- **Photos and supporting cards are story footage.** Photos receive subtle motion, videos use the
+  existing crop/trim pipeline, and a requested supporting card renders as an inset over a blurred
+  background. Neither lane is treated as an optional post-render overlay.
+- **Publication requires measured evidence.** The receipt records exact downloaded generations and
+  hashes, every rendered moment, actual per-element alpha bounds, media/topic IDs, duration, canvas,
+  codecs, final hash, and exact published base/output object generations. Missing text, media, cards,
+  or format invariants keep the Job failed; there is no simple-montage fallback.
+- **Worker duplication is fenced, not assumed away.** A row-locked, heartbeating attempt lease admits
+  one renderer even when Celery delivers the same task twice. Losing deliveries cannot stamp the live
+  job finished; stale leases can be reclaimed after a worker disappears.
+- **Text stays editable without reopening creative decisions.** The renderer preserves a clean story
+  base. TextElement-only edits reburn that base and refresh alpha evidence. Legacy song/timeline/layout
+  operations fail closed for guided stories until they have proposal-aware implementations.
+- **Rollout remains dark by default.** Strict-renderer readiness now permits enforcement, but capability,
+  frontend, and enforcement flags stay false until a production-parity Corfu preview passes.

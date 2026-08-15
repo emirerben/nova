@@ -900,6 +900,26 @@ def test_status_includes_phase_fields(monkeypatch):
     assert resp.expected_phase_durations["analyze_clips"] == 45000
 
 
+def test_status_exposes_machine_readable_failure_reason() -> None:
+    import app.routes.generative_jobs as gj
+
+    job = _phase_job()
+    job.status = "processing_failed"
+    job.error_detail = "Approved media photo-3 could not be loaded."
+    job.failure_reason = "guided_story_media_missing"
+    resp = gj.GenerativeJobStatusResponse(
+        job_id=str(job.id),
+        status=job.status,
+        variants=[],
+        error_detail=job.error_detail,
+        failure_reason=job.failure_reason,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+    assert resp.failure_reason == "guided_story_media_missing"
+
+
 def test_status_phase_fields_null_for_uninstrumented_job(monkeypatch):
     """A job without phase data must return nulls — no crash."""
     import app.routes.generative_jobs as gj

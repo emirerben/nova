@@ -27,7 +27,7 @@ from sqlalchemy.exc import OperationalError
 from app.config import settings
 from app.database import sync_session
 from app.main import app
-from app.models import ContentPlan, Job, Persona, PlanItem, User
+from app.models import ContentPlan, Job, Persona, PlanItem, PlanItemAsset, User
 from app.schemas.edit_proposal import (
     ApprovedProposalSnapshot,
     EditProposal,
@@ -178,6 +178,68 @@ def _approve_clip_proposal(item_id: uuid.UUID, *, path: str, generation: str = "
         item.clip_assignments = [{"media_id": media_id, "gcs_path": path, "shot_id": None}]
         item.edit_proposal = proposal.model_dump(mode="json")
         s.commit()
+
+
+def _approve_asset_proposal(
+    user_id: uuid.UUID, item_id: uuid.UUID, *, path: str, generation: str = "51"
+) -> str:
+    asset_id = uuid.uuid4()
+    media = MediaRef(
+        lane="asset",
+        media_id=str(asset_id),
+        gcs_path=path,
+        generation=generation,
+        kind="image",
+    )
+    snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Tell the story with photos",
+        pace="balanced",
+        duration_s=18,
+        title="Corfu in details",
+        media=[media],
+        story_beats=[
+            StoryBeat(
+                beat_id="town",
+                topic="Town",
+                thought="The old streets hold the story.",
+                media_ids=[str(asset_id)],
+                duration_s=4,
+            )
+        ],
+    )
+    digest = canonical_media_digest([media])
+    proposal = EditProposal(
+        proposal_version=3,
+        generation_attempt_id=str(uuid.uuid4()),
+        media_digest=digest,
+        status="approved",
+        draft=snapshot,
+        last_approved=ApprovedProposalSnapshot(
+            proposal_version=3,
+            media_digest=digest,
+            approved_at=datetime.now(UTC),
+            snapshot=snapshot,
+        ),
+    )
+    with sync_session() as s:
+        item = s.get(PlanItem, item_id)
+        assert item is not None
+        item.clip_gcs_paths = []
+        item.edit_proposal = proposal.model_dump(mode="json")
+        s.add(
+            PlanItemAsset(
+                id=asset_id,
+                plan_item_id=item_id,
+                user_id=user_id,
+                gcs_path=path,
+                gcs_generation=generation,
+                kind="image",
+                status="ready",
+            )
+        )
+        s.commit()
+    return str(asset_id)
 
 
 def _link_job(item_id: uuid.UUID, user_id: uuid.UUID, *, status: str) -> uuid.UUID:
@@ -356,6 +418,42 @@ def test_approved_proposal_exact_media_is_snapshotted_into_job(
             "gcs_path": path,
             "generation": "42",
             "kind": "video",
+        }
+    ]
+
+
+def test_capability_snapshots_approved_asset_only_story_without_enforcement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An approved pool-only edit must not fall back during staged rollout."""
+
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", False)
+    user_id, item_id = _seed_item(clips=[])
+    path = f"users/{user_id}/plan/{item_id}/pool/town.jpg"
+    media_id = _approve_asset_proposal(user_id, item_id, path=path)
+    metadata = ObjectMetadata(
+        path=path,
+        generation="51",
+        etag="etag",
+        size=100,
+        content_type="image/jpeg",
+    )
+
+    with patch("app.storage.object_metadata", return_value=metadata), patch(_ENQUEUE):
+        result = dispatch_item_render_for(str(item_id))
+
+    assert result.outcome == "dispatched"
+    job = _jobs_for(item_id)[0]
+    assert job.all_candidates["clip_paths"] == [path]
+    assert job.raw_storage_path == path
+    assert job.assembly_plan["guided_edit"]["media_identities"] == [
+        {
+            "lane": "asset",
+            "media_id": media_id,
+            "gcs_path": path,
+            "generation": "51",
+            "kind": "image",
         }
     ]
 

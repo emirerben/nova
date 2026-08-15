@@ -151,6 +151,12 @@ export interface GenerativeVariant {
   // re-render. Absent on lyrics/legacy variants → instant editor hidden.
   base_video_url?: string | null;
   base_video_path?: string | null;
+  /** Approved guided-story timeline and strict publication evidence. */
+  story_timeline?: Array<Record<string, unknown>> | null;
+  proposal_version?: number | null;
+  media_digest?: string | null;
+  render_receipt?: Record<string, unknown> | null;
+  duration_s?: number | null;
   // User-pinned independent overrides (decoupled from style_set_id).
   // Null when the user hasn't pinned them; the renderer uses the style-set value.
   intro_font_family?: string | null;
@@ -212,6 +218,9 @@ export interface GenerativeJobStatus {
   status: string;
   variants: GenerativeVariant[];
   error_detail: string | null;
+  /** Stable server failure taxonomy. Strict guided-story verification errors
+   * remain distinguishable from generic rendering failures. */
+  failure_reason?: string | null;
   created_at: string;
   updated_at: string;
   // Plan-declared edit format (montage default). Per-variant `resolved_archetype`

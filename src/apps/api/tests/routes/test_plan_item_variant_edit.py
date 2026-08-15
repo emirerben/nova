@@ -151,6 +151,44 @@ ORIGINAL_VARIANT = {
 }
 
 
+@pytest.mark.parametrize(
+    ("endpoint", "payload"),
+    [
+        ("media-overlays", {"overlays": [], "render": False}),
+        ("sound-effects", {"placements": []}),
+    ],
+)
+def test_guided_story_metadata_lanes_reject_before_mutation(
+    client: TestClient, monkeypatch, endpoint: str, payload: dict
+) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "sound_effects_enabled", True, raising=False)
+    user = _user()
+    variant = {
+        **ORIGINAL_VARIANT,
+        "variant_id": "guided_story",
+        "resolved_archetype": "guided_story",
+        "text_elements": [],
+    }
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    before = dict(variant)
+
+    response = client.put(
+        f"/plan-items/{item.id}/variants/guided_story/{endpoint}",
+        json=payload,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "guided_story_edit_unsupported"
+    assert job.assembly_plan["variants"][0] == before
+    db.commit.assert_not_awaited()
+
+
 def _speech_variant() -> dict:
     candidate = make_candidate(
         start_s=2.0,

@@ -1,8 +1,8 @@
 # Guided edit proposal pipeline
 
 Guided edit separates creative approval from rendering. It is the review contract between all
-uploaded plan-item media and the strict story renderer. PR 2 implements planning and approval;
-the story assembler consumes the approved Job snapshot in PR 3.
+uploaded plan-item media and the strict story renderer. Planning and approval create the contract;
+the story assembler consumes the approved Job snapshot directly.
 
 ## Product flow
 
@@ -88,12 +88,38 @@ All switches default false:
 2. `NEXT_PUBLIC_GUIDED_EDIT_ENABLED` exposes the item-page flow (Vercel rebuild).
 3. `GUIDED_EDIT_ENFORCEMENT_ENABLED` requires an approval at Generate (API + worker restart).
 
-Deploy capability first, then the frontend. Do not enable enforcement until the PR 3 strict story
-renderer consumes `Job.assembly_plan.guided_edit` and the Corfu preview passes. PR 2 pins the
-code-owned `GUIDED_STORY_RENDERER_READY` constant false, so startup rejects enforcement even if an
-operator sets the flag accidentally; PR 3 may flip readiness only with strict assembly and receipt
-verification in place. Roll back in reverse order. Existing approvals and rendered Jobs remain
-readable with every switch off.
+Deploy capability first, then the frontend. Enable enforcement only after the strict story renderer
+and the Corfu preview pass. The code-owned `GUIDED_STORY_RENDERER_READY` pin is true only because
+guided Jobs now render from their approved snapshot and verify stage receipts before publication;
+startup still rejects enforcement without capability. Roll back in reverse order. Existing
+approvals and rendered Jobs remain readable with every switch off.
+
+## Strict story rendering
+
+When capability is enabled, a current approved proposal is snapshotted even before enforcement is
+enabled. Enforcement controls only whether Generate rejects an item without current approval. This
+prevents staged rollout from sending an already-approved story through the legacy montage path.
+
+The worker pins `guided_story_execution_plan` before FFmpeg work. It contains the compiler version,
+proposal version and digest, ordered source windows, direction/pace policy, exact music object
+path/generation and window (or explicit no-match), typography identity, and approved text. Redelivery
+reuses this plan rather than rematching a changed music library.
+
+The renderer exact-generation downloads every source selected by a beat. Unselected catalog media
+remains authorized but is not required in the output. Photos and videos become sequential full-screen
+or supporting-card moments. Photos receive a subtle zoom, relaxed/balanced story directions use
+duration-compensated crossfades, and fast montages use hard cuts. Video source audio is muted and the
+finished base receives either the pinned track or silent stereo AAC. The approved title and thoughts
+become editable TextElements on a clean text-free base. A text-only edit reburns from that base and
+refreshes its rendered-alpha evidence; other legacy editor operations fail closed instead of rebuilding
+the story as a montage. Approved title/thought IDs must remain present exactly once with non-blank text;
+changing wording is allowed, silently deleting an approved layer is not.
+
+Ready status requires a verified `render_receipt`: exact beat/media IDs, per-moment FFmpeg evidence,
+per-text rendered-alpha bounds inside the canvas, duration, 1080×1920 H.264 video, AAC audio, and the
+exact uploaded base/output object generations. Live render attempts use a row-locked heartbeat lease;
+duplicate deliveries neither render concurrently nor mark the owning task finished. Any missing
+approved layer fails with a guided-story reason. There is no montage fallback.
 
 Content-plan collection responses expose no proposal snapshots or signed preview URLs. The item
 detail and proposal mutation responses carry the full review payload, keeping list reads bounded.
@@ -106,6 +132,8 @@ detail and proposal mutation responses carry the full review payload, keeping li
   `tests/agents/test_edit_proposal_agent.py`
 - Replay/live+judge travel cases: `tests/evals/test_edit_proposal_evals.py`
 - Frontend review flow: `src/__tests__/plan/edit-proposal-card.test.tsx`
+- Strict compiler/fault injection: `tests/pipeline/test_guided_story.py`
+- Real mixed-media FFmpeg render: `tests/pipeline/test_guided_story_ffmpeg.py`
 
 Run the focused eval in replay mode:
 

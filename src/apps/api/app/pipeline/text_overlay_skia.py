@@ -3686,6 +3686,11 @@ def _with_masonry_layer_origin(
     overlay: dict,
 ) -> dict[str, Any]:
     """Carry compositor-only board origin metadata alongside the PNG sequence."""
+    # Guided-story strict receipts tie the actual rendered alpha sequence back
+    # to its approved TextElement. Other callers omit this private field and
+    # retain their exact sequence shape.
+    if overlay.get("element_id"):
+        sequence["element_id"] = str(overlay["element_id"])
     origin = _masonry_layer_origin(overlay)
     if origin is not None:
         sequence["layer_origin_x_px"] = origin
@@ -4212,6 +4217,116 @@ def burn_text_overlays_skia(
         # encode above. Free them the instant it returns so they don't pile up on
         # the worker's RAM-backed scratch across overlays and (serial) variants —
         # this is what was filling /tmp and OOM/timeout-killing renders in prod.
+        if work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def _sequence_alpha_evidence(
+    sequences: list[dict[str, Any]],
+    *,
+    required_element_ids: list[str],
+    canvas: Canvas,
+    safe_margin_px: int = 8,
+) -> list[dict[str, Any]]:
+    """Measure actual renderer PNG alpha for strict guided-story receipts.
+
+    We inspect generated frames rather than trusting overlay intent. A required
+    element is visible only when at least one sampled frame has non-trivial
+    alpha and its pixel bounds sit fully inside the canvas safe margin.
+    """
+
+    evidence: dict[str, dict[str, Any]] = {
+        element_id: {
+            "element_id": element_id,
+            "visible": False,
+            "peak_alpha": 0,
+            "pixel_bounds": None,
+            "sampled_frames": 0,
+        }
+        for element_id in required_element_ids
+    }
+    for sequence in sequences:
+        element_id = sequence.get("element_id")
+        if not element_id or element_id not in evidence:
+            continue
+        n_frames = max(1, int(sequence.get("n_frames") or 1))
+        indices = sorted({0, n_frames // 2, n_frames - 1})
+        bounds: tuple[int, int, int, int] | None = None
+        peak_alpha = 0
+        sampled = 0
+        pattern = str(sequence.get("pattern") or "")
+        for index in indices:
+            try:
+                path = pattern % index
+            except (TypeError, ValueError):
+                path = str(sequence.get("first_frame") or "")
+            if not path or not os.path.exists(path):
+                continue
+            with Image.open(path).convert("RGBA") as image:
+                alpha = image.getchannel("A")
+                sampled += 1
+                frame_peak = int(alpha.getextrema()[1])
+                peak_alpha = max(peak_alpha, frame_peak)
+                frame_bounds = alpha.point(lambda value: 255 if value >= 12 else 0).getbbox()
+                if frame_bounds is None:
+                    continue
+                if bounds is None:
+                    bounds = frame_bounds
+                else:
+                    bounds = (
+                        min(bounds[0], frame_bounds[0]),
+                        min(bounds[1], frame_bounds[1]),
+                        max(bounds[2], frame_bounds[2]),
+                        max(bounds[3], frame_bounds[3]),
+                    )
+        within_safe_area = bool(
+            bounds
+            and bounds[0] >= safe_margin_px
+            and bounds[1] >= safe_margin_px
+            and bounds[2] <= canvas.width - safe_margin_px
+            and bounds[3] <= canvas.height - safe_margin_px
+        )
+        current = evidence[element_id]
+        current["sampled_frames"] += sampled
+        current["peak_alpha"] = max(int(current["peak_alpha"]), peak_alpha)
+        if bounds is not None:
+            current["pixel_bounds"] = list(bounds)
+        current["visible"] = bool(peak_alpha >= 12 and within_safe_area)
+    return list(evidence.values())
+
+
+def burn_text_overlays_skia_with_evidence(
+    input_path: str,
+    overlays: list[dict],
+    output_path: str,
+    tmpdir: str,
+    *,
+    required_element_ids: list[str],
+    matte: SubjectMatteProvider | None = None,
+    canvas: Canvas = PORTRAIT,
+    input_probe: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Strict guided burn returning per-TextElement rendered-alpha evidence."""
+
+    _validate_input_canvas(input_path, canvas, input_probe=input_probe)
+    sequences, work_dir = render_text_overlay_sequences(
+        overlays,
+        tmpdir,
+        matte=matte,
+        **_canvas_kwargs(canvas),
+    )
+    try:
+        evidence = _sequence_alpha_evidence(
+            sequences,
+            required_element_ids=required_element_ids,
+            canvas=canvas,
+        )
+        if not sequences:
+            shutil.copy2(input_path, output_path)
+            return evidence
+        _ffmpeg_burn_pngs(input_path, sequences, output_path, **_canvas_kwargs(canvas))
+        return evidence
+    finally:
         if work_dir:
             shutil.rmtree(work_dir, ignore_errors=True)
 

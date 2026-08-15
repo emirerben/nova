@@ -21,6 +21,7 @@ from app.config import settings
 from app.database import get_db
 from app.main import app
 from app.models import ContentPlan, Job, Persona, PlanItem
+from app.routes import plan_items
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "copilot-ops"
 
@@ -1525,6 +1526,31 @@ def test_copilot_route_clarification_empties_ops(client: TestClient, monkeypatch
     assert resp.status_code == 200
     assert resp.json()["ops"] == []
     assert resp.json()["needs_clarification"] is True
+
+
+def test_copilot_route_allows_guided_story_text_drafts(client: TestClient, monkeypatch) -> None:
+    settings.edit_copilot_enabled = True
+    user = _user()
+    item, plan = _item_and_plan(user.id)
+    item.current_job.assembly_plan["variants"][0]["resolved_archetype"] = "guided_story"
+    _install_route_deps(user, item, plan)
+    run = AsyncMock(
+        return_value={
+            "intent": "edit",
+            "ops": [{"op": "set_text", "element_id": "thought-1", "text": "Clearer"}],
+            "confidence": 0.9,
+            "reply": "Updated the thought.",
+            "suggestions": [],
+            "needs_clarification": False,
+        }
+    )
+    monkeypatch.setattr(plan_items, "run_copilot_turn", run)
+
+    resp = client.post(f"/plan-items/{item.id}/variants/v1/copilot/turn", json=_payload())
+
+    assert resp.status_code == 200
+    assert resp.json()["ops"][0]["op"] == "set_text"
+    run.assert_awaited_once()
 
 
 def test_copilot_route_non_edit_intent_empties_ops(client: TestClient, monkeypatch) -> None:

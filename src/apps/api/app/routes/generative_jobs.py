@@ -437,6 +437,12 @@ class GenerativeVariant(BaseModel):
     # the browser can play the base under a client-side text overlay (instant edit).
     base_video_path: str | None = None
     base_video_url: str | None = None
+    # Strict guided-story approval and publication evidence.
+    story_timeline: list[dict] | None = None
+    proposal_version: int | None = None
+    media_digest: str | None = None
+    render_receipt: dict | None = None
+    duration_s: float | None = None
     # Narrated on-video caption editor: editable cues [{text, start_s, end_s}]
     # (assembled-time). Present only on narrated variants with an editable base.
     caption_cues: list[dict] | None = None
@@ -501,6 +507,10 @@ class GenerativeJobStatusResponse(BaseModel):
     # Keep dict pass-through for backwards-compatible internal callers.
     variants: list[dict]
     error_detail: str | None
+    # Stable machine-readable failure taxonomy persisted on the Job. Public
+    # owners need this to distinguish strict-story verification failures from
+    # a generic render error without exposing internal exception details.
+    failure_reason: str | None = None
     created_at: datetime
     updated_at: datetime
     # The plan-declared edit format (montage default). Per-variant `resolved_archetype`
@@ -1715,7 +1725,17 @@ async def _publish_committed_variant_render(
 # loaded Job is single-sourced here.
 
 
-def require_editable_variant(job: Job, variant_id: str) -> dict:
+_GUIDED_STORY_EDIT_ERROR = {
+    "code": "guided_story_edit_unsupported",
+    "message": "Change this in Plan edit, approve the updated story, then generate again.",
+}
+_GUIDED_STORY_TEXT_REQUIRED_ERROR = {
+    "code": "guided_story_text_required",
+    "message": "Keep the approved title and thought moments; edit their wording instead.",
+}
+
+
+def require_editable_variant(job: Job, variant_id: str, *, allow_guided_text: bool = False) -> dict:
     """Return the variant; 404 if unknown, 409 if it's already re-rendering."""
     if getattr(job, "status", None) == "cancelled":
         raise HTTPException(
@@ -1729,7 +1749,34 @@ def require_editable_variant(job: Job, variant_id: str) -> dict:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
         )
+    if variant.get("resolved_archetype") == "guided_story" and not allow_guided_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_GUIDED_STORY_EDIT_ERROR,
+        )
     return variant
+
+
+def _require_guided_story_text_ids(variant: dict, elements: list[dict]) -> None:
+    if variant.get("resolved_archetype") != "guided_story":
+        return
+    receipt = variant.get("render_receipt") or {}
+    required = list(receipt.get("approved_text_ids") or receipt.get("expected_text_ids") or [])
+    try:
+        from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+        parsed = [TextElement.model_validate(element) for element in elements]
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_GUIDED_STORY_TEXT_REQUIRED_ERROR,
+        ) from exc
+    submitted = [element.id for element in parsed if element.text.strip()]
+    if not required or any(submitted.count(required_id) != 1 for required_id in required):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_GUIDED_STORY_TEXT_REQUIRED_ERROR,
+        )
 
 
 async def dispatch_swap_song(
@@ -3498,13 +3545,18 @@ def dispatch_set_text_elements(
             detail="Text element editing is not available.",
         )
 
-    variant = require_editable_variant(job, variant_id)
+    variant = require_editable_variant(job, variant_id, allow_guided_text=True)
+    _require_guided_story_text_ids(variant, elements)
     previous_variant = copy.deepcopy(variant)
     previous_started_at = getattr(job, "started_at", None)
 
     validated, _is_first_sequence_edit = validate_text_elements_payload(
-        variant, elements, require_base=render
+        variant,
+        elements,
+        require_base=render,
+        strict_drop=variant.get("resolved_archetype") == "guided_story",
     )
+    _require_guided_story_text_ids(variant, validated)
 
     # Write render_generation_id before any DB mutation so the stale check in the
     # worker can compare against the value that was current when we enqueued.
@@ -4988,6 +5040,57 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # section.
     caption_reason = CAPTION_TAB_COPY if archetype == "subtitled" else None
     from app.config import settings  # noqa: PLC0415
+
+    if archetype == "guided_story":
+        # A guided story is an approved, immutable editorial plan. Until an
+        # operation has a story-native implementation, advertising the legacy
+        # montage control is worse than hiding it: the async worker must reject
+        # it to avoid dropping approved beats. TextElement reburns are the one
+        # supported post-render operation because they reuse the verified clean
+        # story base without reconstructing the timeline.
+        reason = "guided_story_edit_unsupported"
+        text_editable = _TEXT_ELEMENTS_ENABLED and _text_elements_allowed(variant)
+        return {
+            "text_elements": text_editable,
+            "timeline": False,
+            "split_clips": False,
+            "automatic_cut": False,
+            "automatic_cut_reason": reason,
+            "mix": False,
+            "sfx": False,
+            "overlays": False,
+            "visual_blocks": False,
+            "motion_scenes": False,
+            "motion_runtime_hash": None,
+            "evolving_type": False,
+            "camera_effects": False,
+            "background_music": False,
+            "suggestions": False,
+            "swap_song": False,
+            "intro_controls": False,
+            "reason": reason,
+            "sfx_reason": reason,
+            "overlays_reason": reason,
+            "visual_blocks_reason": reason,
+            "motion_scenes_reason": reason,
+            "camera_effects_reason": reason,
+            "suggestions_reason": reason,
+            "lyrics": {
+                "editable": False,
+                "enabled": False,
+                "can_toggle_on": False,
+                "reason": "disabled",
+                "lyrics_model": "elements",
+            },
+            "orientation": {
+                "editable": False,
+                "value": _variant_orientation(variant),
+                "reason": reason,
+            },
+            "carousel": False,
+            "carousel_reason": reason,
+        }
+
     from app.pipeline.motion_scene import (  # noqa: PLC0415
         COMPATIBLE_MOTION_RUNTIME_HASHES,
         LEGACY_MOTION_RUNTIME_HASH,
@@ -5900,6 +6003,42 @@ def variant_render_baseline(variant: dict) -> str:
     return str(variant.get("render_generation_id") or variant.get("render_finished_at") or "")
 
 
+def require_guided_story_editor_commit(
+    job: Job, variant_id: str, payload: EditorCommitRequest
+) -> None:
+    """Fail unsupported guided sections before route-specific lookups or writes."""
+
+    variant = _find_variant(job, variant_id)
+    if not isinstance(variant, dict) or variant.get("resolved_archetype") != "guided_story":
+        return
+    guided_text_only = (
+        payload.text_elements is not None
+        and payload.caption_cues is None
+        and payload.caption_meta is None
+        and payload.timeline_slots is None
+        and payload.mix is None
+        and payload.music_track_id is None
+        and payload.music_window is None
+        and payload.background_music is None
+        and payload.lyrics is None
+        and payload.orientation is None
+        and payload.sound_effects is None
+        and payload.media_overlays is None
+        and payload.visual_blocks is None
+        and payload.motion_scenes is None
+        and payload.camera_effects is None
+        and payload.title is None
+        and not payload.remove_music
+        and "carousel_moment" not in payload.model_fields_set
+    )
+    if not guided_text_only:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_GUIDED_STORY_EDIT_ERROR,
+        )
+    _require_guided_story_text_ids(variant, payload.text_elements or [])
+
+
 def prepare_editor_commit(
     job: Job,
     variant_id: str,
@@ -5931,6 +6070,7 @@ def prepare_editor_commit(
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    require_guided_story_editor_commit(job, variant_id, payload)
 
     if (
         payload.text_elements is None
@@ -6012,6 +6152,7 @@ def prepare_editor_commit(
             require_base=payload.timeline_slots is None and not text_requires_full_render,
             strict_drop=True,
         )
+        _require_guided_story_text_ids(variant, validated_elements)
 
     validated_caption_cues: list[dict] | None = None
     if payload.caption_cues is not None:
@@ -7144,7 +7285,11 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession) -> None
         return
     for variant in variants:
         track = tracks.get(variant.get("music_track_id") or "")
-        capability = _music_window_capability(variant, track)
+        capability = (
+            None
+            if variant.get("resolved_archetype") == "guided_story"
+            else _music_window_capability(variant, track)
+        )
         if capability is not None:
             editor_capabilities = dict(variant.get("editor_capabilities") or {})
             editor_capabilities["music_window"] = capability
@@ -7301,6 +7446,9 @@ async def get_generative_job_status(
         status=job.status,
         variants=variants,
         error_detail=None if job.status == "cancelled" else job.error_detail,
+        failure_reason=(
+            None if job.status == "cancelled" else getattr(job, "failure_reason", None)
+        ),
         created_at=job.created_at,
         updated_at=job.updated_at,
         edit_format=(job.all_candidates or {}).get("edit_format"),
