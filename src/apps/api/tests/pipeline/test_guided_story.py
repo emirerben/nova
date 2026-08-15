@@ -7,6 +7,7 @@ import pytest
 
 from app.pipeline.guided_story import (
     GuidedStoryError,
+    _compile_execution_plan_version,
     _download_selected,
     _mix_pinned_music,
     _render_video_moment,
@@ -123,6 +124,7 @@ def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> No
     assert plan["selected_media_ids"] == ["food-photo", "town-photo", "coast-video"]
     assert "unused-photo" not in {row["media_id"] for row in plan["story_timeline"]}
     assert plan["resolved_duration_s"] == 18
+    assert plan["compiler_version"] == 2
     assert plan["proposal_version"] == 7
     assert [row["beat_id"] for row in plan["beat_windows"]] == ["food", "town", "coast"]
     assert {row["layout"] for row in plan["story_timeline"]} == {
@@ -169,6 +171,45 @@ def test_execution_plan_is_fenced_to_approval_version_and_digest() -> None:
     assert exc.value.code == "guided_story_snapshot_invalid"
 
 
+def test_execution_plan_accepts_v1_timing_across_compiler_upgrade() -> None:
+    raw = _guided_snapshot()
+    raw["approved_proposal"]["duration_s"] = 17
+    raw["approved_proposal"]["story_beats"][0]["media_ids"] = [
+        "food-photo",
+        "town-photo",
+    ]
+    plan = _compile_execution_plan_version(raw, track=None, compiler_version=1)
+
+    first_beat = [row for row in plan["story_timeline"] if row["beat_id"] == "food"]
+    assert [row["duration_s"] for row in first_beat] == [2.953, 2.954]
+    assert validate_execution_plan(plan, raw) == plan
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda plan: plan["story_timeline"][0].update(gcs_path="users/other.jpg"),
+        lambda plan: plan["story_timeline"][0].update(moment_id="changed-moment"),
+        lambda plan: plan["story_timeline"][0].update(
+            source_start_s=1.0,
+            source_end_s=2.0,
+            output_start_s=1.0,
+            output_end_s=2.0,
+            duration_s=1.0,
+        ),
+    ],
+)
+def test_execution_plan_v1_compatibility_still_rejects_semantic_drift(mutate) -> None:
+    raw = _guided_snapshot()
+    plan = _compile_execution_plan_version(raw, track=None, compiler_version=1)
+    mutate(plan)
+
+    with pytest.raises(GuidedStoryError) as exc:
+        validate_execution_plan(plan, raw)
+
+    assert exc.value.code == "guided_story_snapshot_invalid"
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -199,6 +240,155 @@ def test_compiler_fails_instead_of_dropping_media_when_duration_is_too_short() -
 
     with pytest.raises(GuidedStoryError, match="too short") as exc:
         compile_execution_plan(raw, track=None)
+    assert exc.value.code == "guided_story_duration_impossible"
+
+
+def test_compiler_gives_short_video_its_available_time_and_redistributes_beat() -> None:
+    raw = _guided_snapshot()
+    proposal = raw["approved_proposal"]
+    coast = next(row for row in proposal["media"] if row["media_id"] == "coast-video")
+    coast["duration_s"] = 1.966667
+    coast["analysis"]["duration_s"] = 1.966667
+    coast["analysis"]["best_moments"] = []
+    proposal["duration_s"] = 12
+    proposal["story_beats"] = [
+        {
+            "beat_id": "old-town",
+            "topic": "Old Town",
+            "thought": "The old streets reward slow wandering.",
+            "media_ids": ["food-photo", "town-photo", "coast-video"],
+            "layout": "fullscreen",
+            "duration_s": 10,
+        },
+        {
+            "beat_id": "closing",
+            "topic": "Closing",
+            "thought": "One last look before leaving.",
+            "media_ids": ["food-photo"],
+            "layout": "fullscreen",
+            "duration_s": 2,
+        },
+    ]
+
+    plan = compile_execution_plan(raw, track=None)
+
+    moments = plan["story_timeline"]
+    video = next(row for row in moments if row["media_id"] == "coast-video")
+    assert moments.index(video) < len(moments) - 1
+    assert video["source_end_s"] <= 1.967
+    assert video["duration_s"] >= 1.4
+    assert plan["beat_windows"][0]["resolved_duration_s"] == 10
+    assert plan["resolved_duration_s"] == 12
+
+
+@pytest.mark.parametrize(
+    ("direction", "media_ids", "video_duration_s", "transition_type"),
+    [
+        ("guided_story", ["food-photo", "coast-video"], 1.4, "crossfade"),
+        ("fast_montage", ["coast-video", "food-photo"], 0.8, "none"),
+    ],
+)
+def test_compiler_accepts_video_at_minimum_without_transition_overlap(
+    direction: str,
+    media_ids: list[str],
+    video_duration_s: float,
+    transition_type: str,
+) -> None:
+    raw = _guided_snapshot(direction=direction)
+    proposal = raw["approved_proposal"]
+    coast = next(row for row in proposal["media"] if row["media_id"] == "coast-video")
+    coast["duration_s"] = video_duration_s
+    coast["analysis"]["duration_s"] = video_duration_s
+    coast["analysis"]["best_moments"] = []
+    proposal["duration_s"] = 10
+    proposal["story_beats"] = [
+        {
+            "beat_id": "boundary",
+            "topic": "Boundary",
+            "thought": "Every approved source remains visible.",
+            "media_ids": media_ids,
+            "layout": "fullscreen",
+            "duration_s": 10,
+        }
+    ]
+
+    plan = compile_execution_plan(raw, track=None)
+
+    video = next(row for row in plan["story_timeline"] if row["media_id"] == "coast-video")
+    assert video["duration_s"] == pytest.approx(video_duration_s, abs=0.001)
+    assert video["source_end_s"] <= video_duration_s + 0.001
+    assert plan["transition_policy"]["type"] == transition_type
+    assert plan["resolved_duration_s"] == 10
+
+
+def test_compiler_rejects_selected_video_without_duration() -> None:
+    raw = _guided_snapshot()
+    proposal = raw["approved_proposal"]
+    coast = next(row for row in proposal["media"] if row["media_id"] == "coast-video")
+    coast["duration_s"] = None
+
+    with pytest.raises(GuidedStoryError, match="no usable duration") as exc:
+        compile_execution_plan(raw, track=None)
+
+    assert exc.value.code == "guided_story_duration_impossible"
+
+
+def test_compiler_rejects_video_too_short_after_transition_overlap() -> None:
+    raw = _guided_snapshot()
+    proposal = raw["approved_proposal"]
+    coast = next(row for row in proposal["media"] if row["media_id"] == "coast-video")
+    coast["duration_s"] = 1.45
+    proposal["duration_s"] = 10
+    proposal["story_beats"] = [
+        {
+            "beat_id": "short-video",
+            "topic": "Short video",
+            "thought": "A quick glimpse.",
+            "media_ids": ["coast-video"],
+            "layout": "fullscreen",
+            "duration_s": 5,
+        },
+        {
+            "beat_id": "closing",
+            "topic": "Closing",
+            "thought": "One last look.",
+            "media_ids": ["food-photo"],
+            "layout": "fullscreen",
+            "duration_s": 5,
+        },
+    ]
+
+    with pytest.raises(GuidedStoryError, match="too short to show clearly") as exc:
+        compile_execution_plan(raw, track=None)
+
+    assert exc.value.code == "guided_story_duration_impossible"
+
+
+def test_compiler_rejects_all_video_beat_without_enough_total_footage() -> None:
+    raw = _guided_snapshot()
+    proposal = raw["approved_proposal"]
+    for row in proposal["media"]:
+        row["kind"] = "video"
+        row["duration_s"] = 2.0
+    for row in raw["media_identities"]:
+        row["kind"] = "video"
+    media = [MediaRef.model_validate(row) for row in proposal["media"]]
+    raw["media_digest"] = canonical_media_digest(media)
+    proposal["duration_s"] = 10
+    proposal["story_beats"] = [
+        {
+            "beat_id": "all-video",
+            "topic": "All video",
+            "thought": "Every approved clip should remain visible.",
+            "media_ids": ["food-photo", "town-photo", "coast-video"],
+            "layout": "fullscreen",
+            "duration_s": 10,
+        }
+    ]
+
+    with pytest.raises(GuidedStoryError, match="longer than its approved videos") as exc:
+        compile_execution_plan(raw, track=None)
+
     assert exc.value.code == "guided_story_duration_impossible"
 
 

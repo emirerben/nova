@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.2.0] — 2026-08-15
+
+### Fixed
+- **Approved guided edits now render when one selected video is shorter than its equal share of a story beat.** Nova uses the full short clip and redistributes the remaining time to the surrounding approved photos and videos, preserving the complete story and target duration instead of stopping the render.
+- **Guided renders remain safe across this timing upgrade.** Existing queued plans keep their original timing, while new plans use the improved allocation and both versions still reject changed media, text, layout, or timing.
+
 ## [0.33.1.1] — 2026-08-15
 
 ### Fixed
