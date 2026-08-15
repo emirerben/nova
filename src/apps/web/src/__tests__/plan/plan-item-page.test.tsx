@@ -328,12 +328,14 @@ describe("PlanItemPage — masonry collage item UX", () => {
       fireEvent.click(screen.getAllByRole("button", { name: "Change" })[1]);
     });
     const shelf = screen.getByRole("radiogroup", { name: "Style" });
-    for (const src of [
-      "/plan/style-tiles/classic.jpg",
-      "/plan/style-tiles/masonry.jpg",
-      "/plan/style-tiles/polaroid.jpg",
-    ]) {
-      expect(shelf.querySelector(`img[src="${src}"]`)).not.toBeNull();
+    // Tiles are hover-to-play muted loops: poster frame + video source per style.
+    for (const name of ["classic", "masonry", "polaroid"]) {
+      const video = shelf.querySelector(
+        `video[poster="/plan/style-tiles/${name}.jpg"]`,
+      ) as HTMLVideoElement | null;
+      expect(video).not.toBeNull();
+      expect(video?.getAttribute("src")).toBe(`/plan/style-tiles/${name}.mp4`);
+      expect(video?.muted ?? video?.hasAttribute("muted")).toBeTruthy();
     }
   });
 
