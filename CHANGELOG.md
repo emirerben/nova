@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.33.0.0] — 2026-08-15
 
 ### Added
-- **Approved Plan edits now render as the complete story the creator reviewed.** Nova builds one 15–30 second vertical edit directly from the approved photos, videos, order, title, thoughts, layouts, pace, and goal, including first-class supporting cards and music selected from the whole story.
+- **Approved Plan edits now render as the complete story the creator reviewed.** Nova builds one vertical edit at the creator-approved duration directly from the approved photos, videos, order, title, thoughts, layouts, pace, and goal, including first-class supporting cards and music selected from the whole story.
 - **Every finished guided story carries a strict, machine-readable receipt.** The receipt proves that every required beat, source, and text moment appeared with the approved storage identities and duration before Nova marks the video ready.
 
 ### Changed

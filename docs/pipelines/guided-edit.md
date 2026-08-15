@@ -88,11 +88,14 @@ All switches default false:
 2. `NEXT_PUBLIC_GUIDED_EDIT_ENABLED` exposes the item-page flow (Vercel rebuild).
 3. `GUIDED_EDIT_ENFORCEMENT_ENABLED` requires an approval at Generate (API + worker restart).
 
-Deploy capability first, then the frontend. Enable enforcement only after the strict story renderer
-and the Corfu preview pass. The code-owned `GUIDED_STORY_RENDERER_READY` pin is true only because
+After merge, deploy the API/worker and frontend with all three switches still off. Then download the
+authorized Corfu inputs read-only into temporary storage, render them through the production Docker
+image without production writes, review the MP4, contact sheet, decision trace, and strict receipt,
+and delete the scratch inputs. Only after that preview passes should rollout enable capability, then
+the frontend, then enforcement. The code-owned `GUIDED_STORY_RENDERER_READY` pin is true only because
 guided Jobs now render from their approved snapshot and verify stage receipts before publication;
-startup still rejects enforcement without capability. Roll back in reverse order. Existing
-approvals and rendered Jobs remain readable with every switch off.
+startup still rejects enforcement without capability. Roll back in reverse order. Existing approvals
+and rendered Jobs remain readable with every switch off.
 
 ## Strict story rendering
 
