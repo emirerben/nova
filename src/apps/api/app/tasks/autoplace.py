@@ -80,7 +80,11 @@ def _analysis_temp_filename(source_filename: str | None, kind: str) -> str:
     creator's original basename into that path would leak a filename even
     though the storage URL itself is never logged.
     """
-    allowed = {".mp4", ".mov"} if kind == "video" else {".jpg", ".jpeg", ".png", ".webp", ".heic"}
+    allowed = (
+        {".mp4", ".mov"}
+        if kind == "video"
+        else {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+    )
     suffix = Path(source_filename or "").suffix.lower()
     if suffix not in allowed:
         suffix = ".mp4" if kind == "video" else ".png"
@@ -794,10 +798,16 @@ def _analyze_image(
     dims: tuple[int, int] | None = None
     has_alpha = False
     try:
+        import pillow_heif  # type: ignore[import]  # noqa: PLC0415
         from PIL import Image  # noqa: PLC0415
 
         from app.pipeline.image_clip import image_has_alpha  # noqa: PLC0415
 
+        # Pool analysis runs as its own Celery task and cannot rely on a render
+        # module having registered Pillow's HEIC/HEIF decoder first. Without
+        # this, every iPhone photo fails at Image.open with
+        # UnidentifiedImageError even though pillow-heif is installed.
+        pillow_heif.register_heif_opener()
         with Image.open(local_path) as im:
             if im.height:
                 aspect = round(im.width / im.height, 4)
@@ -839,6 +849,8 @@ def _analyze_image(
             mime = "image/webp"
         elif lower.endswith(".heic"):
             mime = "image/heic"
+        elif lower.endswith(".heif"):
+            mime = "image/heif"
         with open(local_path, "rb") as fh:
             data = fh.read()
         resp = _get_client().models.generate_content(
@@ -1114,7 +1126,8 @@ def analyze_pool_asset(
         except AssetUnreadableError:
             failure_code = "analysis_unreadable"
             failure_detail = (
-                "Kria couldn't read this file. Export it as JPG, PNG, WebP, HEIC, MP4, or MOV."
+                "Kria couldn't read this file. Export it as JPG, PNG, WebP, HEIC, HEIF, MP4, "
+                "or MOV."
             )
             failed = True
         except AnalysisTemporarilyUnavailableError:

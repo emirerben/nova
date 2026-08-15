@@ -240,7 +240,7 @@ def presigned_put_url_for_media_overlay(
     delete rule). This ensures overlay assets survive past the 24h lifecycle so
     a later re-render (e.g. swap-song) can re-apply the same cards.
 
-    Accepted content types: images (jpeg/png/webp/heic) and short video clips
+    Accepted content types: images (jpeg/png/webp/heic/heif) and short video clips
     (mp4/quicktime). The route layer validates the content_type before calling
     this function.
     """

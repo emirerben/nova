@@ -6,7 +6,14 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from app.models import Job, PlanItem, PlanItemAsset
+import pytest
+from sqlalchemy import select, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
+
+from app.config import settings
+from app.database import sync_session
+from app.models import ContentPlan, Job, Persona, PlanItem, PlanItemAsset, User
 from app.tasks import maintenance
 
 
@@ -26,8 +33,10 @@ class _Session:
         self.rows = rows
         self.commits = 0
         self.deleted = []
+        self.statements = []
 
     def execute(self, _stmt):
+        self.statements.append(_stmt)
         return _Rows(self.rows)
 
     def commit(self):
@@ -83,6 +92,138 @@ def test_reconcile_requeues_with_new_fenced_attempt(monkeypatch) -> None:
             "x-correlation-id": "batch-correlation",
         },
     )
+
+
+def test_reconcile_requeues_once_for_heif_decoder_regression(monkeypatch) -> None:
+    asset = _asset(attempts=1)
+    asset.status = "failed"
+    asset.error_code = "analysis_unreadable"
+    asset.error_detail = "Kria couldn't read this file."
+    asset.upload_content_type = "image/heic"
+    session = _Session([asset])
+
+    @contextmanager
+    def _session():
+        yield session
+
+    publish = MagicMock()
+    monkeypatch.setattr(maintenance, "sync_session", _session)
+    monkeypatch.setattr("app.tasks.autoplace.analyze_pool_asset.apply_async", publish)
+    monkeypatch.setattr("app.config.settings.pool_asset_analysis_queue", "autoplace-jobs")
+
+    assert maintenance.reconcile_stale_pool_assets(now=datetime.now(UTC)) == 1
+    assert asset.status == "queued"
+    assert asset.analysis_attempt_count == 2
+    publish.assert_called_once()
+
+    recovery_query = str(session.statements[0])
+    assert "plan_item_assets.error_code" in recovery_query
+    assert "plan_item_assets.upload_content_type" in recovery_query
+    assert "plan_item_assets.analysis_attempt_count" in recovery_query
+    recovery_params = repr(session.statements[0].compile().params)
+    assert "analysis_unreadable" in recovery_params
+    assert "image/heic" in recovery_params
+    assert "image/heif" in recovery_params
+    assert maintenance._POOL_HEIF_DECODER_RECOVERY_MAX_ATTEMPTS in (
+        session.statements[0].compile().params.values()
+    )
+
+
+def test_heif_recovery_predicate_selects_only_eligible_database_rows() -> None:
+    if not (make_url(settings.database_url).database or "").endswith("_test"):
+        pytest.skip("requires a *_test database")
+    try:
+        with sync_session() as probe:
+            probe.execute(text("select 1"))
+    except OperationalError:
+        pytest.skip("nova_test Postgres not reachable")
+
+    user_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    with sync_session() as db:
+        db.add(User(id=user_id, email=f"{user_id}@test.local"))
+        db.flush()
+        persona = Persona(
+            user_id=user_id,
+            persona_status="ready",
+            persona={"content_mode": "travel", "tone": "direct"},
+        )
+        db.add(persona)
+        db.flush()
+        plan = ContentPlan(user_id=user_id, persona_id=persona.id)
+        db.add(plan)
+        db.flush()
+        db.add(
+            PlanItem(
+                id=item_id,
+                content_plan_id=plan.id,
+                position=1,
+                idea="HEIF recovery predicate",
+                item_status="awaiting_clips",
+                clip_gcs_paths=[],
+            )
+        )
+        db.flush()
+
+        def add_asset(
+            *,
+            status: str = "failed",
+            error_code: str | None = "analysis_unreadable",
+            content_type: str = "image/heic",
+            attempts: int = 1,
+        ) -> uuid.UUID:
+            asset_id = uuid.uuid4()
+            db.add(
+                PlanItemAsset(
+                    id=asset_id,
+                    plan_item_id=item_id,
+                    user_id=user_id,
+                    gcs_path=f"users/{user_id}/plan/{item_id}/pool/{asset_id}.heic",
+                    kind="image",
+                    source_filename=f"{asset_id}.heic",
+                    upload_content_type=content_type,
+                    status=status,
+                    error_code=error_code,
+                    error_detail="test",
+                    analysis_attempt_count=attempts,
+                )
+            )
+            return asset_id
+
+        eligible = add_asset()
+        current = add_asset(
+            status="queued",
+            error_code=None,
+            content_type="image/png",
+        )
+        controls = {
+            add_asset(attempts=2),
+            add_asset(content_type="image/png"),
+            add_asset(error_code="analysis_temporarily_unavailable"),
+            add_asset(status="ready"),
+        }
+        db.commit()
+
+        selected = set(
+            db.execute(
+                select(PlanItemAsset.id).where(
+                    PlanItemAsset.id.in_({eligible, *controls}),
+                    maintenance._heif_decoder_recovery_predicate(),
+                )
+            ).scalars()
+        )
+
+    assert selected == {eligible}
+
+    with sync_session() as db:
+        first = db.execute(
+            select(PlanItemAsset.id)
+            .where(PlanItemAsset.id.in_({eligible, current}))
+            .order_by(maintenance._pool_reconcile_priority())
+            .limit(1)
+        ).scalar_one()
+
+    assert first == current
 
 
 def test_reconcile_terminalizes_exhausted_attempt(monkeypatch) -> None:

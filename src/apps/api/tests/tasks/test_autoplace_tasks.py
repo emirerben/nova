@@ -532,6 +532,7 @@ def test_analyze_pool_asset_downloads_verified_generation(monkeypatch) -> None:
     [
         ("private campaign name.MOV", "video", "asset.mov"),
         ("../../customer-secret.JPG", "image", "asset.jpg"),
+        ("phone-photo.HEIF", "image", "asset.heif"),
         ("unsupported.tiff", "image", "asset.png"),
         (None, "video", "asset.mp4"),
     ],
@@ -542,6 +543,69 @@ def test_analysis_temp_filename_never_contains_user_basename(
     expected: str,
 ) -> None:
     assert ap._analysis_temp_filename(source_filename, kind) == expected
+
+
+def test_analyze_image_registers_heif_decoder_before_opening(monkeypatch, tmp_path) -> None:
+    import pillow_heif
+    from PIL import Image
+
+    pillow_heif.register_heif_opener()
+    source = tmp_path / "phone-photo.heic"
+    Image.new("RGB", (12, 8), "#336699").save(source, format="HEIF")
+
+    # Reproduce a fresh worker process where no unrelated render module has
+    # registered pillow-heif yet. Pool analysis must own that initialization.
+    monkeypatch.delitem(Image.OPEN, "HEIF", raising=False)
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "gemini_api_key", None)
+
+    analysis, aspect, dims, has_alpha = ap._analyze_image(str(source), "test-scope")
+
+    assert analysis is None
+    assert aspect == 1.5
+    assert dims == (12, 8)
+    assert has_alpha is False
+
+
+def test_analyze_image_sends_heif_with_provider_mime(monkeypatch, tmp_path) -> None:
+    import pillow_heif
+    from PIL import Image
+
+    pillow_heif.register_heif_opener()
+    source = tmp_path / "phone-photo.heif"
+    Image.new("RGB", (12, 8), "#336699").save(source, format="HEIF")
+
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "gemini_api_key", "gemini-key")
+    captured: dict = {}
+
+    class _Models:
+        def generate_content(self, **kwargs):  # noqa: ANN003, ANN201
+            captured.update(kwargs)
+            return SimpleNamespace(
+                text=json.dumps(
+                    {
+                        "subject": "blue test image",
+                        "description": "solid blue test image",
+                        "on_screen_text": "",
+                        "brands": [],
+                        "kind_hint": "photo",
+                    }
+                )
+            )
+
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer._get_client",
+        lambda: SimpleNamespace(models=_Models()),
+    )
+    monkeypatch.setattr("app.pipeline.prompt_loader.load_prompt", lambda _name: "prompt")
+
+    analysis, _aspect, _dims, _has_alpha = ap._analyze_image(str(source), "test-scope")
+
+    assert analysis is not None
+    assert captured["contents"][0].inline_data.mime_type == "image/heif"
 
 
 def test_analyze_video_does_not_treat_plan_item_as_job_owner(monkeypatch) -> None:

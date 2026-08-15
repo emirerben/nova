@@ -24,7 +24,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import and_, or_, select, text
+from sqlalchemy import and_, case, or_, select, text
 
 from app.database import sync_session
 from app.models import Job, PlanItem, PlanItemAsset
@@ -38,9 +38,25 @@ log = structlog.get_logger()
 _POOL_QUEUED_STALE_AFTER = timedelta(minutes=60)
 _POOL_ANALYZING_STALE_AFTER = timedelta(minutes=10)
 _POOL_MAX_ATTEMPTS = 3
+_POOL_HEIF_DECODER_RECOVERY_MAX_ATTEMPTS = 2
 _POOL_RECONCILE_BATCH = 100
 _POOL_RESERVATION_TTL = timedelta(minutes=15)
 _POOL_RESERVATION_CLEANUP_GRACE = timedelta(minutes=15)
+
+
+def _heif_decoder_recovery_predicate():
+    """Rows terminalized by the missing HEIF decoder, eligible for one retry."""
+    return and_(
+        PlanItemAsset.status == "failed",
+        PlanItemAsset.error_code == "analysis_unreadable",
+        PlanItemAsset.upload_content_type.in_({"image/heic", "image/heif"}),
+        PlanItemAsset.analysis_attempt_count < _POOL_HEIF_DECODER_RECOVERY_MAX_ATTEMPTS,
+    )
+
+
+def _pool_reconcile_priority():
+    """Current creator work sorts ahead of historical decoder recovery."""
+    return case((PlanItemAsset.status == "failed", 1), else_=0)
 
 
 def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
@@ -113,7 +129,21 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                                 ),
                             ),
                         ),
+                        # HEIC/HEIF pool analysis shipped without registering
+                        # Pillow's decoder, so every valid iPhone photo was
+                        # terminalized as unreadable on its first attempt. Give
+                        # those rows exactly one post-fix recovery attempt; a
+                        # genuinely corrupt HEIF then stops at attempt 2 rather
+                        # than looping forever.
+                        _heif_decoder_recovery_predicate(),
                     )
+                )
+                # Current uploads and stale in-flight work stay ahead of the
+                # historical repair so rollout recovery cannot delay creators
+                # who are uploading now.
+                .order_by(
+                    _pool_reconcile_priority(),
+                    PlanItemAsset.created_at,
                 )
                 .with_for_update(skip_locked=True)
                 .limit(_POOL_RECONCILE_BATCH)

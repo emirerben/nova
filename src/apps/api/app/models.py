@@ -1032,6 +1032,15 @@ class PlanItemAsset(Base):
         ),
         # List query: WHERE plan_item_id ORDER BY created_at.
         Index("idx_plan_item_assets_item_created", "plan_item_id", "created_at"),
+        Index(
+            "idx_plan_item_assets_heif_unreadable_recovery",
+            "id",
+            postgresql_where=text(
+                "status = 'failed' AND error_code = 'analysis_unreadable' "
+                "AND upload_content_type IN ('image/heic', 'image/heif') "
+                "AND analysis_attempt_count < 2"
+            ),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

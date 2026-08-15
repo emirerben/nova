@@ -75,3 +75,35 @@ def test_alembic_commits_each_revision_independently() -> None:
     env_source = (Path(__file__).parents[1] / "app" / "migrations" / "env.py").read_text()
 
     assert env_source.count("transaction_per_migration=True") == 2
+
+
+def test_0076_heif_recovery_index_is_symmetric(monkeypatch) -> None:
+    migration = importlib.import_module("app.migrations.versions.0076_heif_recovery_index")
+    created: list[tuple[str, str]] = []
+    dropped: list[str] = []
+
+    monkeypatch.setattr(
+        migration.op,
+        "create_index",
+        lambda name, _table, _columns, **kwargs: created.append(
+            (name, str(kwargs["postgresql_where"]))
+        ),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "drop_index",
+        lambda name, **_kwargs: dropped.append(name),
+    )
+
+    migration.upgrade()
+    migration.downgrade()
+
+    assert created == [
+        (
+            "idx_plan_item_assets_heif_unreadable_recovery",
+            "status = 'failed' AND error_code = 'analysis_unreadable' "
+            "AND upload_content_type IN ('image/heic', 'image/heif') "
+            "AND analysis_attempt_count < 2",
+        )
+    ]
+    assert dropped == ["idx_plan_item_assets_heif_unreadable_recovery"]
