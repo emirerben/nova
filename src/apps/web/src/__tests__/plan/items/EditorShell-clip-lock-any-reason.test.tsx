@@ -102,6 +102,7 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
     clips: [
       { clip_index: 0, signed_url: null, duration_s: 5, used: true },
       { clip_index: 1, signed_url: null, duration_s: 5, used: true },
+      { clip_index: 2, signed_url: null, duration_s: null, used: false },
     ],
     windows: [],
     totalS: 6,
@@ -239,6 +240,36 @@ describe("EditorShell — clip lane locks for ANY server timeline ineligibility"
 
     fireEvent.click(clipBar);
     expect(screen.getByRole("button", { name: "Delete selected" })).toBeEnabled();
+  });
+
+  it("adds an uploaded source omitted from the rendered cut, with undo and save support", async () => {
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    const addClip = screen.getByRole("button", {
+      name: "Add source clip 3 to timeline",
+    });
+    fireEvent.click(addClip);
+
+    expect(screen.queryByRole("button", { name: "Add source clip 3 to timeline" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Clip 3, timeline/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("button", { name: "Add source clip 3 to timeline" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+    expect(screen.getByRole("button", { name: /^Clip 3, timeline/ })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalledTimes(1));
+    expect(mockCommitEditorSession.mock.calls[0][2].timeline_slots).toHaveLength(3);
+    expect(mockCommitEditorSession.mock.calls[0][2].timeline_slots[2]).toMatchObject({
+      slot_id: null,
+      clip_index: 2,
+      in_s: 0,
+      removed: false,
+    });
   });
 
   it("records, undoes, redoes, and saves a clip look change", async () => {

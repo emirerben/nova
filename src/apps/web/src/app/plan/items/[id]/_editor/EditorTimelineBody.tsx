@@ -227,6 +227,8 @@ export interface EditorTimelineBodyProps {
     TimelineClip,
     "clip_index" | "signed_url" | "duration_s"
   >[];
+  /** Append an uploaded source that the rendered cut did not select. */
+  onAddClip?: (clipIndex: number) => void;
 
   /** Staged carousel-moment block, or null/undefined when none is staged. */
   carouselBlock?: EditorCarouselBlockBar | null;
@@ -386,6 +388,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     clipPreviewMode = "rendered",
     clipsLoading,
     filmstripClips,
+    onAddClip,
     carouselBlock = null,
     carouselReadOnly = false,
     carouselDisabledReason,
@@ -574,6 +577,13 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const filmstripSourceByIndex = new Map(
     filmstripClips.map((clip) => [clip.clip_index, clip]),
   );
+  const activeClipIndices = new Set(
+    slots.filter((slot) => !slot.removed).map((slot) => slot.clipIndex),
+  );
+  const unusedFilmstripClips = filmstripClips.filter(
+    (clip) => !activeClipIndices.has(clip.clip_index),
+  );
+  const videoLaneHeight = unusedFilmstripClips.length > 0 ? 76 : 48;
   const activeFilmstripCount = filmstripLayout.windows.reduce(
     (count, win, i) => {
       const slot = filmstripSlots[i];
@@ -656,7 +666,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     ...(cameraEffects.length > 0
       ? [{ label: "Camera", heightPx: cameraLane.totalHeightPx }]
       : []),
-    { label: "Video", heightPx: 48 },
+    { label: "Video", heightPx: videoLaneHeight },
     { label: "Sound", heightPx: soundLaneHeight },
     { label: "Overlays", heightPx: overlayLane.totalHeightPx },
   ];
@@ -1552,7 +1562,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               {/* ── Video lane (Clips + filmstrip) ── */}
               <LaneTrack
                 trackW={trackW}
-                heightPx={TEXT_LANE_BASE_HEIGHT_PX}
+                heightPx={videoLaneHeight}
                 onDragOver={handleCarouselDragOver}
                 onDrop={handleCarouselDrop}
               >
@@ -1601,7 +1611,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           onSelect("clip", slot.key);
                         }}
                         className={[
-                          "group absolute inset-y-0.5 min-w-11 overflow-hidden rounded border bg-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                          "group absolute min-w-11 overflow-hidden rounded border bg-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                          unusedFilmstripClips.length > 0 ? "top-0.5 h-11" : "inset-y-0.5",
                           clipReadOnly
                             ? "cursor-default active:cursor-default"
                             : "cursor-grab active:cursor-grabbing",
@@ -1646,6 +1657,36 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     );
                   })
                 )}
+                {unusedFilmstripClips.length > 0 && (
+                  <div
+                    className="absolute inset-x-1 bottom-1 flex h-6 items-center gap-1 overflow-x-auto"
+                    aria-label="Unused uploaded clips"
+                  >
+                    <span className="sticky left-0 z-10 shrink-0 bg-white/90 px-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+                      Unused
+                    </span>
+                    {unusedFilmstripClips.map((source) => (
+                      <button
+                        key={source.clip_index}
+                        type="button"
+                        aria-label={`Add source clip ${source.clip_index + 1} to timeline`}
+                        disabled={clipReadOnly || !onAddClip}
+                        title={
+                          clipReadOnly
+                            ? (clipDisabledReason ?? "Clip timing is locked")
+                            : `Add Clip ${source.clip_index + 1} to the end`
+                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onAddClip?.(source.clip_index);
+                        }}
+                        className="h-6 shrink-0 rounded border border-dashed border-zinc-300 bg-white px-2 text-[9px] font-semibold text-[#3f3f46] hover:border-lime-500 hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        + Clip {source.clip_index + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {carouselBlock && carouselWindow && (
                   <div
                     role="button"
@@ -1676,7 +1717,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                         onSelectCarousel?.();
                       }
                     }}
-                    className={`absolute inset-y-0.5 flex min-w-11 items-center overflow-hidden rounded border border-zinc-600 bg-[#0c0c0e] px-2 text-[10px] font-semibold text-white shadow-sm transition-colors hover:border-zinc-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                    className={`absolute flex min-w-11 items-center overflow-hidden rounded border border-zinc-600 bg-[#0c0c0e] px-2 text-[10px] font-semibold text-white shadow-sm transition-colors hover:border-zinc-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                      unusedFilmstripClips.length > 0 ? "top-0.5 h-11" : "inset-y-0.5"
+                    } ${
                       carouselReadOnly
                         ? "cursor-default opacity-70"
                         : "cursor-grab active:cursor-grabbing"
