@@ -142,6 +142,7 @@ import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
 import type { DraftSlot } from "@/app/generative/timeline-math";
+import { timelineReducer } from "@/app/generative/timeline-reducer";
 import {
   barsToCaptionCues,
   barsToPreviewTextElements,
@@ -3251,6 +3252,34 @@ export default function EditorShell({
     [clipEditingLocked, readOnly, slots],
   );
 
+  const addClipToTimeline = useCallback(
+    (clipIndex: number) => {
+      if (readOnly || clipEditingLocked) return;
+      if (slots.some((slot) => !slot.removed && slot.clipIndex === clipIndex)) return;
+
+      const nextState = timelineReducer(
+        {
+          ...clip.state,
+          slots,
+          past: [],
+          future: [],
+        },
+        { type: "ADD", clipIndex },
+      );
+      if (nextState.slots.length === slots.length) {
+        setToast("This cut has no room for another clip. Shorten or remove a clip first.");
+        return;
+      }
+
+      const added = nextState.slots[nextState.slots.length - 1];
+      history.record();
+      setLocalSlots(nextState.slots.map((slot) => ({ ...slot })));
+      setTimelineDirty(true);
+      if (added) select("clip", added.key);
+    },
+    [clip.state, clipEditingLocked, history, readOnly, select, slots],
+  );
+
   const patchSelectedClipTiming = useCallback(
     (patch: { inS?: number; outS?: number; durationS?: number }) => {
       if (!selectedClip || readOnly || clipEditingLocked) return;
@@ -6097,6 +6126,7 @@ export default function EditorShell({
     clipPreviewMode: virtualPreviewActive ? "virtual" : "rendered",
     clipsLoading: clip.loadState === "loading",
     filmstripClips: clip.clips,
+    onAddClip: addClipToTimeline,
     carouselBlock: carouselMoment
       ? {
           id: CAROUSEL_SELECTION_ID,

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.0.1] — 2026-08-15
+
+### Fixed
+- **Uploaded footage omitted from an AI cut is visible and recoverable in the editor.** The Video lane now lists unused source clips and can append one to the timeline with immediate preview, one-step Undo/Redo, and the normal save-and-rerender flow.
+
 ## [0.33.0.0] — 2026-08-15
 
 ### Added
