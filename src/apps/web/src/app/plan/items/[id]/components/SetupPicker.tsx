@@ -397,7 +397,7 @@ export default function SetupPicker({
         onToggle={() => setOpenSection(openSection === "type" ? null : "type")}
       >
         <div
-          className="-mx-1 flex snap-x gap-3.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-4"
+          className="-mx-6 flex snap-x snap-mandatory gap-3.5 overflow-x-auto px-6 py-1 [scroll-padding-inline:1.5rem] sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:p-0 lg:grid-cols-4"
           role="radiogroup"
           aria-label="Type"
         >
@@ -423,7 +423,7 @@ export default function SetupPicker({
           onToggle={() => setOpenSection(openSection === "style" ? null : "style")}
         >
           <div
-            className="-mx-1 flex snap-x gap-3.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-4"
+            className="-mx-6 flex snap-x snap-mandatory gap-3.5 overflow-x-auto px-6 py-1 [scroll-padding-inline:1.5rem] sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:p-0 lg:grid-cols-4"
             role="radiogroup"
             aria-label="Style"
           >
