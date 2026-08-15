@@ -108,6 +108,13 @@ proposal version and digest, ordered source windows, direction/pace policy, exac
 path/generation and window (or explicit no-match), typography identity, and approved text. Redelivery
 reuses this plan rather than rematching a changed music library.
 
+Compiler version 2 gives every approved moment its direction-specific minimum, caps each video at
+its real usable duration (including any transition overlap), and redistributes the rest of the beat
+to surrounding photos or longer videos. It still preserves the approved beat and total duration and
+fails before FFmpeg only when the complete selected set cannot fill the requested time. Persisted
+version 1 plans keep their original equal-share timing on redelivery; validation recompiles them with
+the version 1 rules so a rolling deploy cannot reinterpret queued work.
+
 The renderer exact-generation downloads every source selected by a beat. Unselected catalog media
 remains authorized but is not required in the output. Photos and videos become sequential full-screen
 or supporting-card moments. Photos receive a subtle zoom, relaxed/balanced story directions use
