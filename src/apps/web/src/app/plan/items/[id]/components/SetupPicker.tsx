@@ -93,11 +93,12 @@ type OpenSection = "type" | "style" | null;
 
 export type SetupPickerProps = {
   resolvedFormat: PickerEditFormat;
-  isNarratedReady: boolean;
-  contentMode: string;
   montagePreset: MontagePreset;
   subtitledEnabled: boolean;
   showTalkingHead: boolean;
+  /** Item already carries an accepted filming guide — keep its planned flow
+      instead of forcing the already-filmed default on re-selection. */
+  hasGuide?: boolean;
   /** Item is already mid-setup (guide accepted / clips uploaded) — open on
       receipts instead of the poster rail. */
   startCollapsed?: boolean;
@@ -169,41 +170,6 @@ function Receipt({
   );
 }
 
-function SubModeChips({
-  options,
-  activeValue,
-  onSelect,
-}: {
-  options: { value: string; label: string }[];
-  activeValue: string;
-  onSelect: (value: string) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-2" role="radiogroup">
-      {options.map(({ value, label }) => {
-        const active = value === activeValue;
-        return (
-          <button
-            key={value}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => {
-              if (!active) onSelect(value);
-            }}
-            className={`min-h-11 rounded-full border px-4 py-2 text-[13px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-9 ${
-              active
-                ? "border-lime-600 bg-lime-50 font-semibold text-lime-800"
-                : "border-zinc-200 bg-white font-medium text-[#71717a] hover:border-zinc-300"
-            }`}
-          >
-            {label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 function TypeCard({
   value,
@@ -320,11 +286,10 @@ function StyleTile({
 
 export default function SetupPicker({
   resolvedFormat,
-  isNarratedReady,
-  contentMode,
   montagePreset,
   subtitledEnabled,
   showTalkingHead,
+  hasGuide = false,
   startCollapsed = false,
   onPatch,
 }: SetupPickerProps) {
@@ -354,9 +319,21 @@ export default function SetupPicker({
     }
   };
 
+  // Already-filmed is the default path: montage skips the shot plan unless a
+  // guide already exists, and Voiceover starts in narrated_ready (upload the
+  // clips you filmed). The planned flows remain reachable via "Plan this for
+  // me" / an existing filming guide, not via a mode toggle.
   const selectType = async (value: PickerEditFormat) => {
     setOpenSection(value === "montage" ? "style" : null);
-    if (value !== resolvedFormat) {
+    if (value === resolvedFormat) return;
+    if (value === "montage") {
+      await patch({
+        edit_format: "montage",
+        ...(hasGuide ? {} : { content_mode: "existing_footage" }),
+      });
+    } else if (value === "narrated_planned") {
+      await patch({ edit_format: "narrated_ready" });
+    } else {
       await patch({ edit_format: value });
     }
   };
@@ -407,30 +384,6 @@ export default function SetupPicker({
             onChange={() => setOpenSection("type")}
           />
         </div>
-      )}
-
-      {/* Narrated sub-mode — quiet chips under the TYPE section */}
-      {resolvedFormat === "narrated_planned" && (
-        <SubModeChips
-          options={[
-            { value: "narrated_planned", label: "Planning to film" },
-            { value: "narrated_ready", label: "Already filmed" },
-          ]}
-          activeValue={isNarratedReady ? "narrated_ready" : "narrated_planned"}
-          onSelect={(value) => patch({ edit_format: value })}
-        />
-      )}
-
-      {/* Montage sub-mode — content_mode override */}
-      {isMontage && (
-        <SubModeChips
-          options={[
-            { value: "create_new", label: "Planning to film" },
-            { value: "existing_footage", label: "Already filmed" },
-          ]}
-          activeValue={contentMode === "existing_footage" ? "existing_footage" : "create_new"}
-          onSelect={(value) => patch({ content_mode: value as "create_new" | "existing_footage" })}
-        />
       )}
 
       {/* ---- STYLE (montage only) ---- */}

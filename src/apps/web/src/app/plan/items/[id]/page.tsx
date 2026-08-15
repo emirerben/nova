@@ -1604,11 +1604,10 @@ export default function PlanItemPage() {
             {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
               <SetupPicker
                 resolvedFormat={resolvedFormat}
-                isNarratedReady={isNarratedReady}
-                contentMode={contentMode}
                 montagePreset={montagePreset}
                 subtitledEnabled={SUBTITLED_ENABLED}
                 showTalkingHead={isTalkingHead}
+                hasGuide={(item.filming_guide?.length ?? 0) > 0}
                 startCollapsed={
                   (item.clip_gcs_paths?.length ?? 0) > 0 ||
                   (item.filming_guide?.length ?? 0) > 0 ||
