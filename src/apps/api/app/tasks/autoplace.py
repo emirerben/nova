@@ -1126,7 +1126,8 @@ def analyze_pool_asset(
         except AssetUnreadableError:
             failure_code = "analysis_unreadable"
             failure_detail = (
-                "Kria couldn't read this file. Export it as JPG, PNG, WebP, HEIC, MP4, or MOV."
+                "Kria couldn't read this file. Export it as JPG, PNG, WebP, HEIC, HEIF, MP4, "
+                "or MOV."
             )
             failed = True
         except AnalysisTemporarilyUnavailableError:

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.33.1.0] — 2026-08-15
 
 ### Fixed
-- **iPhone photos uploaded as overlays are analyzed and available to edits.** HEIC and HEIF files now open reliably in fresh workers, keep the correct file type during analysis, and use the correct provider format.
+- **iPhone photos uploaded to the visuals pool are analyzed and available to edits.** HEIC and HEIF files now open reliably in fresh workers, keep the correct file type during analysis, and use the correct provider format.
 - **Photos rejected by this decoder bug recover automatically.** Previously failed HEIC and HEIF uploads receive one safe retry after deployment, while genuinely unreadable files remain failed instead of retrying forever.
 
 ## [0.33.0.1] — 2026-08-15
