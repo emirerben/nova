@@ -7,6 +7,7 @@ montage matcher and never drops a selected source or text layer as a fallback.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -24,9 +25,12 @@ from app.schemas.edit_proposal import EditProposalSnapshot, canonical_media_dige
 
 log = structlog.get_logger()
 
-COMPILER_VERSION = 1
+COMPILER_VERSION = 2
 VARIANT_ID = "guided_story"
 _FRAME_S = 1.0 / 30.0
+_ALLOCATION_EPSILON_S = 0.0005
+_FRAME_FLOOR_EPSILON_S = 1e-9
+_DURATION_MATCH_TOLERANCE_S = 0.001
 _MEDIA_PREP_MAX_WORKERS = 3
 _DIRECTION_POLICY = {
     "guided_story": {"min_moment_s": 1.4, "transition": "crossfade", "text_effect": "fade-in"},
@@ -107,7 +111,7 @@ class GuidedStoryExecutionPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    compiler_version: Literal[1]
+    compiler_version: Literal[1, 2]
     proposal_version: int = Field(ge=1)
     media_digest: str = Field(min_length=64, max_length=64)
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
@@ -343,6 +347,104 @@ def _source_window(ref, duration_s: float) -> tuple[float, float]:  # noqa: ANN0
     return round(start, 3), round(start + duration_s, 3)
 
 
+def _allocate_beat_durations(
+    refs: list[Any],
+    *,
+    beat_duration_s: float,
+    min_moment_s: float,
+    overlaps_s: list[float],
+    beat_topic: str,
+) -> list[float]:
+    """Water-fill a beat while respecting the usable length of short videos."""
+
+    if beat_duration_s + _FRAME_S < min_moment_s * len(refs):
+        raise GuidedStoryError(
+            "guided_story_duration_impossible",
+            f"Beat {beat_topic} is too short to show all approved media clearly.",
+        )
+
+    capacities: list[float] = []
+    for ref, overlap in zip(refs, overlaps_s, strict=True):
+        if ref.kind == "image":
+            capacities.append(math.inf)
+            continue
+        source_duration = float(ref.duration_s or 0.0)
+        if source_duration <= 0:
+            raise GuidedStoryError(
+                "guided_story_duration_impossible",
+                f"Video {ref.source_filename or ref.media_id} has no usable duration.",
+            )
+        capacity = max(0.0, source_duration - overlap)
+        if capacity + _FRAME_S < min_moment_s:
+            raise GuidedStoryError(
+                "guided_story_duration_impossible",
+                f"Video {ref.source_filename or ref.media_id} is too short to show clearly.",
+            )
+        capacities.append(capacity)
+
+    allocated = [min_moment_s for _ref in refs]
+    remaining = max(0.0, beat_duration_s - sum(allocated))
+    active = list(range(len(refs)))
+    while remaining > _ALLOCATION_EPSILON_S:
+        if not active:
+            raise GuidedStoryError(
+                "guided_story_duration_impossible",
+                f"Beat {beat_topic} is longer than its approved videos can support.",
+            )
+        share = remaining / len(active)
+        consumed = 0.0
+        next_active: list[int] = []
+        for index in active:
+            headroom = capacities[index] - allocated[index]
+            addition = share if math.isinf(headroom) else min(share, max(0.0, headroom))
+            allocated[index] += addition
+            consumed += addition
+            if math.isinf(headroom) or headroom - addition > _ALLOCATION_EPSILON_S:
+                next_active.append(index)
+        if consumed <= _ALLOCATION_EPSILON_S:
+            raise GuidedStoryError(
+                "guided_story_duration_impossible",
+                f"Beat {beat_topic} is longer than its approved videos can support.",
+            )
+        remaining -= consumed
+        active = next_active
+
+    rounded: list[float] = []
+    for duration, capacity in zip(allocated, capacities, strict=True):
+        value = _round_frame(duration)
+        if not math.isinf(capacity):
+            frame_capacity = math.floor((capacity + _FRAME_FLOOR_EPSILON_S) / _FRAME_S) * _FRAME_S
+            value = min(value, round(frame_capacity, 3))
+        rounded.append(value)
+
+    difference = round(beat_duration_s - sum(rounded), 3)
+    if difference > 0:
+        for index in reversed(range(len(rounded))):
+            headroom = capacities[index] - rounded[index]
+            addition = difference if math.isinf(headroom) else min(difference, headroom)
+            if addition <= 0:
+                continue
+            rounded[index] = round(rounded[index] + addition, 3)
+            difference = round(difference - addition, 3)
+            if difference <= 0:
+                break
+    elif difference < 0:
+        for index in reversed(range(len(rounded))):
+            reduction = min(-difference, rounded[index] - min_moment_s)
+            if reduction <= 0:
+                continue
+            rounded[index] = round(rounded[index] - reduction, 3)
+            difference = round(difference + reduction, 3)
+            if difference >= 0:
+                break
+    if abs(difference) > _DURATION_MATCH_TOLERANCE_S:
+        raise GuidedStoryError(
+            "guided_story_duration_impossible",
+            f"Beat {beat_topic} timing could not be allocated safely.",
+        )
+    return rounded
+
+
 def _text_elements(
     snapshot: EditProposalSnapshot, beat_windows: list[dict], policy: dict
 ) -> list[dict]:
@@ -396,12 +498,13 @@ def _text_elements(
     return elements
 
 
-def compile_execution_plan(
+def _compile_execution_plan_version(
     guided_snapshot: object,
     *,
     track: dict[str, Any] | None,
+    compiler_version: Literal[1, 2],
 ) -> dict[str, Any]:
-    """Compile a deterministic task-owned plan before any FFmpeg work."""
+    """Compile a deterministic plan with an explicitly versioned allocator."""
 
     proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
     policy = _DIRECTION_POLICY[snapshot.direction]
@@ -428,26 +531,45 @@ def compile_execution_plan(
             resolved_beat_s = _round_frame(
                 float(snapshot.duration_s) * float(beat.duration_s) / weight_total
             )
-        per_media = resolved_beat_s / len(beat.media_ids)
-        if per_media + _FRAME_S < float(policy["min_moment_s"]):
-            raise GuidedStoryError(
-                "guided_story_duration_impossible",
-                f"Beat {beat.topic} is too short to show all approved media clearly.",
+        beat_refs = [by_id[media_id] for media_id in beat.media_ids]
+        overlaps_s = [
+            transition_duration_s
+            if transition_type != "none" and len(moments) + offset != moment_count - 1
+            else 0.0
+            for offset in range(len(beat_refs))
+        ]
+        if compiler_version == 1:
+            per_media = resolved_beat_s / len(beat.media_ids)
+            if per_media + _FRAME_S < float(policy["min_moment_s"]):
+                raise GuidedStoryError(
+                    "guided_story_duration_impossible",
+                    f"Beat {beat.topic} is too short to show all approved media clearly.",
+                )
+            legacy_cursor = cursor
+            moment_durations = []
+            for media_index in range(len(beat.media_ids)):
+                if media_index == len(beat.media_ids) - 1:
+                    moment_s = round(cursor + resolved_beat_s - legacy_cursor, 3)
+                else:
+                    moment_s = _round_frame(per_media)
+                moment_durations.append(moment_s)
+                legacy_cursor = round(legacy_cursor + moment_s, 3)
+        else:
+            moment_durations = _allocate_beat_durations(
+                beat_refs,
+                beat_duration_s=resolved_beat_s,
+                min_moment_s=float(policy["min_moment_s"]),
+                overlaps_s=overlaps_s,
+                beat_topic=beat.topic,
             )
         beat_start = cursor
         for media_index, media_id in enumerate(beat.media_ids):
             ref = by_id[media_id]
-            if media_index == len(beat.media_ids) - 1:
-                moment_s = round(beat_start + resolved_beat_s - cursor, 3)
-            else:
-                moment_s = _round_frame(per_media)
-            is_last_moment = len(moments) == moment_count - 1
+            moment_s = moment_durations[media_index]
             # Xfade consumes the overlap from the joined result. Extend every
             # input except the last by exactly that overlap so the approved
             # top-level duration remains authoritative in the final output.
-            render_s = moment_s
-            if transition_type != "none" and not is_last_moment:
-                render_s = round(moment_s + transition_duration_s, 3)
+            render_s = round(moment_s + overlaps_s[media_index], 3)
             source_start, source_end = _source_window(ref, render_s)
             moments.append(
                 {
@@ -486,7 +608,7 @@ def compile_execution_plan(
 
     try:
         compiled = GuidedStoryExecutionPlan(
-            compiler_version=COMPILER_VERSION,
+            compiler_version=compiler_version,
             proposal_version=proposal_version,
             media_digest=media_digest,
             direction=snapshot.direction,
@@ -512,6 +634,20 @@ def compile_execution_plan(
     return compiled.model_dump(mode="json", exclude_none=False)
 
 
+def compile_execution_plan(
+    guided_snapshot: object,
+    *,
+    track: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compile a deterministic task-owned plan with the current compiler."""
+
+    return _compile_execution_plan_version(
+        guided_snapshot,
+        track=track,
+        compiler_version=COMPILER_VERSION,
+    )
+
+
 def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, Any]:
     proposal_version, media_digest, _snapshot = validate_guided_snapshot(guided_snapshot)
     try:
@@ -520,17 +656,14 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The saved render plan is incomplete."
         ) from exc
-    if (
-        validated.compiler_version != COMPILER_VERSION
-        or validated.proposal_version != proposal_version
-        or validated.media_digest != media_digest
-    ):
+    if validated.proposal_version != proposal_version or validated.media_digest != media_digest:
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The saved render plan no longer matches approval."
         )
-    canonical = compile_execution_plan(
+    canonical = _compile_execution_plan_version(
         guided_snapshot,
         track=validated.music.model_dump(mode="json") if validated.music is not None else None,
+        compiler_version=validated.compiler_version,
     )
     normalized = validated.model_dump(mode="json", exclude_none=False)
     if normalized != canonical:
