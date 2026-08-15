@@ -160,7 +160,6 @@ function DisclosureSection({
   valueLabel,
   thumbSrc,
   open,
-  hint,
   onToggle,
   children,
 }: {
@@ -168,7 +167,6 @@ function DisclosureSection({
   valueLabel: string;
   thumbSrc: string;
   open: boolean;
-  hint?: string;
   onToggle: () => void;
   children: React.ReactNode;
 }) {
@@ -196,9 +194,6 @@ function DisclosureSection({
         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-[#0c0c0e]">
           {valueLabel}
         </span>
-        {hint && !open && (
-          <span className="hidden shrink-0 text-[13px] text-[#71717a] md:block">{hint}</span>
-        )}
         <Chevron open={open} />
       </button>
       <div
@@ -399,7 +394,6 @@ export default function SetupPicker({
         valueLabel={TYPE_COPY[resolvedFormat].label}
         thumbSrc={TYPE_MEDIA[resolvedFormat].poster}
         open={openSection === "type"}
-        hint="You can change this until the first render"
         onToggle={() => setOpenSection(openSection === "type" ? null : "type")}
       >
         <div
