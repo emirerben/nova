@@ -321,11 +321,11 @@ describe("PlanItemPage — masonry collage item UX", () => {
       renderMasonryItem({ montage_preset: "classic" });
     });
 
-    // Item has a filming guide, so the accordion starts collapsed on receipts.
-    // Reopen STYLE via its receipt's Change (second receipt), which shows the
-    // shelf with real placeholder footage per tile.
+    // Item has a filming guide, so the accordion starts collapsed. Expand the
+    // STYLE disclosure row, which reveals the shelf with real placeholder
+    // footage per tile.
     await act(async () => {
-      fireEvent.click(screen.getAllByRole("button", { name: "Change" })[1]);
+      fireEvent.click(screen.getByRole("button", { name: /^Style/ }));
     });
     const shelf = screen.getByRole("radiogroup", { name: "Style" });
     // Tiles are hover-to-play muted loops: poster frame + video source per style.

@@ -130,46 +130,89 @@ function useHoverVideo() {
   return { videoRef, play, stop };
 }
 
-function Eyebrow({ children }: { children: React.ReactNode }) {
+
+function Chevron({ open }: { open: boolean }) {
   return (
-    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
-      {children}
-    </p>
+    <span
+      aria-hidden="true"
+      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white transition-transform duration-[var(--t-accordion-dur,300ms)] motion-reduce:transition-none ${
+        open ? "rotate-180" : ""
+      }`}
+    >
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path
+          d="M3.5 5.25 7 8.75l3.5-3.5"
+          stroke="#3f3f46"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
   );
 }
 
-function Receipt({
+/** Disclosure section: the receipt row is always present; the card panel
+    expands/collapses beneath it (t-accordion: grid-rows 0fr↔1fr + opacity).
+    No swap, no layout jump — the row is the toggle, the chevron points the way. */
+function DisclosureSection({
   eyebrow,
-  value,
+  valueLabel,
   thumbSrc,
-  onChange,
+  open,
+  hint,
+  onToggle,
+  children,
 }: {
   eyebrow: string;
-  value: string;
+  valueLabel: string;
   thumbSrc: string;
-  onChange: () => void;
+  open: boolean;
+  hint?: string;
+  onToggle: () => void;
+  children: React.ReactNode;
 }) {
+  const panelId = `${eyebrow.toLowerCase()}-panel`;
   return (
-    <div className="flex min-h-[44px] items-center gap-3.5 rounded-[14px] border border-zinc-200 bg-white px-4 py-3">
-      {/* eslint-disable-next-line @next/next/no-img-element -- static bundled poster */}
-      <img src={thumbSrc} alt="" className="h-9 w-[52px] shrink-0 rounded-md object-cover" />
-      <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
+    <div>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={onToggle}
+        className={`flex min-h-[52px] w-full items-center gap-3.5 rounded-[14px] border bg-white px-4 py-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 ${
+          open ? "border-zinc-300" : "border-zinc-200 hover:border-zinc-300"
+        }`}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- static bundled poster */}
+        <img
+          src={thumbSrc}
+          alt=""
+          className="h-9 w-[52px] shrink-0 rounded-md object-cover"
+        />
         <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
           {eyebrow}
         </span>
-        <span className="truncate text-sm font-semibold text-[#0c0c0e]">{value}</span>
-      </div>
-      <button
-        type="button"
-        onClick={onChange}
-        className="min-h-11 shrink-0 text-[13px] text-[#71717a] underline underline-offset-2 transition-colors hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-7"
-      >
-        Change
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-[#0c0c0e]">
+          {valueLabel}
+        </span>
+        {hint && !open && (
+          <span className="hidden shrink-0 text-[13px] text-[#71717a] md:block">{hint}</span>
+        )}
+        <Chevron open={open} />
       </button>
+      <div
+        id={panelId}
+        className="grid transition-[grid-template-rows,opacity] duration-[var(--t-accordion-dur,300ms)] ease-[var(--t-accordion-ease,cubic-bezier(0.23,1,0.32,1))] motion-reduce:transition-none"
+        style={{ gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0 }}
+      >
+        <div className="overflow-hidden">
+          <div className="pb-1 pt-3">{children}</div>
+        </div>
+      </div>
     </div>
   );
 }
-
 
 function TypeCard({
   value,
@@ -351,72 +394,57 @@ export default function SetupPicker({
   return (
     <div className="mb-4 space-y-2.5" data-testid="setup-picker">
       {/* ---- TYPE ---- */}
-      {openSection === "type" ? (
-        <div className="animate-fade-up space-y-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <Eyebrow>Type</Eyebrow>
-            <p className="hidden text-[13px] text-[#71717a] sm:block">
-              You can change this until the first render
-            </p>
-          </div>
+      <DisclosureSection
+        eyebrow="Type"
+        valueLabel={TYPE_COPY[resolvedFormat].label}
+        thumbSrc={TYPE_MEDIA[resolvedFormat].poster}
+        open={openSection === "type"}
+        hint="You can change this until the first render"
+        onToggle={() => setOpenSection(openSection === "type" ? null : "type")}
+      >
+        <div
+          className="-mx-1 flex snap-x gap-3.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-4"
+          role="radiogroup"
+          aria-label="Type"
+        >
+          {typeValues.map((value) => (
+            <TypeCard
+              key={value}
+              value={value}
+              active={resolvedFormat === value}
+              saving={saving}
+              onSelect={selectType}
+            />
+          ))}
+        </div>
+      </DisclosureSection>
+
+      {/* ---- STYLE (montage only) ---- */}
+      {isMontage && (
+        <DisclosureSection
+          eyebrow="Style"
+          valueLabel={activeStyleTile.label}
+          thumbSrc={activeStyleTile.poster}
+          open={openSection === "style"}
+          onToggle={() => setOpenSection(openSection === "style" ? null : "style")}
+        >
           <div
             className="-mx-1 flex snap-x gap-3.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-4"
             role="radiogroup"
-            aria-label="Type"
+            aria-label="Style"
           >
-            {typeValues.map((value) => (
-              <TypeCard
-                key={value}
-                value={value}
-                active={resolvedFormat === value}
+            {STYLE_TILES.map((tile) => (
+              <StyleTile
+                key={tile.value}
+                tile={tile}
+                active={montagePreset === tile.value}
                 saving={saving}
-                onSelect={selectType}
+                onSelect={selectStyle}
               />
             ))}
           </div>
-        </div>
-      ) : (
-        <div className="animate-fade-up">
-          <Receipt
-            eyebrow="Type"
-            value={TYPE_COPY[resolvedFormat].label}
-            thumbSrc={TYPE_MEDIA[resolvedFormat].poster}
-            onChange={() => setOpenSection("type")}
-          />
-        </div>
+        </DisclosureSection>
       )}
-
-      {/* ---- STYLE (montage only) ---- */}
-      {isMontage &&
-        (openSection === "style" ? (
-          <div className="animate-fade-up space-y-3 pt-2">
-            <Eyebrow>Style</Eyebrow>
-            <div
-              className="-mx-1 flex snap-x gap-3.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-4"
-              role="radiogroup"
-              aria-label="Style"
-            >
-              {STYLE_TILES.map((tile) => (
-                <StyleTile
-                  key={tile.value}
-                  tile={tile}
-                  active={montagePreset === tile.value}
-                  saving={saving}
-                  onSelect={selectStyle}
-                />
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="animate-fade-up">
-            <Receipt
-              eyebrow="Style"
-              value={activeStyleTile.label}
-              thumbSrc={activeStyleTile.poster}
-              onChange={() => setOpenSection("style")}
-            />
-          </div>
-        ))}
     </div>
   );
 }
