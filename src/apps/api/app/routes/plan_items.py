@@ -108,6 +108,7 @@ from app.routes.generative_jobs import (
     persist_variant_captions_enabled,
     prepare_editor_commit,
     require_editable_variant,
+    require_guided_story_editor_commit,
     rollback_speech_cut_dispatch,
     speech_cut_director_context,
     validate_media_overlays_for_user,
@@ -2484,7 +2485,7 @@ async def plan_item_copilot_turn(
         )
 
     job = await _owned_item_render_job(item_id, user.id, db)
-    require_editable_variant(job, variant_id)
+    require_editable_variant(job, variant_id, allow_guided_text=True)
     # agent_run.job_id FKs jobs.id — pass the render job, never the plan-item id.
     return await run_copilot_turn(body, job_id=job.id)
 
@@ -2512,7 +2513,7 @@ async def plan_item_director_suggestions(
             detail="edit_director_not_enabled",
         )
     job = await _owned_item_render_job(item_id, user.id, db)
-    variant = require_editable_variant(job, variant_id)
+    variant = require_editable_variant(job, variant_id, allow_guided_text=True)
     return await run_director(
         body,
         job_id=job.id,
@@ -2540,7 +2541,7 @@ async def plan_item_director_feedback(
             detail="edit_director_not_enabled",
         )
     job = await _owned_item_render_job(item_id, user.id, db)
-    require_editable_variant(job, variant_id)
+    require_editable_variant(job, variant_id, allow_guided_text=True)
     record_director_feedback(body, job_id=job.id)
 
 
@@ -3260,6 +3261,7 @@ async def set_item_media_overlays(
         )
 
     job = await _locked_owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
     await _require_ready_pool_paths(
         item_id=item_id,
         user_id=user.id,
@@ -3444,6 +3446,10 @@ async def editor_commit_item(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cancelled videos cannot be edited.",
         )
+    # Guided stories accept TextElement-only reburns. Run this policy before
+    # media/SFX/music/title validation so every unsupported section gets the
+    # same stable 422 without performing unrelated lookups or mutations.
+    require_guided_story_editor_commit(locked_job, variant_id, body)
     if body.media_overlays is not None:
         await _require_ready_pool_paths(
             item_id=item_id,
@@ -3854,13 +3860,14 @@ async def set_item_sound_effects(
             status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
         )
 
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+
     resolved_placements = await _resolve_sound_effect_placements(
         body.placements,
         user_id=str(user.id),
         db=db,
     )
-
-    job = await _locked_owned_item_render_job(item_id, user.id, db)
 
     # Persist directly — no Celery render dispatched here.
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415

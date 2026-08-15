@@ -158,6 +158,7 @@ import {
 } from "./editor-bars";
 import { isCaptionArchetype } from "@/lib/variant-editor/eligibility";
 import {
+  canEditIntroControls,
   captionToolState,
   computeToolDisabledReasons,
   editorReasonCopy,
@@ -1236,6 +1237,7 @@ export default function EditorShell({
     capabilities.orientation?.editable !== true &&
     capabilities.music_window?.editable !== true;
   const readOnlyReason = editorReasonCopy(capabilities?.reason);
+  const introControlsEditable = canEditIntroControls(capabilities, readOnly);
   // Text-elements gate (plan 010 OV-1): once sfx/overlays flip true on
   // subtitled variants the shell is editable, but optional authored text still
   // respects the rollout flag. Caption cue bars remain directly editable.
@@ -1345,7 +1347,7 @@ export default function EditorShell({
       setCaptionMeta(doc.captionMeta ?? null);
       setCaptionMetaDirty(doc.captionMetaDirty ?? false);
       setCaptionMetaPatch(doc.captionMetaPatch ?? {});
-      setTitle(doc.title);
+      if (introControlsEditable) setTitle(doc.title);
       setTextDirty(
         doc.bars.some((bar) => !isCaptionBar(bar) && (lyricsOptionalActive || !isLyricBar(bar))),
       );
@@ -1362,7 +1364,7 @@ export default function EditorShell({
       if (capabilities?.camera_effects !== false) {
         setCameraEffectsDirty(!cameraEffectsEqual(doc.cameraEffects, variant?.camera_effects));
       }
-      setTitleDirty(true);
+      if (introControlsEditable) setTitleDirty(true);
       // Undo of a delete (or redo of an add) resurrects a bar → re-select it
       // (plan §5 — the one selection rule that reaches into undo).
       const resurrected = doc.bars.find((b) => !beforeIds.has(b.id));
@@ -1371,7 +1373,7 @@ export default function EditorShell({
         setInspectorTab("basic");
       }
     },
-    [state.bars, select, variant, capabilities, lyricsOptionalActive],
+    [state.bars, select, variant, capabilities, lyricsOptionalActive, introControlsEditable],
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
@@ -4311,7 +4313,9 @@ export default function EditorShell({
       (captionCuesEditable
         ? visibleTextBars.some(isCaptionBar)
         : !!variant && isCaptionArchetype(variant) && (variant.caption_cues?.length ?? 0) > 0);
-    const musicSwappable = !!variant?.music_track_id && !readOnly;
+    const musicSwappable =
+      !!variant?.music_track_id && capabilities?.swap_song !== false && !readOnly;
+    const titleEditable = introControlsEditable;
     const mixAllowed = capabilities?.mix !== false && mixLevel !== undefined;
     const introText = variant?.intro_text?.trim() ?? "";
     const introWordCount = introText ? introText.split(/\s+/).filter(Boolean).length : 0;
@@ -4393,7 +4397,7 @@ export default function EditorShell({
         VISUAL_BLOCKS_UI_ENABLED && capabilities?.visual_blocks !== false,
       motionScenesEnabled:
         MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes === true,
-      titleEditable: !readOnly,
+      titleEditable,
       openTools,
       readOnly,
     });
@@ -4403,7 +4407,7 @@ export default function EditorShell({
       captionsPresent,
       musicSwappable,
       mixAllowed,
-      titleEditable: !readOnly,
+      titleEditable,
       openTools,
       // Slot-less variants (subtitled) have a 0 layout total — the real video
       // duration keeps every timing clamp from collapsing at_s values to 0.
@@ -4857,7 +4861,7 @@ export default function EditorShell({
         setSoundMuted(result.nextMixLevel === 0);
         setMixDirty(true);
       }
-      if (result.nextTitle !== undefined) {
+      if (result.nextTitle !== undefined && introControlsEditable) {
         setTitle(result.nextTitle);
         setTitleDirty(true);
       }
@@ -4910,6 +4914,7 @@ export default function EditorShell({
     },
     [
       applyCarouselMoment,
+      capabilities,
       clip.state.grid,
       clear,
       flashCopilotTargets,
@@ -5826,7 +5831,7 @@ export default function EditorShell({
   }
 
   const isVoiceoverVariant = variant.variant_id.startsWith("voiceover");
-  const musicSwapEditable = !readOnly;
+  const musicSwapEditable = capabilities?.swap_song !== false && !readOnly;
   const hasPlayableMusic =
     !!effectiveAudioTrackId &&
     (!!virtualMusicAudioUrl ||
@@ -6242,7 +6247,7 @@ export default function EditorShell({
                 : (splitReason ?? "Move the playhead inside this clip to split."),
               muted: videoMuted,
               onToggleMute: () => {
-                if (readOnly) return;
+                if (!introControlsEditable) return;
                 history.record();
                 setVideoMuted((m) => !m);
               },
@@ -6361,13 +6366,13 @@ export default function EditorShell({
               type="text"
               value={title}
               onChange={(e) => {
-                if (readOnly) return;
+                if (readOnly || capabilities?.intro_controls === false) return;
                   // Coalesce typing bursts into one undo step.
                   history.record("title");
                   setTitleDirty(true);
                   setTitle(e.target.value);
               }}
-              readOnly={readOnly}
+              readOnly={!introControlsEditable}
               placeholder="add title for your video"
               aria-label="Video title"
               className="min-h-11 w-[240px] rounded-md border border-transparent bg-transparent px-2 py-1 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-lime-500/25"

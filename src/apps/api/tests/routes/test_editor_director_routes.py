@@ -263,6 +263,24 @@ def test_director_replaces_spoofed_cut_context_with_server_candidate(
     assert "cut_forged" not in str(authoritative)
 
 
+def test_director_allows_guided_story_text_suggestions(client: TestClient, monkeypatch) -> None:
+    settings.edit_director_enabled = True
+    user, item, plan, job = _owned(uuid.uuid4())
+    job.assembly_plan["variants"][0]["resolved_archetype"] = "guided_story"
+    _install(user, item, plan)
+    run = AsyncMock(return_value=_director_response())
+    monkeypatch.setattr(plan_items, "run_director", run)
+
+    response = client.post(
+        f"/plan-items/{item.id}/variants/v1/director/suggestions",
+        json=_director_body(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["suggestions"][0]["category"] == "text"
+    run.assert_awaited_once()
+
+
 def test_director_suggestion_rate_limit(client: TestClient, monkeypatch) -> None:
     settings.edit_director_enabled = True
     user, item, plan, _ = _owned(uuid.uuid4())

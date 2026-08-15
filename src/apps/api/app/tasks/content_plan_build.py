@@ -634,7 +634,7 @@ def _dispatch_item_render(
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
 
     approved_proposal: dict | None = None
-    if settings.guided_edit_enforcement_enabled:
+    if settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled:
         from app.services.edit_proposals import (  # noqa: PLC0415
             mark_edit_proposal_stale,
             validate_approved_proposal_media_sync,
@@ -647,11 +647,31 @@ def _dispatch_item_render(
             if proposal_error == "proposal_stale":
                 mark_edit_proposal_stale(item)
                 session.commit()
-            return DispatchResult(proposal_error)
+            if settings.guided_edit_enforcement_enabled:
+                return DispatchResult(proposal_error)
+            approved_proposal = None
 
     content_plan_id = plan.id
     plan_item_id = item.id
     clip_paths = list(item.clip_gcs_paths or [])
+    if not clip_paths and approved_proposal is not None:
+        # Asset-only guided stories are valid. build_generative_job still needs
+        # one server-validated seed/raw path for its generic Job contract, but
+        # the strict worker reads every exact source from the approved snapshot.
+        approved_snapshot = approved_proposal["snapshot"]
+        selected_ids = {
+            media_id for beat in approved_snapshot["story_beats"] for media_id in beat["media_ids"]
+        }
+        first_selected = next(
+            (
+                ref["gcs_path"]
+                for ref in approved_snapshot["media"]
+                if ref["media_id"] in selected_ids
+            ),
+            None,
+        )
+        if first_selected:
+            clip_paths = [first_selected]
     if not clip_paths:
         log.warning("plan_item_render.no_clips", plan_item_id=str(item.id))
         return DispatchResult("invalid_clips")

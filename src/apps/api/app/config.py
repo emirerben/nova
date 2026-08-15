@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-GUIDED_STORY_RENDERER_READY = False
+GUIDED_STORY_RENDERER_READY = True
 
 
 class Settings(BaseSettings):
@@ -666,7 +666,7 @@ class Settings(BaseSettings):
     guided_edit_capability_enabled: bool = Field(
         default=False,
         description="Expose the Plan edit draft/edit/approve API. This is the backend "
-        "capability switch; keep it off until the review UI and strict story renderer "
+        "capability switch; enable only after the review UI and strict story renderer "
         "are deployed. Read by the API, so changing it requires an API restart.",
     )
     guided_edit_enforcement_enabled: bool = Field(
@@ -674,12 +674,12 @@ class Settings(BaseSettings):
         description="Require a current approved guided-edit proposal before Generate. "
         "Independent from capability so rollout can deploy endpoints first. Read by "
         "the API and synchronous dispatch worker; changing it requires API and worker "
-        "restarts. Never enable before strict story rendering is live.",
+        "restarts. Startup also requires the code-owned strict-renderer readiness pin.",
     )
 
     @model_validator(mode="after")
     def reject_guided_edit_before_strict_renderer(self) -> "Settings":
-        """Make the PR2 dark-launch sequence structurally impossible to skip."""
+        """Make the guided-edit rollout sequence structurally impossible to skip."""
 
         if self.guided_edit_enforcement_enabled and not self.guided_edit_capability_enabled:
             raise ValueError("guided edit enforcement requires guided edit capability")

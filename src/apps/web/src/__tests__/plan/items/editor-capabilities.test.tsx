@@ -17,6 +17,7 @@ import {
   CAPTIONS_TAB_REASON,
   CAPTIONS_UNAVAILABLE_COPY,
   TEXT_ELEMENTS_LOCKED_FALLBACK,
+  canEditIntroControls,
   captionToolState,
   computeToolDisabledReasons,
   editorReasonCopy,
@@ -77,6 +78,12 @@ describe("editorReasonCopy", () => {
     expect(editorReasonCopy("some_future_reason")).toBe("some_future_reason");
   });
 
+  it("routes guided-story structure changes back to Plan edit", () => {
+    expect(editorReasonCopy("guided_story_edit_unsupported")).toBe(
+      "change the story in Plan edit, approve it, then generate again",
+    );
+  });
+
   it("pins the caption-edit sentence byte-for-byte (server contract — CAPTION_TAB_COPY in generative_jobs.py sends this literal)", () => {
     expect(CAPTIONS_TAB_REASON).toBe("Captions can be selected and edited in this editor");
   });
@@ -86,6 +93,14 @@ describe("editorReasonCopy", () => {
     expect(editorReasonCopy("locked_to_voiceover")).toBe("locked to your voiceover");
     expect(editorReasonCopy(null)).toBe("This version can't be edited.");
     expect(editorReasonCopy(undefined)).toBe("This version can't be edited.");
+  });
+});
+
+describe("canEditIntroControls", () => {
+  it("keeps guided-story undo and copilot from dirtying the legacy intro", () => {
+    expect(canEditIntroControls({ text_elements: true, intro_controls: false }, false)).toBe(false);
+    expect(canEditIntroControls({ text_elements: true, intro_controls: true }, false)).toBe(true);
+    expect(canEditIntroControls(undefined, true)).toBe(false);
   });
 });
 

@@ -100,11 +100,23 @@ class TestGuidedEditRolloutSafety:
             Settings()
 
     @pytest.mark.usefixtures("_clean_env")
-    def test_enforcement_is_unavailable_before_strict_renderer(self, monkeypatch):
+    def test_enforcement_is_available_with_capability_after_strict_renderer(self, monkeypatch):
         monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "true")
         monkeypatch.setenv("GUIDED_EDIT_ENFORCEMENT_ENABLED", "true")
         from app.config import Settings
 
+        settings = Settings()
+        assert settings.guided_edit_capability_enabled is True
+        assert settings.guided_edit_enforcement_enabled is True
+
+    @pytest.mark.usefixtures("_clean_env")
+    def test_enforcement_still_fails_closed_without_renderer_readiness(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
+        monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "true")
+        monkeypatch.setenv("GUIDED_EDIT_ENFORCEMENT_ENABLED", "true")
+        import app.config as config
+
+        monkeypatch.setattr(config, "GUIDED_STORY_RENDERER_READY", False)
         with pytest.raises(ValidationError, match="requires the strict story renderer"):
-            Settings()
+            config.Settings()

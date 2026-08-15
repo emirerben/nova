@@ -1522,6 +1522,10 @@ export interface EditorCapabilities {
   motion_required_runtime_hash?: string | null;
   camera_effects?: boolean;
   background_music?: boolean;
+  /** Whether the existing primary song may be swapped/removed in this editor. */
+  swap_song?: boolean;
+  /** Whether legacy item-title controls may rewrite the rendered intro. */
+  intro_controls?: boolean;
   /** AI overlay suggestions inside the editor's Overlays drawer (plans/005-010).
    *  Deliberately does NOT check pool assets — the drawer owns the empty-pool state. */
   suggestions?: boolean;
@@ -1647,6 +1651,11 @@ export interface PlanItemVariant {
   // is what makes a variant instant-edit-eligible. Absent on lyrics/legacy.
   base_video_url?: string | null;
   base_video_path?: string | null;
+  /** Approved guided-story timeline and strict publication evidence. */
+  story_timeline?: Array<Record<string, unknown>> | null;
+  proposal_version?: number | null;
+  media_digest?: string | null;
+  render_receipt?: Record<string, unknown> | null;
   motion_scenes?: MotionPresetInstance[] | null;
   motion_runtime_hash?: string | null;
   motion_applied_runtime_hash?: string | null;
@@ -2345,6 +2354,7 @@ export function getActivation(planId: string): Promise<ActivationState> {
 export interface PlanItemJobStatus {
   status: string | null;
   variants: PlanItemVariant[];
+  failure_reason?: string | null;
   current_phase?: string | null;
   phase_log?: Array<{ name: string; ts: string; elapsed_ms?: number }> | null;
   started_at?: string | null;

@@ -5803,7 +5803,9 @@ def _mix_template_audio(
     audio_start_offset_s: float = 0.0,
     *,
     require_audio: bool = False,
+    audio_generation: str | None = None,
     validated_window_duration_s: float | None = None,
+    force_video_duration: bool = False,
 ) -> None:
     """Replace assembled video's audio with template music track.
 
@@ -5817,7 +5819,16 @@ def _mix_template_audio(
     """
     audio_local = os.path.join(tmpdir, "template_audio.m4a")
     try:
-        download_to_file(audio_gcs_path, audio_local)
+        if audio_generation is None:
+            download_to_file(audio_gcs_path, audio_local)
+        else:
+            from app.storage import download_generation_to_file  # noqa: PLC0415
+
+            download_generation_to_file(
+                audio_gcs_path,
+                audio_local,
+                generation=audio_generation,
+            )
     except Exception as exc:
         log.warning("template_audio_download_failed", error=str(exc))
         if require_audio:
@@ -5854,7 +5865,12 @@ def _mix_template_audio(
     # Only trim video when audio is within this many seconds of video.
     _AUDIO_SYNC_MAX_GAP_S = 5.0
 
-    if video_dur <= 0 and audio_dur <= 0:
+    if force_video_duration and video_dur > 0:
+        # Strict story timelines have an approved top-level duration. The
+        # input uses -stream_loop, so a shorter track is allowed to repeat;
+        # never trim approved visual beats to a near-short music file.
+        use_duration = video_dur
+    elif video_dur <= 0 and audio_dur <= 0:
         log.warning("audio_mix_probe_both_failed", falling_back_to="natural-length")
         use_duration = 0.0  # will skip -t below
     elif video_dur <= 0:
