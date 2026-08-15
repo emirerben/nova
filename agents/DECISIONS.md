@@ -1089,3 +1089,22 @@ selected photo/video beat.
   operations fail closed for guided stories until they have proposal-aware implementations.
 - **Rollout remains dark by default.** Strict-renderer readiness now permits enforcement, but capability,
   frontend, and enforcement flags stay false until a production-parity Corfu preview passes.
+
+## [2026-08-15] Guided-story photos use decoded render copies
+
+The first production retry of the approved Corfu story passed duration compilation but stopped on its
+first HEIC photo. Pillow had already verified the uploaded file; FFmpeg then selected its HEIF demuxer,
+which rejects the image2-only `-loop` input option used for photo motion.
+
+**Decisions:**
+
+- **Source evidence and render inputs are separate.** Exact-generation downloads remain untouched for
+  byte count, SHA-256, and publication receipts. The worker creates a separate EXIF-corrected JPEG, or
+  PNG when alpha is present, for FFmpeg assembly.
+- **Normalize every selected photo.** The renderer no longer relies on filename-specific FFmpeg demuxer
+  behavior. JPEG, PNG, WebP, HEIC, and HEIF all cross the same verified decode boundary before motion.
+- **Bound memory instead of parallelizing decode.** Downloads and video probes remain bounded-parallel,
+  while full-resolution phone photos decode serially so several large images cannot multiply peak
+  worker memory.
+- **Reject rather than fall back.** A photo that cannot fully decode keeps the stable
+  `guided_story_media_replaced` failure. The renderer never drops it or substitutes a simple montage.

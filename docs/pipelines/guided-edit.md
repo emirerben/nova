@@ -117,7 +117,10 @@ the version 1 rules so a rolling deploy cannot reinterpret queued work.
 
 The renderer exact-generation downloads every source selected by a beat. Unselected catalog media
 remains authorized but is not required in the output. Photos and videos become sequential full-screen
-or supporting-card moments. Photos receive a subtle zoom, relaxed/balanced story directions use
+or supporting-card moments. The downloaded bytes stay untouched for the source receipt; every photo
+is separately decoded, EXIF-corrected, and normalized to a render-safe JPEG or alpha-preserving PNG
+before FFmpeg applies its still-image loop. This is required for HEIC/HEIF, whose dedicated FFmpeg
+demuxer rejects the image2-only loop option. Photos receive a subtle zoom, relaxed/balanced story directions use
 duration-compensated crossfades, and fast montages use hard cuts. Video source audio is muted and the
 finished base receives either the pinned track or silent stereo AAC. The approved title and thoughts
 become editable TextElements on a clean text-free base. A text-only edit reburns from that base and

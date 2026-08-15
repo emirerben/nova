@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pillow_heif
 import pytest
 from PIL import Image, ImageDraw
 
@@ -30,7 +31,20 @@ pytestmark = pytest.mark.skipif(
 def _image(path: Path, color: tuple[int, int, int], label: str) -> None:
     image = Image.new("RGB", (640, 360), color)
     ImageDraw.Draw(image).text((40, 40), label, fill="white")
-    image.save(path)
+    if path.suffix.lower() in {".heic", ".heif"}:
+        pillow_heif.register_heif_opener()
+        try:
+            image.save(path, format="HEIF")
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"local pillow-heif cannot encode HEIF: {exc}")
+    else:
+        image.save(path)
+
+
+def _transparent_image(path: Path) -> None:
+    image = Image.new("RGBA", (640, 360), (50, 180, 120, 255))
+    ImageDraw.Draw(image).rectangle((0, 0, 120, 120), fill=(50, 180, 120, 0))
+    image.save(path, format="WEBP", lossless=True)
 
 
 def _video(path: Path) -> None:
@@ -68,7 +82,7 @@ def _snapshot() -> dict:
         MediaRef(
             lane="asset",
             media_id="food",
-            gcs_path="users/test/food.jpg",
+            gcs_path="users/test/food.heic",
             generation="1",
             kind="image",
         ),
@@ -82,7 +96,7 @@ def _snapshot() -> dict:
         MediaRef(
             lane="asset",
             media_id="food-detail",
-            gcs_path="users/test/food-detail.jpg",
+            gcs_path="users/test/food-detail.webp",
             generation="4",
             kind="image",
         ),
@@ -173,23 +187,23 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
     from app import storage
     from app.pipeline import guided_story
 
-    food = tmp_path / "food.jpg"
-    food_detail = tmp_path / "food-detail.jpg"
+    food = tmp_path / "food.heic"
+    food_detail = tmp_path / "food-detail.webp"
     dessert = tmp_path / "dessert.jpg"
     town = tmp_path / "town.jpg"
     street = tmp_path / "street.jpg"
     coast = tmp_path / "coast.mp4"
     swim = tmp_path / "swim.mp4"
     _image(food, (220, 120, 40), "FOOD")
-    _image(food_detail, (230, 160, 60), "FOOD DETAIL")
+    _transparent_image(food_detail)
     _image(dessert, (200, 90, 120), "DESSERT")
     _image(town, (170, 130, 80), "TOWN")
     _image(street, (140, 110, 75), "STREET")
     _video(coast)
     shutil.copy2(coast, swim)
     sources = {
-        "users/test/food.jpg": food,
-        "users/test/food-detail.jpg": food_detail,
+        "users/test/food.heic": food,
+        "users/test/food-detail.webp": food_detail,
         "users/test/dessert.jpg": dessert,
         "users/test/town.jpg": town,
         "users/test/street.jpg": street,
