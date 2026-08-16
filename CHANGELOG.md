@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.2.3] — 2026-08-16
+
+### Fixed
+- **Edits to a proposed video plan no longer disappear while the page refreshes in the background.** Creators can rewrite titles, location labels, thoughts, layouts, and ordering at their own pace; Nova only replaces the form when a genuinely newer saved proposal arrives.
+
 ## [0.33.2.2] — 2026-08-16
 
 ### Fixed
