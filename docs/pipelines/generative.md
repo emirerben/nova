@@ -121,7 +121,10 @@ creator is eligible only when `SUBTITLED_ARCHETYPE_ENABLED=true`, the plan item
 uses `edit_format="subtitled"`, and either an enabled
 `CreatorStyleAssignment` pins a preset id/version or
 `SMART_CAPTIONS_DEFAULT_PRESET_ID`/`SMART_CAPTIONS_DEFAULT_PRESET_VERSION`
-configure a fleet-wide default. Verify an eligible creator gets
+configure a fleet-wide default. Since v0.34.0.0 the item page has no
+Smart-captions (or Sound design) toggle — dispatch requests smart captions for
+every item (`requested=True` in `content_plan_build.py`) and this gate ladder
+alone decides. Verify an eligible creator gets
 `smart_captions_available=true`, the job trace records
 `smart_captions.plan_compiled`, and the ready variant persists
 `smart_captions_applied=true`. Planner/compiler failures fail open to ordinary
