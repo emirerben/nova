@@ -117,20 +117,23 @@ bypass the route.
 
 ## Rollout
 
-All switches default false:
+All four switches default false:
 
 1. `GUIDED_EDIT_CAPABILITY_ENABLED` exposes proposal and visual-pool APIs (API restart).
 2. `NEXT_PUBLIC_GUIDED_EDIT_ENABLED` exposes the item-page flow (Vercel rebuild).
-3. `GUIDED_EDIT_ENFORCEMENT_ENABLED` requires an approval at Generate (API + worker restart).
+3. `GUIDED_EDIT_CONVERSATION_ENABLED` switches the compatible item page from the typed brief form
+   to conversation after every API and worker can read `briefing` proposals (API restart).
+4. `GUIDED_EDIT_ENFORCEMENT_ENABLED` requires an approval at Generate (API + worker restart).
 
-After merge, deploy the API/worker and frontend with all three switches still off. Then download the
+After merge, deploy the API/worker and frontend with all four switches still off. Then download the
 authorized Corfu inputs read-only into temporary storage, render them through the production Docker
 image without production writes, review the MP4, contact sheet, decision trace, and strict receipt,
 and delete the scratch inputs. Only after that preview passes should rollout enable capability, then
-the frontend, then enforcement. The code-owned `GUIDED_STORY_RENDERER_READY` pin is true only because
-guided Jobs now render from their approved snapshot and verify stage receipts before publication;
-startup still rejects enforcement without capability. Roll back in reverse order. Existing approvals
-and rendered Jobs remain readable with every switch off.
+the frontend, conversation writes, and finally enforcement. The code-owned
+`GUIDED_STORY_RENDERER_READY` pin is true only because guided Jobs now render from their approved
+snapshot and verify stage receipts before publication; startup still rejects enforcement without
+capability. Roll back in reverse order. Existing approvals, conversations, and rendered Jobs remain
+readable with every switch off.
 
 ## Strict story rendering
 
@@ -189,11 +192,12 @@ Run the focused eval in replay mode:
 
 ```bash
 cd src/apps/api
-pytest tests/evals/test_edit_proposal_evals.py -v
+pytest tests/evals/test_edit_proposal_evals.py tests/evals/test_edit_guide_evals.py -v
 ```
 
 Run it against Gemini and the judge before changing the prompt:
 
 ```bash
-NOVA_EVAL_MODE=live pytest tests/evals/test_edit_proposal_evals.py -v --with-judge --allow-cost
+NOVA_EVAL_MODE=live pytest tests/evals/test_edit_proposal_evals.py \
+  tests/evals/test_edit_guide_evals.py -v --with-judge --allow-cost
 ```
