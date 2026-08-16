@@ -330,8 +330,18 @@ export default function SetupPicker({
     startCollapsed ? null : "type",
   );
   const [saving, setSaving] = useState(false);
+  // Optimistic format: the STYLE section and receipts follow the click
+  // immediately; props catch up after PATCH + refetch. Cleared on match or
+  // on failure (patch resolves, refetch reverts the value).
+  const [optimisticFormat, setOptimisticFormat] = useState<PickerEditFormat | null>(null);
+  useEffect(() => {
+    if (optimisticFormat && optimisticFormat === resolvedFormat) {
+      setOptimisticFormat(null);
+    }
+  }, [optimisticFormat, resolvedFormat]);
+  const displayFormat = optimisticFormat ?? resolvedFormat;
 
-  const isMontage = resolvedFormat === "montage";
+  const isMontage = displayFormat === "montage";
 
   const typeValues: PickerEditFormat[] = [
     "montage",
@@ -356,6 +366,7 @@ export default function SetupPicker({
   const selectType = async (value: PickerEditFormat) => {
     setOpenSection(value === "montage" ? "style" : null);
     if (value === resolvedFormat) return;
+    setOptimisticFormat(value);
     if (value === "montage") {
       await patch({
         edit_format: "montage",
@@ -383,8 +394,8 @@ export default function SetupPicker({
       {/* ---- TYPE ---- */}
       <DisclosureSection
         eyebrow="Type"
-        valueLabel={TYPE_COPY[resolvedFormat].label}
-        thumbSrc={TYPE_MEDIA[resolvedFormat].poster}
+        valueLabel={TYPE_COPY[displayFormat].label}
+        thumbSrc={TYPE_MEDIA[displayFormat].poster}
         open={openSection === "type"}
         onToggle={() => setOpenSection(openSection === "type" ? null : "type")}
       >
@@ -397,7 +408,7 @@ export default function SetupPicker({
           {typeValues.map((value) => (
             <MediaRadioCard
               key={value}
-              active={resolvedFormat === value}
+              active={displayFormat === value}
               saving={saving}
               poster={TYPE_MEDIA[value].poster}
               video={TYPE_MEDIA[value].video}
