@@ -375,7 +375,7 @@ function CompactPlanSummary({ item }: { item: PlanItem }) {
   if (shots.length === 0) return null;
   return (
     <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-4">
-      <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-zinc-400">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
         Plan summary
       </p>
       {item.filming_suggestion && (
@@ -1628,7 +1628,7 @@ export default function PlanItemPage() {
               variants.length === 0 &&
               hasLandscapeClip && (
               <div className="mb-4">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Landscape clip detected
                 </p>
                 <div className="flex gap-2">
@@ -1645,7 +1645,7 @@ export default function PlanItemPage() {
                         }}
                         className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
                           active
-                            ? "border-lime-400 bg-lime-50"
+                            ? "border-lime-200 bg-lime-50"
                             : "border-zinc-200 bg-white hover:border-zinc-300"
                         }`}
                       >
@@ -1671,7 +1671,7 @@ export default function PlanItemPage() {
                     setExpandError(null);
                     setAcceptExpandError(null);
                   }}
-                  className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex min-h-11 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                 >
                   <span aria-hidden>✦</span>
                   Plan this for me
@@ -1703,7 +1703,7 @@ export default function PlanItemPage() {
                     type="button"
                     disabled={expanding}
                     onClick={() => handleExpandIdea(expandContext)}
-                    className="rounded-lg bg-lime-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-11 rounded-lg bg-lime-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                   >
                     {expanding ? "Thinking…" : "Generate plan"}
                   </button>
@@ -1711,7 +1711,7 @@ export default function PlanItemPage() {
                     type="button"
                     disabled={expanding}
                     onClick={() => handleExpandIdea(null)}
-                    className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-[12px] text-[#71717a] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-11 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-[12px] text-[#71717a] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                   >
                     Skip and generate
                   </button>
@@ -1735,7 +1735,7 @@ export default function PlanItemPage() {
             {totalShots === 0 && clipCount === 0 && expandProposal && (
               <div className="mb-4">
                 <div className="rounded-xl border border-lime-200 bg-lime-50 p-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-lime-700">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-700">
                     AI SUGGESTION
                   </p>
                   <p className="mt-1 font-display text-lg font-medium text-[#0c0c0e]">
@@ -1819,7 +1819,7 @@ export default function PlanItemPage() {
             {/* Narrated walkthrough: sticky voice recorder bar — shown for both narrated sub-modes */}
             {isNarrated && (
               <div className="sticky top-0 z-10 -mx-6 mb-6 border-b border-zinc-100 bg-[#fafaf8] px-6 py-3">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Voice recording
                 </p>
                 <VoiceRecorder onVoiceover={handleVoiceover} />
@@ -1871,7 +1871,7 @@ export default function PlanItemPage() {
                 6. existing_footage → PoolUploadCard (use footage you already have) */}
             {isSubtitled ? (
               <div>
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Your clip
                 </p>
                 <p className="mb-4 text-sm text-[#71717a]">
@@ -1894,7 +1894,7 @@ export default function PlanItemPage() {
               </div>
             ) : isTalkingHead ? (
               <div>
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Your clips
                 </p>
                 <p className="mb-4 text-sm text-[#71717a]">
@@ -1915,7 +1915,7 @@ export default function PlanItemPage() {
               </div>
             ) : isNarratedReady ? (
               <div>
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Your clips
                 </p>
                 {/* Self-narration mode keeps this line short — the gate hint under
@@ -1941,7 +1941,7 @@ export default function PlanItemPage() {
               </div>
             ) : isCollagePreset ? (
               <div>
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Your clips
                 </p>
                 <PoolUploadCard
