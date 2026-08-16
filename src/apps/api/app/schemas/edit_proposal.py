@@ -10,17 +10,29 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-ProposalStatus = Literal["analyzing", "drafting", "draft", "approved", "stale", "failed"]
+ProposalStatus = Literal[
+    "briefing",
+    "analyzing",
+    "drafting",
+    "draft",
+    "approved",
+    "stale",
+    "failed",
+]
 ProposalDirection = Literal["guided_story", "fast_montage", "text_explainer"]
 ProposalPace = Literal["relaxed", "balanced", "fast"]
 MediaLane = Literal["clip", "asset"]
 MediaKind = Literal["image", "video"]
 BeatLayout = Literal["fullscreen", "supporting_card"]
 ThoughtSource = Literal["ai_draft", "user"]
+ConversationRole = Literal["user", "agent"]
+ConversationPhase = Literal["briefing", "review"]
+ConversationSuggestion = Annotated[str, Field(min_length=1, max_length=100)]
+EDIT_CONVERSATION_MAX_TURNS = 20
 
 
 class MediaRef(BaseModel):
@@ -92,6 +104,25 @@ class ProposalBrief(BaseModel):
     duration_s: int = Field(default=24, ge=10, le=60)
 
 
+class EditConversationTurn(BaseModel):
+    """One durable turn in the edit-direction conversation."""
+
+    role: ConversationRole
+    phase: ConversationPhase = "briefing"
+    content: str = Field(min_length=1, max_length=1000)
+    suggestions: list[ConversationSuggestion] = Field(default_factory=list, max_length=3)
+
+
+class EditConversationAttempt(BaseModel):
+    """Short-lived single-flight fence around one paid edit-guide call."""
+
+    token: str = Field(min_length=1, max_length=100)
+    expected_proposal_version: int = Field(ge=0)
+    reserved_proposal_version: int = Field(ge=1)
+    started_at: datetime
+    placeholder: bool = False
+
+
 class EditProposal(BaseModel):
     schema_version: Literal[1] = 1
     proposal_version: int = Field(ge=1)
@@ -99,6 +130,11 @@ class EditProposal(BaseModel):
     media_digest: str | None = Field(default=None, min_length=64, max_length=64)
     status: ProposalStatus
     brief: ProposalBrief = Field(default_factory=ProposalBrief)
+    conversation: list[EditConversationTurn] = Field(
+        default_factory=list, max_length=EDIT_CONVERSATION_MAX_TURNS
+    )
+    brief_ready: bool = False
+    conversation_attempt: EditConversationAttempt | None = None
     draft: EditProposalSnapshot | None = None
     last_approved: ApprovedProposalSnapshot | None = None
     failure: ProposalFailure | None = None
@@ -121,6 +157,11 @@ class ApprovedProposalSnapshotResponse(ApprovedProposalSnapshot):
 class EditProposalResponse(EditProposal):
     """OpenAPI-visible proposal envelope returned by plan-item endpoints."""
 
+    # Attempt tokens are internal write fences. Responses expose only safe UI
+    # state so a browser can resume after a reload without learning the token.
+    conversation_attempt: None = None
+    conversation_in_progress: bool = False
+    conversation_retry_required: bool = False
     draft: EditProposalSnapshotResponse | None = None
     last_approved: ApprovedProposalSnapshotResponse | None = None
 

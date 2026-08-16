@@ -2127,6 +2127,23 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
                 if any(claim in lowered for claim in unsupported_personal_claims):
                     failures.append(f"beat {index}: invents an unsupported personal experience")
         return failures
+    if agent_name == "nova.plan.edit_guide":
+        failures: list[str] = []
+        if not output.reply.strip():
+            failures.append("reply is blank")
+        if input.phase == "briefing":
+            if output.revision is not None:
+                failures.append("briefing response contains a revision")
+            if not output.brief.goal.strip():
+                failures.append("briefing response has no creator goal")
+        elif output.revision is not None:
+            expected = {beat.beat_id for beat in input.beats}
+            actual = [beat.beat_id for beat in output.revision.story_beats]
+            if set(actual) != expected or len(actual) != len(set(actual)):
+                failures.append("review revision does not preserve exact beat IDs")
+            if any(len(beat.thought.split()) > 18 for beat in output.revision.story_beats):
+                failures.append("review revision contains an overlong thought")
+        return failures
     if agent_name == "nova.compose.overlay_placement":
         return check_overlay_placement(output, input)
     if agent_name == "nova.compose.intro_writer":

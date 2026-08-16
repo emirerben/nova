@@ -297,7 +297,12 @@ def matcher_clip_metas(snapshot: EditProposalSnapshot) -> list[Any]:
             )
             if value
         )
-        moments = list(analysis.get("best_moments") or [])
+        raw_moments = analysis.get("best_moments")
+        moments = (
+            [moment for moment in raw_moments if isinstance(moment, dict)]
+            if isinstance(raw_moments, list)
+            else []
+        )
         if not moments and ref.kind == "video" and ref.duration_s:
             moments = [
                 {
@@ -335,7 +340,11 @@ def _source_window(ref, duration_s: float) -> tuple[float, float]:  # noqa: ANN0
             "guided_story_duration_impossible",
             f"Video {ref.source_filename or ref.media_id} is too short for the approved beat.",
         )
-    for moment in list((ref.analysis or {}).get("best_moments") or []):
+    raw_moments = (ref.analysis or {}).get("best_moments")
+    moments = raw_moments if isinstance(raw_moments, list) else []
+    for moment in moments:
+        if not isinstance(moment, dict):
+            continue
         try:
             start = max(0.0, float(moment.get("start_s", 0.0)))
             end = min(source_duration, float(moment.get("end_s", source_duration)))
@@ -645,6 +654,30 @@ def compile_execution_plan(
         guided_snapshot,
         track=track,
         compiler_version=COMPILER_VERSION,
+    )
+
+
+def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
+    """Reject an editorial revision that the strict renderer cannot allocate."""
+
+    media_digest = canonical_media_digest(snapshot.media)
+    compile_execution_plan(
+        {
+            "proposal_version": 1,
+            "media_digest": media_digest,
+            "approved_proposal": snapshot.model_dump(mode="json"),
+            "media_identities": [
+                {
+                    "lane": ref.lane,
+                    "media_id": ref.media_id,
+                    "gcs_path": ref.gcs_path,
+                    "generation": ref.generation,
+                    "kind": ref.kind,
+                }
+                for ref in snapshot.media
+            ],
+        },
+        track=None,
     )
 
 

@@ -36,6 +36,16 @@ def _neutralize_sensory_modifier(text: str) -> str:
     return re.sub(r"\ban (?=[^AEIOUaeiou\W])", "a ", cleaned)
 
 
+def ai_draft_thought_has_unsupported_claim(text: str) -> bool:
+    """Return whether model-authored copy asserts an unverified experience."""
+
+    return bool(
+        _PERSONAL_PRONOUN.search(text)
+        or _UNSUPPORTED_ACTION_LEAD.search(text)
+        or _SENSORY_CLAIM.search(text)
+    )
+
+
 class EditProposalMedia(BaseModel):
     media_id: str
     lane: Literal["clip", "asset"]
@@ -153,11 +163,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 beat.thought = _neutralize_sensory_modifier(beat.thought)
             if len(beat.thought.split()) > 18:
                 raise SchemaError("edit_proposal: draft thought exceeds 18 words")
-            if not has_creator_context and (
-                _PERSONAL_PRONOUN.search(beat.thought)
-                or _UNSUPPORTED_ACTION_LEAD.search(beat.thought)
-                or _SENSORY_CLAIM.search(beat.thought)
-            ):
+            if not has_creator_context and ai_draft_thought_has_unsupported_claim(beat.thought):
                 raise SchemaError(
                     "edit_proposal: draft thought invents an unsupported personal experience"
                 )
