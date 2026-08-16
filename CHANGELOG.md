@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.3.0] — 2026-08-16
+
+### Added
+- **Plan edit is now conversational.** Describe the intended feeling, focus, text level, pace, and
+  length in ordinary language, see what Kria understood, and keep refining the review draft with
+  requests such as “put food first” or “use less text.” Conversations survive reloads and retries.
+
+### Safety
+- Conversational changes remain drafts until approval. Kria cannot replace uploaded media,
+  silently remove story chapters, or overwrite creator-written thoughts, and concurrent tabs fail
+  with a clear proposal conflict instead of losing work.
+- The existing direction form remains available during rollout. Conversation writes only turn on
+  after every backend reader understands the new durable briefing state.
+
 ## [0.33.2.1] — 2026-08-15
 
 ### Fixed

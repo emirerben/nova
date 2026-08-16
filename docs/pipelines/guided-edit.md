@@ -7,8 +7,10 @@ the story assembler consumes the approved Job snapshot directly.
 ## Product flow
 
 1. The creator uploads main clips and any supporting photos/videos.
-2. **Plan edit** asks for direction (`guided_story`, `fast_montage`, or `text_explainer`), goal,
-   pace, and target length.
+2. **Plan edit** opens an editorial conversation. The creator can describe the result in ordinary
+   language (for example, “a reflective diary about the food and old town” or “fast highlights,
+   little text”). `EditGuideAgent` reflects what it understood, asks at most one useful follow-up
+   at a time, and persists a typed direction, goal, pace, and target length.
 3. `POST /plan-items/{id}/edit-proposal/draft` assigns stable IDs to legacy clip assignments,
    creates a token-fenced attempt, and queues `draft_edit_proposal`.
 4. The task waits for existing visual-pool analysis, analyzes every attached clip without current
@@ -16,8 +18,12 @@ the story assembler consumes the approved Job snapshot directly.
 5. `EditProposalAgent` sees the complete media set plus creator-written context. It proposes an
    ordered title and story beats. It must use at least seven distinct sources when available and
    may not invent personal experiences.
-6. The item page shows combined photo/video thumbnails. Direction, goal, pace, title, order,
-   layouts, and thoughts remain editable. AI-written thoughts carry an **AI draft** label.
+6. The item page shows combined photo/video thumbnails. The creator can continue the same
+   conversation with requests such as “put food first,” “make it slower,” or “use less text.”
+   Conversational revisions may reorder and rewrite editorial fields, but the server preserves
+   every beat's media membership and creator-written thoughts. Direction, goal, pace, title,
+   order, layouts, and thoughts also remain manually editable. AI-written thoughts carry an
+   **AI draft** label.
 7. **Approve plan** saves corrections and approves them using compare-and-swap against
    `expected_proposal_version`.
 8. Generate revalidates every storage generation and snapshots the exact approved proposal and
@@ -32,8 +38,12 @@ the story assembler consumes the approved Job snapshot directly.
 - `generation_attempt_id`: prevents an older analysis task from overwriting a newer attempt.
 - `media_digest`: SHA-256 of canonical lane, stable ID, object path, storage generation, kind,
   and content hash. Editorial ordering is intentionally excluded.
-- `status`: `analyzing`, `drafting`, `draft`, `approved`, `stale`, or `failed`.
+- `status`: `briefing`, `analyzing`, `drafting`, `draft`, `approved`, `stale`, or `failed`.
 - `brief`: requested direction, goal, pace, and duration.
+- `conversation`: up to ten durable creator/Kria exchanges, including reply suggestions. The
+  thread survives reloads and proposal-generation retries.
+- `brief_ready`: Kria's advisory signal that it has enough direction to plan. It never gates the
+  creator; **Build this edit plan** is available whenever a conversation reply is not in flight.
 - `draft`: the current editable proposal.
 - `last_approved`: immutable approval metadata plus the approved snapshot. It is retained when
   media changes so the creator can compare before planning again.
@@ -58,10 +68,14 @@ Draft edits and approvals require `expected_proposal_version`. A stale browser t
 fenced by attempt ID, status, media digest, and a second storage-generation check after analysis.
 The analysis task also carries the plan ownership epoch, so transferring a plan invalidates queued
 work. Repeated **Plan edit** clicks reuse an active attempt, and new attempts are limited to three
-per minute per client IP.
+per minute per client IP. Conversation turns are limited to twelve per minute per authenticated
+creator.
 
 The mutation contracts are:
 
+- `POST /plan-items/{id}/edit-proposal/conversation` with `expected_proposal_version` and a natural
+  language `message` returns the updated item (`200`). Before analysis it updates the typed brief.
+  During review it may return a revised draft, which always requires approval again.
 - `PATCH /plan-items/{id}/edit-proposal` with `expected_proposal_version` and a complete `snapshot`
   returns the updated item (`200`) or a structured `409` conflict/stale response.
 - `POST /plan-items/{id}/edit-proposal/approve` with `expected_proposal_version` returns the approved
@@ -69,6 +83,27 @@ The mutation contracts are:
 
 Media identities and analysis are server-owned. PATCH may change direction, goal, pace, duration,
 title, beat order, layouts, and thoughts, but it cannot replace media metadata.
+
+The conversation endpoint follows the same trust boundary. Under the item lock it first persists a
+short-lived, token-fenced single-flight reservation, then releases the transaction before calling
+the model. Duplicate tabs therefore cannot spend a second model call. The final write reloads under
+lock and must own both the token and proposal version. Responses expose only safe `thinking` or
+`retry required` state—not the token—so a reload disables generic planning while the creator's
+words are still being interpreted. An abandoned reservation expires after 90 seconds and can be
+reclaimed by resending the direction. Draft revisions must preserve every existing beat ID exactly
+once; the route rejoins server-owned media IDs and retains creator-authored thoughts verbatim.
+
+## Conversational rollout
+
+`GUIDED_EDIT_CONVERSATION_ENABLED` is a separate API-read writer gate. Keep it false while this
+release rolls across every API and worker: the web continues to show the existing direction, goal,
+pace, and duration form. After every backend reader understands the `briefing` status, enable the
+flag and restart the API. `PlanItem.guided_edit_conversation_available` then switches the already
+deployed web UI to conversation without a second build. Rolling the flag back restores the form;
+existing conversation history remains readable and is preserved by later planning attempts.
+
+Do not roll the application binary back past `0.33.3.0` while `briefing` rows exist. The reviewed
+compatibility conversion is in `docs/runbooks/conversational-edit-rollback.md`.
 
 When enforcement is enabled, Generate returns one explicit 409 code:
 
@@ -145,6 +180,8 @@ detail and proposal mutation responses carry the full review payload, keeping li
   `tests/agents/test_edit_proposal_agent.py`
 - Replay/live+judge travel cases: `tests/evals/test_edit_proposal_evals.py`
 - Frontend review flow: `src/__tests__/plan/edit-proposal-card.test.tsx`
+- Conversation agent/evals: `tests/agents/test_edit_guide_agent.py` and
+  `tests/evals/test_edit_guide_evals.py`
 - Strict compiler/fault injection: `tests/pipeline/test_guided_story.py`
 - Real mixed-media FFmpeg render: `tests/pipeline/test_guided_story_ffmpeg.py`
 
