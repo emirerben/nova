@@ -252,7 +252,7 @@ function TypeCard({
       />
       <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-b from-transparent via-[rgba(12,12,14,0.55)] to-[rgba(12,12,14,0.94)]" />
       {active && (
-        <span className="absolute left-3 top-3 rounded-full bg-lime-600 px-2.5 py-1 text-[11px] font-semibold text-white">
+        <span className="absolute left-3 top-3 rounded-full bg-lime-700 px-2.5 py-1 text-[11px] font-semibold text-white">
           Selected
         </span>
       )}
@@ -308,7 +308,7 @@ function StyleTile({
       />
       <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-b from-transparent via-[rgba(12,12,14,0.55)] to-[rgba(12,12,14,0.94)]" />
       {active && (
-        <span className="absolute left-3 top-3 rounded-full bg-lime-600 px-2.5 py-1 text-[11px] font-semibold text-white">
+        <span className="absolute left-3 top-3 rounded-full bg-lime-700 px-2.5 py-1 text-[11px] font-semibold text-white">
           Selected
         </span>
       )}
