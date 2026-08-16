@@ -1324,6 +1324,9 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
       theme: "Packing reveal",
       filming_suggestion: "Make the plan feel tactile.",
       filming_guide: filmingGuide,
+      // Acceptance re-enters the guided flow even if the type picker had
+      // stamped existing_footage earlier.
+      content_mode: "create_new",
     });
   });
 

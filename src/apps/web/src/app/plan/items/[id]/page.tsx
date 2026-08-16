@@ -1605,6 +1605,7 @@ export default function PlanItemPage() {
             {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
               <SetupPicker
                 resolvedFormat={resolvedFormat}
+                rawEditFormat={rawEditFormat}
                 montagePreset={montagePreset}
                 subtitledEnabled={SUBTITLED_ENABLED}
                 showTalkingHead={isTalkingHead}
@@ -1615,8 +1616,13 @@ export default function PlanItemPage() {
                   Boolean(item.voiceover_gcs_path)
                 }
                 onPatch={async (updates) => {
-                  await updatePlanItem(item.id, updates).catch(() => null);
-                  refetch();
+                  // Rejections propagate so the picker can drop its optimistic
+                  // state; refetch either way so props reflect the server.
+                  try {
+                    await updatePlanItem(item.id, updates);
+                  } finally {
+                    refetch();
+                  }
                 }}
               />
             )}
@@ -1777,6 +1783,11 @@ export default function PlanItemPage() {
                             theme: expandProposal.theme,
                             filming_suggestion: expandProposal.filming_suggestion,
                             filming_guide: expandProposal.filming_guide,
+                            // Accepting a filming plan re-enters the guided
+                            // (create_new) flow even if the type picker had
+                            // stamped existing_footage earlier — otherwise the
+                            // shot-slot uploader is unreachable for this item.
+                            content_mode: "create_new",
                           });
                           setExpandProposal(null);
                           setExpandContext("");
