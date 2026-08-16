@@ -209,27 +209,36 @@ function DisclosureSection({
   );
 }
 
-function TypeCard({
-  value,
+function MediaRadioCard({
   active,
   saving,
+  poster,
+  video,
+  scrim,
+  label,
+  desc,
+  meta,
   onSelect,
 }: {
-  value: PickerEditFormat;
   active: boolean;
   saving: boolean;
-  onSelect: (value: PickerEditFormat) => void;
+  poster: string;
+  video: string;
+  /** Scrim height class — taller when a meta line rides the caption block. */
+  scrim: "h-1/2" | "h-3/5";
+  label: string;
+  desc: string;
+  meta?: string;
+  onSelect: () => void;
 }) {
   const { videoRef, play, stop } = useHoverVideo();
-  const copy = TYPE_COPY[value];
-  const media = TYPE_MEDIA[value];
   return (
     <button
       type="button"
       role="radio"
       aria-checked={active}
       disabled={saving}
-      onClick={() => onSelect(value)}
+      onClick={onSelect}
       onMouseEnter={play}
       onMouseLeave={stop}
       onFocus={play}
@@ -242,15 +251,17 @@ function TypeCard({
     >
       <video
         ref={videoRef}
-        src={media.video}
-        poster={media.poster}
+        src={video}
+        poster={poster}
         muted
         loop
         playsInline
         preload="none"
         className="absolute inset-0 h-full w-full object-cover"
       />
-      <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-b from-transparent via-[rgba(12,12,14,0.55)] to-[rgba(12,12,14,0.94)]" />
+      <div
+        className={`absolute inset-x-0 bottom-0 ${scrim} bg-gradient-to-b from-transparent via-[rgba(12,12,14,0.55)] to-[rgba(12,12,14,0.94)]`}
+      />
       {active && (
         <span className="absolute left-3 top-3 rounded-full bg-lime-700 px-2.5 py-1 text-[11px] font-semibold text-white">
           Selected
@@ -258,65 +269,12 @@ function TypeCard({
       )}
       <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1 p-4">
         <span className="font-display text-[21px] font-medium leading-tight text-white">
-          {copy.label}
+          {label}
         </span>
-        <span className="text-[12.5px] leading-[18px] text-white/[0.82]">{copy.desc}</span>
-        <span className="pt-0.5 text-[11px] font-medium text-white/60">{copy.meta}</span>
-      </div>
-    </button>
-  );
-}
-
-function StyleTile({
-  tile,
-  active,
-  saving,
-  onSelect,
-}: {
-  tile: (typeof STYLE_TILES)[number];
-  active: boolean;
-  saving: boolean;
-  onSelect: (value: MontagePreset) => void;
-}) {
-  const { videoRef, play, stop } = useHoverVideo();
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      disabled={saving}
-      onClick={() => onSelect(tile.value)}
-      onMouseEnter={play}
-      onMouseLeave={stop}
-      onFocus={play}
-      onBlur={stop}
-      className={`relative aspect-[3/4] w-[216px] shrink-0 snap-start overflow-hidden rounded-[18px] text-left transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-wait sm:w-auto ${
-        active
-          ? "shadow-[0_0_0_3px_#65a30d,0_12px_30px_rgba(0,0,0,0.18)]"
-          : "border border-zinc-200 hover:scale-[1.01]"
-      }`}
-    >
-      <video
-        ref={videoRef}
-        src={tile.video}
-        poster={tile.poster}
-        muted
-        loop
-        playsInline
-        preload="none"
-        className="absolute inset-0 h-full w-full object-cover"
-      />
-      <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-b from-transparent via-[rgba(12,12,14,0.55)] to-[rgba(12,12,14,0.94)]" />
-      {active && (
-        <span className="absolute left-3 top-3 rounded-full bg-lime-700 px-2.5 py-1 text-[11px] font-semibold text-white">
-          Selected
-        </span>
-      )}
-      <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1 p-4">
-        <span className="font-display text-[21px] font-medium leading-tight text-white">
-          {tile.label}
-        </span>
-        <span className="text-[12.5px] leading-[18px] text-white/[0.82]">{tile.desc}</span>
+        <span className="text-[12.5px] leading-[18px] text-white/[0.82]">{desc}</span>
+        {meta && (
+          <span className="pt-0.5 text-[11px] font-medium text-white/60">{meta}</span>
+        )}
       </div>
     </button>
   );
@@ -402,12 +360,17 @@ export default function SetupPicker({
           aria-label="Type"
         >
           {typeValues.map((value) => (
-            <TypeCard
+            <MediaRadioCard
               key={value}
-              value={value}
               active={resolvedFormat === value}
               saving={saving}
-              onSelect={selectType}
+              poster={TYPE_MEDIA[value].poster}
+              video={TYPE_MEDIA[value].video}
+              scrim="h-3/5"
+              label={TYPE_COPY[value].label}
+              desc={TYPE_COPY[value].desc}
+              meta={TYPE_COPY[value].meta}
+              onSelect={() => selectType(value)}
             />
           ))}
         </div>
@@ -428,12 +391,16 @@ export default function SetupPicker({
             aria-label="Style"
           >
             {STYLE_TILES.map((tile) => (
-              <StyleTile
+              <MediaRadioCard
                 key={tile.value}
-                tile={tile}
                 active={montagePreset === tile.value}
                 saving={saving}
-                onSelect={selectStyle}
+                poster={tile.poster}
+                video={tile.video}
+                scrim="h-1/2"
+                label={tile.label}
+                desc={tile.desc}
+                onSelect={() => selectStyle(tile.value)}
               />
             ))}
           </div>
