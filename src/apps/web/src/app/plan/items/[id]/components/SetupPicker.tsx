@@ -93,6 +93,10 @@ type OpenSection = "type" | "style" | null;
 
 export type SetupPickerProps = {
   resolvedFormat: PickerEditFormat;
+  /** The item's stored edit_format, unfolded. The no-op guard compares against
+      this (not resolvedFormat) so legacy sub-modes — e.g. narrated_planned —
+      still upgrade to narrated_ready when their own card is clicked. */
+  rawEditFormat: string;
   montagePreset: MontagePreset;
   subtitledEnabled: boolean;
   showTalkingHead: boolean;
@@ -318,6 +322,7 @@ function MediaRadioCard({
 
 export default function SetupPicker({
   resolvedFormat,
+  rawEditFormat,
   montagePreset,
   subtitledEnabled,
   showTalkingHead,
@@ -333,8 +338,8 @@ export default function SetupPicker({
   );
   const [saving, setSaving] = useState(false);
   // Optimistic format: the STYLE section and receipts follow the click
-  // immediately; props catch up after PATCH + refetch. Cleared on match or
-  // on failure (patch resolves, refetch reverts the value).
+  // immediately; props catch up after PATCH + refetch. Cleared when props
+  // match, and dropped outright when the PATCH rejects (patch() catches).
   const [optimisticFormat, setOptimisticFormat] = useState<PickerEditFormat | null>(null);
   useEffect(() => {
     if (optimisticFormat && optimisticFormat === resolvedFormat) {
@@ -356,6 +361,10 @@ export default function SetupPicker({
     setSaving(true);
     try {
       await onPatch(updates);
+    } catch {
+      // Failed save: revert the receipts/STYLE shelf to the server's truth.
+      // The card stays clickable, so re-selecting retries the PATCH.
+      setOptimisticFormat(null);
     } finally {
       setSaving(false);
     }
@@ -364,20 +373,22 @@ export default function SetupPicker({
   // Already-filmed is the default path: montage skips the shot plan unless a
   // guide already exists, and Voiceover starts in narrated_ready (upload the
   // clips you filmed). The planned flows remain reachable via "Plan this for
-  // me" / an existing filming guide, not via a mode toggle.
+  // me" (acceptance restores content_mode) / an existing filming guide, not
+  // via a mode toggle.
   const selectType = async (value: PickerEditFormat) => {
     setOpenSection(value === "montage" ? "style" : null);
-    if (value === resolvedFormat) return;
+    // Compare against the stored edit_format, not the folded picker value —
+    // a legacy narrated_planned item clicking Voiceover must still upgrade.
+    const targetFormat = value === "narrated_planned" ? "narrated_ready" : value;
+    if (targetFormat === rawEditFormat) return;
     setOptimisticFormat(value);
     if (value === "montage") {
       await patch({
         edit_format: "montage",
         ...(hasGuide ? {} : { content_mode: "existing_footage" }),
       });
-    } else if (value === "narrated_planned") {
-      await patch({ edit_format: "narrated_ready" });
     } else {
-      await patch({ edit_format: value });
+      await patch({ edit_format: targetFormat });
     }
   };
 
