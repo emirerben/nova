@@ -133,6 +133,9 @@ function useHoverVideo() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const play = () => {
     if (prefersReducedMotion()) return;
+    // Hover-capable pointers only: on touch, a tap fires enter/focus and would
+    // download the loop's video bytes for a card that is about to collapse.
+    if (typeof window !== "undefined" && !window.matchMedia("(hover: hover)").matches) return;
     videoRef.current?.play().catch(() => undefined);
   };
   const stop = () => {
@@ -271,12 +274,12 @@ function MediaRadioCard({
       onMouseLeave={stop}
       onFocus={play}
       onBlur={stop}
-      className={`relative aspect-[3/4] w-[216px] shrink-0 snap-start overflow-hidden rounded-[18px] text-left transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:w-auto ${
+      className={`relative aspect-[3/4] w-[216px] shrink-0 snap-start overflow-hidden rounded-[18px] text-left transition-transform motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:w-auto ${
         saving ? "cursor-wait " : ""
       }${
         active
           ? "shadow-[0_0_0_3px_#65a30d,0_12px_30px_rgba(0,0,0,0.18)]"
-          : "border border-zinc-200 hover:scale-[1.01]"
+          : "border border-zinc-200 motion-safe:hover:scale-[1.01]"
       }`}
     >
       <video
