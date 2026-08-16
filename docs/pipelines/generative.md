@@ -124,7 +124,9 @@ uses `edit_format="subtitled"`, and either an enabled
 configure a fleet-wide default. Since v0.34.0.0 the item page has no
 Smart-captions (or Sound design) toggle — dispatch requests smart captions for
 every item (`requested=True` in `content_plan_build.py`) and this gate ladder
-alone decides. Verify an eligible creator gets
+alone decides; auto sound design likewise defaults on
+(`smart_sound_design_enabled` server-default `true`, `None` ⇒ enabled). Verify
+an eligible creator gets
 `smart_captions_available=true`, the job trace records
 `smart_captions.plan_compiled`, and the ready variant persists
 `smart_captions_applied=true`. Planner/compiler failures fail open to ordinary

@@ -1,6 +1,7 @@
 # Smart Captions v2/v3 — internals
 
-Reference doc for deep pipeline internals. CLAUDE.md carries the env-flag contract;
+Reference doc for deep pipeline internals. `.env.example` documents the env flags
+(`SMART_CAPTIONS_ENABLED`, `SMART_CAPTIONS_DEFAULT_PRESET_ID`/`_VERSION`);
 `docs/pipelines/generative.md` carries the rollout runbook. This file carries the v2
 semantic mechanics (v0.11.0.0) and the backward-compatible v3 presentation preset
 (v0.23.10.0).
@@ -16,7 +17,10 @@ configure a fleet-wide default for users without an assignment row. Since
 v0.34.0.0 there is no per-item Smart-captions toggle: plan dispatch
 (`content_plan_build._dispatch_item_render`) always passes `requested=True`, so
 this server gate ladder alone decides — the browser can never select a preset
-or bypass rollout gates. Assignment
+or bypass rollout gates. The PATCH API still accepts and persists
+`smart_captions_enabled` / `smart_sound_design_enabled`
+(`routes/plan_items.py`), but dispatch ignores a stored
+`smart_captions_enabled=false`. Assignment
 rows win over the default: they may pin a different reviewed preset, explicitly
 disable one account, or carry `shadow_preset_id`/`shadow_preset_version`
 (migration 0066; check-constrained to be set or null as a pair) — see the shadow
