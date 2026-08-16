@@ -120,6 +120,7 @@ from app.schemas.edit_proposal import (
     EditProposalResponse,
     EditProposalSnapshot,
     ProposalBrief,
+    StoryBeat,
     parse_edit_proposal,
 )
 from app.schemas.montage_preset import (
@@ -268,6 +269,16 @@ def _edit_proposal_response(item: PlanItem) -> dict | None:
     if proposal is None:
         return None
     payload = proposal.model_dump(mode="json")
+    attempt = proposal.conversation_attempt
+    if attempt is not None:
+        from app.services.edit_proposals import (  # noqa: PLC0415
+            EDIT_CONVERSATION_ATTEMPT_TTL_S,
+        )
+
+        age_s = max(0.0, (datetime.now(UTC) - attempt.started_at).total_seconds())
+        payload["conversation_in_progress"] = age_s < EDIT_CONVERSATION_ATTEMPT_TTL_S
+        payload["conversation_retry_required"] = age_s >= EDIT_CONVERSATION_ATTEMPT_TTL_S
+    payload["conversation_attempt"] = None
     clip_paths_by_id = {
         str(assignment.get("media_id")): str(assignment.get("gcs_path"))
         for assignment in (item.clip_assignments or [])
@@ -355,6 +366,7 @@ class PlanItemResponse(BaseModel):
     # as null by _edit_proposal_response; valid state stays OpenAPI-discoverable.
     edit_proposal: EditProposalResponse | None = None
     guided_edit_available: bool = False
+    guided_edit_conversation_available: bool = False
     status: str
     current_job_id: str | None
     finished_at: datetime | None = None
@@ -465,6 +477,7 @@ def plan_item_response(
         clip_assignments=reconciled_assignments,
         edit_proposal=_edit_proposal_response(item) if include_edit_proposal else None,
         guided_edit_available=settings.guided_edit_capability_enabled,
+        guided_edit_conversation_available=settings.guided_edit_conversation_enabled,
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,
         finished_at=item.current_job.finished_at if item.current_job is not None else None,
@@ -1634,8 +1647,39 @@ def _require_guided_edit() -> None:
         )
 
 
+def _require_guided_edit_conversation() -> None:
+    _require_guided_edit()
+    if not settings.guided_edit_conversation_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversational Plan edit is not available.",
+        )
+
+
+def _edit_conversation_rate_key(request: Request) -> str:
+    """Key paid edit-guide calls by the authenticated proxy identity."""
+
+    user_id = request.headers.get("x-user-id", "").strip()
+    if user_id:
+        return f"user:{user_id[:128]}"
+    return f"ip:{get_real_ip(request)}"
+
+
 class DraftEditProposalBody(ProposalBrief):
     pass
+
+
+class EditGuideTurnBody(BaseModel):
+    expected_proposal_version: int = Field(default=0, ge=0)
+    message: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("message")
+    @classmethod
+    def message_must_have_words(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("message cannot be blank")
+        return value
 
 
 class UpdateEditProposalBody(BaseModel):
@@ -1645,6 +1689,97 @@ class UpdateEditProposalBody(BaseModel):
 
 class ApproveEditProposalBody(BaseModel):
     expected_proposal_version: int = Field(ge=1)
+
+
+async def _edit_guide_media_summary(
+    item: PlanItem,
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+) -> list[dict]:
+    """Return bounded, non-identity media context for the conversation agent."""
+
+    summaries: list[dict] = []
+    seen_paths: set[str] = set()
+    for raw in item.clip_assignments or []:
+        if not isinstance(raw, dict) or not raw.get("gcs_path"):
+            continue
+        path = str(raw["gcs_path"])
+        analysis = raw.get("analysis") if isinstance(raw.get("analysis"), dict) else {}
+        kind = str(raw.get("kind") or "")
+        if kind not in {"image", "video"}:
+            image_suffixes = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")
+            kind = "image" if path.lower().endswith(image_suffixes) else "video"
+        summaries.append(
+            {
+                "kind": kind,
+                "source_filename": path.rsplit("/", 1)[-1].split("-", 1)[-1][:160],
+                "creator_context": str(raw.get("user_note") or "")[:500],
+                "subject": str(analysis.get("subject") or "")[:300],
+                "description": str(analysis.get("description") or "")[:500],
+            }
+        )
+        seen_paths.add(path)
+
+    assets = list(
+        (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.user_id == user_id,
+                    PlanItemAsset.status == "ready",
+                )
+                .order_by(PlanItemAsset.created_at)
+            )
+        ).scalars()
+    )
+    for asset in assets:
+        if asset.gcs_path in seen_paths:
+            continue
+        analysis = asset.analysis if isinstance(asset.analysis, dict) else {}
+        summaries.append(
+            {
+                "kind": "image" if asset.kind == "image" else "video",
+                "source_filename": str(asset.source_filename or "")[:160],
+                "creator_context": str(asset.user_context or "")[:500],
+                "subject": str(analysis.get("subject") or "")[:300],
+                "description": str(analysis.get("description") or "")[:500],
+            }
+        )
+    return summaries[:60]
+
+
+def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapshot:  # noqa: ANN001
+    """Rejoin AI editorial changes with server-owned beat/media membership."""
+
+    beat_by_id = {beat.beat_id: beat for beat in current.story_beats}
+    beats: list[StoryBeat] = []
+    for revised in revision.story_beats:
+        existing = beat_by_id[revised.beat_id]
+        # Creator-authored wording is authoritative. Conversational revisions
+        # can reorganize the chapter, but never silently rewrite that wording.
+        keep_user_thought = existing.thought_source == "user"
+        beats.append(
+            StoryBeat(
+                beat_id=existing.beat_id,
+                topic=revised.topic,
+                thought=existing.thought if keep_user_thought else revised.thought,
+                thought_source="user" if keep_user_thought else "ai_draft",
+                media_ids=existing.media_ids,
+                layout=revised.layout,
+                duration_s=revised.duration_s,
+            )
+        )
+    return EditProposalSnapshot(
+        direction=revision.direction,
+        goal=revision.goal,
+        pace=revision.pace,
+        duration_s=revision.duration_s,
+        title=revision.title,
+        media=current.media,
+        story_beats=beats,
+    )
 
 
 def _proposal_http_conflict(code: str, message: str) -> HTTPException:
@@ -1733,6 +1868,177 @@ async def _proposal_media_is_current(
     return True
 
 
+@router.post("/{item_id}/edit-proposal/conversation", response_model=PlanItemResponse)
+@limiter.limit("12/minute", key_func=_edit_conversation_rate_key)
+async def edit_proposal_conversation_turn(
+    request: Request,
+    item_id: str,
+    body: EditGuideTurnBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Turn natural-language direction into a brief or a reviewable draft revision."""
+
+    _ = request
+    _require_guided_edit_conversation()
+    owner_id = user.id
+    item = await _load_owned_item(item_id, owner_id, db, for_update=True)
+    current = parse_edit_proposal(item.edit_proposal)
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        ProposalConflictError,
+        release_edit_conversation_attempt,
+        require_edit_conversation_attempt,
+        reserve_edit_conversation_attempt,
+        save_edit_conversation_turn,
+    )
+
+    try:
+        _reserved, conversation_token = reserve_edit_conversation_attempt(
+            item,
+            expected_version=body.expected_proposal_version,
+        )
+    except ProposalConflictError as exc:
+        raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+
+    review_snapshot = (
+        current.draft
+        if current and current.status in {"draft", "approved"} and current.draft
+        else None
+    )
+    phase = "review" if review_snapshot else "briefing"
+    brief = (
+        ProposalBrief(
+            direction=review_snapshot.direction,
+            goal=review_snapshot.goal,
+            pace=review_snapshot.pace,
+            duration_s=review_snapshot.duration_s,
+        )
+        if review_snapshot
+        else (current.brief if current else ProposalBrief())
+    )
+    conversation = list(current.conversation) if current else []
+    media_summary = await _edit_guide_media_summary(item, db, user_id=owner_id)
+    idea = str(item.idea or "")
+    theme = str(item.theme or "")
+    # Persist the single-flight token, then release the row lock before Gemini
+    # starts. Duplicate requests stop here without consuming another model call.
+    await db.commit()
+
+    async def release_reservation() -> None:
+        locked_item = await _load_owned_item(item_id, owner_id, db, for_update=True)
+        if release_edit_conversation_attempt(locked_item, token=conversation_token):
+            await db.commit()
+        else:
+            await db.rollback()
+
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents.edit_guide import (  # noqa: PLC0415
+        EditGuideAgent,
+        EditGuideBeatInput,
+        EditGuideInput,
+        EditGuideMediaSummary,
+    )
+    from app.schemas.edit_proposal import EDIT_CONVERSATION_MAX_TURNS  # noqa: PLC0415
+
+    # Persisted history is user/agent pairs. Keep whole exchanges rather than
+    # starting the prompt with an orphaned assistant reply at the window edge.
+    turns = conversation[-(EDIT_CONVERSATION_MAX_TURNS - 2) :]
+    turns.append({"role": "user", "phase": phase, "content": body.message.strip()})
+    try:
+        result = await asyncio.to_thread(
+            EditGuideAgent(default_client()).run,
+            EditGuideInput(
+                phase=phase,
+                idea=idea,
+                theme=theme,
+                turns=turns,
+                brief=brief,
+                media=[EditGuideMediaSummary.model_validate(row) for row in media_summary],
+                title=review_snapshot.title if review_snapshot else "",
+                beats=(
+                    [
+                        EditGuideBeatInput(
+                            beat_id=beat.beat_id,
+                            topic=beat.topic,
+                            thought=beat.thought,
+                            thought_source=beat.thought_source,
+                            layout=beat.layout,
+                            duration_s=beat.duration_s,
+                            media_count=len(beat.media_ids),
+                        )
+                        for beat in review_snapshot.story_beats
+                    ]
+                    if review_snapshot
+                    else []
+                ),
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - conversational failure is retryable
+        log.warning("edit_guide.failed", item_id=item_id, error=str(exc)[:300])
+        await release_reservation()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "edit_guide_failed",
+                "message": "Kria couldn't think that through. Your words were not lost—try again.",
+            },
+        ) from exc
+
+    revised_snapshot = None
+    # A clarifying review answer cannot mutate the brief independently from
+    # the approved/draft render contract. Only a complete revision may do so.
+    saved_brief = brief if review_snapshot else result.brief
+    if review_snapshot and result.revision:
+        revised_snapshot = _snapshot_from_edit_guide_revision(review_snapshot, result.revision)
+        from app.pipeline.guided_story import (  # noqa: PLC0415
+            validate_proposal_timing,
+        )
+
+        try:
+            validate_proposal_timing(revised_snapshot)
+        except Exception as exc:  # noqa: BLE001 - every invalid revision must release its fence
+            log.warning("edit_guide.timing_invalid", item_id=item_id, error=str(exc)[:300])
+            await release_reservation()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "edit_guide_failed",
+                    "message": "Kria proposed timing that couldn't render safely. Try again.",
+                },
+            ) from exc
+        saved_brief = ProposalBrief(
+            direction=revised_snapshot.direction,
+            goal=revised_snapshot.goal,
+            pace=revised_snapshot.pace,
+            duration_s=revised_snapshot.duration_s,
+        )
+
+    locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
+
+    try:
+        reserved_current = require_edit_conversation_attempt(locked, token=conversation_token)
+        save_edit_conversation_turn(
+            locked,
+            expected_version=reserved_current.proposal_version,
+            brief=saved_brief,
+            user_message=body.message,
+            agent_reply=result.reply,
+            suggestions=result.suggestions,
+            ready_to_plan=result.ready_to_plan,
+            conversation_phase=phase,
+            revised_snapshot=revised_snapshot,
+        )
+    except ProposalConflictError as exc:
+        if release_edit_conversation_attempt(locked, token=conversation_token):
+            await db.commit()
+        else:
+            await db.rollback()
+        raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+    await db.commit()
+    reloaded = await _load_owned_item(item_id, owner_id, db)
+    return plan_item_response(reloaded)
+
+
 @router.post(
     "/{item_id}/edit-proposal/draft",
     response_model=PlanItemResponse,
@@ -1752,6 +2058,25 @@ async def draft_item_edit_proposal(
     _require_guided_edit()
     item, plan, _persona = await _load_owned_item_context(item_id, user.id, db, for_update=True)
     current = parse_edit_proposal(item.edit_proposal)
+    if current and current.conversation_attempt is not None:
+        from app.services.edit_proposals import (  # noqa: PLC0415
+            EDIT_CONVERSATION_ATTEMPT_TTL_S,
+            release_edit_conversation_attempt,
+        )
+
+        attempt = current.conversation_attempt
+        age_s = max(0.0, (datetime.now(UTC) - attempt.started_at).total_seconds())
+        if age_s >= EDIT_CONVERSATION_ATTEMPT_TTL_S:
+            release_edit_conversation_attempt(item, token=attempt.token)
+            await db.commit()
+            raise _proposal_http_conflict(
+                "edit_guide_retry_required",
+                "Kria's reply took too long. Send your direction again before building the plan.",
+            )
+        raise _proposal_http_conflict(
+            "edit_guide_in_progress",
+            "Kria is still thinking about your direction.",
+        )
     if current and current.status in {"analyzing", "drafting"}:
         # Double-clicks and retries with a lost response converge on the same
         # attempt instead of publishing another expensive analysis task.

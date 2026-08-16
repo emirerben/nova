@@ -1108,3 +1108,28 @@ which rejects the image2-only `-loop` input option used for photo motion.
   worker memory.
 - **Reject rather than fall back.** A photo that cannot fully decode keeps the stable
   `guided_story_media_replaced` failure. The renderer never drops it or substitutes a simple montage.
+
+## [2026-08-16] Guided edits accept natural-language direction before and after planning
+
+The first guided-edit release exposed direction, pace, length, and goal as a form. It was safe, but
+it asked creators to translate creative intent into product controls before Kria helped.
+
+**Decisions:**
+
+- **Conversation produces the same typed contract.** Creators can speak in ordinary terms and the
+  edit guide persists a direction, goal, pace, and duration in the versioned proposal envelope.
+  `brief_ready` is advisory; creators may start planning at any time.
+- **The conversation continues during review.** Requests such as “put food first” or “use less text”
+  can revise a draft. Any revision returns an approved proposal to `draft`, so new wording and order
+  cannot render without approval.
+- **Media identity stays server-owned.** Model-authored revisions preserve every beat ID exactly once.
+  The route rejoins the original media membership and retains creator-written thoughts verbatim.
+- **Slow model calls do not hold item locks.** The route first persists a short-lived, token-fenced
+  single-flight reservation, closes the transaction, calls the model, then reloads under lock and
+  requires the same token and proposal version. A reload sees only safe thinking/retry state, never
+  the token, and generic planning stays blocked until the reply lands or the creator retries an
+  expired attempt. Concurrent changes cannot overwrite the older reply or duplicate model spend.
+- **Conversation has its own staged writer gate.** `briefing` is a new persisted state that older
+  readers reject. `GUIDED_EDIT_CONVERSATION_ENABLED` therefore stays off until every API and worker
+  runs the compatible reader; the API advertises the switch and the web keeps the existing brief
+  form until it is safe to write conversational state.

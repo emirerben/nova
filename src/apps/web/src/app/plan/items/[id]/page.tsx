@@ -730,7 +730,9 @@ export default function PlanItemPage() {
       if (
         GUIDED_EDIT_ENABLED &&
         item.guided_edit_available === true &&
-        (item.edit_proposal?.status === "analyzing" || item.edit_proposal?.status === "drafting")
+        (item.edit_proposal?.status === "analyzing" ||
+          item.edit_proposal?.status === "drafting" ||
+          item.edit_proposal?.conversation_in_progress === true)
       ) {
         return false;
       }
@@ -2344,6 +2346,7 @@ export default function PlanItemPage() {
             {guidedEditActive && (
               <EditProposalCard
                 item={item}
+                onRefresh={refetch}
                 onChanged={() => {
                   forceFreshFetchRef.current = true;
                   refetch();

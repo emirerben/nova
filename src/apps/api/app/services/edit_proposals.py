@@ -8,7 +8,11 @@ from datetime import UTC, datetime
 
 from app.models import PlanItem
 from app.schemas.edit_proposal import (
+    EDIT_CONVERSATION_MAX_TURNS,
     ApprovedProposalSnapshot,
+    ConversationPhase,
+    EditConversationAttempt,
+    EditConversationTurn,
     EditProposal,
     EditProposalSnapshot,
     ProposalBrief,
@@ -18,6 +22,172 @@ from app.schemas.edit_proposal import (
 
 class ProposalConflictError(ValueError):
     pass
+
+
+EDIT_CONVERSATION_ATTEMPT_TTL_S = 90
+
+
+def reserve_edit_conversation_attempt(
+    item: PlanItem,
+    *,
+    expected_version: int,
+    now: datetime | None = None,
+) -> tuple[EditProposal, str]:
+    """Reserve one model call without holding a DB lock while it runs."""
+
+    current = parse_edit_proposal(item.edit_proposal)
+    timestamp = now or datetime.now(UTC)
+    active = current.conversation_attempt if current else None
+    if active is not None:
+        age_s = max(0.0, (timestamp - active.started_at).total_seconds())
+        if age_s < EDIT_CONVERSATION_ATTEMPT_TTL_S:
+            raise ProposalConflictError("Kria is already thinking about this edit.")
+        valid_expected_versions = {current.proposal_version}
+        if active.placeholder:
+            # The synthetic first-turn envelope is visible after a reload as
+            # version 1, while the abandoned request originally expected 0.
+            # Either view may safely reclaim the same empty placeholder.
+            valid_expected_versions.add(active.expected_proposal_version)
+    else:
+        valid_expected_versions = {current.proposal_version if current else 0}
+    if expected_version not in valid_expected_versions:
+        actual_for_request = current.proposal_version if current else 0
+        raise ProposalConflictError(
+            f"The edit plan changed in another tab (expected version {expected_version}, "
+            f"found {actual_for_request})."
+        )
+    if current and current.status in {"analyzing", "drafting"}:
+        raise ProposalConflictError("Kria is already building this edit plan.")
+
+    token = str(uuid.uuid4())
+    reserved_version = current.proposal_version if current else 1
+    attempt = EditConversationAttempt(
+        token=token,
+        expected_proposal_version=expected_version,
+        reserved_proposal_version=reserved_version,
+        started_at=timestamp,
+        placeholder=current is None,
+    )
+    proposal = (
+        current.model_copy(update={"conversation_attempt": attempt})
+        if current
+        else EditProposal(
+            proposal_version=reserved_version,
+            generation_attempt_id=f"brief-{uuid.uuid4()}",
+            status="briefing",
+            conversation_attempt=attempt,
+        )
+    )
+    item.edit_proposal = proposal.model_dump(mode="json")
+    return proposal, token
+
+
+def require_edit_conversation_attempt(item: PlanItem, *, token: str) -> EditProposal:
+    """Fence the final write to the exact reservation and proposal version."""
+
+    current = parse_edit_proposal(item.edit_proposal)
+    attempt = current.conversation_attempt if current else None
+    if (
+        current is None
+        or attempt is None
+        or attempt.token != token
+        or current.proposal_version != attempt.reserved_proposal_version
+    ):
+        raise ProposalConflictError("The edit plan changed while Kria was thinking.")
+    return current
+
+
+def release_edit_conversation_attempt(item: PlanItem, *, token: str) -> bool:
+    """Release a live reservation without disturbing a concurrent winner."""
+
+    current = parse_edit_proposal(item.edit_proposal)
+    attempt = current.conversation_attempt if current else None
+    if current is None or attempt is None or attempt.token != token:
+        return False
+    if (
+        attempt.placeholder
+        and current.proposal_version == attempt.reserved_proposal_version
+        and not current.conversation
+        and current.draft is None
+        and current.last_approved is None
+    ):
+        item.edit_proposal = None
+    else:
+        item.edit_proposal = current.model_copy(update={"conversation_attempt": None}).model_dump(
+            mode="json"
+        )
+    return True
+
+
+def save_edit_conversation_turn(
+    item: PlanItem,
+    *,
+    expected_version: int,
+    brief: ProposalBrief,
+    user_message: str,
+    agent_reply: str,
+    suggestions: list[str],
+    ready_to_plan: bool,
+    conversation_phase: ConversationPhase = "briefing",
+    revised_snapshot: EditProposalSnapshot | None = None,
+) -> EditProposal:
+    """Persist one user/agent exchange under the proposal CAS contract.
+
+    A reply that revises a current proposal returns it to ``draft`` so the
+    creator must approve the changed wording and sequence again. A briefing
+    exchange never starts analysis by itself.
+    """
+
+    current = parse_edit_proposal(item.edit_proposal)
+    actual = current.proposal_version if current else 0
+    if actual != expected_version:
+        raise ProposalConflictError(
+            f"The edit plan changed in another tab (expected version {expected_version}, "
+            f"found {actual})."
+        )
+    if current and current.status in {"analyzing", "drafting"}:
+        raise ProposalConflictError("Kria is already building this edit plan.")
+
+    # A failed render attempt or stale media must not erase the creator's
+    # direction. Analysis/drafting states have already been rejected above, so
+    # every remaining proposal state is a valid continuation of the same chat.
+    prior_turns = list(current.conversation) if current is not None else []
+    conversation = [
+        *prior_turns,
+        EditConversationTurn(role="user", phase=conversation_phase, content=user_message.strip()),
+        EditConversationTurn(
+            role="agent",
+            phase=conversation_phase,
+            content=agent_reply.strip(),
+            suggestions=suggestions[:3],
+        ),
+    ][-EDIT_CONVERSATION_MAX_TURNS:]
+    status = (
+        "draft"
+        if revised_snapshot is not None
+        else (current.status if current and current.status in {"draft", "approved"} else "briefing")
+    )
+    proposal = EditProposal(
+        proposal_version=actual + 1,
+        generation_attempt_id=(
+            current.generation_attempt_id if current else f"brief-{uuid.uuid4()}"
+        ),
+        media_digest=current.media_digest if current else None,
+        status=status,
+        brief=brief,
+        conversation=conversation,
+        brief_ready=ready_to_plan,
+        conversation_attempt=None,
+        draft=(
+            revised_snapshot
+            if revised_snapshot is not None
+            else (current.draft if current else None)
+        ),
+        last_approved=current.last_approved if current else None,
+        failure=None,
+    )
+    item.edit_proposal = proposal.model_dump(mode="json")
+    return proposal
 
 
 def clip_ref_matches(ref, assignment: dict | None) -> bool:  # noqa: ANN001
@@ -67,6 +237,8 @@ def begin_proposal_attempt(item: PlanItem, *, brief: ProposalBrief | None = None
         media_digest=None,
         status="analyzing",
         brief=brief or ProposalBrief(),
+        conversation=current.conversation if current else [],
+        brief_ready=current.brief_ready if current else False,
         draft=None,
         last_approved=current.last_approved if current else None,
         failure=None,

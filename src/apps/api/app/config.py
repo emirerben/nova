@@ -669,6 +669,12 @@ class Settings(BaseSettings):
         "capability switch; enable only after the review UI and strict story renderer "
         "are deployed. Read by the API, so changing it requires an API restart.",
     )
+    guided_edit_conversation_enabled: bool = Field(
+        default=False,
+        description="Allow the conversational Plan edit endpoint and advertise it to "
+        "the web app. Enable only after every API and worker can parse the briefing "
+        "proposal state. Read by the API; changing it requires an API restart.",
+    )
     guided_edit_enforcement_enabled: bool = Field(
         default=False,
         description="Require a current approved guided-edit proposal before Generate. "
@@ -683,6 +689,8 @@ class Settings(BaseSettings):
 
         if self.guided_edit_enforcement_enabled and not self.guided_edit_capability_enabled:
             raise ValueError("guided edit enforcement requires guided edit capability")
+        if self.guided_edit_conversation_enabled and not self.guided_edit_capability_enabled:
+            raise ValueError("guided edit conversation requires guided edit capability")
         if self.guided_edit_enforcement_enabled and not GUIDED_STORY_RENDERER_READY:
             raise ValueError("guided edit enforcement requires the strict story renderer")
         return self

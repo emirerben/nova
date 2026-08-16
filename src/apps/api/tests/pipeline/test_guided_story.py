@@ -18,6 +18,7 @@ from app.pipeline.guided_story import (
     _verify_receipt,
     compile_execution_plan,
     validate_execution_plan,
+    validate_proposal_timing,
     validate_ready_result,
     verify_guided_text_reburn,
 )
@@ -118,6 +119,40 @@ def _guided_snapshot(*, direction: str = "guided_story", catalog_extra: bool = F
             for ref in media
         ],
     }
+
+
+def test_proposal_timing_validator_rejects_unrenderable_revision() -> None:
+    raw = _guided_snapshot(direction="text_explainer")
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    impossible = snapshot.model_copy(
+        update={
+            "duration_s": 10,
+            "story_beats": [
+                StoryBeat(
+                    beat_id="first",
+                    topic="First",
+                    media_ids=["coast-video", "food-photo", "town-photo"],
+                    duration_s=4,
+                ),
+                StoryBeat(
+                    beat_id="second",
+                    topic="Second",
+                    media_ids=["coast-video", "food-photo", "town-photo"],
+                    duration_s=4,
+                ),
+            ],
+        }
+    )
+    with pytest.raises(GuidedStoryError, match="too short to show all approved media"):
+        validate_proposal_timing(impossible)
+
+
+def test_proposal_timing_validator_ignores_malformed_best_moments() -> None:
+    raw = _guided_snapshot()
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    snapshot.media[0].analysis["best_moments"] = ["not an object", None]
+
+    validate_proposal_timing(snapshot)
 
 
 def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> None:
