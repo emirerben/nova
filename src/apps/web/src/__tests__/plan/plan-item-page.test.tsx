@@ -231,6 +231,8 @@ function makeGuidedProposal(status: "analyzing" | "draft" | "approved" | "stale"
       pace: "balanced",
       duration_s: 24,
     },
+    conversation: [],
+    brief_ready: false,
     draft: snapshot,
     last_approved:
       status === "approved" || status === "stale"
@@ -1207,6 +1209,39 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     await waitFor(() => {
       expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
     });
+  });
+
+  it("keeps polling while a conversational reply is in flight", async () => {
+    const active = makeGuidedProposal("briefing");
+    active.conversation_in_progress = true;
+    const item = {
+      ...guidedItem(active),
+      status: "ready",
+      current_job_id: "job-1",
+    };
+    const settledJob = makeJob({ status: "done" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: settledJob },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const isTerminal = mockUsePolledJobStatus.mock.calls.at(-1)?.[2];
+    expect(isTerminal?.({ item, job: settledJob })).toBe(false);
+
+    const retryItem = {
+      ...item,
+      edit_proposal: {
+        ...active,
+        conversation_in_progress: false,
+        conversation_retry_required: true,
+      },
+    };
+    expect(isTerminal?.({ item: retryItem, job: settledJob })).toBe(true);
   });
 
   it("refreshes the proposal after an asset-pool mutation", async () => {

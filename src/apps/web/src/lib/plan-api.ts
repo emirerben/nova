@@ -1064,6 +1064,20 @@ export function draftEditProposal(
   });
 }
 
+export function editProposalConversationTurn(
+  itemId: string,
+  expectedProposalVersion: number,
+  message: string,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/edit-proposal/conversation`, {
+    method: "POST",
+    body: JSON.stringify({
+      expected_proposal_version: expectedProposalVersion,
+      message,
+    }),
+  });
+}
+
 export function updateEditProposal(
   itemId: string,
   expectedProposalVersion: number,
@@ -2556,6 +2570,7 @@ export interface ClipAssignment {
 }
 
 export type EditProposalStatus =
+  | "briefing"
   | "analyzing"
   | "drafting"
   | "draft"
@@ -2613,6 +2628,15 @@ export interface EditProposal {
     pace: EditProposalPace;
     duration_s: number;
   };
+  conversation: Array<{
+    role: "user" | "agent";
+    phase?: "briefing" | "review";
+    content: string;
+    suggestions: string[];
+  }>;
+  brief_ready: boolean;
+  conversation_in_progress?: boolean;
+  conversation_retry_required?: boolean;
   draft: EditProposalSnapshot | null;
   last_approved: {
     proposal_version: number;
@@ -2626,6 +2650,7 @@ export interface EditProposal {
 export interface PlanItem {
   edit_proposal?: EditProposal | null;
   guided_edit_available?: boolean;
+  guided_edit_conversation_available?: boolean;
 }
 
 // Conformance trust fields (echo-back evidence + dismissal/contest state).
