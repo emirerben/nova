@@ -32,6 +32,7 @@ from app.agents.creative_direction import CreativeDirectionOutput
 from app.agents.edit_copilot import _MAX_OPS as _EDIT_COPILOT_MAX_OPS
 from app.agents.edit_copilot import EditCopilotOutput
 from app.agents.edit_director import EditDirectorInput, EditDirectorOutput
+from app.agents.edit_proposal import minimum_required_sources
 from app.agents.idea_expander import IdeaExpanderInput, IdeaExpanderOutput
 from app.agents.intro_writer import (
     _MAX_WORDS as INTRO_MAX_WORDS,
@@ -2099,7 +2100,7 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         failures: list[str] = []
         if not used <= known:
             failures.append("story references unknown media")
-        if len(used) < min(7, len(known)):
+        if len(used) < minimum_required_sources(len(known)):
             failures.append("story does not use enough distinct sources")
         input_kinds = {media.kind for media in input.media}
         used_kinds = {media.kind for media in input.media if media.media_id in used}

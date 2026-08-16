@@ -60,6 +60,31 @@ def test_accepts_every_source_for_a_small_upload() -> None:
     assert output.title == "What I noticed in Corfu"
 
 
+def test_accepts_one_intentionally_unused_source_from_six() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    selected = [f"media-{index}" for index in range(5)]
+    agent_input = _input(6)
+    agent_input.direction = "fast_montage"
+    agent_input.goal = "Make a 10-second travel reel and leave one weaker clip unused."
+    agent_input.pace = "fast"
+    agent_input.target_duration_s = 15
+    payload = json.loads(_raw(selected))
+    payload["duration_s"] = 15
+    for beat in payload["story_beats"]:
+        beat["duration_s"] = 5
+
+    output = agent.parse(json.dumps(payload), agent_input)
+
+    assert {media_id for beat in output.story_beats for media_id in beat.media_ids} == set(selected)
+
+
+def test_rejects_two_unused_sources_from_six() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+
+    with pytest.raises(SchemaError, match="need at least 5"):
+        agent.parse(_raw([f"media-{index}" for index in range(4)]), _input(6))
+
+
 def test_rejects_repeated_chapter_topics() -> None:
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     payload = json.loads(_raw([f"media-{index}" for index in range(7)]))

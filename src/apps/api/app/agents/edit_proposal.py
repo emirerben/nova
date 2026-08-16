@@ -27,6 +27,15 @@ _UNSUPPORTED_ACTION_LEAD = re.compile(
 )
 
 
+def minimum_required_sources(available: int) -> int:
+    """Keep small edits varied without forcing one redundant source into the cut."""
+    if available <= 3:
+        return available
+    if available < 7:
+        return available - 1
+    return 7
+
+
 def _neutralize_sensory_modifier(text: str) -> str:
     cleaned = _SENSORY_MODIFIER.sub("", text)
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
@@ -121,7 +130,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             if len(beat.media_ids) != len(set(beat.media_ids)):
                 raise SchemaError("edit_proposal: beat repeats the same media")
             used.update(beat.media_ids)
-        minimum = min(7, len(input.media))
+        minimum = minimum_required_sources(len(input.media))
         if len(used) < minimum:
             raise SchemaError(
                 f"edit_proposal: selected {len(used)} distinct sources; need at least {minimum}"
