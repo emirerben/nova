@@ -105,6 +105,21 @@ export type SetupPickerProps = {
   onPatch: (updates: SetupPatch) => Promise<void>;
 };
 
+/** WAI radio-group keyboard pattern: arrow keys move focus between radios
+    (roving tabindex — only the checked card is in the tab order). */
+function radioGroupKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+  const keys = ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"];
+  if (!keys.includes(event.key)) return;
+  const radios = Array.from(
+    event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]'),
+  );
+  const current = radios.indexOf(document.activeElement as HTMLElement);
+  if (current === -1 || radios.length === 0) return;
+  event.preventDefault();
+  const delta = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+  radios[(current + delta + radios.length) % radios.length]?.focus();
+}
+
 function prefersReducedMotion(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -237,13 +252,20 @@ function MediaRadioCard({
       type="button"
       role="radio"
       aria-checked={active}
-      disabled={saving}
-      onClick={onSelect}
+      // aria-disabled (not disabled) so keyboard focus survives the save —
+      // disabling the just-clicked element would drop focus to <body>.
+      aria-disabled={saving || undefined}
+      tabIndex={active ? 0 : -1}
+      onClick={() => {
+        if (!saving) onSelect();
+      }}
       onMouseEnter={play}
       onMouseLeave={stop}
       onFocus={play}
       onBlur={stop}
-      className={`relative aspect-[3/4] w-[216px] shrink-0 snap-start overflow-hidden rounded-[18px] text-left transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-wait sm:w-auto ${
+      className={`relative aspect-[3/4] w-[216px] shrink-0 snap-start overflow-hidden rounded-[18px] text-left transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:w-auto ${
+        saving ? "cursor-wait " : ""
+      }${
         active
           ? "shadow-[0_0_0_3px_#65a30d,0_12px_30px_rgba(0,0,0,0.18)]"
           : "border border-zinc-200 hover:scale-[1.01]"
@@ -358,6 +380,7 @@ export default function SetupPicker({
           className="-mx-6 flex snap-x snap-mandatory gap-3.5 overflow-x-auto px-6 py-1 [scroll-padding-inline:1.5rem] sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:p-0 lg:grid-cols-4"
           role="radiogroup"
           aria-label="Type"
+          onKeyDown={radioGroupKeyDown}
         >
           {typeValues.map((value) => (
             <MediaRadioCard
@@ -389,6 +412,7 @@ export default function SetupPicker({
             className="-mx-6 flex snap-x snap-mandatory gap-3.5 overflow-x-auto px-6 py-1 [scroll-padding-inline:1.5rem] sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:p-0 lg:grid-cols-4"
             role="radiogroup"
             aria-label="Style"
+            onKeyDown={radioGroupKeyDown}
           >
             {STYLE_TILES.map((tile) => (
               <MediaRadioCard
