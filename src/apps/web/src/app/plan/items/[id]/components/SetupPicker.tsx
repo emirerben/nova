@@ -153,7 +153,7 @@ function Chevron({ open }: { open: boolean }) {
   return (
     <span
       aria-hidden="true"
-      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white transition-transform duration-[var(--t-accordion-dur,300ms)] motion-reduce:transition-none ${
+      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white transition-transform duration-[var(--t-accordion-dur)] motion-reduce:transition-none ${
         open ? "rotate-180" : ""
       }`}
     >
@@ -174,6 +174,7 @@ function Chevron({ open }: { open: boolean }) {
     expands/collapses beneath it (t-accordion: grid-rows 0fr↔1fr + opacity).
     No swap, no layout jump — the row is the toggle, the chevron points the way. */
 function DisclosureSection({
+  id,
   eyebrow,
   valueLabel,
   thumbSrc,
@@ -181,6 +182,7 @@ function DisclosureSection({
   onToggle,
   children,
 }: {
+  id: string;
   eyebrow: string;
   valueLabel: string;
   thumbSrc: string;
@@ -188,7 +190,7 @@ function DisclosureSection({
   onToggle: () => void;
   children: React.ReactNode;
 }) {
-  const panelId = `${eyebrow.toLowerCase()}-panel`;
+  const panelId = `${id}-panel`;
   // Collapsed panels are visually hidden (grid-rows 0fr + overflow-hidden) but
   // their radios/videos would otherwise stay reachable by keyboard. inert
   // removes them from tab order and the a11y tree while closed.
@@ -203,7 +205,7 @@ function DisclosureSection({
         aria-expanded={open}
         aria-controls={panelId}
         onClick={onToggle}
-        className={`flex min-h-[52px] w-full items-center gap-3.5 rounded-[14px] border bg-white px-4 py-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 ${
+        className={`flex min-h-[52px] w-full items-center gap-3.5 rounded-2xl border bg-white px-4 py-2.5 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 ${
           open ? "border-zinc-300" : "border-zinc-200 hover:border-zinc-300"
         }`}
       >
@@ -211,7 +213,7 @@ function DisclosureSection({
         <img
           src={thumbSrc}
           alt=""
-          className="h-9 w-[52px] shrink-0 rounded-md object-cover"
+          className="h-10 w-[30px] shrink-0 rounded-[7px] object-cover"
         />
         <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
           {eyebrow}
@@ -224,7 +226,7 @@ function DisclosureSection({
       <div
         id={panelId}
         ref={panelRef}
-        className="grid transition-[grid-template-rows,opacity] duration-[var(--t-accordion-dur,300ms)] ease-[var(--t-accordion-ease,cubic-bezier(0.23,1,0.32,1))] motion-reduce:transition-none"
+        className="grid transition-[grid-template-rows,opacity] duration-[var(--t-accordion-dur)] ease-[var(--t-accordion-ease)] motion-reduce:transition-none"
         style={{ gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0 }}
       >
         <div className="overflow-hidden">
@@ -302,10 +304,10 @@ function MediaRadioCard({
         </span>
       )}
       <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1 p-4">
-        <span className="font-display text-[21px] font-medium leading-tight text-white">
+        <span className="font-display text-[20px] font-medium leading-tight text-white">
           {label}
         </span>
-        <span className="text-[12.5px] leading-[18px] text-white/[0.82]">{desc}</span>
+        <span className="text-[13px] leading-[18px] text-white/[0.82]">{desc}</span>
         {meta && (
           <span className="pt-0.5 text-[11px] font-medium text-white/75">{meta}</span>
         )}
@@ -393,6 +395,7 @@ export default function SetupPicker({
     <div className="mb-4 space-y-2.5" data-testid="setup-picker">
       {/* ---- TYPE ---- */}
       <DisclosureSection
+        id="type"
         eyebrow="Type"
         valueLabel={TYPE_COPY[displayFormat].label}
         thumbSrc={TYPE_MEDIA[displayFormat].poster}
@@ -425,6 +428,7 @@ export default function SetupPicker({
       {/* ---- STYLE (montage only) ---- */}
       {isMontage && (
         <DisclosureSection
+          id="style"
           eyebrow="Style"
           valueLabel={activeStyleTile.label}
           thumbSrc={activeStyleTile.poster}
