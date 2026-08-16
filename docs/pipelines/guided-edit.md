@@ -16,8 +16,9 @@ the story assembler consumes the approved Job snapshot directly.
 4. The task waits for existing visual-pool analysis, analyzes every attached clip without current
    metadata, and resolves the immutable storage generation for every source.
 5. `EditProposalAgent` sees the complete media set plus creator-written context. It proposes an
-   ordered title and story beats. It must use at least seven distinct sources when available and
-   may not invent personal experiences.
+   ordered title and story beats. It must use every source when there are at most three, may leave
+   one out when there are four to six, and must use at least seven when more are available. It may
+   not invent personal experiences.
 6. The item page shows combined photo/video thumbnails. The creator can continue the same
    conversation with requests such as “put food first,” “make it slower,” or “use less text.”
    Conversational revisions may reorder and rewrite editorial fields, but the server preserves

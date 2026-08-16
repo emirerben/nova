@@ -122,10 +122,19 @@ export default function EditProposalCard({
   const conversationInProgress = proposal?.conversation_in_progress === true;
   const conversationRetryRequired = proposal?.conversation_retry_required === true;
   const conversationBlocked = conversationInProgress || conversationRetryRequired;
+  // Poll responses recreate the draft object; only the CAS version denotes a
+  // durable server revision that should replace the creator's unsaved edits.
+  const appliedProposalRevision = useRef<string | null>(null);
 
   useEffect(() => {
-    setDraft(proposal?.draft ?? null);
     if (conversationEnabled && proposal?.status === "briefing") setConversationOpen(true);
+  }, [conversationEnabled, proposal?.status]);
+
+  useEffect(() => {
+    const revision = `${item.id}:${proposal?.proposal_version ?? "none"}`;
+    if (appliedProposalRevision.current === revision) return;
+    appliedProposalRevision.current = revision;
+    setDraft(proposal?.draft ?? null);
     const retryBrief = proposal?.status === "stale"
       ? proposal.last_approved?.snapshot
       : proposal?.brief;
@@ -138,14 +147,7 @@ export default function EditProposalCard({
       });
     }
     if (proposal?.status !== "approved") setEditingApproved(false);
-  }, [
-    conversationEnabled,
-    proposal?.proposal_version,
-    proposal?.draft,
-    proposal?.status,
-    proposal?.brief,
-    proposal?.last_approved?.snapshot,
-  ]);
+  }, [item.id, proposal]);
 
   const mediaById = useMemo(
     () => new Map((draft?.media ?? []).map((ref) => [ref.media_id, ref])),

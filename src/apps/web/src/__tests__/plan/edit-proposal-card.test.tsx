@@ -306,6 +306,27 @@ describe("EditProposalCard", () => {
     expect(onChanged).toHaveBeenLastCalledWith(approved);
   });
 
+  it("preserves unsaved edits across same-version polling and resets for a new revision", () => {
+    const onChanged = jest.fn();
+    const view = render(<EditProposalCard item={item(proposal())} onChanged={onChanged} />);
+
+    fireEvent.change(screen.getAllByRole("textbox", { name: /Thought/ })[0], {
+      target: { value: "Lisbon" },
+    });
+    view.rerender(<EditProposalCard item={item(proposal())} onChanged={onChanged} />);
+
+    expect(screen.getAllByRole("textbox", { name: /Thought/ })[0]).toHaveValue("Lisbon");
+
+    const serverRevision = proposal();
+    serverRevision.proposal_version = 3;
+    serverRevision.draft!.story_beats[0].thought = "Server revision";
+    view.rerender(<EditProposalCard item={item(serverRevision)} onChanged={onChanged} />);
+
+    expect(screen.getAllByRole("textbox", { name: /Thought/ })[0]).toHaveValue(
+      "Server revision",
+    );
+  });
+
   it("keeps the last approval visible when media makes the plan stale", () => {
     const stale = proposal("stale");
     stale.last_approved = {
