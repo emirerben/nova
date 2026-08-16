@@ -1595,8 +1595,9 @@ export default function PlanItemPage() {
                 }
               }}
               placeholder="Add notes…"
+              aria-label="Notes"
               rows={2}
-              className="mb-4 mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-zinc-400 focus:outline-none"
+              className="mb-4 mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
             />
 
             {/* TYPE / STYLE accordion — poster cards collapse to receipts after
