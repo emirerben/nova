@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   approveEditProposal,
   draftEditProposal,
@@ -91,8 +91,14 @@ export default function EditProposalCard({
   const [editingApproved, setEditingApproved] = useState(false);
   const [draft, setDraft] = useState<EditProposalSnapshot | null>(proposal?.draft ?? null);
   const [error, setError] = useState<string | null>(null);
+  // Poll responses recreate the draft object; only the CAS version denotes a
+  // durable server revision that should replace the creator's unsaved edits.
+  const appliedProposalRevision = useRef<string | null>(null);
 
   useEffect(() => {
+    const revision = `${item.id}:${proposal?.proposal_version ?? "none"}`;
+    if (appliedProposalRevision.current === revision) return;
+    appliedProposalRevision.current = revision;
     setDraft(proposal?.draft ?? null);
     const retryDirection =
       proposal?.status === "stale" ? proposal.last_approved?.snapshot : null;
@@ -108,13 +114,7 @@ export default function EditProposalCard({
       setDuration(proposal.brief.duration_s);
     }
     if (proposal?.status !== "approved") setEditingApproved(false);
-  }, [
-    proposal?.proposal_version,
-    proposal?.draft,
-    proposal?.status,
-    proposal?.brief,
-    proposal?.last_approved?.snapshot,
-  ]);
+  }, [item.id, proposal]);
 
   const mediaById = useMemo(
     () => new Map((draft?.media ?? []).map((ref) => [ref.media_id, ref])),
