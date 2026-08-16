@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.2.2] — 2026-08-16
+
+### Fixed
+- **Plan edit can intentionally leave one weaker upload out of a small montage.** For four to six photos or videos, Nova may omit one redundant source while still requiring a varied cut; it no longer rejects a valid six-video plan merely because the creator asked to use the strongest five moments.
+
 ## [0.33.2.1] — 2026-08-15
 
 ### Fixed
