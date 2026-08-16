@@ -15,7 +15,7 @@
  * curated brand loops without touching this component.
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MontagePreset } from "@/lib/plan-api";
 import type { PickerEditFormat } from "@/lib/edit-format";
 
@@ -186,6 +186,13 @@ function DisclosureSection({
   children: React.ReactNode;
 }) {
   const panelId = `${eyebrow.toLowerCase()}-panel`;
+  // Collapsed panels are visually hidden (grid-rows 0fr + overflow-hidden) but
+  // their radios/videos would otherwise stay reachable by keyboard. inert
+  // removes them from tab order and the a11y tree while closed.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (panelRef.current) panelRef.current.inert = !open;
+  }, [open]);
   return (
     <div>
       <button
@@ -213,6 +220,7 @@ function DisclosureSection({
       </button>
       <div
         id={panelId}
+        ref={panelRef}
         className="grid transition-[grid-template-rows,opacity] duration-[var(--t-accordion-dur,300ms)] ease-[var(--t-accordion-ease,cubic-bezier(0.23,1,0.32,1))] motion-reduce:transition-none"
         style={{ gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0 }}
       >
