@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.3.0] — 2026-08-16
+
+### Changed
+- **Weekly TikTok research refresh (2026-08-16).** Added two new persona archetypes (`aesthetic-finds-curator-01` from a city-fashion taste-curation account, `lifestyle-brand-creator-01` from a founder-turned-lifestyle creator), five new content ideas (aesthetic list, seasonal identity declaration, fitness beginner confusion, audience permission teaser, nostalgia format return), two new corpus success factors (taste curation at ~17.75× account median, audience decision teaser at ~8.4×), and one new overlay example for the taste-curation hook voice. Version constants bumped for persona, content plan, intro writer, and overlay format matcher.
+
 ## [0.33.2.1] — 2026-08-15
 
 ### Fixed
