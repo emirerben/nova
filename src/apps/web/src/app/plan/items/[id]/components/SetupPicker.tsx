@@ -40,7 +40,7 @@ const TYPE_COPY: Record<
   montage: {
     label: "Montage",
     desc: "Your clips cut to music, beat by beat",
-    meta: "Needs 3+ clips",
+    meta: "Best with 3+ clips",
   },
   narrated_planned: {
     label: "Voiceover",
@@ -278,12 +278,13 @@ function MediaRadioCard({
         saving ? "cursor-wait " : ""
       }${
         active
-          ? "shadow-[0_0_0_3px_#65a30d,0_12px_30px_rgba(0,0,0,0.18)]"
+          ? "ring-[3px] ring-lime-600 shadow-[0_12px_30px_rgba(0,0,0,0.18)]"
           : "border border-zinc-200 motion-safe:hover:scale-[1.01]"
       }`}
     >
       <video
         ref={videoRef}
+        aria-hidden="true"
         src={video}
         poster={poster}
         muted
@@ -306,7 +307,7 @@ function MediaRadioCard({
         </span>
         <span className="text-[12.5px] leading-[18px] text-white/[0.82]">{desc}</span>
         {meta && (
-          <span className="pt-0.5 text-[11px] font-medium text-white/60">{meta}</span>
+          <span className="pt-0.5 text-[11px] font-medium text-white/75">{meta}</span>
         )}
       </div>
     </button>
