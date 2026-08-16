@@ -347,8 +347,8 @@ describe("Fit/Fill landscape-clip toggle", () => {
     const fillBtn = screen.getByRole("button", { name: /^Fill/i });
 
     // Active button has the lime border; inactive has the zinc border.
-    expect(fitBtn.className).toContain("border-lime-400");
-    expect(fillBtn.className).not.toContain("border-lime-400");
+    expect(fitBtn.className).toContain("border-lime-200");
+    expect(fillBtn.className).not.toContain("border-lime-200");
 
     // Active button's label span has the lime color class.
     const fitLabelSpan = fitBtn.querySelector("span:first-child");
