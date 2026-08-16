@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-05",
+  "version": "2026-08-16",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -322,6 +322,19 @@
       "highlight_color": "#FFE08A",
       "niche": "professional lifestyle & city aesthetics",
       "source": "tiktok market research 2026-06"
+    },
+    {
+      "id": "aesthetic-list-declaration-static-01",
+      "content_profile": "personal taste curation — fast cuts of aesthetic finds, fashion details, or beautiful objects compiled as a glimpse into the creator's visual philosophy; understated, gently self-amused energy",
+      "effect": "static",
+      "text": "things i find kinda chic",
+      "highlight_word": "chic",
+      "position": "bottom",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFE08A",
+      "niche": "city lifestyle & fashion",
+      "source": "tiktok market research 2026-08"
     }
   ]
 }

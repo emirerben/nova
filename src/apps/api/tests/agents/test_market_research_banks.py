@@ -223,8 +223,11 @@ def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
     #                  (allexmarielle 9to5 professional aesthetic lane).
     # Bump 2026-07-11-kria: product rename only; banks untouched.
-    assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
+    # Bump 2026-08-16: weekly research refresh — added aesthetic-finds-curator-01
+    #                  (allexmarielle 'things I find kinda chic' vi=17.75x) and
+    #                  lifestyle-brand-creator-01 (nermozdemir farm-vlog vi=8.96x).
+    assert archetypes_version() == "2026-08-16"
+    assert PERSONA_PROMPT_VERSION == "2026-08-16"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -246,8 +249,12 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             banks untouched (new block is conditional-empty when no seeds).
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
-    assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
+    # 2026-08-16: weekly research refresh — added 5 new ideas: things-i-find-chic-01
+    #             (vi=17.75x), seasonal-identity-declaration-01 (vi=5.07x, 25% eng),
+    #             fitness-beginner-confusion-01 (vi=4.51x), audience-permission-teaser-01
+    #             (vi=8.42x), nostalgia-format-return-01 (vi=8.96x).
+    assert content_ideas_version() == "2026-08-16"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-08-16"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -267,10 +274,13 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Intro bumped to 2026-08-05: anti-slop pattern-class ban + translate-don't-echo
     #                  (plans/015 — monkey/marketing incident); banks untouched here
     #                  (success-factor bank unchanged; overlay bank moved separately).
-    assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-08-05"
+    # Bump 2026-08-16: weekly research refresh — added 2 corpus factors:
+    #                  aesthetic-list-format-corpus-10 (taste curation vi=17.75x) and
+    #                  audience-permission-loop-corpus-11 (teaser/decision vi=8.4x).
+    assert success_factors_version() == "2026-08-16"
+    assert PERSONA_PROMPT_VERSION == "2026-08-16"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-08-16"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-08-16"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -302,9 +312,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  bank content edit, so BOTH consuming agents bump. Guard:
     #                  tests/agents/test_overlay_examples_slop_guard.py now lints
     #                  every exemplar against the slop pattern class.
-    assert library_version() == "2026-08-05"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-08-05"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-08-05"
+    # Bump 2026-08-16: weekly research refresh — added aesthetic-list-declaration-static-01
+    #                  (taste-curation voice/form from allexmarielle vi=17.75x).
+    assert library_version() == "2026-08-16"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-08-16"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-08-16"
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-08-16",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -212,6 +212,56 @@
       "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
       "source": "tiktok:@izzsiomoi (2026-06)",
       "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "things-i-find-chic-01",
+      "niche": "city lifestyle & fashion",
+      "pillar": "personal taste curation",
+      "idea": "a short list-format clip of things you find kinda [chic/beautiful/cool] — presented as a glimpse into your aesthetic eye, not a recommendation",
+      "hook_pattern": "things I find kinda [chic]",
+      "filming_context": "2-4 fast cuts of disparate finds — an object, a fabric, a light, a moment — no narration; the accumulation IS the point; keep it under 15s",
+      "source": "tiktok:@allexmarielle (2026-08)",
+      "performance": {"engagement_rate": 0.131, "view_index": 17.75, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "seasonal-identity-declaration-01",
+      "niche": "city lifestyle & fashion",
+      "pillar": "seasonal moments",
+      "idea": "declare your seasonal identity — 'forever a [season] person' — in a short montage that captures the textures and feelings that make that season yours",
+      "hook_pattern": "forever a [autumn/winter/spring/summer] person",
+      "filming_context": "3-5 clips of season-specific textures, light, or rituals; palette matching the season; no explanation needed; 8-12s",
+      "source": "tiktok:@allexmarielle (2026-08)",
+      "performance": {"engagement_rate": 0.250, "view_index": 5.07, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "fitness-beginner-confusion-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "fitness milestones",
+      "idea": "your first session at a new fitness class or gym, documenting the genuine confusion of encountering unfamiliar equipment or movements for the first time",
+      "hook_pattern": "wasn't sure how to use the [equipment]...",
+      "filming_context": "candid gym or class setting, POV or wide angle showing real confusion; 8-12s; humor comes from honest uncertainty, not performance",
+      "source": "tiktok:@izzsiomoi (2026-08)",
+      "performance": {"engagement_rate": 0.017, "view_index": 4.51, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "audience-permission-teaser-01",
+      "niche": "founder / product launch",
+      "pillar": "community decision-making",
+      "idea": "a short teaser clip of something you're considering making or continuing — a product, a format, a series — ending with a direct question: 'should I continue with this?'",
+      "hook_pattern": "ok or continue? 👀",
+      "filming_context": "one candid clip of the work-in-progress or rough concept; explicit audience decision prompt in caption; short (10-30s); comments are the goal",
+      "source": "tiktok:@nermozdemir (2026-08)",
+      "performance": {"engagement_rate": 0.033, "view_index": 8.42, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "nostalgia-format-return-01",
+      "niche": "founder / lifestyle",
+      "pillar": "lifestyle behind-the-scenes",
+      "idea": "return to a beloved content format you haven't posted in a while — frame it as checking in with the community and asking if they missed it",
+      "hook_pattern": "it's been [X] since my last [beloved format]... did you miss it?",
+      "filming_context": "warm, familiar setting associated with the format (a farm, a kitchen, a trail); nostalgic mood; make the return feel earned; 60-120s works here",
+      "source": "tiktok:@nermozdemir (2026-08)",
+      "performance": {"engagement_rate": 0.082, "view_index": 8.96, "sampled_at": "2026-08"}
     }
   ]
 }

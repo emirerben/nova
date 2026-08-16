@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-08-16",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -136,6 +136,24 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
       "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+    },
+    {
+      "id": "aesthetic-list-format-corpus-10",
+      "factor": "A 'things I find kinda [quality]' format that reveals your aesthetic eye outperforms direct tutorials or outfit posts — share the taste, not the instruction",
+      "why": "Taste curation creates desire without sales pressure; viewers follow for the curator's eye; the format is endlessly repeatable with any aesthetic angle and invites saves",
+      "applies_to": ["persona", "plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched city-fashion set, a 'things I find kinda chic' clip indexed ~17.75x the account median at 13.1% engagement, far outperforming direct outfit posts from the same creator in the same period",
+      "source": "tiktok market research 2026-08 (city-lifestyle account)"
+    },
+    {
+      "id": "audience-permission-loop-corpus-11",
+      "factor": "End a teaser clip with an explicit audience decision question ('should I continue this?') to drive comments and create a content permission loop",
+      "why": "Asking the audience to decide makes them co-authors of what comes next; they comment to vote, which signals the algorithm while deepening creator-community investment",
+      "applies_to": ["plan", "hook"],
+      "provenance": "corpus",
+      "evidence": "In our fetched founder-lifestyle set, a 'continue or stop?' teaser indexed ~8.4x the account median and generated comment-to-like ratios suggesting the explicit decision prompt drove specific comment behavior above typical like-only engagement",
+      "source": "tiktok market research 2026-08 (founder-lifestyle account)"
     }
   ]
 }
