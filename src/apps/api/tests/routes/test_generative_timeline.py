@@ -250,6 +250,43 @@ def test_get_guided_story_projects_verified_cut_as_read_only_timeline(monkeypatc
     assert [clip["used"] for clip in out["clips"]] == [True, False, True]
 
 
+def test_get_asset_only_guided_story_projects_every_verified_source(monkeypatch):
+    """The legacy clip lane must not truncate an asset-only guided story."""
+    _set_flag(monkeypatch, True)
+    job = _timeline_job(
+        variant_id="guided_story",
+        archetype="guided_story",
+        with_ai=False,
+        n_clips=1,
+    )
+    first_path = job.all_candidates["clip_paths"][0]
+    story_paths = [first_path, "users/u/plan/i/pool/istanbul.mov", "users/u/plan/i/pool/corfu.mov"]
+    job.assembly_plan["variants"][0]["story_timeline"] = [
+        {
+            "moment_id": f"place-{index}",
+            "topic": f"Place {index}",
+            "gcs_path": path,
+            "source_start_s": float(index),
+            "source_end_s": float(index + 2),
+            "duration_s": 2.0,
+        }
+        for index, path in enumerate(story_paths)
+    ]
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, _ttl: f"https://media/{path}")
+
+    out = gj.dispatch_get_timeline(job, "guided_story")
+
+    assert out["editable"] is False
+    assert out["reason"] == "unsupported_variant"
+    assert out["total_duration_s"] == 6.0
+    assert [slot["clip_index"] for slot in out["slots"]] == [0, 1, 2]
+    assert [slot["order"] for slot in out["slots"]] == [0, 1, 2]
+    assert [clip["used"] for clip in out["clips"]] == [True, True, True]
+    assert [clip["signed_url"] for clip in out["clips"]] == [
+        f"https://media/{path}" for path in story_paths
+    ]
+
+
 def test_get_sources_expired_reason(monkeypatch):
     # Non-durable source paths = legacy job cutting from 24h-swept uploads.
     _set_flag(monkeypatch, True)

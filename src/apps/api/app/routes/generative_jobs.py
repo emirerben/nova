@@ -5269,16 +5269,28 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
     reason = _timeline_ineligibility(job, variant)
     ai_slots, user_slots, beat_grid = _timeline_parts(variant)
+    clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
     # Guided stories deliberately have no editable legacy ``ai_timeline``;
     # their immutable, verified cut lives in ``story_timeline`` instead.  Still
     # project that cut into the read-only timeline response so the editor can
     # show which uploaded clips were used and where, rather than labelling the
-    # entire source pool "Unused".
+    # entire source pool "Unused".  A guided story can be assembled entirely
+    # from plan-item assets, while ``all_candidates.clip_paths`` contains only
+    # the legacy primary-clip lane (or just the first compatibility path).  Its
+    # authoritative clip pool must therefore include every path from the
+    # verified story in story order; otherwise the editor silently projects
+    # only the first beat.  Preserve any legacy pool entries so older jobs keep
+    # stable clip indexes and still show their unused sources.
     if not ai_slots and variant.get("resolved_archetype") == "guided_story":
-        clip_index_by_path = {
-            path: index
-            for index, path in enumerate((job.all_candidates or {}).get("clip_paths") or [])
-        }
+        story_paths: list[str] = []
+        for moment in variant.get("story_timeline") or []:
+            if not isinstance(moment, dict):
+                continue
+            path = nonblank_str(moment.get("gcs_path"))
+            if path and path not in story_paths:
+                story_paths.append(path)
+        clip_paths.extend(path for path in story_paths if path not in clip_paths)
+        clip_index_by_path = {path: index for index, path in enumerate(clip_paths)}
         ai_slots = []
         for order, moment in enumerate(variant.get("story_timeline") or []):
             if not isinstance(moment, dict):
@@ -5315,7 +5327,7 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
             dur_by_idx.setdefault(idx, float(s["source_duration_s"]))
 
     clips: list[dict] = []
-    for i, path in enumerate((job.all_candidates or {}).get("clip_paths") or []):
+    for i, path in enumerate(clip_paths):
         try:
             url: str | None = signed_get_url(path, PLAYBACK_URL_TTL_MIN)
         except Exception:  # noqa: BLE001 — one bad sign must not 500 the editor open

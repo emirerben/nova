@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.6] — 2026-08-17
+
+### Fixed
+- **The video editor now shows every approved guided-story source.** Stories assembled entirely
+  from the visuals pool no longer collapse their video lane to the first compatibility clip; each
+  verified moment appears in the rendered order and at its real duration.
+
 ## [0.34.1.5] — 2026-08-17
 
 ### Fixed
