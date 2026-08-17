@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.5] — 2026-08-17
+
+### Fixed
+- **Generate now reaches the strict renderer for approved visual-pool-only stories.** The API no
+  longer asks for a duplicate primary clip after the creator has approved a story with selected
+  photos or videos; the dispatcher still verifies every approved source before creating the job.
+
 ## [0.34.1.4] — 2026-08-17
 
 ### Fixed

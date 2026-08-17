@@ -2251,7 +2251,7 @@ async def generate_item(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
-    """Enqueue a generative render for this item's themed clips (≥1 required)."""
+    """Enqueue a render from attached clips or an approved guided story."""
     item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     # Narrated walkthroughs are spined by narration. With self-narration OFF that
@@ -2269,6 +2269,16 @@ async def generate_item(
         if proposal_error := proposal_generate_error(item):
             _raise_proposal_generate_conflict(proposal_error)
 
+    approved_guided_media = False
+    if settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled:
+        proposal = parse_edit_proposal(item.edit_proposal)
+        approved_guided_media = bool(
+            proposal
+            and proposal.status == "approved"
+            and proposal.last_approved
+            and any(beat.media_ids for beat in proposal.last_approved.snapshot.story_beats)
+        )
+
     if (
         (item.edit_format or "") in NARRATED_EDIT_FORMATS
         and not item.voiceover_gcs_path
@@ -2278,7 +2288,7 @@ async def generate_item(
             status_code=status.HTTP_409_CONFLICT,
             detail="Record or upload your voiceover before generating a Voiceover edit",
         )
-    if not (item.clip_gcs_paths or []):
+    if not (item.clip_gcs_paths or []) and not approved_guided_media:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload at least one clip before generating",

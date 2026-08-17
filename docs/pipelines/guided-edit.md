@@ -31,8 +31,9 @@ the story assembler consumes the approved Job snapshot directly.
 8. Generate revalidates every storage generation and snapshots the exact approved proposal and
    media identities into `Job.assembly_plan.guided_edit` while holding the established
    Plan → Persona → PlanItem → Job locks.
-   The web generation gate treats selected media in that approved snapshot as footage, including
-   asset-lane-only stories; it does not require a duplicate legacy clip attachment.
+   The web and API generation gates treat selected media in that approved snapshot as footage,
+   including asset-lane-only stories; neither requires a duplicate legacy clip attachment. The
+   lock-owning dispatcher still revalidates every object before it creates the Job.
 
 ## Stored envelope
 
