@@ -123,6 +123,45 @@ def test_snapshot_revision_rejoins_reassigned_media_aliases() -> None:
     assert [beat.media_ids for beat in revised.story_beats] == [["clip-2"], ["clip-1"]]
 
 
+def test_snapshot_revision_recalculates_auto_orientation_from_reassigned_media() -> None:
+    current = _snapshot()
+    current.media[0].aspect = 1.7778
+    current.output_orientation = "landscape"
+    current.output_orientation_reason = "Auto-selected landscape from the previous story."
+    portrait = MediaRef(
+        lane="clip",
+        media_id="clip-2",
+        gcs_path="users/u/plan/i/portrait.mp4",
+        generation="43",
+        kind="video",
+        duration_s=30,
+        aspect=0.5625,
+    )
+    current.media.append(portrait)
+    revision = EditGuideRevision(
+        direction="guided_story",
+        goal="Make the portrait clip the story",
+        pace="balanced",
+        duration_s=24,
+        title="Portrait story",
+        story_beats=[
+            EditGuideRevisionBeat(
+                beat_id="coast",
+                topic="Portrait",
+                thought="Portrait",
+                layout="fullscreen",
+                duration_s=12,
+                media_refs=["media_2"],
+            )
+        ],
+    )
+
+    revised = plan_items._snapshot_from_edit_guide_revision(current, revision)
+
+    assert revised.output_orientation == "portrait"
+    assert "12.0s portrait" in revised.output_orientation_reason
+
+
 def _patch_route_dependencies(monkeypatch, item, *, media_current: bool) -> AsyncMock:
     monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
     monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)

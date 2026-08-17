@@ -11,6 +11,8 @@ import subprocess
 
 import structlog
 
+from app.pipeline.canvas import Canvas
+
 log = structlog.get_logger()
 
 # Transition type → FFmpeg xfade `transition` parameter.
@@ -76,6 +78,7 @@ def join_with_transitions(
     output_path: str,
     transition_duration_s: float | None = None,
     transition_durations_s: list[float | None] | None = None,
+    canvas: Canvas | None = None,
 ) -> None:
     """Join slot video files with xfade transitions. Video-only output (-an).
 
@@ -93,6 +96,7 @@ def join_with_transitions(
                      "none" is rejected.
         slot_durations: Visual output duration per slot in seconds (post speed-ramp).
         output_path: Where to write the joined output.
+        canvas: Output dimensions. Omit to preserve the legacy portrait default.
 
     Raises:
         TransitionError: If FFmpeg fails.
@@ -169,7 +173,12 @@ def join_with_transitions(
             "-map",
             final_label,
             "-an",  # video-only — template audio mixed separately
-            *_encoding_args(output_path, preset="fast", include_audio=False),
+            *_encoding_args(
+                output_path,
+                preset="fast",
+                include_audio=False,
+                canvas=canvas,
+            ),
         ]
     )
 

@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.agents._schemas.text_element import TextElement
+from app.pipeline.generative_overlays import build_overlays_from_text_elements
 from app.pipeline.guided_story import (
     GuidedStoryError,
     _compile_execution_plan_version,
@@ -162,7 +164,7 @@ def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> No
     assert plan["selected_media_ids"] == ["food-photo", "town-photo", "coast-video"]
     assert "unused-photo" not in {row["media_id"] for row in plan["story_timeline"]}
     assert plan["resolved_duration_s"] == 18
-    assert plan["compiler_version"] == 2
+    assert plan["compiler_version"] == 3
     assert plan["proposal_version"] == 7
     assert [row["beat_id"] for row in plan["beat_windows"]] == ["food", "town", "coast"]
     assert {row["layout"] for row in plan["story_timeline"]} == {
@@ -175,6 +177,201 @@ def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> No
     first_thought = next(row for row in plan["text_elements"] if row["id"] == "guided-thought-food")
     assert first_thought["start_s"] == 0.0
     assert first_thought["end_s"] == plan["beat_windows"][0]["end_s"]
+
+
+def _orientation_snapshot(aspects: list[float], durations: list[float] | None = None) -> dict:
+    durations = durations or [2.0] * len(aspects)
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=f"summer-{index}",
+            gcs_path=f"users/u/summer-{index}.mp4",
+            generation=str(index),
+            kind="video",
+            duration_s=20,
+            aspect=aspect,
+            analysis={"width": round(aspect * 1080), "height": 1080},
+        )
+        for index, aspect in enumerate(aspects, start=1)
+    ]
+    snapshot = EditProposalSnapshot(
+        duration_s=max(10, round(sum(durations))),
+        title="Summer 26",
+        media=media,
+        story_beats=[
+            StoryBeat(
+                beat_id=f"place-{index}",
+                topic=f"Place {index}",
+                thought=f"Place {index}",
+                media_ids=[ref.media_id],
+                duration_s=duration,
+            )
+            for index, (ref, duration) in enumerate(zip(media, durations, strict=True), start=1)
+        ],
+    )
+    return {
+        "proposal_version": 1,
+        "media_digest": canonical_media_digest(media),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                "lane": ref.lane,
+                "media_id": ref.media_id,
+                "gcs_path": ref.gcs_path,
+                "generation": ref.generation,
+                "kind": ref.kind,
+            }
+            for ref in media
+        ],
+    }
+
+
+def test_summer_26_five_landscape_sources_auto_select_landscape() -> None:
+    plan = compile_execution_plan(_orientation_snapshot([1.7778] * 5), track=None)
+
+    assert plan["output_orientation"] == "landscape"
+    assert "10.0s landscape, 0.0s portrait" in plan["output_orientation_reason"]
+
+
+def test_all_portrait_sources_auto_select_portrait() -> None:
+    plan = compile_execution_plan(_orientation_snapshot([0.5625] * 5), track=None)
+
+    assert plan["output_orientation"] == "portrait"
+    assert "0.0s landscape, 10.0s portrait" in plan["output_orientation_reason"]
+
+
+def test_mixed_media_uses_duration_weight_and_first_source_tie_break() -> None:
+    dominant = compile_execution_plan(
+        _orientation_snapshot([1.7778, 0.5625, 0.5625], [6, 2, 2]), track=None
+    )
+    tied = compile_execution_plan(_orientation_snapshot([0.5625, 1.7778], [5, 5]), track=None)
+
+    assert dominant["output_orientation"] == "landscape"
+    assert tied["output_orientation"] == "portrait"
+
+
+def test_legacy_execution_plan_without_orientation_remains_valid_portrait() -> None:
+    raw = _guided_snapshot()
+    legacy = _compile_execution_plan_version(raw, track=None, compiler_version=2)
+    assert legacy["typography"] == {"style_id": "guided_story_v1", "font": "Inter-Bold"}
+    assert legacy["text_elements"][0]["stroke_width"] == 5
+    assert legacy["text_elements"][1]["stroke_width"] == 4
+    legacy.pop("output_orientation")
+    legacy.pop("output_orientation_reason")
+
+    validated = validate_execution_plan(legacy, raw)
+
+    assert validated["output_orientation"] == "portrait"
+    assert "Legacy guided stories" in validated["output_orientation_reason"]
+
+
+def test_compiler_persists_editorial_text_defaults_without_strokes() -> None:
+    plan = compile_execution_plan(_guided_snapshot(), track=None)
+
+    assert plan["typography"] == {"style_id": "guided_story_v2", "font": "Fraunces"}
+    title, *thoughts = plan["text_elements"]
+    assert {
+        "font_family": title["font_family"],
+        "size_px": title["size_px"],
+        "color": title["color"],
+        "highlight_color": title["highlight_color"],
+        "stroke_width": title["stroke_width"],
+        "shadow_enabled": title["shadow_enabled"],
+        "shadow_style": title["shadow_style"],
+        "position": title["position"],
+        "x_frac": title["x_frac"],
+        "y_frac": title["y_frac"],
+        "max_width_frac": title["max_width_frac"],
+    } == {
+        "font_family": "Fraunces",
+        "size_px": 104.0,
+        "color": "#FFF8F0",
+        "highlight_color": "#D9FF70",
+        "stroke_width": 0.0,
+        "shadow_enabled": True,
+        "shadow_style": "standard",
+        "position": "custom",
+        "x_frac": 0.5,
+        "y_frac": 0.16,
+        "max_width_frac": 0.8,
+    }
+    assert thoughts
+    assert all(element["font_family"] == "DM Sans" for element in thoughts)
+    assert all(element["size_px"] == 60.0 for element in thoughts)
+    assert all(element["stroke_width"] == 0.0 for element in thoughts)
+    assert all(element["shadow_style"] == "standard" for element in thoughts)
+    assert all(element["y_frac"] == 0.8 for element in thoughts)
+
+
+def test_guided_story_text_defaults_reach_burn_dict_without_strokes() -> None:
+    from app.pipeline import text_overlay_skia
+
+    plan = compile_execution_plan(_guided_snapshot(), track=None)
+    elements = [TextElement.model_validate(row) for row in plan["text_elements"]]
+
+    overlays = build_overlays_from_text_elements(
+        elements,
+        video_duration_s=plan["resolved_duration_s"],
+        independent_box_alignment=True,
+    )
+
+    assert len(overlays) == len(elements)
+    assert [overlay["font_family"] for overlay in overlays] == [
+        "Fraunces",
+        "DM Sans",
+        "DM Sans",
+        "DM Sans",
+    ]
+    assert all(overlay["stroke_width"] == 0 for overlay in overlays)
+    assert all(overlay["text_color"] == "#FFF8F0" for overlay in overlays)
+    assert all(overlay["highlight_color"] == "#D9FF70" for overlay in overlays)
+    assert all(overlay["shadow_enabled"] is True for overlay in overlays)
+    assert all(overlay["shadow_style"] == "standard" for overlay in overlays)
+    assert [overlay["position_y_frac"] for overlay in overlays] == [0.16, 0.8, 0.8, 0.8]
+
+    title_resolution = text_overlay_skia.resolved_typeface_for_overlay(overlays[0])
+    thought_resolution = text_overlay_skia.resolved_typeface_for_overlay(overlays[1])
+    assert (title_resolution["name"], title_resolution["file"]) == (
+        "Fraunces",
+        "Fraunces-Bold.ttf",
+    )
+    assert (thought_resolution["name"], thought_resolution["file"]) == (
+        "DM Sans",
+        "DMSans-Bold.ttf",
+    )
+    assert title_resolution["source"] == thought_resolution["source"] == "font_family"
+    assert title_resolution["fallback"] is thought_resolution["fallback"] is False
+
+
+def test_guided_story_long_thought_wraps_without_shrinking_to_caption_size() -> None:
+    from app.pipeline import text_overlay_skia
+
+    plan = compile_execution_plan(_guided_snapshot(), track=None)
+    thought = TextElement.model_validate(plan["text_elements"][1]).model_copy(
+        update={
+            "text": (
+                "The streets looked different at every turn, especially in the quiet hour "
+                "before dinner."
+            )
+        }
+    )
+    [overlay] = build_overlays_from_text_elements(
+        [thought],
+        video_duration_s=plan["resolved_duration_s"],
+        independent_box_alignment=True,
+    )
+    resolution = text_overlay_skia._resolve_typeface_for_overlay(overlay)
+    max_width = 1080 * overlay["max_width_frac"]
+    font, size, lines = text_overlay_skia._shrink_to_fit(
+        overlay["text"],
+        resolution.typeface,
+        overlay["text_size_px"],
+        max_width,
+    )
+
+    assert size == 60
+    assert 2 <= len(lines) <= 4
+    assert max(font.measureText(line) for line in lines) <= max_width
 
 
 @pytest.mark.parametrize(
@@ -191,7 +388,7 @@ def test_direction_policy_is_persisted(direction: str, minimum: float, transitio
     assert min(row["duration_s"] for row in plan["story_timeline"]) >= minimum
     assert plan["transition_policy"]["type"] == transition
     if direction == "text_explainer":
-        assert max(row["size_px"] for row in plan["text_elements"][1:]) == 54
+        assert max(row["size_px"] for row in plan["text_elements"][1:]) == 64
 
 
 def test_execution_plan_is_fenced_to_approval_version_and_digest() -> None:

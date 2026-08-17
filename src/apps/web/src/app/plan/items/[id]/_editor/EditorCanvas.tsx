@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * EditorCanvas — the center 9:16 preview of the TikTok-parity editor shell.
+ * EditorCanvas — the center output-format preview of the editor shell.
  *
  * Renders the text-free base video with overlay text from the LOCAL working
  * bars (bug #6 fix: the editor's working state feeds the overlay, never the
@@ -1005,6 +1005,7 @@ export default function EditorCanvas({
   }
 
   const zoom = zoomPct / 100;
+  const outputFormatLabel = canvas.w > canvas.h ? "16:9 landscape" : "9:16 portrait";
   // Unsaved orientation changes still display the previously rendered video.
   // In landscape, cover-crop that source so the canvas previews the same
   // centered 16:9 composition the server will produce on Save. Portrait keeps
@@ -1147,6 +1148,9 @@ export default function EditorCanvas({
     <div
       ref={viewportRef}
       data-region="canvas"
+      data-output-orientation={canvas.w > canvas.h ? "landscape" : "portrait"}
+      role="region"
+      aria-label={`Video canvas, ${outputFormatLabel}`}
       data-look-preview={lookPreset}
       className={`relative h-full w-full min-h-0 min-w-0 overflow-auto bg-[#fafaf8] ${
         tool === "pan" && zoom > 1 ? "cursor-grab active:cursor-grabbing" : ""

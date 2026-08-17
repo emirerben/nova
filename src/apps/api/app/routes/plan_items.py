@@ -5070,6 +5070,11 @@ class PoolAssetOut(BaseModel):
     # [] means analyzed with nothing detected.
     brands: list[str] | None = None
     display_url: str | None
+    # Signed preview URL (pool asset preview pipeline). Images fold their
+    # preview into display_url directly; this is populated for videos, whose
+    # display_url stays the signed raw video so playback still works. None
+    # when no preview was generated (never attempted or attempted-and-failed).
+    preview_url: str | None = None
     deduped: bool = False
     # Object key under users/{uid}/plan/{item_id}/pool/ — inside attach_clips'
     # allowed prefix, so the frontend "Use in edit" promotion can re-register the
@@ -5095,11 +5100,24 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
     analysis = asset.analysis or {}
     if not isinstance(analysis, dict):
         analysis = {}
+    # "" is the attempted-and-failed sentinel — treat it the same as never
+    # attempted (fall back / omit), never sign it as a path.
+    raw_preview_path = getattr(asset, "preview_gcs_path", None)
+    preview_path = raw_preview_path or None
     display_url: str | None = None
+    preview_url: str | None = None
     try:
-        display_url = storage.signed_get_url(asset.gcs_path, expiration_minutes=60)
+        display_url = storage.signed_get_url(
+            asset.gcs_path if asset.kind == "video" else (preview_path or asset.gcs_path),
+            expiration_minutes=60,
+        )
     except Exception:  # noqa: BLE001 — thumbnail signing is best-effort, never 500s the list
         display_url = None
+    if asset.kind == "video" and preview_path:
+        try:
+            preview_url = storage.signed_get_url(preview_path, expiration_minutes=60)
+        except Exception:  # noqa: BLE001 — preview signing is best-effort, never 500s the list
+            preview_url = None
     # str() coercion: a corrupt JSONB element must degrade, never fail response
     # validation and 500 the whole list.
     raw_brands = analysis.get("brands")
@@ -5143,6 +5161,7 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         nova_on_screen_text=nova_on_screen_text,
         brands=brands,
         display_url=display_url,
+        preview_url=preview_url,
         deduped=deduped,
         gcs_path=asset.gcs_path,
         source_type=str(analysis.get("source") or "") or None,

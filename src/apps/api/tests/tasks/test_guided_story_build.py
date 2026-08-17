@@ -107,6 +107,27 @@ def test_redelivery_reuses_pinned_execution_plan_without_rematching(monkeypatch)
     assert track is None
 
 
+def test_guided_orientation_regen_is_the_only_supported_base_change() -> None:
+    from app.pipeline.guided_story import GuidedStoryError
+
+    variant = {"resolved_archetype": "guided_story"}
+    controls = {
+        name: gb.CAROUSEL_MOMENT_UNSET if name == "carousel_moment_override" else None
+        for name in gb._GUIDED_REGEN_CONTROL_NAMES
+    }
+    controls.update(
+        orientation_override="landscape",
+        force_full_render=True,
+        remove_text=False,
+    )
+
+    gb._reject_unsupported_guided_regen(variant, controls)
+
+    controls["mix_override"] = 0.5
+    with pytest.raises(GuidedStoryError, match="must be changed in Plan edit"):
+        gb._reject_unsupported_guided_regen(variant, controls)
+
+
 def test_guided_text_reburn_never_falls_through_to_legacy_montage(monkeypatch) -> None:
     job_id = "12345678-1234-5678-1234-567812345678"
     existing = {

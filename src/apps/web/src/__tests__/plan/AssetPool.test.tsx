@@ -1805,3 +1805,91 @@ describe("AssetPool — creator context", () => {
     expect(screen.getByText("Use this when I mention churn")).toBeInTheDocument();
   });
 });
+
+describe("AssetPool — preview pipeline (HEIC/HEVC uploads)", () => {
+  it("falls back to the kind-label placeholder when the image thumbnail fails to decode", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-broken-heic",
+      kind: "image",
+      status: "ready",
+      subject: "phone photo",
+      display_url: "https://storage.example/signed/photo.heic",
+    });
+    mockFetch(listRoute([asset]));
+    await renderPool();
+
+    const img = screen.getByAltText("phone photo");
+    await act(async () => {
+      fireEvent.error(img);
+    });
+
+    expect(screen.queryByAltText("phone photo")).toBeNull();
+    expect(screen.getByText("image")).toBeInTheDocument();
+  });
+
+  it("passes preview_url as the poster on video tiles", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-video-preview",
+      kind: "video",
+      status: "ready",
+      subject: "clip",
+      display_url: "https://storage.example/signed/clip.mov",
+      preview_url: "https://storage.example/signed/clip.mov.preview.jpg",
+    });
+    mockFetch(listRoute([asset]));
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<AssetPool itemId="item-1" />));
+    });
+
+    const video = container.querySelector("video");
+    expect(video).toHaveAttribute(
+      "poster",
+      "https://storage.example/signed/clip.mov.preview.jpg",
+    );
+  });
+
+  it("renders no poster when preview_url is absent (never attempted / failed)", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-video-no-preview",
+      kind: "video",
+      status: "ready",
+      subject: "clip",
+      display_url: "https://storage.example/signed/clip.mov",
+    });
+    mockFetch(listRoute([asset]));
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<AssetPool itemId="item-1" />));
+    });
+
+    expect(container.querySelector("video")).not.toHaveAttribute("poster");
+  });
+
+  it("falls back to the kind-label placeholder when the video thumbnail fails to load", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-video-broken",
+      kind: "video",
+      status: "ready",
+      subject: "clip",
+      display_url: "https://storage.example/signed/clip.mov",
+    });
+    mockFetch(listRoute([asset]));
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<AssetPool itemId="item-1" />));
+    });
+
+    const video = container.querySelector("video")!;
+    await act(async () => {
+      fireEvent.error(video);
+    });
+
+    expect(container.querySelector("video")).toBeNull();
+    expect(screen.getByText("video")).toBeInTheDocument();
+  });
+});
