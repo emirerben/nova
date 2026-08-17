@@ -47,6 +47,16 @@ const PACE_LABELS: Record<EditProposalPace, string> = {
   fast: "Fast",
 };
 
+const DURATION_OPTIONS = [15, 20, 24, 30, 45, 60];
+
+function durationOptions(current: number): number[] {
+  return Array.from(new Set([current, ...DURATION_OPTIONS])).sort((a, b) => a - b);
+}
+
+function selectedSourceCount(snapshot: EditProposalSnapshot): number {
+  return new Set(snapshot.story_beats.flatMap((beat) => beat.media_ids)).size;
+}
+
 function withoutPreviewUrls(snapshot: EditProposalSnapshot): EditProposalSnapshot {
   return {
     ...snapshot,
@@ -63,10 +73,17 @@ function MediaThumb({
   kind: "image" | "video";
   label: string;
 }) {
-  if (!src) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  if (!src || failed) {
     return (
-      <div className="flex h-14 w-10 shrink-0 items-center justify-center rounded-md bg-zinc-100 px-1 text-center text-[9px] text-zinc-500">
-        {kind === "image" ? "Photo" : "Video"}
+      <div
+        role="img"
+        aria-label={`${label}: preview unavailable`}
+        title={`${label}: preview unavailable`}
+        className="flex h-14 w-10 shrink-0 items-center justify-center rounded-md bg-zinc-100 px-1 text-center text-[9px] text-zinc-500"
+      >
+        {failed ? "File" : kind === "image" ? "Photo" : "Video"}
       </div>
     );
   }
@@ -78,6 +95,7 @@ function MediaThumb({
         alt={label}
         loading="lazy"
         decoding="async"
+        onError={() => setFailed(true)}
         className="h-14 w-10 shrink-0 rounded-md object-cover"
       />
     );
@@ -89,6 +107,7 @@ function MediaThumb({
       muted
       playsInline
       preload="none"
+      onError={() => setFailed(true)}
       className="h-14 w-10 shrink-0 rounded-md object-cover"
     />
   );
@@ -507,7 +526,7 @@ export default function EditProposalCard({
               }
               className="mt-2 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
             >
-              {[15, 20, 24, 30, 45, 60].map((seconds) => (
+              {durationOptions(legacyBrief.duration_s).map((seconds) => (
                 <option key={seconds} value={seconds}>{seconds} seconds</option>
               ))}
             </select>
@@ -645,7 +664,7 @@ export default function EditProposalCard({
           {visibleDraft.title}
         </h2>
         <p className="mt-1 text-sm text-[#3f3f46]">
-          {visibleDraft.story_beats.length} moments · {visibleDraft.media.length} sources · about {visibleDraft.duration_s}s
+          {visibleDraft.story_beats.length} moments · {selectedSourceCount(visibleDraft)} sources · about {visibleDraft.duration_s}s
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
@@ -763,7 +782,7 @@ export default function EditProposalCard({
             }
             className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base font-normal outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
           >
-            {[15, 20, 24, 30, 45, 60].map((seconds) => (
+            {durationOptions(visibleDraft.duration_s).map((seconds) => (
               <option key={seconds} value={seconds}>{seconds} seconds</option>
             ))}
           </select>

@@ -306,6 +306,51 @@ describe("EditProposalCard", () => {
     expect(onChanged).toHaveBeenLastCalledWith(approved);
   });
 
+  it("shows a conversational custom duration instead of falling back to 15 seconds", () => {
+    const custom = proposal();
+    custom.draft = { ...custom.draft!, duration_s: 10 };
+    custom.brief = { ...custom.brief, duration_s: 10 };
+
+    render(<EditProposalCard item={item(custom)} onChanged={jest.fn()} />);
+
+    expect(screen.getByLabelText("Target length")).toHaveValue("10");
+    expect(screen.getByRole("option", { name: "10 seconds" })).toBeInTheDocument();
+  });
+
+  it("counts only selected sources in the approved summary", () => {
+    const approved = proposal("approved");
+    approved.draft!.media.push({
+      lane: "clip",
+      media_id: "unused-video",
+      gcs_path: "users/u/plan/i/unused.mov",
+      generation: "3",
+      kind: "video",
+      source_filename: "unused.mov",
+      user_context: "",
+      analysis: {},
+    });
+
+    render(<EditProposalCard item={item(approved)} onChanged={jest.fn()} />);
+
+    expect(screen.getByText("2 moments · 2 sources · about 24s")).toBeInTheDocument();
+    expect(screen.queryByText(/3 sources/)).toBeNull();
+  });
+
+  it("replaces an unplayable source preview with an honest file fallback", () => {
+    const withPreview = proposal();
+    withPreview.draft!.media[1] = {
+      ...withPreview.draft!.media[1],
+      preview_url: "https://cdn.example/coast.mov",
+    };
+    render(<EditProposalCard item={item(withPreview)} onChanged={jest.fn()} />);
+
+    const preview = screen.getByLabelText("Coast: coast.mp4");
+    fireEvent.error(preview);
+
+    expect(screen.getByRole("img", { name: "Coast: coast.mp4: preview unavailable" }))
+      .toBeInTheDocument();
+  });
+
   it("preserves unsaved edits across same-version polling and resets for a new revision", () => {
     const onChanged = jest.fn();
     const view = render(<EditProposalCard item={item(proposal())} onChanged={onChanged} />);

@@ -1133,3 +1133,19 @@ it asked creators to translate creative intent into product controls before Kria
   readers reject. `GUIDED_EDIT_CONVERSATION_ENABLED` therefore stays off until every API and worker
   runs the compatible reader; the API advertises the switch and the web keeps the existing brief
   form until it is safe to write conversational state.
+
+## [2026-08-17] Guided-story results remain authoritative when reopened
+
+Production dogfood rendered the requested five-video travel cut, but reopening it exposed two legacy
+projections: the text reader collapsed the approved title and five thoughts into one intro, and the
+timeline reader marked every source unused because it only understood `ai_timeline`.
+
+**Decisions:**
+
+- **Persisted guided-story text wins on reads.** The renderer's verified `text_elements` document is
+  authoritative even before a creator manually edits it. Legacy intro projection must not replace it.
+- **The verified story cut is visible but read-only.** The editor projects `story_timeline` into its
+  existing clip-lane response so creators can inspect order, trims, and used media without making the
+  legacy timeline mutation APIs responsible for guided stories.
+- **Different text regions may share time.** A top-positioned title and bottom-positioned first thought
+  can both start at zero. Serializing them made the first thought only one frame long in short edits.

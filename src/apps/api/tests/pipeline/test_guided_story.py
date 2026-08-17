@@ -169,6 +169,12 @@ def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> No
         "fullscreen",
         "supporting_card",
     }
+    # Title and first thought occupy different vertical positions, so both can
+    # remain readable for the full first beat.  Delaying the thought until the
+    # title ended reduced short montage labels to a single frame.
+    first_thought = next(row for row in plan["text_elements"] if row["id"] == "guided-thought-food")
+    assert first_thought["start_s"] == 0.0
+    assert first_thought["end_s"] == plan["beat_windows"][0]["end_s"]
 
 
 @pytest.mark.parametrize(

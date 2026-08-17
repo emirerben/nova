@@ -121,7 +121,7 @@ closing the §6 D17 gap per-surface. Source skill: `npx skills add Jakubantalik/
 | step-slide (derived #8) | `--page-slide-dur/fade-dur: 250ms`, `--page-slide-distance: 8px`, `--page-blur: 3px`, `--page-slide/fade-ease` | `OnboardingShell` `<StepSlide key={step}>` — slide+blur entrance on each wizard step. |
 | `t-skel` (#14) | `--reveal-dur: 400ms`, `--reveal-blur: 2px`, `--reveal-ease: ease-in-out` | `VariantRenderCard` shimmer→video cross-blur reveal when status becomes `ready`. |
 | `t-stagger` (#18) | `--stagger-dur: 500ms`, `--stagger-distance: 12px`, `--stagger-stagger: 40ms`, `--stagger-blur: 3px`, `--stagger-ease` | Landing hero `<section class="t-stagger is-shown">` — 4 lines stagger in on page load. |
-| `t-accordion` | `--t-accordion-dur: 300ms`, `--t-accordion-ease: cubic-bezier(0.23,1,0.32,1)` | `NovaStepRow` detail-line reveal (render-progress `NovaActivityFeed`, behind `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED`). Grid-rows `0fr → 1fr` + opacity crossfade, same duration; `prefers-reduced-motion` zeroes it. Chat compact rows (a later PR) reuse the same token pair so both surfaces expand identically. |
+| `t-accordion` | `--t-accordion-dur: 300ms`, `--t-accordion-ease: cubic-bezier(0.23,1,0.32,1)` | `NovaStepRow` detail-line reveal (render-progress `NovaActivityFeed`, behind `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED`). Grid-rows `0fr → 1fr` + opacity crossfade, same duration; `prefers-reduced-motion` zeroes it. Chat compact rows (a later PR) and the plan-item `SetupPicker` disclosure rows (v0.34.0.0) reuse the same token pair so all surfaces expand identically. |
 
 **Follow-up scope (not this PR):** `t-tabs`, `t-success-check`, `t-error-shake`, upload-dropzone drag feedback, spinner component consolidation.
 
@@ -281,7 +281,7 @@ Rules here supplement §2 (light editorial system).
 - Proposal card: `rounded-xl border border-lime-200 bg-lime-50 p-4`. Eyebrow `text-[11px] uppercase tracking-[.15em] text-lime-700`. Theme in Fraunces `text-lg font-medium`. Filming suggestion `text-sm text-[#3f3f46]`.
 - Shot list renders inside the card: italic Fraunces numerals `text-[17px] text-lime-600`, shot `what` `text-[15px] font-medium text-[#0c0c0e]`, `how` `text-[13.5px] text-[#3f3f46]`, duration chip `text-[11px] border-zinc-200 bg-white text-[#3f3f46]`.
 - Accept CTA: `bg-lime-600 text-white rounded-lg text-[12px] font-semibold` copy "Use this plan". Dismiss: `border-zinc-200 bg-white text-[#71717a]`. Rationale `text-xs italic text-[#71717a]` under the card.
-- Non-slot accepted plans (existing-footage montage, Voiceover "I have the videos", talking-to-camera) show a compact white `Plan summary` reference above the uploader instead of converting the flow to shot slots.
+- Non-slot accepted plans (existing-footage montage, Voiceover, talking-to-camera) show a compact white `Plan summary` reference above the uploader instead of converting the flow to shot slots.
 
 ---
 

@@ -5269,6 +5269,38 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
     reason = _timeline_ineligibility(job, variant)
     ai_slots, user_slots, beat_grid = _timeline_parts(variant)
+    # Guided stories deliberately have no editable legacy ``ai_timeline``;
+    # their immutable, verified cut lives in ``story_timeline`` instead.  Still
+    # project that cut into the read-only timeline response so the editor can
+    # show which uploaded clips were used and where, rather than labelling the
+    # entire source pool "Unused".
+    if not ai_slots and variant.get("resolved_archetype") == "guided_story":
+        clip_index_by_path = {
+            path: index
+            for index, path in enumerate((job.all_candidates or {}).get("clip_paths") or [])
+        }
+        ai_slots = []
+        for order, moment in enumerate(variant.get("story_timeline") or []):
+            if not isinstance(moment, dict):
+                continue
+            path = moment.get("gcs_path")
+            clip_index = clip_index_by_path.get(path)
+            if clip_index is None:
+                continue
+            ai_slots.append(
+                {
+                    "slot_id": moment.get("moment_id") or f"guided-story-{order}",
+                    "clip_index": clip_index,
+                    "source_gcs_path": path,
+                    "source_duration_s": moment.get("source_end_s"),
+                    "in_s": moment.get("source_start_s", 0.0),
+                    "duration_s": moment.get("duration_s"),
+                    "duration_beats": None,
+                    "order": order,
+                    "moment_description": moment.get("topic"),
+                    "removed": False,
+                }
+            )
     has_user_edits = bool(user_slots)
     effective = user_slots if has_user_edits else ai_slots
     active = [s for s in effective if not s.get("removed")]
