@@ -78,6 +78,34 @@ describe("SetupPicker PATCH payloads", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Voiceover/ }));
     expect(onPatch).not.toHaveBeenCalled();
   });
+
+  it("re-clicking Montage on a default create_new item still stamps existing_footage", async () => {
+    // Default new items land on montage + create_new + no guide with nothing
+    // in the DOM to upload clips into (PR #833 removed the mode toggle) — the
+    // no-op guard must not swallow this click.
+    const { onPatch } = renderPicker({
+      resolvedFormat: "montage",
+      rawEditFormat: "montage",
+      contentMode: "create_new",
+    });
+    fireEvent.click(screen.getByRole("radio", { name: /Montage/ }));
+    await waitFor(() =>
+      expect(onPatch).toHaveBeenCalledWith({
+        edit_format: "montage",
+        content_mode: "existing_footage",
+      }),
+    );
+  });
+
+  it("re-clicking Montage when already existing_footage is a no-op", () => {
+    const { onPatch } = renderPicker({
+      resolvedFormat: "montage",
+      rawEditFormat: "montage",
+      contentMode: "existing_footage",
+    });
+    fireEvent.click(screen.getByRole("radio", { name: /Montage/ }));
+    expect(onPatch).not.toHaveBeenCalled();
+  });
 });
 
 describe("SetupPicker optimistic format", () => {

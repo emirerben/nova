@@ -1,0 +1,109 @@
+name: Migration staging guard
+
+# Pre-merge gate closing the packaging hole behind the 2026-08-12 deploy freeze.
+#
+# #804 added migrations 0072 and 0073 in a single PR. 0073 installs the
+# composite same-owner FK and REFUSES to apply while any mismatched content plan
+# exists. Its own runbook (docs/runbooks/content-plan-persona-owner-repair.md)
+# is explicit:
+#
+#     Do not combine these into one Fly release. Fly runs migrations before
+#     replacing the application image; an unexpected corrupt row must not
+#     prevent release-1 guards from reaching production.
+#
+# That instruction had no mechanism behind it. fly.toml's release_command is
+# unconditionally `alembic upgrade head`, which chained both, so 0073 threw,
+# the whole chain rolled back, and release 1 could never land. API deploys
+# failed for ~24 hours. This workflow is the missing mechanism.
+#
+# WHAT IT CATCHES
+# ===============
+# A PR that adds 2+ migrations where at least one can REFUSE to apply — i.e.
+# its upgrade() raises on a data precondition. Those must ship as separate
+# releases with the remediation in between, because a single `upgrade head`
+# cannot express the pause.
+#
+# It deliberately does NOT flag a lone precondition migration (one per release
+# is exactly the safe shape), nor several purely additive migrations together.
+#
+# ESCAPE HATCH
+# ============
+# Put [staged-migration-ok] in the PR body, with a sentence on how the staging
+# is actually enforced (a pinned release_command, a manual pre-deploy step, a
+# runbook already executed). The marker is honour-system like require-local-test,
+# but it forces the author to have thought about the release order at all —
+# which is the step that was skipped.
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited]
+    branches: [main, dev]
+
+concurrency:
+  group: migration-staging-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  migration-staging-guard:
+    name: Require staging plan for multi-migration PRs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check added migrations
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          DIR="src/apps/api/app/migrations/versions"
+
+          # Only ADDED files count. Editing an existing migration is a different
+          # (and separately alarming) thing that this guard has no opinion on.
+          git diff --name-only --diff-filter=A "$BASE_SHA...$HEAD_SHA" \
+            | grep -E "^${DIR}/.*\.py$" > /tmp/added.txt || true
+
+          count=$(wc -l < /tmp/added.txt | tr -d ' ')
+          echo "migrations added: $count"
+          [ "$count" = "0" ] && { echo "No new migrations."; exit 0; }
+          cat /tmp/added.txt
+
+          if [ "$count" -lt 2 ]; then
+            echo "Single migration — a precondition here is the safe shape, nothing to enforce."
+            exit 0
+          fi
+
+          # Which of them can refuse? A `raise` anywhere in the file is a
+          # deliberate over-approximation: we would rather ask about a harmless
+          # raise than miss a refusing one. The escape hatch makes a false
+          # positive cost one sentence.
+          refusing=""
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            if grep -qE '^[[:space:]]*raise ' "$f"; then
+              refusing="${refusing}${f}"$'\n'
+            fi
+          done < /tmp/added.txt
+
+          if [ -z "$refusing" ]; then
+            echo "No added migration raises — they can all apply in one release."
+            exit 0
+          fi
+
+          echo "migrations that can refuse to apply:"
+          echo "$refusing"
+
+          if printf '%s' "$PR_BODY" | grep -qF '[staged-migration-ok]'; then
+            echo "Staging plan declared via [staged-migration-ok]."
+            exit 0
+          fi
+
+          echo "::error::This PR adds $count migrations and at least one can REFUSE to apply (it raises in upgrade()). fly.toml runs 'alembic upgrade head', so a refusal rolls back the WHOLE chain and NO migration lands — that is the 2026-08-12 freeze, which cost ~24h of undeployed backend. Ship them as separate releases, or add [staged-migration-ok] to the PR body with one sentence on how the release order is actually enforced. See docs/runbooks/content-plan-persona-owner-repair.md."
+          exit 1

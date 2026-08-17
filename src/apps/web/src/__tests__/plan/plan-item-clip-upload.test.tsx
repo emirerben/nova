@@ -340,6 +340,21 @@ describe("PoolUploadCard — input markup (mobile Safari fix)", () => {
   });
 });
 
+describe("PoolUploadCard — montage clip uploader visibility (regression, PR #833/#834)", () => {
+  it("default create_new montage item without a guide still renders the clip uploader", async () => {
+    // Default items land on edit_format: "montage" (makeItem's default),
+    // content_mode: "create_new", with no filming_guide — the dead
+    // `isFilmThis ? null` branch used to swallow the uploader entirely here,
+    // leaving no way to add clips at all.
+    setData(makeItem({ content_mode: "create_new", filming_guide: [], clip_assignments: [] }));
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByRole("button", { name: "Add clips" })).toBeInTheDocument();
+  });
+});
+
 describe("PoolUploadCard — pending cards, progress, saving", () => {
   it("shows a per-file card with real progress while uploading", async () => {
     setData(makeItem());

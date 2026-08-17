@@ -1,0 +1,134 @@
+name: Deploy drift check
+
+# External dead-man's switch for the API deploy lane, in the same spirit as
+# beat-health.yml — and closing the same shape of hole.
+#
+# The 2026-08-12 incident this closes: #804 shipped migrations 0072 and 0073 in
+# one release. 0073 refuses to apply while a mismatched content plan exists, so
+# `alembic upgrade head` threw, the chain rolled back, and every deploy failed.
+# Production never went down — Fly aborts a release BEFORE replacing machines,
+# so the previous image kept serving and /health stayed 200. Nothing alerted.
+# No backend change reached production for ~24 hours and four consecutive red
+# `Fly Deploy` runs read as normal.
+#
+# WHY THIS MEASURES DRIFT AND NOT FAILURE
+# ========================================
+# The obvious check is "alert when Fly Deploy goes red". That is wrong here.
+# Per #834 the release command is killed during startup roughly 2 runs in 12
+# (exit 143, machine destroyed ~3s in) and the very next deploy succeeds. An
+# alert on redness would fire on those, and an alarm that cries wolf twice a
+# fortnight is one you learn to skim — which is precisely the habit that let the
+# real freeze hide. False positives are how a dead-man's switch gets ignored the
+# day it is real.
+#
+# Drift has no such problem. A self-healing flake leaves zero drift, because the
+# next deploy lands. Only genuinely-stuck code accumulates it. It is also cause
+# agnostic: a migration refusal, a revoked FLY_API_TOKEN, a Fly outage and a
+# persistent exit-143 all present identically as "main moved and production
+# didn't".
+#
+# Detection latency is DRIFT_HOURS + the cron interval (+ GitHub cron slip), so
+# ~2-3.5h worst case at the current settings. Change the two consciously
+# together.
+#
+# This deliberately uses only the GitHub API — no FLY_API_TOKEN. What we care
+# about is "did the code on main successfully deploy", and the Fly Deploy
+# workflow's own run history answers that without another credential to rotate.
+#
+# On failure GitHub emails the workflow's last committer. Note: GitHub disables
+# cron workflows after 60 days without repo activity — a red run after
+# reactivating the repo may just need a manual re-enable.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+# Least privilege: read the Fly Deploy run history and main's commit list.
+# Nothing here writes.
+permissions:
+  actions: read
+  contents: read
+
+env:
+  # How long main is allowed to sit undeployed before this is an incident.
+  # A healthy deploy finishes in minutes; #834's flake self-heals on the next
+  # push. Two hours means genuinely stuck, not merely slow.
+  DRIFT_HOURS: "2"
+  DEPLOY_WORKFLOW: "Fly Deploy"
+
+jobs:
+  deploy-drift:
+    name: Is main actually deployed?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compare main HEAD against the last successful deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Newest commit on main.
+          main_sha=$(gh api "repos/$REPO/commits/main" --jq '.sha')
+
+          # Is a deploy in flight right now? If so this run has nothing useful
+          # to say — a deploy mid-flight is the healthy path, not drift.
+          in_flight=$(gh api \
+            "repos/$REPO/actions/runs?branch=main&status=in_progress&per_page=50" \
+            --jq "[.workflow_runs[] | select(.name == \"$DEPLOY_WORKFLOW\")] | length")
+          if [ "$in_flight" != "0" ]; then
+            echo "A deploy is in progress — nothing to judge yet."
+            exit 0
+          fi
+
+          # Most recent SUCCESSFUL deploy of main.
+          deployed_sha=$(gh api \
+            "repos/$REPO/actions/runs?branch=main&status=success&per_page=100" \
+            --jq "[.workflow_runs[] | select(.name == \"$DEPLOY_WORKFLOW\")]
+                  | sort_by(.created_at) | reverse | .[0].head_sha // empty")
+
+          if [ -z "$deployed_sha" ]; then
+            # Not an incident on its own — could be a fresh repo, a renamed
+            # workflow, or history aged out of the 100-run window. Say so
+            # instead of failing, so a genuine freeze stays the only red.
+            echo "::warning::No successful '$DEPLOY_WORKFLOW' run found for main. If the workflow was renamed, update DEPLOY_WORKFLOW in this file."
+            exit 0
+          fi
+
+          echo "main HEAD : $main_sha"
+          echo "deployed  : $deployed_sha"
+
+          if [ "$main_sha" = "$deployed_sha" ]; then
+            echo "In sync — production has main."
+            exit 0
+          fi
+
+          # main has moved. Drift only counts once the OLDEST undeployed commit
+          # is older than the budget: a merge from ten minutes ago is a deploy
+          # in progress, not an incident.
+          undeployed=$(gh api "repos/$REPO/compare/$deployed_sha...$main_sha" \
+            --jq '[.commits[] | {sha: .sha, date: .commit.committer.date}]')
+          count=$(echo "$undeployed" | jq 'length')
+
+          if [ "$count" = "0" ]; then
+            # deployed_sha is ahead of / diverged from main — e.g. history was
+            # rewritten. Surface it rather than silently passing.
+            echo "::warning::Last successful deploy ($deployed_sha) is not an ancestor of main. Force-push or rewritten history?"
+            exit 0
+          fi
+
+          oldest_date=$(echo "$undeployed" | jq -r '.[0].date')
+          oldest_epoch=$(date -u -d "$oldest_date" +%s)
+          age_hours=$(( ( $(date -u +%s) - oldest_epoch ) / 3600 ))
+
+          echo "undeployed commits: $count (oldest $age_hours h old, $oldest_date)"
+
+          if [ "$age_hours" -lt "$DRIFT_HOURS" ]; then
+            echo "Within the ${DRIFT_HOURS}h budget — a deploy is probably still catching up."
+            exit 0
+          fi
+
+          echo "::error::DEPLOY DRIFT: $count commit(s) have been on main for ${age_hours}h without a successful '$DEPLOY_WORKFLOW'. Production is serving older code and /health will NOT show this (Fly aborts a failed release before swapping machines). Check the newest Fly Deploy run and 'fly releases -a nova-video'. If the release command is failing on a migration, see docs/runbooks/ and agents/DECISIONS.md; if it exited 143 in ~3s, that is #834 and a re-run usually clears it."
+          exit 1

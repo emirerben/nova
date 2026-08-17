@@ -5,7 +5,26 @@ All notable changes to this project will be documented in this file.
 ## [0.34.1.13] — 2026-08-17
 
 ### Changed
-- **A row-locking mistake that could start the same video twice can no longer be reintroduced.** A new check reads the code and flags the specific pattern behind that bug — locking a database row after already having read it, which quietly hands back the older copy. It looks for the shape of the mistake rather than policing every lock in the codebase, so it stays worth paying attention to. Eight suspected existing instances were found while building it; they are recorded as a tracked backlog rather than silently approved, and the check fails if that list grows or goes out of date.
+- **A row-locking mistake that could start the same video twice can no longer be reintroduced.** A new check reads the code and flags the specific pattern behind that bug — locking a database row after already having read it in the same session, which quietly hands back the older copy. It looks for the shape of the mistake rather than policing every lock in the codebase, so it stays worth paying attention to. Two confirmed existing instances were found while building it; they are recorded as a tracked backlog rather than silently approved, and the check fails if that list grows or goes out of date.
+
+## [0.34.1.12] — 2026-08-17
+
+### Changed
+- **Backend releases can no longer stall unnoticed.** A scheduled check now compares what is on the main branch against what has actually deployed, and raises an alarm if code sits undeployed for more than two hours. It measures the gap rather than watching for failed deploys, because deploys fail transiently and self-heal often enough that a failure alarm gets ignored — which is how a day-long stall went unnoticed on 2026-08-12 while the site itself stayed up and healthy. A pull request that adds two or more database migrations where one can refuse to apply is now blocked unless it says how the releases will be ordered, which is the packaging mistake that caused that stall. Tests also run on every merge to the main branch, so a breakage is attributed to the change that caused it instead of surfacing days later on someone else's unrelated work.
+
+## [0.34.1.11] — 2026-08-17
+
+### Fixed
+- **Restored the missing clip uploader on default montage plan items.** PR #833 replaced the "I
+  already have footage" toggle with a click on the Montage type card that patches
+  `content_mode: "existing_footage"` — but `SetupPicker`'s no-op guard returned early whenever the
+  clicked card matched the item's already-stored `edit_format`, which is `"montage"` by default. So
+  re-clicking (or the initial, already-selected) Montage card never fired the patch, and default
+  items (`content_mode: "create_new"`, empty `filming_guide`, `edit_format: "montage"`) fell into a
+  dead render branch in `page.tsx` (`isFilmThis ? null`) with no uploader anywhere in the DOM —
+  there was no way to add the main videos. Fixed by letting the guard's early return account for a
+  pending `content_mode` stamp, and by deleting the dead branch so a film-this montage item without
+  a guide falls through to the existing pool-upload uploader.
 
 ## [0.34.1.10] — 2026-08-17
 
