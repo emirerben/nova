@@ -29,6 +29,8 @@ export interface GenerateGateInput {
   /** A clip upload is still finishing. */
   uploaderBusy: boolean;
   clipCount: number;
+  /** A current approved guided plan contains at least one selected media source. */
+  hasApprovedGuidedMedia: boolean;
   /** edit_format is one of the narrated family. */
   isNarrated: boolean;
   /** voiceover_gcs_path present (recorded or uploaded). */
@@ -58,6 +60,7 @@ export function generateGate(input: GenerateGateInput): GenerateGateResult {
     isGenerating,
     uploaderBusy,
     clipCount,
+    hasApprovedGuidedMedia,
     isNarrated,
     hasVoiceover,
     selfNarrationEnabled,
@@ -68,15 +71,16 @@ export function generateGate(input: GenerateGateInput): GenerateGateResult {
   // Voiceover is only a hard requirement while self-narration is off.
   const voiceoverBlocked = isNarrated && !hasVoiceover && !selfNarrationEnabled;
 
+  const hasGenerateMedia = clipCount > 0 || hasApprovedGuidedMedia;
   const disabled =
-    generating || clipCount === 0 || isGenerating || uploaderBusy || voiceoverBlocked;
+    generating || !hasGenerateMedia || isGenerating || uploaderBusy || voiceoverBlocked;
 
   let hint: string | null = null;
   if (uploaderBusy) {
     hint = FINISHING_UPLOAD_HINT;
   } else if (voiceoverBlocked) {
     hint = VOICEOVER_REQUIRED_HINT;
-  } else if (clipCount === 0) {
+  } else if (!hasGenerateMedia) {
     hint = "Add clips to generate";
   } else if (isInstructed && shotsLeft > 0) {
     // Shot-slot progress outranks the self-narration explainer: while slots are

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.4] — 2026-08-17
+
+### Fixed
+- **Approved guided edits can now generate directly from photos and videos in the visuals pool.** A
+  plan that already shows five selected sources no longer disables Generate with “Add clips to
+  generate” merely because those sources are not duplicated in the legacy primary-clips lane.
+
 ## [0.34.1.3] — 2026-08-17
 
 ### Fixed
