@@ -5,6 +5,7 @@ import {
   CSSProperties,
   MutableRefObject,
   RefObject,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -14,6 +15,7 @@ import {
 import styles from "./KriaEditStory.module.css";
 import {
   AUTO_RENDER_START_MS,
+  AUTO_SOUND_START_MS,
   AUTO_STORY_DURATION_MS,
   getAutoKriaHeadlineLineCount,
   getAutoKriaStoryStep,
@@ -198,13 +200,11 @@ function useTravelStyles(
 export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStoryMode }) {
   const isAuto = mode === "auto";
   const sectionRef = useRef<HTMLElement>(null);
-  const [progress, setProgress] = useState(0);
   const progressRef = useRef(0);
   const [step, setStep] = useState(0);
   const [headlineLines, setHeadlineLines] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [autoPlaying, setAutoPlaying] = useState(false);
-  const [soundUnavailable, setSoundUnavailable] = useState(false);
   const phoneVideos = useRef<Array<HTMLVideoElement | null>>([]);
   const overlayVideo = useRef<HTMLVideoElement | null>(null);
   const ambienceAudio = useRef<HTMLAudioElement | null>(null);
@@ -214,8 +214,9 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
   const renderedPlaybackRetryUsed = useRef(false);
   const renderedPlaybackGeneration = useRef(0);
   const audioPlaybackGeneration = useRef(0);
+  const audioUnmuteAttempted = useRef(false);
   const lastRenderedCorrectionAt = useRef(Number.NEGATIVE_INFINITY);
-  const reducedMotionAudioTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoStartScheduled = useRef(false);
 
   const sourceRefs = useMemo(
     createTravelRefs,
@@ -233,7 +234,6 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
       setReducedMotion(query.matches);
       if (query.matches) {
         progressRef.current = 1;
-        setProgress(1);
         setStep(7);
         setHeadlineLines(3);
       }
@@ -262,16 +262,12 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
     if (!isAuto || !reducedMotion) return;
     ambienceAudio.current?.pause();
     phoneVideos.current.forEach((video) => video?.pause());
-    if (reducedMotionAudioTimer.current) {
-      clearTimeout(reducedMotionAudioTimer.current);
-      reducedMotionAudioTimer.current = null;
-    }
     renderedPlaybackAttempted.current = false;
     renderedPlaybackRetryPending.current = false;
     renderedPlaybackRetryUsed.current = false;
     renderedPlaybackGeneration.current += 1;
     audioPlaybackGeneration.current += 1;
-    setSoundUnavailable(false);
+    audioUnmuteAttempted.current = false;
     lastRenderedCorrectionAt.current = Number.NEGATIVE_INFINITY;
     setAutoPlaying(false);
   }, [isAuto, reducedMotion]);
@@ -319,13 +315,27 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
       const nextStep = getAutoKriaStoryStep(elapsed);
       const renderedVideo = phoneVideos.current[RENDERED_VIDEO_INDEX];
 
-      const previousProgress = progressRef.current;
       progressRef.current = nextProgress;
-      if (previousProgress === 0 && nextProgress > 0) setProgress(nextProgress);
-      if (previousProgress < 1 && nextProgress >= 1) setProgress(1);
       setStep(nextStep);
       setHeadlineLines(getAutoKriaHeadlineLineCount(elapsed));
-      if (audio) audio.volume = getAutoStoryAudioVolume(elapsed);
+      if (audio) {
+        audio.volume = getAutoStoryAudioVolume(elapsed);
+        if (elapsed >= AUTO_SOUND_START_MS && !audioUnmuteAttempted.current) {
+          audioUnmuteAttempted.current = true;
+          audio.currentTime = elapsed / 1_000;
+          audio.muted = false;
+          const playbackGeneration = audioPlaybackGeneration.current;
+          const playback = audio.play();
+          if (playback) {
+            void playback.catch(() => {
+              if (audioPlaybackGeneration.current === playbackGeneration) {
+                audio.muted = true;
+                audio.volume = 0;
+              }
+            });
+          }
+        }
+      }
 
       if (renderedVideo && elapsed >= AUTO_RENDER_START_MS) {
         const referenceTime = (elapsed - AUTO_RENDER_START_MS) / 1_000;
@@ -375,7 +385,6 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
       audioPlaybackGeneration.current += 1;
       renderedPlaybackGeneration.current += 1;
       audio?.pause();
-      if (reducedMotionAudioTimer.current) clearTimeout(reducedMotionAudioTimer.current);
     };
   }, []);
 
@@ -398,106 +407,56 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
     });
   }, [autoPlaying, isAuto, reducedMotion, step]);
 
-  const toggleAutomaticStory = () => {
-    if (!isAuto) return;
-
-    if (autoPlaying) {
-      audioPlaybackGeneration.current += 1;
-      renderedPlaybackGeneration.current += 1;
-      ambienceAudio.current?.pause();
-      phoneVideos.current.forEach((video) => video?.pause());
-      if (reducedMotionAudioTimer.current) {
-        clearTimeout(reducedMotionAudioTimer.current);
-        reducedMotionAudioTimer.current = null;
-      }
-      setAutoPlaying(false);
-      setSoundUnavailable(false);
-      renderedPlaybackAttempted.current = false;
-      renderedPlaybackRetryPending.current = false;
-      renderedPlaybackRetryUsed.current = false;
-      lastRenderedCorrectionAt.current = Number.NEGATIVE_INFINITY;
-      return;
-    }
-
-    const currentProgress = progressRef.current;
-    const isResuming = currentProgress > 0 && currentProgress < 1;
-    const resumeElapsedMs = isResuming ? currentProgress * AUTO_STORY_DURATION_MS : 0;
-
+  const startAutomaticStory = useCallback(() => {
+    if (!isAuto || reducedMotion) return;
     const audio = ambienceAudio.current;
     if (audio) {
-      audio.currentTime = resumeElapsedMs / 1_000;
-      audio.volume = reducedMotion ? 0.8 : getAutoStoryAudioVolume(audio.currentTime * 1_000);
+      audio.currentTime = 0;
+      audio.volume = 0;
+      audio.muted = true;
       audio.loop = false;
       const playbackGeneration = audioPlaybackGeneration.current + 1;
       audioPlaybackGeneration.current = playbackGeneration;
-      setSoundUnavailable(false);
       const playback = audio.play();
       if (playback) {
         void playback.catch(() => {
-          if (audioPlaybackGeneration.current === playbackGeneration) {
-            setSoundUnavailable(true);
-          }
+          // The visual timeline continues from performance.now() when autoplay
+          // audio is unavailable. A synchronized audible retry happens at the
+          // sound-effects beat where browser policy permits it.
         });
       }
     }
 
-    if (reducedMotion) {
-      progressRef.current = 1;
-      setProgress(1);
-      setStep(7);
-      setHeadlineLines(3);
-      setAutoPlaying(true);
-      if (audio) audio.currentTime = AUTO_RENDER_START_MS / 1_000;
-      const renderedVideo = phoneVideos.current[RENDERED_VIDEO_INDEX];
-      if (renderedVideo) {
-        renderedPlaybackAttempted.current = true;
-        renderedPlaybackRetryPending.current = false;
-        renderedPlaybackRetryUsed.current = false;
-        renderedPlaybackGeneration.current += 1;
-        renderedVideo.currentTime = 0;
-        const playbackGeneration = renderedPlaybackGeneration.current;
-        const playback = renderedVideo.play();
-        if (playback) {
-          void playback.catch(() => {
-            if (renderedPlaybackGeneration.current === playbackGeneration) {
-              renderedPlaybackRetryPending.current = true;
-            }
-          });
-        }
-      }
-      if (reducedMotionAudioTimer.current) clearTimeout(reducedMotionAudioTimer.current);
-      reducedMotionAudioTimer.current = setTimeout(() => {
-        audioPlaybackGeneration.current += 1;
-        renderedPlaybackGeneration.current += 1;
-        ambienceAudio.current?.pause();
-        phoneVideos.current[RENDERED_VIDEO_INDEX]?.pause();
-        renderedPlaybackRetryPending.current = false;
-        setAutoPlaying(false);
-        reducedMotionAudioTimer.current = null;
-      }, AUTO_STORY_DURATION_MS - AUTO_RENDER_START_MS);
-      return;
-    }
-
-    if (!isResuming) {
-      progressRef.current = 0;
-      setProgress(0);
-      setStep(0);
-      setHeadlineLines(0);
-      const renderedVideo = phoneVideos.current[RENDERED_VIDEO_INDEX];
-      if (renderedVideo) renderedVideo.currentTime = 0;
-      if (overlayVideo.current) overlayVideo.current.currentTime = 0;
-    }
-    const elapsed = audio
-      ? audio.currentTime * 1_000
-      : resumeElapsedMs;
-    autoStartedAt.current = performance.now() - elapsed;
+    progressRef.current = 0;
+    setStep(0);
+    setHeadlineLines(0);
+    const renderedVideo = phoneVideos.current[RENDERED_VIDEO_INDEX];
+    if (renderedVideo) renderedVideo.currentTime = 0;
+    if (overlayVideo.current) overlayVideo.current.currentTime = 0;
+    autoStartedAt.current = performance.now();
     renderedPlaybackAttempted.current = false;
     renderedPlaybackRetryPending.current = false;
     renderedPlaybackRetryUsed.current = false;
     renderedPlaybackGeneration.current += 1;
+    audioUnmuteAttempted.current = false;
     lastRenderedCorrectionAt.current = Number.NEGATIVE_INFINITY;
     setAutoPlaying(true);
-  };
+  }, [isAuto, reducedMotion]);
+
+  useEffect(() => {
+    if (
+      !isAuto
+      || autoStartScheduled.current
+      || window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) return;
+
+    const raf = requestAnimationFrame(() => {
+      if (autoStartScheduled.current) return;
+      autoStartScheduled.current = true;
+      startAutomaticStory();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [isAuto, startAutomaticStory]);
 
   const phoneVideoRefs = useMemo(
     () => [0, 1, 2, RENDERED_VIDEO_INDEX].map((index) => (node: HTMLVideoElement | null) => {
@@ -505,16 +464,6 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
     }),
     [],
   );
-
-  const autoButtonLabel = autoPlaying
-    ? soundUnavailable
-      ? "Pause — playing without sound"
-      : "Pause automatic demo"
-    : progress >= 1
-      ? "Replay with sound"
-      : progress > 0
-        ? "Resume with sound"
-        : "Play with sound";
 
   return (
     <section
@@ -528,6 +477,7 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
         <audio
           ref={ambienceAudio}
           src={RENDERED_AUDIO}
+          muted
           preload="metadata"
           data-testid="auto-story-audio"
           aria-hidden="true"
@@ -545,23 +495,6 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
         <p className={styles.srOnly} aria-live="polite">
           {KRIA_STORY_STEPS[step].label}, {KRIA_STORY_STEPS[step].range}
         </p>
-
-        <div className={styles.storyControls}>
-          <nav className={styles.modeSwitch} aria-label="Compare animation versions">
-            <Link href="/?mode=scroll" aria-current={!isAuto ? "page" : undefined}>Scroll</Link>
-            <Link href="/" aria-current={isAuto ? "page" : undefined}>Automatic</Link>
-          </nav>
-          {isAuto ? (
-            <button
-              type="button"
-              className={styles.autoPlayButton}
-              onClick={toggleAutomaticStory}
-              aria-pressed={autoPlaying}
-            >
-              <span aria-hidden="true">{autoPlaying ? "Ⅱ" : "▶"}</span> {autoButtonLabel}
-            </button>
-          ) : null}
-        </div>
 
         <h1
           className={styles.headline}

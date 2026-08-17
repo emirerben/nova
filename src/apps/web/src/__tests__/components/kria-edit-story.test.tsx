@@ -254,256 +254,145 @@ describe("KriaEditStory reduced motion", () => {
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
   });
 
-  it("starts the automatic comparison from one sound-enabled action", async () => {
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: jest.fn().mockReturnValue({
-        matches: false,
-        media: "(prefers-reduced-motion: reduce)",
-        addEventListener: jest.fn(),
-        removeEventListener: jest.fn(),
-      }),
-    });
+  it("starts automatically without playback or mode controls", () => {
+    mockReducedMotion(false);
+    const frames = mockAnimationFrames();
 
     render(<KriaEditStory mode="auto" />);
     const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
     const play = jest.fn().mockResolvedValue(undefined);
-    const pause = jest.fn();
     audio.play = play;
-    audio.pause = pause;
 
     expect(audio).toHaveAttribute("src", "/landing/raw-story/travel-reference-audio.m4a");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Automatic" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Scroll" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
+    frames.runLatest(0);
 
     expect(play).toHaveBeenCalledTimes(1);
     expect(audio.volume).toBe(0);
+    expect(audio.muted).toBe(true);
     expect(
       screen.getByLabelText("How Kria turns raw videos into a finished edit"),
     ).toHaveAttribute("data-mode", "auto");
-    expect(await screen.findByRole("button", { name: /pause automatic demo/i })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    expect(screen.getByRole("link", { name: "Automatic" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(screen.getByRole("link", { name: "Automatic" })).toHaveAttribute("href", "/");
-    expect(screen.getByRole("link", { name: "Scroll" })).toHaveAttribute(
-      "href",
-      "/?mode=scroll",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /pause automatic demo/i }));
-    expect(pause).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /with sound/i })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
   });
 
-  it("resumes from the paused timestamp and resets when replaying", async () => {
+  it("unmutes the synchronized soundtrack at the sound-effects beat", () => {
     mockReducedMotion(false);
     const frames = mockAnimationFrames();
 
-    const { container } = render(<KriaEditStory mode="auto" />);
+    render(<KriaEditStory mode="auto" />);
     const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
-    const renderedVideo = container.querySelector<HTMLVideoElement>(
-      'video[src="/landing/raw-story/travel-render.mp4"]',
-    );
-    const overlayVideo = container.querySelector<HTMLVideoElement>(
-      'video[src="/landing/raw-story/corfu.mp4"]',
-    );
-    expect(renderedVideo).not.toBeNull();
-    expect(overlayVideo).not.toBeNull();
-    const renderedPlay = jest.fn().mockResolvedValue(undefined);
-    const renderedPause = jest.fn();
-    renderedVideo!.play = renderedPlay;
-    renderedVideo!.pause = renderedPause;
     const play = jest.fn().mockResolvedValue(undefined);
-    const pause = jest.fn();
     audio.play = play;
-    audio.pause = pause;
     Object.defineProperty(audio, "paused", {
       configurable: true,
       get: () => false,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
-    audio.currentTime = 2;
-    frames.runLatest(2_000);
-    expect(screen.getByText("Create more, 24–36%")).toBeInTheDocument();
+    frames.runLatest(0);
+    audio.currentTime = AUTO_SOUND_START_MS / 1_000;
+    frames.runLatest(AUTO_SOUND_START_MS);
 
-    fireEvent.click(screen.getByRole("button", { name: /pause automatic demo/i }));
-    expect(screen.getByRole("button", { name: /resume with sound/i })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /resume with sound/i }));
-    expect(audio.currentTime).toBe(2);
+    expect(audio.muted).toBe(false);
     expect(play).toHaveBeenCalledTimes(2);
-
-    audio.currentTime = AUTO_STORY_DURATION_MS / 1_000;
-    frames.runLatest(AUTO_STORY_DURATION_MS);
-    expect(screen.getByRole("button", { name: /replay with sound/i })).toBeInTheDocument();
-    expect(renderedPlay).toHaveBeenCalled();
-    expect(renderedPause).toHaveBeenCalled();
-    expect(renderedVideo!.currentTime).toBeCloseTo(
-      (AUTO_STORY_DURATION_MS - AUTO_RENDER_START_MS) / 1_000,
-    );
-    overlayVideo!.currentTime = 1.25;
-
-    fireEvent.click(screen.getByRole("button", { name: /replay with sound/i }));
-    expect(audio.currentTime).toBe(0);
-    expect(overlayVideo!.currentTime).toBe(0);
-    expect(play).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("Add sound effects, 82–100%")).toBeInTheDocument();
   });
 
-  it("stops reduced-motion playback after the authored render duration", async () => {
-    jest.useFakeTimers();
+  it("keeps the completed composition static for reduced motion", async () => {
     mockReducedMotion(true);
+    const frames = mockAnimationFrames();
+    const play = HTMLMediaElement.prototype.play as jest.Mock;
+    play.mockClear();
 
     render(<KriaEditStory mode="auto" />);
-    const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
-    const pause = jest.fn();
-    audio.play = jest.fn().mockResolvedValue(undefined);
-    audio.pause = pause;
+    frames.runAll(0);
 
     await waitFor(() => {
       expect(
         screen.getByLabelText("How Kria turns raw videos into a finished edit"),
       ).toHaveAttribute("data-reduced-motion", "true");
     });
-    fireEvent.click(screen.getByRole("button", { name: /replay with sound/i }));
-
-    act(() => {
-      jest.advanceTimersByTime(AUTO_STORY_DURATION_MS - AUTO_RENDER_START_MS);
-    });
-
-    expect(pause).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /replay with sound/i })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
+    expect(screen.getByText("Add sound effects, 82–100%")).toBeInTheDocument();
+    expect(play).not.toHaveBeenCalled();
   });
 
-  it("clears the reduced-motion stop timer when unmounted", async () => {
-    jest.useFakeTimers();
-    mockReducedMotion(true);
+  it("cancels the scheduled automatic start when unmounted", () => {
+    mockReducedMotion(false);
+    const frames = mockAnimationFrames();
 
     const { unmount } = render(<KriaEditStory mode="auto" />);
     const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
-    const pause = jest.fn();
-    audio.play = jest.fn().mockResolvedValue(undefined);
-    audio.pause = pause;
-
-    await waitFor(() => {
-      expect(
-        screen.getByLabelText("How Kria turns raw videos into a finished edit"),
-      ).toHaveAttribute("data-reduced-motion", "true");
-    });
-    fireEvent.click(screen.getByRole("button", { name: /replay with sound/i }));
+    const play = jest.fn().mockResolvedValue(undefined);
+    audio.play = play;
     unmount();
-    const callsAfterUnmount = pause.mock.calls.length;
+    frames.runAll(0);
 
-    act(() => {
-      jest.advanceTimersByTime(AUTO_STORY_DURATION_MS);
-    });
-
-    expect(pause).toHaveBeenCalledTimes(callsAfterUnmount);
+    expect(play).not.toHaveBeenCalled();
   });
 
-  it("cancels the reduced-motion stop timer when paused early", async () => {
-    jest.useFakeTimers();
-    mockReducedMotion(true);
+  it("finishes automatic playback without adding replay controls", () => {
+    mockReducedMotion(false);
+    const frames = mockAnimationFrames();
 
     render(<KriaEditStory mode="auto" />);
     const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
     const pause = jest.fn();
     audio.play = jest.fn().mockResolvedValue(undefined);
     audio.pause = pause;
+    Object.defineProperty(audio, "paused", { configurable: true, get: () => false });
 
-    await waitFor(() => {
-      expect(
-        screen.getByLabelText("How Kria turns raw videos into a finished edit"),
-      ).toHaveAttribute("data-reduced-motion", "true");
-    });
-    fireEvent.click(screen.getByRole("button", { name: /replay with sound/i }));
-    fireEvent.click(screen.getByRole("button", { name: /pause automatic demo/i }));
-    const callsAfterPause = pause.mock.calls.length;
+    frames.runLatest(0);
+    audio.currentTime = AUTO_STORY_DURATION_MS / 1_000;
+    frames.runLatest(AUTO_STORY_DURATION_MS);
 
-    act(() => {
-      jest.advanceTimersByTime(AUTO_STORY_DURATION_MS);
-    });
-
-    expect(pause).toHaveBeenCalledTimes(callsAfterPause);
-    expect(screen.getByRole("button", { name: /replay with sound/i })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
+    expect(pause).toHaveBeenCalled();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByText("Add sound effects, 82–100%")).toBeInTheDocument();
   });
 
-  it("remains controllable when the browser rejects media playback", async () => {
-    mockReducedMotion(false);
-
-    render(<KriaEditStory mode="auto" />);
-    const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
-    audio.play = jest
-      .fn()
-      .mockRejectedValueOnce(new Error("playback blocked"))
-      .mockResolvedValue(undefined);
-    audio.pause = jest.fn();
-
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
-
-    expect(
-      await screen.findByRole("button", { name: /playing without sound/i }),
-    ).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByRole("button", { name: /playing without sound/i }));
-    expect(screen.getByRole("button", { name: /with sound/i })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-
-    // Playback rejection can take long enough for the visual clock to advance,
-    // so this control may correctly read either "Play" or "Resume" with sound.
-    fireEvent.click(screen.getByRole("button", { name: /with sound/i }));
-    expect(audio.play).toHaveBeenCalledTimes(2);
-    expect(
-      await screen.findByRole("button", { name: /pause automatic demo/i }),
-    ).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("resumes from the visual timeline after blocked audio instead of rewinding", async () => {
+  it("keeps the visual timeline running when autoplay audio is blocked", async () => {
     mockReducedMotion(false);
     const frames = mockAnimationFrames();
     jest.spyOn(performance, "now").mockReturnValue(0);
 
     render(<KriaEditStory mode="auto" />);
     const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
-    let audioPaused = true;
-    Object.defineProperty(audio, "paused", { configurable: true, get: () => audioPaused });
+    audio.play = jest.fn().mockRejectedValue(new Error("playback blocked"));
+    Object.defineProperty(audio, "paused", { configurable: true, get: () => true });
+
+    frames.runLatest(0);
+    frames.runLatest(4_000);
+
+    expect(screen.getByText("Captions + visual effects, 36–52%")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("retries synchronized audio once at the sound-effects beat", () => {
+    mockReducedMotion(false);
+    const frames = mockAnimationFrames();
+    jest.spyOn(performance, "now").mockReturnValue(0);
+
+    render(<KriaEditStory mode="auto" />);
+    const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
+    Object.defineProperty(audio, "paused", { configurable: true, get: () => true });
     audio.play = jest
       .fn()
       .mockRejectedValueOnce(new Error("playback blocked"))
-      .mockImplementation(() => {
-        audioPaused = false;
-        return Promise.resolve();
-      });
-    audio.pause = jest.fn(() => { audioPaused = true; });
+      .mockResolvedValue(undefined);
 
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
-    frames.runLatest(4_000);
-    expect(screen.getByText("Captions + visual effects, 36–52%")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: /playing without sound/i }));
+    frames.runLatest(0);
+    frames.runLatest(AUTO_SOUND_START_MS);
 
-    fireEvent.click(screen.getByRole("button", { name: /resume with sound/i }));
-    expect(audio.currentTime).toBeCloseTo(4);
-    frames.runLatest(4_100);
-    expect(screen.getByText("Captions + visual effects, 36–52%")).toBeInTheDocument();
+    expect(audio.play).toHaveBeenCalledTimes(2);
+    expect(audio.currentTime).toBeCloseTo(AUTO_SOUND_START_MS / 1_000);
+    expect(audio.muted).toBe(false);
   });
 
   it("stops active playback when reduced motion is enabled at runtime", async () => {
     const mediaQuery = mockReducedMotion(false);
+    const frames = mockAnimationFrames();
 
     const { container, unmount } = render(<KriaEditStory mode="auto" />);
     const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
@@ -515,7 +404,7 @@ describe("KriaEditStory reduced motion", () => {
     expect(renderedVideo).not.toBeNull();
     renderedVideo!.pause = jest.fn();
 
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
+    frames.runLatest(0);
     mediaQuery.setMatches(true);
 
     await waitFor(() => {
@@ -526,10 +415,7 @@ describe("KriaEditStory reduced motion", () => {
     expect(screen.getByText("Add sound effects, 82–100%")).toBeInTheDocument();
     expect(audio.pause).toHaveBeenCalled();
     expect(renderedVideo!.pause).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /replay with sound/i })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
 
     unmount();
     expect(mediaQuery.removeEventListener).toHaveBeenCalledWith(
@@ -538,25 +424,21 @@ describe("KriaEditStory reduced motion", () => {
     );
   });
 
-  it("ignores a stale audio rejection after a newer playback starts", async () => {
+  it("ignores a stale audio rejection after unmount", async () => {
     mockReducedMotion(false);
+    const frames = mockAnimationFrames();
     const firstPlayback = createDeferred();
 
-    render(<KriaEditStory mode="auto" />);
+    const { unmount } = render(<KriaEditStory mode="auto" />);
     const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
-    audio.play = jest
-      .fn()
-      .mockReturnValueOnce(firstPlayback.promise)
-      .mockResolvedValue(undefined);
+    audio.play = jest.fn().mockReturnValue(firstPlayback.promise);
     audio.pause = jest.fn();
 
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
-    fireEvent.click(screen.getByRole("button", { name: /pause automatic demo/i }));
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
+    frames.runLatest(0);
+    unmount();
     await act(async () => { firstPlayback.reject(new Error("stale rejection")); });
 
-    expect(screen.getByRole("button", { name: /pause automatic demo/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /playing without sound/i })).not.toBeInTheDocument();
+    expect(audio.pause).toHaveBeenCalled();
   });
 
   it("attempts rendered-video playback only once after a rejection", () => {
@@ -578,7 +460,7 @@ describe("KriaEditStory reduced motion", () => {
       get: () => true,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
+    frames.runLatest(0);
     audio.currentTime = AUTO_RENDER_START_MS / 1_000;
     frames.runLatest(AUTO_RENDER_START_MS);
     audio.currentTime += 0.1;
@@ -609,7 +491,7 @@ describe("KriaEditStory reduced motion", () => {
       get: () => true,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
+    frames.runLatest(0);
     audio.currentTime = AUTO_RENDER_START_MS / 1_000;
     frames.runLatest(AUTO_RENDER_START_MS);
     await waitFor(() => expect(renderedPlay).toHaveBeenCalledTimes(1));
@@ -620,12 +502,12 @@ describe("KriaEditStory reduced motion", () => {
     expect(renderedPlay).toHaveBeenCalledTimes(2);
   });
 
-  it("does not arm a retry from a stale rendered-video rejection", async () => {
+  it("does not arm a retry from a rendered-video rejection after unmount", async () => {
     mockReducedMotion(false);
     const frames = mockAnimationFrames();
     const firstPlayback = createDeferred();
 
-    const { container } = render(<KriaEditStory mode="auto" />);
+    const { container, unmount } = render(<KriaEditStory mode="auto" />);
     const audio = screen.getByTestId("auto-story-audio") as HTMLAudioElement;
     Object.defineProperty(audio, "paused", { configurable: true, get: () => false });
     audio.play = jest.fn().mockResolvedValue(undefined);
@@ -640,17 +522,15 @@ describe("KriaEditStory reduced motion", () => {
     renderedVideo!.play = renderedPlay;
     Object.defineProperty(renderedVideo!, "paused", { configurable: true, get: () => true });
 
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
+    frames.runLatest(0);
     audio.currentTime = AUTO_RENDER_START_MS / 1_000;
     frames.runLatest(AUTO_RENDER_START_MS);
-    fireEvent.click(screen.getByRole("button", { name: /pause automatic demo/i }));
-    fireEvent.click(screen.getByRole("button", { name: /resume with sound/i }));
-    frames.runLatest(AUTO_RENDER_START_MS + 100);
-    expect(renderedPlay).toHaveBeenCalledTimes(2);
+    expect(renderedPlay).toHaveBeenCalledTimes(1);
+    unmount();
 
     await act(async () => { firstPlayback.reject(new Error("stale rejection")); });
     fireEvent.canPlay(renderedVideo!);
-    expect(renderedPlay).toHaveBeenCalledTimes(2);
+    expect(renderedPlay).toHaveBeenCalledTimes(1);
   });
 
   it("does not chase rendered-video drift while the video is buffering", () => {
@@ -674,7 +554,7 @@ describe("KriaEditStory reduced motion", () => {
       get: () => readyState,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
+    frames.runLatest(0);
     audio.currentTime = AUTO_RENDER_START_MS / 1_000;
     frames.runLatest(AUTO_RENDER_START_MS);
     audio.currentTime += 1;

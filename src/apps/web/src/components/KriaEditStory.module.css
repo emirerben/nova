@@ -32,81 +32,14 @@
   white-space: nowrap;
 }
 
-.storyControls {
-  position: absolute;
-  z-index: 20;
-  top: 12px;
-  left: 50%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transform: translateX(-50%);
-}
-
-.modeSwitch {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--cream) 92%, transparent);
-  box-shadow: 0 8px 24px rgb(12 12 14 / 8%);
-}
-
-.modeSwitch a {
-  border-radius: 999px;
-  padding: 7px 12px;
-  color: var(--ink3);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 16px;
-}
-
-.modeSwitch a[aria-current="page"] {
-  background: var(--ink);
-  color: white;
-}
-
 @media (hover: hover) {
-  .modeSwitch a:hover,
-  .autoPlayButton:hover {
-    opacity: 0.72;
-  }
-
   .cta:hover {
     opacity: 0.8;
   }
 }
 
-.modeSwitch a:active,
-.autoPlayButton:active,
 .cta:active {
   opacity: 0.62;
-}
-
-.autoPlayButton {
-  display: inline-flex;
-  min-height: 36px;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--story-lime);
-  color: var(--ink);
-  padding: 8px 14px;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 16px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.modeSwitch a:focus-visible,
-.autoPlayButton:focus-visible {
-  outline: 3px solid #65a30d;
-  outline-offset: 2px;
 }
 
 .headline {
@@ -359,25 +292,6 @@
   .scrollStory { height: 720svh; }
 
   .stickyStage { min-height: 611px; }
-
-  .storyControls {
-    top: 8px;
-    gap: 6px;
-  }
-
-  .modeSwitch a {
-    display: inline-flex;
-    min-height: 44px;
-    align-items: center;
-    padding: 6px 9px;
-    font-size: 10px;
-  }
-
-  .autoPlayButton {
-    min-height: 44px;
-    padding: 6px 10px;
-    font-size: 10px;
-  }
 
   .headline {
     top: calc(24% + min(24.75vw, 140.625px));
