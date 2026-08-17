@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.edit_guide",
-  "prompt_version": "1.0.4",
+  "prompt_version": "1.0.5",
   "input": {
     "phase": "review",
     "idea": "Corfu trip",
@@ -15,12 +15,17 @@
       "duration_s": 24
     },
     "title": "A Day in Corfu",
+    "media": [
+      {"media_ref": "media_1", "kind": "video", "source_filename": "town.mov", "subject": "old town street"},
+      {"media_ref": "media_2", "kind": "video", "source_filename": "food.mov", "subject": "local market food"},
+      {"media_ref": "media_3", "kind": "video", "source_filename": "coast.mov", "subject": "quiet coast"}
+    ],
     "beats": [
-      {"beat_id": "town", "topic": "Old town", "thought": "Stone streets hold layers of history.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 6, "media_count": 3},
-      {"beat_id": "food", "topic": "Food", "thought": "Local colors make each stop distinct.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 6, "media_count": 2},
-      {"beat_id": "coast", "topic": "Coast", "thought": "The water slows the final moments.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 6, "media_count": 3}
+      {"beat_id": "town", "topic": "Old town", "thought": "Stone streets hold layers of history.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 6, "media_count": 1, "media_refs": ["media_1"]},
+      {"beat_id": "food", "topic": "Food", "thought": "Local colors make each stop distinct.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 6, "media_count": 1, "media_refs": ["media_2"]},
+      {"beat_id": "coast", "topic": "Coast", "thought": "The water slows the final moments.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 6, "media_count": 1, "media_refs": ["media_3"]}
     ]
   },
-  "raw_text": "{\"reply\":\"I moved food to the opening, slowed the pace, and shortened each thought while keeping all three chapters.\",\"suggestions\":[\"Make the title simpler\"],\"brief\":{\"direction\":\"guided_story\",\"goal\":\"Share what stood out in Corfu\",\"pace\":\"relaxed\",\"duration_s\":30},\"ready_to_plan\":true,\"revision\":{\"direction\":\"guided_story\",\"goal\":\"Share what stood out in Corfu\",\"pace\":\"relaxed\",\"duration_s\":30,\"title\":\"A Slower Day in Corfu\",\"story_beats\":[{\"beat_id\":\"food\",\"topic\":\"Food\",\"thought\":\"Local colors make each stop distinct.\",\"layout\":\"fullscreen\",\"duration_s\":7},{\"beat_id\":\"town\",\"topic\":\"Old town\",\"thought\":\"Stone streets hold layers of history.\",\"layout\":\"fullscreen\",\"duration_s\":7},{\"beat_id\":\"coast\",\"topic\":\"Coast\",\"thought\":\"The water slows the ending.\",\"layout\":\"fullscreen\",\"duration_s\":7}]}}",
+  "raw_text": "{\"reply\":\"I moved food to the opening, slowed the pace, and shortened each thought while keeping all three chapters.\",\"suggestions\":[\"Make the title simpler\"],\"brief\":{\"direction\":\"guided_story\",\"goal\":\"Share what stood out in Corfu\",\"pace\":\"relaxed\",\"duration_s\":30},\"ready_to_plan\":true,\"revision\":{\"direction\":\"guided_story\",\"goal\":\"Share what stood out in Corfu\",\"pace\":\"relaxed\",\"duration_s\":30,\"title\":\"A Slower Day in Corfu\",\"story_beats\":[{\"beat_id\":\"food\",\"topic\":\"Food\",\"thought\":\"Local colors make each stop distinct.\",\"layout\":\"fullscreen\",\"duration_s\":7,\"media_refs\":[\"media_2\"]},{\"beat_id\":\"town\",\"topic\":\"Old town\",\"thought\":\"Stone streets hold layers of history.\",\"layout\":\"fullscreen\",\"duration_s\":7,\"media_refs\":[\"media_1\"]},{\"beat_id\":\"coast\",\"topic\":\"Coast\",\"thought\":\"The water slows the ending.\",\"layout\":\"fullscreen\",\"duration_s\":7,\"media_refs\":[\"media_3\"]}]}}",
   "meta": {"source": "product_case", "scenario": "plain-language draft revision"}
 }
