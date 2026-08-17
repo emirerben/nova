@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - **Backend releases can no longer stall unnoticed.** A scheduled check now compares what is on the main branch against what has actually deployed, and raises an alarm if code sits undeployed for more than two hours. It measures the gap rather than watching for failed deploys, because deploys fail transiently and self-heal often enough that a failure alarm gets ignored — which is how a day-long stall went unnoticed on 2026-08-12 while the site itself stayed up and healthy. A pull request that adds two or more database migrations where one can refuse to apply is now blocked unless it says how the releases will be ordered, which is the packaging mistake that caused that stall. Tests also run on every merge to the main branch, so a breakage is attributed to the change that caused it instead of surfacing days later on someone else's unrelated work.
+### Fixed
+- **Fly Deploy no longer goes red when Fly kills the release machine during startup (#834).** The
+  deploy workflow now wraps `flyctl deploy` in `scripts/fly-deploy-with-retry.sh`, which retries
+  exactly once — and only when the log matches the full startup-kill signature (`has state:
+  destroyed` + `release_command failed ... with exit code 143`). Any other failure, most importantly
+  a genuine migration error, still fails on the first attempt; a retried deploy is loudly marked
+  with a `::warning` annotation and a job-summary block so it can never be mistaken for a clean
+  pass. Investigation refuted the leading `REMAP_SIGTERM` hypothesis (it's a Celery-only setting,
+  inert on the release machine — recorded in fly.toml comments and agents/DECISIONS.md); the root
+  cause is a Fly platform-side machine lifecycle race, which is why the fix is a targeted retry
+  rather than config. Pinned by 13 new tests driving the real script against a stub flyctl.
 
 ## [0.34.1.7] — 2026-08-17
 

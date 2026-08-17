@@ -9,6 +9,15 @@ kill_timeout = 300
 # lets Celery spend four of those minutes in soft shutdown, then restore any
 # unfinished late-acknowledged task with a one-minute margin before hard stop.
 [env]
+  # REMAP_SIGTERM is read by the Celery worker process itself (a Celery 5.5
+  # soft-shutdown feature) — not by Fly's init. It's inert on any non-Celery
+  # process, including the temporary release_command machine that inherits
+  # this env block. It is NOT the cause of the intermittent release-machine
+  # kills tracked in issue #834: those exit with code 143 (128+15 = plain
+  # SIGTERM); a SIGQUIT death from a remap would instead be 131. Root cause
+  # is a Fly platform-side machine lifecycle race — see agents/DECISIONS.md
+  # (2026-08-17) and scripts/fly-deploy-with-retry.sh, which retries that
+  # specific signature once.
   REMAP_SIGTERM = "SIGQUIT"
   # Deploy the dedicated worker before switching POOL_ASSET_ANALYSIS_QUEUE via
   # a Fly secret. Initial routing deliberately remains the code default: celery.
