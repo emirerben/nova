@@ -582,8 +582,16 @@ describe("EditorShell visuals upload lifecycle", () => {
   });
 
   it("fences stale hydration and polls a newly queued asset through to ready", async () => {
-    const queued = poolAsset({ status: "queued", display_url: null, subject: null });
-    const ready = poolAsset();
+    const queued = poolAsset({
+      status: "queued",
+      display_url:
+        "https://storage.googleapis.com/nova/users/u/plan/item-1/pool/queued.heic?signature=raw",
+      subject: null,
+    });
+    const ready = poolAsset({
+      display_url:
+        "https://storage.googleapis.com/nova/users/u/plan/item-1/pool/queued.heic.preview.jpg?signature=preview",
+    });
     let listCalls = 0;
     let releaseInitial: ((response: Response) => void) | null = null;
     global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -631,9 +639,15 @@ describe("EditorShell visuals upload lifecycle", () => {
     expect(await screen.findByText("Queued for analysis…")).toBeInTheDocument();
     await act(async () => releaseInitial?.(jsonResponse({ assets: [], max_assets: 20 })));
     expect(screen.getByText("Queued for analysis…")).toBeInTheDocument();
-    expect(
-      await screen.findByRole("button", { name: "Select queued.png" }, { timeout: 4_000 }),
-    ).toBeInTheDocument();
+    const readyButton = await screen.findByRole(
+      "button",
+      { name: "Select queued.png" },
+      { timeout: 4_000 },
+    );
+    expect(readyButton.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://storage.googleapis.com/nova/users/u/plan/item-1/pool/queued.heic.preview.jpg?signature=preview",
+    );
     expect(listCalls).toBeGreaterThanOrEqual(2);
   });
 });

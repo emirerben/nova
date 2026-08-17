@@ -13,6 +13,15 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **The old caption instructions block shrank to one line** ("Pause and tap a caption to fix a word.") instead of a two-sentence lecture, and a leaked internal roadmap note ("Controls for this element arrive with the timeline update.") no longer shows to users.
 
+## [0.35.1.0] — 2026-08-17
+
+### Fixed
+- **Newly uploaded iPhone photos now open as soon as their preview is ready, without refreshing
+  the page.** The live pool and editor had been keeping the first signed URL they received even
+  after Kria replaced the raw HEIC file with a browser-safe JPEG preview. They now keep a URL only
+  while it still points to the same stored object, adopt the generated preview immediately, and
+  retain the last working thumbnail if a signing attempt briefly returns no URL.
+
 ## [0.35.0.1] — 2026-08-17
 
 ### Fixed
