@@ -534,10 +534,18 @@ function AssetTile({
   const [draftContext, setDraftContext] = useState(asset.user_context ?? "");
   const [savingContext, setSavingContext] = useState(false);
   const [contextError, setContextError] = useState<string | null>(null);
+  // Some HEIC/HEVC uploads still fail to decode client-side even with a
+  // preview (or predate the preview backfill) — fall back to the kind-label
+  // placeholder instead of a permanently broken tile.
+  const [mediaError, setMediaError] = useState(false);
 
   useEffect(() => {
     setDraftContext(asset.user_context ?? "");
   }, [asset.user_context]);
+
+  useEffect(() => {
+    setMediaError(false);
+  }, [asset.display_url]);
 
   async function saveContext() {
     setSavingContext(true);
@@ -589,19 +597,30 @@ function AssetTile({
   return (
     <li className="group relative overflow-hidden rounded-lg border border-zinc-200 bg-white">
       <div className="relative aspect-square overflow-hidden">
-        {busy || !asset.display_url ? (
-          <div className="absolute inset-0 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+        {busy || !asset.display_url || mediaError ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer">
+            {!busy && mediaError && (
+              <span className="text-[11px] font-medium capitalize text-[#71717a]">{asset.kind}</span>
+            )}
+          </div>
         ) : asset.kind === "video" ? (
           <StableVideo
             src={asset.display_url}
+            poster={asset.preview_url ?? undefined}
             muted
             playsInline
             preload="metadata"
+            onError={() => setMediaError(true)}
             className="h-full w-full object-cover"
           />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element -- signed GCS thumbnail, not an optimizable static asset
-          <img src={asset.display_url} alt={asset.subject ?? label} className="h-full w-full object-cover" />
+          <img
+            src={asset.display_url}
+            alt={asset.subject ?? label}
+            onError={() => setMediaError(true)}
+            className="h-full w-full object-cover"
+          />
         )}
         {/* bg-white/95 (not /85): the lime-700 action text must hold the 4.5:1
             contrast floor even over dark video frames (DESIGN.md §8). */}

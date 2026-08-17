@@ -102,7 +102,7 @@ const EDITABLE_CAPABILITIES: EditorCapabilities = {
   },
 };
 
-function makeVariant(): PlanItemVariant {
+function makeVariant(overrides: Partial<PlanItemVariant> = {}): PlanItemVariant {
   return {
     variant_id: "song_text",
     output_url: "https://storage.example/variant.mp4",
@@ -115,13 +115,14 @@ function makeVariant(): PlanItemVariant {
     resolved_archetype: "montage",
     render_generation_id: "gen-current",
     editor_capabilities: EDITABLE_CAPABILITIES,
+    ...overrides,
   } as unknown as PlanItemVariant;
 }
 
-async function renderShell() {
+async function renderShell(variant: PlanItemVariant = makeVariant()) {
   mockGetPlanItem.mockResolvedValue(ITEM);
   mockGetPlanItemJobStatus.mockResolvedValue({
-    variants: [makeVariant()],
+    variants: [variant],
   } as unknown as Awaited<ReturnType<typeof getPlanItemJobStatus>>);
   mockCommitEditorSession.mockResolvedValue({
     ok: true,
@@ -147,6 +148,7 @@ describe("EditorShell orientation", () => {
       "true",
     );
     expect(document.querySelector("video")).toHaveClass("object-cover");
+    expect(screen.getByRole("region", { name: "Video canvas, 16:9 landscape" })).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Use 9:16 output" }));
     expect(screen.getByRole("button", { name: "Use 9:16 output" })).toHaveAttribute(
@@ -154,6 +156,7 @@ describe("EditorShell orientation", () => {
       "true",
     );
     expect(document.querySelector("video")).toHaveClass("object-contain");
+    expect(screen.getByRole("region", { name: "Video canvas, 9:16 portrait" })).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(screen.getByRole("button", { name: "Use 16:9 output" })).toHaveAttribute(
@@ -161,6 +164,60 @@ describe("EditorShell orientation", () => {
       "true",
     );
     expect(document.querySelector("video")).toHaveClass("object-cover");
+  });
+
+  it("uses the server's actual format and keeps landscape enabled for a guided story", async () => {
+    await renderShell(
+      makeVariant({
+        variant_id: "guided_story",
+        orientation: undefined,
+        resolved_archetype: "guided_story",
+        editor_capabilities: {
+          ...EDITABLE_CAPABILITIES,
+          timeline: false,
+          split_clips: false,
+          orientation: { editable: true, value: "landscape", reason: null },
+        },
+      }),
+    );
+
+    expect(screen.getByRole("button", { name: "Use 16:9 output" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Use 9:16 output" })).toBeEnabled();
+    expect(screen.getByRole("region", { name: "Video canvas, 16:9 landscape" })).toBeVisible();
+  });
+
+  it("locks the format switch while Save is in flight and restores it after an error", async () => {
+    let rejectSave: (reason?: unknown) => void = () => {};
+    mockCommitEditorSession.mockImplementationOnce(
+      () => new Promise((_, reject) => { rejectSave = reject; }),
+    );
+    await renderShell();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use 9:16 output" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("group", { name: "Output format" })).toHaveAttribute(
+        "aria-busy",
+        "true",
+      );
+    });
+    expect(screen.getByRole("button", { name: "Use 9:16 output" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Use 16:9 output" })).toBeDisabled();
+
+    await act(async () => {
+      rejectSave(new Error("Couldn't rebuild this format."));
+    });
+
+    expect(await screen.findByText("Couldn't rebuild this format.")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Output format" })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Use 16:9 output" })).toBeEnabled();
   });
 
   it("forgets the recovery draft after a successful orientation save", async () => {

@@ -1123,7 +1123,8 @@ it asked creators to translate creative intent into product controls before Kria
   can revise a draft. Any revision returns an approved proposal to `draft`, so new wording and order
   cannot render without approval.
 - **Media identity stays server-owned.** Model-authored revisions preserve every beat ID exactly once.
-  The route rejoins the original media membership and retains creator-written thoughts verbatim.
+  Media reassignment was added later through bounded short aliases; the route always rejoins real
+  identities and retains creator-written thoughts verbatim.
 - **Slow model calls do not hold item locks.** The route first persists a short-lived, token-fenced
   single-flight reservation, closes the transaction, calls the model, then reloads under lock and
   requires the same token and proposal version. A reload sees only safe thinking/retry state, never
@@ -1149,3 +1150,124 @@ timeline reader marked every source unused because it only understood `ai_timeli
   legacy timeline mutation APIs responsible for guided stories.
 - **Different text regions may share time.** A top-positioned title and bottom-positioned first thought
   can both start at zero. Serializing them made the first thought only one frame long in short edits.
+
+## [2026-08-17] Fly release_command startup kill: retry once, don't touch REMAP_SIGTERM
+
+`Fly Deploy` intermittently went red with exit 143 (SIGTERM) on the release_command machine
+(`python -m alembic upgrade head`) — the machine reported `has state: destroyed` roughly 3 seconds
+after starting, well before alembic could plausibly have failed, and the very next deploy of the
+identical code succeeded. Rate: 2 in ~12 releases (v891, v896). The concerning part wasn't the
+occasional red run — it was that a deploy pipeline crying wolf 1-in-6 can't also be trusted as the
+signal for a real freeze; this exact noise class is how the 24-hour deploy freeze (#812) hid earlier.
+
+Issue #834 ranked three hypotheses, top of which was `REMAP_SIGTERM = "SIGQUIT"` in fly.toml `[env]`
+leaking onto the release machine. That was refuted during investigation: `REMAP_SIGTERM` is a Celery
+5.5 feature read by the Celery worker process itself (to reinterpret SIGTERM as cold shutdown, opening
+the soft-shutdown window used by `app/worker.py`'s late-ack design) — Fly's init never reads it, and
+it's absent from Fly's own configuration docs. The release machine does inherit the `[env]` block (Fly
+docs: the temporary release machine "has full access to the network, environment variables and
+secrets"), but `python -m alembic` never reads that variable, so it is inert there. The exit code is
+the tell: 143 = 128+15 = a plain, unremapped SIGTERM; a SIGQUIT death (what an actual remap would
+cause) would be 131. The observed 143 proves the process died from platform-side SIGTERM, not a
+Celery-side remap that doesn't even apply to this process. Conclusion: this is a Fly platform-side
+machine lifecycle race (flyctl and the machine disagreeing about state, per the accompanying "timeout
+waiting for release command logs" log line), not something fixable from our config.
+
+**Decisions:**
+
+- **Retry, don't reconfigure.** Nothing in fly.toml changed in value — `REMAP_SIGTERM` stays
+  `SIGQUIT` at the top-level `[env]` block, which `tests/test_deploy_shutdown_policy.py` continues to
+  pin, because the worker's late-ack soft-shutdown design is load-bearing on it. A comment was added
+  directly above the line recording the refutation, so the next person chasing a #834-shaped report
+  doesn't re-open the same dead end.
+- **Signature-gated, not blanket.** `scripts/fly-deploy-with-retry.sh` retries exactly once, and only
+  when the deploy log shows BOTH `has state: destroyed` and `release_command failed running on
+  machine ... with exit code 143` (word-bounded regex, ANSI-stripped first). Any other failure — most
+  importantly a genuine migration `raise`, which exits 1 — fails immediately on the first attempt.
+  Acceptance criterion from #834: a startup-killed release command no longer fails the deploy outright,
+  AND a real migration failure still fails on attempt one, visibly. A blanket retry-on-any-failure was
+  explicitly rejected — it would recreate the exact noise class that hid #812.
+- **The gate is log-based, NOT flyctl-exit-code-based — deliberately.** flyctl itself exits 1 on a
+  release_command failure (verified in run 31972609339: log says `exit code 143`, step says "Process
+  completed with exit code 1"); the 143 only ever appears in the LOG. Cross-model review suggested
+  "hardening" the gate with `$exit_code -eq 143` — that would silently disable the retry forever.
+  Pinned by `test_signature_then_success_retries_once_and_warns` (exit 1 + signature ⇒ retries).
+- **Known accepted over-match:** a migration that runs long enough to be SIGTERM'd by Fly's 5-minute
+  release timeout produces the same signature and gets the one loud retry. Accepted because alembic
+  migrations are transactional, every deploy attempt re-runs the release command anyway, and a second
+  timeout still fails the deploy. The retry annotations deliberately hedge the root-cause claim
+  ("usually the #834 race") rather than asserting it — the signature proves SIGTERM + destroyed, not
+  which SIGTERM.
+- **Loud, not silently green.** A retry emits a `::warning title=Fly deploy retried::` GitHub Actions
+  annotation (unconditional) plus a `$GITHUB_STEP_SUMMARY` block with a 40-line log tail, whenever that
+  var is set (CI only — local runs no-op instead of crashing). A green deploy after a retry should
+  still be visibly flagged as "retried," not indistinguishable from a clean first-attempt pass.
+
+**Revisit if:** the retried-signature rate rises materially above the observed ~2-in-12 baseline (would
+suggest the platform race is worsening, not just noise), or Fly ships a fix for release-machine
+lifecycle reporting — at that point the retry wrapper becomes a belt-and-braces fallback rather than a
+load-bearing part of the pipeline, and `timeout-minutes` can likely drop back toward 25.
+## [2026-08-17] Conversational revisions use short review references
+
+Production dogfood asked Kria to swap two named travel videos and shorten five thoughts. The model's
+reply described the correct change, but both schema attempts failed because one long generated beat ID
+was lost while reproducing the full revision.
+
+**Decisions:**
+
+- **Models edit aliases, servers retain identities.** Review prompts expose `beat_1`, `beat_2`, and
+  similar short references. Parsed revisions must preserve every alias exactly once, after which the
+  server maps them back to the original beat IDs.
+- **Visible-content references have an explicit join.** Media already supplied to the edit guide gets
+  a short `media_1`-style reference, and every review beat lists its associated media references. This
+  lets “the bridge video,” “the Istanbul clip,” and uploaded filenames resolve to the intended beat.
+- **Safety remains fail-closed.** Unknown, missing, or duplicated aliases are rejected. The model still
+  cannot add media, replace object identity, remove beats, or overwrite creator-authored thoughts.
+
+## [2026-08-17] Conversational revisions may reassign existing media safely
+
+The first filename-reference repair let the model understand which upload a creator meant, but the
+revision output could only reorder beat IDs. In production dogfood the model changed “Cityscape” to
+“Lisbon” while leaving the Istanbul source underneath it, then claimed the request was complete.
+
+**Decisions:**
+
+- **Every revised beat returns media aliases explicitly.** A request such as “moment 1 uses the bridge
+  video” can move `media_1` to that beat instead of merely changing its text.
+- **The server validates the complete assignment.** The multiset of returned aliases must exactly match
+  the currently assigned aliases. Unknown, missing, or duplicated media fails closed before persistence.
+- **Aliases never become authority.** Only the server maps validated aliases back to stable media IDs;
+  the model still cannot introduce another user's object, replace storage identity, or drop a source.
+
+## [2026-08-17] Approved guided media satisfies the Generate footage gate
+
+Production dogfood approved a five-source guided story built entirely from the visuals pool, then the
+page disabled Generate with “Add clips to generate.” The strict renderer already consumes both media
+lanes from the approved snapshot; only the legacy frontend gate still counted attached clips.
+
+**Decision:** A current approved proposal with at least one selected story-beat media ID satisfies both
+the frontend and API footage gates. Unguided items and empty/malformed approvals still require an
+attached clip, and the lock-owning dispatcher continues to revalidate the approved snapshot before
+dispatch. The initial frontend-only repair exposed the API twin in production; both layers now share
+the same contract.
+
+## [2026-08-17] Guided stories inherit selected-media orientation
+
+Production dogfood proved that all five approved travel sources were 16:9 while the strict story
+renderer still hardcoded a 9:16 canvas. The output was technically valid but needlessly cropped, and
+the editor then disabled the control that could have corrected it.
+
+**Decisions:**
+
+- **Approved screen time chooses the default canvas.** Only media referenced by story beats votes;
+  each source is weighted by its approved exposure. Near-square and unknown aspects are neutral,
+  ties follow the first selected non-square source, and no usable metadata falls back to portrait.
+- **Orientation is part of the strict program.** Compiler v3 pins the chosen canvas and explanation;
+  moment rendering, text burn, receipt dimensions, variant projection, and the editor all read that
+  same value. Persisted v1/v2 plans remain portrait and replay without reinterpretation.
+- **Editor changes remain story-native.** A 9:16/16:9 change re-renders the pinned media, timing,
+  music, and validated text through the strict story renderer. Token-gated publication and the full
+  receipt apply again; a generic montage is never an orientation fallback.
+- **Editorial defaults do not outline text.** New guided titles use Fraunces and thoughts use DM Sans
+  with warm-white fill, a lime accent, and soft shadow. Both persist `stroke_width=0`; old plans and
+  user edits remain unchanged.

@@ -5083,9 +5083,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "lyrics_model": "elements",
             },
             "orientation": {
-                "editable": False,
+                "editable": _LANDSCAPE_OUTPUT_ENABLED,
                 "value": _variant_orientation(variant),
-                "reason": reason,
+                "reason": None if _LANDSCAPE_OUTPUT_ENABLED else "disabled",
             },
             "carousel": False,
             "carousel_reason": reason,
@@ -5269,24 +5269,48 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
     reason = _timeline_ineligibility(job, variant)
     ai_slots, user_slots, beat_grid = _timeline_parts(variant)
+    clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
+    projected_story_duration_s: float | None = None
     # Guided stories deliberately have no editable legacy ``ai_timeline``;
     # their immutable, verified cut lives in ``story_timeline`` instead.  Still
     # project that cut into the read-only timeline response so the editor can
     # show which uploaded clips were used and where, rather than labelling the
-    # entire source pool "Unused".
+    # entire source pool "Unused".  A guided story can be assembled entirely
+    # from plan-item assets, while ``all_candidates.clip_paths`` contains only
+    # the legacy primary-clip lane (or just the first compatibility path).  Its
+    # authoritative clip pool must therefore include every path from the
+    # verified story in story order; otherwise the editor silently projects
+    # only the first beat.  Preserve any legacy pool entries so older jobs keep
+    # stable clip indexes and still show their unused sources.
     if not ai_slots and variant.get("resolved_archetype") == "guided_story":
-        clip_index_by_path = {
-            path: index
-            for index, path in enumerate((job.all_candidates or {}).get("clip_paths") or [])
-        }
+        story_moments = [
+            moment for moment in (variant.get("story_timeline") or []) if isinstance(moment, dict)
+        ]
+        story_paths: list[str] = []
+        for moment in story_moments:
+            path = nonblank_str(moment.get("gcs_path"))
+            if path and path not in story_paths:
+                story_paths.append(path)
+        clip_paths.extend(path for path in story_paths if path not in clip_paths)
+        clip_index_by_path = {path: index for index, path in enumerate(clip_paths)}
         ai_slots = []
-        for order, moment in enumerate(variant.get("story_timeline") or []):
-            if not isinstance(moment, dict):
-                continue
+        for order, moment in enumerate(story_moments):
             path = moment.get("gcs_path")
             clip_index = clip_index_by_path.get(path)
             if clip_index is None:
                 continue
+            next_moment = story_moments[order + 1] if order + 1 < len(story_moments) else None
+            overlap_s = 0.0
+            if next_moment is not None:
+                try:
+                    overlap_s = max(
+                        0.0,
+                        float(moment.get("output_end_s"))
+                        - float(next_moment.get("output_start_s")),
+                    )
+                except (TypeError, ValueError):
+                    overlap_s = 0.0
+            transition_duration_s = round(min(1.0, overlap_s), 3) if overlap_s >= 0.1 else None
             ai_slots.append(
                 {
                     "slot_id": moment.get("moment_id") or f"guided-story-{order}",
@@ -5299,12 +5323,22 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
                     "order": order,
                     "moment_description": moment.get("topic"),
                     "removed": False,
+                    "transition_after": "crossfade" if transition_duration_s else "cut",
+                    "transition_duration_s": transition_duration_s,
                 }
             )
+        try:
+            story_end_s = max(float(moment.get("output_end_s")) for moment in story_moments)
+            if story_end_s > 0:
+                projected_story_duration_s = story_end_s
+        except (TypeError, ValueError):
+            projected_story_duration_s = None
     has_user_edits = bool(user_slots)
     effective = user_slots if has_user_edits else ai_slots
     active = [s for s in effective if not s.get("removed")]
     total = _active_timeline_duration_s(active)
+    if projected_story_duration_s is not None:
+        total = projected_story_duration_s
     used_indices = {s.get("clip_index") for s in active}
 
     # Source durations are only known where the worker probed them (ai_timeline).
@@ -5315,7 +5349,7 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
             dur_by_idx.setdefault(idx, float(s["source_duration_s"]))
 
     clips: list[dict] = []
-    for i, path in enumerate((job.all_candidates or {}).get("clip_paths") or []):
+    for i, path in enumerate(clip_paths):
         try:
             url: str | None = signed_get_url(path, PLAYBACK_URL_TTL_MIN)
         except Exception:  # noqa: BLE001 — one bad sign must not 500 the editor open
@@ -6043,8 +6077,8 @@ def require_guided_story_editor_commit(
     variant = _find_variant(job, variant_id)
     if not isinstance(variant, dict) or variant.get("resolved_archetype") != "guided_story":
         return
-    guided_text_only = (
-        payload.text_elements is not None
+    guided_text_or_orientation_only = (
+        (payload.text_elements is not None or payload.orientation is not None)
         and payload.caption_cues is None
         and payload.caption_meta is None
         and payload.timeline_slots is None
@@ -6053,7 +6087,6 @@ def require_guided_story_editor_commit(
         and payload.music_window is None
         and payload.background_music is None
         and payload.lyrics is None
-        and payload.orientation is None
         and payload.sound_effects is None
         and payload.media_overlays is None
         and payload.visual_blocks is None
@@ -6063,12 +6096,13 @@ def require_guided_story_editor_commit(
         and not payload.remove_music
         and "carousel_moment" not in payload.model_fields_set
     )
-    if not guided_text_only:
+    if not guided_text_or_orientation_only:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=_GUIDED_STORY_EDIT_ERROR,
         )
-    _require_guided_story_text_ids(variant, payload.text_elements or [])
+    if payload.text_elements is not None:
+        _require_guided_story_text_ids(variant, payload.text_elements)
 
 
 def prepare_editor_commit(

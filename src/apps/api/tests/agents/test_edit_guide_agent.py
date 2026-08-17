@@ -203,6 +203,145 @@ def test_review_revision_must_preserve_every_beat_id_once() -> None:
         )
 
 
+def test_review_prompt_uses_short_refs_and_maps_them_back_to_server_ids() -> None:
+    opaque_lisbon_id = "7dd5e0f6-4a16-4ef5-9584-c81b811a819f"
+    opaque_istanbul_id = "e984706a-e702-4f54-b6e8-fce4ad11e50e"
+    agent_input = EditGuideInput(
+        phase="review",
+        title="Summer 26",
+        beats=[
+            EditGuideBeatInput(
+                beat_id=opaque_lisbon_id,
+                topic="Architecture",
+                duration_s=2,
+                media_count=1,
+                media_refs=["media_1"],
+            ),
+            EditGuideBeatInput(
+                beat_id=opaque_istanbul_id,
+                topic="Cityscape",
+                duration_s=2,
+                media_count=1,
+                media_refs=["media_2"],
+            ),
+        ],
+    )
+
+    prompt = EditGuideAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+    assert opaque_lisbon_id not in prompt
+    assert opaque_istanbul_id not in prompt
+    assert '"beat_id": "beat_1"' in prompt
+    assert '"media_refs": ["media_2"]' in prompt
+
+    output = EditGuideAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(
+            {
+                "reply": "I put Lisbon before Istanbul and shortened the labels.",
+                "suggestions": [],
+                "brief": {**_brief_payload(), "duration_s": 10},
+                "ready_to_plan": True,
+                "revision": {
+                    **_brief_payload(),
+                    "duration_s": 10,
+                    "title": "Summer 26",
+                    "story_beats": [
+                        {
+                            "beat_id": "beat_1",
+                            "topic": "Lisbon",
+                            "thought": "Lisbon",
+                            "layout": "fullscreen",
+                            "duration_s": 2,
+                            "media_refs": ["media_1"],
+                        },
+                        {
+                            "beat_id": "beat_2",
+                            "topic": "Istanbul",
+                            "thought": "Istanbul",
+                            "layout": "fullscreen",
+                            "duration_s": 2,
+                            "media_refs": ["media_2"],
+                        },
+                    ],
+                },
+            }
+        ),
+        agent_input,
+    )
+
+    assert output.revision is not None
+    assert [beat.beat_id for beat in output.revision.story_beats] == [
+        opaque_lisbon_id,
+        opaque_istanbul_id,
+    ]
+    assert [beat.media_refs for beat in output.revision.story_beats] == [
+        ["media_1"],
+        ["media_2"],
+    ]
+
+
+def test_review_revision_can_reassign_named_media_and_rejects_drops() -> None:
+    agent_input = EditGuideInput(
+        phase="review",
+        title="Summer 26",
+        beats=[
+            EditGuideBeatInput(
+                beat_id="city",
+                topic="Cityscape",
+                duration_s=2,
+                media_count=1,
+                media_refs=["media_2"],
+            ),
+            EditGuideBeatInput(
+                beat_id="bridge",
+                topic="Architecture",
+                duration_s=2,
+                media_count=1,
+                media_refs=["media_1"],
+            ),
+        ],
+    )
+
+    payload = {
+        "reply": "I matched each label to the requested video.",
+        "suggestions": [],
+        "brief": {**_brief_payload(), "duration_s": 10},
+        "ready_to_plan": True,
+        "revision": {
+            **_brief_payload(),
+            "duration_s": 10,
+            "title": "Summer 26",
+            "story_beats": [
+                {
+                    "beat_id": "beat_1",
+                    "topic": "Lisbon",
+                    "thought": "Lisbon",
+                    "layout": "fullscreen",
+                    "duration_s": 2,
+                    "media_refs": ["media_1"],
+                },
+                {
+                    "beat_id": "beat_2",
+                    "topic": "Istanbul",
+                    "thought": "Istanbul",
+                    "layout": "fullscreen",
+                    "duration_s": 2,
+                    "media_refs": ["media_2"],
+                },
+            ],
+        },
+    }
+    output = EditGuideAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+    assert output.revision is not None
+    assert [beat.media_refs for beat in output.revision.story_beats] == [
+        ["media_1"],
+        ["media_2"],
+    ]
+
+    payload["revision"]["story_beats"][1]["media_refs"] = ["media_1"]
+    with pytest.raises(SchemaError, match="preserve every assigned media reference"):
+        EditGuideAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+
+
 def test_review_revision_rejects_invented_personal_experience() -> None:
     agent_input = EditGuideInput(
         phase="review",

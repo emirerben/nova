@@ -72,6 +72,96 @@ def _draft_item() -> SimpleNamespace:
     )
 
 
+def test_snapshot_revision_rejoins_reassigned_media_aliases() -> None:
+    current = _snapshot()
+    second = MediaRef(
+        lane="clip",
+        media_id="clip-2",
+        gcs_path="users/u/plan/i/istanbul.mp4",
+        generation="43",
+        kind="video",
+        duration_s=30,
+    )
+    current.media.append(second)
+    current.story_beats.append(
+        StoryBeat(
+            beat_id="city",
+            topic="Cityscape",
+            thought="Istanbul",
+            media_ids=[second.media_id],
+            duration_s=4,
+        )
+    )
+    revision = EditGuideRevision(
+        direction="guided_story",
+        goal="Match every city label to its video",
+        pace="balanced",
+        duration_s=24,
+        title="Summer 26",
+        story_beats=[
+            EditGuideRevisionBeat(
+                beat_id="coast",
+                topic="Lisbon",
+                thought="Lisbon",
+                layout="fullscreen",
+                duration_s=4,
+                media_refs=["media_2"],
+            ),
+            EditGuideRevisionBeat(
+                beat_id="city",
+                topic="Istanbul",
+                thought="Istanbul",
+                layout="fullscreen",
+                duration_s=4,
+                media_refs=["media_1"],
+            ),
+        ],
+    )
+
+    revised = plan_items._snapshot_from_edit_guide_revision(current, revision)
+
+    assert [beat.media_ids for beat in revised.story_beats] == [["clip-2"], ["clip-1"]]
+
+
+def test_snapshot_revision_recalculates_auto_orientation_from_reassigned_media() -> None:
+    current = _snapshot()
+    current.media[0].aspect = 1.7778
+    current.output_orientation = "landscape"
+    current.output_orientation_reason = "Auto-selected landscape from the previous story."
+    portrait = MediaRef(
+        lane="clip",
+        media_id="clip-2",
+        gcs_path="users/u/plan/i/portrait.mp4",
+        generation="43",
+        kind="video",
+        duration_s=30,
+        aspect=0.5625,
+    )
+    current.media.append(portrait)
+    revision = EditGuideRevision(
+        direction="guided_story",
+        goal="Make the portrait clip the story",
+        pace="balanced",
+        duration_s=24,
+        title="Portrait story",
+        story_beats=[
+            EditGuideRevisionBeat(
+                beat_id="coast",
+                topic="Portrait",
+                thought="Portrait",
+                layout="fullscreen",
+                duration_s=12,
+                media_refs=["media_2"],
+            )
+        ],
+    )
+
+    revised = plan_items._snapshot_from_edit_guide_revision(current, revision)
+
+    assert revised.output_orientation == "portrait"
+    assert "12.0s portrait" in revised.output_orientation_reason
+
+
 def _patch_route_dependencies(monkeypatch, item, *, media_current: bool) -> AsyncMock:
     monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
     monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
@@ -386,6 +476,7 @@ async def test_conversation_revision_preserves_media_and_creator_thought(monkeyp
                         thought="The still water creates a reflective pause.",
                         layout="supporting_card",
                         duration_s=6,
+                        media_refs=["media_1"],
                     )
                 ],
             ),
@@ -446,6 +537,7 @@ async def test_revision_validation_failure_releases_conversation_attempt(monkeyp
                         thought="The water sets the pace.",
                         layout="fullscreen",
                         duration_s=4,
+                        media_refs=["media_1"],
                     )
                 ],
             ),
@@ -494,9 +586,13 @@ async def test_review_clarification_preserves_current_brief(monkeypatch) -> None
     monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded: loaded)
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
     seen_briefs = []
+    seen_beats = []
+    seen_media_refs = []
 
     def run(_self, agent_input):  # noqa: ANN001, ANN202
         seen_briefs.append(agent_input.brief)
+        seen_beats.extend(agent_input.beats)
+        seen_media_refs.extend(row.media_ref for row in agent_input.media)
         return EditGuideOutput(
             reply="Should the food chapter come first?",
             suggestions=["Yes", "Keep the coast first"],
@@ -525,6 +621,8 @@ async def test_review_clarification_preserves_current_brief(monkeypatch) -> None
     assert persisted.brief == expected_brief
     assert persisted.draft == _snapshot()
     assert seen_briefs == [expected_brief]
+    assert [beat.media_refs for beat in seen_beats] == [["media_1"]]
+    assert seen_media_refs == ["media_1"]
 
 
 @pytest.mark.asyncio
