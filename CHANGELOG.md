@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.9] — 2026-08-17
+
+### Fixed
+- **Restored the missing clip uploader on default montage plan items.** PR #833 replaced the "I
+  already have footage" toggle with a click on the Montage type card that patches
+  `content_mode: "existing_footage"` — but `SetupPicker`'s no-op guard returned early whenever the
+  clicked card matched the item's already-stored `edit_format`, which is `"montage"` by default. So
+  re-clicking (or the initial, already-selected) Montage card never fired the patch, and default
+  items (`content_mode: "create_new"`, empty `filming_guide`, `edit_format: "montage"`) fell into a
+  dead render branch in `page.tsx` (`isFilmThis ? null`) with no uploader anywhere in the DOM —
+  there was no way to add the main videos. Fixed by letting the guard's early return account for a
+  pending `content_mode` stamp, and by deleting the dead branch so a film-this montage item without
+  a guide falls through to the existing pool-upload uploader.
+
 ## [0.34.1.8] — 2026-08-17
 
 ### Fixed

@@ -1618,8 +1618,11 @@ export default function PlanItemPage() {
                 rawEditFormat={rawEditFormat}
                 montagePreset={montagePreset}
                 subtitledEnabled={SUBTITLED_ENABLED}
+                // Intentionally shown only for legacy talking_head items — not a
+                // generally reachable card in the current picker.
                 showTalkingHead={isTalkingHead}
                 hasGuide={(item.filming_guide?.length ?? 0) > 0}
+                contentMode={contentMode}
                 startCollapsed={
                   (item.clip_gcs_paths?.length ?? 0) > 0 ||
                   (item.filming_guide?.length ?? 0) > 0 ||
@@ -1889,7 +1892,7 @@ export default function PlanItemPage() {
                 2. narrated_ready: audio-first flow, pool upload, no step spine
                 3. masonry montage → compact pool strip even when guide present
                 4. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
-                5. isFilmThis but no guide yet → no uploader until Plan this for me is accepted
+                5. isFilmThis, no guide → pool upload (Plan-this-for-me offered above)
                 6. existing_footage → PoolUploadCard (use footage you already have) */}
             {isSubtitled ? (
               <div>
@@ -1988,10 +1991,9 @@ export default function PlanItemPage() {
                 }}
                 onBusyChange={setUploaderBusy}
               />
-            ) : isFilmThis ? (
-              null
             ) : (
-              /* existing_footage — pool upload (find the footage you already have) */
+              /* isFilmThis (no guide yet) OR existing_footage — both fall through
+                 to pool upload (find/upload the footage you already have). */
               <>
                 {!hasGuide && item.filming_suggestion ? (
                   <p className="mb-4 text-sm text-[#71717a]">{item.filming_suggestion}</p>
