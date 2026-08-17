@@ -154,7 +154,9 @@ def test_smart_captions_context_is_resolved_and_pinned_at_dispatch() -> None:
     item.theme = "brand mascots"
     item.idea = "explain four examples"
     item.edit_format = "subtitled"
-    item.smart_captions_enabled = True
+    # Default-on contract: the stored per-item flag must NOT gate the request —
+    # the resolver's server ladder (kill switch / format / assignment) decides.
+    item.smart_captions_enabled = False
     item.smart_sound_design_enabled = True
     item.voiceover_gcs_path = None
     item.landscape_fit = "fit"

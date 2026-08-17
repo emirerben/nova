@@ -247,47 +247,12 @@ function makeGuidedProposal(status: "analyzing" | "draft" | "approved" | "stale"
   };
 }
 
-describe("PlanItemPage — Smart captions availability", () => {
-  beforeEach(() => {
-    mockUpdatePlanItem.mockReset();
-    mockRefetch.mockReset();
-  });
-
-  it("shows the server-authorized switch and persists the per-video choice", async () => {
+describe("PlanItemPage — Smart captions (default-on, no toggle)", () => {
+  it("never renders a Smart captions switch — the capability is server-decided", async () => {
     const item = makeItem({
       edit_format: "subtitled",
       smart_captions_available: true,
       smart_captions_unavailable_reason: null,
-    });
-    mockUpdatePlanItem.mockResolvedValue({ ...item, smart_captions_enabled: true });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    const smartSwitch = screen.getByRole("switch", { name: "Smart captions" });
-    expect(smartSwitch).toHaveAttribute("aria-checked", "false");
-
-    await act(async () => {
-      fireEvent.click(smartSwitch);
-    });
-
-    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
-      smart_captions_enabled: true,
-    });
-    expect(mockRefetch).toHaveBeenCalled();
-  });
-
-  it("does not expose the switch when the backend capability denies it", async () => {
-    const item = makeItem({
-      edit_format: "subtitled",
-      smart_captions_available: false,
-      smart_captions_unavailable_reason: "not_assigned",
     });
     mockUsePolledJobStatus.mockReturnValue({
       data: { item, job: null },
@@ -300,65 +265,7 @@ describe("PlanItemPage — Smart captions availability", () => {
     });
 
     expect(screen.queryByRole("switch", { name: "Smart captions" })).toBeNull();
-  });
-
-  it("lets the creator disable automatic SFX without disabling Smart captions", async () => {
-    const item = makeItem({
-      edit_format: "subtitled",
-      smart_captions_enabled: true,
-      smart_sound_design_enabled: true,
-      smart_captions_available: true,
-      smart_captions_unavailable_reason: null,
-    });
-    mockUpdatePlanItem.mockResolvedValue({
-      ...item,
-      smart_sound_design_enabled: false,
-    });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    expect(screen.getByText("Sound design")).toBeInTheDocument();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Off" }));
-    });
-
-    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
-      smart_sound_design_enabled: false,
-    });
-  });
-
-  it("keeps the choice unchanged and shows an error when persistence fails", async () => {
-    const item = makeItem({
-      edit_format: "subtitled",
-      smart_captions_available: true,
-      smart_captions_unavailable_reason: null,
-    });
-    mockUpdatePlanItem.mockRejectedValue(new Error("conflict"));
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("switch", { name: "Smart captions" }));
-    });
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Couldn't update Smart captions — try again.",
-    );
-    expect(mockRefetch).not.toHaveBeenCalled();
+    expect(screen.queryByText("Sound design")).toBeNull();
   });
 });
 
@@ -411,26 +318,27 @@ describe("PlanItemPage — masonry collage item UX", () => {
     return render(<PlanItemPage />);
   }
 
-  it("renders preset preview tiles instead of text-only cards", async () => {
+  it("renders STYLE tiles with real imagery instead of text-only cards", async () => {
     await act(async () => {
       renderMasonryItem({ montage_preset: "classic" });
     });
 
-    expect(
-      screen
-        .getByText("Classic")
-        .previousElementSibling?.querySelector('[class*="montage-classic-a"]'),
-    ).not.toBeNull();
-    expect(
-      screen
-        .getByText("Masonry collage")
-        .previousElementSibling?.querySelector('[class*="montage-masonry-pan"]'),
-    ).not.toBeNull();
-    expect(
-      screen
-        .getByText("Polaroid wall")
-        .previousElementSibling?.querySelector('[class*="pb-"]'),
-    ).not.toBeNull();
+    // Item has a filming guide, so the accordion starts collapsed. Expand the
+    // STYLE disclosure row, which reveals the shelf with real placeholder
+    // footage per tile.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^Style/ }));
+    });
+    const shelf = screen.getByRole("radiogroup", { name: "Style" });
+    // Tiles are hover-to-play muted loops: poster frame + video source per style.
+    for (const name of ["classic", "masonry", "polaroid"]) {
+      const video = shelf.querySelector(
+        `video[poster="/plan/style-tiles/${name}.jpg"]`,
+      ) as HTMLVideoElement | null;
+      expect(video).not.toBeNull();
+      expect(video?.getAttribute("src")).toBe(`/plan/style-tiles/${name}.mp4`);
+      expect(video?.muted ?? video?.hasAttribute("muted")).toBeTruthy();
+    }
   });
 
   it.each(["masonry", "polaroid_wall"])(
@@ -1477,6 +1385,9 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
       theme: "Packing reveal",
       filming_suggestion: "Make the plan feel tactile.",
       filming_guide: filmingGuide,
+      // Acceptance re-enters the guided flow even if the type picker had
+      // stamped existing_footage earlier.
+      content_mode: "create_new",
     });
   });
 
