@@ -3287,6 +3287,10 @@ function FocusedResults({
   const modePill = variant
     ? variant.resolved_archetype === "narrated"
       ? "Voiceover"
+      : variant.track_title || variant.music_track_id
+        ? variant.text_mode === "lyrics"
+          ? "With lyrics"
+          : "Music"
       : (TEXT_MODE_PILL[variant.text_mode] ?? "Original audio")
     : null;
 

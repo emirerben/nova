@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.0] — 2026-08-17
+
+### Fixed
+- **Guided travel edits now keep every approved title and location thought visible.** The first
+  thought begins with the first scene instead of flashing for a single frame, and opening the
+  editor preserves the complete approved text plan rather than collapsing it into one title.
+- **The editor now shows the real guided-story cut.** Uploaded videos used by the approved plan
+  appear in their rendered order and time windows; only footage that was actually omitted is
+  marked unused.
+- **Plan and result details now match the edit Kria made.** Custom lengths such as 10 seconds stay
+  selected, source totals count only chosen media, unplayable phone previews show an honest file
+  fallback, and track-backed results are labelled “Music” instead of “Original audio.”
+
 ## [0.33.3.0] — 2026-08-16
 
 ### Added
