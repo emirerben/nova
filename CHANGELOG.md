@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.1] — 2026-08-17
+
+### Fixed
+- **Kria can now reliably revise a planned edit when creators name a specific upload or visible
+  scene.** Requests such as “put the bridge video before the skyline clip” use short review
+  references tied to the analyzed media, while the server still owns every real media and beat ID.
+- **Exact multi-scene revisions no longer fail after Kria describes the right change.** Reordering
+  five or more moments no longer depends on the model perfectly copying long generated IDs; missing
+  or duplicated moments still fail closed.
+
 ## [0.34.1.0] — 2026-08-17
 
 ### Fixed

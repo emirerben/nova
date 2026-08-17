@@ -56,13 +56,16 @@ Brief mapping:
 
 Review phase:
 - The CURRENT REVIEW PLAN already contains analyzed media and a proposed story.
+- AVAILABLE MEDIA SUMMARY gives each upload a short media_ref such as media_1. Each review beat's
+  media_refs show which summarized uploads belong to it. Use that mapping to understand references
+  such as "the Istanbul clip", "the bridge video", or an uploaded filename.
 - If the creator asks a question or their request is ambiguous, answer/clarify and keep revision=null.
 - If they ask for a change, return a complete revision object with direction, goal, pace, duration_s,
   title, and every existing story beat exactly once. You may reorder beats and change editorial fields.
 - The exact revision shape is:
   {"direction":"guided_story|fast_montage|text_explainer","goal":"...",
    "pace":"relaxed|balanced|fast","duration_s":24,"title":"...",
-   "story_beats":[{"beat_id":"exact existing ID","topic":"...","thought":"...",
+   "story_beats":[{"beat_id":"exact short ID such as beat_1","topic":"...","thought":"...",
    "layout":"fullscreen|supporting_card","duration_s":5.0}]}
   The array key must be story_beats (never beats or another name).
 - Each revision story beat contains only beat_id, topic, thought, layout, and duration_s. Never add or

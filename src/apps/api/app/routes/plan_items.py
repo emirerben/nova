@@ -1747,7 +1747,10 @@ async def _edit_guide_media_summary(
                 "description": str(analysis.get("description") or "")[:500],
             }
         )
-    return summaries[:60]
+    limited = summaries[:60]
+    for index, summary in enumerate(limited, start=1):
+        summary["media_ref"] = f"media_{index}"
+    return limited
 
 
 def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapshot:  # noqa: ANN001
@@ -1965,6 +1968,11 @@ async def edit_proposal_conversation_turn(
                             layout=beat.layout,
                             duration_s=beat.duration_s,
                             media_count=len(beat.media_ids),
+                            media_refs=[
+                                f"media_{index}"
+                                for index, ref in enumerate(review_snapshot.media, start=1)
+                                if ref.media_id in beat.media_ids
+                            ],
                         )
                         for beat in review_snapshot.story_beats
                     ]

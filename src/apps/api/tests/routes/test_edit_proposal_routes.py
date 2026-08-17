@@ -494,9 +494,13 @@ async def test_review_clarification_preserves_current_brief(monkeypatch) -> None
     monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded: loaded)
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
     seen_briefs = []
+    seen_beats = []
+    seen_media_refs = []
 
     def run(_self, agent_input):  # noqa: ANN001, ANN202
         seen_briefs.append(agent_input.brief)
+        seen_beats.extend(agent_input.beats)
+        seen_media_refs.extend(row.media_ref for row in agent_input.media)
         return EditGuideOutput(
             reply="Should the food chapter come first?",
             suggestions=["Yes", "Keep the coast first"],
@@ -525,6 +529,8 @@ async def test_review_clarification_preserves_current_brief(monkeypatch) -> None
     assert persisted.brief == expected_brief
     assert persisted.draft == _snapshot()
     assert seen_briefs == [expected_brief]
+    assert [beat.media_refs for beat in seen_beats] == [["media_1"]]
+    assert seen_media_refs == ["media_1"]
 
 
 @pytest.mark.asyncio

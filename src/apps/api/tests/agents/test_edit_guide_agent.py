@@ -203,6 +203,76 @@ def test_review_revision_must_preserve_every_beat_id_once() -> None:
         )
 
 
+def test_review_prompt_uses_short_refs_and_maps_them_back_to_server_ids() -> None:
+    opaque_lisbon_id = "7dd5e0f6-4a16-4ef5-9584-c81b811a819f"
+    opaque_istanbul_id = "e984706a-e702-4f54-b6e8-fce4ad11e50e"
+    agent_input = EditGuideInput(
+        phase="review",
+        title="Summer 26",
+        beats=[
+            EditGuideBeatInput(
+                beat_id=opaque_lisbon_id,
+                topic="Architecture",
+                duration_s=2,
+                media_count=1,
+                media_refs=["media_1"],
+            ),
+            EditGuideBeatInput(
+                beat_id=opaque_istanbul_id,
+                topic="Cityscape",
+                duration_s=2,
+                media_count=1,
+                media_refs=["media_2"],
+            ),
+        ],
+    )
+
+    prompt = EditGuideAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+    assert opaque_lisbon_id not in prompt
+    assert opaque_istanbul_id not in prompt
+    assert '"beat_id": "beat_1"' in prompt
+    assert '"media_refs": ["media_2"]' in prompt
+
+    output = EditGuideAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(
+            {
+                "reply": "I put Lisbon before Istanbul and shortened the labels.",
+                "suggestions": [],
+                "brief": {**_brief_payload(), "duration_s": 10},
+                "ready_to_plan": True,
+                "revision": {
+                    **_brief_payload(),
+                    "duration_s": 10,
+                    "title": "Summer 26",
+                    "story_beats": [
+                        {
+                            "beat_id": "beat_1",
+                            "topic": "Lisbon",
+                            "thought": "Lisbon",
+                            "layout": "fullscreen",
+                            "duration_s": 2,
+                        },
+                        {
+                            "beat_id": "beat_2",
+                            "topic": "Istanbul",
+                            "thought": "Istanbul",
+                            "layout": "fullscreen",
+                            "duration_s": 2,
+                        },
+                    ],
+                },
+            }
+        ),
+        agent_input,
+    )
+
+    assert output.revision is not None
+    assert [beat.beat_id for beat in output.revision.story_beats] == [
+        opaque_lisbon_id,
+        opaque_istanbul_id,
+    ]
+
+
 def test_review_revision_rejects_invented_personal_experience() -> None:
     agent_input = EditGuideInput(
         phase="review",
