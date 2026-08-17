@@ -30,6 +30,7 @@ import {
   type PoolReservationCapacity,
 } from "@/lib/plan-api";
 import { poolAssetAnalysisLine } from "@/lib/pool-asset-display";
+import { mergePoolAssetsPreservingDisplayUrls } from "@/lib/pool-assets";
 import { StableVideo } from "@/components/StableVideo";
 import {
   POOL_ASSET_MIME_TYPES,
@@ -45,21 +46,6 @@ const UNAVAILABLE_COPY = "Visuals pool isn't available right now.";
 // Unknown future statuses deliberately DON'T poll (no runaway interval).
 const ASSET_POLL_MS = 5000;
 const NON_TERMINAL_ASSET_STATUSES = new Set(["uploaded", "queued", "analyzing"]);
-
-/** Merge a fresh poll snapshot over the current tiles, KEEPING each existing
- *  tile's already-signed `display_url`. `_asset_out` re-signs on every read and
- *  a GCS V4 URL embeds a fresh timestamp+signature, so a blind replace hands
- *  every ready `<img>`/`<video>` a new `src` each tick → the browser reloads
- *  every thumbnail every 5s. The prior URL was signed for 60 min, so it's still
- *  valid; reuse it and only new tiles (or ones that hadn't signed yet) take the
- *  fresh URL. Status/subject/brands/etc. always come from the server snapshot. */
-function mergePreservingUrls(prev: PoolAsset[], next: PoolAsset[]): PoolAsset[] {
-  const prevById = new Map(prev.map((a) => [a.id, a]));
-  return next.map((a) => {
-    const existing = prevById.get(a.id);
-    return existing?.display_url ? { ...a, display_url: existing.display_url } : a;
-  });
-}
 
 /** Backend flag off → routes 404 with this detail (or a raw 404 wrapper). */
 function isUnavailableError(err: unknown): boolean {
@@ -161,7 +147,7 @@ export default function AssetPool({
     listPoolAssets(itemId)
       .then((res) => {
         if (cancelled || startedAtEpoch !== listEpoch.current) return;
-        setAssets((current) => mergePreservingUrls(current, res.assets));
+        setAssets((current) => mergePoolAssetsPreservingDisplayUrls(current, res.assets));
         setMaxAssets(res.max_assets);
         setServerReservations(res.active_reservations ?? []);
         setServerOccupiedCount(res.occupied_assets ?? res.assets.length);
@@ -193,7 +179,7 @@ export default function AssetPool({
       listPoolAssets(itemId)
         .then((res) => {
           if (cancelled || epoch !== listEpoch.current) return;
-          setAssets((prev) => mergePreservingUrls(prev, res.assets));
+          setAssets((prev) => mergePoolAssetsPreservingDisplayUrls(prev, res.assets));
           setMaxAssets(res.max_assets);
           setServerReservations(res.active_reservations ?? []);
           setServerOccupiedCount(res.occupied_assets ?? res.assets.length);

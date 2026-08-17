@@ -1687,7 +1687,7 @@ describe("AssetPool — analysis status polling", () => {
       id: "asset-ready",
       status: "ready",
       subject: "dash",
-      display_url: "https://storage.example/signed/v1",
+      display_url: "https://storage.example/bucket/dash.png?signature=v1",
     });
     const spinner = makeAsset({ id: "asset-spin", status: "analyzing", subject: null });
     mockFetch((method, url) => {
@@ -1695,7 +1695,7 @@ describe("AssetPool — analysis status polling", () => {
         // Every read re-signs → a NEW url each time (GCS V4 behavior).
         return jsonResponse({
           assets: [
-            { ...ready, display_url: "https://storage.example/signed/v2-resigned" },
+            { ...ready, display_url: "https://storage.example/bucket/dash.png?signature=v2" },
             spinner,
           ],
           max_assets: 20,
@@ -1708,14 +1708,130 @@ describe("AssetPool — analysis status polling", () => {
       jsonResponse({ assets: [ready, spinner], max_assets: 20 }),
     );
     await renderPool();
-    expect(screen.getByAltText("dash")).toHaveAttribute("src", "https://storage.example/signed/v1");
+    expect(screen.getByAltText("dash")).toHaveAttribute(
+      "src",
+      "https://storage.example/bucket/dash.png?signature=v1",
+    );
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(5000);
     });
     // The poll re-signed to v2, but the merge kept the still-valid v1 → the
     // <img> src never changes, so the browser never reloads the thumbnail.
-    expect(screen.getByAltText("dash")).toHaveAttribute("src", "https://storage.example/signed/v1");
+    expect(screen.getByAltText("dash")).toHaveAttribute(
+      "src",
+      "https://storage.example/bucket/dash.png?signature=v1",
+    );
+  });
+
+  it("replaces the raw HEIC URL when analysis produces a browser-safe preview", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    const analyzing = makeAsset({
+      id: "asset-heic",
+      kind: "image",
+      status: "analyzing",
+      subject: null,
+      display_url:
+        "https://storage.googleapis.com/nova/users/u1/plan/item-1/pool/photo.heic?X-Goog-Signature=raw",
+    });
+    const ready = {
+      ...analyzing,
+      status: "ready",
+      subject: "Corfu coastline",
+      display_url:
+        "https://storage.googleapis.com/nova/users/u1/plan/item-1/pool/photo.heic.preview.jpg?X-Goog-Signature=preview",
+    };
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        listCalls += 1;
+        return jsonResponse({ assets: [listCalls === 1 ? analyzing : ready], max_assets: 20 });
+      }
+      return undefined;
+    });
+
+    await renderPool();
+    expect(screen.getByText("Analyzing…")).toBeInTheDocument();
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+
+    expect(screen.getByAltText("Corfu coastline")).toHaveAttribute(
+      "src",
+      "https://storage.googleapis.com/nova/users/u1/plan/item-1/pool/photo.heic.preview.jpg?X-Goog-Signature=preview",
+    );
+  });
+
+  it("keeps the existing URL when a fresh signing attempt returns no URL", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    const analyzing = makeAsset({
+      id: "asset-signing-gap",
+      status: "analyzing",
+      subject: null,
+      display_url: "https://storage.example/bucket/photo.jpg?signature=working",
+    });
+    const ready = {
+      ...analyzing,
+      status: "ready",
+      subject: "Signed preview",
+      display_url: null,
+    };
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        listCalls += 1;
+        return jsonResponse({ assets: [listCalls === 1 ? analyzing : ready], max_assets: 20 });
+      }
+      return undefined;
+    });
+
+    await renderPool();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+
+    expect(screen.getByAltText("Signed preview")).toHaveAttribute(
+      "src",
+      "https://storage.example/bucket/photo.jpg?signature=working",
+    );
+  });
+
+  it("accepts the fresh URL when a storage provider returns an invalid prior URL", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    const analyzing = makeAsset({
+      id: "asset-invalid-url",
+      status: "analyzing",
+      subject: null,
+      display_url: "not a valid url",
+    });
+    const ready = {
+      ...analyzing,
+      status: "ready",
+      subject: "Recovered preview",
+      display_url: "https://storage.example/bucket/recovered.jpg?signature=fresh",
+    };
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        listCalls += 1;
+        return jsonResponse({ assets: [listCalls === 1 ? analyzing : ready], max_assets: 20 });
+      }
+      return undefined;
+    });
+
+    await renderPool();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+
+    expect(screen.getByAltText("Recovered preview")).toHaveAttribute(
+      "src",
+      "https://storage.example/bucket/recovered.jpg?signature=fresh",
+    );
   });
 });
 

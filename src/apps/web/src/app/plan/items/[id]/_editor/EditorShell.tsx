@@ -55,6 +55,7 @@ import {
   type TextElement,
   type VisualBlock,
 } from "@/lib/plan-api";
+import { mergePoolAssetsPreservingDisplayUrls } from "@/lib/pool-assets";
 import type { CarouselClipThumb } from "./CarouselPanel";
 import type { NovaStep } from "@/lib/job-phases";
 import { POLL_INTERVAL_MS } from "@/components/progress";
@@ -2505,10 +2506,7 @@ export default function EditorShell({
       .then((res) => {
         if (cancelled || poolListEpoch.current !== startedAtEpoch) return;
         setPoolAssets((current) =>
-          res.assets.map((fresh) => {
-            const existing = current.find((row) => row.id === fresh.id);
-            return existing?.display_url ? { ...fresh, display_url: existing.display_url } : fresh;
-          }),
+          mergePoolAssetsPreservingDisplayUrls(current, res.assets),
         );
         setMaxPoolAssets(res.max_assets);
         setServerPoolReservations(res.active_reservations ?? []);
@@ -2540,10 +2538,7 @@ export default function EditorShell({
         .then((res) => {
           if (poolListEpoch.current !== startedAtEpoch) return;
           setPoolAssets((current) =>
-            res.assets.map((fresh) => {
-              const existing = current.find((row) => row.id === fresh.id);
-              return existing?.display_url ? { ...fresh, display_url: existing.display_url } : fresh;
-            }),
+            mergePoolAssetsPreservingDisplayUrls(current, res.assets),
           );
           setMaxPoolAssets(res.max_assets);
           setServerPoolReservations(res.active_reservations ?? []);
