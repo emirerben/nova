@@ -797,6 +797,149 @@ def test_analyze_pool_asset_video_persists_brands(monkeypatch):
     assert asset.analysis["height"] == 1080
 
 
+# ── pool asset preview pipeline ───────────────────────────────────────────────
+
+
+def test_analyze_pool_asset_persists_video_poster_preview(monkeypatch) -> None:
+    asset = _PoolAsset(kind="video")
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key=None)
+    monkeypatch.setattr(
+        ap,
+        "_analyze_video",
+        lambda *_a, **_kw: ({"subject": "clip"}, 1.7778, 4.0, (1920, 1080)),
+    )
+    monkeypatch.setattr(
+        "app.services.pool_asset_preview.write_video_poster",
+        lambda _src, _dst: True,
+    )
+    uploads: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "app.storage.upload_local_file",
+        lambda local, obj, content_type: uploads.append((local, obj, content_type)),
+    )
+
+    ap.analyze_pool_asset(str(asset.id))
+
+    assert asset.status == "ready"
+    assert asset.preview_gcs_path == f"{asset.gcs_path}.preview.jpg"
+    assert len(uploads) == 1
+    assert uploads[0][1] == f"{asset.gcs_path}.preview.jpg"
+    assert uploads[0][2] == "image/jpeg"
+
+
+def test_analyze_pool_asset_preview_failure_still_marks_ready(monkeypatch) -> None:
+    """Preview generation is best-effort — a raising generator must never turn a
+    successful analysis into a failed asset; it persists the "" do-not-retry
+    sentinel instead."""
+    asset = _PoolAsset(kind="video")
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key=None)
+    monkeypatch.setattr(
+        ap,
+        "_analyze_video",
+        lambda *_a, **_kw: ({"subject": "clip"}, 1.7778, 4.0, (1920, 1080)),
+    )
+
+    def _boom(_src, _dst):
+        raise RuntimeError("ffmpeg not found")
+
+    monkeypatch.setattr("app.services.pool_asset_preview.write_video_poster", _boom)
+
+    ap.analyze_pool_asset(str(asset.id))
+
+    assert asset.status == "ready"
+    assert asset.preview_gcs_path == ""
+
+
+def test_analyze_pool_asset_jpeg_image_skips_preview(monkeypatch) -> None:
+    """An already browser-safe image (JPEG, not HEIC/HEIF) never attempts a
+    preview — preview_gcs_path stays None (never-attempted), not ""."""
+    asset = _PoolAsset(kind="image")
+    asset.gcs_path = f"users/u/plan/i/pool/{asset.id}.jpg"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key=None)
+    monkeypatch.setattr(
+        "app.services.pool_asset_preview.write_image_preview",
+        lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("must not attempt preview")),
+    )
+
+    ap.analyze_pool_asset(str(asset.id))
+
+    assert asset.status == "ready"
+    assert asset.preview_gcs_path is None
+
+
+class _PreviewBackfillSess:
+    """Minimal fake session for `generate_pool_asset_preview`: one shared asset,
+    `get()` ignores `with_for_update` (single-owner in tests)."""
+
+    def __init__(self, asset):  # noqa: ANN001
+        self.asset = asset
+        self.commits = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, _model, _pk, **_kw):
+        return self.asset
+
+    def commit(self):
+        self.commits += 1
+
+
+@pytest.mark.parametrize(
+    ("status", "preview_gcs_path"),
+    [
+        ("analyzing", None),  # not ready yet
+        ("failed", None),  # not ready
+        ("ready", "users/u/plan/i/pool/existing.jpg"),  # already previewed
+        ("ready", ""),  # attempted-and-failed sentinel — do not retry
+    ],
+)
+def test_generate_pool_asset_preview_skips_non_ready_or_already_previewed(
+    monkeypatch,
+    status: str,
+    preview_gcs_path: str | None,
+) -> None:
+    asset = _PoolAsset(kind="video")
+    asset.status = status
+    asset.preview_gcs_path = preview_gcs_path
+    monkeypatch.setattr(ap, "_sync_session", lambda: _PreviewBackfillSess(asset))
+    downloads: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.download_to_file",
+        lambda path, _local: downloads.append(path),
+    )
+
+    ap.generate_pool_asset_preview(str(asset.id))
+
+    assert downloads == []
+    assert asset.preview_gcs_path == preview_gcs_path
+
+
+def test_generate_pool_asset_preview_backfills_ready_asset(monkeypatch) -> None:
+    asset = _PoolAsset(kind="video")
+    asset.status = "ready"
+    asset.preview_gcs_path = None
+    monkeypatch.setattr(ap, "_sync_session", lambda: _PreviewBackfillSess(asset))
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        "app.services.pool_asset_preview.write_video_poster",
+        lambda _src, _dst: True,
+    )
+    uploads: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "app.storage.upload_local_file",
+        lambda local, obj, content_type: uploads.append((local, obj, content_type)),
+    )
+
+    ap.generate_pool_asset_preview(str(asset.id))
+
+    assert asset.preview_gcs_path == f"{asset.gcs_path}.preview.jpg"
+    assert len(uploads) == 1
+
+
 # ── no transcript → failed ────────────────────────────────────────────────────
 
 

@@ -3495,8 +3495,9 @@ def _caps(job, variant_id: str) -> dict:
     return v["editor_capabilities"]
 
 
-def test_guided_story_advertises_only_text_reburn(monkeypatch):
+def test_guided_story_advertises_text_and_orientation_rebuild(monkeypatch):
     _arm(monkeypatch)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
     job = _job(
         variant_id="guided_story",
         resolved_archetype="guided_story",
@@ -3511,7 +3512,7 @@ def test_guided_story_advertises_only_text_reburn(monkeypatch):
     assert caps["swap_song"] is False
     assert caps["intro_controls"] is False
     assert caps["lyrics"]["editable"] is False
-    assert caps["orientation"]["editable"] is False
+    assert caps["orientation"] == {"editable": True, "value": "portrait", "reason": None}
     for name in (
         "timeline",
         "split_clips",
@@ -3573,6 +3574,32 @@ def test_guided_story_accepts_text_element_only_commit(monkeypatch):
     assert variant["text_elements"][0]["text"] == updated["text"]
     assert staged["has_render_section"] is True
     assert staged["new_track_id"] is None
+
+
+def test_guided_story_accepts_orientation_only_as_strict_full_render(monkeypatch):
+    _arm(monkeypatch)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    job = _job(
+        variant_id="guided_story",
+        resolved_archetype="guided_story",
+        duration_s=18.0,
+        story_timeline=[{"beat_id": "food"}],
+        text_elements=[dict(_VALID_ELEMENT)],
+        render_receipt={"expected_text_ids": [_VALID_ELEMENT["id"]]},
+        orientation="portrait",
+    )
+
+    staged = gj.prepare_editor_commit(
+        job,
+        "guided_story",
+        _commit_req(orientation="landscape"),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["orientation"] == "landscape"
+    assert variant["base_video_stale"] is True
+    assert staged["orientation_override"] == "landscape"
+    assert staged["sections"]["orientation"] is True
 
 
 def test_guided_story_rejects_deleting_approved_text_synchronously(monkeypatch):

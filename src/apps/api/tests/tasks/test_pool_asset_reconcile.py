@@ -29,14 +29,27 @@ class _Rows:
 
 
 class _Session:
-    def __init__(self, rows):  # noqa: ANN001
+    def __init__(self, rows, *, preview_rows=()):  # noqa: ANN001
         self.rows = rows
+        # Deliberately NOT `rows` by default: the preview-backfill select is a
+        # distinct query (`WHERE ... preview_gcs_path IS NULL ...`) that most
+        # tests here never intend to exercise. Reusing `rows` would silently
+        # dispatch a real (unmocked) `generate_pool_asset_preview.apply_async`
+        # for every reconcile test. Pass a real list to opt in.
+        self.preview_rows = list(preview_rows)
         self.commits = 0
         self.deleted = []
         self.statements = []
 
-    def execute(self, _stmt):
-        self.statements.append(_stmt)
+    def execute(self, stmt):
+        self.statements.append(stmt)
+        # The preview-backfill select is `select(PlanItemAsset.id)` (a single
+        # column) — every other query in this module selects the whole
+        # `PlanItemAsset` entity, whose compiled column list ALSO happens to
+        # include `preview_gcs_path` now that it's a real column. Match the
+        # single-column SELECT prefix specifically, not just the substring.
+        if str(stmt).startswith("SELECT plan_item_assets.id \nFROM plan_item_assets"):
+            return _Rows(self.preview_rows)
         return _Rows(self.rows)
 
     def commit(self):
@@ -414,3 +427,137 @@ def test_reconcile_publish_failure_becomes_safe_retryable_failure(monkeypatch) -
     assert asset.error_code == "analysis_temporarily_unavailable"
     assert asset.error_retryable is True
     assert "private broker detail" not in asset.error_detail
+
+
+# ── preview-backfill bounded pass ─────────────────────────────────────────────
+
+
+def test_reconcile_dispatches_bounded_preview_backfill(monkeypatch) -> None:
+    """`ready` + preview_gcs_path IS NULL rows get the backfill task dispatched
+    (video, or HEIC/HEIF image); ready JPEG rows and the ""-sentinel
+    (attempted-and-failed) rows do NOT (excluded by the predicate itself —
+    here we assert only the ids the fake session hands back get dispatched)."""
+    video_id = uuid.uuid4()
+    heic_id = uuid.uuid4()
+    # No stale/queued/analyzing rows in `rows` — the main reconcile pass has
+    # nothing to touch, isolating this test to the preview-backfill pass.
+    session = _Session([], preview_rows=[video_id, heic_id])
+
+    @contextmanager
+    def _session():
+        yield session
+
+    dispatch = MagicMock()
+    monkeypatch.setattr(maintenance, "sync_session", _session)
+    monkeypatch.setattr("app.tasks.autoplace.generate_pool_asset_preview.apply_async", dispatch)
+    monkeypatch.setattr("app.config.settings.pool_asset_analysis_queue", "autoplace-jobs")
+
+    assert maintenance.reconcile_stale_pool_assets(now=datetime.now(UTC)) == 0
+    assert dispatch.call_count == 2
+    dispatched_ids = {call.kwargs["args"][0] for call in dispatch.call_args_list}
+    assert dispatched_ids == {str(video_id), str(heic_id)}
+    for call in dispatch.call_args_list:
+        assert call.kwargs["queue"] == "autoplace-jobs"
+
+    preview_query = str(session.statements[-1])
+    assert "plan_item_assets.preview_gcs_path" in preview_query
+    assert "plan_item_assets.status" in preview_query
+
+
+def test_reconcile_preview_backfill_dispatch_failure_does_not_fail_sweep(monkeypatch) -> None:
+    asset_id = uuid.uuid4()
+    session = _Session([], preview_rows=[asset_id])
+
+    @contextmanager
+    def _session():
+        yield session
+
+    dispatch = MagicMock(side_effect=RuntimeError("broker unavailable"))
+    monkeypatch.setattr(maintenance, "sync_session", _session)
+    monkeypatch.setattr("app.tasks.autoplace.generate_pool_asset_preview.apply_async", dispatch)
+    monkeypatch.setattr("app.config.settings.pool_asset_analysis_queue", "autoplace-jobs")
+
+    # Must not raise — a preview-backfill dispatch failure is best-effort only.
+    assert maintenance.reconcile_stale_pool_assets(now=datetime.now(UTC)) == 0
+    dispatch.assert_called_once()
+
+
+def test_preview_backfill_predicate_selects_only_eligible_database_rows() -> None:
+    if not (make_url(settings.database_url).database or "").endswith("_test"):
+        pytest.skip("requires a *_test database")
+    try:
+        with sync_session() as probe:
+            probe.execute(text("select 1"))
+    except OperationalError:
+        pytest.skip("nova_test Postgres not reachable")
+
+    user_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    with sync_session() as db:
+        db.add(User(id=user_id, email=f"{user_id}@test.local"))
+        db.flush()
+        persona = Persona(
+            user_id=user_id,
+            persona_status="ready",
+            persona={"content_mode": "travel", "tone": "direct"},
+        )
+        db.add(persona)
+        db.flush()
+        plan = ContentPlan(user_id=user_id, persona_id=persona.id)
+        db.add(plan)
+        db.flush()
+        db.add(
+            PlanItem(
+                id=item_id,
+                content_plan_id=plan.id,
+                position=1,
+                idea="Preview backfill predicate",
+                item_status="awaiting_clips",
+                clip_gcs_paths=[],
+            )
+        )
+        db.flush()
+
+        def add_asset(
+            *,
+            kind: str = "video",
+            content_type: str | None = "video/quicktime",
+            status: str = "ready",
+            preview_gcs_path: str | None = None,
+        ) -> uuid.UUID:
+            asset_id = uuid.uuid4()
+            db.add(
+                PlanItemAsset(
+                    id=asset_id,
+                    plan_item_id=item_id,
+                    user_id=user_id,
+                    gcs_path=f"users/{user_id}/plan/{item_id}/pool/{asset_id}.mov",
+                    kind=kind,
+                    source_filename=f"{asset_id}.mov",
+                    upload_content_type=content_type,
+                    status=status,
+                    preview_gcs_path=preview_gcs_path,
+                )
+            )
+            return asset_id
+
+        eligible_video = add_asset()
+        eligible_heic = add_asset(kind="image", content_type="image/heic")
+        controls = {
+            add_asset(status="analyzing"),  # not ready yet
+            add_asset(preview_gcs_path="users/x/plan/y/pool/z.jpg"),  # already previewed
+            add_asset(preview_gcs_path=""),  # attempted-and-failed sentinel
+            add_asset(kind="image", content_type="image/jpeg"),  # browser-safe already
+        }
+        db.commit()
+
+        selected = set(
+            db.execute(
+                select(PlanItemAsset.id).where(
+                    PlanItemAsset.id.in_({eligible_video, eligible_heic, *controls}),
+                    maintenance._preview_backfill_predicate(),
+                )
+            ).scalars()
+        )
+
+    assert selected == {eligible_video, eligible_heic}

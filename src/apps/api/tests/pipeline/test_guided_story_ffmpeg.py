@@ -4,6 +4,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pillow_heif
 import pytest
@@ -28,6 +29,32 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_concat_fallback_keeps_explicit_landscape_canvas(tmp_path: Path) -> None:
+    from app.tasks.template_orchestrate import _concat_demuxer
+
+    slots = [tmp_path / "slot_a.mp4", tmp_path / "slot_b.mp4"]
+    for slot in slots:
+        slot.write_bytes(b"x")
+    failed_copy = MagicMock(returncode=1, stderr=b"copy failed")
+    successful_encode = MagicMock(returncode=0, stderr=b"")
+
+    with patch(
+        "app.tasks.template_orchestrate.subprocess.run",
+        side_effect=[failed_copy, successful_encode],
+    ) as mock_run:
+        _concat_demuxer(
+            [str(slot) for slot in slots],
+            str(tmp_path / "out.mp4"),
+            str(tmp_path),
+            expected_duration_s=4.0,
+            canvas=Canvas(1920, 1080),
+        )
+
+    assert mock_run.call_count == 2
+    fallback = mock_run.call_args_list[-1][0][0]
+    assert fallback[fallback.index("-s") + 1] == "1920x1080"
+
+
 def _image(path: Path, color: tuple[int, int, int], label: str) -> None:
     image = Image.new("RGB", (640, 360), color)
     ImageDraw.Draw(image).text((40, 40), label, fill="white")
@@ -47,14 +74,14 @@ def _transparent_image(path: Path) -> None:
     image.save(path, format="WEBP", lossless=True)
 
 
-def _video(path: Path) -> None:
+def _video(path: Path, *, size: str = "360x640") -> None:
     subprocess.run(
         [
             "ffmpeg",
             "-f",
             "lavfi",
             "-i",
-            "testsrc2=size=360x640:rate=30",
+            f"testsrc2=size={size}:rate=30",
             "-f",
             "lavfi",
             "-i",
@@ -77,7 +104,7 @@ def _video(path: Path) -> None:
     )
 
 
-def _snapshot() -> dict:
+def _snapshot(*, analyzed_aspect: float | None = None) -> dict:
     media = [
         MediaRef(
             lane="asset",
@@ -85,6 +112,7 @@ def _snapshot() -> dict:
             gcs_path="users/test/food.heic",
             generation="1",
             kind="image",
+            aspect=analyzed_aspect,
         ),
         MediaRef(
             lane="asset",
@@ -92,6 +120,7 @@ def _snapshot() -> dict:
             gcs_path="users/test/town.jpg",
             generation="2",
             kind="image",
+            aspect=analyzed_aspect,
         ),
         MediaRef(
             lane="asset",
@@ -99,6 +128,7 @@ def _snapshot() -> dict:
             gcs_path="users/test/food-detail.webp",
             generation="4",
             kind="image",
+            aspect=analyzed_aspect,
         ),
         MediaRef(
             lane="asset",
@@ -106,6 +136,7 @@ def _snapshot() -> dict:
             gcs_path="users/test/dessert.jpg",
             generation="5",
             kind="image",
+            aspect=analyzed_aspect,
         ),
         MediaRef(
             lane="asset",
@@ -113,6 +144,7 @@ def _snapshot() -> dict:
             gcs_path="users/test/street.jpg",
             generation="6",
             kind="image",
+            aspect=analyzed_aspect,
         ),
         MediaRef(
             lane="clip",
@@ -121,6 +153,7 @@ def _snapshot() -> dict:
             generation="3",
             kind="video",
             duration_s=5.5,
+            aspect=analyzed_aspect,
         ),
         MediaRef(
             lane="asset",
@@ -129,6 +162,7 @@ def _snapshot() -> dict:
             generation="7",
             kind="video",
             duration_s=5.5,
+            aspect=analyzed_aspect,
         ),
     ]
     snapshot = EditProposalSnapshot(
@@ -180,9 +214,15 @@ def _snapshot() -> dict:
     }
 
 
-@pytest.mark.parametrize("with_music", [False, True])
+@pytest.mark.parametrize(
+    ("with_music", "orientation"),
+    [(False, "portrait"), (True, "portrait"), (False, "landscape")],
+)
 def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_music: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_music: bool,
+    orientation: str,
 ) -> None:
     from app import storage
     from app.pipeline import guided_story
@@ -199,7 +239,7 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
     _image(dessert, (200, 90, 120), "DESSERT")
     _image(town, (170, 130, 80), "TOWN")
     _image(street, (140, 110, 75), "STREET")
-    _video(coast)
+    _video(coast, size="640x360" if orientation == "landscape" else "360x640")
     shutil.copy2(coast, swim)
     sources = {
         "users/test/food.heic": food,
@@ -222,8 +262,8 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
         shutil.copy2(local_path, uploads / Path(object_path).name)
         return f"https://example.test/{object_path}"
 
-    canvas = Canvas(360, 640)
-    monkeypatch.setattr(guided_story, "PORTRAIT", canvas)
+    canvas = Canvas(640, 360) if orientation == "landscape" else Canvas(360, 640)
+    monkeypatch.setattr(guided_story, orientation.upper(), canvas)
     monkeypatch.setattr(guided_story.settings, "output_width", canvas.width)
     monkeypatch.setattr(guided_story.settings, "output_height", canvas.height)
     monkeypatch.setattr(storage, "download_generation_to_file", download)
@@ -288,10 +328,15 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
             "start_s": 0.0,
         }
 
-    plan = compile_execution_plan(_snapshot(), track=track_payload)
+    plan = compile_execution_plan(
+        _snapshot(analyzed_aspect=1.7778 if orientation == "landscape" else None),
+        track=track_payload,
+    )
+    assert plan["output_orientation"] == orientation
+    assert plan["transition_policy"]["type"] == "crossfade"
+    assert all(element["stroke_width"] == 0 for element in plan["text_elements"])
     for element in plan["text_elements"]:
         element["size_px"] = 28 if element["id"] == "guided-title" else 20
-        element["stroke_width"] = 2
     result = render_execution_plan(
         plan,
         job_id="real-guided-test",
@@ -324,5 +369,13 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
     }
     final = next(uploads.glob("variant_1_guided_story_*.mp4"))
     probe = probe_video(str(final))
-    assert (probe.width, probe.height, probe.codec, probe.has_audio) == (360, 640, "h264", True)
+    assert (probe.width, probe.height, probe.codec, probe.has_audio) == (
+        canvas.width,
+        canvas.height,
+        "h264",
+        True,
+    )
     assert probe.duration_s == pytest.approx(15, abs=0.3)
+    base = next(uploads.glob("base_1_guided_story_*.mp4"))
+    base_probe = probe_video(str(base))
+    assert (base_probe.width, base_probe.height) == (canvas.width, canvas.height)

@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.34.1.9] — 2026-08-17
+## [0.34.1.11] — 2026-08-17
 
 ### Fixed
 - **Restored the missing clip uploader on default montage plan items.** PR #833 replaced the "I
@@ -15,6 +15,34 @@ All notable changes to this project will be documented in this file.
   there was no way to add the main videos. Fixed by letting the guard's early return account for a
   pending `content_mode` stamp, and by deleting the dead branch so a film-this montage item without
   a guide falls through to the existing pool-upload uploader.
+
+## [0.34.1.10] — 2026-08-17
+
+### Fixed
+- **Visuals-pool uploads now show a preview for iPhone HEIC photos and HEVC-in-QuickTime .mov
+  clips.** The pool never had a preview pipeline — `display_url` signed the RAW uploaded object,
+  and Chromium can't decode either format, so `ready` assets rendered blank in the plan-item
+  editor and asset pool. `analyze_pool_asset` now generates a browser-safe JPEG preview (image
+  thumbnail via Pillow/pillow_heif, video poster frame via `ffmpeg`) alongside analysis and
+  persists it on the new `plan_item_assets.preview_gcs_path` column; preview generation is
+  strictly best-effort and never turns a successful analysis into a failure. A bounded
+  maintenance backfill (`generate_pool_asset_preview`, dispatched from
+  `reconcile_stale_pool_assets`) covers pre-fix `ready` rows that never got one. `_asset_out`
+  signs the preview for images (`display_url`) and exposes it separately for videos
+  (`preview_url`, poster on the `<video>` tile); the editor's Visuals drawer no longer renders
+  videos through a bare `<img>` (always broken) and both surfaces fall back to a kind-label
+  placeholder on a decode error.
+
+## [0.34.1.9] — 2026-08-17
+
+### Changed
+- **Guided stories now match the approved footage's natural format.** Kria chooses 16:9 or 9:16
+  from the selected story media and its approved screen time, so an all-landscape trip no longer
+  gets forced into a portrait crop. The editor shows the format that actually rendered and can
+  rebuild the same verified story in the other format when the creator changes it.
+- **New guided-story text uses a cleaner editorial system.** Titles use Fraunces, supporting
+  thoughts use DM Sans, sizing and placement are more deliberate, and the warm-white/lime palette
+  relies on a soft shadow for contrast. Default title and thought strokes are now always zero.
 
 ## [0.34.1.8] — 2026-08-17
 

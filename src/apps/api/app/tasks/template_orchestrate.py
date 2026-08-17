@@ -3965,6 +3965,7 @@ def _concat_demuxer(
     output_path: str,
     tmpdir: str,
     expected_duration_s: float | None = None,
+    canvas: Canvas | None = None,
 ) -> None:
     """FFmpeg concat demuxer — stream-copy when slot layouts match, else re-encode.
 
@@ -4078,7 +4079,7 @@ def _concat_demuxer(
         # without busting the 1200s timeout. Locked by tests/test_encoder_policy.py.
         # Old comment, kept for archaeology: "ultrafast: shared-CPU workers crawl
         # on preset=fast (24-slot Morocco was hitting ~9 min for transitions alone)."
-        *_encoding_args(output_path, preset="fast"),
+        *_encoding_args(output_path, preset="fast", canvas=canvas),
     ]
     result = subprocess.run(encode_cmd, capture_output=True, timeout=1200, check=False)
     if result.returncode != 0:

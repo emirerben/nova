@@ -1531,10 +1531,19 @@ function VisualAssetButton({
   const [draft, setDraft] = useState(asset.user_context ?? "");
   const [saving, setSaving] = useState(false);
   const novaLine = asset.nova_description ?? asset.nova_on_screen_text ?? null;
+  // Videos can't render through <img> at all — they need the browser-safe
+  // poster preview. Images fall back to their raw display_url when no
+  // preview was generated (e.g. already browser-safe JPEG/PNG/WebP).
+  const tileSrc = asset.kind === "video" ? (asset.preview_url ?? null) : (asset.preview_url ?? asset.display_url);
+  const [mediaError, setMediaError] = useState(false);
 
   useEffect(() => {
     setDraft(asset.user_context ?? "");
   }, [asset.user_context]);
+
+  useEffect(() => {
+    setMediaError(false);
+  }, [tileSrc]);
 
   async function save() {
     if (!onSaveContext) return;
@@ -1558,9 +1567,14 @@ function VisualAssetButton({
           selected ? "border-lime-500" : "border-transparent"
         } focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500`}
       >
-        {asset.display_url ? (
+        {tileSrc && !mediaError ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={asset.display_url} alt="" className="h-full w-full object-cover" />
+          <img
+            src={tileSrc}
+            alt=""
+            onError={() => setMediaError(true)}
+            className="h-full w-full object-cover"
+          />
         ) : (
           <span className="flex h-full items-center justify-center bg-zinc-100 text-[10px] text-zinc-500">
             {asset.kind}
