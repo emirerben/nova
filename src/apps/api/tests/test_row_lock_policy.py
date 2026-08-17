@@ -28,7 +28,7 @@ codebase (``content_plan_build._lock_owned_plan_persona``,
 
 What this test does
 ===================
-It finds the *shape*, not the convention: within a single function, an unlocked
+It finds the *shape*, not the convention: within a single SESSION, an unlocked
 read of a primary key followed by a locked re-read of the SAME key that does not
 refresh. That is high signal — a bare ``with_for_update`` in a fresh session
 with nothing cached is perfectly safe, and flagging all ~78 of those would be
@@ -37,17 +37,30 @@ noise nobody reads.
 Adding a new occurrence fails this test. Fix it by adding
 ``populate_existing=True`` to the locked read.
 
+Matching is SESSION-scoped, not function-scoped
+===============================================
+The identity map lives on the session, so two reads only interact when they
+share one. A function that opens a session, closes it, does slow work, then
+opens a SECOND session to take the lock is the safest possible shape — the new
+session has nothing cached. Pairing those would be a false positive, and a gate
+that cries wolf is a gate people mute.
+
+This is not hypothetical. A function-scoped first draft of this gate flagged
+``autoplace.generate_pool_asset_preview`` (two separate sessions around the
+media work) plus three others, so 4 of its 6 findings were noise. Scoping to the
+enclosing ``with ... as <session>:`` block removed all four.
+
 The allow-list is a BUG BACKLOG, not an approval list
 =====================================================
-Every entry below is a suspected live instance of this bug, found when the gate
-was introduced. They are quarantined so the gate can start protecting new code
-immediately, NOT because they are believed correct. The list may shrink; it must
-never grow. Tracked in issue #845.
+Both entries below are verified live instances, read and confirmed to share one
+session with their unlocked pre-read. They are quarantined so the gate can start
+protecting new code immediately, NOT because they are believed correct. The list
+may shrink; it must never grow. Tracked in issue #845.
 
-Note the detector under-reports: it keys on the source text of the identifier
+The count is still a floor: matching keys on the source text of the identifier
 expression, so ``db.get(PlanItem, content_plan_item_id)`` followed by
-``db.get(PlanItem, item_ref.id, with_for_update=True)`` is the same row but does
-not match. Treat the allow-list as a floor.
+``db.get(PlanItem, item_ref.id, with_for_update=True)`` is the same row reached
+two ways and does not match.
 """
 
 from __future__ import annotations
@@ -61,65 +74,85 @@ APP_ROOT = pathlib.Path(__file__).resolve().parents[1] / "app"
 KNOWN_STALE_LOCK_READS: frozenset[tuple[str, str, str, str]] = frozenset(
     {
         ("tasks/conformance_build.py", "_run", "PlanItem", "iid"),
-        ("tasks/content_plan_build.py", "reroll_plan_item", "PlanItem", "iid"),
         ("tasks/generative_build.py", "_lock_owned_entry_job", "Job", "job_uuid"),
-        (
-            "tasks/generative_build.py",
-            "_guided_execution_plan",
-            "Job",
-            "uuid.UUID(job_id)",
-        ),
-        (
-            "tasks/generative_build.py",
-            "_run_media_overlay_pass",
-            "Job",
-            "uuid.UUID(job_id)",
-        ),
     }
 )
 
 
-def _get_call_key(call: ast.Call) -> tuple[str, str] | None:
-    """(Model, ident-source) for a ``<session>.get(Model, ident, ...)`` call."""
+def _get_call_key(call: ast.Call) -> tuple[str, str, str] | None:
+    """(receiver, Model, ident-source) for a ``<session>.get(Model, ident, ...)`` call."""
     if not (isinstance(call.func, ast.Attribute) and call.func.attr == "get"):
         return None
     if len(call.args) < 2:
         return None
     try:
-        return (ast.unparse(call.args[0]), ast.unparse(call.args[1]))
+        return (
+            ast.unparse(call.func.value),
+            ast.unparse(call.args[0]),
+            ast.unparse(call.args[1]),
+        )
     except Exception:  # pragma: no cover - defensive, unparse is total in 3.9+
         return None
 
 
+def _session_scope(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> int | None:
+    """Identity of the innermost ``with ... as <name>:`` block enclosing ``node``.
+
+    The identity map is per-SESSION, so two reads only interact when they share
+    one. Without this, a function that opens a session, closes it, then opens a
+    second one to take the lock reads as a violation when it is the safest
+    possible shape — the second session has nothing cached. That false positive
+    is not hypothetical: it is exactly ``autoplace.generate_pool_asset_preview``,
+    which does its slow media work between two separate sessions.
+    """
+    cur: ast.AST | None = node
+    while cur is not None:
+        parent = parents.get(cur)
+        if isinstance(parent, (ast.With, ast.AsyncWith)) and any(
+            item.optional_vars is not None for item in parent.items
+        ):
+            return id(parent)
+        cur = parent
+    return None
+
+
 def _find_stale_lock_reads() -> list[tuple[str, str, str, str, int]]:
-    """Every unlocked-then-locked-without-refresh read of one PK in one function."""
+    """Unlocked-then-locked-without-refresh reads of one PK in ONE session."""
     found: list[tuple[str, str, str, str, int]] = []
     for path in sorted(APP_ROOT.rglob("*.py")):
         rel = path.relative_to(APP_ROOT).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+        parents: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parents[child] = parent
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            unlocked: dict[tuple[str, str], int] = {}
-            locked: list[tuple[tuple[str, str], int, bool]] = []
+            # Keyed by session scope as well as receiver, so reads in two
+            # different `with session()` blocks never pair with each other.
+            unlocked: dict[tuple[int | None, str, str, str], int] = {}
+            locked: list[tuple[tuple[int | None, str, str, str], int, bool]] = []
             for node in ast.walk(fn):
                 if not isinstance(node, ast.Call):
                     continue
                 key = _get_call_key(node)
                 if key is None:
                     continue
+                scoped = (_session_scope(node, parents), *key)
                 kwargs = {kw.arg for kw in node.keywords if kw.arg}
                 if "with_for_update" in kwargs:
-                    locked.append((key, node.lineno, "populate_existing" in kwargs))
+                    locked.append((scoped, node.lineno, "populate_existing" in kwargs))
                 else:
                     # Earliest unlocked read is what poisons the identity map.
-                    unlocked.setdefault(key, node.lineno)
-            for key, lineno, refreshed in locked:
+                    unlocked.setdefault(scoped, node.lineno)
+            for scoped, lineno, refreshed in locked:
                 if refreshed:
                     continue
-                first_unlocked = unlocked.get(key)
+                first_unlocked = unlocked.get(scoped)
                 if first_unlocked is not None and first_unlocked < lineno:
-                    found.append((rel, fn.name, key[0], key[1], lineno))
+                    _, _receiver, model, ident = scoped
+                    found.append((rel, fn.name, model, ident, lineno))
     return found
 
 

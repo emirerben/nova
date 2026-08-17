@@ -1267,10 +1267,17 @@ and each minted a Job. The same staleness let the ownership fence read a stale `
   pass `populate_existing=True`. Requiring the pairing at all ~78 `with_for_update` sites was rejected:
   a bare lock in a fresh session with nothing cached is perfectly safe, and 60-odd allow-list entries
   written to satisfy a linter is noise nobody reads. One guard people trust beats a broad one they mute.
-- **The allow-list is a bug backlog and is asserted in both directions.** The 8 pre-existing instances
-  the gate found are quarantined so it can protect new code immediately, not because they are believed
-  correct (issue #845). A second test fails if a listed entry stops matching, so a fixed or renamed
-  entry cannot rot the list into fiction — an allow-list nobody trusts is an allow-list nobody reads.
+- **Matching is session-scoped, not function-scoped.** The identity map lives on the session, so two
+  reads only interact when they share one. A function that opens a session, closes it, does slow work,
+  then opens a SECOND session to take the lock is the safest possible shape. A function-scoped first
+  draft flagged four such cases — including `autoplace.generate_pool_asset_preview`, merged the same
+  day — so 4 of its 6 findings were noise. Scoping to the enclosing `with ... as <session>:` block
+  removed all four and left 2 verified instances. A gate that cries wolf is a gate people mute, which
+  would have defeated the whole point.
+- **The allow-list is a bug backlog and is asserted in both directions.** The 2 verified instances are
+  quarantined so the gate can protect new code immediately, not because they are believed correct
+  (issue #845). A second test fails if a listed entry stops matching, so a fixed or renamed entry
+  cannot rot the list into fiction — an allow-list nobody trusts is an allow-list nobody reads.
 - **The count is a floor.** The detector keys on the source text of the identifier expression, so the
   same row reached two ways (`db.get(PlanItem, content_plan_item_id)` then
   `db.get(PlanItem, item_ref.id, with_for_update=True)`) is the same bug and is not flagged. Stated in
