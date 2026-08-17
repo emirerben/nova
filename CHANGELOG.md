@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.34.1.8] — 2026-08-17
+## [0.34.1.9] — 2026-08-17
 
 ### Changed
 - **Guided stories now match the approved footage's natural format.** Kria chooses 16:9 or 9:16
@@ -12,6 +12,8 @@ All notable changes to this project will be documented in this file.
 - **New guided-story text uses a cleaner editorial system.** Titles use Fraunces, supporting
   thoughts use DM Sans, sizing and placement are more deliberate, and the warm-white/lime palette
   relies on a soft shadow for contrast. Default title and thought strokes are now always zero.
+
+## [0.34.1.8] — 2026-08-17
 
 ### Fixed
 - **Fly Deploy no longer goes red when Fly kills the release machine during startup (#834).** The
