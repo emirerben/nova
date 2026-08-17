@@ -15,6 +15,7 @@ import {
 } from "../../../lib/plan-api";
 import { INTRO_FONTS } from "../../../lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
+import { InfoDot } from "@/components/ui/InfoDot";
 import CaptionStyleToggle from "./CaptionStyleToggle";
 
 const CAPTION_LANGUAGE_LABELS: Record<string, string> = { en: "English", tr: "Türkçe" };
@@ -86,7 +87,6 @@ export default function CaptionEditor({
   initialFont = null,
   initialCaptionStyle = "sentence",
   initialCaptionsEnabled = true,
-  wordHint,
   rendering = false,
   reviewFirst = false,
   captionLanguage = null,
@@ -104,8 +104,6 @@ export default function CaptionEditor({
   /** Subtitles on/off, independent of cue count. Off shows no overlay/list here
    * and Apply reburns to the caption-free base without touching stored cues. */
   initialCaptionsEnabled?: boolean;
-  /** Word-by-word hint copy — differs slightly between narrated and talking-to-camera. */
-  wordHint?: string;
   rendering?: boolean;
   /**
    * Show a persistent "check your captions before applying" notice until the user
@@ -405,10 +403,7 @@ export default function CaptionEditor({
       </div>
 
       {captionsEnabled && (
-        <p className="text-xs text-[#71717a]">
-          Pause and tap a caption to fix a word. Changes save as you type; hit{" "}
-          <span className="font-medium">Apply</span> to bake them into the video.
-        </p>
+        <p className="text-xs text-[#71717a]">Pause and tap a caption to fix a word.</p>
       )}
 
       {captionsEnabled && reviewFirst && !reviewed && (
@@ -580,14 +575,16 @@ export default function CaptionEditor({
       {/* Style + font + cue list are moot while subtitles are off. */}
       {captionsEnabled && (
       <div>
-        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
+        <p className="mb-1.5 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
           Caption style
+          <InfoDot label="Caption style" size="compact">
+            Sentence shows full lines like subtitles. Word-by-word pops one big word at a time.
+          </InfoDot>
         </p>
         <CaptionStyleToggle
           value={captionStyle}
           onChange={chooseCaptionStyle}
           saving={false}
-          wordHint={wordHint}
         />
       </div>
       )}

@@ -11,6 +11,7 @@ import {
   type EditProposalSnapshot,
   type PlanItem,
 } from "@/lib/plan-api";
+import { InfoDot } from "@/components/ui/InfoDot";
 
 const DIRECTION_OPTIONS: Array<{
   value: EditProposalDirection;
@@ -570,9 +571,6 @@ export default function EditProposalCard({
             <span aria-hidden>✦</span>
             Plan edit
           </button>
-          <p className="mt-2 text-sm text-[#71717a]">
-            Choose the direction, pace, and goal before Kria plans every upload.
-          </p>
         </div>
       );
     }
@@ -600,9 +598,6 @@ export default function EditProposalCard({
           <span aria-hidden>✦</span>
           Plan edit
         </button>
-        <p className="mt-2 text-sm text-[#71717a]">
-          Tell Kria what you want. It will understand all your uploads and propose the edit before rendering.
-        </p>
       </div>
     );
   }
@@ -876,17 +871,19 @@ export default function EditProposalCard({
         ))}
       </ol>
 
-      <button
-        type="button"
-        disabled={working || !visibleDraft.title.trim()}
-        onClick={approve}
-        className="mt-4 min-h-11 w-full rounded-lg bg-lime-600 px-4 py-2 text-sm font-semibold text-white outline-none hover:bg-lime-700 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {workingAction === "approve" ? "Approving…" : "Approve plan"}
-      </button>
-      <p className="mt-2 text-center text-xs text-[#71717a]">
-        AI thoughts stay drafts until you approve this plan.
-      </p>
+      <div className="mt-4 flex items-center gap-1">
+        <button
+          type="button"
+          disabled={working || !visibleDraft.title.trim()}
+          onClick={approve}
+          className="min-h-11 flex-1 rounded-lg bg-lime-600 px-4 py-2 text-sm font-semibold text-white outline-none hover:bg-lime-700 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {workingAction === "approve" ? "Approving…" : "Approve plan"}
+        </button>
+        <InfoDot label="Plan approval" size="compact">
+          AI thoughts stay drafts until you approve this plan.
+        </InfoDot>
+      </div>
       {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
     </section>
   );

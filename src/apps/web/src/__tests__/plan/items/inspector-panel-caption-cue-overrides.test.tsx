@@ -10,6 +10,19 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import InspectorPanel from "@/app/plan/items/[id]/_editor/InspectorPanel";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
+// Radix Popover (InfoDot) positions via floating-ui, which needs ResizeObserver;
+// jsdom has none. See src/__tests__/components/InfoDot.test.tsx for the pattern.
+beforeAll(() => {
+  if (typeof globalThis.ResizeObserver === "undefined") {
+    class RO {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    (globalThis as Record<string, unknown>).ResizeObserver = RO;
+  }
+});
+
 const noop = jest.fn();
 
 function makeCaptionBar(overrides: Partial<TextElementBar> = {}): TextElementBar {
@@ -106,6 +119,8 @@ describe("InspectorPanel caption section split (Lane PR-A)", () => {
 
   it("points the per-cue hint at a control that exists here, not an 'All captions' section that moved away", () => {
     renderCaptionInspector(makeCaptionBar());
+    const trigger = screen.getByRole("button", { name: "About This caption" });
+    fireEvent.click(trigger);
     expect(
       screen.getByText(/Changes only this line\. Use “Match all captions” to clear it\./),
     ).toBeInTheDocument();

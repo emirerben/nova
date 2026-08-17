@@ -93,6 +93,7 @@ import PresetGrid from "./PresetGrid";
 import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
 import MotionInspector, { type CreatorBlockMotionControlPatch } from "./MotionInspector";
 import CarouselPanel, { type CarouselPanelControl } from "./CarouselPanel";
+import { InfoDot } from "@/components/ui/InfoDot";
 
 /** Fields with dedicated (potentially editable) rows in this panel. */
 const EDITABLE_ROW_FIELDS = new Set([
@@ -436,7 +437,6 @@ export default function InspectorPanel({
           <div className="flex items-center justify-between px-5 pb-4 pt-5">
             <div>
               <h2 className="font-display text-[18px] text-[#0c0c0e]">Carousel</h2>
-              <p className="mt-0.5 text-[11px] text-[#71717a]">Visual effect and playback</p>
             </div>
             <CloseX onClose={onClose} />
           </div>
@@ -487,9 +487,6 @@ export default function InspectorPanel({
             </h2>
             <CloseX onClose={onClose} />
           </div>
-          <p className="mt-3 text-[13px] text-[#71717a]">
-            Controls for this element arrive with the timeline update.
-          </p>
         </div>
       )}
     </div>
@@ -692,7 +689,12 @@ function MixInspector({
       {editable ? (
         <div className="mt-4">
           <div className="flex items-center justify-between text-[12px] font-semibold text-[#3f3f46]">
-            <label htmlFor="editor-mix-level">Bed level</label>
+            <span className="flex items-center gap-1">
+              <label htmlFor="editor-mix-level">Bed level</label>
+              <InfoDot label="Bed level" size="compact">
+                Balances the background bed against your voiceover.
+              </InfoDot>
+            </span>
             <span>{Math.round(safeLevel * 100)}%</span>
           </div>
           <input
@@ -705,9 +707,6 @@ function MixInspector({
             onChange={(e) => onPatch?.(Number(e.target.value))}
             className="mt-2 h-11 w-full cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
           />
-          <p className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
-            Balance the background bed against your voiceover.
-          </p>
         </div>
       ) : (
         <p className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
@@ -987,7 +986,6 @@ function CameraInspector({
         <h2 className="font-display text-[18px] text-[#0c0c0e]">Camera</h2>
         <CloseX onClose={onClose} />
       </div>
-      <p className="mt-1 text-[12px] text-[#71717a]">Focus pulse</p>
 
       <TimingSection label="Timing">
         <TimingNumberInput
@@ -1461,7 +1459,12 @@ function TextInspector({
       {isCaption && (
         <div className="mt-4 border-b border-zinc-100 pb-3">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-[13px] font-bold text-[#0c0c0e]">This caption</span>
+            <span className="flex items-center gap-1">
+              <span className="text-[13px] font-bold text-[#0c0c0e]">This caption</span>
+              <InfoDot label="This caption" size="compact">
+                Changes only this line. Use &ldquo;Match all captions&rdquo; to clear it.
+              </InfoDot>
+            </span>
             {hasAnyCueOverride && (
               <button
                 type="button"
@@ -1559,12 +1562,6 @@ function TextInspector({
             </span>
             <span className="text-[11px] text-[#71717a]">Size</span>
           </div>
-          {/* Self-contained: points at the "Match all captions" control right
-              above, NOT at an "All captions" section — that moved to the
-              Captions panel, so "below" named something no longer here. */}
-          <p className="mt-2 text-[11px] text-[#71717a]">
-            Changes only this line. Use &ldquo;Match all captions&rdquo; to clear it.
-          </p>
         </div>
       )}
 
@@ -2162,7 +2159,13 @@ function ClipInspector({
       </p>
 
       <fieldset className="mt-5">
-        <legend className="text-[12px] font-semibold text-[#3f3f46]">Look</legend>
+        <legend className="flex items-center gap-1 text-[12px] font-semibold text-[#3f3f46]">
+          <span>Look</span>
+          <InfoDot label="Looks" size="compact">
+            Each look is a color grade — warm olive, smoky split-tone, or stadium diffusion.
+            Thumbnails show the treatment.
+          </InfoDot>
+        </legend>
         <div className="mt-2 grid grid-cols-2 gap-2">
           {(
             [
@@ -2197,15 +2200,6 @@ function ClipInspector({
             );
           })}
         </div>
-        <p className="mt-2 text-[11px] leading-relaxed text-[#71717a]">
-          {selectedLook === "olive_film"
-            ? "Warm olive highlights, green-cool shadows, soft highlights, and restrained colour."
-            : selectedLook === "smoky_split_tone"
-              ? "A stronger warm/teal split with softened texture, grain, and a deeper vignette."
-              : selectedLook === "stadium_diffusion"
-                ? "Diffusion, optical edge pull, cool shadows, warm highlights, and film grain."
-                : "No source-media colour treatment."}
-        </p>
 
         {isCustomizableLook(selectedLook) && lookControls && (
           <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/70 p-3">

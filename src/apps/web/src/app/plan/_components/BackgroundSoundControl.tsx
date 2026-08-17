@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { setPlanItemNarratedBedLevel } from "@/lib/plan-api";
+import { InfoDot } from "@/components/ui/InfoDot";
 
 // Commit only on drag-release or after a quiet period — each commit dispatches a
 // REAL Celery re-render (re-mixes the audio bed, re-runs the clip assembly), not a
@@ -65,12 +66,12 @@ export default function BackgroundSoundControl({
 
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-3">
-      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+      <p className="mb-3 flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-zinc-400">
         Background sound
-      </p>
-      <p className="mb-3 text-sm text-[#71717a]">
-        How loud your original clip audio plays under your voice. Kria ducks it
-        automatically while you&apos;re talking.
+        <InfoDot label="Background sound">
+          How loud your clip audio plays under your voice. Kria ducks it automatically
+          while you&apos;re talking.
+        </InfoDot>
       </p>
       <div className="flex items-center gap-3">
         <span className="text-xs text-zinc-400">Off</span>

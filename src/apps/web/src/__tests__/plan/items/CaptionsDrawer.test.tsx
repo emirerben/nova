@@ -171,7 +171,7 @@ describe("CaptionsDrawer — find and replace", () => {
 describe("CaptionsDrawer — globals", () => {
   it("reaches the variant-wide styling with NO cue selected — the whole point of moving it here", () => {
     const { onPatchMeta } = renderDrawer({ selectedId: null });
-    fireEvent.click(screen.getByRole("button", { name: /All captions/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^All captions/ }));
     fireEvent.change(screen.getByLabelText("All captions font size"), {
       target: { value: "96" },
     });
@@ -188,13 +188,13 @@ describe("CaptionsDrawer — globals", () => {
         size_px: 96,
       },
     });
-    const summary = screen.getByRole("button", { name: /All captions/ });
+    const summary = screen.getByRole("button", { name: /^All captions/ });
     expect(within(summary).getByText("Montserrat Bold · 96")).toBeInTheDocument();
   });
 
   it("patches stroke, colour and shadow through the same meta channel", () => {
     const { onPatchMeta } = renderDrawer();
-    fireEvent.click(screen.getByRole("button", { name: /All captions/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^All captions/ }));
     fireEvent.change(screen.getByLabelText("All captions stroke width"), {
       target: { value: "8" },
     });

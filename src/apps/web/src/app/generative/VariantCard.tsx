@@ -439,7 +439,7 @@ export function VariantCard({
                     sequenceSynced
                       ? "Editorial — text synced to this edit"
                       : clusterBlocked
-                        ? "Editorial layout needs a 3-6 word hook — shorten the text first"
+                        ? undefined
                         : "Editorial word-cluster — mixed sizes, magazine-style"
                   }
                   onSelect={() => run(() => onChangeLayout("cluster"))}
