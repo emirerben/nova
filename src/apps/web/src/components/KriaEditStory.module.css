@@ -330,44 +330,6 @@
 
 .activeShot { opacity: 1; }
 
-.overlayResult {
-  position: absolute;
-  z-index: 3;
-  display: block;
-  object-fit: cover;
-  overflow: hidden;
-  background-position: center;
-  background-size: cover;
-  box-shadow: 0 10px 24px rgb(0 0 0 / 20%);
-  opacity: 0;
-  transform: translateY(10px) scale(0.82);
-  transition:
-    transform var(--story-move-dur) var(--story-ease-move),
-    opacity var(--story-move-dur) var(--story-ease-move);
-}
-
-.imageOverlayResult {
-  top: 11%;
-  right: 7%;
-  width: 29%;
-  aspect-ratio: 190 / 126;
-  border-radius: 15px;
-}
-
-.videoOverlayResult {
-  bottom: 10%;
-  left: 7%;
-  width: 32%;
-  aspect-ratio: 150 / 98;
-  border-radius: 13px;
-  transition-delay: var(--story-overlay-stagger);
-}
-
-.activeOverlayResult {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
 .cta {
   position: absolute;
   z-index: 11;
@@ -505,8 +467,7 @@
   }
 
   .headline span[data-active],
-  .phoneShot,
-  .overlayResult {
+  .phoneShot {
     transition: opacity var(--story-reduced-dur) var(--story-ease-out);
     transform: none;
   }

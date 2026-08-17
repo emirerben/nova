@@ -307,11 +307,11 @@ describe("KriaEditStory reduced motion", () => {
     const renderedVideo = container.querySelector<HTMLVideoElement>(
       'video[src="/landing/raw-story/travel-render.mp4"]',
     );
-    const overlayVideos = container.querySelectorAll<HTMLVideoElement>(
+    const overlayVideo = container.querySelector<HTMLVideoElement>(
       'video[src="/landing/raw-story/corfu.mp4"]',
     );
     expect(renderedVideo).not.toBeNull();
-    expect(overlayVideos).toHaveLength(2);
+    expect(overlayVideo).not.toBeNull();
     const renderedPlay = jest.fn().mockResolvedValue(undefined);
     const renderedPause = jest.fn();
     renderedVideo!.play = renderedPlay;
@@ -345,13 +345,11 @@ describe("KriaEditStory reduced motion", () => {
     expect(renderedVideo!.currentTime).toBeCloseTo(
       (AUTO_STORY_DURATION_MS - AUTO_RENDER_START_MS) / 1_000,
     );
-    overlayVideos[0].currentTime = 1.25;
-    overlayVideos[1].currentTime = 2.5;
+    overlayVideo!.currentTime = 1.25;
 
     fireEvent.click(screen.getByRole("button", { name: /replay with sound/i }));
     expect(audio.currentTime).toBe(0);
-    expect(overlayVideos[0].currentTime).toBe(0);
-    expect(overlayVideos[1].currentTime).toBe(0);
+    expect(overlayVideo!.currentTime).toBe(0);
     expect(play).toHaveBeenCalledTimes(3);
   });
 
@@ -744,7 +742,7 @@ describe("KriaEditStory reduced motion", () => {
     expect(cancel).toHaveBeenCalled();
   });
 
-  it("plays the overlay preview only during its authored placement beat", () => {
+  it("keeps the phone video-only after the overlay inputs land", () => {
     mockReducedMotion(false);
     const frames = mockAnimationFrames();
 
@@ -756,38 +754,32 @@ describe("KriaEditStory reduced motion", () => {
     const overlays = container.querySelectorAll<HTMLVideoElement>(
       'video[src="/landing/raw-story/corfu.mp4"]',
     );
-    expect(overlays).toHaveLength(2);
-    const [overlay, overlayResult] = Array.from(overlays);
+    expect(overlays).toHaveLength(1);
+    const [overlay] = Array.from(overlays);
     const play = jest.fn().mockResolvedValue(undefined);
     const pause = jest.fn();
-    const resultPlay = jest.fn().mockResolvedValue(undefined);
-    const resultPause = jest.fn();
     overlay.play = play;
     overlay.pause = pause;
-    overlayResult.play = resultPlay;
-    overlayResult.pause = resultPause;
 
     Object.defineProperty(window, "scrollY", { configurable: true, value: 400 });
     fireEvent.scroll(window);
     frames.runAll(16);
     expect(play).toHaveBeenCalledTimes(1);
-    expect(resultPause).toHaveBeenCalled();
     overlay.currentTime = 1.25;
 
     Object.defineProperty(window, "scrollY", { configurable: true, value: 550 });
     fireEvent.scroll(window);
     frames.runAll(32);
     expect(pause).toHaveBeenCalled();
-    expect(resultPlay).toHaveBeenCalledTimes(1);
-    expect(overlayResult.currentTime).toBe(1.25);
-    expect(container.querySelector('[data-overlay-result="image"]')?.className).toContain(
-      "activeOverlayResult",
-    );
+    expect(container.querySelector("[data-overlay-result]")).not.toBeInTheDocument();
+    expect(
+      container.querySelector('video[src="/landing/raw-story/travel-render.mp4"]')?.className,
+    ).toContain("activeShot");
 
-    overlayResult.currentTime = 2.5;
     Object.defineProperty(window, "scrollY", { configurable: true, value: 400 });
     fireEvent.scroll(window);
     frames.runAll(48);
-    expect(overlay.currentTime).toBe(2.5);
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(overlay.currentTime).toBe(1.25);
   });
 });

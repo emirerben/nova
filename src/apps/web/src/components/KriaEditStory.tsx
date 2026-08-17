@@ -55,7 +55,7 @@ const ACCESSIBLE_STORY_STEPS = [
   "Kria adds the first landscape clip and begins the edit.",
   "Kria adds the next two clips to build a multi-shot sequence.",
   "Captions and visual effects arrive together and appear on the video.",
-  "An image and a video overlay move into distinct positions on the edit.",
+  "The overlay inputs land, and the rendered video reveals the finished placement.",
   "Sound effects arrive, and only then does the finished edit begin playing music.",
   "The finished message appears one centered line at a time: Save time, let AI edit your videos, and create more.",
 ] as const;
@@ -207,8 +207,6 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
   const [soundUnavailable, setSoundUnavailable] = useState(false);
   const phoneVideos = useRef<Array<HTMLVideoElement | null>>([]);
   const overlayVideo = useRef<HTMLVideoElement | null>(null);
-  const phoneOverlayVideo = useRef<HTMLVideoElement | null>(null);
-  const previousOverlayStep = useRef(step);
   const ambienceAudio = useRef<HTMLAudioElement | null>(null);
   const autoStartedAt = useRef(0);
   const renderedPlaybackAttempted = useRef(false);
@@ -248,15 +246,7 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
 
   useEffect(() => {
     const sourceVideo = overlayVideo.current;
-    const resultVideo = phoneOverlayVideo.current;
     const playbackBlocked = reducedMotion || (isAuto && !autoPlaying);
-    const enteringResult = previousOverlayStep.current < 5 && step >= 5;
-    const returningToSource = previousOverlayStep.current >= 5 && step === 4;
-
-    if (sourceVideo && resultVideo) {
-      if (enteringResult) resultVideo.currentTime = sourceVideo.currentTime;
-      if (returningToSource) sourceVideo.currentTime = resultVideo.currentTime;
-    }
 
     if (sourceVideo) {
       if (playbackBlocked || step !== 4) {
@@ -266,23 +256,12 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
         if (playback) void playback.catch(() => undefined);
       }
     }
-
-    if (resultVideo) {
-      if (playbackBlocked || step < 5) {
-        resultVideo.pause();
-      } else {
-        const playback = resultVideo.play();
-        if (playback) void playback.catch(() => undefined);
-      }
-    }
-    previousOverlayStep.current = step;
   }, [autoPlaying, isAuto, reducedMotion, step]);
 
   useEffect(() => {
     if (!isAuto || !reducedMotion) return;
     ambienceAudio.current?.pause();
     phoneVideos.current.forEach((video) => video?.pause());
-    phoneOverlayVideo.current?.pause();
     if (reducedMotionAudioTimer.current) {
       clearTimeout(reducedMotionAudioTimer.current);
       reducedMotionAudioTimer.current = null;
@@ -396,7 +375,6 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
       audioPlaybackGeneration.current += 1;
       renderedPlaybackGeneration.current += 1;
       audio?.pause();
-      phoneOverlayVideo.current?.pause();
       if (reducedMotionAudioTimer.current) clearTimeout(reducedMotionAudioTimer.current);
     };
   }, []);
@@ -428,7 +406,6 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
       renderedPlaybackGeneration.current += 1;
       ambienceAudio.current?.pause();
       phoneVideos.current.forEach((video) => video?.pause());
-      phoneOverlayVideo.current?.pause();
       if (reducedMotionAudioTimer.current) {
         clearTimeout(reducedMotionAudioTimer.current);
         reducedMotionAudioTimer.current = null;
@@ -509,7 +486,6 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
       const renderedVideo = phoneVideos.current[RENDERED_VIDEO_INDEX];
       if (renderedVideo) renderedVideo.currentTime = 0;
       if (overlayVideo.current) overlayVideo.current.currentTime = 0;
-      if (phoneOverlayVideo.current) phoneOverlayVideo.current.currentTime = 0;
     }
     const elapsed = audio
       ? audio.currentTime * 1_000
@@ -739,17 +715,6 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
               }}
               loop={false}
               className={`${styles.phoneShot} ${step >= 4 ? styles.activeShot : ""}`}
-            />
-            <div
-              className={`${styles.overlayResult} ${styles.imageOverlayResult} ${step >= 5 ? styles.activeOverlayResult : ""}`}
-              style={{ backgroundImage: `url(${RAW_MEDIA.imageOverlay})` }}
-              data-overlay-result="image"
-            />
-            <StoryVideo
-              src={RAW_MEDIA.videoOverlay}
-              poster={RAW_POSTERS.videoOverlay}
-              videoRef={(node) => { phoneOverlayVideo.current = node; }}
-              className={`${styles.overlayResult} ${styles.videoOverlayResult} ${step >= 5 ? styles.activeOverlayResult : ""}`}
             />
           </div>
         </div>

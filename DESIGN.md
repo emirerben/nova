@@ -35,7 +35,7 @@ Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/componen
   - `outline-lime-500` — selection
 - **Cards:** `rounded-2xl border border-zinc-200 shadow-sm`, fill `bg-white` or `bg-[#fafaf8]`.
 - **Notice line (light surfaces):** `border-zinc-200 bg-white text-[#3f3f46]` quiet informational line — transient warnings/conflicts (e.g. "another variant is rendering") stay zinc; NO amber on light surfaces (amber is the dark-render-system accent, §9).
-- **Landing story screen:** centered 16:9 frame with a 1px ink border, 44px desktop / 30px mobile radius, and transparent fill until the first shot arrives. The screen contains only the video and placed media; surrounding source media has no border.
+- **Landing story screen:** centered 16:9 frame with a 1px ink border, 44px desktop / 30px mobile radius, and transparent fill until the first shot arrives. The screen contains only the active video; captions, visual effects, and placed media must be reflected inside the rendered footage, never as separate DOM cards layered above it. Surrounding source media has no border.
 - **Type scale:**
   - Landing story line: Inter medium, `clamp(54px,6.53vw,94px)` desktop; the long middle line uses `clamp(26px,7.6vw,38px)` on mobile.
   - Feature chips: Inter 15/18 desktop and 11/16 mobile, weight 700.
@@ -247,7 +247,7 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 
 | # | Drift | Canonical pick | Note |
 |---|---|---|---|
-| 1 | Landing story radii: 44px screen / 24–13px source and overlay media / full feature pills | Role-based: the screen reads as the device; source media and placed overlays step down by size; feature controls stay pill-shaped | Not one value — each radius serves a role |
+| 1 | Landing story radii: 44px screen / 24–13px source media / full feature pills | Role-based: the screen reads as the device; surrounding source media steps down by size; feature controls stay pill-shaped | Not one value — each radius serves a role |
 | 2 | Product radius stragglers: bare `rounded`, lone `rounded-2xl` | `rounded-full` buttons/pills; `rounded-lg` surfaces | Normalize opportunistically |
 | 3 | `--amber: #d97706` CSS var ≠ shipped amber-400 `#fbbf24` | Tailwind `amber-400` / `amber-300` | CSS var is stale; do not reference it |
 | 4 | Landing raw-hex grays (= zinc-500/400) | `--ink*` CSS vars are the landing-identity tokens | Equivalence noted for greps |
