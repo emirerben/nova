@@ -22,6 +22,7 @@ function input(overrides: Partial<GenerateGateInput> = {}): GenerateGateInput {
     isGenerating: false,
     uploaderBusy: false,
     clipCount: 1,
+    hasApprovedGuidedMedia: false,
     isNarrated: false,
     hasVoiceover: false,
     selfNarrationEnabled: false,
@@ -106,6 +107,12 @@ describe("generateGate — busy states and non-narrated items", () => {
       hint: "Add clips to generate",
     });
     expect(generateGate(input({ clipCount: 2 }))).toEqual({ disabled: false, hint: null });
+  });
+
+  it("an approved guided story can generate from selected pool media without attached clips", () => {
+    expect(
+      generateGate(input({ clipCount: 0, hasApprovedGuidedMedia: true })),
+    ).toEqual({ disabled: false, hint: null });
   });
 
   it("instructed items show the shots-left nudge with correct pluralization", () => {

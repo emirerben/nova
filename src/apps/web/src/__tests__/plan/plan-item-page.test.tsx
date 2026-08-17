@@ -1145,6 +1145,38 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     });
   });
 
+  it("enables Generate when an approved plan selects only visual-pool media", async () => {
+    const proposal = makeGuidedProposal("approved");
+    proposal.draft.media[0].lane = "asset";
+    const item = {
+      ...guidedItem(proposal),
+      clip_gcs_paths: [],
+      clip_assignments: [],
+    };
+    mockGeneratePlanItem.mockResolvedValue(item);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const generate = screen.getByRole("button", { name: /generate video/i });
+    expect(generate).toBeEnabled();
+    expect(screen.queryByText("Add clips to generate")).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(generate);
+    });
+
+    await waitFor(() => {
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+  });
+
   it("keeps polling while a conversational reply is in flight", async () => {
     const active = makeGuidedProposal("briefing");
     active.conversation_in_progress = true;

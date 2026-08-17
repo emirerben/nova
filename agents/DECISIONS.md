@@ -1182,3 +1182,13 @@ revision output could only reorder beat IDs. In production dogfood the model cha
   the currently assigned aliases. Unknown, missing, or duplicated media fails closed before persistence.
 - **Aliases never become authority.** Only the server maps validated aliases back to stable media IDs;
   the model still cannot introduce another user's object, replace storage identity, or drop a source.
+
+## [2026-08-17] Approved guided media satisfies the Generate footage gate
+
+Production dogfood approved a five-source guided story built entirely from the visuals pool, then the
+page disabled Generate with “Add clips to generate.” The strict renderer already consumes both media
+lanes from the approved snapshot; only the legacy frontend gate still counted attached clips.
+
+**Decision:** A current approved proposal with at least one selected story-beat media ID satisfies the
+shared footage gate. Unguided items and empty/malformed approvals still require an attached clip, and
+the backend continues to revalidate the approved snapshot before dispatch.

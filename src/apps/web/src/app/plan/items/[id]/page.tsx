@@ -1482,6 +1482,15 @@ export default function PlanItemPage() {
   // voiceover; the footage's own audio drives the edit.
   const selfNarrationEnabled =
     process.env.NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED === "true";
+  const guidedEditActive = GUIDED_EDIT_ENABLED && item.guided_edit_available === true;
+  const guidedEditApproved = item.edit_proposal?.status === "approved";
+  const hasApprovedGuidedMedia = Boolean(
+    guidedEditActive &&
+      guidedEditApproved &&
+      item.edit_proposal?.last_approved?.snapshot.story_beats.some(
+        (beat) => beat.media_ids.length > 0,
+      ),
+  );
   // Existing upload/format rules come from one decision; guided-edit approval
   // composes a second explicit gate immediately below.
   const gate = generateGate({
@@ -1493,14 +1502,13 @@ export default function PlanItemPage() {
     // "Finishing upload…" would be a lie for an upload that already failed.
     uploaderBusy: uploaderBusy || uploading || hasActivePoolUploads,
     clipCount,
+    hasApprovedGuidedMedia,
     isNarrated,
     hasVoiceover: !!voiceoverGcsPath,
     selfNarrationEnabled,
     isInstructed,
     shotsLeft,
   });
-  const guidedEditActive = GUIDED_EDIT_ENABLED && item.guided_edit_available === true;
-  const guidedEditApproved = item.edit_proposal?.status === "approved";
   const guidedEditHint =
     item.edit_proposal?.status === "stale"
       ? "Your media changed — plan the edit again."
