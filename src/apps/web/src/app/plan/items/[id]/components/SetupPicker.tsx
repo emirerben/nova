@@ -106,6 +106,11 @@ export type SetupPickerProps = {
   /** Item is already mid-setup (guide accepted / clips uploaded) — open on
       receipts instead of the poster rail. */
   startCollapsed?: boolean;
+  /** Item's current content_mode. Used so re-clicking the already-selected
+      Montage card still stamps content_mode: "existing_footage" when the
+      item is stuck on create_new with no guide (e.g. default new items) —
+      otherwise the no-op guard below would swallow the click entirely. */
+  contentMode?: "existing_footage" | "create_new" | "mixed";
   onPatch: (updates: SetupPatch) => Promise<void>;
 };
 
@@ -328,6 +333,7 @@ export default function SetupPicker({
   showTalkingHead,
   hasGuide = false,
   startCollapsed = false,
+  contentMode,
   onPatch,
 }: SetupPickerProps) {
   // The poster rail is the page's opening moment; after a choice it collapses
@@ -380,12 +386,18 @@ export default function SetupPicker({
     // Compare against the stored edit_format, not the folded picker value —
     // a legacy narrated_planned item clicking Voiceover must still upgrade.
     const targetFormat = value === "narrated_planned" ? "narrated_ready" : value;
-    if (targetFormat === rawEditFormat) return;
+    // Re-clicking the already-selected Montage card is not always a no-op:
+    // default items land on montage + create_new + no guide with nothing in
+    // the DOM to upload clips into (PR #833 removed the mode toggle). Fall
+    // through past the no-op guard so the content_mode stamp still fires.
+    const needsContentModeStamp =
+      value === "montage" && !hasGuide && contentMode !== "existing_footage";
+    if (targetFormat === rawEditFormat && !needsContentModeStamp) return;
     setOptimisticFormat(value);
     if (value === "montage") {
       await patch({
         edit_format: "montage",
-        ...(hasGuide ? {} : { content_mode: "existing_footage" }),
+        ...(needsContentModeStamp ? { content_mode: "existing_footage" } : {}),
       });
     } else {
       await patch({ edit_format: targetFormat });
