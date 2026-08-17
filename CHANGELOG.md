@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.0.1] — 2026-08-17
+
+### Changed
+- **Info dots now open on hover.** On desktop, resting the pointer on a ⓘ dot opens its explanation after a beat and it fades away when you move on; clicking pins it open. Touch still taps to toggle. Hover-opening never steals your keyboard focus.
+
 ## [0.36.0.0] — 2026-08-17
 
 ### Added
