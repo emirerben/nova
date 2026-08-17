@@ -289,6 +289,11 @@ describe("KriaEditStory reduced motion", () => {
       "aria-current",
       "page",
     );
+    expect(screen.getByRole("link", { name: "Automatic" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: "Scroll" })).toHaveAttribute(
+      "href",
+      "/?mode=scroll",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /pause automatic demo/i }));
     expect(pause).toHaveBeenCalled();

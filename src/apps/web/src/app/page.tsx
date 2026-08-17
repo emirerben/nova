@@ -6,13 +6,21 @@ import { authOptions } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage() {
+type HomePageProps = {
+  searchParams?: {
+    mode?: string | string[];
+  };
+};
+
+export default async function HomePage({ searchParams }: HomePageProps) {
   const session = await getServerSession(authOptions);
   if (session) redirect("/plan");
 
+  const storyMode = searchParams?.mode === "scroll" ? "scroll" : "auto";
+
   return (
     <main className="min-h-screen bg-[#fafaf8] text-[#0c0c0e]">
-      <KriaEditStory />
+      <KriaEditStory mode={storyMode} />
     </main>
   );
 }

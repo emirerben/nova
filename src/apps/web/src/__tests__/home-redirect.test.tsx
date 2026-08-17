@@ -18,14 +18,19 @@ jest.mock("next/navigation", () => ({
 
 // KriaEditStory uses browser media and animation APIs. Stub it so this server-page
 // test stays focused on authentication and the landing composition boundary.
+const mockStory = jest.fn(({ mode }: { mode?: string }) => (
+  <section
+    aria-label="How Kria turns raw videos into a finished edit"
+    data-mode={mode}
+  >
+    <h1>Save time. Let AI edit your videos. Create more.</h1>
+    <a href="/plan">Create my first edit</a>
+  </section>
+));
+
 jest.mock("@/components/KriaEditStory", () => ({
   __esModule: true,
-  default: () => (
-    <section aria-label="How Kria turns raw videos into a finished edit">
-      <h1>Save time. Let AI edit your videos. Create more.</h1>
-      <a href="/plan">Create my first edit</a>
-    </section>
-  ),
+  default: (props: { mode?: string }) => mockStory(props),
 }));
 
 const mockGetServerSession = getServerSession as jest.MockedFunction<
@@ -51,24 +56,40 @@ describe("HomePage", () => {
 
     const { default: HomePage } = await import("../app/page");
 
-    await expect(HomePage()).rejects.toThrow("REDIRECT");
+    await expect(HomePage({})).rejects.toThrow("REDIRECT");
     expect(mockRedirect).toHaveBeenCalledWith("/plan");
   });
 
-  it("renders the landing page when no session is present", async () => {
+  it("renders the automatic landing story by default", async () => {
     mockGetServerSession.mockResolvedValue(null);
 
     const { default: HomePage } = await import("../app/page");
 
     // Need to isolate the module between tests since we import it dynamically.
-    const jsx = await HomePage();
+    const jsx = await HomePage({});
     render(jsx);
 
     expect(mockRedirect).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
     const ctaLinks = screen.getAllByRole("link", { name: /create my first edit/i });
     expect(ctaLinks.length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getByLabelText("How Kria turns raw videos into a finished edit"),
+    ).toHaveAttribute("data-mode", "auto");
+    expect(mockStory).toHaveBeenCalledWith({ mode: "auto" });
     expect(screen.queryByText(/how your agent works/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/it learns about you/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the scroll comparison available through the mode query", async () => {
+    mockGetServerSession.mockResolvedValue(null);
+
+    const { default: HomePage } = await import("../app/page");
+    render(await HomePage({ searchParams: { mode: "scroll" } }));
+
+    expect(
+      screen.getByLabelText("How Kria turns raw videos into a finished edit"),
+    ).toHaveAttribute("data-mode", "scroll");
+    expect(mockStory).toHaveBeenCalledWith({ mode: "scroll" });
   });
 });

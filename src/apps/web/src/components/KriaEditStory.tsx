@@ -548,8 +548,8 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
 
         <div className={styles.storyControls}>
           <nav className={styles.modeSwitch} aria-label="Compare animation versions">
-            <Link href="/" aria-current={!isAuto ? "page" : undefined}>Scroll</Link>
-            <Link href="/auto-story" aria-current={isAuto ? "page" : undefined}>Automatic</Link>
+            <Link href="/?mode=scroll" aria-current={!isAuto ? "page" : undefined}>Scroll</Link>
+            <Link href="/" aria-current={isAuto ? "page" : undefined}>Automatic</Link>
           </nav>
           {isAuto ? (
             <button
