@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.8] — 2026-08-17
+
+### Fixed
+- **Fly Deploy no longer goes red when Fly kills the release machine during startup (#834).** The
+  deploy workflow now wraps `flyctl deploy` in `scripts/fly-deploy-with-retry.sh`, which retries
+  exactly once — and only when the log matches the full startup-kill signature (`has state:
+  destroyed` + `release_command failed ... with exit code 143`). Any other failure, most importantly
+  a genuine migration error, still fails on the first attempt; a retried deploy is loudly marked
+  with a `::warning` annotation and a job-summary block so it can never be mistaken for a clean
+  pass. Investigation refuted the leading `REMAP_SIGTERM` hypothesis (it's a Celery-only setting,
+  inert on the release machine — recorded in fly.toml comments and agents/DECISIONS.md); the root
+  cause is a Fly platform-side machine lifecycle race, which is why the fix is a targeted retry
+  rather than config. Pinned by 13 new tests driving the real script against a stub flyctl.
+
 ## [0.34.1.7] — 2026-08-17
 
 ### Fixed
