@@ -91,7 +91,6 @@ export default function LibraryPage() {
       <header className="mb-8">
         <Eyebrow tone="muted" className="mb-2">Your library</Eyebrow>
         <p className="font-display text-3xl text-[#0c0c0e]">Your videos</p>
-        <p className="mt-1 text-sm text-[#71717a]">Everything you&apos;ve made, newest first.</p>
       </header>
 
       <TikTokConnectionCard onConnection={setTikTokConnection} />

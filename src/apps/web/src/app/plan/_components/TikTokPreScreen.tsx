@@ -35,9 +35,6 @@ export default function TikTokPreScreen({
       <h1 className="font-display text-3xl leading-snug text-[#0c0c0e]">
         Are you a TikTok creator?
       </h1>
-      <p className="mt-2 text-[#71717a]">
-        Drop your handle and we&apos;ll skip to the interesting questions.
-      </p>
 
       <div className="mt-6">
         <input

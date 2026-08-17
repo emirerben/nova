@@ -46,11 +46,11 @@ describe("PersonaEditor — reveal moves the CTA, and changes nothing else", () 
     expect(cta.compareDocumentPosition(pillars) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("keeps the status badge, the subline and the rationale card", () => {
+  it("keeps the status badge, the persona info dot and the rationale card", () => {
     render(<PersonaEditor {...baseProps} variant="reveal" />);
 
     expect(screen.getByText("AI-generated")).toBeInTheDocument();
-    expect(screen.getByText(/This is who we think you are\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "About Your persona" })).toBeInTheDocument();
     expect(screen.getByText("Why this lane")).toBeInTheDocument();
   });
 

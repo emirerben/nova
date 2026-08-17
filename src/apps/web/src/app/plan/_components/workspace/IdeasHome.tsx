@@ -197,9 +197,6 @@ export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
             </p>
           )}
         </div>
-        <p className="mt-3 text-[14px] text-[#71717a]">
-          Every idea here becomes a video.
-        </p>
       </header>
 
       <div className="flex flex-col gap-3">

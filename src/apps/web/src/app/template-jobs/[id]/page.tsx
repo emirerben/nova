@@ -261,6 +261,16 @@ const SLOT_COLORS: Record<string, string> = {
   transition: "bg-yellow-500",
 };
 
+// Slot types are internal snake_case identifiers (e.g. "b_roll") — humanize
+// for display without touching the underlying data contract.
+function humanizeSlotType(slotType: string): string {
+  return slotType
+    .split("_")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 // `steps` is required here — the parent always guards `steps.length > 0`
 // before rendering this component. Use NonNullable so TS knows.
 function TimelinePlayer({
@@ -326,9 +336,9 @@ function TimelinePlayer({
                 borderWidth: step.slot.priority ? `${Math.min(step.slot.priority, 10) * 0.3}px` : "1px",
                 borderColor: "rgba(255,255,255,0.2)",
               }}
-              title={`${step.slot.slot_type} · ${step.slot.target_duration_s.toFixed(1)}s`}
+              title={`${humanizeSlotType(step.slot.slot_type)} · ${step.slot.target_duration_s.toFixed(1)}s`}
             >
-              {widthPercent > 8 && step.slot.slot_type}
+              {widthPercent > 8 && humanizeSlotType(step.slot.slot_type)}
             </button>
           );
         })}
@@ -341,7 +351,7 @@ function TimelinePlayer({
 
       {/* Current slot info */}
       <div className="mt-2 text-xs text-zinc-400">
-        Slot {steps[activeSlot]?.slot.position} · Clip {activeSlot + 1} · {steps[activeSlot]?.slot.slot_type} · {steps[activeSlot]?.slot.target_duration_s.toFixed(1)}s
+        Slot {steps[activeSlot]?.slot.position} · Clip {activeSlot + 1} · {steps[activeSlot] && humanizeSlotType(steps[activeSlot].slot.slot_type)} · {steps[activeSlot]?.slot.target_duration_s.toFixed(1)}s
       </div>
     </div>
   );
@@ -631,28 +641,6 @@ function ResultView({
                 ]}
               />
             )}
-          </div>
-        )}
-
-        {/* Assembly breakdown (multi-clip templates only) */}
-        {steps.length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-lg font-semibold mb-3">Assembly breakdown</h2>
-            <div className="space-y-2">
-              {steps.map((step, i) => (
-                <div
-                  key={i}
-                  className="bg-zinc-900 rounded-lg px-4 py-3 text-sm flex items-center justify-between"
-                >
-                  <span className="text-zinc-300">
-                    Shot {step.slot.position} · {step.slot.slot_type}
-                  </span>
-                  <span className="text-zinc-500">
-                    {step.moment.start_s.toFixed(1)}s – {step.moment.end_s.toFixed(1)}s
-                  </span>
-                </div>
-              ))}
-            </div>
           </div>
         )}
 

@@ -12,6 +12,7 @@ import {
 } from "@/lib/plan-api";
 import { ProgressTheater } from "@/components/progress";
 import { ACTIVATION_PHASE_ORDER, ACTIVATION_PHASE_LABEL } from "@/lib/job-phases";
+import { InfoDot } from "@/components/ui/InfoDot";
 
 const POLL_MS = 2000;
 const ACCEPT = "video/mp4,video/quicktime";
@@ -155,11 +156,7 @@ export default function SeedUploadCard({
         role="status"
         aria-live="polite"
       >
-        <h2 className="mb-1 font-display text-lg text-[#0c0c0e]">Finding your best clip…</h2>
-        <p className="text-sm text-[#71717a]">
-          Matching your footage to the days it fits best and rendering a first video. This takes a
-          couple of minutes — the matched day(s) below will start generating.
-        </p>
+        <h2 className="font-display text-lg text-[#0c0c0e]">Finding your best clip…</h2>
       </section>
     );
   }
@@ -168,22 +165,24 @@ export default function SeedUploadCard({
     return (
       <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
         <h2 className="mb-1 font-display text-lg text-[#0c0c0e]">Your first video is on the way</h2>
-        <p className="text-sm text-[#71717a]">
-          We matched your clips to the best-fit day(s) below — open a generating card to watch it
-          render. Upload more clips any time to activate other days.
-        </p>
+        <p className="text-sm text-[#71717a]">Open a generating card below to watch it render.</p>
       </section>
     );
   }
 
   return (
     <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-      <h2 className="mb-1 font-display text-lg text-[#0c0c0e]">Skip the homework — start with footage you already have</h2>
-      <p className="mb-4 text-sm text-[#71717a]">
-        Upload a batch of recent clips and we&apos;ll find the day they fit best and render a first
-        video for you — no need to film against the plan yet.
-        {seededCount > 0 ? ` ${seededCount} clip${seededCount === 1 ? "" : "s"} ready.` : ""}
-      </p>
+      <div className="mb-4 flex items-center gap-1">
+        <h2 className="font-display text-lg text-[#0c0c0e]">Start with footage you already have</h2>
+        <InfoDot label="Start with footage">
+          Upload recent clips and Kria finds the ideas they fit, then renders a first video.
+        </InfoDot>
+      </div>
+      {seededCount > 0 && (
+        <p className="mb-4 text-sm text-[#71717a]">
+          {seededCount} clip{seededCount === 1 ? "" : "s"} ready.
+        </p>
+      )}
       {done === "activated_empty" && (
         <div className="mb-4 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-sm text-[#3f3f46]">
           We couldn&apos;t confidently match those clips to a day — no problem. Pick a day below and

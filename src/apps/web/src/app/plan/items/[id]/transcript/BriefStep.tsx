@@ -123,10 +123,6 @@ export default function BriefStep({
         <h1 className="font-display text-3xl leading-snug text-[#0c0c0e]">
           Add your clips first, and Kria will write what to say over them.
         </h1>
-        <p className="mt-4 text-[#71717a]">
-          The transcript is tuned to your footage — its length, its moments. Once a
-          clip is attached, come back here.
-        </p>
         <div className="mt-8">
           <Link
             href={`/plan/items/${itemId}`}
@@ -147,9 +143,6 @@ export default function BriefStep({
           <span className="h-1.5 w-1.5 motion-safe:animate-ping rounded-full bg-lime-600" />
           <span className="text-sm text-[#71717a]">Reading your footage…</span>
         </div>
-        <h1 className="mt-4 font-display text-3xl leading-snug text-[#0c0c0e]">
-          Watching your clips so the words land on the right moments.
-        </h1>
         <div className="mt-8 h-24 w-full motion-safe:animate-pulse rounded-2xl border border-zinc-200 bg-zinc-50" />
       </div>
     );
