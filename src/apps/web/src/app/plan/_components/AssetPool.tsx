@@ -29,6 +29,7 @@ import {
   type PoolAsset,
   type PoolReservationCapacity,
 } from "@/lib/plan-api";
+import { poolAssetAnalysisLine } from "@/lib/pool-asset-display";
 import { StableVideo } from "@/components/StableVideo";
 import {
   POOL_ASSET_MIME_TYPES,
@@ -592,7 +593,7 @@ function AssetTile({
   // Detected brand identities (analysis v5) ride the subject line's title
   // attribute — enough to verify detection without new tile chrome.
   const brands = asset.brands ?? [];
-  const novaLine = asset.nova_description ?? asset.nova_on_screen_text ?? null;
+  const novaStatusLine = poolAssetAnalysisLine(asset);
 
   return (
     <li className="group relative overflow-hidden rounded-lg border border-zinc-200 bg-white">
@@ -706,7 +707,7 @@ function AssetTile({
         </div>
         <div>
           <span className="font-semibold text-[#3f3f46]">Nova</span>
-          <p className="line-clamp-2 text-[#71717a]">{novaLine || "Analysis pending"}</p>
+          <p className="line-clamp-2 text-[#71717a]">{novaStatusLine}</p>
         </div>
       </div>
       <button

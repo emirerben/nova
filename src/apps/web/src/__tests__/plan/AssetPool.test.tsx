@@ -1748,6 +1748,58 @@ describe("AssetPool — brand micro-label (analysis v5)", () => {
 });
 
 describe("AssetPool — creator context", () => {
+  it("does not label a ready video as pending when its optional description is empty", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-ready-video",
+      kind: "video",
+      status: "ready",
+      subject: "sunset over lake and mountains",
+      nova_description: "",
+      nova_on_screen_text: "",
+    });
+    mockFetch(listRoute([asset]));
+
+    await renderPool();
+
+    expect(screen.getByText("Analysis complete")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis pending")).not.toBeInTheDocument();
+  });
+
+  it("uses on-screen copy when the optional long description is empty", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-on-screen-copy",
+      status: "ready",
+      nova_description: "   ",
+      nova_on_screen_text: "Sunset over the bay",
+    });
+    mockFetch(listRoute([asset]));
+
+    await renderPool();
+
+    expect(screen.getByText("Sunset over the bay")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
+  });
+
+  it("labels a filename-only fallback without overstating its analysis", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-stub",
+      status: "ready",
+      nova_description: null,
+      nova_on_screen_text: null,
+      source_type: "stub",
+    });
+    mockFetch(listRoute([asset]));
+
+    await renderPool();
+
+    expect(screen.getByText("Basic file details ready")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
+    expect(screen.queryByText("Analysis pending")).not.toBeInTheDocument();
+  });
+
   it("labels user context separately from Nova analysis and saves edits", async () => {
     process.env[FLAG] = "true";
     const onMutated = jest.fn();
