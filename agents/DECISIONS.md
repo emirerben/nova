@@ -1252,6 +1252,41 @@ dispatch. The initial frontend-only repair exposed the API twin in production; b
 the same contract.
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+## [2026-08-17] Stale lock reads are gated by shape, not by convention
+
+PR #813 fixed a bug where `SELECT ... FOR UPDATE` serialized correctly but the Python object behind
+it did not refresh: SQLAlchemy only writes a freshly-locked row onto an instance it is loading for the
+first time in that session, so a prior unlocked read of the same PK makes the locked call return the
+cached object with pre-lock values. Two concurrent Generate posts each read `current_job_id` as `None`
+and each minted a Job. The same staleness let the ownership fence read a stale `ownership_epoch`.
+
+**Decisions:**
+
+- **The gate matches the bug shape, not the convention.** `tests/test_row_lock_policy.py` flags an
+  unlocked read of a PK followed by a locked re-read of the same PK in the same function that does not
+  pass `populate_existing=True`. Requiring the pairing at all ~78 `with_for_update` sites was rejected:
+  a bare lock in a fresh session with nothing cached is perfectly safe, and 60-odd allow-list entries
+  written to satisfy a linter is noise nobody reads. One guard people trust beats a broad one they mute.
+- **Matching is session-scoped, not function-scoped.** The identity map lives on the session, so two
+  reads only interact when they share one. A function that opens a session, closes it, does slow work,
+  then opens a SECOND session to take the lock is the safest possible shape. A function-scoped first
+  draft flagged four such cases — including `autoplace.generate_pool_asset_preview`, merged the same
+  day — so 4 of its 6 findings were noise. Scoping to the enclosing `with ... as <session>:` block
+  removed all four and left 2 verified instances. A gate that cries wolf is a gate people mute, which
+  would have defeated the whole point.
+- **The allow-list is a bug backlog and is asserted in both directions.** The 2 verified instances are
+  quarantined so the gate can protect new code immediately, not because they are believed correct
+  (issue #845). A second test fails if a listed entry stops matching, so a fixed or renamed entry
+  cannot rot the list into fiction — an allow-list nobody trusts is an allow-list nobody reads.
+- **The count is a floor.** The detector keys on the source text of the identifier expression, so the
+  same row reached two ways (`db.get(PlanItem, content_plan_item_id)` then
+  `db.get(PlanItem, item_ref.id, with_for_update=True)`) is the same bug and is not flagged. Stated in
+  the module docstring so the number is never mistaken for a total.
+
+Verified by reintroducing #813 (removing `populate_existing` from `dispatch_item_render_for`): the gate
+names the exact function and row, and goes green again when restored.
+=======
 ## [2026-08-17] Deploy health is measured as drift, and staged migrations are enforced
 
 The 2026-08-12 freeze was two failures wearing one costume. #804 shipped migrations `0072` and `0073`
@@ -1282,6 +1317,7 @@ kept serving, `/health` stayed 200, and four consecutive red `Fly Deploy` runs r
 
 The narrative lives here rather than in CLAUDE.md because that file is at 37,914 of its 38,000-char
 budget; the guards announce themselves through their own CI failure messages.
+>>>>>>> origin/main
 =======
 ## [2026-08-17] Guided stories inherit selected-media orientation
 
