@@ -1189,6 +1189,8 @@ Production dogfood approved a five-source guided story built entirely from the v
 page disabled Generate with “Add clips to generate.” The strict renderer already consumes both media
 lanes from the approved snapshot; only the legacy frontend gate still counted attached clips.
 
-**Decision:** A current approved proposal with at least one selected story-beat media ID satisfies the
-shared footage gate. Unguided items and empty/malformed approvals still require an attached clip, and
-the backend continues to revalidate the approved snapshot before dispatch.
+**Decision:** A current approved proposal with at least one selected story-beat media ID satisfies both
+the frontend and API footage gates. Unguided items and empty/malformed approvals still require an
+attached clip, and the lock-owning dispatcher continues to revalidate the approved snapshot before
+dispatch. The initial frontend-only repair exposed the API twin in production; both layers now share
+the same contract.
