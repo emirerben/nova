@@ -18,8 +18,8 @@
  *  2. The legacy light surface renders: the floating "Add text" empty-state
  *     CTA (no text bars) and the light transport's "Scrub video" range input.
  *  3. Tap-opens-sheet: double-clicking a canvas text element opens the legacy
- *     LightEditSheet (dialog with heading "Edit text" and the
- *     "Full timeline editing on desktop" copy), which is closable again.
+ *     LightEditSheet (dialog with heading "Edit text" and a "Close text
+ *     editor" button), which is closable again.
  *     (Single-tap selection routes through EditorCanvas hit-testing, which
  *     needs real bounding rects + PointerEvent clientX — jsdom 20 has
  *     neither, so the deterministic double-click path, which calls
@@ -217,8 +217,8 @@ describe("EditorShell — pocket editor flag OFF (legacy light mode pinned)", ()
     expect(screen.getByRole("button", { name: "Add text" })).toBeInTheDocument();
     expect(screen.getByRole("slider", { name: "Scrub video" })).toBeInTheDocument();
 
-    // 3. The LightEditSheet is closed initially — its unique copy is absent.
-    expect(screen.queryByText("Full timeline editing on desktop")).toBeNull();
+    // 3. The LightEditSheet is closed initially — its heading is absent.
+    expect(screen.queryByRole("heading", { name: "Edit text" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -231,11 +231,11 @@ describe("EditorShell — pocket editor flag OFF (legacy light mode pinned)", ()
     fireEvent.doubleClick(textEl as Element);
     await settle();
 
-    // The legacy full-screen edit sheet — dialog + "Edit text" heading + the
-    // legacy-only "Full timeline editing on desktop" strapline.
+    // The legacy full-screen edit sheet — dialog + "Edit text" heading + its
+    // close affordance (the legacy-only markers now that the strapline is gone).
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Edit text" })).toBeInTheDocument();
-    expect(screen.getByText("Full timeline editing on desktop")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close text editor" })).toBeInTheDocument();
     // The selected bar's text is loaded into the Content field.
     expect(screen.getByLabelText("Content")).toHaveValue("Title 1");
 
@@ -244,7 +244,7 @@ describe("EditorShell — pocket editor flag OFF (legacy light mode pinned)", ()
 
     // The sheet closes again via its close affordance.
     fireEvent.click(screen.getByRole("button", { name: "Close text editor" }));
-    expect(screen.queryByText("Full timeline editing on desktop")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Edit text" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

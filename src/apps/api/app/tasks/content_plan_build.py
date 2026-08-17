@@ -74,7 +74,13 @@ def _lock_owned_plan_persona(
     A changed epoch, quarantine, missing persona, or owner mismatch is the same
     fail-closed condition: no plan-derived write may land.
     """
-    plan = session.get(ContentPlan, plan_id, with_for_update=True)
+    # populate_existing is required, not decorative. When this session already
+    # touched the row without a lock, SQLAlchemy returns the cached instance and
+    # does NOT write the freshly locked row onto it: the SELECT ... FOR UPDATE
+    # serializes correctly, but the Python attributes stay pre-lock. The epoch
+    # comparison below would then read a stale ownership_epoch and wave through
+    # the exact stale worker this fence exists to stop.
+    plan = session.get(ContentPlan, plan_id, with_for_update=True, populate_existing=True)
     if plan is None:
         return None
     persona = load_owned_plan_persona_sync(session, plan, for_update=True)
@@ -87,7 +93,10 @@ def _lock_plan_items(session, items: list[PlanItem]) -> list[PlanItem]:  # noqa:
     """Lock existing items after Plan and Persona, in deterministic id order."""
     locked: list[PlanItem] = []
     for item in sorted(items, key=lambda row: str(row.id)):
-        current = session.get(PlanItem, item.id, with_for_update=True)
+        # Every caller passes list(plan.items) -- already-loaded relationship
+        # objects -- so the identity map is always populated here and the locked
+        # re-read would otherwise hand back pre-lock attribute values.
+        current = session.get(PlanItem, item.id, with_for_update=True, populate_existing=True)
         if current is not None:
             locked.append(current)
     return locked
@@ -516,6 +525,10 @@ DispatchOutcome = Literal[
     "invalid_persona",
     "missing_row",
     "publish_failed",
+    "proposal_required",
+    "proposal_draft",
+    "proposal_stale",
+    "proposal_analyzing",
 ]
 
 
@@ -608,6 +621,7 @@ def _dispatch_item_render(
 
     `item.clip_gcs_paths` must already be set on the session before calling.
     """
+    from app.config import settings  # noqa: PLC0415
     from app.schemas.montage_preset import coerce_montage_preset  # noqa: PLC0415
     from app.services.generative_jobs import (  # noqa: PLC0415
         CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
@@ -619,9 +633,45 @@ def _dispatch_item_render(
     )
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
 
+    approved_proposal: dict | None = None
+    if settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled:
+        from app.services.edit_proposals import (  # noqa: PLC0415
+            mark_edit_proposal_stale,
+            validate_approved_proposal_media_sync,
+        )
+
+        proposal_error, approved_proposal = validate_approved_proposal_media_sync(
+            session, item, owner_id=plan.user_id
+        )
+        if proposal_error:
+            if proposal_error == "proposal_stale":
+                mark_edit_proposal_stale(item)
+                session.commit()
+            if settings.guided_edit_enforcement_enabled:
+                return DispatchResult(proposal_error)
+            approved_proposal = None
+
     content_plan_id = plan.id
     plan_item_id = item.id
     clip_paths = list(item.clip_gcs_paths or [])
+    if not clip_paths and approved_proposal is not None:
+        # Asset-only guided stories are valid. build_generative_job still needs
+        # one server-validated seed/raw path for its generic Job contract, but
+        # the strict worker reads every exact source from the approved snapshot.
+        approved_snapshot = approved_proposal["snapshot"]
+        selected_ids = {
+            media_id for beat in approved_snapshot["story_beats"] for media_id in beat["media_ids"]
+        }
+        first_selected = next(
+            (
+                ref["gcs_path"]
+                for ref in approved_snapshot["media"]
+                if ref["media_id"] in selected_ids
+            ),
+            None,
+        )
+        if first_selected:
+            clip_paths = [first_selected]
     if not clip_paths:
         log.warning("plan_item_render.no_clips", plan_item_id=str(item.id))
         return DispatchResult("invalid_clips")
@@ -634,7 +684,11 @@ def _dispatch_item_render(
     smart_context = resolve_smart_captions_context_sync(
         user_id=plan.user_id,
         edit_format=str(item.edit_format or "montage"),
-        requested=getattr(item, "smart_captions_enabled", False) is True,
+        # Smart captions are default-on (2026-08-14): the per-item toggle was
+        # removed from the UI, so eligibility is decided entirely by the
+        # resolver's server gate ladder (kill switch, subtitled format,
+        # creator assignment / fleet default preset).
+        requested=True,
         sound_design_enabled=(getattr(item, "smart_sound_design_enabled", None) is not False),
         db=session,
     )
@@ -696,6 +750,24 @@ def _dispatch_item_render(
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
         return DispatchResult("invalid_clips")
+    if approved_proposal is not None:
+        snapshot = dict(job.assembly_plan or {})
+        snapshot["guided_edit"] = {
+            "proposal_version": approved_proposal["proposal_version"],
+            "media_digest": approved_proposal["media_digest"],
+            "approved_proposal": approved_proposal["snapshot"],
+            "media_identities": [
+                {
+                    "lane": ref["lane"],
+                    "media_id": ref["media_id"],
+                    "gcs_path": ref["gcs_path"],
+                    "generation": ref["generation"],
+                    "kind": ref["kind"],
+                }
+                for ref in approved_proposal["snapshot"]["media"]
+            ],
+        }
+        job.assembly_plan = snapshot
     # Caller holds Plan -> Persona -> PlanItem locks and has revalidated this
     # exact epoch. Job is last in the global lock/write order.
     if _plan_epoch(plan) != ownership_epoch:
@@ -856,12 +928,18 @@ def dispatch_item_render_for(
             return DispatchResult("missing_row")
         plan, persona_row = owned
         ownership_epoch = _plan_epoch(plan)
-        item = session.get(PlanItem, item_uuid, with_for_update=True)
+        # The unlocked item_ref read above already cached this row, so without
+        # populate_existing the lock serializes but current_job_id stays at its
+        # pre-lock value -- two concurrent Generate posts would each see None and
+        # each mint a Job, which is the precise duplicate this lock prevents.
+        item = session.get(PlanItem, item_uuid, with_for_update=True, populate_existing=True)
         if item is None or item.content_plan_id != plan.id:
             log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
             return DispatchResult("missing_row")
         if item.current_job_id is not None:
-            current = session.get(Job, item.current_job_id, with_for_update=True)
+            current = session.get(
+                Job, item.current_job_id, with_for_update=True, populate_existing=True
+            )
             if current is not None and current.status not in PLAN_ITEM_JOB_TERMINAL:
                 return DispatchResult("already_active", job_id=str(current.id))
         if not persona_row.persona:

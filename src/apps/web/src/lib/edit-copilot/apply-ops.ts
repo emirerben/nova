@@ -14,6 +14,11 @@ import type {
 import { normalizeCameraEffect } from "@/lib/camera-effects";
 import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
 import { defaultLookAdjustments } from "@/lib/look-presets";
+import {
+  motionPatchForEffect,
+  motionPatchForManualEnd,
+  motionPatchForText,
+} from "@/lib/text-motion-v2";
 import type { AcceptedSuggestionRef } from "@/lib/editor-commit";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import {
@@ -58,7 +63,11 @@ import {
 } from "./snapshot";
 import {
   createCreatorBlockInstance,
+  creatorBlockDurationFramesV2,
   creatorBlockEntry,
+  retimeCreatorBlockManualSpan,
+  retimeCreatorBlockSpeed,
+  upgradeCreatorBlockInstanceToV2,
   validateMotionInstances,
   type MotionAssetRef,
   type MotionPresetInstance,
@@ -159,6 +168,10 @@ export interface ApplyCopilotOpsContext {
   capabilities?: EditorCapabilities | null;
   grid?: number[];
   videoDurationS?: number;
+  /** Explicit for deterministic tests; defaults to the build-time rollout flag. */
+  textMotionV2Enabled?: boolean;
+  /** Explicit for deterministic tests; defaults to the build-time rollout flag. */
+  evolvingTypeEnabled?: boolean;
   sfx?: SoundEffectPlacement[];
   sfxCatalog?: SoundEffectSummary[];
   overlays?: MediaOverlay[];
@@ -709,6 +722,8 @@ export function applyCopilotOps(
   let historyAction: ApplyCopilotOpsResult["historyAction"];
   const grid = ctx.grid ?? [];
   const videoDurationS = ctx.videoDurationS ?? Math.max(60, ctx.snapshot.total_duration_s);
+  const textMotionV2Enabled =
+    ctx.textMotionV2Enabled ?? process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED === "true";
   const allowedFamilies = new Set(ctx.snapshot.allowed_op_families);
   let nextSlots: DraftSlot[] | null = null;
   let workingSlots = ctx.slots;
@@ -863,7 +878,15 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "text was changed after Nova read it"));
         continue;
       }
-      textActions.push({ type: "EDIT_TEXT", id: bar.id, text: op.text });
+      textActions.push(
+        bar.role === "lyric_line" || !textMotionV2Enabled || bar.motion?.version !== 2
+          ? { type: "EDIT_TEXT", id: bar.id, text: op.text }
+          : {
+              type: "PATCH_BAR",
+              id: bar.id,
+              patch: motionPatchForText(bar, op.text, videoDurationS),
+            },
+      );
       applied.push({ label: `Text ${op.bar_index + 1}`, from: bar.text, to: op.text });
     } else if (op.op === "patch_text_style") {
       const snap = textSnapAt(ctx.snapshot, op.bar_index);
@@ -875,6 +898,17 @@ export function applyCopilotOps(
       const stylePatch = applyStylePatch(op.patch);
       const { patch, stripped } =
         bar.role === "lyric_line" ? clampLyricStylePatch(stylePatch) : stylePatch;
+      const motionPatch =
+        textMotionV2Enabled && typeof patch.effect === "string" && bar.role !== "lyric_line"
+          ? motionPatchForEffect(bar, patch.effect, videoDurationS)
+          : null;
+      if (patch.effect === "smooth-type" && !textMotionV2Enabled) {
+        rejected.push(
+          reject(op.op, labelForOp(op), "capability_disabled", "Text Motion v2 is disabled."),
+        );
+        continue;
+      }
+      const effectivePatch = motionPatch ? { ...patch, ...motionPatch } : patch;
       const patchKeys = Object.keys(patch) as TextStylePatchKey[];
       if (patchKeys.length === 0) {
         rejected.push(
@@ -893,7 +927,7 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "style was changed after Nova read it"));
         continue;
       }
-      textActions.push({ type: "PATCH_BAR", id: bar.id, patch });
+      textActions.push({ type: "PATCH_BAR", id: bar.id, patch: effectivePatch });
       for (const key of patchKeys) {
         applied.push({
           label: key === "size_px" ? "Size" : key,
@@ -926,7 +960,14 @@ export function applyCopilotOps(
         endS: span.endS ?? bar.end_s,
         videoDurationS,
       });
-      textActions.push({ type: "PATCH_BAR", id: bar.id, patch: next });
+      const retimed = textMotionV2Enabled
+        ? motionPatchForManualEnd({ ...bar, ...next }, next.end_s, videoDurationS)
+        : { end_s: next.end_s };
+      textActions.push({
+        type: "PATCH_BAR",
+        id: bar.id,
+        patch: { ...next, ...retimed },
+      });
       applied.push({
         label: `Text ${op.bar_index + 1} timing`,
         from: `${fmtSeconds(bar.start_s)}-${fmtSeconds(bar.end_s)}`,
@@ -1815,6 +1856,12 @@ export function applyCopilotOps(
       openTool = op.tool;
       applied.push({ label: `Opened ${op.tool[0].toUpperCase()}${op.tool.slice(1)}`, from: "closed", to: "open" });
     } else if (op.op === "add_motion_block") {
+      const evolvingTypeEnabled = ctx.evolvingTypeEnabled ??
+        process.env.NEXT_PUBLIC_EVOLVING_TYPE_ENABLED === "true";
+      if (op.preset_id === "evolving_type" && !evolvingTypeEnabled) {
+        rejected.push(reject(op.op, labelForOp(op), "capability_disabled", "Evolving Type is not enabled."));
+        continue;
+      }
       const entry = creatorBlockEntry(op.preset_id);
       const assetIds = Array.isArray(op.params.asset_ids)
         ? op.params.asset_ids.filter((value): value is string => typeof value === "string")
@@ -1829,11 +1876,13 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "eligible image assets changed after Nova read them"));
         continue;
       }
-      const scene = createCreatorBlockInstance({
+      const startFrame = Math.round(op.start_s * 30);
+      const requestedEndFrame = Math.round(op.end_s * 30);
+      let scene = createCreatorBlockInstance({
         id: ctx.makeMotionId?.() ?? defaultMotionId(),
         presetId: op.preset_id,
-        startFrame: Math.round(op.start_s * 30),
-        endFrameExclusive: Math.round(op.end_s * 30),
+        startFrame,
+        endFrameExclusive: startFrame + entry.default_duration_frames,
         palette: op.palette,
         assets,
       });
@@ -1845,6 +1894,28 @@ export function applyCopilotOps(
         ...(entry.kind === "media" ? { assets } : {}),
       } as never;
       scene.intensity = op.intensity ?? scene.intensity;
+      scene.motion = {
+        ...scene.motion,
+        ...(op.speed === undefined ? {} : { speed: op.speed }),
+        ...(op.easing === undefined ? {} : { easing: op.easing }),
+        ...(op.hold_frames === undefined ? {} : { hold_frames: op.hold_frames }),
+      };
+      if (op.speed !== undefined || op.hold_frames !== undefined) {
+        scene.end_frame_exclusive = Math.max(
+          scene.start_frame + 1,
+          Math.min(
+            Math.ceil(videoDurationS * 30),
+            scene.start_frame + creatorBlockDurationFramesV2(scene, scene.motion),
+          ),
+        );
+      } else {
+        scene = retimeCreatorBlockManualSpan(
+          scene,
+          startFrame,
+          requestedEndFrame,
+          Math.ceil(videoDurationS * 30),
+        ) as typeof scene;
+      }
       const candidate = [...workingMotionScenes, scene];
       const validationResult = validateMotionInstances(candidate, Math.ceil(videoDurationS * 30));
       if (!validationResult.ok) {
@@ -1860,6 +1931,12 @@ export function applyCopilotOps(
       const scene = index >= 0 ? workingMotionScenes[index] : null;
       if (!snap || !scene) {
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "Creator Block no longer exists"));
+        continue;
+      }
+      const evolvingTypeEnabled = ctx.evolvingTypeEnabled ??
+        process.env.NEXT_PUBLIC_EVOLVING_TYPE_ENABLED === "true";
+      if (scene.preset_id === "evolving_type" && !evolvingTypeEnabled) {
+        rejected.push(reject(op.op, labelForOp(op), "capability_disabled", "Evolving Type is not enabled."));
         continue;
       }
       if (snap.mutation_fingerprint && motionMutationFingerprint(scene) !== snap.mutation_fingerprint) {
@@ -1881,16 +1958,82 @@ export function applyCopilotOps(
         continue;
       }
       if (rawParams) delete rawParams.asset_ids;
-      const patched = {
-        ...scene,
-        start_frame: op.patch.start_s === undefined ? scene.start_frame : Math.round(op.patch.start_s * 30),
-        end_frame_exclusive: op.patch.end_s === undefined ? scene.end_frame_exclusive : Math.round(op.patch.end_s * 30),
+      const entry = scene.preset_id === "route_trace" ? null : creatorBlockEntry(scene.preset_id);
+      const advancedParamKeys = new Set(
+        entry?.parameters
+          .filter((parameter) => parameter.type === "number" || parameter.type === "enum" || parameter.type === "boolean")
+          .map((parameter) => parameter.key) ?? [],
+      );
+      const touchesAdvancedParam = rawParams
+        ? Object.keys(rawParams).some((key) => advancedParamKeys.has(key))
+        : false;
+      const touchesV2Motion =
+        op.patch.speed !== undefined ||
+        op.patch.easing !== undefined ||
+        op.patch.hold_frames !== undefined ||
+        op.patch.intensity !== undefined ||
+        touchesAdvancedParam;
+      let base = scene;
+      if (touchesV2Motion && scene.preset_id !== "route_trace") {
+        base = upgradeCreatorBlockInstanceToV2(scene);
+      }
+      if (op.patch.speed !== undefined && base.preset_id !== "route_trace") {
+        base = retimeCreatorBlockSpeed(base, op.patch.speed, Math.ceil(videoDurationS * 30));
+      }
+      if (
+        base.preset_id !== "route_trace" &&
+        base.preset_version === 2 &&
+        (op.patch.easing !== undefined || op.patch.hold_frames !== undefined)
+      ) {
+        const motion = {
+          ...base.motion,
+          ...(op.patch.easing === undefined ? {} : { easing: op.patch.easing }),
+          ...(op.patch.hold_frames === undefined ? {} : { hold_frames: op.patch.hold_frames }),
+        };
+        base = {
+          ...base,
+          motion,
+          ...(op.patch.hold_frames === undefined
+            ? {}
+            : {
+                end_frame_exclusive: Math.max(
+                  base.start_frame + 1,
+                  Math.min(
+                    Math.ceil(videoDurationS * 30),
+                    base.start_frame + creatorBlockDurationFramesV2(base, motion),
+                  ),
+                ),
+              }),
+        };
+      }
+      let patched = {
+        ...base,
         palette: op.patch.palette ?? scene.palette,
         intensity: op.patch.intensity ?? scene.intensity,
         ...(rawParams
-          ? { params: { ...(("params" in scene ? scene.params : {}) as Record<string, unknown>), ...rawParams, ...(assets ? { assets } : {}) } }
+          ? { params: { ...(("params" in base ? base.params : {}) as Record<string, unknown>), ...rawParams, ...(assets ? { assets } : {}) } }
           : {}),
       } as MotionPresetInstance;
+      const requestedStart = op.patch.start_s === undefined
+        ? scene.start_frame
+        : Math.round(op.patch.start_s * 30);
+      const requestedEnd = op.patch.end_s === undefined
+        ? base.end_frame_exclusive
+        : Math.round(op.patch.end_s * 30);
+      if (patched.preset_id === "route_trace") {
+        patched = {
+          ...patched,
+          start_frame: requestedStart,
+          end_frame_exclusive: requestedEnd,
+        };
+      } else if (op.patch.start_s !== undefined || op.patch.end_s !== undefined) {
+        patched = retimeCreatorBlockManualSpan(
+          patched,
+          requestedStart,
+          requestedEnd,
+          Math.ceil(videoDurationS * 30),
+        ) as MotionPresetInstance;
+      }
       const candidate = workingMotionScenes.map((item, itemIndex) => itemIndex === index ? patched : item);
       const validationResult = validateMotionInstances(candidate, Math.ceil(videoDurationS * 30));
       if (!validationResult.ok) {

@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime
-from typing import Annotated, Literal
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Literal, NoReturn
 
 import structlog
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, status
 from fastapi import UploadFile as MultipartFile
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
@@ -29,6 +29,7 @@ from app import storage
 from app.agents._schemas.edit_format import coerce_edit_format
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
+from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
 from app.models import ContentPlan, Job, MusicTrack, Persona, PlanItem, PlanItemAsset
@@ -107,6 +108,7 @@ from app.routes.generative_jobs import (
     persist_variant_captions_enabled,
     prepare_editor_commit,
     require_editable_variant,
+    require_guided_story_editor_commit,
     rollback_speech_cut_dispatch,
     speech_cut_director_context,
     validate_media_overlays_for_user,
@@ -114,6 +116,13 @@ from app.routes.generative_jobs import (
     visual_block_variant_duration,
 )
 from app.routes.waitlist import get_real_ip
+from app.schemas.edit_proposal import (
+    EditProposalResponse,
+    EditProposalSnapshot,
+    ProposalBrief,
+    StoryBeat,
+    parse_edit_proposal,
+)
 from app.schemas.montage_preset import (
     MontagePreset,
     coerce_montage_preset,
@@ -255,6 +264,55 @@ def derive_item_status(item: PlanItem) -> str:
     return "generating"
 
 
+def _edit_proposal_response(item: PlanItem) -> dict | None:
+    proposal = parse_edit_proposal(getattr(item, "edit_proposal", None))
+    if proposal is None:
+        return None
+    payload = proposal.model_dump(mode="json")
+    attempt = proposal.conversation_attempt
+    if attempt is not None:
+        from app.services.edit_proposals import (  # noqa: PLC0415
+            EDIT_CONVERSATION_ATTEMPT_TTL_S,
+        )
+
+        age_s = max(0.0, (datetime.now(UTC) - attempt.started_at).total_seconds())
+        payload["conversation_in_progress"] = age_s < EDIT_CONVERSATION_ATTEMPT_TTL_S
+        payload["conversation_retry_required"] = age_s >= EDIT_CONVERSATION_ATTEMPT_TTL_S
+    payload["conversation_attempt"] = None
+    clip_paths_by_id = {
+        str(assignment.get("media_id")): str(assignment.get("gcs_path"))
+        for assignment in (item.clip_assignments or [])
+        if isinstance(assignment, dict)
+        and assignment.get("media_id")
+        and assignment.get("gcs_path")
+    }
+    asset_path_fragment = f"/plan/{item.id}/pool/"
+    # Preview URLs are response-only decoration. Immutable identity remains the
+    # stored gcs_path + generation; PATCH validation ignores this extra key.
+    for holder in (payload.get("draft"), (payload.get("last_approved") or {}).get("snapshot")):
+        if not isinstance(holder, dict):
+            continue
+        for ref in holder.get("media") or []:
+            if not isinstance(ref, dict) or not ref.get("gcs_path"):
+                continue
+            path = str(ref["gcs_path"])
+            if ref.get("lane") == "clip":
+                safe_to_sign = clip_paths_by_id.get(str(ref.get("media_id"))) == path
+            else:
+                # Pool objects are always promoted under this item's durable
+                # namespace. Never sign an arbitrary path merely because it
+                # appeared in legacy/corrupt proposal JSONB.
+                safe_to_sign = path.startswith("users/") and asset_path_fragment in path
+            if not safe_to_sign:
+                ref["preview_url"] = None
+                continue
+            try:
+                ref["preview_url"] = storage.signed_get_url(path, expiration_minutes=60)
+            except Exception:  # noqa: BLE001 - filename tile remains usable
+                ref["preview_url"] = None
+    return payload
+
+
 class FilmingShotResponse(BaseModel):
     """One shot from the plan item's filming guide.
 
@@ -279,6 +337,9 @@ class ClipAssignmentResponse(BaseModel):
     # True = the footage-pool matcher placed this clip (provisional chip in the
     # UI; conformance suppressed until the user keeps/swaps/replaces it).
     machine_matched: bool = False
+    # Stable server-owned identity used by guided-edit proposals. Null only on
+    # legacy rows that have never been processed by Plan edit.
+    media_id: str | None = None
 
 
 class PlanItemResponse(BaseModel):
@@ -301,6 +362,11 @@ class PlanItemResponse(BaseModel):
     # Per-shot clip assignments. Shape: [{gcs_path, shot_id}]; shot_id=null = pool.
     # Populated since migration 0052; empty list for items with no clips yet.
     clip_assignments: list[ClipAssignmentResponse] = []
+    # Versioned Plan edit envelope. Invalid legacy/corrupt JSON is serialized
+    # as null by _edit_proposal_response; valid state stays OpenAPI-discoverable.
+    edit_proposal: EditProposalResponse | None = None
+    guided_edit_available: bool = False
+    guided_edit_conversation_available: bool = False
     status: str
     current_job_id: str | None
     finished_at: datetime | None = None
@@ -356,6 +422,7 @@ class PlanItemResponse(BaseModel):
 def plan_item_response(
     item: PlanItem,
     *,
+    include_edit_proposal: bool = True,
     instruction_level: str = "full",
     content_mode: str = "create_new",
     seed_text_by_id: dict[str, str] | None = None,
@@ -388,6 +455,7 @@ def plan_item_response(
             shot_id=a.get("shot_id") if a.get("shot_id") in live_shot_ids else None,
             user_note=str(a.get("user_note") or ""),
             machine_matched=bool(a.get("machine_matched")),
+            media_id=str(a.get("media_id")) if a.get("media_id") else None,
         )
         for a in raw_assignments
         if isinstance(a, dict) and a.get("gcs_path")
@@ -407,6 +475,9 @@ def plan_item_response(
         filming_guide=shots,
         clip_gcs_paths=list(item.clip_gcs_paths or []),
         clip_assignments=reconciled_assignments,
+        edit_proposal=_edit_proposal_response(item) if include_edit_proposal else None,
+        guided_edit_available=settings.guided_edit_capability_enabled,
+        guided_edit_conversation_available=settings.guided_edit_conversation_enabled,
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,
         finished_at=item.current_job.finished_at if item.current_job is not None else None,
@@ -1003,6 +1074,11 @@ async def attach_clips(
         for a in (item.clip_assignments or [])
         if isinstance(a, dict) and a.get("gcs_path") and a.get("machine_matched")
     }
+    prior_media_ids: dict[str, str] = {
+        str(a["gcs_path"]): str(a["media_id"])
+        for a in (item.clip_assignments or [])
+        if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
+    }
 
     if body.assignments is not None:
         # Shot-slot uploader path: validate prefix, then validate shot_ids.
@@ -1033,6 +1109,7 @@ async def attach_clips(
                 shot_id=a.shot_id,
                 user_note=(a.user_note or "")[:_MAX_NOTE_CHARS],
                 machine_matched=prior_mm.get((a.gcs_path, a.shot_id), False),
+                media_id=prior_media_ids.get(a.gcs_path),
             )
             for a in body.assignments
         ]
@@ -1045,7 +1122,12 @@ async def attach_clips(
                     detail="Clip path outside this plan item's upload prefix",
                 )
         assignments = [
-            ClipAssignment(gcs_path=p, shot_id=None, machine_matched=prior_mm.get((p, None), False))
+            ClipAssignment(
+                gcs_path=p,
+                shot_id=None,
+                machine_matched=prior_mm.get((p, None), False),
+                media_id=prior_media_ids.get(p),
+            )
             for p in body.clip_gcs_paths
         ]
 
@@ -1073,7 +1155,9 @@ async def attach_clips(
                 PlanItemAsset.gcs_path.in_(new_pool_paths),
             )
         )
-        kind_by_path = {row.gcs_path: row.kind for row in asset_rows.scalars()}
+        kind_by_path = {
+            row.gcs_path: row.kind for row in asset_rows.scalars() if row.status == "ready"
+        }
         allowed_asset_kinds = {"video", "image"} if _item_uses_collage_preset(item) else {"video"}
         for p in new_pool_paths:
             if kind_by_path.get(p) not in allowed_asset_kinds:
@@ -1279,8 +1363,13 @@ async def set_clip_note(
     for a in assignments:
         entry = dict(a) if isinstance(a, dict) else {}
         if entry.get("gcs_path") == body.gcs_path:
+            prior_note = str(entry.get("user_note") or "")
             entry["user_note"] = note
             entry["machine_matched"] = False
+            if prior_note != note:
+                from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+                mark_edit_proposal_stale(item)
             hit = True
         updated.append(entry)
     if not hit:
@@ -1550,13 +1639,619 @@ async def plan_item_advisor_turn(
     )
 
 
+def _require_guided_edit() -> None:
+    if not settings.guided_edit_capability_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plan edit is not available.",
+        )
+
+
+def _require_guided_edit_conversation() -> None:
+    _require_guided_edit()
+    if not settings.guided_edit_conversation_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversational Plan edit is not available.",
+        )
+
+
+def _edit_conversation_rate_key(request: Request) -> str:
+    """Key paid edit-guide calls by the authenticated proxy identity."""
+
+    user_id = request.headers.get("x-user-id", "").strip()
+    if user_id:
+        return f"user:{user_id[:128]}"
+    return f"ip:{get_real_ip(request)}"
+
+
+class DraftEditProposalBody(ProposalBrief):
+    pass
+
+
+class EditGuideTurnBody(BaseModel):
+    expected_proposal_version: int = Field(default=0, ge=0)
+    message: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("message")
+    @classmethod
+    def message_must_have_words(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("message cannot be blank")
+        return value
+
+
+class UpdateEditProposalBody(BaseModel):
+    expected_proposal_version: int = Field(ge=1)
+    snapshot: EditProposalSnapshot
+
+
+class ApproveEditProposalBody(BaseModel):
+    expected_proposal_version: int = Field(ge=1)
+
+
+async def _edit_guide_media_summary(
+    item: PlanItem,
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+) -> list[dict]:
+    """Return bounded, non-identity media context for the conversation agent."""
+
+    summaries: list[dict] = []
+    seen_paths: set[str] = set()
+    for raw in item.clip_assignments or []:
+        if not isinstance(raw, dict) or not raw.get("gcs_path"):
+            continue
+        path = str(raw["gcs_path"])
+        analysis = raw.get("analysis") if isinstance(raw.get("analysis"), dict) else {}
+        kind = str(raw.get("kind") or "")
+        if kind not in {"image", "video"}:
+            image_suffixes = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")
+            kind = "image" if path.lower().endswith(image_suffixes) else "video"
+        summaries.append(
+            {
+                "kind": kind,
+                "source_filename": path.rsplit("/", 1)[-1].split("-", 1)[-1][:160],
+                "creator_context": str(raw.get("user_note") or "")[:500],
+                "subject": str(analysis.get("subject") or "")[:300],
+                "description": str(analysis.get("description") or "")[:500],
+            }
+        )
+        seen_paths.add(path)
+
+    assets = list(
+        (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.user_id == user_id,
+                    PlanItemAsset.status == "ready",
+                )
+                .order_by(PlanItemAsset.created_at)
+            )
+        ).scalars()
+    )
+    for asset in assets:
+        if asset.gcs_path in seen_paths:
+            continue
+        analysis = asset.analysis if isinstance(asset.analysis, dict) else {}
+        summaries.append(
+            {
+                "kind": "image" if asset.kind == "image" else "video",
+                "source_filename": str(asset.source_filename or "")[:160],
+                "creator_context": str(asset.user_context or "")[:500],
+                "subject": str(analysis.get("subject") or "")[:300],
+                "description": str(analysis.get("description") or "")[:500],
+            }
+        )
+    limited = summaries[:60]
+    for index, summary in enumerate(limited, start=1):
+        summary["media_ref"] = f"media_{index}"
+    return limited
+
+
+def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapshot:  # noqa: ANN001
+    """Rejoin AI aliases with server-owned beat and media identities."""
+
+    beat_by_id = {beat.beat_id: beat for beat in current.story_beats}
+    media_id_by_ref = {
+        f"media_{index}": ref.media_id for index, ref in enumerate(current.media, start=1)
+    }
+    beats: list[StoryBeat] = []
+    for revised in revision.story_beats:
+        existing = beat_by_id[revised.beat_id]
+        # Creator-authored wording is authoritative. Conversational revisions
+        # can reorganize the chapter, but never silently rewrite that wording.
+        keep_user_thought = existing.thought_source == "user"
+        beats.append(
+            StoryBeat(
+                beat_id=existing.beat_id,
+                topic=revised.topic,
+                thought=existing.thought if keep_user_thought else revised.thought,
+                thought_source="user" if keep_user_thought else "ai_draft",
+                media_ids=[media_id_by_ref[media_ref] for media_ref in revised.media_refs]
+                if revised.media_refs
+                else existing.media_ids,
+                layout=revised.layout,
+                duration_s=revised.duration_s,
+            )
+        )
+    return EditProposalSnapshot(
+        direction=revision.direction,
+        goal=revision.goal,
+        pace=revision.pace,
+        duration_s=revision.duration_s,
+        title=revision.title,
+        media=current.media,
+        story_beats=beats,
+    )
+
+
+def _proposal_http_conflict(code: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": code, "message": message},
+    )
+
+
+_PROPOSAL_GENERATE_MESSAGES = {
+    "proposal_required": "Plan this edit before generating.",
+    "proposal_draft": "Approve the edit plan before generating.",
+    "proposal_stale": "Your media changed. Plan the edit again before generating.",
+    "proposal_analyzing": "Kria is still planning this edit.",
+}
+
+
+def _raise_proposal_generate_conflict(code: str) -> NoReturn:
+    raise _proposal_http_conflict(code, _PROPOSAL_GENERATE_MESSAGES[code])
+
+
+async def _proposal_media_is_current(
+    item: PlanItem,
+    snapshot: EditProposalSnapshot,
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+) -> bool:
+    """Revalidate ownership + exact object identity before edit or approval."""
+
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        asset_ref_matches,
+        clip_ref_matches,
+    )
+
+    clip_by_id = {
+        str(a.get("media_id")): a
+        for a in (item.clip_assignments or [])
+        if isinstance(a, dict) and a.get("media_id") and a.get("gcs_path")
+    }
+    asset_refs = [ref for ref in snapshot.media if ref.lane == "asset"]
+    asset_by_id: dict[str, PlanItemAsset] = {}
+    if asset_refs:
+        try:
+            asset_uuids = [uuid.UUID(ref.media_id) for ref in asset_refs]
+        except ValueError:
+            return False
+        rows = (
+            (
+                await db.execute(
+                    select(PlanItemAsset).where(
+                        PlanItemAsset.id.in_(asset_uuids),
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.user_id == user_id,
+                        PlanItemAsset.status == "ready",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        asset_by_id = {str(row.id): row for row in rows}
+
+    for ref in snapshot.media:
+        if ref.lane == "clip":
+            assignment = clip_by_id.get(ref.media_id)
+            if not clip_ref_matches(ref, assignment):
+                return False
+        else:
+            asset = asset_by_id.get(ref.media_id)
+            if not asset_ref_matches(ref, asset):
+                return False
+    if snapshot.media:
+        semaphore = asyncio.Semaphore(8)
+
+        async def generation_matches(ref) -> bool:  # noqa: ANN001
+            async with semaphore:
+                try:
+                    metadata = await asyncio.to_thread(storage.object_metadata, ref.gcs_path)
+                except Exception:  # noqa: BLE001 - missing/replaced media is stale
+                    return False
+                return metadata.generation == ref.generation
+
+        if not all(await asyncio.gather(*(generation_matches(ref) for ref in snapshot.media))):
+            return False
+    return True
+
+
+@router.post("/{item_id}/edit-proposal/conversation", response_model=PlanItemResponse)
+@limiter.limit("12/minute", key_func=_edit_conversation_rate_key)
+async def edit_proposal_conversation_turn(
+    request: Request,
+    item_id: str,
+    body: EditGuideTurnBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Turn natural-language direction into a brief or a reviewable draft revision."""
+
+    _ = request
+    _require_guided_edit_conversation()
+    owner_id = user.id
+    item = await _load_owned_item(item_id, owner_id, db, for_update=True)
+    current = parse_edit_proposal(item.edit_proposal)
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        ProposalConflictError,
+        release_edit_conversation_attempt,
+        require_edit_conversation_attempt,
+        reserve_edit_conversation_attempt,
+        save_edit_conversation_turn,
+    )
+
+    try:
+        _reserved, conversation_token = reserve_edit_conversation_attempt(
+            item,
+            expected_version=body.expected_proposal_version,
+        )
+    except ProposalConflictError as exc:
+        raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+
+    review_snapshot = (
+        current.draft
+        if current and current.status in {"draft", "approved"} and current.draft
+        else None
+    )
+    phase = "review" if review_snapshot else "briefing"
+    brief = (
+        ProposalBrief(
+            direction=review_snapshot.direction,
+            goal=review_snapshot.goal,
+            pace=review_snapshot.pace,
+            duration_s=review_snapshot.duration_s,
+        )
+        if review_snapshot
+        else (current.brief if current else ProposalBrief())
+    )
+    conversation = list(current.conversation) if current else []
+    media_summary = await _edit_guide_media_summary(item, db, user_id=owner_id)
+    idea = str(item.idea or "")
+    theme = str(item.theme or "")
+    # Persist the single-flight token, then release the row lock before Gemini
+    # starts. Duplicate requests stop here without consuming another model call.
+    await db.commit()
+
+    async def release_reservation() -> None:
+        locked_item = await _load_owned_item(item_id, owner_id, db, for_update=True)
+        if release_edit_conversation_attempt(locked_item, token=conversation_token):
+            await db.commit()
+        else:
+            await db.rollback()
+
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents.edit_guide import (  # noqa: PLC0415
+        EditGuideAgent,
+        EditGuideBeatInput,
+        EditGuideInput,
+        EditGuideMediaSummary,
+    )
+    from app.schemas.edit_proposal import EDIT_CONVERSATION_MAX_TURNS  # noqa: PLC0415
+
+    # Persisted history is user/agent pairs. Keep whole exchanges rather than
+    # starting the prompt with an orphaned assistant reply at the window edge.
+    turns = conversation[-(EDIT_CONVERSATION_MAX_TURNS - 2) :]
+    turns.append({"role": "user", "phase": phase, "content": body.message.strip()})
+    try:
+        result = await asyncio.to_thread(
+            EditGuideAgent(default_client()).run,
+            EditGuideInput(
+                phase=phase,
+                idea=idea,
+                theme=theme,
+                turns=turns,
+                brief=brief,
+                media=[EditGuideMediaSummary.model_validate(row) for row in media_summary],
+                title=review_snapshot.title if review_snapshot else "",
+                beats=(
+                    [
+                        EditGuideBeatInput(
+                            beat_id=beat.beat_id,
+                            topic=beat.topic,
+                            thought=beat.thought,
+                            thought_source=beat.thought_source,
+                            layout=beat.layout,
+                            duration_s=beat.duration_s,
+                            media_count=len(beat.media_ids),
+                            media_refs=[
+                                f"media_{index}"
+                                for index, ref in enumerate(review_snapshot.media, start=1)
+                                if ref.media_id in beat.media_ids
+                            ],
+                        )
+                        for beat in review_snapshot.story_beats
+                    ]
+                    if review_snapshot
+                    else []
+                ),
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - conversational failure is retryable
+        log.warning("edit_guide.failed", item_id=item_id, error=str(exc)[:300])
+        await release_reservation()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "edit_guide_failed",
+                "message": "Kria couldn't think that through. Your words were not lost—try again.",
+            },
+        ) from exc
+
+    revised_snapshot = None
+    # A clarifying review answer cannot mutate the brief independently from
+    # the approved/draft render contract. Only a complete revision may do so.
+    saved_brief = brief if review_snapshot else result.brief
+    if review_snapshot and result.revision:
+        revised_snapshot = _snapshot_from_edit_guide_revision(review_snapshot, result.revision)
+        from app.pipeline.guided_story import (  # noqa: PLC0415
+            validate_proposal_timing,
+        )
+
+        try:
+            validate_proposal_timing(revised_snapshot)
+        except Exception as exc:  # noqa: BLE001 - every invalid revision must release its fence
+            log.warning("edit_guide.timing_invalid", item_id=item_id, error=str(exc)[:300])
+            await release_reservation()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "edit_guide_failed",
+                    "message": "Kria proposed timing that couldn't render safely. Try again.",
+                },
+            ) from exc
+        saved_brief = ProposalBrief(
+            direction=revised_snapshot.direction,
+            goal=revised_snapshot.goal,
+            pace=revised_snapshot.pace,
+            duration_s=revised_snapshot.duration_s,
+        )
+
+    locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
+
+    try:
+        reserved_current = require_edit_conversation_attempt(locked, token=conversation_token)
+        save_edit_conversation_turn(
+            locked,
+            expected_version=reserved_current.proposal_version,
+            brief=saved_brief,
+            user_message=body.message,
+            agent_reply=result.reply,
+            suggestions=result.suggestions,
+            ready_to_plan=result.ready_to_plan,
+            conversation_phase=phase,
+            revised_snapshot=revised_snapshot,
+        )
+    except ProposalConflictError as exc:
+        if release_edit_conversation_attempt(locked, token=conversation_token):
+            await db.commit()
+        else:
+            await db.rollback()
+        raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+    await db.commit()
+    reloaded = await _load_owned_item(item_id, owner_id, db)
+    return plan_item_response(reloaded)
+
+
+@router.post(
+    "/{item_id}/edit-proposal/draft",
+    response_model=PlanItemResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+@limiter.limit("3/minute", key_func=get_real_ip)
+async def draft_item_edit_proposal(
+    request: Request,
+    item_id: str,
+    body: DraftEditProposalBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Start one token-fenced analysis + proposal attempt for all item media."""
+
+    _ = request
+    _require_guided_edit()
+    item, plan, _persona = await _load_owned_item_context(item_id, user.id, db, for_update=True)
+    current = parse_edit_proposal(item.edit_proposal)
+    if current and current.conversation_attempt is not None:
+        from app.services.edit_proposals import (  # noqa: PLC0415
+            EDIT_CONVERSATION_ATTEMPT_TTL_S,
+            release_edit_conversation_attempt,
+        )
+
+        attempt = current.conversation_attempt
+        age_s = max(0.0, (datetime.now(UTC) - attempt.started_at).total_seconds())
+        if age_s >= EDIT_CONVERSATION_ATTEMPT_TTL_S:
+            release_edit_conversation_attempt(item, token=attempt.token)
+            await db.commit()
+            raise _proposal_http_conflict(
+                "edit_guide_retry_required",
+                "Kria's reply took too long. Send your direction again before building the plan.",
+            )
+        raise _proposal_http_conflict(
+            "edit_guide_in_progress",
+            "Kria is still thinking about your direction.",
+        )
+    if current and current.status in {"analyzing", "drafting"}:
+        # Double-clicks and retries with a lost response converge on the same
+        # attempt instead of publishing another expensive analysis task.
+        return plan_item_response(item)
+    ready_assets = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.status.in_({"queued", "analyzing", "ready"}),
+                )
+            )
+        ).scalar_one()
+    )
+    if not (item.clip_assignments or []) and ready_assets == 0:
+        raise _proposal_http_conflict("proposal_required", "Upload media before planning an edit.")
+
+    from app.schemas.edit_proposal import ProposalFailure  # noqa: PLC0415
+    from app.services.edit_proposals import begin_proposal_attempt  # noqa: PLC0415
+    from app.services.plan_clips import ensure_clip_media_ids  # noqa: PLC0415
+    from app.tasks.edit_proposal_build import draft_edit_proposal  # noqa: PLC0415
+
+    ensure_clip_media_ids(item)
+    proposal = begin_proposal_attempt(item, brief=ProposalBrief.model_validate(body.model_dump()))
+    await db.commit()
+    try:
+        draft_edit_proposal.apply_async(
+            args=[
+                str(item.id),
+                proposal.generation_attempt_id,
+                int(getattr(plan, "ownership_epoch", 0) or 0),
+            ],
+            queue=settings.pool_asset_analysis_queue,
+        )
+    except Exception as exc:  # noqa: BLE001
+        locked = await _load_owned_item(item_id, user.id, db, for_update=True)
+        current = parse_edit_proposal(locked.edit_proposal)
+        if current and current.generation_attempt_id == proposal.generation_attempt_id:
+            failed = current.model_copy(
+                update={
+                    "proposal_version": current.proposal_version + 1,
+                    "status": "failed",
+                    "failure": ProposalFailure(
+                        code="proposal_dispatch_failed",
+                        message="Kria couldn't start planning this edit. Try again.",
+                        retryable=True,
+                    ),
+                }
+            )
+            locked.edit_proposal = failed.model_dump(mode="json")
+            await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "proposal_dispatch_failed",
+                "message": "Kria couldn't start planning this edit. Try again.",
+            },
+        ) from exc
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    return plan_item_response(reloaded)
+
+
+@router.patch("/{item_id}/edit-proposal", response_model=PlanItemResponse)
+async def update_item_edit_proposal(
+    item_id: str,
+    body: UpdateEditProposalBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Save user corrections without allowing media identity substitution."""
+
+    _require_guided_edit()
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    from app.schemas.edit_proposal import canonical_media_digest  # noqa: PLC0415
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        ProposalConflictError,
+        mark_edit_proposal_stale,
+        save_proposal_draft,
+    )
+
+    current = parse_edit_proposal(item.edit_proposal)
+    if (
+        current is None
+        or current.draft is None
+        or current.status not in {"draft", "approved"}
+        or current.media_digest != canonical_media_digest(body.snapshot.media)
+    ):
+        raise _proposal_http_conflict(
+            "proposal_stale", "The uploaded media no longer matches this edit plan."
+        )
+    if not await _proposal_media_is_current(item, body.snapshot, db, user_id=user.id):
+        mark_edit_proposal_stale(item)
+        await db.commit()
+        raise _proposal_http_conflict(
+            "proposal_stale", "The uploaded media changed. Plan the edit again."
+        )
+    try:
+        save_proposal_draft(
+            item,
+            expected_version=body.expected_proposal_version,
+            # Media metadata is server-owned. The client may edit the story,
+            # text, ordering, and layout, but cannot smuggle arbitrary analysis
+            # or context into the approved render snapshot.
+            snapshot=body.snapshot.model_copy(update={"media": current.draft.media}),
+        )
+    except ProposalConflictError as exc:
+        raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+    await db.commit()
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    return plan_item_response(reloaded)
+
+
+@router.post("/{item_id}/edit-proposal/approve", response_model=PlanItemResponse)
+async def approve_item_edit_proposal(
+    item_id: str,
+    body: ApproveEditProposalBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Approve only the current, exact-media draft under the item lock."""
+
+    _require_guided_edit()
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        ProposalConflictError,
+        approve_proposal,
+        mark_edit_proposal_stale,
+    )
+
+    current = parse_edit_proposal(item.edit_proposal)
+    if current is None or current.draft is None:
+        raise _proposal_http_conflict("proposal_draft", "Plan the edit before approving it.")
+    if current.status == "stale":
+        raise _proposal_http_conflict(
+            "proposal_stale", "The uploaded media changed. Plan the edit again."
+        )
+    if current.status != "draft":
+        raise _proposal_http_conflict("proposal_draft", "Review the current draft before approval.")
+    if not await _proposal_media_is_current(item, current.draft, db, user_id=user.id):
+        mark_edit_proposal_stale(item)
+        await db.commit()
+        raise _proposal_http_conflict(
+            "proposal_stale", "The uploaded media changed. Plan the edit again."
+        )
+    try:
+        approve_proposal(item, expected_version=body.expected_proposal_version)
+    except ProposalConflictError as exc:
+        raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+    await db.commit()
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    return plan_item_response(reloaded)
+
+
 @router.post("/{item_id}/generate", response_model=PlanItemResponse)
 async def generate_item(
     item_id: str,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
-    """Enqueue a generative render for this item's themed clips (≥1 required)."""
+    """Enqueue a render from attached clips or an approved guided story."""
     item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     # Narrated walkthroughs are spined by narration. With self-narration OFF that
@@ -1568,6 +2263,22 @@ async def generate_item(
     from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS  # noqa: PLC0415
     from app.config import settings  # noqa: PLC0415
 
+    if settings.guided_edit_enforcement_enabled:
+        from app.services.edit_proposals import proposal_generate_error  # noqa: PLC0415
+
+        if proposal_error := proposal_generate_error(item):
+            _raise_proposal_generate_conflict(proposal_error)
+
+    approved_guided_media = False
+    if settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled:
+        proposal = parse_edit_proposal(item.edit_proposal)
+        approved_guided_media = bool(
+            proposal
+            and proposal.status == "approved"
+            and proposal.last_approved
+            and any(beat.media_ids for beat in proposal.last_approved.snapshot.story_beats)
+        )
+
     if (
         (item.edit_format or "") in NARRATED_EDIT_FORMATS
         and not item.voiceover_gcs_path
@@ -1577,7 +2288,7 @@ async def generate_item(
             status_code=status.HTTP_409_CONFLICT,
             detail="Record or upload your voiceover before generating a Voiceover edit",
         )
-    if not (item.clip_gcs_paths or []):
+    if not (item.clip_gcs_paths or []) and not approved_guided_media:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload at least one clip before generating",
@@ -1649,6 +2360,13 @@ async def generate_item(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The render couldn't be queued — give it another go",
         )
+    if result.outcome in {
+        "proposal_required",
+        "proposal_draft",
+        "proposal_stale",
+        "proposal_analyzing",
+    }:
+        _raise_proposal_generate_conflict(result.outcome)
     if result.outcome not in ("dispatched", "already_active"):
         # A future/unknown outcome must never read as success (review CA3/M1) —
         # the silent-no-op class this whole feature exists to kill.
@@ -1681,11 +2399,7 @@ async def _owned_item_render_job(item_id: str, user_id: uuid.UUID, db: AsyncSess
     """Return a fresh, user-owned render Job and hide cancelled tombstones."""
     item = await _load_owned_item(item_id, user_id, db)
     job_id = item.current_job_id or (item.current_job.id if item.current_job is not None else None)
-    job = (
-        await db.get(Job, job_id, populate_existing=True)
-        if job_id is not None
-        else None
-    )
+    job = await db.get(Job, job_id, populate_existing=True) if job_id is not None else None
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
     if job.status == "cancelled":
@@ -2119,7 +2833,7 @@ async def plan_item_copilot_turn(
         )
 
     job = await _owned_item_render_job(item_id, user.id, db)
-    require_editable_variant(job, variant_id)
+    require_editable_variant(job, variant_id, allow_guided_text=True)
     # agent_run.job_id FKs jobs.id — pass the render job, never the plan-item id.
     return await run_copilot_turn(body, job_id=job.id)
 
@@ -2147,7 +2861,7 @@ async def plan_item_director_suggestions(
             detail="edit_director_not_enabled",
         )
     job = await _owned_item_render_job(item_id, user.id, db)
-    variant = require_editable_variant(job, variant_id)
+    variant = require_editable_variant(job, variant_id, allow_guided_text=True)
     return await run_director(
         body,
         job_id=job.id,
@@ -2175,7 +2889,7 @@ async def plan_item_director_feedback(
             detail="edit_director_not_enabled",
         )
     job = await _owned_item_render_job(item_id, user.id, db)
-    require_editable_variant(job, variant_id)
+    require_editable_variant(job, variant_id, allow_guided_text=True)
     record_director_feedback(body, job_id=job.id)
 
 
@@ -2787,6 +3501,44 @@ class SetMediaOverlaysBody(BaseModel):
     render: bool = True
 
 
+async def _require_ready_pool_paths(
+    *,
+    item_id: str,
+    user_id: uuid.UUID,
+    payload: object,
+    db: AsyncSession,
+) -> None:
+    from app.services.pool_asset_refs import pool_paths_in_payload  # noqa: PLC0415
+
+    try:
+        parsed_item_id = uuid.UUID(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+    prefix = f"users/{user_id}/plan/{parsed_item_id}/pool/"
+    paths = pool_paths_in_payload(payload, prefix=prefix)
+    if not paths:
+        return
+    rows = (
+        (
+            await db.execute(
+                select(PlanItemAsset).where(
+                    PlanItemAsset.plan_item_id == parsed_item_id,
+                    PlanItemAsset.user_id == user_id,
+                    PlanItemAsset.gcs_path.in_(paths),
+                    PlanItemAsset.status == "ready",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if {row.gcs_path for row in rows if row.status == "ready"} != paths:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="One of these visual files is no longer available. Refresh and choose again.",
+        )
+
+
 def _persist_overlay_metadata_only(
     job: Job,
     variant_id: str,
@@ -2857,6 +3609,13 @@ async def set_item_media_overlays(
         )
 
     job = await _locked_owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+    await _require_ready_pool_paths(
+        item_id=item_id,
+        user_id=user.id,
+        payload=body.overlays,
+        db=db,
+    )
     enqueue_after_commit = None
     if body.render:
         enqueue_after_commit = dispatch_set_media_overlays(
@@ -3034,6 +3793,17 @@ async def editor_commit_item(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cancelled videos cannot be edited.",
+        )
+    # Guided stories accept TextElement-only reburns. Run this policy before
+    # media/SFX/music/title validation so every unsupported section gets the
+    # same stable 422 without performing unrelated lookups or mutations.
+    require_guided_story_editor_commit(locked_job, variant_id, body)
+    if body.media_overlays is not None:
+        await _require_ready_pool_paths(
+            item_id=item_id,
+            user_id=user.id,
+            payload=body.media_overlays,
+            db=db,
         )
 
     # Validate the title section BEFORE the job-JSON staging so a bad title
@@ -3438,13 +4208,14 @@ async def set_item_sound_effects(
             status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
         )
 
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+
     resolved_placements = await _resolve_sound_effect_placements(
         body.placements,
         user_id=str(user.id),
         db=db,
     )
-
-    job = await _locked_owned_item_render_job(item_id, user.id, db)
 
     # Persist directly — no Celery render dispatched here.
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
@@ -3880,6 +4651,40 @@ async def transcript_recorded(
 
 _MAX_POOL_ASSETS = 20  # plan 005 finding 9: cap + dedupe keep analysis spend bounded
 _MAX_POOL_CONTEXT_CHARS = 500
+_POOL_RESERVATION_TTL = timedelta(minutes=15)
+_POOL_RESERVATION_CLEANUP_GRACE = timedelta(minutes=15)
+_MAX_POOL_IMAGE_BYTES = 25 * 1024 * 1024
+_MAX_POOL_VIDEO_BYTES = 512 * 1024 * 1024
+_POOL_REUSABLE_STATUSES = {"uploaded", "queued", "analyzing", "ready", "failed"}
+
+
+def _pool_asset_counts_toward_capacity(now: datetime):
+    """Count committed assets and only reservations still inside their grace window."""
+    reservation_cutoff = now - _POOL_RESERVATION_CLEANUP_GRACE
+    legacy_cutoff = now - (_POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE)
+    return or_(
+        PlanItemAsset.status.notin_({"preparing", "promoting"}),
+        and_(
+            PlanItemAsset.status.in_({"preparing", "promoting"}),
+            or_(
+                PlanItemAsset.upload_expires_at >= reservation_cutoff,
+                and_(
+                    PlanItemAsset.upload_expires_at.is_(None),
+                    PlanItemAsset.created_at >= legacy_cutoff,
+                ),
+            ),
+        ),
+    )
+
+
+def _pool_reservation_is_expired(reservation: PlanItemAsset, now: datetime) -> bool:
+    expires_at = getattr(reservation, "upload_expires_at", None)
+    if isinstance(expires_at, datetime):
+        return expires_at < now - _POOL_RESERVATION_CLEANUP_GRACE
+    created_at = getattr(reservation, "created_at", None)
+    return isinstance(created_at, datetime) and created_at < now - (
+        _POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE
+    )
 
 
 def _require_autoplace() -> None:
@@ -3894,7 +4699,11 @@ def _require_autoplace() -> None:
 def _require_asset_pool() -> None:
     from app.config import settings as _settings  # noqa: PLC0415
 
-    if not (_settings.overlay_autoplace_enabled or _settings.visual_blocks_enabled):
+    if not (
+        _settings.overlay_autoplace_enabled
+        or _settings.visual_blocks_enabled
+        or _settings.guided_edit_capability_enabled
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Visual asset pool not available."
         )
@@ -3905,66 +4714,299 @@ def _asset_kind_for_content_type(content_type: str) -> str:
 
 
 class PoolUploadFile(BaseModel):
-    filename: str
+    filename: str = Field(min_length=1, max_length=255)
     content_type: str
     file_size_bytes: int
+    client_upload_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class PoolUploadUrlsBody(BaseModel):
-    files: list[PoolUploadFile]
+    files: list[PoolUploadFile] = Field(min_length=1, max_length=_MAX_POOL_ASSETS)
+
+
+class PoolUploadTarget(BaseModel):
+    reservation_id: str
+    client_upload_id: str
+    upload_url: str
+    gcs_path: str
+    expires_at: datetime
+    upload_headers: dict[str, str]
 
 
 class PoolUploadUrlsResponse(BaseModel):
-    urls: list[UploadUrlItem]
+    urls: list[PoolUploadTarget]
+
+
+async def _cleanup_reserved_pool_path(path: str, *, reservation_id: str) -> None:
+    """Require idempotent cleanup before forgetting or rotating a reservation path."""
+    cleaned = await asyncio.to_thread(storage.delete_object_best_effort, path)
+    if cleaned:
+        return
+    log.warning(
+        "pool_asset_reservation_cleanup_failed",
+        reservation_id=reservation_id,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "message": "Kria couldn't refresh this upload yet. Retry in a moment.",
+            "code": "upload_cleanup_temporarily_unavailable",
+            "retryable": True,
+            "stage": "reservation_cleanup",
+        },
+    )
+
+
+async def _cleanup_expired_pool_reservation(reservation: PlanItemAsset) -> None:
+    """Remove every object an abandoned preparing/promotion claim may own."""
+    targets: list[tuple[str, str | None]] = [
+        (reservation.gcs_path, getattr(reservation, "gcs_generation", None))
+    ]
+    promotion = (
+        (reservation.analysis or {}).get("_upload_promotion")
+        if isinstance(reservation.analysis, dict)
+        else None
+    )
+    if isinstance(promotion, dict):
+        source_path = promotion.get("source_path")
+        source_generation = promotion.get("source_generation")
+        destination_path = promotion.get("destination_path")
+        if isinstance(source_path, str) and source_path:
+            targets[0] = (
+                source_path,
+                str(source_generation) if source_generation else None,
+            )
+        if isinstance(destination_path, str) and destination_path:
+            targets.append((destination_path, None))
+
+    for path, generation in dict.fromkeys(targets):
+        cleaned = await asyncio.to_thread(
+            storage.delete_object_generation_best_effort
+            if generation
+            else storage.delete_object_best_effort,
+            path,
+            **({"generation": str(generation)} if generation else {}),
+        )
+        if not cleaned:
+            log.warning(
+                "pool_asset_reservation_cleanup_failed",
+                reservation_id=str(reservation.id),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "message": "Kria couldn't refresh this upload yet. Retry in a moment.",
+                    "code": "upload_cleanup_temporarily_unavailable",
+                    "retryable": True,
+                    "stage": "reservation_cleanup",
+                },
+            )
 
 
 @router.post("/{item_id}/assets/upload-urls", response_model=PoolUploadUrlsResponse)
 async def create_pool_upload_urls(
     item_id: str,
     body: PoolUploadUrlsBody,
+    request: Request,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PoolUploadUrlsResponse:
     """Signed PUT URLs for pool assets (same content-type set as overlay cards)."""
     _require_asset_pool()
-    item = await _load_owned_item(item_id, user.id, db)
-    if not body.files:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide files")
-    existing = int(
-        (
-            await db.execute(
-                select(func.count())
-                .select_from(PlanItemAsset)
-                .where(PlanItemAsset.plan_item_id == item.id)
-            )
-        ).scalar_one()
-    )
-    if existing + len(body.files) > _MAX_POOL_ASSETS:
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    now = datetime.now(UTC)
+    correlation_id = request.state.correlation_id
+    client_ids = [f.client_upload_id or uuid.uuid4().hex for f in body.files]
+    if len(set(client_ids)) != len(client_ids):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Each selected file needs a unique upload ID.",
         )
-    urls: list[UploadUrlItem] = []
+    # Validate the entire batch before object cleanup or reservation mutation.
+    # A bad later entry must not rotate an earlier retry target and then roll
+    # its database update back while the old object is already gone.
     for f in body.files:
         if f.content_type not in _OVERLAY_ALLOWED_CONTENT_TYPES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Unsupported asset content type: {f.content_type}",
             )
-        if f.file_size_bytes <= 0 or f.file_size_bytes > _MAX_OVERLAY_FILE_BYTES:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bad file size")
-        safe_name = f"{uuid.uuid4().hex}-{f.filename.split('/')[-1]}"
-        upload_url, gcs_path = storage.presigned_put_url_for_pool_asset(
-            user_id=str(user.id),
-            plan_item_id=str(item.id),
-            filename=safe_name,
-            content_type=f.content_type,
+        limit = (
+            _MAX_POOL_VIDEO_BYTES
+            if _asset_kind_for_content_type(f.content_type) == "video"
+            else _MAX_POOL_IMAGE_BYTES
         )
-        urls.append(UploadUrlItem(upload_url=upload_url, gcs_path=gcs_path))
+        if f.file_size_bytes <= 0 or f.file_size_bytes > limit:
+            max_label = "512 MB" if limit == _MAX_POOL_VIDEO_BYTES else "25 MB"
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{_asset_kind_for_content_type(f.content_type).title()} files must be "
+                    f"{max_label} or smaller."
+                ),
+            )
+
+    stale = (
+        (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.status.in_({"preparing", "promoting"}),
+                    or_(
+                        PlanItemAsset.upload_expires_at < now - _POOL_RESERVATION_CLEANUP_GRACE,
+                        and_(
+                            PlanItemAsset.upload_expires_at.is_(None),
+                            PlanItemAsset.created_at
+                            < now - (_POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE),
+                        ),
+                    ),
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in stale:
+        await _cleanup_expired_pool_reservation(row)
+        await db.delete(row)
+
+    existing_by_client = {
+        row.client_upload_id: row
+        for row in (
+            (
+                await db.execute(
+                    select(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.client_upload_id.in_(client_ids),
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if row.client_upload_id
+    }
+    occupied = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    _pool_asset_counts_toward_capacity(now),
+                )
+            )
+        ).scalar_one()
+    )
+    new_count = sum(client_id not in existing_by_client for client_id in client_ids)
+    if occupied + new_count > _MAX_POOL_ASSETS:
+        remaining = max(0, _MAX_POOL_ASSETS - occupied)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Your visuals pool is full. Remove a visual before adding another."
+                if remaining == 0
+                else f"Your visuals pool has room for {remaining} more. Select up to {remaining}."
+            ),
+        )
+    log.info(
+        "pool_asset_upload_urls_requested",
+        item_id=str(item.id),
+        batch_size=len(body.files),
+        request_id=request.state.request_id,
+        correlation_id=correlation_id,
+    )
+    reservations: list[tuple[PlanItemAsset, bool]] = []
+    for f, client_upload_id in zip(body.files, client_ids, strict=True):
+        reservation = existing_by_client.get(client_upload_id)
+        if reservation is not None:
+            if reservation.status != "preparing":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This file is already in your visuals pool.",
+                )
+            if (
+                reservation.upload_content_type != f.content_type
+                or reservation.upload_size_bytes != f.file_size_bytes
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This upload retry does not match the originally selected file.",
+                )
+            # Keep one durable key per reservation. Previously issued signed
+            # URLs cannot be revoked; rotating the key let a late PUT recreate
+            # an untracked object in the persistent pool prefix.
+            await _cleanup_reserved_pool_path(
+                reservation.gcs_path,
+                reservation_id=str(reservation.id),
+            )
+        else:
+            reservation_id = uuid.uuid4()
+            safe_name = f"{uuid.uuid4().hex}-{f.filename.split('/')[-1]}"
+            # Every signed target stages under the 24h lifecycle prefix. A valid
+            # URL can outlive reservation deletion and cannot be revoked; only
+            # registration promotes its verified generation into persistent
+            # pool storage, so replay never creates an immortal orphan.
+            gcs_path = (
+                f"dev-user/{user.id}/plan-pool-reservations/{item.id}/{reservation_id}/{safe_name}"
+            )
+            reservation = PlanItemAsset(
+                id=reservation_id,
+                plan_item_id=item.id,
+                user_id=user.id,
+                gcs_path=gcs_path,
+                kind=_asset_kind_for_content_type(f.content_type),
+                source_filename=f.filename.split("/")[-1],
+                client_upload_id=client_upload_id,
+                upload_content_type=f.content_type,
+                upload_size_bytes=f.file_size_bytes,
+                status="preparing",
+            )
+            db.add(reservation)
+        reservation.upload_expires_at = now + _POOL_RESERVATION_TTL
+        reservation.correlation_id = correlation_id
+        reservations.append((reservation, f.client_upload_id is not None))
+    await db.commit()
+
+    urls: list[PoolUploadTarget] = []
+    for reservation, strict_headers in reservations:
+        await db.refresh(reservation)
+        content_type = reservation.upload_content_type or "application/octet-stream"
+        if strict_headers:
+            upload_url = await asyncio.to_thread(
+                storage.signed_put_url,
+                reservation.gcs_path,
+                content_type,
+                int(reservation.upload_size_bytes or 0),
+            )
+            upload_headers = {"x-goog-if-generation-match": "0"}
+        else:
+            upload_url = await asyncio.to_thread(
+                storage.signed_put_url_legacy,
+                reservation.gcs_path,
+                content_type,
+                int(reservation.upload_size_bytes or 0),
+            )
+            upload_headers = {}
+        urls.append(
+            PoolUploadTarget(
+                reservation_id=str(reservation.id),
+                client_upload_id=reservation.client_upload_id or "",
+                upload_url=upload_url,
+                gcs_path=reservation.gcs_path,
+                expires_at=reservation.upload_expires_at or now,
+                upload_headers=upload_headers,
+            )
+        )
     return PoolUploadUrlsResponse(urls=urls)
 
 
 class RegisterAssetBody(BaseModel):
+    reservation_id: str | None = None
     gcs_path: str
     content_type: str
     content_hash: str | None = None
@@ -3972,10 +5014,43 @@ class RegisterAssetBody(BaseModel):
     user_context: str | None = Field(default=None, max_length=_MAX_POOL_CONTEXT_CHARS)
 
 
+async def _delete_verified_pool_upload(
+    gcs_path: str,
+    generation: str,
+    *,
+    reservation_id: str | None,
+) -> None:
+    """Delete validated bytes without losing the row needed to retry cleanup."""
+    try:
+        await asyncio.to_thread(
+            storage.delete_object_generation,
+            gcs_path,
+            generation=generation,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "pool_asset_generation_cleanup_failed",
+            reservation_id=reservation_id,
+            error_type=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "message": "Kria couldn't finish cleaning up this upload. Retry in a moment.",
+                "code": "upload_cleanup_temporarily_unavailable",
+                "retryable": True,
+                "stage": "registration_cleanup",
+            },
+        ) from exc
+
+
 class PoolAssetOut(BaseModel):
     id: str
     kind: str
     status: str
+    error_code: str | None = None
+    error_detail: str | None = None
+    retryable: bool = False
     source_filename: str | None
     duration_s: float | None
     aspect: float | None
@@ -3995,6 +5070,11 @@ class PoolAssetOut(BaseModel):
     # [] means analyzed with nothing detected.
     brands: list[str] | None = None
     display_url: str | None
+    # Signed preview URL (pool asset preview pipeline). Images fold their
+    # preview into display_url directly; this is populated for videos, whose
+    # display_url stays the signed raw video so playback still works. None
+    # when no preview was generated (never attempted or attempted-and-failed).
+    preview_url: str | None = None
     deduped: bool = False
     # Object key under users/{uid}/plan/{item_id}/pool/ — inside attach_clips'
     # allowed prefix, so the frontend "Use in edit" promotion can re-register the
@@ -4015,14 +5095,29 @@ def _clean_pool_asset_context(value: str | None) -> str | None:
 
 
 def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
+    from app.config import settings as _settings  # noqa: PLC0415
+
     analysis = asset.analysis or {}
     if not isinstance(analysis, dict):
         analysis = {}
+    # "" is the attempted-and-failed sentinel — treat it the same as never
+    # attempted (fall back / omit), never sign it as a path.
+    raw_preview_path = getattr(asset, "preview_gcs_path", None)
+    preview_path = raw_preview_path or None
     display_url: str | None = None
+    preview_url: str | None = None
     try:
-        display_url = storage.signed_get_url(asset.gcs_path, expiration_minutes=60)
+        display_url = storage.signed_get_url(
+            asset.gcs_path if asset.kind == "video" else (preview_path or asset.gcs_path),
+            expiration_minutes=60,
+        )
     except Exception:  # noqa: BLE001 — thumbnail signing is best-effort, never 500s the list
         display_url = None
+    if asset.kind == "video" and preview_path:
+        try:
+            preview_url = storage.signed_get_url(preview_path, expiration_minutes=60)
+        except Exception:  # noqa: BLE001 — preview signing is best-effort, never 500s the list
+            preview_url = None
     # str() coercion: a corrupt JSONB element must degrade, never fail response
     # validation and 500 the whole list.
     raw_brands = analysis.get("brands")
@@ -4035,16 +5130,26 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         if isinstance(raw_description, str) and raw_description.strip()
         else None
     )
+
     raw_on_screen_text = analysis.get("on_screen_text")
     nova_on_screen_text = (
         str(raw_on_screen_text).strip()[:400]
         if isinstance(raw_on_screen_text, str) and raw_on_screen_text.strip()
         else None
     )
+    raw_error_code = getattr(asset, "error_code", None)
+    raw_error_detail = getattr(asset, "error_detail", None)
+    raw_retryable = getattr(asset, "error_retryable", False)
+    visible_status = asset.status
+    if visible_status == "queued" and not _settings.pool_asset_queued_status_enabled:
+        visible_status = "uploaded"
     return PoolAssetOut(
         id=str(asset.id),
         kind=asset.kind,
-        status=asset.status,
+        status=visible_status,
+        error_code=raw_error_code if isinstance(raw_error_code, str) else None,
+        error_detail=raw_error_detail if isinstance(raw_error_detail, str) else None,
+        retryable=raw_retryable if isinstance(raw_retryable, bool) else False,
         source_filename=asset.source_filename,
         duration_s=asset.duration_s,
         aspect=asset.aspect,
@@ -4056,6 +5161,7 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         nova_on_screen_text=nova_on_screen_text,
         brands=brands,
         display_url=display_url,
+        preview_url=preview_url,
         deduped=deduped,
         gcs_path=asset.gcs_path,
         source_type=str(analysis.get("source") or "") or None,
@@ -4064,10 +5170,106 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
     )
 
 
+async def _pool_promotion_is_durable(
+    asset_id: uuid.UUID,
+    *,
+    path: str,
+    generation: str,
+) -> bool | None:
+    """Resolve an ambiguous COMMIT without risking deletion of durable bytes.
+
+    A driver can report a connection error after PostgreSQL has committed. Use a
+    fresh connection to distinguish that case from a definite rollback. Unknown
+    results deliberately preserve the generation for idempotent retry/reconcile.
+    """
+    from app.database import AsyncSessionLocal  # noqa: PLC0415
+
+    try:
+        async with AsyncSessionLocal() as verify_db:
+            durable = await verify_db.get(PlanItemAsset, asset_id)
+    except Exception as exc:  # noqa: BLE001
+        log.error(
+            "pool_asset_promotion_commit_unresolved",
+            reservation_id=str(asset_id),
+            error_type=type(exc).__name__,
+        )
+        return None
+    if durable is None:
+        return False
+    return (
+        durable.gcs_path == path
+        and str(durable.gcs_generation or "") == str(generation)
+        and durable.status in {"uploaded", "queued", "analyzing", "ready", "failed"}
+    )
+
+
+_ANALYSIS_DISPATCH_ERROR_CODE = "analysis_temporarily_unavailable"
+_ANALYSIS_DISPATCH_ERROR_DETAIL = "Kria couldn't start analyzing this file. Try again."
+
+
+async def _queue_pool_asset_analysis(
+    asset: PlanItemAsset,
+    db: AsyncSession,
+    *,
+    reset_attempts: bool = False,
+) -> None:
+    """Persist a fenced queued attempt, then publish it best-effort.
+
+    The row is committed before broker publication so workers can always claim
+    it. A publish failure is made terminal and actionable instead of leaving the
+    UI polling an `uploaded` row forever.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+    from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
+
+    attempt_token = uuid.uuid4().hex
+    prior_attempts = int(getattr(asset, "analysis_attempt_count", 0) or 0)
+    asset.status = "queued"
+    asset.error_code = None
+    asset.error_detail = None
+    asset.error_retryable = False
+    asset.analysis_attempt_token = attempt_token
+    asset.analysis_attempt_count = 1 if reset_attempts else prior_attempts + 1
+    asset.analysis_last_dispatched_at = datetime.now(UTC)
+    asset.analysis_started_at = None
+    await db.commit()
+    await db.refresh(asset)
+
+    try:
+        task_headers = {"pool_asset_attempt_token": attempt_token}
+        if asset.correlation_id:
+            task_headers["x-correlation-id"] = asset.correlation_id
+        analyze_pool_asset.apply_async(
+            args=[str(asset.id), False],
+            queue=_settings.pool_asset_analysis_queue,
+            headers=task_headers,
+        )
+        log.info(
+            "pool_asset_analysis_queued",
+            asset_id=str(asset.id),
+            queue=_settings.pool_asset_analysis_queue,
+            attempt=asset.analysis_attempt_count,
+        )
+    except Exception as exc:  # noqa: BLE001
+        asset.status = "failed"
+        asset.error_code = _ANALYSIS_DISPATCH_ERROR_CODE
+        asset.error_detail = _ANALYSIS_DISPATCH_ERROR_DETAIL
+        asset.error_retryable = True
+        await db.commit()
+        await db.refresh(asset)
+        log.warning(
+            "pool_asset_analysis_dispatch_failed",
+            asset_id=str(asset.id),
+            attempt=asset.analysis_attempt_count,
+            error_type=type(exc).__name__,
+        )
+
+
 @router.post("/{item_id}/assets", response_model=PoolAssetOut)
 async def register_pool_asset(
     item_id: str,
     body: RegisterAssetBody,
+    request: Request,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PoolAssetOut:
@@ -4075,107 +5277,425 @@ async def register_pool_asset(
 
     Dedupe: an existing row with the same content_hash on this item is returned
     as-is (`deduped=true`) — identical bytes are never re-analyzed (plan 005
-    finding 9). Analysis dispatch lands in PR1a; PR0 rows stay status="uploaded".
+    finding 9). New rows enter `queued`; broker failures become retryable
+    terminal failures instead of polling forever.
     """
     _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     _pool_prefix = f"users/{user.id}/plan/{item.id}/pool/"
-    if not body.gcs_path.startswith(_pool_prefix):
+    _staging_prefix = f"dev-user/{user.id}/plan-pool-reservations/{item.id}/"
+    if not body.gcs_path.startswith((_pool_prefix, _staging_prefix)):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Asset path must be under '{_pool_prefix}'.",
+            detail="Upload path is not valid for this item.",
         )
     if body.content_type not in _OVERLAY_ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported asset content type: {body.content_type}",
         )
+    reservation: PlanItemAsset | None = None
+    metadata = None
+    if body.reservation_id is not None:
+        try:
+            reservation_uuid = uuid.UUID(body.reservation_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Upload reservation not found.") from exc
+        reservation = (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.id == reservation_uuid,
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.user_id == user.id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if reservation is None:
+            raise HTTPException(status_code=404, detail="Upload reservation not found.")
+        if reservation.status not in {"preparing", "promoting"}:
+            if reservation.status == "uploaded":
+                retry_staging_prefix = f"{_staging_prefix}{reservation.id}/"
+                if body.gcs_path != reservation.gcs_path and not body.gcs_path.startswith(
+                    retry_staging_prefix
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Upload target does not match its reservation.",
+                    )
+                await _queue_pool_asset_analysis(reservation, db)
+                if body.gcs_path.startswith(retry_staging_prefix):
+                    cleaned = await asyncio.to_thread(
+                        storage.delete_object_best_effort,
+                        body.gcs_path,
+                    )
+                    if not cleaned:
+                        log.warning(
+                            "pool_asset_staging_cleanup_deferred",
+                            reservation_id=str(reservation.id),
+                        )
+                return _asset_out(reservation)
+            if reservation.status in {"queued", "analyzing", "ready", "failed"}:
+                return _asset_out(reservation)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This upload reservation is no longer available.",
+            )
+    else:
+        # Compatibility for deployed path-based clients, with an ownership
+        # fence: a path already referenced by this item is never treated as a
+        # disposable new upload. Adopt a preparing reservation or return the
+        # finalized asset idempotently; cleanup-only states stay unavailable.
+        path_owner = (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.user_id == user.id,
+                    PlanItemAsset.gcs_path == body.gcs_path,
+                )
+                .with_for_update()
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if path_owner is not None:
+            if path_owner.status in {"preparing", "promoting"}:
+                reservation = path_owner
+            elif path_owner.status == "uploaded":
+                await _queue_pool_asset_analysis(path_owner, db)
+                return _asset_out(path_owner)
+            elif path_owner.status in _POOL_REUSABLE_STATUSES:
+                return _asset_out(path_owner)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This upload reservation is no longer available.",
+                )
+        elif body.gcs_path.startswith(_staging_prefix):
+            # After promotion `gcs_path` points at the persistent copy. Recover
+            # a lost legacy registration response from the reservation UUID
+            # embedded in the original staging key.
+            relative = body.gcs_path.removeprefix(_staging_prefix)
+            try:
+                staged_reservation_id = uuid.UUID(relative.split("/", 1)[0])
+            except (ValueError, IndexError) as exc:
+                raise HTTPException(
+                    status_code=404, detail="Upload reservation not found."
+                ) from exc
+            promoted = (
+                await db.execute(
+                    select(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.id == staged_reservation_id,
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if promoted is None or not promoted.gcs_path.startswith(_pool_prefix):
+                raise HTTPException(status_code=404, detail="Upload reservation not found.")
+            if promoted.status == "uploaded":
+                await _queue_pool_asset_analysis(promoted, db)
+                await _cleanup_reserved_pool_path(
+                    body.gcs_path,
+                    reservation_id=str(promoted.id),
+                )
+                return _asset_out(promoted)
+            if promoted.status in {"queued", "analyzing", "ready", "failed"}:
+                return _asset_out(promoted)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This upload reservation is no longer available.",
+            )
+    if reservation is not None and _pool_reservation_is_expired(reservation, datetime.now(UTC)):
+        await _cleanup_expired_pool_reservation(reservation)
+        await db.delete(reservation)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "This upload link expired. Retry the upload to get a new link.",
+                "code": "upload_reservation_expired",
+                "retryable": True,
+                "stage": "transfer",
+            },
+        )
+    if reservation is not None and reservation.gcs_path != body.gcs_path:
+        raise HTTPException(
+            status_code=409,
+            detail="Upload target does not match its reservation.",
+        )
+
+    try:
+        metadata = await asyncio.to_thread(storage.object_metadata, body.gcs_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The upload has not finished yet. Retry the upload, then add it again.",
+        ) from exc
+
+    expected_type = reservation.upload_content_type if reservation else body.content_type
+    expected_size = reservation.upload_size_bytes if reservation else metadata.size
+    kind = _asset_kind_for_content_type(expected_type or body.content_type)
+    limit = _MAX_POOL_VIDEO_BYTES if kind == "video" else _MAX_POOL_IMAGE_BYTES
+    mismatch = (
+        metadata.content_type.split(";", 1)[0].strip() != expected_type
+        or metadata.size != expected_size
+        or metadata.size <= 0
+        or metadata.size > limit
+    )
+    if mismatch:
+        await _delete_verified_pool_upload(
+            body.gcs_path,
+            metadata.generation,
+            reservation_id=str(reservation.id) if reservation else None,
+        )
+        if reservation is not None:
+            await db.delete(reservation)
+            await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The uploaded file did not match the selected file. Choose it again and retry.",
+        )
+
     if body.content_hash:
         existing = (
             await db.execute(
                 select(PlanItemAsset).where(
                     PlanItemAsset.plan_item_id == item.id,
                     PlanItemAsset.content_hash == body.content_hash,
+                    PlanItemAsset.id != (reservation.id if reservation else uuid.UUID(int=0)),
+                    PlanItemAsset.status.in_(_POOL_REUSABLE_STATUSES),
                 )
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if existing.status == "uploaded":
+                await _queue_pool_asset_analysis(existing, db)
             cleaned_context = _clean_pool_asset_context(body.user_context)
             if body.user_context is not None and existing.user_context != cleaned_context:
                 existing.user_context = cleaned_context
+                from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+                mark_edit_proposal_stale(item)
                 await db.commit()
                 await db.refresh(existing)
+            same_retained_object = existing.gcs_path == body.gcs_path and str(
+                getattr(existing, "gcs_generation", "")
+            ) == str(metadata.generation)
+            if not same_retained_object:
+                await _delete_verified_pool_upload(
+                    body.gcs_path,
+                    metadata.generation,
+                    reservation_id=str(reservation.id) if reservation else None,
+                )
+            if reservation is not None:
+                await db.delete(reservation)
+                await db.commit()
             return _asset_out(existing, deduped=True)
-    count = int(
-        (
-            await db.execute(
-                select(func.count())
-                .select_from(PlanItemAsset)
-                .where(PlanItemAsset.plan_item_id == item.id)
-            )
-        ).scalar_one()
-    )
-    if count >= _MAX_POOL_ASSETS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
+    if reservation is None:
+        count = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.plan_item_id == item.id,
+                        _pool_asset_counts_toward_capacity(datetime.now(UTC)),
+                    )
+                )
+            ).scalar_one()
         )
-    asset = PlanItemAsset(
+        if count >= _MAX_POOL_ASSETS:
+            await _delete_verified_pool_upload(
+                body.gcs_path,
+                metadata.generation,
+                reservation_id=None,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
+            )
+    staging_cleanup: tuple[str, str] | None = None
+    if reservation is not None and body.gcs_path.startswith(_staging_prefix):
+        source_generation = metadata.generation
+        promotion_state = (
+            (reservation.analysis or {}).get("_upload_promotion")
+            if isinstance(reservation.analysis, dict)
+            else None
+        )
+        if reservation.status == "promoting" and isinstance(promotion_state, dict):
+            persistent_path = str(promotion_state.get("destination_path") or "")
+            if (
+                promotion_state.get("source_path") != body.gcs_path
+                or str(promotion_state.get("source_generation") or "") != source_generation
+                or not persistent_path.startswith(_pool_prefix)
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This upload reservation is no longer available.",
+                )
+        else:
+            persistent_name = (
+                f"{reservation.id}-{(reservation.source_filename or 'asset').split('/')[-1]}"
+            )
+            persistent_path = f"users/{user.id}/plan/{item.id}/pool/{persistent_name}"
+            reservation.status = "promoting"
+            reservation.upload_expires_at = datetime.now(UTC) + _POOL_RESERVATION_TTL
+            reservation.analysis = {
+                "_upload_promotion": {
+                    "source_path": body.gcs_path,
+                    "source_generation": source_generation,
+                    "destination_path": persistent_path,
+                }
+            }
+            try:
+                # This durable claim precedes the only write into lifecycle-
+                # exempt storage, making every later failure reconcilable.
+                await db.commit()
+                await db.refresh(reservation)
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "message": "The file uploaded, but Kria couldn't add it to your visuals.",
+                        "code": "registration_temporarily_unavailable",
+                        "retryable": True,
+                        "stage": "registration",
+                    },
+                ) from exc
+        try:
+            metadata = await asyncio.to_thread(
+                storage.copy_object_generation,
+                body.gcs_path,
+                persistent_path,
+                source_generation=source_generation,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "pool_asset_staging_promotion_failed",
+                reservation_id=str(reservation.id),
+                error_type=type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "message": "The file uploaded, but Kria couldn't add it to your visuals.",
+                    "code": "registration_temporarily_unavailable",
+                    "retryable": True,
+                    "stage": "registration",
+                },
+            ) from exc
+        if (
+            metadata.size != expected_size
+            or metadata.content_type.split(";", 1)[0].strip() != expected_type
+        ):
+            log.error(
+                "pool_asset_staging_promotion_mismatch",
+                reservation_id=str(reservation.id),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "message": "The file uploaded, but Kria couldn't add it to your visuals.",
+                    "code": "registration_temporarily_unavailable",
+                    "retryable": True,
+                    "stage": "registration",
+                },
+            )
+        reservation.gcs_path = persistent_path
+        staging_cleanup = (body.gcs_path, source_generation)
+    asset = reservation or PlanItemAsset(
         plan_item_id=item.id,
         user_id=user.id,
         gcs_path=body.gcs_path,
-        kind=_asset_kind_for_content_type(body.content_type),
-        content_hash=body.content_hash,
-        source_filename=body.source_filename,
-        user_context=_clean_pool_asset_context(body.user_context),
-        status="uploaded",
+        kind=kind,
     )
-    db.add(asset)
-    await db.commit()
-    await db.refresh(asset)
+    if reservation is None:
+        db.add(asset)
+    asset.content_hash = body.content_hash
+    asset.source_filename = body.source_filename or asset.source_filename
+    asset.user_context = _clean_pool_asset_context(body.user_context)
+    asset.gcs_generation = metadata.generation
+    asset.upload_content_type = expected_type
+    asset.upload_size_bytes = metadata.size
+    asset.analysis = None
+    asset.correlation_id = request.state.correlation_id or asset.correlation_id
+    asset.status = "uploaded" if staging_cleanup is not None else "queued"
+    from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
 
-    # Upload-time analysis (PR1a): async, best-effort — a broker hiccup must not
-    # fail the register; the asset just stays "uploaded" until re-registered.
-    try:
-        from app.config import settings as _settings  # noqa: PLC0415
-        from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
-
-        analyze_pool_asset.apply_async(args=[str(asset.id)], queue=_settings.autoplace_queue)
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "pool_asset_analysis_dispatch_failed", asset_id=str(asset.id), error=str(exc)[:160]
-        )
+    mark_edit_proposal_stale(item)
+    if staging_cleanup is not None:
+        promoted_asset_id = asset.id
+        promoted_path = asset.gcs_path
+        promoted_generation = asset.gcs_generation
+        try:
+            # Make the persistent generation durable before queue publication.
+            # The earlier promoting claim remains the cleanup/retry authority
+            # when this commit rolls back or its outcome is ambiguous.
+            await db.commit()
+            await db.refresh(asset)
+        except Exception as exc:  # noqa: BLE001
+            try:
+                await db.rollback()
+            except Exception:  # noqa: BLE001 — fresh-session check is authoritative
+                pass
+            durable = await _pool_promotion_is_durable(
+                promoted_asset_id,
+                path=promoted_path,
+                generation=str(promoted_generation),
+            )
+            log.warning(
+                "pool_asset_promotion_commit_failed",
+                reservation_id=str(promoted_asset_id),
+                durable=durable,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "message": "The file uploaded, but Kria couldn't add it to your visuals.",
+                    "code": "registration_temporarily_unavailable",
+                    "retryable": True,
+                    "stage": "registration",
+                },
+            ) from exc
+    await _queue_pool_asset_analysis(asset, db)
+    if staging_cleanup is not None:
+        staging_path, staging_generation = staging_cleanup
+        try:
+            await asyncio.to_thread(
+                storage.delete_object_generation,
+                staging_path,
+                generation=staging_generation,
+            )
+        except Exception as exc:  # noqa: BLE001 — 24h lifecycle is the fallback
+            log.warning(
+                "pool_asset_staging_cleanup_deferred",
+                reservation_id=str(asset.id),
+                error_type=type(exc).__name__,
+            )
     return _asset_out(asset)
-
-
-# Proxy uploads stream through the API (browser → Next proxy → FastAPI → GCS),
-# sidestepping bucket-CORS entirely. Smaller cap than the presigned path — pool
-# assets are screenshots / short screen recordings, and the bytes transit the API.
-_MAX_POOL_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
 
 
 @router.post("/{item_id}/assets/upload", response_model=PoolAssetOut)
 async def upload_pool_asset(
     item_id: str,
+    request: Request,
     user: CurrentUser,
     file: MultipartFile = File(...),  # noqa: B008
     db: AsyncSession = Depends(get_db),
 ) -> PoolAssetOut:
-    """One-shot pool upload: multipart file → GCS (server-side) → asset row.
-
-    Replaces the presigned-PUT dance for the pool: a browser PUT straight to
-    storage.googleapis.com dies on bucket CORS for origins the bucket doesn't
-    list (any localhost). Server computes the content hash while streaming, so
-    dedupe never trusts the client. Analysis dispatches like register.
-    """
+    """Compatibility multipart upload through the shared staged registrar."""
     import hashlib  # noqa: PLC0415
     import os as _os  # noqa: PLC0415
     import tempfile  # noqa: PLC0415
 
     _require_asset_pool()
-    item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    _, plan, _ = await _load_owned_item_context(item_id, user.id, db)
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
-    stable_item_id = item.id
     # Do not retain a transaction or ownership row lock while the client body
     # streams and storage upload run.  The epoch snapshot is revalidated at the
     # only persistence boundary below.
@@ -4188,43 +5708,32 @@ async def upload_pool_asset(
             detail=f"Unsupported asset content type: {content_type or 'unknown'}",
         )
 
-    # Stream to a temp file, hashing as we go (never the whole file in RAM).
+    kind = _asset_kind_for_content_type(content_type)
+    upload_limit = _MAX_POOL_VIDEO_BYTES if kind == "video" else _MAX_POOL_IMAGE_BYTES
     hasher = hashlib.sha256()
     total = 0
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        tmp_path = tmp.name
-        while chunk := await file.read(1024 * 1024):
-            total += len(chunk)
-            if total > _MAX_POOL_UPLOAD_BYTES:
-                tmp.close()
-                _os.unlink(tmp_path)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="File too large (100 MB max for pool assets).",
-                )
-            hasher.update(chunk)
-            tmp.write(chunk)
+    tmp_path: str | None = None
     try:
+        # Hash to disk, never buffering the whole file in process memory.
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > upload_limit:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            "File too large (512 MB max for videos)."
+                            if kind == "video"
+                            else "File too large (25 MB max for images)."
+                        ),
+                    )
+                hasher.update(chunk)
+                tmp.write(chunk)
         if total == 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
         content_hash = hasher.hexdigest()
-
         source_filename = (file.filename or "asset").split("/")[-1]
-        safe_name = f"{uuid.uuid4().hex}-{source_filename}"
-        gcs_path = f"users/{user.id}/plan/{stable_item_id}/pool/{safe_name}"
-        try:
-            await asyncio.to_thread(storage.upload_local_file, tmp_path, gcs_path, content_type)
-        except Exception:
-            # A provider error may occur after creating a partial object.
-            await asyncio.to_thread(storage.delete_object_best_effort, gcs_path)
-            raise
-    finally:
-        try:
-            _os.unlink(tmp_path)
-        except OSError:
-            pass
-
-    try:
         locked_item, locked_plan, _ = await _load_owned_item_context(
             item_id,
             user.id,
@@ -4243,13 +5752,15 @@ async def upload_pool_asset(
                 .where(
                     PlanItemAsset.plan_item_id == locked_item.id,
                     PlanItemAsset.content_hash == content_hash,
+                    PlanItemAsset.status.in_(_POOL_REUSABLE_STATUSES),
                 )
                 .with_for_update()
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if existing.status == "uploaded":
+                await _queue_pool_asset_analysis(existing, db)
             await db.rollback()
-            await asyncio.to_thread(storage.delete_object_best_effort, gcs_path)
             return _asset_out(existing, deduped=True)
 
         count = int(
@@ -4257,7 +5768,10 @@ async def upload_pool_asset(
                 await db.execute(
                     select(func.count())
                     .select_from(PlanItemAsset)
-                    .where(PlanItemAsset.plan_item_id == locked_item.id)
+                    .where(
+                        PlanItemAsset.plan_item_id == locked_item.id,
+                        _pool_asset_counts_toward_capacity(datetime.now(UTC)),
+                    )
                 )
             ).scalar_one()
         )
@@ -4267,40 +5781,63 @@ async def upload_pool_asset(
                 detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
             )
 
-        asset = PlanItemAsset(
+        reservation_id = uuid.uuid4()
+        safe_name = f"{uuid.uuid4().hex}-{source_filename}"
+        gcs_path = (
+            f"dev-user/{user.id}/plan-pool-reservations/{locked_item.id}/"
+            f"{reservation_id}/{safe_name}"
+        )
+        reservation = PlanItemAsset(
+            id=reservation_id,
             plan_item_id=locked_item.id,
             user_id=user.id,
             gcs_path=gcs_path,
-            kind=_asset_kind_for_content_type(content_type),
+            kind=kind,
             content_hash=content_hash,
             source_filename=source_filename,
-            status="uploaded",
+            status="preparing",
+            upload_content_type=content_type,
+            upload_size_bytes=total,
+            upload_expires_at=datetime.now(UTC) + _POOL_RESERVATION_TTL,
+            correlation_id=request.state.correlation_id,
         )
-        db.add(asset)
+        db.add(reservation)
         await db.commit()
-        await db.refresh(asset)
-    except Exception:
-        await db.rollback()
-        deleted = await asyncio.to_thread(storage.delete_object_best_effort, gcs_path)
-        if not deleted:
-            log.error("pool_asset_stale_upload_cleanup_failed", gcs_path=gcs_path)
-        raise
+        await db.refresh(reservation)
 
-    try:
-        from app.config import settings as _settings  # noqa: PLC0415
-        from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
-
-        analyze_pool_asset.apply_async(args=[str(asset.id)], queue=_settings.autoplace_queue)
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "pool_asset_analysis_dispatch_failed", asset_id=str(asset.id), error=str(exc)[:160]
+        # Staging is lifecycle-covered even if the provider raises after writing.
+        await asyncio.to_thread(storage.upload_local_file, tmp_path, gcs_path, content_type)
+        return await register_pool_asset(
+            item_id,
+            RegisterAssetBody(
+                reservation_id=str(reservation.id),
+                gcs_path=gcs_path,
+                content_type=content_type,
+                content_hash=content_hash,
+                source_filename=source_filename,
+            ),
+            request,
+            user,
+            db,
         )
-    return _asset_out(asset)
+    finally:
+        if tmp_path:
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+class PoolReservationCapacity(BaseModel):
+    reservation_id: str
+    release_at: datetime | None = None
 
 
 class PoolAssetsResponse(BaseModel):
     assets: list[PoolAssetOut]
     max_assets: int = _MAX_POOL_ASSETS
+    occupied_assets: int = 0
+    active_reservations: list[PoolReservationCapacity] = Field(default_factory=list)
 
 
 @router.get("/{item_id}/assets", response_model=PoolAssetsResponse)
@@ -4311,7 +5848,7 @@ async def list_pool_assets(
 ) -> PoolAssetsResponse:
     _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db)
-    assets = (
+    rows = (
         (
             await db.execute(
                 select(PlanItemAsset)
@@ -4322,7 +5859,76 @@ async def list_pool_assets(
         .scalars()
         .all()
     )
-    return PoolAssetsResponse(assets=[_asset_out(a) for a in assets])
+    now = datetime.now(UTC)
+    hidden_statuses = {"preparing", "promoting", "cleanup_pending"}
+    capacity_rows = [
+        row
+        for row in rows
+        if row.status not in {"preparing", "promoting"}
+        or not _pool_reservation_is_expired(row, now)
+    ]
+    assets = [row for row in rows if row.status not in hidden_statuses]
+    hidden_capacity_rows = [row for row in capacity_rows if row.status in hidden_statuses]
+    reservations = []
+    for row in hidden_capacity_rows:
+        release_at = None
+        if row.status == "cleanup_pending":
+            # Cleanup owns this reservation until its exact object generation is
+            # deleted.  The original upload expiry is not a release guarantee.
+            release_at = None
+        elif row.upload_expires_at is not None:
+            release_at = row.upload_expires_at + _POOL_RESERVATION_CLEANUP_GRACE
+        elif row.created_at is not None and row.status in {"preparing", "promoting"}:
+            release_at = row.created_at + _POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE
+        reservations.append(
+            PoolReservationCapacity(reservation_id=str(row.id), release_at=release_at)
+        )
+    return PoolAssetsResponse(
+        assets=[_asset_out(a) for a in assets],
+        occupied_assets=len(capacity_rows),
+        active_reservations=reservations,
+    )
+
+
+@router.post("/{item_id}/assets/{asset_id}/reanalyze", response_model=PoolAssetOut)
+async def reanalyze_pool_asset(
+    item_id: str,
+    asset_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PoolAssetOut:
+    """Idempotently retry a failed/legacy pool-asset analysis."""
+    _require_asset_pool()
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    try:
+        aid = uuid.UUID(asset_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Asset not found",
+        ) from exc
+    asset = (
+        await db.execute(
+            select(PlanItemAsset)
+            .where(
+                PlanItemAsset.id == aid,
+                PlanItemAsset.plan_item_id == item.id,
+                PlanItemAsset.user_id == user.id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    if asset.status in {"queued", "analyzing", "ready"}:
+        return _asset_out(asset)
+    if asset.status not in {"failed", "uploaded"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This upload must finish before analysis can start.",
+        )
+    await _queue_pool_asset_analysis(asset, db, reset_attempts=True)
+    return _asset_out(asset)
 
 
 @router.delete("/{item_id}/assets/{asset_id}")
@@ -4332,13 +5938,12 @@ async def delete_pool_asset(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Remove an asset from the pool.
+    """Remove an asset and durably reclaim unreferenced persistent bytes."""
+    from app.services.pool_asset_refs import (  # noqa: PLC0415
+        item_references_pool_path,
+        job_references_pool_asset,
+    )
 
-    PR1b hook (plan 005 decision 11A): deleting an asset will ALSO clear
-    dependent PENDING overlay suggestions + show the zinc notice. PR0 has no
-    suggestions yet, so this is a plain row delete (GCS object left in place —
-    the persistent prefix is cheap and other rows may share bytes).
-    """
     _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     try:
@@ -4348,12 +5953,21 @@ async def delete_pool_asset(
     asset = (
         await db.execute(
             select(PlanItemAsset).where(
-                PlanItemAsset.id == aid, PlanItemAsset.plan_item_id == item.id
+                PlanItemAsset.id == aid,
+                PlanItemAsset.plan_item_id == item.id,
+                PlanItemAsset.user_id == user.id,
             )
         )
     ).scalar_one_or_none()
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    if asset.status in {"preparing", "promoting"} or (
+        asset.status == "cleanup_pending" and not asset.gcs_generation
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This upload reservation cannot be removed while its upload link is active.",
+        )
     removed = 0
     locked_job = (
         await db.get(
@@ -4365,48 +5979,168 @@ async def delete_pool_asset(
         if item.current_job_id is not None
         else None
     )
+    if item_references_pool_path(item, asset.gcs_path) or (
+        locked_job is not None
+        and locked_job.status != "cancelled"
+        and job_references_pool_asset(
+            locked_job,
+            asset_id=str(asset.id),
+            gcs_path=asset.gcs_path,
+        )
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Replace or remove this file from the edit before deleting it.",
+        )
     if locked_job is not None and locked_job.status != "cancelled":
-        if _visual_blocks_reference_asset(locked_job, str(asset.id)):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Replace or remove this asset from visual blocks before deleting it.",
-            )
         # Decision 11A: deleting an asset eagerly clears dependent PENDING
         # suggestion rows (staged/accepted cards are real placements — untouched).
         removed = _clear_suggestions_for_asset(locked_job, str(asset.id))
+    shared_count = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(
+                    PlanItemAsset.id != asset.id,
+                    PlanItemAsset.gcs_path == asset.gcs_path,
+                    PlanItemAsset.gcs_generation == asset.gcs_generation,
+                )
+            )
+        ).scalar_one()
+    )
+    if shared_count == 0:
+        # Keep the row quota-charged until exact-generation cleanup succeeds.
+        previous_status = (
+            (asset.analysis or {}).get("_pool_cleanup_previous_status")
+            if isinstance(asset.analysis, dict)
+            else None
+        ) or asset.status
+        analysis = dict(asset.analysis) if isinstance(asset.analysis, dict) else {}
+        analysis["_pool_cleanup_previous_status"] = previous_status
+        asset.analysis = analysis
+        asset.status = "cleanup_pending"
+        await db.commit()
+
+        # The durable claim releases the first transaction. Reacquire item,
+        # asset, and job locks; recheck consumers; then hold all locks through
+        # storage deletion so a concurrent editor write cannot win the gap.
+        locked_item = await _load_owned_item(item_id, user.id, db, for_update=True)
+        locked_asset = (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.id == aid,
+                    PlanItemAsset.plan_item_id == locked_item.id,
+                    PlanItemAsset.user_id == user.id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if locked_asset is None:
+            return {"ok": True, "removed_suggestions": removed}
+        locked_job = (
+            await db.get(
+                Job,
+                locked_item.current_job_id,
+                populate_existing=True,
+                with_for_update=True,
+            )
+            if locked_item.current_job_id is not None
+            else None
+        )
+        if item_references_pool_path(locked_item, locked_asset.gcs_path) or (
+            locked_job is not None
+            and locked_job.status != "cancelled"
+            and job_references_pool_asset(
+                locked_job,
+                asset_id=str(locked_asset.id),
+                gcs_path=locked_asset.gcs_path,
+            )
+        ):
+            restored_analysis = (
+                dict(locked_asset.analysis) if isinstance(locked_asset.analysis, dict) else {}
+            )
+            restored_analysis.pop("_pool_cleanup_previous_status", None)
+            locked_asset.analysis = restored_analysis or None
+            locked_asset.status = str(previous_status)
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Replace or remove this file from the edit before deleting it.",
+            )
+        fresh_shared_count = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.id != locked_asset.id,
+                        PlanItemAsset.gcs_path == locked_asset.gcs_path,
+                        PlanItemAsset.gcs_generation == locked_asset.gcs_generation,
+                    )
+                )
+            ).scalar_one()
+        )
+        if fresh_shared_count:
+            from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+            mark_edit_proposal_stale(locked_item)
+            await db.delete(locked_asset)
+            await db.commit()
+            return {"ok": True, "removed_suggestions": removed}
+        if locked_asset.gcs_generation:
+            cleaned = await asyncio.to_thread(
+                storage.delete_object_generation_best_effort,
+                locked_asset.gcs_path,
+                generation=str(locked_asset.gcs_generation),
+            )
+        else:
+            cleaned = await asyncio.to_thread(
+                storage.delete_object_best_effort,
+                locked_asset.gcs_path,
+            )
+        if not cleaned:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "message": "Kria couldn't remove this file right now. Retry in a moment.",
+                    "code": "asset_cleanup_temporarily_unavailable",
+                    "retryable": True,
+                    "stage": "remove",
+                },
+            )
+        asset = locked_asset
+    from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+    mark_edit_proposal_stale(locked_item if shared_count == 0 else item)
     await db.delete(asset)
     await db.commit()
     return {"ok": True, "removed_suggestions": removed}
-
-
-def _visual_blocks_reference_asset(job: Job, asset_id: str) -> bool:
-    from app.agents._schemas.visual_block import iter_visual_shots  # noqa: PLC0415
-
-    for variant in (job.assembly_plan or {}).get("variants") or []:
-        if any(
-            str(shot.get("asset_id")) == asset_id
-            for shot in iter_visual_shots(variant.get("visual_blocks") or [])
-        ):
-            return True
-    return False
 
 
 def _clear_suggestions_for_asset(job: Job, asset_id: str) -> int:
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
     removed = 0
+    changed = False
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         pending = v.get("overlay_suggestions") or []
-        if not pending:
-            continue
         kept = [s for s in pending if str(s.get("asset_id")) != asset_id]
         removed += len(pending) - len(kept)
         if len(kept) != len(pending):
+            changed = True
             v["overlay_suggestions"] = kept or None
             if not kept and v.get("overlay_suggest_status") == "ready":
                 v["overlay_suggest_status"] = "zero"
-    if removed:
+        # Any in-flight matcher read the pre-delete ready-asset set. Fence its
+        # later persist even when it has not produced suggestion rows yet.
+        if v.pop("overlay_suggest_attempt_token", None) is not None:
+            changed = True
+            if v.get("overlay_suggest_status") == "matching":
+                v["overlay_suggest_status"] = None
+    if changed:
         job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
         flag_modified(job, "assembly_plan")
     return removed
@@ -4487,7 +6221,12 @@ async def update_pool_asset_context(
     ).scalar_one_or_none()
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    prior_context = asset.user_context
     asset.user_context = body.user_context
+    from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+    if prior_context != asset.user_context:
+        mark_edit_proposal_stale(item)
     locked_job = (
         await db.get(
             Job,
@@ -4774,6 +6513,13 @@ async def apply_overlay_suggestions(
     await _load_owned_item(item_id, user.id, db)
     job = await _locked_owned_item_render_job(item_id, user.id, db)
     _find_variant_dict(job, variant_id)
+
+    await _require_ready_pool_paths(
+        item_id=item_id,
+        user_id=user.id,
+        payload=body.suggestions,
+        db=db,
+    )
 
     result = apply_suggestions_to_variant(job, variant_id, body.suggestions, user_id=str(user.id))
     if not result["dispatched"]:

@@ -21,6 +21,7 @@ class ResizeObserverMock {
   ResizeObserverMock;
 
 import EditorTimelineBody, {
+  type EditorMotionBar,
   type EditorTimelineBodyProps,
 } from "@/app/plan/items/[id]/_editor/EditorTimelineBody";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -78,6 +79,29 @@ const PLAIN_TEXT_BAR: TextElementBar = {
   role: "generative_intro",
 };
 
+const MOTION_BLOCK: EditorMotionBar = {
+  id: "motion-1",
+  label: "Wild Type",
+  start_s: 1,
+  end_s: 3.5,
+  sourceScene: {
+    id: "motion-1",
+    preset_id: "kinetic_word",
+    preset_version: 2,
+    start_frame: 30,
+    end_frame_exclusive: 105,
+    palette: { primary: "#0c0c0e", accent: "#c7ff3d" },
+    intensity: 0.72,
+    params: { text: "Wild Type" },
+    motion: {
+      version: 2,
+      speed: 1,
+      easing: "ease-in-out-cubic",
+      hold_frames: 30,
+    },
+  },
+};
+
 describe("EditorTimelineBody — AI sequence row marker", () => {
   it("shows the AI sequence marker for a backend-projected sequence_scene bar", () => {
     render(<EditorTimelineBody {...baseProps([AI_SEQUENCE_BAR])} />);
@@ -93,6 +117,42 @@ describe("EditorTimelineBody — AI sequence row marker", () => {
     render(<EditorTimelineBody {...baseProps([PLAIN_TEXT_BAR])} />);
     expect(screen.queryByLabelText("AI sequence")).not.toBeInTheDocument();
   });
+
+  it("forwards one immutable text-drag origin through every trim preview", () => {
+    const onPreviewTextTiming = jest.fn();
+    render(
+      <EditorTimelineBody
+        {...baseProps([PLAIN_TEXT_BAR])}
+        onPreviewTextTiming={onPreviewTextTiming}
+      />,
+    );
+    const bar = screen.getByRole("button", { name: /Text row 1, Big title/ });
+    Object.defineProperties(bar, {
+      setPointerCapture: { value: jest.fn(), configurable: true },
+      hasPointerCapture: { value: jest.fn(() => true), configurable: true },
+      releasePointerCapture: { value: jest.fn(), configurable: true },
+    });
+    jest.spyOn(bar, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 120, top: 0, bottom: 24, width: 120, height: 24,
+      x: 0, y: 0, toJSON: () => ({}),
+    });
+    const scroller = screen.getByTestId("editor-timeline-lanes-scroll");
+    jest.spyOn(scroller, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 600, top: 0, bottom: 240, width: 600, height: 240,
+      x: 0, y: 0, toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(bar, { pointerId: 7, clientX: 119 });
+    fireEvent.pointerMove(bar, { pointerId: 7, clientX: 80 });
+    fireEvent.pointerMove(bar, { pointerId: 7, clientX: 110 });
+    fireEvent.pointerUp(bar, { pointerId: 7, clientX: 110 });
+
+    expect(onPreviewTextTiming).toHaveBeenCalledTimes(2);
+    for (const call of onPreviewTextTiming.mock.calls) {
+      expect(["left", "right", "body"]).toContain(call[2]);
+      expect(call[3]).toStrictEqual(PLAIN_TEXT_BAR);
+    }
+  });
 });
 
 describe("EditorTimelineBody — Creator Blocks lane", () => {
@@ -101,7 +161,7 @@ describe("EditorTimelineBody — Creator Blocks lane", () => {
     render(<EditorTimelineBody
       {...baseProps([])}
       showMotionBlocks
-      motionBlocks={[{ id: "motion-1", label: "Wild Type", start_s: 1, end_s: 3.5 }]}
+      motionBlocks={[MOTION_BLOCK]}
       onSelect={onSelect}
     />);
 
@@ -127,7 +187,7 @@ describe("EditorTimelineBody — Creator Blocks lane", () => {
       <EditorTimelineBody
         {...baseProps([])}
         showMotionBlocks
-        motionBlocks={[{ id: "motion-1", label: "Wild Type", start_s: 1, end_s: 3.5 }]}
+        motionBlocks={[MOTION_BLOCK]}
         onSelect={onSelect}
         onPreviewMotionTiming={onPreviewMotionTiming}
         onRecordTimelineEdit={onRecordTimelineEdit}
@@ -153,6 +213,7 @@ describe("EditorTimelineBody — Creator Blocks lane", () => {
     expect(onPreviewMotionTiming).toHaveBeenCalledWith(
       "motion-1",
       expect.objectContaining({ start_s: expect.any(Number), end_s: expect.any(Number) }),
+      MOTION_BLOCK,
     );
     const patch = onPreviewMotionTiming.mock.calls.at(-1)?.[1];
     expect(Number.isFinite(patch.start_s)).toBe(true);
@@ -169,6 +230,7 @@ describe("EditorTimelineBody — Creator Blocks lane", () => {
     expect(onPreviewMotionTiming).toHaveBeenCalledWith(
       "motion-1",
       expect.objectContaining({ end_s: 3.5 }),
+      MOTION_BLOCK,
     );
     const leftTrim = onPreviewMotionTiming.mock.calls.at(-1)?.[1];
     expect(leftTrim.start_s).toBeGreaterThan(1);
@@ -181,5 +243,82 @@ describe("EditorTimelineBody — Creator Blocks lane", () => {
     const rightTrim = onPreviewMotionTiming.mock.calls.at(-1)?.[1];
     expect(rightTrim.start_s).toBe(1);
     expect(rightTrim.end_s).toBeLessThan(3.5);
+  });
+
+  it("restores the immutable motion origin when a drag is cancelled", () => {
+    (global as unknown as { PointerEvent: typeof MouseEvent }).PointerEvent = MouseEvent;
+    const onPreviewMotionTiming = jest.fn();
+    const onRecordTimelineEdit = jest.fn();
+    const capture = new Set<number>();
+    Object.defineProperties(HTMLElement.prototype, {
+      setPointerCapture: { configurable: true, value(id: number) { capture.add(id); } },
+      hasPointerCapture: { configurable: true, value(id: number) { return capture.has(id); } },
+      releasePointerCapture: { configurable: true, value(id: number) { capture.delete(id); } },
+    });
+    render(<EditorTimelineBody
+      {...baseProps([])}
+      showMotionBlocks
+      motionBlocks={[MOTION_BLOCK]}
+      onPreviewMotionTiming={onPreviewMotionTiming}
+      onRecordTimelineEdit={onRecordTimelineEdit}
+    />);
+    const bar = screen.getByRole("button", { name: /Wild Type/ });
+    jest.spyOn(bar, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 120, top: 0, bottom: 24, width: 120, height: 24,
+      x: 0, y: 0, toJSON: () => ({}),
+    });
+    const scroller = screen.getByTestId("editor-timeline-lanes-scroll");
+    jest.spyOn(scroller, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 600, top: 0, bottom: 240, width: 600, height: 240,
+      x: 0, y: 0, toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(bar, { pointerId: 4, clientX: 60 });
+    fireEvent.pointerMove(bar, { pointerId: 4, clientX: 90 });
+    fireEvent.pointerCancel(bar, { pointerId: 4, clientX: 90 });
+
+    expect(onRecordTimelineEdit).toHaveBeenCalledTimes(1);
+    expect(onPreviewMotionTiming.mock.calls.at(-1)).toEqual([
+      "motion-1",
+      { start_s: 1, end_s: 3.5 },
+      MOTION_BLOCK,
+    ]);
+  });
+
+  it("keeps persisted read-only Creator Blocks selectable without drag mutation", () => {
+    const onPreviewMotionTiming = jest.fn();
+    const onRecordTimelineEdit = jest.fn();
+    const onSelect = jest.fn();
+    render(<EditorTimelineBody
+      {...baseProps([])}
+      showMotionBlocks
+      motionBlocks={[{
+        id: "motion-evolving",
+        label: "Evolving Type",
+        start_s: 0,
+        end_s: 5.3,
+        sourceScene: {
+          ...MOTION_BLOCK.sourceScene,
+          id: "motion-evolving",
+          preset_id: "evolving_type",
+          start_frame: 0,
+          end_frame_exclusive: 159,
+        } as EditorMotionBar["sourceScene"],
+        readOnly: true,
+      }]}
+      onPreviewMotionTiming={onPreviewMotionTiming}
+      onRecordTimelineEdit={onRecordTimelineEdit}
+      onSelect={onSelect}
+    />);
+    const bar = screen.getByRole("button", { name: /Evolving Type/ });
+
+    fireEvent.pointerDown(bar, { pointerId: 5, clientX: 60 });
+    fireEvent.pointerMove(bar, { pointerId: 5, clientX: 90 });
+    fireEvent.pointerUp(bar, { pointerId: 5, clientX: 90 });
+    fireEvent.click(bar);
+
+    expect(onPreviewMotionTiming).not.toHaveBeenCalled();
+    expect(onRecordTimelineEdit).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledWith("motion", "motion-evolving");
   });
 });

@@ -7,8 +7,17 @@ name: Fly Deploy
 #   flyctl auth token
 # Then add via Settings → Secrets and variables → Actions → New repository secret.
 #
-# The release_command in fly.toml runs `alembic upgrade head` automatically,
-# so migrations ship as part of the deploy. No separate step needed here.
+# The release_command in fly.toml runs migrations automatically, so they ship as
+# part of the deploy and need no separate step here. fly.toml is the source of
+# truth for WHICH revision it targets — normally `upgrade head`, but a staged
+# migration with a data precondition can pin it to an intermediate revision.
+# While it is pinned, TODOS.md carries a P0 to restore it: a green deploy alone
+# is not evidence that the newest migration actually applied.
+#
+# The Deploy step below wraps flyctl in scripts/fly-deploy-with-retry.sh,
+# which retries exactly once on the signature-gated release-machine startup
+# kill (SIGTERM, exit 143) tracked in issue #834 — any other failure still
+# fails the run immediately, visibly.
 on:
   push:
     branches:
@@ -34,7 +43,9 @@ jobs:
   deploy:
     name: Deploy to Fly.io
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 35 = headroom for two full deploy attempts (signature-gated retry in
+    # scripts/fly-deploy-with-retry.sh); typical runs are 5-8 min.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
 
@@ -44,7 +55,9 @@ jobs:
       - name: Deploy
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: flyctl deploy --remote-only
+        run: |
+          chmod +x scripts/fly-deploy-with-retry.sh
+          scripts/fly-deploy-with-retry.sh --remote-only
 
       - name: Verify
         env:

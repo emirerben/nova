@@ -39,9 +39,10 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from itertools import cycle
+from types import SimpleNamespace
 from typing import Any, NamedTuple
 
 import structlog
@@ -209,6 +210,15 @@ _CANCELLED_JOB_STATUS = "cancelled"
 _CONTENT_PLAN_FENCE: contextvars.ContextVar[tuple[str, int] | None] = contextvars.ContextVar(
     "generative_content_plan_owner_fence", default=None
 )
+_GUIDED_TASK_ATTEMPT_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "guided_story_task_attempt_id", default=None
+)
+_GUIDED_RENDER_LEASE_S = 45
+_GUIDED_RENDER_HEARTBEAT_S = 10
+
+
+class _GuidedStoryAttemptBusy(RuntimeError):
+    """A second worker observed a live strict-render lease and must no-op."""
 
 
 def _lock_owned_entry_job(db, job_id: str) -> tuple[Job, int | None] | None:  # noqa: ANN001
@@ -723,11 +733,17 @@ def orchestrate_generative_job(self, job_id: str) -> None:
     # a silently killed attempt stops beating, and the redelivered attempt's
     # first beat clears the stale state (2026-07-21 OOM, job e8173a25).
     with pipeline_trace_for(job_id), job_heartbeat(job_id):
+        guided_attempt_token = _GUIDED_TASK_ATTEMPT_ID.set(
+            f"{self.request.id or 'direct'}:{uuid.uuid4().hex}"
+        )
         try:
             _run_generative_job(job_id)
             mark_finished(job_id)
         except OperationalError:
             raise  # transient DB → Celery autoretry
+        except _GuidedStoryAttemptBusy:
+            log.info("guided_story_duplicate_delivery_busy", job_id=job_id)
+            return
         except SoftTimeLimitExceeded:
             # The 30-min soft limit fired (heavy 4K/HDR footage). Fail VISIBLY with a
             # user-actionable message instead of letting the hard time_limit SIGKILL
@@ -742,9 +758,24 @@ def orchestrate_generative_job(self, job_id: str) -> None:
                 failure_reason="processing_timeout",
             )
         except Exception as exc:
+            from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+            if isinstance(exc, GuidedStoryError):
+                log.error(
+                    "guided_story_job_failed",
+                    job_id=job_id,
+                    failure_reason=exc.code,
+                    error=str(exc),
+                    exc_info=True,
+                )
+                mark_failed_phase(job_id)
+                _fail_job(job_id, str(exc), failure_reason=exc.code)
+                return
             log.error("generative_job_failed", job_id=job_id, error=str(exc), exc_info=True)
             mark_failed_phase(job_id)
             _fail_job(job_id, str(exc))
+        finally:
+            _GUIDED_TASK_ATTEMPT_ID.reset(guided_attempt_token)
 
 
 @celery_app.task(
@@ -1019,11 +1050,18 @@ def _run_generative_job_impl(
         # Montage visual preset. Absent means classic so public/legacy jobs keep
         # byte-identical render behavior.
         montage_preset = coerce_montage_preset((all_candidates or {}).get("montage_preset"))
+        guided_snapshot = copy.deepcopy((job.assembly_plan or {}).get("guided_edit"))
 
     # Phase writes happen only after the owner/quarantine gate and the initial
     # status mutation commit. job_phases has its own cancelled tombstone fence.
     mark_started(job_id)
     record_phase(job_id, "queued", next_phase="analyze_clips")
+
+    if guided_snapshot is not None:
+        if speech_cut_operation_id:
+            raise RuntimeError("Speech-cut rerenders are not available on guided stories")
+        _run_guided_story_job(job_id, guided_snapshot, render_trace_id=render_trace_id)
+        return
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -1364,14 +1402,17 @@ def _run_generative_job_impl(
             # First render only. Re-renders stamp this at DISPATCH instead
             # (`stamp_variant_attempt` in services/job_phases.py) so the tile
             # clock restarts on the Save press rather than inheriting this value.
-            if _update_variant_entry(
-                job_id,
-                variant_id,
-                {
-                    "render_status": "rendering",
-                    "render_started_at": datetime.utcnow().isoformat() + "Z",
-                },
-            ) is False:
+            if (
+                _update_variant_entry(
+                    job_id,
+                    variant_id,
+                    {
+                        "render_status": "rendering",
+                        "render_started_at": datetime.utcnow().isoformat() + "Z",
+                    },
+                )
+                is False
+            ):
                 return {
                     "variant_id": variant_id,
                     "rank": rank,
@@ -1606,26 +1647,29 @@ def _run_generative_job_impl(
         # rules. No-op — mutates nothing — unless both carousel flags are on.
         _author_carousel_moments(initial_specs, job_id=job_id, n_clips=len(clip_metas))
         for spec in initial_specs:
-            if _upsert_variant_entry(
-                job_id,
-                {
-                    "variant_id": spec["variant_id"],
-                    "rank": initial_specs.index(spec) + 1,
-                    "text_mode": spec.get("text_mode", "agent_text"),
-                    "music_track_id": spec["track"].id if spec.get("track") else None,
-                    "track_title": spec["track"].title if spec.get("track") else None,
-                    "render_status": "pending",
-                    "ok": False,
-                    # Seed the authored moment onto the row BEFORE the render even
-                    # starts (not just once `base` persists it below): a crash/OOM
-                    # between here and the first `_upsert_variant_entry(result)`
-                    # would otherwise leave this pending row as the only persisted
-                    # state, and _run_regenerate_variant's `existing.get(...)`
-                    # reads THIS row — so a carousel_moment authored but never
-                    # rendered must still be visible to a re-render.
-                    "carousel_moment": spec.get("carousel_moment"),
-                },
-            ) is False:
+            if (
+                _upsert_variant_entry(
+                    job_id,
+                    {
+                        "variant_id": spec["variant_id"],
+                        "rank": initial_specs.index(spec) + 1,
+                        "text_mode": spec.get("text_mode", "agent_text"),
+                        "music_track_id": spec["track"].id if spec.get("track") else None,
+                        "track_title": spec["track"].title if spec.get("track") else None,
+                        "render_status": "pending",
+                        "ok": False,
+                        # Seed the authored moment onto the row BEFORE the render even
+                        # starts (not just once `base` persists it below): a crash/OOM
+                        # between here and the first `_upsert_variant_entry(result)`
+                        # would otherwise leave this pending row as the only persisted
+                        # state, and _run_regenerate_variant's `existing.get(...)`
+                        # reads THIS row — so a carousel_moment authored but never
+                        # rendered must still be visible to a re-render.
+                        "carousel_moment": spec.get("carousel_moment"),
+                    },
+                )
+                is False
+            ):
                 return
 
         try:
@@ -1650,18 +1694,21 @@ def _run_generative_job_impl(
                 variant_policy=variant_policy,
             )
             for spec in fallback_specs:
-                if _upsert_variant_entry(
-                    job_id,
-                    {
-                        "variant_id": spec["variant_id"],
-                        "rank": fallback_specs.index(spec) + 1,
-                        "text_mode": spec.get("text_mode", "agent_text"),
-                        "music_track_id": spec["track"].id if spec.get("track") else None,
-                        "track_title": spec["track"].title if spec.get("track") else None,
-                        "render_status": "pending",
-                        "ok": False,
-                    },
-                ) is False:
+                if (
+                    _upsert_variant_entry(
+                        job_id,
+                        {
+                            "variant_id": spec["variant_id"],
+                            "rank": fallback_specs.index(spec) + 1,
+                            "text_mode": spec.get("text_mode", "agent_text"),
+                            "music_track_id": spec["track"].id if spec.get("track") else None,
+                            "track_title": spec["track"].title if spec.get("track") else None,
+                            "render_status": "pending",
+                            "ok": False,
+                        },
+                    )
+                    is False
+                ):
                     return
             results = _render_spec_set(fallback_specs, None)
 
@@ -1701,6 +1748,311 @@ def _run_generative_job_impl(
         job_id,
         speech_cut_rerender=bool(speech_cut_operation_id),
     )
+
+
+def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, MusicTrack | None]:
+    """Load or atomically pin the deterministic strict-story execution plan."""
+
+    from app.pipeline.guided_story import (  # noqa: PLC0415
+        compile_execution_plan,
+        matcher_clip_metas,
+        validate_execution_plan,
+        validate_guided_snapshot,
+    )
+
+    _proposal_version, _media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        existing = copy.deepcopy((job.assembly_plan or {}).get("guided_story_execution_plan"))
+    if existing is not None:
+        plan = validate_execution_plan(existing, guided_snapshot)
+    else:
+        matched = _match_best_track(matcher_clip_metas(snapshot), job_id=job_id)
+        track_payload = None
+        if matched is not None and matched.audio_gcs_path:
+            from app.storage import object_metadata  # noqa: PLC0415
+
+            config = matched.track_config or {}
+            try:
+                audio_metadata = object_metadata(matched.audio_gcs_path)
+            except Exception as exc:  # noqa: BLE001
+                from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+                raise GuidedStoryError(
+                    "guided_story_music_missing",
+                    "The music selected for this edit could not be pinned safely.",
+                ) from exc
+            track_payload = {
+                "track_id": str(matched.id),
+                "title": str(matched.title),
+                "audio_gcs_path": str(matched.audio_gcs_path),
+                "generation": audio_metadata.generation,
+                "start_s": round(float(config.get("best_start_s", 0.0) or 0.0), 3),
+            }
+        candidate = compile_execution_plan(guided_snapshot, track=track_payload)
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            if job is None or _cancelled_job_write_rejected(
+                job, operation="persist_guided_execution_plan", db=db
+            ):
+                raise RuntimeError("Guided story job was cancelled")
+            current_snapshot = (job.assembly_plan or {}).get("guided_edit")
+            validate_guided_snapshot(current_snapshot)
+            existing = (job.assembly_plan or {}).get("guided_story_execution_plan")
+            if existing is None:
+                job.assembly_plan = {
+                    **(job.assembly_plan or {}),
+                    "guided_story_execution_plan": candidate,
+                }
+                db.commit()
+                plan = candidate
+            else:
+                plan = validate_execution_plan(copy.deepcopy(existing), guided_snapshot)
+
+    music = plan.get("music")
+    if music is None:
+        return plan, None
+    return plan, SimpleNamespace(
+        id=str(music["track_id"]),
+        title=str(music["title"]),
+        audio_gcs_path=str(music["audio_gcs_path"]),
+        generation=str(music["generation"]),
+    )
+
+
+def _claim_guided_story_attempt(
+    job_id: str, plan: dict[str, Any], attempt_id: str
+) -> tuple[str, dict[str, Any] | None]:
+    """Claim one strict render, resume the same delivery, or reuse verified output."""
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None or _cancelled_job_write_rejected(
+            job, operation="claim_guided_story_render", db=db
+        ):
+            return "rejected", None
+        assembly = dict(job.assembly_plan or {})
+        variants = list(assembly.get("variants") or [])
+        index = next(
+            (i for i, row in enumerate(variants) if row.get("variant_id") == "guided_story"),
+            None,
+        )
+        existing = dict(variants[index]) if index is not None else None
+        if existing is not None and existing.get("render_status") == "ready":
+            from app.pipeline.guided_story import (  # noqa: PLC0415
+                GuidedStoryError,
+                validate_ready_result,
+            )
+
+            try:
+                validate_ready_result(plan, existing, job_id=job_id, verify_storage=False)
+            except GuidedStoryError:
+                pass
+            else:
+                return "ready", existing
+        if existing is not None and existing.get("render_status") in {"pending", "rendering"}:
+            owner = existing.get("render_generation_id")
+            claimed_at = existing.get("render_heartbeat_at") or existing.get("render_claimed_at")
+            lease_live = True
+            if claimed_at:
+                try:
+                    lease_live = datetime.utcnow() - datetime.fromisoformat(
+                        str(claimed_at).removesuffix("Z")
+                    ) < timedelta(seconds=_GUIDED_RENDER_LEASE_S)
+                except (TypeError, ValueError):
+                    lease_live = True
+            if owner and lease_live:
+                return "busy", None
+        now = datetime.utcnow().isoformat() + "Z"
+        pending = {
+            "variant_id": "guided_story",
+            "rank": 1,
+            "text_mode": "agent_text",
+            "resolved_archetype": "guided_story",
+            "proposal_version": plan["proposal_version"],
+            "media_digest": plan["media_digest"],
+            "orientation": plan.get("output_orientation", "portrait"),
+            "orientation_reason": plan.get(
+                "output_orientation_reason",
+                "Legacy guided stories used the portrait canvas.",
+            ),
+            "render_generation_id": attempt_id,
+            "render_claimed_at": now,
+            "render_heartbeat_at": now,
+            "render_status": "pending",
+            "ok": False,
+        }
+        if index is None:
+            variants.append(pending)
+        else:
+            variants[index] = pending
+        assembly["variants"] = variants
+        job.assembly_plan = assembly
+        job.status = "rendering"
+        job.error_detail = None
+        job.failure_reason = None
+        db.commit()
+    return "claimed", pending
+
+
+def _heartbeat_guided_story_attempt(job_id: str, attempt_id: str) -> bool:
+    """Refresh only the still-owned guided render lease."""
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return False
+        assembly = dict(job.assembly_plan or {})
+        variants = list(assembly.get("variants") or [])
+        index = next(
+            (i for i, row in enumerate(variants) if row.get("variant_id") == "guided_story"),
+            None,
+        )
+        if index is None:
+            return False
+        current = dict(variants[index])
+        if current.get("render_generation_id") != attempt_id or current.get(
+            "render_status"
+        ) not in {"pending", "rendering"}:
+            return False
+        current["render_heartbeat_at"] = datetime.utcnow().isoformat() + "Z"
+        current["render_status"] = "rendering"
+        variants[index] = current
+        assembly["variants"] = variants
+        job.assembly_plan = assembly
+        db.commit()
+        return True
+
+
+@contextmanager
+def _guided_story_attempt_heartbeat(job_id: str, attempt_id: str):  # noqa: ANN201
+    """Keep a live lease while FFmpeg owns the approved story render."""
+
+    stopped = threading.Event()
+
+    def beat() -> None:
+        while not stopped.wait(_GUIDED_RENDER_HEARTBEAT_S):
+            try:
+                if not _heartbeat_guided_story_attempt(job_id, attempt_id):
+                    return
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "guided_story_heartbeat_failed",
+                    job_id=job_id,
+                    attempt_id=attempt_id,
+                    error=str(exc),
+                )
+
+    thread = threading.Thread(target=beat, name="guided-story-heartbeat", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        thread.join(timeout=1)
+
+
+def _run_guided_story_job(job_id: str, guided_snapshot: dict, *, render_trace_id: str) -> None:
+    """Render one approved story and never enter the best-effort montage path."""
+
+    from app.pipeline.guided_story import (  # noqa: PLC0415
+        VARIANT_ID,
+        render_execution_plan,
+        validate_ready_result,
+    )
+    from app.services.pipeline_trace import (  # noqa: PLC0415
+        record_pipeline_event,
+        render_stage_timer,
+    )
+
+    compile_t0 = time.monotonic()
+    plan, track = _guided_execution_plan(job_id, guided_snapshot)
+    record_phase(
+        job_id,
+        "analyze_clips",
+        elapsed_ms=_elapsed_ms(compile_t0),
+        next_phase="match_song",
+    )
+    record_phase(job_id, "match_song", elapsed_ms=0, next_phase="render_variants")
+    record_pipeline_event(
+        "assembly",
+        "guided_story_plan_pinned",
+        {
+            "compiler_version": plan["compiler_version"],
+            "proposal_version": plan["proposal_version"],
+            "media_count": len(plan["selected_media_ids"]),
+            "beat_count": len(plan["beat_windows"]),
+            "output_orientation": plan.get("output_orientation", "portrait"),
+            "output_orientation_reason": plan.get(
+                "output_orientation_reason",
+                "Legacy guided stories used the portrait canvas.",
+            ),
+            "track_id": track.id if track is not None else None,
+        },
+    )
+    attempt_id = _GUIDED_TASK_ATTEMPT_ID.get() or f"direct-{render_trace_id}"
+    claim, existing_result = _claim_guided_story_attempt(job_id, plan, attempt_id)
+    if claim == "busy":
+        raise _GuidedStoryAttemptBusy
+    if claim == "rejected":
+        return
+    if claim == "ready" and existing_result is not None:
+        verified_result = validate_ready_result(
+            plan,
+            existing_result,
+            job_id=job_id,
+            verify_storage=True,
+        )
+        _finalize_job(job_id, [verified_result])
+        return
+
+    render_t0 = time.monotonic()
+    with _guided_story_attempt_heartbeat(job_id, attempt_id):
+        with tempfile.TemporaryDirectory(
+            prefix="nova_guided_story_", ignore_cleanup_errors=True
+        ) as tmpdir:
+            with render_stage_timer(
+                "guided_story_render",
+                trace_id=render_trace_id,
+                variant_id=VARIANT_ID,
+                counts={"media_count": len(plan["selected_media_ids"])},
+            ):
+                result = render_execution_plan(
+                    plan,
+                    job_id=job_id,
+                    tmpdir=tmpdir,
+                    track=track,
+                    attempt_id=attempt_id,
+                )
+    result["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+    result["render_generation_id"] = attempt_id
+    if (
+        _update_variant_entry(
+            job_id,
+            VARIANT_ID,
+            result,
+            expected_render_gen_id=attempt_id,
+            outcome="guided_story_complete",
+            cancelled_cleanup_paths=[
+                path for path in (result.get("base_video_path"), result.get("video_path")) if path
+            ],
+        )
+        is False
+    ):
+        # The result carries token-scoped exact keys. Delete those keys
+        # directly; the path suffix is a hash, not the raw Celery attempt id.
+        _discard_generation_storage(result, job_id=job_id, generation=None)
+        return
+    record_phase(
+        job_id,
+        "render_variants",
+        elapsed_ms=_elapsed_ms(render_t0),
+        next_phase="finalize",
+    )
+    finalize_t0 = time.monotonic()
+    if _finalize_job(job_id, [result]) is False:
+        return
+    record_phase(job_id, "finalize", elapsed_ms=_elapsed_ms(finalize_t0))
 
 
 def _dispatch_post_finalize_suggestion_chains(job_id: str, *, speech_cut_rerender: bool) -> None:
@@ -1754,9 +2106,7 @@ def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if (
             job is None
-            or _cancelled_job_write_rejected(
-                job, operation="visual_blocks_autoplace", db=db
-            )
+            or _cancelled_job_write_rejected(job, operation="visual_blocks_autoplace", db=db)
             or job.content_plan_item_id is None
         ):
             return
@@ -3056,6 +3406,13 @@ def _run_media_overlay_pass(
     if existing is None:
         log.error("media_overlay_variant_not_found", job_id=job_id, variant_id=variant_id)
         return
+    if existing.get("resolved_archetype") == "guided_story":
+        from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+        raise GuidedStoryError(
+            "guided_story_edit_unsupported",
+            "This guided story edit must be changed in Plan edit, then generated again.",
+        )
 
     current_video_path = existing.get("video_path")
     if not current_video_path:
@@ -3091,9 +3448,7 @@ def _run_media_overlay_pass(
             locked_job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if locked_job is None:
                 return False, False, False, False
-            if _cancelled_job_write_rejected(
-                locked_job, operation="media_overlay_persist", db=db
-            ):
+            if _cancelled_job_write_rejected(locked_job, operation="media_overlay_persist", db=db):
                 return False, False, False, True
             variants = list((locked_job.assembly_plan or {}).get("variants") or [])
             stale_write_skipped = False
@@ -3783,6 +4138,13 @@ def _run_sfx_pass(
     if existing is None:
         log.error("sfx_variant_not_found", job_id=job_id, variant_id=variant_id)
         return
+    if existing.get("resolved_archetype") == "guided_story":
+        from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+        raise GuidedStoryError(
+            "guided_story_edit_unsupported",
+            "This guided story edit must be changed in Plan edit, then generated again.",
+        )
 
     current_video_path = existing.get("video_path")
     if not current_video_path:
@@ -4501,9 +4863,9 @@ def _ensure_motion_base(
 
     from app.config import settings as _motion_settings  # noqa: PLC0415
     from app.pipeline.motion_scene import (  # noqa: PLC0415
+        COMPATIBLE_MOTION_RUNTIME_HASHES,
         LEGACY_MOTION_RUNTIME_HASH,
         MOTION_RUNTIME_HASH,
-        PREVIOUS_MOTION_RUNTIME_HASH,
         apply_motion_scenes,
         validate_motion_instances,
     )
@@ -4513,7 +4875,7 @@ def _ensure_motion_base(
     legacy_route_only = required_hash == LEGACY_MOTION_RUNTIME_HASH and all(
         scene.get("preset_id") == "route_trace" for scene in scenes
     )
-    compatible_hash = required_hash in {MOTION_RUNTIME_HASH, PREVIOUS_MOTION_RUNTIME_HASH}
+    compatible_hash = required_hash in COMPATIBLE_MOTION_RUNTIME_HASHES
     if not compatible_hash and not legacy_route_only:
         raise RuntimeError(
             f"motion runtime mismatch: variant requires {required_hash!r}, "
@@ -4719,7 +5081,12 @@ def _reburn_text_on_base(
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
-    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+    from app.storage import (  # noqa: PLC0415
+        download_generation_to_file,
+        download_to_file,
+        object_metadata,
+        upload_public_read,
+    )
 
     # All timed lanes persist in pre-insertion time. Every reburn consumes an
     # idempotent render-only projection so a later text/style edit cannot move
@@ -4738,12 +5105,54 @@ def _reburn_text_on_base(
     previous_video_path = (existing.get("video_path") or "").lstrip("/") or None
     orientation = _resolve_variant_orientation(existing)
     canvas = canvas_for_orientation(orientation)
+    guided_base_storage = None
+    if existing.get("resolved_archetype") == "guided_story":
+        from app.pipeline.guided_story import (  # noqa: PLC0415
+            GuidedStoryError,
+            GuidedStoryRenderReceipt,
+        )
+
+        try:
+            guided_receipt = GuidedStoryRenderReceipt.model_validate(existing.get("render_receipt"))
+            guided_base_storage = guided_receipt.base_storage
+            if guided_base_storage is None or guided_base_storage.path != base_gcs_path:
+                raise ValueError("guided base receipt does not match the variant")
+            current_base = object_metadata(base_gcs_path)
+            if (
+                current_base.generation != guided_base_storage.generation
+                or current_base.size != guided_base_storage.size
+                or (
+                    guided_base_storage.md5_hash
+                    and current_base.md5_hash != guided_base_storage.md5_hash
+                )
+            ):
+                raise ValueError("guided base object identity changed")
+        except GuidedStoryError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise GuidedStoryError(
+                "guided_story_receipt_mismatch",
+                "The verified story base is no longer available for text editing.",
+            ) from exc
 
     with tempfile.TemporaryDirectory(prefix="nova_reburn_") as tmpdir:
         local_base = os.path.join(tmpdir, "base.mp4")
 
         def _download_and_validate_base(base_path: str):
-            download_to_file(base_path, local_base)
+            if guided_base_storage is not None and base_path == base_gcs_path:
+                try:
+                    download_generation_to_file(
+                        base_path,
+                        local_base,
+                        generation=guided_base_storage.generation,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    raise GuidedStoryError(
+                        "guided_story_receipt_mismatch",
+                        "The verified story base is no longer available for text editing.",
+                    ) from exc
+            else:
+                download_to_file(base_path, local_base)
             try:
                 probe = probe_video(local_base)
             except Exception as exc:  # noqa: BLE001
@@ -4899,6 +5308,7 @@ def _reburn_text_on_base(
             *,
             matte=None,
         ) -> None:
+            nonlocal guided_text_evidence
             if is_collage_montage_preset(existing.get("montage_preset_rendered")):
                 from app.pipeline.masonry_montage import (  # noqa: PLC0415
                     burn_masonry_text_overlays,
@@ -4923,15 +5333,37 @@ def _reburn_text_on_base(
                     ),
                 )
                 return
-            burn_text_overlays_skia(
-                input_path,
-                overlay_dicts,
-                output_path,
-                tmpdir,
-                matte=matte,
-                input_probe=base_probe,
-                **_canvas_kwargs(canvas),
-            )
+            if existing.get("resolved_archetype") == "guided_story":
+                from app.pipeline.text_overlay_skia import (  # noqa: PLC0415
+                    burn_text_overlays_skia_with_evidence,
+                )
+
+                guided_text_evidence = burn_text_overlays_skia_with_evidence(
+                    input_path,
+                    overlay_dicts,
+                    output_path,
+                    tmpdir,
+                    required_element_ids=[
+                        str(row.get("id"))
+                        for row in existing.get("text_elements") or []
+                        if row.get("id")
+                    ],
+                    matte=matte,
+                    input_probe=base_probe,
+                    **_canvas_kwargs(canvas),
+                )
+            else:
+                burn_text_overlays_skia(
+                    input_path,
+                    overlay_dicts,
+                    output_path,
+                    tmpdir,
+                    matte=matte,
+                    input_probe=base_probe,
+                    **_canvas_kwargs(canvas),
+                )
+
+        guided_text_evidence: list[dict] | None = None
 
         if existing.get("resolved_archetype") == "subtitled":
             # A Carousel full rebuild creates a fresh caption-free base. Burn
@@ -5068,13 +5500,56 @@ def _reburn_text_on_base(
                 upload_key_base=base_gcs_path,
                 duration_s=_te_dur,
                 job_id=job_id,
-                    variant_id=variant_id,
-                    cut_boundaries_s=_variant_slot_boundaries(existing),
-                    created_storage_paths=created_storage_paths,
+                variant_id=variant_id,
+                cut_boundaries_s=_variant_slot_boundaries(existing),
+                created_storage_paths=created_storage_paths,
             )
             _burn_text_for_variant(local_base, _te_burn_dicts, _te_final_path, matte=_te_provider)
             _te_gcs_key = reburn_output_key
+            guided_receipt_patch: dict[str, Any] = {}
+            if guided_text_evidence is not None:
+                from app.pipeline.guided_story import (  # noqa: PLC0415
+                    verify_guided_text_reburn,
+                )
+
+                guided_receipt = verify_guided_text_reburn(
+                    existing.get("render_receipt"),
+                    list(existing.get("text_elements") or []),
+                    guided_text_evidence,
+                    _te_final_path,
+                    local_base,
+                )
+                guided_receipt_patch = {"render_receipt": guided_receipt}
+            elif existing.get("resolved_archetype") == "guided_story":
+                from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+                raise GuidedStoryError(
+                    "guided_story_text_missing", "The edited text could not be verified."
+                )
             _te_output_url = upload_public_read(_te_final_path, _te_gcs_key)
+            if guided_text_evidence is not None:
+                from app.pipeline.guided_story import (  # noqa: PLC0415
+                    GuidedStoryRenderReceipt,
+                )
+
+                try:
+                    output_metadata = object_metadata(_te_gcs_key)
+                    guided_receipt["output_storage"] = {
+                        "path": output_metadata.path,
+                        "generation": output_metadata.generation,
+                        "size": output_metadata.size,
+                        "md5_hash": output_metadata.md5_hash,
+                    }
+                    guided_receipt_patch = {
+                        "render_receipt": GuidedStoryRenderReceipt.model_validate(
+                            guided_receipt
+                        ).model_dump(mode="json")
+                    }
+                except Exception:
+                    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+                    delete_object_best_effort(_te_gcs_key)
+                    raise
             return {
                 **visual_blocks_patch,
                 "render_status": "ready",
@@ -5087,10 +5562,12 @@ def _reburn_text_on_base(
                 "orientation": orientation,
                 "intro_text_size_px": existing.get("intro_text_size_px"),
                 "intro_size_source": existing.get("intro_size_source"),
+                "text_elements": existing.get("text_elements") or [],
                 "text_elements_user_edited": True,
                 "text_placement_candidates": existing.get("text_placement_candidates"),
                 "subject_matte_path": _te_matte_path,
                 "_old_video_path_for_delete": previous_video_path,
+                **guided_receipt_patch,
                 **({"custom_effects": []} if custom_effect_cleared else {}),
             }
 
@@ -6670,6 +7147,182 @@ def _project_recipe_overlays_to_steps(recipe_dict: dict, steps: list) -> None:
         step_cursor = step_end
 
 
+_GUIDED_REGEN_CONTROL_NAMES = frozenset(
+    {
+        "new_track_id",
+        "override_text",
+        "remove_text",
+        "style_set_id",
+        "size_override_px",
+        "mix_override",
+        "layout_override",
+        "timeline_override",
+        "font_family_override",
+        "effect_override",
+        "text_color_override",
+        "cluster_hero_font_override",
+        "cluster_body_font_override",
+        "cluster_accent_font_override",
+        "cluster_hero_size_px_override",
+        "cluster_body_size_px_override",
+        "cluster_accent_size_px_override",
+        "media_overlays_override",
+        "sfx_override",
+        "intro_start_s_override",
+        "intro_end_s_override",
+        "text_behind_subject",
+        "orientation_override",
+        "force_full_render",
+        "carousel_moment_override",
+    }
+)
+_GUIDED_REGEN_FALSE_CONTROLS = frozenset({"remove_text", "force_full_render"})
+_GUIDED_REGEN_SENTINEL_CONTROLS = frozenset({"carousel_moment_override"})
+
+
+def _guided_text_reburn_only(variant: dict, controls: dict[str, Any]) -> bool:
+    """Return true only for the one supported guided-story editor operation.
+
+    The exact-key assertion turns every future generic regenerate parameter
+    into a required policy decision instead of silently treating it as safe.
+    """
+
+    if set(controls) != _GUIDED_REGEN_CONTROL_NAMES:
+        raise RuntimeError("Guided-story regeneration controls are out of sync")
+    if not variant.get("text_elements_user_edited"):
+        return False
+    for name, value in controls.items():
+        if name in _GUIDED_REGEN_FALSE_CONTROLS:
+            if value is not False:
+                return False
+        elif name in _GUIDED_REGEN_SENTINEL_CONTROLS:
+            if value != CAROUSEL_MOMENT_UNSET:
+                return False
+        elif value is not None:
+            return False
+    return True
+
+
+def _guided_orientation_rerender_only(controls: dict[str, Any]) -> bool:
+    """Accept one strict full render whose only base change is the canvas."""
+
+    if controls.get("orientation_override") not in {"portrait", "landscape"}:
+        return False
+    for name, value in controls.items():
+        if name == "orientation_override":
+            continue
+        if name == "force_full_render":
+            if value is not True:
+                return False
+        elif name == "remove_text":
+            if value is not False:
+                return False
+        elif name in _GUIDED_REGEN_SENTINEL_CONTROLS:
+            if value != CAROUSEL_MOMENT_UNSET:
+                return False
+        elif value is not None:
+            return False
+    return True
+
+
+def _reject_unsupported_guided_regen(variant: dict | None, controls: dict[str, Any]) -> None:
+    if not isinstance(variant, dict) or variant.get("resolved_archetype") != "guided_story":
+        return
+    if _guided_text_reburn_only(variant, controls):
+        return
+    if _guided_orientation_rerender_only(controls):
+        return
+    from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+    raise GuidedStoryError(
+        "guided_story_edit_unsupported",
+        "This guided story edit must be changed in Plan edit, then generated again.",
+    )
+
+
+def _rerender_guided_story_orientation(
+    job_id: str,
+    existing: dict[str, Any],
+    *,
+    orientation: str,
+    render_gen_id: str | None,
+) -> None:
+    """Rebuild a guided story on a new canvas without entering montage code."""
+
+    from app.pipeline.guided_story import (  # noqa: PLC0415
+        GuidedStoryRenderReceipt,
+        execution_plan_with_editor_state,
+        render_execution_plan,
+        validate_execution_plan,
+        validate_ready_result,
+    )
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return
+        assembly = dict(job.assembly_plan or {})
+        guided_snapshot = assembly.get("guided_edit")
+        pinned_plan = assembly.get("guided_story_execution_plan")
+    canonical = validate_execution_plan(pinned_plan, guided_snapshot)
+    runtime_plan = execution_plan_with_editor_state(
+        canonical,
+        output_orientation="landscape" if orientation == "landscape" else "portrait",
+        text_elements=list(existing.get("text_elements") or canonical["text_elements"]),
+    )
+    music = runtime_plan.get("music")
+    track = (
+        SimpleNamespace(
+            id=str(music["track_id"]),
+            title=str(music["title"]),
+            audio_gcs_path=str(music["audio_gcs_path"]),
+            generation=str(music["generation"]),
+        )
+        if music is not None
+        else None
+    )
+    attempt_id = render_gen_id or uuid.uuid4().hex
+    with tempfile.TemporaryDirectory(
+        prefix="nova_guided_orientation_", ignore_cleanup_errors=True
+    ) as tmpdir:
+        result = render_execution_plan(
+            runtime_plan,
+            job_id=job_id,
+            tmpdir=tmpdir,
+            track=track,
+            attempt_id=attempt_id,
+        )
+    previous_receipt = existing.get("render_receipt")
+    receipt = GuidedStoryRenderReceipt.model_validate(result["render_receipt"])
+    if isinstance(previous_receipt, dict):
+        previous = GuidedStoryRenderReceipt.model_validate(previous_receipt)
+        receipt = receipt.model_copy(
+            update={
+                "approved_text_ids": previous.approved_text_ids or previous.expected_text_ids,
+                "text_edited_after_approval": previous.text_edited_after_approval,
+            }
+        )
+        result["render_receipt"] = receipt.model_dump(mode="json")
+    result.update(
+        {
+            "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            "render_generation_id": attempt_id,
+            "base_video_stale": False,
+            "text_elements_user_edited": bool(existing.get("text_elements_user_edited")),
+        }
+    )
+    validate_ready_result(runtime_plan, result, job_id=job_id, verify_storage=False)
+    if not _update_variant_entry(
+        job_id,
+        "guided_story",
+        result,
+        expected_render_gen_id=render_gen_id,
+        outcome="guided_story_orientation_complete",
+    ):
+        _discard_generation_storage(result, job_id=job_id, generation=None)
+        return
+
+
 def _run_regenerate_variant(
     job_id: str,
     variant_id: str,
@@ -6704,6 +7357,9 @@ def _run_regenerate_variant(
         record_pipeline_event,
         render_stage_timer,
     )
+
+    _call_values = locals().copy()
+    guided_controls = {name: _call_values[name] for name in _GUIDED_REGEN_CONTROL_NAMES}
 
     render_trace_id = render_gen_id or uuid.uuid4().hex
 
@@ -6836,6 +7492,18 @@ def _run_regenerate_variant(
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
             log.error("generative_regenerate_variant_unknown", job_id=job_id, variant_id=variant_id)
+            return
+        _reject_unsupported_guided_regen(existing, guided_controls)
+        if (
+            existing.get("resolved_archetype") == "guided_story"
+            and orientation_override is not None
+        ):
+            _rerender_guided_story_orientation(
+                job_id,
+                existing,
+                orientation=orientation_override,
+                render_gen_id=render_gen_id,
+            )
             return
         effective_orientation = _resolve_variant_orientation(existing, orientation_override)
         _is_subtitled_text_reburn = (
@@ -7123,13 +7791,16 @@ def _run_regenerate_variant(
                     existing_music_window_duration_s = active_timeline_duration_s
 
     # Mark this variant as re-rendering so the UI can show a spinner immediately.
-    if _update_variant_entry(
-        job_id,
-        variant_id,
-        {"render_status": "rendering", "ok": False, "error": None},
-        expected_render_gen_id=render_gen_id,
-        outcome="regenerate_start",
-    ) is False:
+    if (
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            {"render_status": "rendering", "ok": False, "error": None},
+            expected_render_gen_id=render_gen_id,
+            outcome="regenerate_start",
+        )
+        is False
+    ):
         return
 
     # ── Fast-reburn path ──────────────────────────────────────────────────────
@@ -7219,6 +7890,12 @@ def _run_regenerate_variant(
                 or "no such object" in str(_fast_exc).lower()
             )
             _is_unusable = isinstance(_fast_exc, CachedBaseUnusableError)
+            if existing.get("resolved_archetype") == "guided_story":
+                # A guided edit has no permitted legacy reconstruction path:
+                # falling through would replace the approved story with a
+                # simple montage. Keep the edit failed and the prior output
+                # addressable instead of publishing a degraded fallback.
+                raise
             if _is_missing or _is_unusable:
                 if isinstance(_fast_exc, CachedBaseCanvasMismatchError):
                     event_name = "generative_fast_reburn_base_canvas_mismatch"
@@ -7995,9 +8672,7 @@ def _update_variant_entry(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
-        if _cancelled_job_write_rejected(
-            job, operation=outcome or "variant_update", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation=outcome or "variant_update", db=db):
             _delete_cancelled_job_objects(job_id, cancelled_cleanup_paths or [])
             return False
         plan = dict(job.assembly_plan or {})
@@ -8063,6 +8738,13 @@ def _variant_specs(best_track: MusicTrack | None) -> list[dict[str, Any]]:
 
 
 def _content_plan_primary_montage_spec(best_track: MusicTrack | None) -> dict[str, Any]:
+    # Optional lyrics are an editor capability of the track-backed text edit,
+    # not a reason to replace the generated intro. Choosing song_lyrics here
+    # would suppress the intro because its text_mode is "lyrics"; when lyrics
+    # are optional that creates a valid but textless primary output. Flag-off
+    # deliberately keeps the legacy first-renderable-variant selection.
+    if bool(settings.lyrics_optional_enabled) and best_track is not None:
+        return {"variant_id": "song_text", "text_mode": "agent_text", "track": best_track}
     return _variant_specs(best_track)[0]
 
 
@@ -9439,17 +10121,19 @@ def _render_generative_variant(
     lyrics_available = (
         lyrics_variant_renderable(track.lyrics_cached) if track is not None else False
     )
-    # Lyrics-as-optional-elements (LYRICS_OPTIONAL_ENABLED): every render pass
-    # for a song_lyrics variant made while the flag is on skips baking lyrics
-    # into pixels entirely, regardless of the `lyrics_enabled` kwarg — the
-    # variant always renders lyrics-free (clean base, like song_text) and the
-    # editor's Lyrics toggle instead materializes beat-synced lyric lines as
-    # ordinary `role=lyric_line` TextElements (GET .../lyric-seeds) that burn
-    # through the normal fast-text-reburn path on save. This is intentionally
-    # unconditional on `lyrics_enabled` — a variant becomes "new model" the
-    # moment it's (re-)rendered under the flag; flag-off (or a non-lyrics
-    # variant) leaves `effective_lyrics_enabled` untouched, byte-identical.
-    lyrics_optional_active = bool(settings.lyrics_optional_enabled) and text_mode == "lyrics"
+    # Lyrics-as-optional-elements (LYRICS_OPTIONAL_ENABLED): lyrics are a
+    # capability of any track-backed text variant with renderable lyrics. This
+    # includes song_text, whose generated intro remains authoritative while the
+    # editor can materialize beat-synced `role=lyric_line` TextElements on
+    # demand. A legacy song_lyrics variant rendered under the flag also stays
+    # clean. Flag-off leaves both pixels and persisted dict shape unchanged.
+    lyrics_optional_active = bool(
+        settings.lyrics_optional_enabled
+        and (
+            text_mode == "lyrics"
+            or (variant_id == "song_text" and track is not None and lyrics_available)
+        )
+    )
     if lyrics_optional_active:
         effective_lyrics_enabled = False
 
@@ -9573,11 +10257,12 @@ def _render_generative_variant(
         )
     if lyrics_optional_active:
         # Only stamped when the flag actually skipped baking — absent (None
-        # via .get()) for every flag-off render and every non-lyrics variant,
-        # which is what keeps "flag off = byte-identical" true at the dict-
-        # shape level too (same pattern as montage_preset above). Every
-        # reader treats `variant.get("lyrics_baked") is False` as "new model"
-        # and anything else (True/None/absent) as "legacy baked".
+        # via .get()) for every flag-off render and every variant that is not
+        # an optional-lyrics song_lyrics/song_text target. That keeps "flag
+        # off = byte-identical" true at the dict-shape level too (same pattern
+        # as montage_preset above). Every reader treats
+        # `variant.get("lyrics_baked") is False` as "new model" and anything
+        # else (True/None/absent) as "legacy baked".
         base["lyrics_baked"] = False
     variant_t0 = time.monotonic()
     try:
@@ -13626,6 +14311,22 @@ def _text_element_burn_dicts(variant: dict) -> list[dict]:
         )
         if key in schedules and overlay.get("effect") == "typewriter":
             overlay["reveal_schedule_s"] = schedules[key]
+    element_ids = {
+        (
+            element.text,
+            round(float(element.start_s), 3),
+            round(float(element.end_s), 3),
+        ): element.id
+        for element in elements
+    }
+    for overlay in overlays:
+        overlay["element_id"] = element_ids.get(
+            (
+                str(overlay.get("text") or ""),
+                round(float(overlay.get("start_s") or 0.0), 3),
+                round(float(overlay.get("end_s") or 0.0), 3),
+            )
+        )
     return overlays
 
 
@@ -15561,9 +16262,7 @@ def _claim_speech_cut_finalize(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
-        if _cancelled_job_write_rejected(
-            job, operation="claim_speech_cut_finalize", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation="claim_speech_cut_finalize", db=db):
             return False
         plan = job.assembly_plan or {}
         control = dict(plan.get("speech_cut_control") or {})
@@ -15618,9 +16317,7 @@ def _release_speech_cut_finalize_claim(job_id: str, operation_id: str, attempt_i
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
-        if _cancelled_job_write_rejected(
-            job, operation="release_speech_cut_finalize", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation="release_speech_cut_finalize", db=db):
             return False
         plan = job.assembly_plan or {}
         control = dict(plan.get("speech_cut_control") or {})
@@ -15808,9 +16505,7 @@ def _restore_failed_speech_cut_rerender(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
-        if _cancelled_job_write_rejected(
-            job, operation="restore_failed_speech_cut", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation="restore_failed_speech_cut", db=db):
             return False
         plan = job.assembly_plan or {}
         prior = plan.get("speech_cut_previous_variant")
@@ -16143,7 +16838,15 @@ def _finalize_job(
                     # Output orientation — initial renders are portrait today, but
                     # keep the persisted value authoritative rather than implied.
                     "orientation": r.get("orientation"),
+                    "duration_s": r.get("duration_s"),
                     "text_elements_materialized_from": r.get("text_elements_materialized_from"),
+                    # Strict guided-story state. These fields are the approval
+                    # and publication receipt; stripping any of them would turn
+                    # a verified first render into an unverifiable ready Job.
+                    "story_timeline": r.get("story_timeline"),
+                    "proposal_version": r.get("proposal_version"),
+                    "media_digest": r.get("media_digest"),
+                    "render_receipt": r.get("render_receipt"),
                     # render fingerprint — the caption editor's remount key reads it, so
                     # stripping it here would silently degrade re-seeding after reburns.
                     "render_finished_at": r.get("render_finished_at"),
@@ -16230,7 +16933,14 @@ def _finalize_job(
             _discard_generation_storage(
                 result,
                 job_id=job_id,
-                generation=result.get("render_generation_id"),
+                # Guided story keys use a hash of the attempt token. Its result
+                # contains the two exact task-owned paths, so filter by Job
+                # ownership only instead of a raw token that cannot match.
+                generation=(
+                    None
+                    if result.get("resolved_archetype") == "guided_story"
+                    else result.get("render_generation_id")
+                ),
             )
         return False
     log.info(
@@ -16256,9 +16966,7 @@ def _persist_archetype_fallback(job_id: str, declared: str, reason: str | None) 
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return
-        if _cancelled_job_write_rejected(
-            job, operation="persist_archetype_fallback", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation="persist_archetype_fallback", db=db):
             return
         plan = job.assembly_plan or {}
         if reason:
@@ -16290,9 +16998,7 @@ def _set_status(
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return False
-        if _cancelled_job_write_rejected(
-            job, operation=f"set_status:{status}", db=db
-        ):
+        if _cancelled_job_write_rejected(job, operation=f"set_status:{status}", db=db):
             return False
         if expected_speech_cut_operation_id and expected_speech_cut_attempt_id:
             control = (job.assembly_plan or {}).get("speech_cut_control") or {}

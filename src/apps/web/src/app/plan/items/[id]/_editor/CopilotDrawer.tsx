@@ -10,6 +10,7 @@ import DirectorSuggestions from "./DirectorSuggestions";
 import type { UseEditDirectorResult } from "@/lib/edit-copilot/useEditDirector";
 import { NovaActivityFeed, NovaStepRow } from "@/components/progress";
 import type { NovaStep } from "@/lib/job-phases";
+import { InfoDot } from "@/components/ui/InfoDot";
 
 const STARTERS = [
   "Make the hook punchier",
@@ -218,7 +219,13 @@ export default function CopilotDrawer({
         </div>
       )}
       <div className="flex flex-none items-center justify-between px-5 pb-3 pt-4">
-        <h2 className="font-display text-[18px] font-medium text-[#0c0c0e]">Nova</h2>
+        <span className="flex items-center gap-1">
+          <h2 className="font-display text-[18px] font-medium text-[#0c0c0e]">Nova</h2>
+          <InfoDot label="Nova">
+            Nova can rewrite your hook, restyle text, and tighten or reorder cuts. Draft
+            edits preview instantly.
+          </InfoDot>
+        </span>
         <button
           type="button"
           aria-label="Close Nova"
@@ -252,16 +259,6 @@ export default function CopilotDrawer({
             canRestoreOriginalTiming={director.canRestoreOriginalTiming}
             onRestoreOriginalTiming={director.restoreOriginalTiming}
           />
-        )}
-
-        {starterVisible && (
-          <div className="mr-auto max-w-[85%] rounded-[18px] rounded-bl-md bg-zinc-100 px-3.5 py-2.5 text-[13.5px] leading-5 text-[#0c0c0e]">
-            <p>What should we change?</p>
-            <p className="mt-1 text-[#3f3f46]">
-              I can rewrite your hook, restyle text, and tighten or reorder cuts.
-              Draft edits preview instantly. Timing changes explain the rebuild before they run.
-            </p>
-          </div>
         )}
 
         {messages.map((message) => {

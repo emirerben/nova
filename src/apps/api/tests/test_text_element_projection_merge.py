@@ -271,6 +271,40 @@ def test_merge_user_saved_identity_wins_over_projection() -> None:
     assert merged[0]["text"] == "User rewrite"
 
 
+def test_guided_story_saved_text_document_wins_over_legacy_intro_projection() -> None:
+    variant = {
+        "variant_id": "guided_story",
+        "resolved_archetype": "guided_story",
+        "text_mode": "agent_text",
+        "intro_text": "summer 26",
+        "duration_s": 10.0,
+        "text_elements": [
+            {
+                "id": "guided-title",
+                "text": "summer 26",
+                "start_s": 0.0,
+                "end_s": 2.2,
+                "role": "generative_intro",
+            },
+            {
+                "id": "guided-thought-lisbon",
+                "text": "Lisbon",
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "role": "generative_intro",
+            },
+        ],
+    }
+
+    merged = merge_projected_text_elements_for_variant(variant)
+
+    assert merged is not None
+    assert [(row["text"], row["start_s"], row["end_s"]) for row in merged] == [
+        ("summer 26", 0.0, 2.2),
+        ("Lisbon", 0.0, 2.0),
+    ]
+
+
 def test_validate_payload_adds_tombstone_for_deleted_projected_intro() -> None:
     variant = {
         "text_mode": "agent_text",

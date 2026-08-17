@@ -32,7 +32,7 @@ import type {
   LookAdjustments,
   LookPreset,
 } from "@/lib/generative-api";
-import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
+import type { MotionPresetInstance } from "@nova/motion-runtime";
 
 const PLAN_BASE = "/api/plan";
 
@@ -138,7 +138,7 @@ export interface EditorCommitRequest {
   /** Full replacement visual-block list. Omit when untouched. */
   visual_blocks?: VisualBlock[];
   /** Curated immutable motion-preset instances; no raw scene graphs or SVG. */
-  motion_scenes?: MotionPresetInstanceV1[];
+  motion_scenes?: MotionPresetInstance[];
   motion_runtime_hash?: string;
   /** Full replacement scene camera-effect list. Omit when untouched. */
   camera_effects?: CameraEffect[];
@@ -301,7 +301,7 @@ export function buildEditorCommitRequest({
   visualBlocksDirty?: boolean;
   visualBlocks?: VisualBlock[];
   motionScenesDirty?: boolean;
-  motionScenes?: MotionPresetInstanceV1[];
+  motionScenes?: MotionPresetInstance[];
   motionRuntimeHash?: string;
   cameraEffectsDirty?: boolean;
   cameraEffects?: CameraEffect[];
@@ -450,6 +450,10 @@ const TIMELINE_ERROR_MESSAGES: Record<string, string> = {
     "Creator Blocks need a clean video base, which is unavailable for this edit.",
   motion_runtime_mismatch:
     "Kria's motion renderer changed. Refresh before saving Creator Blocks.",
+  invalid_orientation: "Choose either 9:16 or 16:9, then try saving again.",
+  orientation_unsupported: "This edit can't be rebuilt in that format yet.",
+  guided_story_edit_unsupported:
+    "This story couldn't be rebuilt in that format. Your current video is unchanged.",
 };
 
 type TimelineOutOfBoundsDetail = {

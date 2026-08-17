@@ -11,18 +11,14 @@ export default function CaptionStyleToggle({
   value,
   onChange,
   saving = false,
-  wordHint = "One big word at a time",
 }: {
   value: VoiceoverCaptionStyle;
   onChange: (style: VoiceoverCaptionStyle) => void;
   saving?: boolean;
-  /** "Talking to camera" phrases the word-by-word hint slightly differently
-   * ("pops as you say it") than narrated ("one big word at a time"). */
-  wordHint?: string;
 }) {
-  const options: Array<{ value: VoiceoverCaptionStyle; label: string; hint: string }> = [
-    { value: "sentence", label: "Sentence", hint: "Full lines, like subtitles" },
-    { value: "word", label: "Word-by-word", hint: wordHint },
+  const options: Array<{ value: VoiceoverCaptionStyle; label: string }> = [
+    { value: "sentence", label: "Sentence" },
+    { value: "word", label: "Word-by-word" },
   ];
   return (
     <div>
@@ -43,7 +39,6 @@ export default function CaptionStyleToggle({
               }`}
             >
               <span className="block text-sm font-semibold">{opt.label}</span>
-              <span className="block text-xs text-[#71717a]">{opt.hint}</span>
             </button>
           );
         })}

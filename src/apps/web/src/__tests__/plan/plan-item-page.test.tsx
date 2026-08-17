@@ -31,6 +31,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import "@testing-library/jest-dom";
 
 process.env.NEXT_PUBLIC_SUBTITLED_ENABLED = "true";
+process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED = "true";
 
 // Mock next/navigation
 jest.mock("next/navigation", () => ({
@@ -118,7 +119,15 @@ jest.mock("@/app/library/_components/FeedbackButtons", () => ({
 }));
 jest.mock("@/app/plan/_components/AssetPool", () => ({
   __esModule: true,
-  default: () => <div data-testid="asset-pool" />,
+  default: ({ onMutated }: { onMutated?: () => void }) => (
+    <div data-testid="asset-pool">
+      {onMutated ? (
+        <button type="button" onClick={onMutated}>
+          Simulate asset mutation
+        </button>
+      ) : null}
+    </div>
+  ),
 }));
 jest.mock("@/app/plan/_components/SuggestionRail", () => ({
   __esModule: true,
@@ -179,47 +188,71 @@ function makeItem(overrides = {}) {
   };
 }
 
-describe("PlanItemPage — Smart captions availability", () => {
-  beforeEach(() => {
-    mockUpdatePlanItem.mockReset();
-    mockRefetch.mockReset();
-  });
+function makeGuidedProposal(status: "analyzing" | "draft" | "approved" | "stale") {
+  const snapshot = {
+    direction: "guided_story",
+    goal: "Tell the Corfu story",
+    pace: "balanced",
+    duration_s: 24,
+    title: "What I noticed in Corfu",
+    media: [
+      {
+        lane: "clip",
+        media_id: "clip-1",
+        gcs_path: "users/u1/plan/test-item-id/corfu.mp4",
+        generation: "1",
+        kind: "video",
+        source_filename: "corfu.mp4",
+        user_context: "",
+        analysis: {},
+      },
+    ],
+    story_beats: [
+      {
+        beat_id: "beat-1",
+        topic: "Coast",
+        thought: "The water set the pace.",
+        thought_source: "ai_draft",
+        media_ids: ["clip-1"],
+        layout: "fullscreen",
+        duration_s: 4,
+      },
+    ],
+  };
+  return {
+    schema_version: 1,
+    proposal_version: 2,
+    generation_attempt_id: "attempt-1",
+    media_digest: "a".repeat(64),
+    status,
+    brief: {
+      direction: "guided_story",
+      goal: "Tell the Corfu story",
+      pace: "balanced",
+      duration_s: 24,
+    },
+    conversation: [],
+    brief_ready: false,
+    draft: snapshot,
+    last_approved:
+      status === "approved" || status === "stale"
+        ? {
+            proposal_version: 2,
+            media_digest: "a".repeat(64),
+            approved_at: "2026-08-14T10:00:00Z",
+            snapshot,
+          }
+        : null,
+    failure: null,
+  };
+}
 
-  it("shows the server-authorized switch and persists the per-video choice", async () => {
+describe("PlanItemPage — Smart captions (default-on, no toggle)", () => {
+  it("never renders a Smart captions switch — the capability is server-decided", async () => {
     const item = makeItem({
       edit_format: "subtitled",
       smart_captions_available: true,
       smart_captions_unavailable_reason: null,
-    });
-    mockUpdatePlanItem.mockResolvedValue({ ...item, smart_captions_enabled: true });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    const smartSwitch = screen.getByRole("switch", { name: "Smart captions" });
-    expect(smartSwitch).toHaveAttribute("aria-checked", "false");
-
-    await act(async () => {
-      fireEvent.click(smartSwitch);
-    });
-
-    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
-      smart_captions_enabled: true,
-    });
-    expect(mockRefetch).toHaveBeenCalled();
-  });
-
-  it("does not expose the switch when the backend capability denies it", async () => {
-    const item = makeItem({
-      edit_format: "subtitled",
-      smart_captions_available: false,
-      smart_captions_unavailable_reason: "not_assigned",
     });
     mockUsePolledJobStatus.mockReturnValue({
       data: { item, job: null },
@@ -232,65 +265,7 @@ describe("PlanItemPage — Smart captions availability", () => {
     });
 
     expect(screen.queryByRole("switch", { name: "Smart captions" })).toBeNull();
-  });
-
-  it("lets the creator disable automatic SFX without disabling Smart captions", async () => {
-    const item = makeItem({
-      edit_format: "subtitled",
-      smart_captions_enabled: true,
-      smart_sound_design_enabled: true,
-      smart_captions_available: true,
-      smart_captions_unavailable_reason: null,
-    });
-    mockUpdatePlanItem.mockResolvedValue({
-      ...item,
-      smart_sound_design_enabled: false,
-    });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    expect(screen.getByText("Sound design")).toBeInTheDocument();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Off" }));
-    });
-
-    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
-      smart_sound_design_enabled: false,
-    });
-  });
-
-  it("keeps the choice unchanged and shows an error when persistence fails", async () => {
-    const item = makeItem({
-      edit_format: "subtitled",
-      smart_captions_available: true,
-      smart_captions_unavailable_reason: null,
-    });
-    mockUpdatePlanItem.mockRejectedValue(new Error("conflict"));
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("switch", { name: "Smart captions" }));
-    });
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Couldn't update Smart captions — try again.",
-    );
-    expect(mockRefetch).not.toHaveBeenCalled();
+    expect(screen.queryByText("Sound design")).toBeNull();
   });
 });
 
@@ -343,26 +318,27 @@ describe("PlanItemPage — masonry collage item UX", () => {
     return render(<PlanItemPage />);
   }
 
-  it("renders preset preview tiles instead of text-only cards", async () => {
+  it("renders STYLE tiles with real imagery instead of text-only cards", async () => {
     await act(async () => {
       renderMasonryItem({ montage_preset: "classic" });
     });
 
-    expect(
-      screen
-        .getByText("Classic")
-        .previousElementSibling?.querySelector('[class*="montage-classic-a"]'),
-    ).not.toBeNull();
-    expect(
-      screen
-        .getByText("Masonry collage")
-        .previousElementSibling?.querySelector('[class*="montage-masonry-pan"]'),
-    ).not.toBeNull();
-    expect(
-      screen
-        .getByText("Polaroid wall")
-        .previousElementSibling?.querySelector('[class*="pb-"]'),
-    ).not.toBeNull();
+    // Item has a filming guide, so the accordion starts collapsed. Expand the
+    // STYLE disclosure row, which reveals the shelf with real placeholder
+    // footage per tile.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^Style/ }));
+    });
+    const shelf = screen.getByRole("radiogroup", { name: "Style" });
+    // Tiles are hover-to-play muted loops: poster frame + video source per style.
+    for (const name of ["classic", "masonry", "polaroid"]) {
+      const video = shelf.querySelector(
+        `video[poster="/plan/style-tiles/${name}.jpg"]`,
+      ) as HTMLVideoElement | null;
+      expect(video).not.toBeNull();
+      expect(video?.getAttribute("src")).toBe(`/plan/style-tiles/${name}.mp4`);
+      expect(video?.muted ?? video?.hasAttribute("muted")).toBeTruthy();
+    }
   });
 
   it.each(["masonry", "polaroid_wall"])(
@@ -539,7 +515,13 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
     }
   });
 
-  it("keeps progress below the preview when a ready item is re-rendering one variant", async () => {
+  it("shows the veil instead of the theater when a ready item's sole variant reburns with output already present", async () => {
+    // Updated for the veil/theater dedup (v0.26.x): this fixture — the
+    // focused (only) variant "rendering" with an `output_url` already set —
+    // is exactly the frozen-frame veil's visibility condition. Before the
+    // dedup this asserted the theater rendered below the preview (steps
+    // disclosure, doubled step label); now the veil is the SOLE rendering
+    // voice for this case and the theater must not also mount below it.
     process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED = "true";
     const item = makeItem({
       status: "ready",
@@ -574,14 +556,9 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
         render(<PlanItemPage />);
       });
 
-      const preview = document.querySelector("[data-variant-preview]");
-      const disclosure = screen.getByRole("button", { name: "Show analysis steps" });
-      expect(
-        (preview?.compareDocumentPosition(disclosure) ?? 0) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      expect(screen.getAllByText("Applying your intro text")).toHaveLength(2);
-      expect(screen.queryByText("Your edits are ready")).not.toBeInTheDocument();
+      expect(await screen.findByLabelText("Rendering new version")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Show analysis steps" })).not.toBeInTheDocument();
+      expect(screen.queryByText("Applying your intro text")).not.toBeInTheDocument();
     } finally {
       delete process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED;
     }
@@ -733,6 +710,32 @@ describe("PlanItemPage — result cleanup", () => {
     expect(titleSection?.parentElement).toHaveClass(
       "grid-cols-[minmax(132px,0.78fr)_minmax(0,1.22fr)]",
     );
+  });
+
+  it("labels a track-backed guided edit as music instead of original audio", async () => {
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-guided",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variant = {
+      ...makeVariant("guided_story", "ready", "https://cdn/guided.mp4"),
+      resolved_archetype: "guided_story",
+      music_track_id: "track-1",
+      track_title: "Maui Wowie",
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: makeJob({ status: "variants_ready", variants: [variant] }) },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Kria's pick · Music")).toBeInTheDocument();
+    expect(screen.queryByText("Kria's pick · Original audio")).toBeNull();
   });
 
   it("replaces a failed preview in-frame with recovery actions", async () => {
@@ -1072,6 +1075,158 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
   });
 });
 
+describe("PlanItemPage — guided edit Generate gating", () => {
+  function guidedItem(editProposal: ReturnType<typeof makeGuidedProposal> | null) {
+    return makeItem({
+      status: "awaiting_clips",
+      edit_format: "montage",
+      guided_edit_available: true,
+      edit_proposal: editProposal,
+      clip_gcs_paths: ["users/u1/plan/test-item-id/corfu.mp4"],
+      clip_assignments: [
+        {
+          media_id: "clip-1",
+          gcs_path: "users/u1/plan/test-item-id/corfu.mp4",
+          shot_id: null,
+          user_note: "",
+        },
+      ],
+    });
+  }
+
+  beforeEach(() => {
+    mockGeneratePlanItem.mockReset();
+    mockRefetch.mockReset();
+  });
+
+  it.each([
+    [null, "Plan this edit before generating."],
+    [makeGuidedProposal("analyzing"), "Nova is still planning this edit."],
+    [makeGuidedProposal("draft"), "Review and approve the edit plan first."],
+    [makeGuidedProposal("stale"), "Your media changed — plan the edit again."],
+  ])("blocks Generate until the proposal is current and approved", async (proposal, hint) => {
+    const item = guidedItem(proposal);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
+    expect(screen.getByText(hint)).toBeInTheDocument();
+  });
+
+  it("enables Generate for a current approved proposal", async () => {
+    const item = guidedItem(makeGuidedProposal("approved"));
+    mockGeneratePlanItem.mockResolvedValue(item);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const generate = screen.getByRole("button", { name: /generate video/i });
+    expect(generate).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(generate);
+    });
+
+    await waitFor(() => {
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+  });
+
+  it("enables Generate when an approved plan selects only visual-pool media", async () => {
+    const proposal = makeGuidedProposal("approved");
+    proposal.draft.media[0].lane = "asset";
+    const item = {
+      ...guidedItem(proposal),
+      clip_gcs_paths: [],
+      clip_assignments: [],
+    };
+    mockGeneratePlanItem.mockResolvedValue(item);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const generate = screen.getByRole("button", { name: /generate video/i });
+    expect(generate).toBeEnabled();
+    expect(screen.queryByText("Add clips to generate")).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(generate);
+    });
+
+    await waitFor(() => {
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+  });
+
+  it("keeps polling while a conversational reply is in flight", async () => {
+    const active = makeGuidedProposal("briefing");
+    active.conversation_in_progress = true;
+    const item = {
+      ...guidedItem(active),
+      status: "ready",
+      current_job_id: "job-1",
+    };
+    const settledJob = makeJob({ status: "done" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: settledJob },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const isTerminal = mockUsePolledJobStatus.mock.calls.at(-1)?.[2];
+    expect(isTerminal?.({ item, job: settledJob })).toBe(false);
+
+    const retryItem = {
+      ...item,
+      edit_proposal: {
+        ...active,
+        conversation_in_progress: false,
+        conversation_retry_required: true,
+      },
+    };
+    expect(isTerminal?.({ item: retryItem, job: settledJob })).toBe(true);
+  });
+
+  it("refreshes the proposal after an asset-pool mutation", async () => {
+    const item = guidedItem(makeGuidedProposal("approved"));
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Simulate asset mutation" }));
+    expect(mockRefetch).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("PlanItemPage — Plan this for me proposal flow", () => {
   beforeEach(() => {
     mockExpandIdea.mockReset();
@@ -1262,6 +1417,9 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
       theme: "Packing reveal",
       filming_suggestion: "Make the plan feel tactile.",
       filming_guide: filmingGuide,
+      // Acceptance re-enters the guided flow even if the type picker had
+      // stamped existing_footage earlier.
+      content_mode: "create_new",
     });
   });
 

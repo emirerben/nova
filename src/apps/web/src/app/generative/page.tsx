@@ -30,6 +30,7 @@ import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { Eyebrow } from "@/components/ui/Eyebrow";
 import { InkButton } from "@/components/ui/InkButton";
+import { InfoDot } from "@/components/ui/InfoDot";
 
 // ===== Helpers =====
 
@@ -297,22 +298,18 @@ export default function GenerativePage() {
             <VoiceRecorder onVoiceover={setVoiceoverPath} />
           </div>
 
-          <p className="text-xs text-[#a1a1aa]">
-            Length is set automatically from your clips and the matched song —
-            the edit is never longer than the footage you upload.
-          </p>
-
-          <InkButton
-            onClick={handleGenerate}
-            disabled={uploads.length === 0 || uploading}
-          >
-            Generate edits
-          </InkButton>
-          <p className="text-xs text-[#a1a1aa]">
-            {voiceoverPath
-              ? "We'll build voiceover edits around your recording — sync your footage to your voice."
-              : "Add a voiceover above and you'll get voiceover edits instead."}
-          </p>
+          <div className="flex items-center gap-1">
+            <InkButton
+              onClick={handleGenerate}
+              disabled={uploads.length === 0 || uploading}
+            >
+              Generate edits
+            </InkButton>
+            <InfoDot label="How length and audio work">
+              Length is set by your clips and the song. A voiceover makes Kria cut to your
+              voice.
+            </InfoDot>
+          </div>
         </section>
       )}
 

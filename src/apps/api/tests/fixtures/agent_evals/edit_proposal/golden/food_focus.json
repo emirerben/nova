@@ -1,0 +1,23 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.0.1",
+  "input": {
+    "idea": "Corfu food notes",
+    "theme": "Food and place",
+    "direction": "text_explainer",
+    "goal": "Organize the visible food moments without claiming what anything tasted like",
+    "pace": "relaxed",
+    "target_duration_s": 30,
+    "media": [
+      {"media_id":"f1","lane":"clip","kind":"video","subject":"restaurant exterior"},
+      {"media_id":"f2","lane":"asset","kind":"image","subject":"ice cream"},
+      {"media_id":"f3","lane":"asset","kind":"image","subject":"pastry display"},
+      {"media_id":"f4","lane":"asset","kind":"video","subject":"market stall"},
+      {"media_id":"f5","lane":"asset","kind":"image","subject":"shared table"},
+      {"media_id":"f6","lane":"asset","kind":"video","subject":"server plating a dish"},
+      {"media_id":"f7","lane":"asset","kind":"image","subject":"cafe sign"}
+    ]
+  },
+  "raw_text": "{\"title\":\"Food details from Corfu\",\"duration_s\":28,\"story_beats\":[{\"topic\":\"Places\",\"thought\":\"Signs and entrances set up where each food moment begins.\",\"media_ids\":[\"f1\",\"f7\"],\"layout\":\"fullscreen\",\"duration_s\":6},{\"topic\":\"Market\",\"thought\":\"The market adds movement, color, and local context.\",\"media_ids\":[\"f3\",\"f4\"],\"layout\":\"fullscreen\",\"duration_s\":7},{\"topic\":\"Table\",\"thought\":\"Close details make the table feel like its own scene.\",\"media_ids\":[\"f2\",\"f5\",\"f6\"],\"layout\":\"supporting_card\",\"duration_s\":9}]}",
+  "meta": {"source":"hand_authored_golden","expected_topics":["places","market","table"]}
+}

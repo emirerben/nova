@@ -816,9 +816,6 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
           <span className="text-xs font-medium text-[#3f3f46]">Extra footage</span>
           <span className="text-xs text-[#a1a1aa]">optional</span>
         </div>
-        <p className="mb-3 text-xs text-[#71717a]">
-          Got more good moments? Add them — the editor will use the best parts.
-        </p>
         {/* Pool chips */}
         {poolPaths.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">

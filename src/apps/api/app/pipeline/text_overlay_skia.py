@@ -44,6 +44,7 @@ import re
 import shutil
 import subprocess
 import time
+import unicodedata
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -76,6 +77,18 @@ from app.pipeline.handwriting_strokes import (
 from app.pipeline.text_animation_math import handwriting_progress as _handwriting_progress
 from app.pipeline.text_animation_math import handwriting_settle_s as _handwriting_settle_s
 from app.pipeline.text_animation_math import motion_cubic_bezier as _motion_cubic_bezier
+from app.pipeline.text_motion_v2 import (
+    V2_HOLDABLE_TEXT_EFFECTS,
+    authored_motion_time_s,
+    effect_base_duration_s,
+    normalize_text_motion,
+    renderer_settle_duration_s,
+    round_output_frame,
+    smooth_type_line_progresses,
+    smooth_type_state_at,
+    text_motion_complexity_error,
+)
+from app.pipeline.text_motion_v2 import ease as text_motion_ease
 from app.pipeline.text_overlay import (
     _FONT_REGISTRY,
     _FONT_SIZE_MAP,
@@ -508,13 +521,28 @@ def _staggered_slice_progress(t: float, start: float, duration: float) -> float:
     return _ease_out_cubic((t - start) / max(0.01, duration))
 
 
-def _staggered_slice_state(text: str, t_local: float, duration_s: float) -> StaggeredSliceState:
+def _staggered_slice_state(
+    text: str,
+    t_local: float,
+    duration_s: float,
+    raw_motion: object = None,
+) -> StaggeredSliceState:
     """Pure timing model mirrored by `staggeredSliceStateAt` in the editor."""
     normalized = _normalize_reveal_text(text)
     logical_lines = normalized.split("\n")
     choreography_s = _staggered_slice_choreography_s(normalized)
     settle_s = _staggered_slice_settle_s(normalized)
-    t = _staggered_slice_nominal_time(t_local, duration_s, settle_s, choreography_s)
+    has_v2 = isinstance(raw_motion, dict) and raw_motion.get("version") == 2
+    motion = normalize_text_motion("staggered-slice", raw_motion) if has_v2 else None
+    t = _staggered_slice_nominal_time(
+        authored_motion_time_s("staggered-slice", normalized, t_local, raw_motion)
+        if motion
+        else t_local,
+        settle_s if motion else duration_s,
+        settle_s,
+        choreography_s,
+    )
+    intensity = motion.intensity if motion else 1.0
     lines: list[StaggeredSliceLineState] = []
 
     for line_index, line in enumerate(logical_lines):
@@ -557,9 +585,11 @@ def _staggered_slice_state(text: str, t_local: float, duration_s: float) -> Stag
                 glyph_states.append(
                     StaggeredSliceGlyphState(
                         grapheme=grapheme,
-                        opacity=progress,
-                        translate_y_em=0.18 * (1.0 - progress),
-                        rotate_deg=(-4.0 if glyph_index % 2 == 0 else 4.0) * (1.0 - progress),
+                        opacity=1.0 - (1.0 - progress) * intensity,
+                        translate_y_em=0.18 * (1.0 - progress) * intensity,
+                        rotate_deg=(-4.0 if glyph_index % 2 == 0 else 4.0)
+                        * (1.0 - progress)
+                        * intensity,
                     )
                 )
             lines.append(
@@ -587,9 +617,11 @@ def _staggered_slice_state(text: str, t_local: float, duration_s: float) -> Stag
             glyph_states.append(
                 StaggeredSliceGlyphState(
                     grapheme=grapheme,
-                    opacity=progress,
-                    translate_y_em=0.18 * (1.0 - progress),
-                    rotate_deg=(-4.0 if glyph_index % 2 == 0 else 4.0) * (1.0 - progress),
+                    opacity=1.0 - (1.0 - progress) * intensity,
+                    translate_y_em=0.18 * (1.0 - progress) * intensity,
+                    rotate_deg=(-4.0 if glyph_index % 2 == 0 else 4.0)
+                    * (1.0 - progress)
+                    * intensity,
                 )
             )
         lines.append(StaggeredSliceLineState(text=line, kind="glyphs", glyphs=tuple(glyph_states)))
@@ -675,11 +707,46 @@ def _uses_long_running_frame_ceiling(overlay: dict) -> bool:
     if overlay.get("behind_subject"):
         return True
     effect = overlay.get("effect", "none")
+    motion = overlay.get("motion")
+    if (
+        effect in V2_HOLDABLE_TEXT_EFFECTS
+        and isinstance(motion, dict)
+        and motion.get("version") == 2
+    ):
+        return True
     return (
         effect in {"lyric-line", "karaoke-line"}
         or (effect == "pop-in" and bool(overlay.get("pop_animated_suffix")))
-        or effect in {"handwriting", "ink-reveal"}
+        or effect in {"handwriting", "ink-reveal", "smooth-type"}
     )
+
+
+def _long_running_frame_ceiling(overlay: dict) -> int:
+    """Return the full-window ceiling for a long-running text effect.
+
+    Smooth Type's settled tail is hard-linked, so allowing the full authored
+    sub-60s window does not increase the number of uniquely rendered PNGs.
+    Keeping it on the legacy 30s ceiling would make a valid long manual trim
+    disappear when the image sequence reaches EOF.
+    """
+    effect = overlay.get("effect", "none")
+    motion = overlay.get("motion")
+    if (
+        overlay.get("behind_subject")
+        or effect
+        in {
+            "handwriting",
+            "ink-reveal",
+            "smooth-type",
+        }
+        or (
+            effect in V2_HOLDABLE_TEXT_EFFECTS
+            and isinstance(motion, dict)
+            and motion.get("version") == 2
+        )
+    ):
+        return BEHIND_SUBJECT_FRAME_CEILING
+    return LONG_RUNNING_TEXT_FRAME_CEILING
 
 
 def _sequence_fade_out_ms(overlay: dict) -> int:
@@ -1152,9 +1219,63 @@ def _overlay_letter_spacing_px(overlay: dict, font_size_px: float) -> float:
     return resolve_letter_spacing_px(overlay.get("letter_spacing"), font_size_px)
 
 
-def _measure_line(font: skia.Font, text: str, spacing_px: float = 0.0) -> float:
+_PARAGRAPH_UNICODE = skia.Unicode.ICU_Make()
+
+
+def _shaped_paragraph(
+    text: str,
+    font: skia.Font,
+    spacing_px: float,
+    paint: skia.Paint,
+) -> skia.textlayout_Paragraph:
+    """Shape a complete bidi run with tracking and per-codepoint font fallback."""
+    primary = font.refTypeface()
+    provider = skia.textlayout_TypefaceFontProvider()
+    families = ["NovaPrimary"]
+    provider.registerTypeface(primary, families[0])
+    fallback_manager = skia.FontMgr.RefDefault()
+    seen_fallbacks: set[int] = set()
+    for character in text:
+        if character.isspace() or primary.unicharToGlyph(ord(character)) != 0:
+            continue
+        fallback = fallback_manager.matchFamilyStyleCharacter(
+            primary.getFamilyName(), primary.fontStyle(), ["und"], ord(character)
+        )
+        if fallback is None or fallback.uniqueID() in seen_fallbacks:
+            continue
+        seen_fallbacks.add(fallback.uniqueID())
+        alias = f"NovaFallback{len(families)}"
+        provider.registerTypeface(fallback, alias)
+        families.append(alias)
+
+    collection = skia.textlayout_FontCollection()
+    collection.setDefaultFontManager(provider, families)
+    text_style = skia.textlayout_TextStyle()
+    text_style.setFontFamilies(families)
+    text_style.setFontSize(font.getSize())
+    text_style.setLetterSpacing(spacing_px)
+    text_style.setForegroundPaint(paint)
+    paragraph_style = skia.textlayout_ParagraphStyle()
+    paragraph_style.setTextStyle(text_style)
+    builder = skia.textlayout_ParagraphBuilder.make(paragraph_style, collection, _PARAGRAPH_UNICODE)
+    builder.addText(text)
+    paragraph = builder.Build()
+    paragraph.layout(100_000.0)
+    return paragraph
+
+
+def _measure_line(
+    font: skia.Font,
+    text: str,
+    spacing_px: float = 0.0,
+    *,
+    shape_text: bool = False,
+) -> float:
     """Line width under the spaced advance model. spacing_px == 0 keeps the
     kerned single-call measure — byte-identical to the pre-T11 renderer."""
+    if shape_text:
+        paragraph = _shaped_paragraph(text, font, spacing_px, skia.Paint(AntiAlias=True))
+        return float(paragraph.LongestLine)
     if spacing_px == 0.0 or len(text) <= 1:
         return font.measureText(text)
     return sum(font.measureText(ch) for ch in text) + spacing_px * (len(text) - 1)
@@ -1168,9 +1289,14 @@ def _draw_string_spaced(
     font: skia.Font,
     paint: skia.Paint,
     spacing_px: float = 0.0,
+    shape_text: bool = False,
 ) -> None:
     """drawString with optional per-character tracking (advance model matches
     _measure_line exactly, so anchoring math stays consistent)."""
+    if shape_text:
+        paragraph = _shaped_paragraph(text, font, spacing_px, paint)
+        paragraph.paint(canvas, x, baseline_y - float(paragraph.AlphabeticBaseline))
+        return
     if spacing_px == 0.0 or len(text) <= 1:
         canvas.drawString(text, x, baseline_y, font, paint)
         return
@@ -1181,7 +1307,12 @@ def _draw_string_spaced(
 
 
 def _wrap_text_to_lines(
-    text: str, font: skia.Font, max_width: float, spacing_px: float = 0.0
+    text: str,
+    font: skia.Font,
+    max_width: float,
+    spacing_px: float = 0.0,
+    *,
+    shape_text: bool = False,
 ) -> list[str]:
     """Greedy word-wrap, mirrors text_overlay._wrap_text_to_lines.
 
@@ -1198,7 +1329,10 @@ def _wrap_text_to_lines(
         current: list[str] = []
         for word in words:
             candidate = " ".join([*current, word]) if current else word
-            if _measure_line(font, candidate, spacing_px) <= max_width or not current:
+            if (
+                _measure_line(font, candidate, spacing_px, shape_text=shape_text) <= max_width
+                or not current
+            ):
                 current.append(word)
             else:
                 out.append(" ".join(current))
@@ -1225,6 +1359,8 @@ def _shrink_to_fit(
     initial_size: int,
     max_width: float,
     letter_spacing_em: float = 0.0,
+    *,
+    shape_text: bool = False,
 ) -> tuple[skia.Font, int, list[str]]:
     """Wrap + iteratively shrink the font until every line fits inside
     max_width. Caps at 6 iterations and a 24px floor, matching Pillow.
@@ -1237,18 +1373,21 @@ def _shrink_to_fit(
     font = skia.Font(typeface, size)
     font.setSubpixel(True)
     spacing_px = letter_spacing_em * size
-    lines = _wrap_text_to_lines(text, font, max_width, spacing_px)
+    lines = _wrap_text_to_lines(text, font, max_width, spacing_px, shape_text=shape_text)
 
     iterations = 0
     while iterations < 6 and size > _MIN_FONT_SIZE:
-        widest = max((_measure_line(font, ln, spacing_px) for ln in lines), default=0)
+        widest = max(
+            (_measure_line(font, ln, spacing_px, shape_text=shape_text) for ln in lines),
+            default=0,
+        )
         if widest <= max_width:
             break
         size = max(_MIN_FONT_SIZE, int(size * 0.85))
         font = skia.Font(typeface, size)
         font.setSubpixel(True)
         spacing_px = letter_spacing_em * size
-        lines = _wrap_text_to_lines(text, font, max_width, spacing_px)
+        lines = _wrap_text_to_lines(text, font, max_width, spacing_px, shape_text=shape_text)
         iterations += 1
 
     return font, size, lines
@@ -1260,6 +1399,8 @@ def _wrap_at_fixed_size(
     size: int,
     max_width: float,
     letter_spacing_em: float = 0.0,
+    *,
+    shape_text: bool = False,
 ) -> tuple[skia.Font, int, list[str]]:
     """Wrap text at the requested font size without shrinking.
 
@@ -1270,7 +1411,17 @@ def _wrap_at_fixed_size(
     size = max(_MIN_FONT_SIZE, int(size))
     font = skia.Font(typeface, size)
     font.setSubpixel(True)
-    return font, size, _wrap_text_to_lines(text, font, max_width, letter_spacing_em * size)
+    return (
+        font,
+        size,
+        _wrap_text_to_lines(
+            text,
+            font,
+            max_width,
+            letter_spacing_em * size,
+            shape_text=shape_text,
+        ),
+    )
 
 
 def _shrink_to_fit_max_lines(
@@ -1306,6 +1457,7 @@ def _measure_block(
     *,
     line_spacing: float = _LINE_SPACING,
     letter_spacing_px: float = 0.0,
+    shape_text: bool = False,
 ) -> dict[str, Any]:
     """Compute per-line widths, max line height, total block height.
 
@@ -1317,7 +1469,7 @@ def _measure_block(
     metrics = font.getMetrics()
     line_height_raw = metrics.fDescent - metrics.fAscent
     line_step = int(line_height_raw * line_spacing)
-    widths = [_measure_line(font, ln, letter_spacing_px) for ln in lines]
+    widths = [_measure_line(font, ln, letter_spacing_px, shape_text=shape_text) for ln in lines]
     block_h = line_step * (len(lines) - 1) + int(line_height_raw) if lines else 0
     return {
         "widths": widths,
@@ -1628,7 +1780,13 @@ def _draw_centered_text(
     scale_origin_y: float = 0.0,
     layout_text: str | None = None,
     show_cursor: bool = False,
+    cursor_style: str = "bar",
     reveal_progress: float = 1.0,
+    reveal_origin: str = "forward",
+    blur_px: float = 0.0,
+    shape_text: bool = False,
+    smooth_t_local: float | None = None,
+    smooth_motion: object = None,
 ) -> None:
     """Draw `text` centered horizontally at the overlay's anchor, with
     shadow + optional stroke + fill. Mirrors Pillow's _draw_text_png layout:
@@ -1649,16 +1807,32 @@ def _draw_centered_text(
     if font_override is not None:
         font = font_override
         size = int(font.getSize())
-        lines = _wrap_text_to_lines(geometry_text, font, max_width, letter_spacing_em * size)
+        lines = _wrap_text_to_lines(
+            geometry_text,
+            font,
+            max_width,
+            letter_spacing_em * size,
+            shape_text=shape_text,
+        )
     else:
         initial_size = _resolve_font_size_px(overlay)
         if overlay.get("preserve_font_size"):
             font, size, lines = _wrap_at_fixed_size(
-                geometry_text, typeface, initial_size, max_width, letter_spacing_em
+                geometry_text,
+                typeface,
+                initial_size,
+                max_width,
+                letter_spacing_em,
+                shape_text=shape_text,
             )
         else:
             font, size, lines = _shrink_to_fit(
-                geometry_text, typeface, initial_size, max_width, letter_spacing_em
+                geometry_text,
+                typeface,
+                initial_size,
+                max_width,
+                letter_spacing_em,
+                shape_text=shape_text,
             )
 
     if not lines:
@@ -1670,6 +1844,11 @@ def _draw_centered_text(
     draw_lines, cursor_line = (
         _fixed_reveal_lines(lines, text) if layout_text is not None else (lines, len(lines) - 1)
     )
+    smooth_line_progresses = (
+        smooth_type_line_progresses(lines, smooth_t_local, smooth_motion)
+        if shape_text and smooth_t_local is not None
+        else None
+    )
 
     letter_spacing_px = letter_spacing_em * size
     block = _measure_block(
@@ -1677,6 +1856,7 @@ def _draw_centered_text(
         lines,
         line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
         letter_spacing_px=letter_spacing_px,
+        shape_text=shape_text,
     )
     cx, cy = _resolve_anchor(overlay, render_canvas)
     anchor = _resolve_text_anchor(overlay)
@@ -1738,23 +1918,37 @@ def _draw_centered_text(
     rotation_deg = _finite_float(overlay.get("rotation_deg"), 0.0)
     origin_x = cx + scale_origin_x
     origin_y = cy + scale_origin_y
-    canvas.translate(origin_x + x_translate, origin_y + y_translate)
+    canvas.translate(origin_x, origin_y)
     if rotation_deg:
         canvas.rotate(rotation_deg)
+    canvas.translate(x_translate, y_translate)
     canvas.scale(scale, scale)
     canvas.translate(-origin_x, -origin_y)
-    if reveal_progress < 1.0:
+    blur_layer = blur_px > 0.01
+    if blur_layer:
+        canvas.saveLayer(
+            None,
+            skia.Paint(ImageFilter=skia.ImageFilters.Blur(blur_px, blur_px)),
+        )
+    if reveal_progress < 1.0 and smooth_line_progresses is None:
         reveal_left = content_left - left_bleed
         reveal_full_right = content_right + right_bleed
-        reveal_right = min(
-            reveal_full_right,
-            reveal_left + (reveal_full_right - reveal_left) * reveal_progress,
-        )
+        reveal_width = (reveal_full_right - reveal_left) * reveal_progress
+        if reveal_origin == "reverse":
+            clip_left = reveal_full_right - reveal_width
+            clip_right = reveal_full_right
+        elif reveal_origin == "center-out":
+            center = (reveal_left + reveal_full_right) / 2.0
+            clip_left = center - reveal_width / 2.0
+            clip_right = center + reveal_width / 2.0
+        else:
+            clip_left = reveal_left
+            clip_right = reveal_left + reveal_width
         canvas.clipRect(
             skia.Rect(
-                reveal_left,
+                clip_left,
                 block_top - top_bleed,
-                reveal_right,
+                clip_right,
                 block_top + block["block_h"] + bottom_bleed,
             ),
             doAntiAlias=True,
@@ -1769,6 +1963,42 @@ def _draw_centered_text(
             line_x = block_left + emoji_metrics["size"] + emoji_metrics["gap"]
         else:
             line_x = _anchored_left_x(anchor, cx, line_w)
+
+        line_clip_active = smooth_line_progresses is not None and smooth_line_progresses[i] < 1.0
+        if line_clip_active:
+            line_progress = smooth_line_progresses[i]
+            line_left = line_x - left_bleed
+            line_right = line_x + line_w + right_bleed
+            reveal_width = (line_right - line_left) * line_progress
+            first_strong_rtl = False
+            for character in line:
+                bidi = unicodedata.bidirectional(character)
+                if bidi in {"R", "AL", "AN"}:
+                    first_strong_rtl = True
+                    break
+                if bidi == "L":
+                    break
+            logical_order = normalize_text_motion("smooth-type", smooth_motion).order
+            if logical_order == "center-out":
+                center = (line_left + line_right) / 2.0
+                clip_left = center - reveal_width / 2.0
+                clip_right = center + reveal_width / 2.0
+            elif (logical_order == "forward") == first_strong_rtl:
+                clip_left = line_right - reveal_width
+                clip_right = line_right
+            else:
+                clip_left = line_left
+                clip_right = line_left + reveal_width
+            canvas.save()
+            canvas.clipRect(
+                skia.Rect(
+                    clip_left,
+                    baseline_y - block["ascent_offset"] - top_bleed,
+                    clip_right,
+                    baseline_y - block["ascent_offset"] + block["line_step"] + bottom_bleed,
+                ),
+                doAntiAlias=True,
+            )
 
         draw_kwargs: dict[str, Any] = {"shader": gradient_shader}
         if letter_spacing_px != 0.0:
@@ -1787,14 +2017,17 @@ def _draw_centered_text(
                 stroke_px,
                 shadow_style,
                 **draw_kwargs,
+                shape_text=shape_text,
             )
         if show_cursor and i == cursor_line:
-            cursor_x = line_x + _measure_line(font, draw_line, letter_spacing_px)
+            cursor_x = line_x + _measure_line(
+                font, draw_line, letter_spacing_px, shape_text=shape_text
+            )
             if draw_line and letter_spacing_px:
                 cursor_x += letter_spacing_px
             _draw_line_with_layers(
                 canvas,
-                " |",
+                " ▮" if cursor_style == "block" else " _" if cursor_style == "underscore" else " |",
                 cursor_x,
                 baseline_y,
                 font,
@@ -1802,7 +2035,10 @@ def _draw_centered_text(
                 stroke_px,
                 shadow_style,
                 **draw_kwargs,
+                shape_text=shape_text,
             )
+        if line_clip_active:
+            canvas.restore()
 
     # Emoji compositing onto the canvas at the resolved combined-block x
     if emoji_metrics is not None and lines:
@@ -1813,6 +2049,8 @@ def _draw_centered_text(
         emoji_y = block_top + (first_line_h - emoji_metrics["size"]) / 2.0
         _draw_skia_image(canvas, emoji_metrics["img"], emoji_x, emoji_y, alpha=alpha)
 
+    if blur_layer:
+        canvas.restore()
     canvas.restore()
 
 
@@ -1831,6 +2069,7 @@ def _draw_line_with_layers(
     layer_alpha: float = 1.0,
     glow_rgb: tuple[int, int, int] | None = None,
     glow_strength: float = 0.0,
+    shape_text: bool = False,
 ) -> None:
     """Optional glow → shadow → stroke → fill, matching Pillow's base compositing.
 
@@ -1843,6 +2082,26 @@ def _draw_line_with_layers(
     ``letter_spacing_px`` applies per-character tracking to every layer
     (glow, shadow, stroke, fill share one advance model — see _draw_string_spaced).
     """
+
+    def draw_spaced(
+        draw_x: float,
+        draw_y: float,
+        draw_paint: skia.Paint,
+    ) -> None:
+        if shape_text:
+            _draw_string_spaced(
+                canvas,
+                line,
+                draw_x,
+                draw_y,
+                font,
+                draw_paint,
+                letter_spacing_px,
+                shape_text=True,
+            )
+        else:
+            _draw_string_spaced(canvas, line, draw_x, draw_y, font, draw_paint, letter_spacing_px)
+
     if glow_rgb is not None and glow_strength > 0.0:
         r, g, b = glow_rgb
         glow_strength = max(0.0, min(1.0, glow_strength))
@@ -1855,18 +2114,10 @@ def _draw_line_with_layers(
                 Color=skia.ColorSetARGB(glow_alpha, r, g, b),
                 MaskFilter=skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, sigma),
             )
-            _draw_string_spaced(canvas, line, x, baseline_y, font, glow_paint, letter_spacing_px)
+            draw_spaced(x, baseline_y, glow_paint)
 
     for shadow_layer, shadow_paint in _text_shadow_paints(shadow_style, layer_alpha):
-        _draw_string_spaced(
-            canvas,
-            line,
-            x + shadow_layer.dx,
-            baseline_y + shadow_layer.dy,
-            font,
-            shadow_paint,
-            letter_spacing_px,
-        )
+        draw_spaced(x + shadow_layer.dx, baseline_y + shadow_layer.dy, shadow_paint)
 
     # Crisp black stroke (TikTok caption look)
     if stroke_px > 0:
@@ -1877,13 +2128,13 @@ def _draw_line_with_layers(
             StrokeWidth=stroke_px * 2.0,
             StrokeJoin=skia.Paint.kRound_Join,
         )
-        _draw_string_spaced(canvas, line, x, baseline_y, font, stroke_paint, letter_spacing_px)
+        draw_spaced(x, baseline_y, stroke_paint)
 
     # Fill: solid colour OR gradient shader
     fill_paint = skia.Paint(AntiAlias=True, Color=fill_color)
     if shader is not None:
         fill_paint.setShader(shader)
-    _draw_string_spaced(canvas, line, x, baseline_y, font, fill_paint, letter_spacing_px)
+    draw_spaced(x, baseline_y, fill_paint)
 
 
 def _draw_staggered_slice(
@@ -1898,7 +2149,7 @@ def _draw_staggered_slice(
     text = _normalize_reveal_text(_overlay_text(overlay))
     if not text:
         return
-    state = _staggered_slice_state(text, t_local, duration_s)
+    state = _staggered_slice_state(text, t_local, duration_s, overlay.get("motion"))
     if state.settled:
         _draw_centered_text(canvas, text, overlay, render_canvas=render_canvas)
         return
@@ -2435,6 +2686,7 @@ def _typewriter_visible_text_at(
     t_local: float,
     raw_schedule: object,
     start_s: float,
+    grapheme_mode: bool = False,
 ) -> str:
     """Return the renderer's visible typewriter slice at one local timestamp."""
 
@@ -2447,6 +2699,10 @@ def _typewriter_visible_text_at(
             1,
             math.ceil(len(reveal_text) * revealed_steps / max(1, len(schedule))),
         )
+    elif grapheme_mode:
+        clusters = regex.findall(r"\X", reveal_text)
+        visible_clusters = max(1, int(t_local * 12.0) + 1)
+        return "".join(clusters[:visible_clusters])
     else:
         # Generic and user-authored typewriter elements retain the legacy speed.
         chars_per_s = 12.0
@@ -2478,50 +2734,102 @@ def _draw_with_animation(
     scale_origin_y = 0.0
     visible_text = text
     show_cursor = False
+    cursor_style = "bar"
     reveal_progress = 1.0
+    reveal_origin = "forward"
+    blur_px = 0.0
+    shape_text = bool(overlay.get("shape_text"))
+    raw_motion = overlay.get("motion")
+    has_v2_motion = isinstance(raw_motion, dict) and raw_motion.get("version") == 2
+    if effect == "smooth-type" and not has_v2_motion:
+        # Missing config means legacy timing. Smooth Type has no legacy curve,
+        # so malformed/old-client payloads fail closed to settled shaped text.
+        effect = "static"
+        shape_text = True
+    v2_motion = normalize_text_motion(effect, raw_motion) if has_v2_motion else None
+    effect_t = authored_motion_time_s(effect, text, t_local, raw_motion) if v2_motion else t_local
+    choreography_duration_s = (
+        effect_base_duration_s(effect, text, raw_motion) if v2_motion else duration_s
+    )
 
-    if effect == "scale-up":
-        if duration_s > 0.6:
-            progress = min(1.0, t_local / 0.6)
+    def effect_ease(progress: float) -> float:
+        return (
+            text_motion_ease(progress, v2_motion.easing) if v2_motion else _ease_out_cubic(progress)
+        )
+
+    if effect == "smooth-type":
+        state = smooth_type_state_at(text, t_local, overlay.get("motion"))
+        alpha = state.alpha
+        x_translate = state.x_translate
+        y_translate = state.y_translate
+        blur_px = state.blur_px
+        reveal_progress = state.reveal_progress
+        reveal_origin = state.reveal_origin
+        shape_text = True
+    elif effect == "scale-up":
+        if choreography_duration_s > 0.6:
+            progress = min(1.0, effect_t / 0.6)
         else:
-            progress = min(1.0, t_local / max(duration_s, 0.01))
-        scale = 0.6 + 0.4 * _ease_out_cubic(progress)
+            progress = min(1.0, effect_t / max(choreography_duration_s, 0.01))
+        scale = 0.6 + 0.4 * effect_ease(progress)
     elif effect == "fade-in":
-        if duration_s > 0.4:
-            progress = min(1.0, t_local / 0.4)
+        if choreography_duration_s > 0.4:
+            progress = min(1.0, effect_t / 0.4)
         else:
-            progress = min(1.0, t_local / max(duration_s, 0.01))
-        alpha = _ease_out_cubic(progress)
+            progress = min(1.0, effect_t / max(choreography_duration_s, 0.01))
+        alpha = effect_ease(progress)
     elif effect == "typewriter":
         visible_text = _typewriter_visible_text_at(
             reveal_text,
-            t_local=t_local,
-            raw_schedule=overlay.get("reveal_schedule_s"),
+            t_local=effect_t,
+            # V2 timing is authoritative. Keep a legacy schedule in persisted
+            # source_params for rollback, but do not apply it after migration.
+            raw_schedule=None if v2_motion is not None else overlay.get("reveal_schedule_s"),
             start_s=_finite_float(overlay.get("start_s"), 0.0),
+            grapheme_mode=v2_motion is not None,
         )
+        if v2_motion is not None:
+            cursor_style = v2_motion.cursor_style
+            show_cursor = (
+                cursor_style != "none"
+                and len(visible_text) < len(reveal_text)
+                and int(effect_t * 1000.0 / v2_motion.cursor_blink_ms) % 2 == 0
+            )
     elif effect == "stream-in":
         # "How an AI returns an answer" — reveal WORD by word (not char) with a
         # blinking cursor while streaming. Pairs with text_anchor="left" so the
         # answer grows rightward from a fixed margin like a chat response.
         words = list(re.finditer(r"\S+", reveal_text))
         words_per_s = 6.0
-        n = max(1, int(t_local * words_per_s) + 1)
+        n = max(1, int(effect_t * words_per_s) + 1)
         last_visible_word = words[min(n, len(words)) - 1] if words else None
         visible_text = reveal_text[: last_visible_word.end()] if last_visible_word else ""
-        if n < len(words) and int(t_local * 2) % 2 == 0:
+        blink_ms = v2_motion.cursor_blink_ms if v2_motion else 500.0
+        cursor_style = v2_motion.cursor_style if v2_motion else "bar"
+        if cursor_style != "none" and n < len(words) and int(effect_t * 1000.0 / blink_ms) % 2 == 0:
             show_cursor = True  # blink cursor at ~2 Hz
     elif effect in ("slide-up", "slide-down"):
-        animate_for = min(0.35, duration_s * 0.5)
-        progress = min(1.0, t_local / animate_for) if animate_for > 0 else 1.0
-        eased = _ease_out_cubic(progress)
-        direction = -1.0 if effect == "slide-up" else 1.0
-        y_translate = direction * 220.0 * (1.0 - eased)
+        animate_for = choreography_duration_s if v2_motion else min(0.35, duration_s * 0.5)
+        progress = min(1.0, effect_t / animate_for) if animate_for > 0 else 1.0
+        eased = effect_ease(progress)
+        distance = v2_motion.travel_px if v2_motion else 220.0
+        direction = v2_motion.direction if v2_motion else ("up" if effect == "slide-up" else "down")
+        if direction == "left":
+            x_translate = -distance * (1.0 - eased)
+        elif direction == "right":
+            x_translate = distance * (1.0 - eased)
+        elif direction == "up":
+            y_translate = -distance * (1.0 - eased)
+        elif direction == "down":
+            y_translate = distance * (1.0 - eased)
     elif effect == "pop-in":
-        scale = _pop_in_scale_at(t_local, duration_s)
+        scale = _pop_in_scale_at(effect_t, choreography_duration_s)
+        if v2_motion is not None and scale > 1.0:
+            scale = 1.0 + (scale - 1.0) * (v2_motion.overshoot / 0.15)
     elif effect == "bounce":
-        animate_for = min(0.5, duration_s * 0.8)
-        if t_local < animate_for:
-            p = t_local / animate_for
+        animate_for = choreography_duration_s if v2_motion else min(0.5, duration_s * 0.8)
+        if effect_t < animate_for:
+            p = effect_t / animate_for
             if p < 0.36:
                 scale = 1.0 + 0.25 * (p / 0.36)
             elif p < 0.72:
@@ -2530,16 +2838,49 @@ def _draw_with_animation(
                 scale = 0.90 + 0.10 * ((p - 0.72) / 0.28)
         else:
             scale = 1.0
+        if v2_motion is not None and scale > 1.0:
+            scale = 1.0 + (scale - 1.0) * (v2_motion.overshoot / 0.15)
     elif effect in ("handwriting", "ink-reveal"):
-        reveal_progress = _handwriting_progress(t_local, duration_s)
+        reveal_progress = _handwriting_progress(effect_t, choreography_duration_s)
+        if v2_motion is not None:
+            reveal_progress = text_motion_ease(reveal_progress, v2_motion.easing)
     elif effect == "lyric-line":
-        alpha = _lyric_line_alpha(overlay, t_local, duration_s)
+        alpha = _lyric_line_alpha(overlay, effect_t, duration_s)
     elif effect not in ("none", "static"):
         # Unknown effect → render as static. This is intentionally lenient:
         # in production we'd rather render the text at its base style than
         # raise and lose the overlay entirely. A logged warning gives us
         # visibility into schema drift.
         log.warning("skia_unknown_effect_static_fallback", effect=effect)
+
+    if v2_motion is not None and effect != "smooth-type":
+        intensity = v2_motion.intensity
+        scale = 1.0 + (scale - 1.0) * intensity
+        alpha = 1.0 - (1.0 - alpha) * intensity
+        x_translate *= intensity
+        y_translate *= intensity
+        reveal_progress = 1.0 - (1.0 - reveal_progress) * intensity
+        if effect in {"typewriter", "stream-in"}:
+            full_clusters = regex.findall(r"\X", reveal_text)
+            animated_count = len(regex.findall(r"\X", visible_text))
+            visible_count = min(
+                len(full_clusters),
+                math.ceil(
+                    animated_count + (len(full_clusters) - animated_count) * (1.0 - intensity)
+                ),
+            )
+            visible_text = "".join(full_clusters[:visible_count])
+            if visible_count >= len(full_clusters):
+                show_cursor = False
+
+    if v2_motion is not None and v2_motion.exit_s > 0:
+        exit_s = min(duration_s, round_output_frame(v2_motion.exit_s))
+        exit_start_s = duration_s - exit_s
+        if t_local >= exit_start_s:
+            exit_progress = text_motion_ease(
+                (t_local - exit_start_s) / max(exit_s, 1e-6), "ease-in-out-cubic"
+            )
+            alpha *= 1.0 - exit_progress
 
     # Sequence overlays (role="generative_sequence") multiply a fade-out tail
     # on top of the effect's own alpha: fade-in head → full-opacity hold →
@@ -2571,7 +2912,13 @@ def _draw_with_animation(
         scale_origin_y=scale_origin_y,
         layout_text=reveal_text if effect in ("typewriter", "stream-in") else None,
         show_cursor=show_cursor,
+        cursor_style=cursor_style,
         reveal_progress=reveal_progress,
+        reveal_origin=reveal_origin,
+        blur_px=blur_px,
+        shape_text=shape_text,
+        smooth_t_local=t_local if effect == "smooth-type" else None,
+        smooth_motion=raw_motion if effect == "smooth-type" else None,
     )
 
 
@@ -2584,6 +2931,7 @@ _ANIMATED_EFFECTS_SKIA = {
     "fade-in",
     "typewriter",
     "stream-in",
+    "smooth-type",
     "slide-up",
     "slide-down",
     "pop-in",
@@ -2675,7 +3023,11 @@ def _draw_overlay_on_canvas(
         else:
             # Static effects render at full opacity throughout [start_s, end_s].
             _draw_centered_text(
-                canvas, _overlay_text(overlay), overlay, render_canvas=render_canvas
+                canvas,
+                _overlay_text(overlay),
+                overlay,
+                render_canvas=render_canvas,
+                shape_text=bool(overlay.get("shape_text")),
             )
 
 
@@ -2966,14 +3318,11 @@ def _sequence_hold_plan(
         return None
     if overlay.get("behind_subject") or _theme_transition_type(overlay) is not None:
         return None
-    effect = overlay.get("effect", "none")
-    if effect == "fade-in":
-        settle_s = min(_FADE_IN_SETTLE_S, duration_s)
-    elif effect in {"handwriting", "ink-reveal"}:
-        settle_s = _handwriting_settle_s(duration_s)
-    else:
-        settle_s = 0.0
-    fade_out_s = min(_sequence_fade_out_ms(overlay) / 1000.0, duration_s)
+    settle = _sequence_head_settle_s(overlay)
+    if settle is None:
+        return None
+    settle_s = min(settle, duration_s)
+    fade_out_s = _sequence_tail_change_s(overlay, duration_s)
     fade_out_start_s = duration_s - fade_out_s
 
     render_indices: list[int] = []
@@ -2999,6 +3348,10 @@ def _staggered_slice_hold_plan(
 ) -> tuple[list[int], int, list[int]] | None:
     if overlay.get("effect") != "staggered-slice" or n_render <= 1:
         return None
+    if isinstance(overlay.get("motion"), dict) and overlay["motion"].get("version") == 2:
+        # V2 speed changes the settle boundary. Rendering all frames is the
+        # conservative path until hold-frame de-dup accepts normalized motion.
+        return None
     if _theme_transition_type(overlay) is not None:
         return None
     settle_s = min(duration_s, _staggered_slice_settle_s(_overlay_text(overlay)))
@@ -3015,6 +3368,8 @@ def _handwriting_hold_plan(
 ) -> tuple[list[int], int, list[int]] | None:
     if overlay.get("effect") not in {"handwriting", "ink-reveal"} or n_render <= 1:
         return None
+    if isinstance(overlay.get("motion"), dict) and overlay["motion"].get("version") == 2:
+        return None
     if overlay.get("role") == SEQUENCE_OVERLAY_ROLE:
         return None
     if _theme_transition_type(overlay) is not None:
@@ -3025,6 +3380,45 @@ def _handwriting_hold_plan(
         return None
     render_indices = list(range(settled_idx + 1))
     hold_indices = list(range(settled_idx + 1, n_render))
+    return render_indices, settled_idx, hold_indices
+
+
+def _v2_motion_hold_plan(
+    overlay: dict, n_render: int, frame_dur: float, duration_s: float
+) -> tuple[list[int], int, list[int]] | None:
+    """Render a v2 entrance/exit once and hard-link its settled hold."""
+    effect = overlay.get("effect", "none")
+    motion_raw = overlay.get("motion")
+    if (
+        effect not in V2_HOLDABLE_TEXT_EFFECTS
+        or not isinstance(motion_raw, dict)
+        or motion_raw.get("version") != 2
+        or n_render <= 1
+    ):
+        return None
+    if _theme_transition_type(overlay) is not None:
+        return None
+    motion = normalize_text_motion(effect, motion_raw)
+    settle_s = min(
+        duration_s,
+        renderer_settle_duration_s(effect, _overlay_text(overlay), motion_raw),
+    )
+    exit_s = min(duration_s, round_output_frame(motion.exit_s))
+    exit_start_s = duration_s - exit_s
+    render_indices: list[int] = []
+    hold_indices: list[int] = []
+    settled_idx = -1
+    for i in range(n_render):
+        t = i * frame_dur
+        if t < settle_s or (exit_s > 0.0 and t >= exit_start_s):
+            render_indices.append(i)
+        elif settled_idx < 0:
+            settled_idx = i
+            render_indices.append(i)
+        else:
+            hold_indices.append(i)
+    if settled_idx < 0 or not hold_indices:
+        return None
     return render_indices, settled_idx, hold_indices
 
 
@@ -3092,11 +3486,7 @@ def _generate_overlay_sequence(
     # across a full sub-60s output, and FFmpeg's eof_action=pass would otherwise
     # make them vanish at 30s. Other long-running effects keep the tighter 30s
     # ceiling. Single source of truth keeps this clamp and the +1 seam frame aligned.
-    long_ceiling = (
-        BEHIND_SUBJECT_FRAME_CEILING
-        if wants_behind or effect in {"handwriting", "ink-reveal"}
-        else LONG_RUNNING_TEXT_FRAME_CEILING
-    )
+    long_ceiling = _long_running_frame_ceiling(overlay)
     if uses_long_ceiling:
         if wanted > long_ceiling:
             log.warning(
@@ -3241,6 +3631,8 @@ def _generate_overlay_sequence(
             hold_plan = _staggered_slice_hold_plan(overlay, n_render, frame_dur, duration_s)
         if hold_plan is None:
             hold_plan = _handwriting_hold_plan(overlay, n_render, frame_dur, duration_s)
+        if hold_plan is None:
+            hold_plan = _v2_motion_hold_plan(overlay, n_render, frame_dur, duration_s)
     if hold_plan is None:
         render_indices: list[int] = list(range(n_render))
         settled_idx = -1
@@ -3294,6 +3686,11 @@ def _with_masonry_layer_origin(
     overlay: dict,
 ) -> dict[str, Any]:
     """Carry compositor-only board origin metadata alongside the PNG sequence."""
+    # Guided-story strict receipts tie the actual rendered alpha sequence back
+    # to its approved TextElement. Other callers omit this private field and
+    # retain their exact sequence shape.
+    if overlay.get("element_id"):
+        sequence["element_id"] = str(overlay["element_id"])
     origin = _masonry_layer_origin(overlay)
     if origin is not None:
         sequence["layer_origin_x_px"] = origin
@@ -3376,6 +3773,13 @@ def _sequence_head_settle_s(overlay: dict) -> float | None:
     if _theme_transition_type(overlay) is not None:
         return None
     effect = overlay.get("effect", "none")
+    motion = overlay.get("motion")
+    if (
+        effect in V2_HOLDABLE_TEXT_EFFECTS
+        and isinstance(motion, dict)
+        and motion.get("version") == 2
+    ):
+        return renderer_settle_duration_s(effect, _overlay_text(overlay), motion)
     if effect == "fade-in":
         return _FADE_IN_SETTLE_S
     if effect in {"handwriting", "ink-reveal"}:
@@ -3391,6 +3795,17 @@ def _sequence_head_settle_s(overlay: dict) -> float | None:
     return None
 
 
+def _sequence_tail_change_s(overlay: dict, duration_s: float) -> float:
+    tail_s = _sequence_fade_out_ms(overlay) / 1000.0
+    motion = overlay.get("motion")
+    if isinstance(motion, dict) and motion.get("version") == 2:
+        tail_s = max(
+            tail_s,
+            round_output_frame(normalize_text_motion(overlay.get("effect", "none"), motion).exit_s),
+        )
+    return min(duration_s, tail_s)
+
+
 def _sequence_block_changing_at(overlay: dict, t_local: float, duration_s: float) -> bool:
     """True when the block's pixels can differ from the adjacent frame's:
     inside the fade-in head, inside the fade-out tail, or (unknown effect)
@@ -3401,7 +3816,7 @@ def _sequence_block_changing_at(overlay: dict, t_local: float, duration_s: float
         return True
     if t_local < min(settle_s, duration_s):
         return True
-    fade_out_s = min(_sequence_fade_out_ms(overlay) / 1000.0, duration_s)
+    fade_out_s = _sequence_tail_change_s(overlay, duration_s)
     return fade_out_s > 0 and t_local >= duration_s - fade_out_s
 
 
@@ -3659,6 +4074,10 @@ def render_text_overlay_sequences(
     if not overlays:
         return [], None
 
+    complexity_error = text_motion_complexity_error(overlays)
+    if complexity_error is not None:
+        raise ValueError(complexity_error)
+
     # Resolve the timing window: production caller passes ABS_PASS_TIME_S /
     # ABS_PASS_SLOT_INDEX sentinels meaning "use the final-pass duration".
     # The overlays carry absolute timestamps already; we only need a permissive
@@ -3798,6 +4217,116 @@ def burn_text_overlays_skia(
         # encode above. Free them the instant it returns so they don't pile up on
         # the worker's RAM-backed scratch across overlays and (serial) variants —
         # this is what was filling /tmp and OOM/timeout-killing renders in prod.
+        if work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def _sequence_alpha_evidence(
+    sequences: list[dict[str, Any]],
+    *,
+    required_element_ids: list[str],
+    canvas: Canvas,
+    safe_margin_px: int = 8,
+) -> list[dict[str, Any]]:
+    """Measure actual renderer PNG alpha for strict guided-story receipts.
+
+    We inspect generated frames rather than trusting overlay intent. A required
+    element is visible only when at least one sampled frame has non-trivial
+    alpha and its pixel bounds sit fully inside the canvas safe margin.
+    """
+
+    evidence: dict[str, dict[str, Any]] = {
+        element_id: {
+            "element_id": element_id,
+            "visible": False,
+            "peak_alpha": 0,
+            "pixel_bounds": None,
+            "sampled_frames": 0,
+        }
+        for element_id in required_element_ids
+    }
+    for sequence in sequences:
+        element_id = sequence.get("element_id")
+        if not element_id or element_id not in evidence:
+            continue
+        n_frames = max(1, int(sequence.get("n_frames") or 1))
+        indices = sorted({0, n_frames // 2, n_frames - 1})
+        bounds: tuple[int, int, int, int] | None = None
+        peak_alpha = 0
+        sampled = 0
+        pattern = str(sequence.get("pattern") or "")
+        for index in indices:
+            try:
+                path = pattern % index
+            except (TypeError, ValueError):
+                path = str(sequence.get("first_frame") or "")
+            if not path or not os.path.exists(path):
+                continue
+            with Image.open(path).convert("RGBA") as image:
+                alpha = image.getchannel("A")
+                sampled += 1
+                frame_peak = int(alpha.getextrema()[1])
+                peak_alpha = max(peak_alpha, frame_peak)
+                frame_bounds = alpha.point(lambda value: 255 if value >= 12 else 0).getbbox()
+                if frame_bounds is None:
+                    continue
+                if bounds is None:
+                    bounds = frame_bounds
+                else:
+                    bounds = (
+                        min(bounds[0], frame_bounds[0]),
+                        min(bounds[1], frame_bounds[1]),
+                        max(bounds[2], frame_bounds[2]),
+                        max(bounds[3], frame_bounds[3]),
+                    )
+        within_safe_area = bool(
+            bounds
+            and bounds[0] >= safe_margin_px
+            and bounds[1] >= safe_margin_px
+            and bounds[2] <= canvas.width - safe_margin_px
+            and bounds[3] <= canvas.height - safe_margin_px
+        )
+        current = evidence[element_id]
+        current["sampled_frames"] += sampled
+        current["peak_alpha"] = max(int(current["peak_alpha"]), peak_alpha)
+        if bounds is not None:
+            current["pixel_bounds"] = list(bounds)
+        current["visible"] = bool(peak_alpha >= 12 and within_safe_area)
+    return list(evidence.values())
+
+
+def burn_text_overlays_skia_with_evidence(
+    input_path: str,
+    overlays: list[dict],
+    output_path: str,
+    tmpdir: str,
+    *,
+    required_element_ids: list[str],
+    matte: SubjectMatteProvider | None = None,
+    canvas: Canvas = PORTRAIT,
+    input_probe: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Strict guided burn returning per-TextElement rendered-alpha evidence."""
+
+    _validate_input_canvas(input_path, canvas, input_probe=input_probe)
+    sequences, work_dir = render_text_overlay_sequences(
+        overlays,
+        tmpdir,
+        matte=matte,
+        **_canvas_kwargs(canvas),
+    )
+    try:
+        evidence = _sequence_alpha_evidence(
+            sequences,
+            required_element_ids=required_element_ids,
+            canvas=canvas,
+        )
+        if not sequences:
+            shutil.copy2(input_path, output_path)
+            return evidence
+        _ffmpeg_burn_pngs(input_path, sequences, output_path, **_canvas_kwargs(canvas))
+        return evidence
+    finally:
         if work_dir:
             shutil.rmtree(work_dir, ignore_errors=True)
 

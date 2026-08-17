@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * EditorCanvas — the center 9:16 preview of the TikTok-parity editor shell.
+ * EditorCanvas — the center output-format preview of the editor shell.
  *
  * Renders the text-free base video with overlay text from the LOCAL working
  * bars (bug #6 fix: the editor's working state feeds the overlay, never the
@@ -34,7 +34,7 @@ import type {
   TimelineClip,
 } from "@/lib/generative-api";
 import CarouselBlockPreview from "./CarouselBlockPreview";
-import { mapVirtualTime } from "./virtual-timeline";
+import { mapVirtualTime, transitionPreviewAtTime } from "./virtual-timeline";
 import { lookPreviewStyles } from "@/lib/look-presets";
 import { cameraScaleAt } from "@/lib/camera-effects";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -61,13 +61,19 @@ import {
   themeTransitionStateAt,
 } from "@/lib/overlay-animation";
 import { INTRO_FONTS, MAX_INTRO_S, type OverlayCanvas } from "@/lib/overlay-constants";
-import { StableVideo } from "@/components/StableVideo";
+import { smoothTypeLineProgresses, textMotionPreviewDurationS } from "@/lib/text-motion-v2";
+import { StableVideo, stableVideoSourceIdentity } from "@/components/StableVideo";
 import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
 import {
   TextElementOverlayContent,
+  smoothTypePreviewLayout,
   textElementContentStyle,
   textElementWrapperStyle,
+  useSmoothTypeFontRevision,
 } from "../components/TextElementOverlayLayer";
+
+const TEXT_MOTION_V2_UI_ENABLED =
+  process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED === "true";
 import { StaggeredSliceText } from "@/components/variant-editor/StaggeredSliceText";
 import {
   clampMediaOverlayPosition,
@@ -87,7 +93,11 @@ import {
 } from "./editor-smart-placement";
 import VisualBlocksLayer from "./VisualBlocksLayer";
 import MotionCanvasLayer from "./MotionCanvasLayer";
-import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
+import type { MotionPresetInstance } from "@nova/motion-runtime";
+import {
+  useEditorPlaybackTime,
+  type EditorPlaybackClock,
+} from "./editor-playback-clock";
 
 /** Min/max font size (1080×1920 canvas px) reachable via corner-drag scale.
  * Wider than the inspector's INTRO_SIZE envelope on purpose — the canvas can
@@ -100,6 +110,36 @@ const DEFAULT_CAPTION_SIZE_PX = 78;
 const DEFAULT_CAPTION_COLOR = "#FFFFFF";
 const DEFAULT_CAPTION_HIGHLIGHT_COLOR = "#A3E635";
 const DEFAULT_CAPTION_STROKE_WIDTH = 2;
+
+function PlaybackFrame({
+  clock,
+  fallbackTimeS,
+  children,
+}: {
+  clock?: EditorPlaybackClock | null;
+  fallbackTimeS: number;
+  children: (timeS: number) => React.ReactNode;
+}) {
+  const timeS = useEditorPlaybackTime(clock, fallbackTimeS);
+  return children(timeS);
+}
+
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(media.matches);
+    update();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener("change", update);
+    }
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+  return reduced;
+}
 
 function captionPreviewShadow(strokePx: number, shadowEnabled: boolean): string | undefined {
   const shadows: string[] = [];
@@ -159,25 +199,6 @@ interface DragState {
   hits: string[];
 }
 
-function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return;
-    }
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => setReduced(media.matches);
-    update();
-    if (typeof media.addEventListener === "function") {
-      media.addEventListener("change", update);
-      return () => media.removeEventListener("change", update);
-    }
-    media.addListener(update);
-    return () => media.removeListener(update);
-  }, []);
-  return reduced;
-}
-
 type DragOverride =
   | {
       target: "text";
@@ -214,7 +235,8 @@ export default function EditorCanvas({
   selectedOverlayId,
   flashTextIds,
   flashOverlayIds,
-  currentTime,
+  currentTime: committedCurrentTime,
+  playbackClock,
   lookPreset = "none",
   lookAdjustments = null,
   virtualDeckLookPresets = { a: "none", b: "none" },
@@ -250,7 +272,7 @@ export default function EditorCanvas({
   bars: TextElementBar[];
   mediaOverlays?: MediaOverlay[];
   visualBlocks?: VisualBlock[];
-  motionScenes?: MotionPresetInstanceV1[];
+  motionScenes?: MotionPresetInstance[];
   motionRuntimeHash?: string | null;
   cameraEffects?: CameraEffect[];
   visualAssets?: PoolAsset[];
@@ -265,6 +287,9 @@ export default function EditorCanvas({
   flashTextIds?: Set<string>;
   flashOverlayIds?: Set<string>;
   currentTime: number;
+  /** Output-timeline frame clock. Only this authored preview layer subscribes;
+   * the editor shell keeps using committed transport time. */
+  playbackClock?: EditorPlaybackClock | null;
   /** Close CSS approximation; the saved FFmpeg render is authoritative. */
   lookPreset?: LookPreset;
   lookAdjustments?: LookAdjustments | null;
@@ -323,13 +348,19 @@ export default function EditorCanvas({
   /** Output canvas dimensions used for layout projection. Defaults to portrait. */
   canvas?: OverlayCanvas;
 }) {
+  // The canvas shell stays on committed time. Only PlaybackFrame and the
+  // dedicated authored layers below subscribe to decoded-frame cadence.
+  const currentTime = committedCurrentTime;
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const overlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const mediaOverlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const virtualDeckAContainerRef = useRef<HTMLDivElement>(null);
+  const virtualDeckBContainerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const emptyVideoRef = useRef<HTMLVideoElement | null>(null);
+  const renderedIdentityRef = useRef<string | null | undefined>(undefined);
 
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -342,6 +373,70 @@ export default function EditorCanvas({
   // PATCH_BAR dispatch happens on pointerup, not per pointermove).
   const [dragOverride, setDragOverride] = useState<DragOverride | null>(null);
   const reducedMotion = usePrefersReducedMotion();
+  const settleAuthoredMotion = !playbackClock && reducedMotion;
+  const renderedIdentity = variant.base_video_url
+    ? stableVideoSourceIdentity(variant.base_video_url, variant.base_video_path ?? undefined)
+    : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+  // Render-phase ref update closes the passive-effect gap on source swaps:
+  // a queued callback from the prior identity is rejected even before the old
+  // effect cleanup runs.
+  renderedIdentityRef.current = renderedIdentity;
+
+  // Rendered-preview mode has one stable video instead of the virtual dual
+  // deck. Publish its decoded media time to the same output clock. Virtual
+  // preview owns this when its deck controller is present.
+  useEffect(() => {
+    if (!playbackClock || virtualPreview || !playing) return;
+    const video = videoRef.current;
+    if (!video || typeof video.requestVideoFrameCallback !== "function") return;
+
+    let live = true;
+    let callbackId = 0;
+    let generation = 0;
+    const effectIdentity = renderedIdentity;
+    const schedule = (expectedGeneration: number) => {
+      const sample: VideoFrameRequestCallback = (_now, metadata) => {
+        if (
+          !live ||
+          generation !== expectedGeneration ||
+          renderedIdentityRef.current !== effectIdentity
+        ) return;
+        playbackClock.publish(metadata.mediaTime);
+        schedule(expectedGeneration);
+      };
+      callbackId = video.requestVideoFrameCallback(sample);
+    };
+    const restart = () => {
+      if (!live) return;
+      generation += 1;
+      if (callbackId) video.cancelVideoFrameCallback(callbackId);
+      playbackClock.publish(video.currentTime);
+      schedule(generation);
+    };
+    const recoverVisibility = () => {
+      if (document.visibilityState === "visible") restart();
+    };
+
+    restart();
+    video.addEventListener("seeked", restart);
+    video.addEventListener("ratechange", restart);
+    video.addEventListener("canplay", restart);
+    document.addEventListener("visibilitychange", recoverVisibility);
+    return () => {
+      live = false;
+      if (callbackId) video.cancelVideoFrameCallback(callbackId);
+      video.removeEventListener("seeked", restart);
+      video.removeEventListener("ratechange", restart);
+      video.removeEventListener("canplay", restart);
+      document.removeEventListener("visibilitychange", recoverVisibility);
+    };
+  }, [
+    playbackClock,
+    playing,
+    videoRef,
+    virtualPreview,
+    renderedIdentity,
+  ]);
 
   // Measure the stage so 1080×1920-scale px project onto the rendered box.
   useEffect(() => {
@@ -357,26 +452,27 @@ export default function EditorCanvas({
 
   const layouts = useMemo(() => resolveTextElementsLayout(elements, canvas), [elements, canvas]);
   const barById = useMemo(() => new Map(bars.map((b) => [b.id, b])), [bars]);
+  const smoothFontRevision = useSmoothTypeFontRevision(layouts);
+  const smoothPreviewById = useMemo(() => {
+    void smoothFontRevision;
+    return new Map(
+      layouts
+        .filter((layout) => (barById.get(layout.id)?.effect ?? layout.effect) === "smooth-type")
+        .map((layout) => [layout.id, smoothTypePreviewLayout(layout)]),
+    );
+  }, [barById, layouts, smoothFontRevision]);
 
-  // Elements visible at the playhead (the working bars' own timing).
-  const visible = useMemo(
-    () =>
-      layouts.filter((layout) => {
-        const tLocal = currentTime - layout.start_s;
-        const durationS = layout.end_s - layout.start_s;
-        if ((barById.get(layout.id)?.effect ?? "static") === "staggered-slice") {
-          return staggeredSlicePreviewVisibleAt(tLocal, durationS, playing);
-        }
-        return tLocal >= 0 && tLocal < durationS;
-      }),
-    [barById, currentTime, layouts, playing],
-  );
-  const visibleMediaOverlays = useMemo(
-    () => visibleMediaOverlaysAtTime(mediaOverlays, currentTime, overlayPreviewUrls),
-    [currentTime, mediaOverlays, overlayPreviewUrls],
-  );
+  const visibleAt = (timeS: number) =>
+    layouts.filter((layout) => {
+      const tLocal = timeS - layout.start_s;
+      const durationS = layout.end_s - layout.start_s;
+      if ((barById.get(layout.id)?.effect ?? "static") === "staggered-slice") {
+        return staggeredSlicePreviewVisibleAt(tLocal, durationS, playing);
+      }
+      return tLocal >= 0 && tLocal < durationS;
+    });
   const captionPreviewUsesCleanBase = Boolean(variant.base_video_url || virtualPreview);
-  const visibleCaption = useMemo((): {
+  const visibleCaptionAt = (timeS: number): {
     text: string;
     bar: TextElementBar;
     wordMode: boolean;
@@ -394,7 +490,7 @@ export default function EditorCanvas({
       return null;
     }
     const bar = bars.filter(isCaptionBar).find(
-      (candidate) => currentTime >= candidate.start_s && currentTime < candidate.end_s,
+      (candidate) => timeS >= candidate.start_s && timeS < candidate.end_s,
     );
     if (!bar) return null;
     const cueIndex = Number(bar.id.match(/^caption-(\d+)$/)?.[1]);
@@ -406,13 +502,15 @@ export default function EditorCanvas({
       originalCue?.text === bar.text;
     if (wordMode) {
       const activeWord = originalWords.find(
-        (word) => currentTime >= word.start_s && currentTime < word.end_s,
+        (word) => timeS >= word.start_s && timeS < word.end_s,
       )?.text;
       return activeWord ? { text: activeWord, bar, wordMode: true } : null;
     }
     return { text: bar.text, bar, wordMode: false };
-  }, [bars, captionPreviewUsesCleanBase, captionsEnabled, currentTime, variant]);
-  const captionPreviewStyle = useMemo(() => {
+  };
+  const captionPreviewStyleFor = (
+    visibleCaption: ReturnType<typeof visibleCaptionAt>,
+  ) => {
     const bar = visibleCaption?.bar;
     // Per-cue override BEFORE the variant-wide value, matching the inspector's
     // own precedence for the "This caption" section (`cue_* ?? global`).
@@ -446,7 +544,7 @@ export default function EditorCanvas({
       fontSizePx: stageSize.h > 0 ? (sizePx / canvas.h) * stageSize.h : 0,
       textShadow: captionPreviewShadow(scaledStroke, shadowEnabled),
     };
-  }, [canvas.h, stageSize.h, variant, visibleCaption]);
+  };
 
   const src = variant.base_video_url ?? variant.output_url ?? null;
   const hasPreview = Boolean(src || virtualPreview);
@@ -466,20 +564,34 @@ export default function EditorCanvas({
   // carousel entry on the virtual timeline — both decks are already paused
   // by useVirtualPreview's own gate (showMapping's `entry.kind !== "clip"`
   // branch), this just decides whether to paint the placeholder OVER them.
-  const carouselMapping = virtualPreview
-    ? mapVirtualTime(virtualPreview.timeline, currentTime)
-    : null;
-  const activeCarouselEntry =
-    carouselMapping?.entry.kind === "carousel" ? carouselMapping.entry : null;
-  const virtualTransition = virtualPreview?.transitionPreview ?? null;
-  const displayedCarouselEntry =
-    activeCarouselEntry ?? virtualTransition?.carouselEntry ?? null;
-  const transitionProgress = virtualTransition?.progress ?? 0;
-  const transitionOverlayOpacity =
-    virtualTransition?.kind === "dip_to_black" || virtualTransition?.kind === "flash"
-      ? 1 - Math.abs(transitionProgress * 2 - 1)
-      : 0;
-  const virtualDeckStyle = (deck: "a" | "b"): React.CSSProperties => {
+  const virtualFrameStateAt = (timeS: number) => {
+    const carouselMapping = virtualPreview
+      ? mapVirtualTime(virtualPreview.timeline, timeS)
+      : null;
+    const activeCarouselEntry =
+      carouselMapping?.entry.kind === "carousel" ? carouselMapping.entry : null;
+    const virtualTransition = virtualPreview
+      ? transitionPreviewAtTime(virtualPreview.timeline, timeS)
+      : null;
+    const displayedCarouselEntry =
+      activeCarouselEntry ?? virtualTransition?.carouselEntry ?? null;
+    const transitionProgress = virtualTransition?.progress ?? 0;
+    const transitionOverlayOpacity =
+      virtualTransition?.kind === "dip_to_black" || virtualTransition?.kind === "flash"
+        ? 1 - Math.abs(transitionProgress * 2 - 1)
+        : 0;
+    return {
+      displayedCarouselEntry,
+      transitionOverlayOpacity,
+      transitionProgress,
+      virtualTransition,
+    };
+  };
+  const virtualDeckStyleAt = (
+    deck: "a" | "b",
+    virtualTransition: ReturnType<typeof transitionPreviewAtTime>,
+    transitionProgress: number,
+  ): React.CSSProperties => {
     const isActive = virtualPreview?.activeDeck === deck;
     if (virtualTransition?.carouselRole === "incoming") {
       return { opacity: isActive ? 1 : 0, zIndex: EDITOR_STAGE_Z.video };
@@ -496,9 +608,7 @@ export default function EditorCanvas({
         : 0;
     return { opacity, zIndex: EDITOR_STAGE_Z.video };
   };
-  const identity = variant.base_video_url
-    ? (variant.base_video_path ?? undefined)
-    : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+  const identity = renderedIdentity;
 
   useSfxPreview(
     videoRef,
@@ -521,12 +631,11 @@ export default function EditorCanvas({
   function hitsAtPoint(clientX: number, clientY: number): string[] {
     // Topmost first: render order is array order (last-in-array = top).
     const out: Array<{ id: string; z: number }> = [];
-    visible.forEach((l, i) => {
-      const el = overlayRefs.current.get(l.id);
+    overlayRefs.current.forEach((el, id) => {
       if (!el) return;
       const r = el.getBoundingClientRect();
       if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-        out.push({ id: l.id, z: i });
+        out.push({ id, z: layouts.findIndex((layout) => layout.id === id) });
       }
     });
     return out.sort((a, b) => b.z - a.z).map((h) => h.id);
@@ -896,28 +1005,30 @@ export default function EditorCanvas({
   }
 
   const zoom = zoomPct / 100;
+  const outputFormatLabel = canvas.w > canvas.h ? "16:9 landscape" : "9:16 portrait";
   // Unsaved orientation changes still display the previously rendered video.
   // In landscape, cover-crop that source so the canvas previews the same
   // centered 16:9 composition the server will produce on Save. Portrait keeps
   // its historical contain behavior.
   const videoFitClass = canvas.w > canvas.h ? "object-cover" : "object-contain";
-  const cameraScale = cameraScaleAt(cameraEffects, currentTime);
   const activeLookStyles = lookPreviewStyles(lookPreset, lookAdjustments);
-  const baseCameraTransform = {
-    transform: `scale(${cameraScale})`,
+  const cameraTransformAt = (timeS: number): React.CSSProperties => ({
+    transform: `scale(${cameraScaleAt(cameraEffects, timeS)})`,
     transformOrigin: "50% 50%",
     zIndex: EDITOR_STAGE_Z.video,
-  };
-  const cameraTransform = {
-    ...baseCameraTransform,
     ...activeLookStyles.video,
-  };
-  const virtualVideoStyle = (deck: "a" | "b"): React.CSSProperties => {
+  });
+  const virtualVideoStyleAt = (deck: "a" | "b", timeS: number): React.CSSProperties => {
     const styles = lookPreviewStyles(
       virtualDeckLookPresets[deck],
       virtualDeckLookAdjustments[deck],
     );
-    return { ...baseCameraTransform, ...styles.video };
+    return {
+      transform: `scale(${cameraScaleAt(cameraEffects, timeS)})`,
+      transformOrigin: "50% 50%",
+      zIndex: EDITOR_STAGE_Z.video,
+      ...styles.video,
+    };
   };
   const lookPreviewLayers = (
     preset: LookPreset,
@@ -965,32 +1076,81 @@ export default function EditorCanvas({
     );
   };
   const cssPixelsPerCanvasPixel = stageSize.h > 0 ? stageSize.h / canvas.h : 0;
-  const dissolvePreviewProgress = reducedMotion
-    ? 0
-    : Math.max(
-        0,
-        ...visible.map((layout) => {
-          const effect = barById.get(layout.id)?.effect ?? "static";
-          return effect === "dissolve-out"
-            ? dissolveOutProgressAt(currentTime - layout.start_s, layout.end_s - layout.start_s)
-            : 0;
-        }),
-        ...visibleMediaOverlays.map(({ card }) =>
-          card.exit_token === "dissolve-out"
-            ? dissolveOutProgressAt(currentTime - card.start_s, card.end_s - card.start_s)
-            : 0,
-        ),
-      );
-  const dissolvePreviewScale = dissolveOutDisplacementScaleAt(
-    dissolvePreviewProgress,
-    cssPixelsPerCanvasPixel,
-    true,
-  );
+  const dissolvePreviewScaleAt = (
+    timeS: number,
+    frameVisible: ReturnType<typeof visibleAt>,
+    frameMediaOverlays: ReturnType<typeof visibleMediaOverlaysAtTime>,
+  ) => {
+    const progress = settleAuthoredMotion
+      ? 0
+      : Math.max(
+          0,
+          ...frameVisible.map((layout) => {
+            const effect = barById.get(layout.id)?.effect ?? "static";
+            return effect === "dissolve-out"
+              ? dissolveOutProgressAt(timeS - layout.start_s, layout.end_s - layout.start_s)
+              : 0;
+          }),
+          ...frameMediaOverlays.map(({ card }) =>
+            card.exit_token === "dissolve-out"
+              ? dissolveOutProgressAt(timeS - card.start_s, card.end_s - card.start_s)
+              : 0,
+          ),
+        );
+    return dissolveOutDisplacementScaleAt(progress, cssPixelsPerCanvasPixel, true);
+  };
+  const committedVirtualFrame = virtualFrameStateAt(currentTime);
+
+  // Keep stable media DOM out of React's decoded-frame render path. Only the
+  // compositor styles that actually change with time are written here; the
+  // authored overlay, transition overlay, and carousel each have their own
+  // narrow PlaybackFrame subscriber below.
+  useEffect(() => {
+    if (!playbackClock) return;
+    const updateMediaStyles = () => {
+      const timeS = playbackClock.getSnapshot();
+      const transition = virtualPreview
+        ? transitionPreviewAtTime(virtualPreview.timeline, timeS)
+        : null;
+      const progress = transition?.progress ?? 0;
+      const deckStyle = (deck: "a" | "b") => {
+        const isActive = virtualPreview?.activeDeck === deck;
+        if (transition?.carouselRole === "incoming") {
+          return { opacity: isActive ? 1 : 0, zIndex: EDITOR_STAGE_Z.video };
+        }
+        if (transition?.carouselRole === "outgoing") {
+          return { opacity: isActive ? 0 : 1, zIndex: EDITOR_STAGE_Z.video };
+        }
+        return {
+          opacity: transition ? (isActive ? 1 - progress : progress) : isActive ? 1 : 0,
+          zIndex: EDITOR_STAGE_Z.video,
+        };
+      };
+      const deckAStyle = deckStyle("a");
+      const deckBStyle = deckStyle("b");
+      Object.assign(virtualDeckAContainerRef.current?.style ?? {}, deckAStyle);
+      Object.assign(virtualDeckBContainerRef.current?.style ?? {}, deckBStyle);
+      if (virtualVideoARef?.current) {
+        virtualVideoARef.current.style.transform = `scale(${cameraScaleAt(cameraEffects, timeS)})`;
+      }
+      if (virtualVideoBRef?.current) {
+        virtualVideoBRef.current.style.transform = `scale(${cameraScaleAt(cameraEffects, timeS)})`;
+      }
+      if (!virtualPreview && videoRef.current) {
+        videoRef.current.style.transform = `scale(${cameraScaleAt(cameraEffects, timeS)})`;
+      }
+    };
+    updateMediaStyles();
+    return playbackClock.subscribe(updateMediaStyles);
+  }, [cameraEffects, playbackClock, videoRef, virtualPreview, virtualVideoARef, virtualVideoBRef]);
 
   return (
     <div
       ref={viewportRef}
       data-region="canvas"
+      data-output-orientation={canvas.w > canvas.h ? "landscape" : "portrait"}
+      role="region"
+      aria-label={`Video canvas, ${outputFormatLabel}`}
       data-look-preview={lookPreset}
       className={`relative h-full w-full min-h-0 min-w-0 overflow-auto bg-[#fafaf8] ${
         tool === "pan" && zoom > 1 ? "cursor-grab active:cursor-grabbing" : ""
@@ -1023,6 +1183,20 @@ export default function EditorCanvas({
               if (tool === "select" && e.target === e.currentTarget) onClearSelection();
             }}
           >
+            <PlaybackFrame clock={playbackClock} fallbackTimeS={currentTime}>
+              {(frameTime) => {
+                const frameVisible = visibleAt(frameTime);
+                const frameMediaOverlays = visibleMediaOverlaysAtTime(
+                  mediaOverlays,
+                  frameTime,
+                  overlayPreviewUrls,
+                );
+                const dissolvePreviewScale = dissolvePreviewScaleAt(
+                  frameTime,
+                  frameVisible,
+                  frameMediaOverlays,
+                );
+                return (
             <svg
               aria-hidden
               className="pointer-events-none absolute h-0 w-0"
@@ -1075,11 +1249,19 @@ export default function EditorCanvas({
                 </filter>
               </defs>
             </svg>
+                );
+              }}
+            </PlaybackFrame>
             {virtualPreview ? (
               <>
                 <div
+                  ref={virtualDeckAContainerRef}
                   className="pointer-events-none absolute inset-0 overflow-hidden"
-                  style={virtualDeckStyle("a")}
+                  style={virtualDeckStyleAt(
+                    "a",
+                    committedVirtualFrame.virtualTransition,
+                    committedVirtualFrame.transitionProgress,
+                  )}
                   data-look-preview-deck="a"
                   data-look-preset={virtualDeckLookPresets.a}
                 >
@@ -1087,7 +1269,7 @@ export default function EditorCanvas({
                     {...virtualVideoAProps}
                     ref={virtualVideoARef}
                     className={`pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`}
-                    style={virtualVideoStyle("a")}
+                    style={virtualVideoStyleAt("a", currentTime)}
                   />
                   {lookPreviewLayers(
                     virtualDeckLookPresets.a,
@@ -1095,8 +1277,13 @@ export default function EditorCanvas({
                   )}
                 </div>
                 <div
+                  ref={virtualDeckBContainerRef}
                   className="pointer-events-none absolute inset-0 overflow-hidden"
-                  style={virtualDeckStyle("b")}
+                  style={virtualDeckStyleAt(
+                    "b",
+                    committedVirtualFrame.virtualTransition,
+                    committedVirtualFrame.transitionProgress,
+                  )}
                   data-look-preview-deck="b"
                   data-look-preset={virtualDeckLookPresets.b}
                 >
@@ -1104,25 +1291,31 @@ export default function EditorCanvas({
                     {...virtualVideoBProps}
                     ref={virtualVideoBRef}
                     className={`pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`}
-                    style={virtualVideoStyle("b")}
+                    style={virtualVideoStyleAt("b", currentTime)}
                   />
                   {lookPreviewLayers(
                     virtualDeckLookPresets.b,
                     virtualDeckLookAdjustments.b,
                   )}
                 </div>
-                {transitionOverlayOpacity > 0 && (
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute inset-0"
-                    style={{
-                      backgroundColor:
-                        virtualTransition?.kind === "flash" ? "#ffffff" : "#000000",
-                      opacity: transitionOverlayOpacity,
-                      zIndex: EDITOR_STAGE_Z.video + 2,
-                    }}
-                  />
-                )}
+                <PlaybackFrame clock={playbackClock} fallbackTimeS={currentTime}>
+                  {(frameTime) => {
+                    const { transitionOverlayOpacity, virtualTransition } =
+                      virtualFrameStateAt(frameTime);
+                    return transitionOverlayOpacity > 0 ? (
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0"
+                        style={{
+                          backgroundColor:
+                            virtualTransition?.kind === "flash" ? "#ffffff" : "#000000",
+                          opacity: transitionOverlayOpacity,
+                          zIndex: EDITOR_STAGE_Z.video + 2,
+                        }}
+                      />
+                    ) : null;
+                  }}
+                </PlaybackFrame>
                 {virtualMusicAudioProps && (
                   <audio
                     {...virtualMusicAudioProps}
@@ -1130,8 +1323,12 @@ export default function EditorCanvas({
                     className="hidden"
                   />
                 )}
-                {displayedCarouselEntry && carouselMoment && (
-                  <div
+                <PlaybackFrame clock={playbackClock} fallbackTimeS={currentTime}>
+                  {(frameTime) => {
+                    const { displayedCarouselEntry, transitionProgress, virtualTransition } =
+                      virtualFrameStateAt(frameTime);
+                    return displayedCarouselEntry && carouselMoment ? (
+                    <div
                     className="absolute inset-0 overflow-hidden"
                     style={{
                       zIndex: EDITOR_STAGE_Z.video + 3,
@@ -1165,31 +1362,48 @@ export default function EditorCanvas({
                       <CarouselBlockPreview
                         config={carouselMoment}
                         clips={carouselClips}
-                        currentTimeS={currentTime}
+                        currentTimeS={frameTime}
                         blockStartS={displayedCarouselEntry.startS}
                         durationS={displayedCarouselEntry.durationS}
                         isPlaying={playing}
                       />
                     </div>
-                  </div>
-                )}
+                    </div>
+                    ) : null;
+                  }}
+                </PlaybackFrame>
               </>
             ) : src ? (
               <StableVideo
                 ref={videoRef}
                 src={src}
-                identity={identity}
+                identity={identity ?? undefined}
                 playsInline
                 preload="auto"
                 className={`pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`}
-                style={cameraTransform}
-                onTimeUpdate={(e) => onTimeUpdate((e.target as HTMLVideoElement).currentTime)}
+                style={cameraTransformAt(currentTime)}
+                onTimeUpdate={(e) => {
+                  const video = e.target as HTMLVideoElement;
+                  if (
+                    playbackClock &&
+                    typeof video.requestVideoFrameCallback !== "function"
+                  ) {
+                    playbackClock.publish(video.currentTime);
+                  }
+                  onTimeUpdate(video.currentTime);
+                }}
                 onLoadedMetadata={(e) => {
                   const d = (e.target as HTMLVideoElement).duration;
                   if (isFinite(d) && d > 0) onDuration(d);
                 }}
                 onPlay={() => onPlayingChange?.(true)}
-                onPause={() => onPlayingChange?.(false)}
+                onPause={(event) => {
+                  if (playbackClock) {
+                    playbackClock.publish(event.currentTarget.currentTime);
+                    onTimeUpdate(event.currentTarget.currentTime);
+                  }
+                  onPlayingChange?.(false);
+                }}
                 // Frame under the playhead not yet decoded → shimmer (never move
                 // the playhead against a silently frozen frame).
                 onWaiting={() => setBuffering(true)}
@@ -1225,6 +1439,9 @@ export default function EditorCanvas({
               blocks={visualBlocks}
               assets={visualAssets}
               currentTime={currentTime}
+              frameDriven={Boolean(playbackClock)}
+              playbackClock={playbackClock}
+              playing={playing}
             />
             <MotionCanvasLayer
               instances={motionScenes}
@@ -1235,10 +1452,23 @@ export default function EditorCanvas({
               height={canvas.h}
               runtimeHash={motionRuntimeHash}
               videoRef={videoRef}
+              frameDriven={Boolean(playbackClock)}
+              playbackClock={playbackClock}
             />
 
             {/* Deselect layer over the video (the <video> is pointer-events-none,
                 so clicks on footage land here). */}
+            <PlaybackFrame clock={playbackClock} fallbackTimeS={currentTime}>
+              {(frameTime) => {
+                const frameVisible = visibleAt(frameTime);
+                const frameMediaOverlays = visibleMediaOverlaysAtTime(
+                  mediaOverlays,
+                  frameTime,
+                  overlayPreviewUrls,
+                );
+                const visibleCaption = visibleCaptionAt(frameTime);
+                const captionPreviewStyle = captionPreviewStyleFor(visibleCaption);
+                return <>
             {hasPreview && (
               <div
                 className="absolute inset-0"
@@ -1309,12 +1539,12 @@ export default function EditorCanvas({
                     )}
                   </div>
                 )}
-                {visibleMediaOverlays.map((overlay) => (
+                {frameMediaOverlays.map((overlay) => (
                   <MediaOverlayCard
                     key={overlay.card.id}
                     overlay={overlay}
-                    currentTimeS={currentTime}
-                    reducedMotion={reducedMotion}
+                    currentTimeS={frameTime}
+                    reducedMotion={settleAuthoredMotion}
                     selected={selectedOverlayId === overlay.card.id}
                     flashing={flashOverlayIds?.has(overlay.card.id) ?? false}
                     suggested={suggestedOverlayIds?.has(overlay.card.id) ?? false}
@@ -1341,7 +1571,7 @@ export default function EditorCanvas({
                     }
                   />
                 ))}
-                {visible.map((layout) => {
+                {frameVisible.map((layout) => {
                   const bar = barById.get(layout.id);
                   const override =
                     dragOverride?.target === "text" && dragOverride.id === layout.id
@@ -1355,7 +1585,7 @@ export default function EditorCanvas({
                       : baseMotion;
                   const xFrac =
                     masonryBoardXFrac(motion, localXFrac) -
-                    masonryMotionOffsetFrac(motion, currentTime);
+                    masonryMotionOffsetFrac(motion, frameTime);
                   const yFrac = override?.y_frac ?? layout.yFrac;
                   const sizePx = override?.size_px ?? layout.sizePx;
                   const maxWidthFrac = override?.max_width_frac ?? layout.maxWidthFrac;
@@ -1374,26 +1604,34 @@ export default function EditorCanvas({
                       ? EDITOR_STAGE_Z.selectionHandle
                       : EDITOR_STAGE_Z.textOverlay;
                   const effect = bar?.effect ?? "static";
+                  const animationDurationS = textMotionPreviewDurationS(
+                    layout.end_s - layout.start_s,
+                    bar?.motion,
+                    TEXT_MOTION_V2_UI_ENABLED,
+                    MAX_INTRO_S,
+                  );
                   const animation = animationStateAt(
                     effect,
-                    Math.max(0, currentTime - layout.start_s),
-                    Math.min(MAX_INTRO_S, Math.max(0.01, layout.end_s - layout.start_s)),
+                    Math.max(0, frameTime - layout.start_s),
+                    animationDurationS,
                     layout.text,
                     {
                       revealScheduleS: bar?.source_params?.reveal_schedule_s,
                       absoluteStartS: layout.start_s,
+                      motion: bar?.motion,
+                      motionV2Enabled: TEXT_MOTION_V2_UI_ENABLED,
                     },
                   );
                   const transition = themeTransitionStateAt(
                     bar?.theme_transition,
-                    Math.max(0, currentTime - layout.start_s),
+                    Math.max(0, frameTime - layout.start_s),
                     Math.min(MAX_INTRO_S, Math.max(0.01, layout.end_s - layout.start_s)),
                     layout.text,
                   );
                   const fadeOutAlpha = sequenceOverlayFadeOutAlphaAt(
                     bar?.role,
                     effect,
-                    Math.max(0, currentTime - layout.start_s),
+                    Math.max(0, frameTime - layout.start_s),
                     Math.max(0.01, layout.end_s - layout.start_s),
                     bar?.fade_out_ms,
                   );
@@ -1406,6 +1644,10 @@ export default function EditorCanvas({
                     maxWidthFrac,
                     zIndex,
                   });
+                  const smoothPreview = smoothPreviewById.get(layout.id);
+                  const motionFontPx = smoothPreview
+                    ? (smoothPreview.sizePx / canvas.h) * stageSize.h
+                    : fontPx;
                   return (
                     <div
                       key={layout.id}
@@ -1421,16 +1663,20 @@ export default function EditorCanvas({
                       style={{
                         ...baseStyle,
                         opacity: animation.alpha * transition.alpha * fadeOutAlpha,
-                        filter:
-                          !reducedMotion && animation.dissolveProgress > 0
+                        filter: [
+                          !settleAuthoredMotion && animation.dissolveProgress > 0
                             ? `url(#${DISSOLVE_PREVIEW_FILTER_ID})`
-                            : undefined,
-                        transform: `${baseStyle.transform ?? ""} translateY(${
-                          (animation.yTranslate / canvas.h) * stageSize.h
-                        }px) scale(${
+                            : null,
+                          !settleAuthoredMotion && animation.blurPx > 0.01
+                            ? `blur(${(animation.blurPx / canvas.h) * stageSize.h}px)`
+                            : null,
+                        ].filter(Boolean).join(" ") || undefined,
+                        transform: `${baseStyle.transform ?? ""} translate(${
+                          (animation.xTranslate / canvas.w) * stageSize.w
+                        }px, ${(animation.yTranslate / canvas.h) * stageSize.h}px) scale(${
                           animation.scale *
                           transition.scale *
-                          (reducedMotion
+                          (settleAuthoredMotion
                             ? 1
                             : dissolveOutTransformScaleAt(animation.dissolveProgress))
                         })`,
@@ -1456,12 +1702,10 @@ export default function EditorCanvas({
                       {effect === "staggered-slice" ? (
                         <StaggeredSliceText
                           text={layout.text}
-                          tLocal={currentTime - layout.start_s}
-                          durationS={Math.min(
-                            MAX_INTRO_S,
-                            Math.max(0.01, layout.end_s - layout.start_s),
-                          )}
+                          tLocal={frameTime - layout.start_s}
+                          durationS={animationDurationS}
                           playing={playing}
+                          motion={TEXT_MOTION_V2_UI_ENABLED ? bar?.motion : null}
                           style={textElementContentStyle({
                             layout,
                             fontSize: `${fontPx}px`,
@@ -1472,7 +1716,7 @@ export default function EditorCanvas({
                       ) : (
                         <TextElementOverlayContent
                           layout={{ ...layout, effect: effect as TextElement["effect"] }}
-                          fontSize={`${fontPx}px`}
+                          fontSize={`${motionFontPx}px`}
                           strokeWidth={strokePx > 0 ? `${strokePx}px` : null}
                           canvasPixelCssSize={`${stageSize.h / canvas.h}px`}
                           reserveText={
@@ -1481,11 +1725,25 @@ export default function EditorCanvas({
                               : null
                           }
                           showCursor={animation.showCursor}
+                          cursorStyle={animation.cursorStyle}
                           revealProgress={
-                            effect === "handwriting" || effect === "ink-reveal"
-                              ? reducedMotion
+                            effect === "handwriting" || effect === "ink-reveal" || effect === "smooth-type"
+                              ? settleAuthoredMotion
                                 ? 1
                                 : animation.revealProgress
+                              : undefined
+                          }
+                          revealOrigin={animation.revealOrigin}
+                          revealLines={smoothPreview?.lines}
+                          lineRevealProgresses={
+                            effect === "smooth-type" &&
+                            TEXT_MOTION_V2_UI_ENABLED &&
+                            !settleAuthoredMotion
+                              ? smoothTypeLineProgresses(
+                                  smoothPreview?.lines ?? layout.text.split("\n"),
+                                  frameTime - layout.start_s,
+                                  bar?.motion,
+                                )
                               : undefined
                           }
                         >
@@ -1574,6 +1832,9 @@ export default function EditorCanvas({
                 })}
               </div>
             )}
+                </>;
+              }}
+            </PlaybackFrame>
 
             {/* Scrub-buffering shimmer (readyState < HAVE_CURRENT_DATA). */}
             {hasPreview && (virtualPreview?.buffering || buffering) && !videoError && (

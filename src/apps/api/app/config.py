@@ -1,8 +1,10 @@
 import json
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+GUIDED_STORY_RENDERER_READY = True
 
 
 class Settings(BaseSettings):
@@ -234,6 +236,10 @@ class Settings(BaseSettings):
     # reject it. When True, user-authored text is burned onto the caption-free
     # base before captions, so captions stay topmost.
     subtitled_text_lane_enabled: bool = False
+
+    # Text Motion v2 evaluator + Smooth Type renderer. Persisted configs are
+    # retained while disabled; Smooth Type renders as settled static text.
+    text_motion_v2_enabled: bool = False
 
     # Subtitled caption correction: after whisper, an LLM fixes each cue's spelling /
     # grammar / case-endings (whisper mishears Turkish morphology) while preserving cue
@@ -640,20 +646,54 @@ class Settings(BaseSettings):
 
     lyrics_optional_enabled: bool = Field(
         default=False,
-        description="Lyrics stop being baked into song_lyrics renders: the variant "
-        "renders lyrics-free (clean base, like song_text) and stamps "
+        description="Lyrics become an optional capability of track-backed song_text: "
+        "the generated intro stays, lyrics are not baked, and "
+        "the variant stamps "
         "lyrics_baked=False + lyrics_enabled=False. The editor's Lyrics toggle "
         "(default OFF) then instantly materializes beat-synced lyric lines as "
         "ordinary editable `role=lyric_line` TextElements via GET "
         ".../lyric-seeds; saving burns them through the normal fast text "
-        "reburn. Read at render time inside _render_generative_variant, so "
-        "flipping it affects queued jobs and re-renders after a worker "
-        "restart. Off = byte-identical current (bake-in) behavior; legacy "
+        "reburn. Read by API capability discovery and at render time inside "
+        "_render_generative_variant, so flipping it affects editor responses, "
+        "queued jobs, and re-renders after an API and worker restart. "
+        "Off = byte-identical current (bake-in) behavior; legacy "
         "variants (lyrics_baked absent) always keep baked behavior regardless "
         "of this flag. Kill switch: `fly secrets set "
         "LYRICS_OPTIONAL_ENABLED=false --app nova-video` + "
-        "`fly machine restart <id>` — no deploy needed.",
+        "`fly machine restart <id>` for the API and worker — no deploy needed.",
     )
+
+    guided_edit_capability_enabled: bool = Field(
+        default=False,
+        description="Expose the Plan edit draft/edit/approve API. This is the backend "
+        "capability switch; enable only after the review UI and strict story renderer "
+        "are deployed. Read by the API, so changing it requires an API restart.",
+    )
+    guided_edit_conversation_enabled: bool = Field(
+        default=False,
+        description="Allow the conversational Plan edit endpoint and advertise it to "
+        "the web app. Enable only after every API and worker can parse the briefing "
+        "proposal state. Read by the API; changing it requires an API restart.",
+    )
+    guided_edit_enforcement_enabled: bool = Field(
+        default=False,
+        description="Require a current approved guided-edit proposal before Generate. "
+        "Independent from capability so rollout can deploy endpoints first. Read by "
+        "the API and synchronous dispatch worker; changing it requires API and worker "
+        "restarts. Startup also requires the code-owned strict-renderer readiness pin.",
+    )
+
+    @model_validator(mode="after")
+    def reject_guided_edit_before_strict_renderer(self) -> "Settings":
+        """Make the guided-edit rollout sequence structurally impossible to skip."""
+
+        if self.guided_edit_enforcement_enabled and not self.guided_edit_capability_enabled:
+            raise ValueError("guided edit enforcement requires guided edit capability")
+        if self.guided_edit_conversation_enabled and not self.guided_edit_capability_enabled:
+            raise ValueError("guided edit conversation requires guided edit capability")
+        if self.guided_edit_enforcement_enabled and not GUIDED_STORY_RENDERER_READY:
+            raise ValueError("guided edit enforcement requires the strict story renderer")
+        return self
 
     # agent_run retention (days). Rows with job_id IS NOT NULL and
     # created_at older than this are deleted by the daily
@@ -793,6 +833,9 @@ class Settings(BaseSettings):
     # Curated CanvasKit motion-preset lane. The API/worker gate is flipped
     # before NEXT_PUBLIC_MOTION_SCENES_ENABLED so rolling deploys fail closed.
     motion_scenes_enabled: bool = False
+    # Exposure gate for new Evolving Type insertions and motion-control edits.
+    # Persisted instances continue to validate and render while disabled.
+    evolving_type_enabled: bool = False
 
     # Sound-effects glossary + user placement (PR-1 foundation). Admin-curated
     # SFX + user uploads placed at arbitrary timestamps in a plan-item variant.
@@ -816,11 +859,15 @@ class Settings(BaseSettings):
     # Kill switch: OVERLAY_AUTOPLACE_ENABLED=false → all pool/suggestion routes 404.
     overlay_autoplace_enabled: bool = False
 
-    # Queue for the light autoplace tasks (analysis + matcher — LLM calls, no
-    # ffmpeg). Default "celery" (the default queue) in prod; local dev sets a
-    # DEDICATED queue (e.g. "autoplace-jobs") because sibling worktree workers
-    # share one redis and would grab tasks they don't have registered.
+    # General overlay matcher/planner queue. These tasks can use transcript
+    # fallback and stay on the media-safe render worker in production.
     autoplace_queue: str = "celery"
+    # Upload-time image/video metadata analysis is isolated from renders in Fly.
+    # Roll back by setting POOL_ASSET_ANALYSIS_QUEUE=celery.
+    pool_asset_analysis_queue: str = "celery"
+    # Keep response compatibility during the backend-first rollout. Set true
+    # only after both queued-aware upload surfaces are deployed.
+    pool_asset_queued_status_enabled: bool = False
 
     # Zero-click auto-apply (plan 007, decision D2-B + G3-A): after a plan-item
     # generate render finalizes, matched visuals are burned in WITHOUT review on

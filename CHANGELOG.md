@@ -2,10 +2,350 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.26.2.0] — 2026-08-12
+## [0.37.1.0] — 2026-08-17
 
 ### Fixed
 - **fix(tiktok): stop calling the TikTok inbox handoff "TikTok drafts."** TikTok's Upload API (`/v2/post/publish/inbox/video/init/`) delivers to the creator's TikTok **app inbox** as a notification — it never writes to the Drafts tab and never appears on tiktok.com in a desktop browser. Kria's UI called this destination "TikTok drafts" everywhere prominent (release receipt, publish dialog, library tile, the public TikTok-review demo page), so a user whose upload fully succeeded (confirmed by prod logs: init 200 OK, TikTok pulled the media, `status/fetch` reached a terminal state) searched tiktok.com and reported the video missing. Renamed every destination string to name the real place, added explicit find-it steps (open the TikTok app → Inbox → tap the notification) to the receipt and the pre-send confirm step, wired a download fallback into the receipt state (it previously had none), and exposed `tiktok_publish_id` on `GET /tiktok/publications/{id}` for support correlation without reading Fly logs. Internal identifiers (`delivery_mode="draft_upload"`, `privacy_level="TIKTOK_DRAFT"`, `visibility_status="draft"`) are unchanged — presentation only, no migration. New regression test asserts a draft-upload receipt never renders "TikTok drafts" as a destination.
+
+## [0.36.0.0] — 2026-08-17
+
+### Added
+- **Helper text is now on demand instead of in your face.** A small ⓘ dot sits next to controls that used to carry explanatory paragraphs — tap it and a small card opens with the explanation (180ms, dismisses on tap-outside or Escape, honors reduced motion, keyboard accessible). It works on top of every editor sheet and drawer, and the design system now documents when a ⓘ is allowed and when text must stay visible.
+
+### Changed
+- **Every product page reads cleaner.** Nineteen paragraphs of restating sublines, how-it-works blurbs, and internal jargon were deleted outright across the ideas home, library, upload flows, transcript helper, the editor, and the render-result page (the "Assembly breakdown" list of internal shot types is gone; timeline chips now use plain words). Seventeen more explainers moved behind ⓘ dots — persona, upload cards, audio bed, caption styles, carousel modes, Nova's capabilities. Warnings, disabled-state reasons, and confirmations all stay visible; a committed audit inventory records every keep/move/delete call.
+
+### Fixed
+- **The old caption instructions block shrank to one line** ("Pause and tap a caption to fix a word.") instead of a two-sentence lecture, and a leaked internal roadmap note ("Controls for this element arrive with the timeline update.") no longer shows to users.
+
+## [0.35.1.0] — 2026-08-17
+
+### Fixed
+- **Newly uploaded iPhone photos now open as soon as their preview is ready, without refreshing
+  the page.** The live pool and editor had been keeping the first signed URL they received even
+  after Kria replaced the raw HEIC file with a browser-safe JPEG preview. They now keep a URL only
+  while it still points to the same stored object, adopt the generated preview immediately, and
+  retain the last working thumbnail if a signing attempt briefly returns no URL.
+
+## [0.35.0.1] — 2026-08-17
+
+### Fixed
+- **Finished visuals no longer look stuck on “Analysis pending.”** Video analysis can finish with a
+  subject and usable moments but no optional long description. The plan page and editor now use
+  the visual's real processing status instead of treating that empty description as unfinished.
+  Filename-only fallback metadata is labeled separately as “Basic file details ready” so Kria
+  does not overstate how much it understood.
+
+## [0.34.1.13] — 2026-08-17
+
+### Changed
+- **A row-locking mistake that could start the same video twice can no longer be reintroduced.** A new check reads the code and flags the specific pattern behind that bug — locking a database row after already having read it in the same session, which quietly hands back the older copy. It looks for the shape of the mistake rather than policing every lock in the codebase, so it stays worth paying attention to. Two confirmed existing instances were found while building it; they are recorded as a tracked backlog rather than silently approved, and the check fails if that list grows or goes out of date.
+
+## [0.34.1.12] — 2026-08-17
+
+### Changed
+- **Backend releases can no longer stall unnoticed.** A scheduled check now compares what is on the main branch against what has actually deployed, and raises an alarm if code sits undeployed for more than two hours. It measures the gap rather than watching for failed deploys, because deploys fail transiently and self-heal often enough that a failure alarm gets ignored — which is how a day-long stall went unnoticed on 2026-08-12 while the site itself stayed up and healthy. A pull request that adds two or more database migrations where one can refuse to apply is now blocked unless it says how the releases will be ordered, which is the packaging mistake that caused that stall. Tests also run on every merge to the main branch, so a breakage is attributed to the change that caused it instead of surfacing days later on someone else's unrelated work.
+
+## [0.34.1.11] — 2026-08-17
+
+### Fixed
+- **Restored the missing clip uploader on default montage plan items.** PR #833 replaced the "I
+  already have footage" toggle with a click on the Montage type card that patches
+  `content_mode: "existing_footage"` — but `SetupPicker`'s no-op guard returned early whenever the
+  clicked card matched the item's already-stored `edit_format`, which is `"montage"` by default. So
+  re-clicking (or the initial, already-selected) Montage card never fired the patch, and default
+  items (`content_mode: "create_new"`, empty `filming_guide`, `edit_format: "montage"`) fell into a
+  dead render branch in `page.tsx` (`isFilmThis ? null`) with no uploader anywhere in the DOM —
+  there was no way to add the main videos. Fixed by letting the guard's early return account for a
+  pending `content_mode` stamp, and by deleting the dead branch so a film-this montage item without
+  a guide falls through to the existing pool-upload uploader.
+
+## [0.34.1.10] — 2026-08-17
+
+### Fixed
+- **Visuals-pool uploads now show a preview for iPhone HEIC photos and HEVC-in-QuickTime .mov
+  clips.** The pool never had a preview pipeline — `display_url` signed the RAW uploaded object,
+  and Chromium can't decode either format, so `ready` assets rendered blank in the plan-item
+  editor and asset pool. `analyze_pool_asset` now generates a browser-safe JPEG preview (image
+  thumbnail via Pillow/pillow_heif, video poster frame via `ffmpeg`) alongside analysis and
+  persists it on the new `plan_item_assets.preview_gcs_path` column; preview generation is
+  strictly best-effort and never turns a successful analysis into a failure. A bounded
+  maintenance backfill (`generate_pool_asset_preview`, dispatched from
+  `reconcile_stale_pool_assets`) covers pre-fix `ready` rows that never got one. `_asset_out`
+  signs the preview for images (`display_url`) and exposes it separately for videos
+  (`preview_url`, poster on the `<video>` tile); the editor's Visuals drawer no longer renders
+  videos through a bare `<img>` (always broken) and both surfaces fall back to a kind-label
+  placeholder on a decode error.
+
+## [0.34.1.9] — 2026-08-17
+
+### Changed
+- **Guided stories now match the approved footage's natural format.** Kria chooses 16:9 or 9:16
+  from the selected story media and its approved screen time, so an all-landscape trip no longer
+  gets forced into a portrait crop. The editor shows the format that actually rendered and can
+  rebuild the same verified story in the other format when the creator changes it.
+- **New guided-story text uses a cleaner editorial system.** Titles use Fraunces, supporting
+  thoughts use DM Sans, sizing and placement are more deliberate, and the warm-white/lime palette
+  relies on a soft shadow for contrast. Default title and thought strokes are now always zero.
+
+## [0.34.1.8] — 2026-08-17
+
+### Fixed
+- **Fly Deploy no longer goes red when Fly kills the release machine during startup (#834).** The
+  deploy workflow now wraps `flyctl deploy` in `scripts/fly-deploy-with-retry.sh`, which retries
+  exactly once — and only when the log matches the full startup-kill signature (`has state:
+  destroyed` + `release_command failed ... with exit code 143`). Any other failure, most importantly
+  a genuine migration error, still fails on the first attempt; a retried deploy is loudly marked
+  with a `::warning` annotation and a job-summary block so it can never be mistaken for a clean
+  pass. Investigation refuted the leading `REMAP_SIGTERM` hypothesis (it's a Celery-only setting,
+  inert on the release machine — recorded in fly.toml comments and agents/DECISIONS.md); the root
+  cause is a Fly platform-side machine lifecycle race, which is why the fix is a targeted retry
+  rather than config. Pinned by 13 new tests driving the real script against a stub flyctl.
+
+## [0.34.1.7] — 2026-08-17
+
+### Fixed
+- **Guided-story clip bars now match the rendered video exactly.** The editor accounts for the
+  verified crossfade overlap between adjacent moments, so its ruler, video lane, text timing, and
+  playback all end together instead of overstating the story length.
+
+## [0.34.1.6] — 2026-08-17
+
+### Fixed
+- **The video editor now shows every approved guided-story source.** Stories assembled entirely
+  from the visuals pool no longer collapse their video lane to the first compatibility clip; each
+  verified moment appears in the rendered order and at its real duration.
+
+## [0.34.1.5] — 2026-08-17
+
+### Fixed
+- **Generate now reaches the strict renderer for approved visual-pool-only stories.** The API no
+  longer asks for a duplicate primary clip after the creator has approved a story with selected
+  photos or videos; the dispatcher still verifies every approved source before creating the job.
+
+## [0.34.1.4] — 2026-08-17
+
+### Fixed
+- **Approved guided edits can now generate directly from photos and videos in the visuals pool.** A
+  plan that already shows five selected sources no longer disables Generate with “Add clips to
+  generate” merely because those sources are not duplicated in the legacy primary-clips lane.
+
+## [0.34.1.3] — 2026-08-17
+
+### Fixed
+- **Kria now moves the referenced upload, not just its label, when revising an edit plan.** Requests
+  such as “make the bridge video moment one” explicitly reassign the already-selected source while
+  the server guarantees that no approved media is invented, duplicated, or silently dropped.
+- **Kria cannot claim a named-video correction while leaving the old footage underneath it.** Invalid
+  media assignments fail closed and retry instead of saving a visually mismatched draft.
+
+## [0.34.1.2] — 2026-08-17
+
+### Fixed
+- **Kria can now reliably revise a planned edit when creators name a specific upload or visible
+  scene.** Requests such as “put the bridge video before the skyline clip” use short review
+  references tied to the analyzed media, while the server still owns every real media and beat ID.
+- **Exact multi-scene revisions no longer fail after Kria describes the right change.** Reordering
+  five or more moments no longer depends on the model perfectly copying long generated IDs; missing
+  or duplicated moments still fail closed.
+
+## [0.34.1.1] — 2026-08-17
+
+### Changed
+- **Closed out the persona-owner incident in TODOS.** Both remediation P0s are complete — production is at alembic `0076`, the global owner-mismatch audit returns zero rows, `uq_personas_id_user_id` and `fk_content_plans_persona_owner` are both installed, and `release_command` is back to `upgrade head`. The entries were removed and the section retitled around the one thing still open: `alembic upgrade head` cannot express a migration that must ship in two staged releases. Stale P0s teach you to skim past P0s, which is the habit that let a 24-hour deploy freeze hide in plain sight. Docs-only PR.
+
+## [0.34.1.0] — 2026-08-17
+
+### Fixed
+- **Guided travel edits now keep every approved title and location thought visible.** The first
+  thought begins with the first scene instead of flashing for a single frame, and opening the
+  editor preserves the complete approved text plan rather than collapsing it into one title.
+- **The editor now shows the real guided-story cut.** Uploaded videos used by the approved plan
+  appear in their rendered order and time windows; only footage that was actually omitted is
+  marked unused.
+- **Plan and result details now match the edit Kria made.** Custom lengths such as 10 seconds stay
+  selected, source totals count only chosen media, unplayable phone previews show an honest file
+  fallback, and track-backed results are labelled “Music” instead of “Original audio.”
+
+## [0.34.0.0] — 2026-08-17
+
+### Added
+- **Visual setup picker on the video page.** Edit types (Montage, Voiceover, Talking to camera, Talking-head B-roll) and montage styles (Classic, Masonry collage, Polaroid wall) are now full poster cards with real footage — hover a card to watch that style in motion, click to choose. Each choice collapses into a compact receipt row that reopens with one tap, so returning to a video shows a calm summary instead of a wall of controls.
+
+### Changed
+- **Smart captions are now automatic** on eligible talk-to-camera videos — there's no toggle to remember; the server applies them whenever they fit.
+- **"Already filmed" is the default.** The plan-to-film/already-filmed chips are gone: choosing a type goes straight to uploading the footage you have, and accepting a "Plan this for me" filming plan switches the video back into the guided shot-by-shot flow.
+- Voiceover videos start in the ready-to-upload flow; older "planned" voiceover videos switch over with one click.
+- Mobile: the card rails swipe edge-to-edge with snap points, and setup controls meet the 44px touch-target minimum.
+
+### Fixed
+- A save that fails mid-pick no longer leaves the page showing a choice that didn't stick — it reverts to the saved setup and the card can simply be clicked again.
+- Accessibility pass on the new picker: real radio-group keyboard navigation, focus survives saves, collapsed sections are skipped by keyboard and screen readers, hover videos respect reduced-motion and never download on touch devices.
+- Selected-state contrast, one consistent label style across the setup area, and a proper label + focus style on the notes field.
+
+### Removed
+- The per-video Smart captions and Sound design switches (both features now run on their defaults), the "you can change this until the first render" hint, and nine unused bundled assets; poster images were recompressed for faster loads.
+
+## [0.33.3.0] — 2026-08-16
+
+### Added
+- **Plan edit is now conversational.** Describe the intended feeling, focus, text level, pace, and
+  length in ordinary language, see what Kria understood, and keep refining the review draft with
+  requests such as “put food first” or “use less text.” Conversations survive reloads and retries.
+
+### Safety
+- Conversational changes remain drafts until approval. Kria cannot replace uploaded media,
+  silently remove story chapters, or overwrite creator-written thoughts, and concurrent tabs fail
+  with a clear proposal conflict instead of losing work.
+- The existing direction form remains available during rollout. Conversation writes only turn on
+  after every backend reader understands the new durable briefing state.
+
+## [0.33.2.3] — 2026-08-16
+
+### Fixed
+- **Edits to a proposed video plan no longer disappear while the page refreshes in the background.** Creators can rewrite titles, location labels, thoughts, layouts, and ordering at their own pace; Nova only replaces the form when a genuinely newer saved proposal arrives.
+
+## [0.33.2.2] — 2026-08-16
+
+### Fixed
+- **Plan edit can intentionally leave one weaker upload out of a small montage.** For four to six photos or videos, Nova may omit one redundant source while still requiring a varied cut; it no longer rejects a valid six-video plan merely because the creator asked to use the strongest five moments.
+
+## [0.33.2.1] — 2026-08-15
+
+### Fixed
+- **Approved guided edits now render iPhone HEIC and HEIF photos.** Kria keeps the exact uploaded source identity for verification, while decoding each story photo into an orientation-corrected render input before applying motion. A valid HEIC photo can no longer stop the edit with “This one didn't render.”
+
+## [0.33.2.0] — 2026-08-15
+
+### Fixed
+- **Approved guided edits now render when one selected video is shorter than its equal share of a story beat.** Nova uses the full short clip and redistributes the remaining time to the surrounding approved photos and videos, preserving the complete story and target duration instead of stopping the render.
+- **Guided renders remain safe across this timing upgrade.** Existing queued plans keep their original timing, while new plans use the improved allocation and both versions still reject changed media, text, layout, or timing.
+
+## [0.33.1.1] — 2026-08-15
+
+### Fixed
+- **Plan edit can understand an attached video and finish the proposal.** The planner now calls the shared video analyzer through its privacy-safe interface, so mixed photo and video trips no longer stop with “Kria couldn't plan this edit.”
+
+## [0.33.1.0] — 2026-08-15
+
+### Fixed
+- **iPhone photos uploaded to the visuals pool are analyzed and available to edits.** HEIC and HEIF files now open reliably in fresh workers, keep the correct file type during analysis, and use the correct provider format.
+- **Photos rejected by this decoder bug recover automatically.** Previously failed HEIC and HEIF uploads receive one safe retry after deployment, while genuinely unreadable files remain failed instead of retrying forever.
+
+## [0.33.0.1] — 2026-08-15
+
+### Fixed
+- **Uploaded footage omitted from an AI cut is visible and recoverable in the editor.** The Video lane now lists unused source clips and can append one to the timeline with immediate preview, one-step Undo/Redo, and the normal save-and-rerender flow.
+
+## [0.33.0.0] — 2026-08-15
+
+### Added
+- **Approved Plan edits now render as the complete story the creator reviewed.** Nova builds one vertical edit at the creator-approved duration directly from the approved photos, videos, order, title, thoughts, layouts, pace, and goal, including first-class supporting cards and music selected from the whole story.
+- **Every finished guided story carries a strict, machine-readable receipt.** The receipt proves that every required beat, source, and text moment appeared with the approved storage identities and duration before Nova marks the video ready.
+
+### Changed
+- **A guided edit can never silently fall back to a simple montage.** Missing, replaced, mistimed, or dropped media and text now fail with a plain-language reason instead of publishing an incomplete video.
+- **Later wording edits preserve the approved story.** The editor can change guided-story text while structural controls remain locked; fast text reburns use the exact verified clean base and record the new output identity.
+- **The release remains dark until the production Corfu preview passes.** Renderer readiness is now available, but capability, frontend, and enforcement switches all stay off for deployment and can only be enabled in sequence after acceptance testing.
+
+## [0.32.0.0] — 2026-08-14
+
+### Added
+- **Creator Blocks now have precise, reusable motion controls.** New blocks support speed, intensity, easing, hold, and preset-specific advanced details in the desktop and pocket inspectors, while Nova AI can read and edit the same catalog-backed controls.
+- **Evolving Type adds a polished 5.3-second kinetic composition.** Creators can customize its headline, subtitle, organic icon choreography, reveal order, density, layout, typography, backdrop, and palette while preview and export share the same deterministic 30fps state.
+
+### Changed
+- **Existing edits keep their original look until motion is explicitly changed.** Preset-v1 formulas remain immutable, content/palette/timeline edits do not migrate them, motion-control edits upgrade only the selected block, and saved v2/v3/v4 runtimes remain compatible with v4 normalization on save.
+- **Creator motion is safer under heavy scenes and rollbacks.** Catalog-generated schemas fail on drift, dual rollout flags keep persisted Evolving blocks renderable but read-only when hidden, and weighted validation plus production/browser performance gates bound overlapping scenes and media resources before render.
+
+## [0.31.0.1] — 2026-08-14
+
+### Fixed
+- **Plan edit now proposes a short story instead of listing every upload as a separate beat.** Related photos and videos are grouped into three to five distinct chapters, while neutral AI drafts can no longer imply that the creator visited, enjoyed, tasted, or felt something unless they wrote that context themselves.
+- **Live proposal evaluation accepts natural chapter names without weakening the quality gate.** Replay fixtures still pin expected vocabulary; live Gemini output is judged semantically for complete-media use, coherent topics, creator direction, safe thoughts, and editability.
+
+## [0.31.0.0] — 2026-08-14
+
+### Added
+- **Plan edit turns all uploaded photos and videos into a reviewable story before rendering.** Creators can choose a story, montage, or text-led direction; describe their goal; set pace and length; then review the proposed title, sequence, layouts, and editable thought moments. AI-written thoughts are clearly marked as drafts and never become approved personal claims without review.
+- **Approved plans keep exact media identities and survive later comparison.** Each proposal has a versioned draft and last-approved snapshot across both attached clips and supporting visuals. Upload, removal, replacement, or context changes mark the plan stale instead of silently generating from different material.
+
+### Changed
+- **The guided-edit path ships dark until strict story rendering is ready.** Backend capability and the frontend review flow can be deployed separately, but this release structurally rejects proposal enforcement so an operator cannot accidentally approve a plan and render the old simple montage. The next renderer release can unlock Generate only after strict assembly and receipt verification exist.
+
+## [0.30.0.1] — 2026-08-14
+
+### Fixed
+- **Visual analysis logs no longer expose creator filenames or provider payloads.** Pool workers use neutral temporary names, keep plan-item IDs out of the Job-owned agent-run table, and reduce persistence failures to a safe exception class while retaining asset, attempt, timing, and batch-correlation diagnostics.
+
+## [0.30.0.0] — 2026-08-14
+
+### Added
+- **Smooth Type brings polished, readable text reveals to every compatible editor surface.** Creators can tune its speed, intensity, easing, stagger, reveal order, direction, travel, blur, reveal ramp, and hold from the desktop editor, pocket inspector, and instant-edit flow. Other Text Motion v2 effects expose only the details they support, including overshoot for pop/bounce and cursor style/blink rate for typed effects.
+
+### Changed
+- **Text motion now previews the same state that exports at every 30fps sample.** TypeScript and Skia share normalized timing, easing, phase rounding, Unicode grapheme behavior, full-run shaping, bidirectional reveal order, wrapping, and font fallback so multilingual text stays stable while animating.
+- **Retiming is safer and fully reversible.** Motion changes resize only the selected overlay, trims consume hold before accelerating up to 4× and clamp to a valid settle window, one gesture creates one undo record, and legacy edits keep their original timing until explicitly upgraded.
+- **Long and complex animations fail closed before rendering.** Settled holds are hard-linked to avoid redundant frames, weighted scene limits cover overlapping, behind-subject, sequence, and theme-transition cases, and dual rollout flags preserve saved configuration while falling back to settled static text when Text Motion v2 is disabled.
+
+## [0.29.1.0] — 2026-08-14
+
+### Fixed
+- **Content-plan videos keep their generated opening title when lyrics are optional.** A lyric-capable song used to select a lyrics-only version, then start with those lyrics switched off, leaving a valid but nearly empty-looking montage. The primary edit now keeps Nova's generated title visible and offers the matched song's lyrics as an optional editor layer. Turning optional lyrics off still restores the existing baked-lyrics version.
+
+## [0.28.0.1] — 2026-08-14
+
+### Added
+- **Visual uploads now start as one capacity-checked batch and keep moving in parallel.** Kria rejects unsupported or oversized files before networking, reserves the accepted batch in one request, transfers up to three files at once, and registers each completed file immediately so analysis can overlap later uploads. The item page and editor share the same uploader and count pending files toward the 20-visual limit.
+- **Every file now has its own honest progress and recovery path.** Preparing, uploading, registering, queued, analyzing, ready, and failed states stay independent; successful files remain available, transfer retries refresh only their signed reservation, and registration retries reuse the uploaded object instead of sending it again.
+
+### Fixed
+- **Creators no longer see raw “Internal Server Error” upload failures.** The proxy and API client preserve safe actionable validation details, sanitize server failures, attach request and batch correlation IDs, and show stage-specific guidance with Retry or Remove actions plus an accurate batch summary.
+- **The editor now keeps polling queued analysis and explains unreadable versus temporary analysis failures.** Retryable analysis errors offer Retry analysis, unsupported formats name the accepted image/video types, and mixed batches report exactly how many visuals were added or need attention.
+
+## [0.28.0.0] — 2026-08-14
+
+### Added
+- **Visual uploads can now be resumed safely instead of starting over as one opaque batch.** The API reserves capacity before transfer, reuses stable per-file upload identities, verifies the uploaded media's exact type, size, and immutable storage generation, and queues analysis with fenced attempts so late workers cannot overwrite a retry.
+- **Visual analysis has a dedicated, always-on worker ready for a controlled queue switch.** Two analyses can run together without waiting behind video renders; initial routing stays on the existing queue until the new worker is verified healthy, with a one-setting rollback.
+
+### Fixed
+- **Failed visual analysis can no longer look successful or spin forever.** Unreadable files, provider outages, timeouts, broker publication failures, abandoned uploads, and stale attempts now reach safe retryable or terminal states, while a maintenance pass cleans expired reservations and recovers work that was never claimed.
+- **Upload retries cannot leak permanent objects or delete a committed file.** Signed targets now land in lifecycle-covered staging, registration promotes only the verified generation, ambiguous database commits are resolved through a fresh connection before compensation, and Remove keeps capacity charged until exact-generation cleanup succeeds.
+- **Backend failures are now traceable without exposing private details.** Request and batch correlation IDs cross the API and worker boundary, and unexpected errors return safe structured responses instead of raw exception text.
+- **The blocked persona-ownership migration is safe to release again.** A guarded, fingerprinted production repair quarantined the one mismatched plan before moving only its exact owner data; Fly releases once again require every migration through `head` before new processes start.
+
+## [0.27.0.0] — 2026-08-13
+
+### Added
+- **Editor motion can now follow the video frame the creator is actually seeing.** A shared output-timeline clock drives authored text, Creator Blocks, visual blocks, transitions, carousel scenes, camera motion, and both desktop and pocket playheads from decoded video frames. Non-video windows use a display-rate clock, while seeks, stalls, deck swaps, playback-rate changes, music corrections, and background-tab recovery resynchronize against the authoritative media time.
+
+### Changed
+- **Smooth playback no longer makes the whole editor rerender at display refresh rate.** High-frequency time stays inside playback layers and playheads, while the editor shell receives a throttled committed time. Stale callbacks from replaced video decks or rendered sources are rejected, visual-block interpolation uses the renderer's 30fps sampling rules, and authored video motion remains faithful even when reduced-motion is enabled for editor chrome.
+- **The new clock is independently reversible.** `NEXT_PUBLIC_FRAME_DRIVEN_PREVIEW_ENABLED` defaults to off; disabling it preserves the existing playback clock, animation timing, reduced-motion behavior, and saved edits.
+
+## [0.26.2.1] — 2026-08-13
+
+### Fixed
+- **Backend releases reach production again.** API deploys had been failing for about a day, so no server-side change shipped after 2026-08-11. The release step runs every pending database migration at once, and the newest one deliberately refuses to apply while a single content plan still points at another account's persona. That refusal is correct — it is the tenant-isolation guard doing its job — but the repair procedure it ships with requires the previous migration's safety guards to be live first, and running both in one release meant the guards could never land. The release step is now pinned to the guards-only migration so it completes, unblocking the deploy queue; the ownership constraint applies in a follow-up release once the affected plan is repaired. Production was never down: the failed release left the previous image serving.
+
+## [0.26.2.0] — 2026-08-12
+
+### Fixed
+- **Editing a published video works again.** Publishing to TikTok used to take the Edit button away for good. The release rail swapped its whole action pane out the moment a publication existed, and that pane held the only "Edit video" link in the app — so a single publish attempt, successful or not, permanently removed both Edit and Download from that video. Nothing on the server ever locked the item; the buttons were simply no longer drawn. Edit and Download now render in every release state, and a creator who edits a published video can send the new cut from the same screen: the republish button reads "Publish updated video" once the current render is newer than what was posted, "Publish again" otherwise.
+- **The release desk stops offering a second post it can't take back.** Republish is withheld whenever another delivery is unresolved — while TikTok is still processing the first one, while our own worker is auto-retrying a failed attempt, and when TikTok never confirmed it received the video at all. That last case keeps its "Open TikTok" and "Check status again" recovery actions instead of a publish button, because the safe move is to go look rather than fire a duplicate. A failed attempt that nobody is retrying returns the full release pane with the reason it failed, so the next try is one click away.
+- **A video no longer shows another version's publishing receipt.** When no specific version was in focus, the receipt lookup fell back to the whole job and could return a different version's publication, putting an unpublished cut into a published state and hiding its actions. The receipt is now accepted only when it belongs to the version on screen, and a slow status check can no longer promote an older publication over a newer one.
+- **Publishing status keeps up with edits.** After editing a published video the page never re-checked its publishing history, so the receipt described a cut that no longer existed. It now refreshes when a re-render finishes, and a status check already in flight can no longer overwrite a publication that was just created.
+
+## [0.26.1.3] — 2026-08-13
+
+### Fixed
+- **Pressing Generate twice can no longer start the same video twice.** The guard that stops a second render from starting was locking the right database row but then reading a copy of it from memory that predated the lock — so two clicks arriving together could each conclude no render was running, and each start one. The same stale-copy pattern also weakened the ownership fence that stops an out-of-date background worker from writing to a plan. Both now re-read the row they just locked.
+
+## [0.26.1.1] — 2026-08-12
+
+### Fixed
+- **One rendering voice at a time.** During a same-variant re-render the item page showed both the frozen-frame veil (in the video) and the below-hero progress theater for the same event, with different wording and time estimates. The theater now hides exactly while the veil is visible, and remains the sole indicator everywhere the veil can't be: first renders with no output yet, re-renders of a non-focused variant, stale-playback failures (where the recovery UI wins), and instant-edit variants previewed through LiveEditPreview.
 
 ## [0.26.1.0] — 2026-08-12
 

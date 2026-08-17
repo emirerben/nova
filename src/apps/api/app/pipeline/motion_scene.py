@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 import jsonschema
@@ -19,9 +20,15 @@ log = structlog.get_logger()
 MOTION_FPS = 30
 MOTION_MAX_ACTIVE_FRAMES = 8 * MOTION_FPS
 MOTION_MAX_INSTANCE_FRAMES = 8 * MOTION_FPS
+MOTION_MAX_COMPLEXITY_UNITS = 960
 LEGACY_MOTION_RUNTIME_HASH = "motion-v1:ck0.40.0:b2556106:2abfa191:route-trace-v1"
-PREVIOUS_MOTION_RUNTIME_HASH = "motion-v2:ck0.40.0:b2556106:2abfa191:creator-blocks-v1"
-MOTION_RUNTIME_HASH = "motion-v3:ck0.40.0:b2556106:2abfa191:creator-blocks-v2"
+MOTION_RUNTIME_V2_HASH = "motion-v2:ck0.40.0:b2556106:2abfa191:creator-blocks-v1"
+MOTION_RUNTIME_V3_HASH = "motion-v3:ck0.40.0:b2556106:2abfa191:creator-blocks-v2"
+PREVIOUS_MOTION_RUNTIME_HASH = MOTION_RUNTIME_V3_HASH
+MOTION_RUNTIME_HASH = "motion-v4:ck0.40.0:b2556106:2abfa191:creator-blocks-v3"
+COMPATIBLE_MOTION_RUNTIME_HASHES = frozenset(
+    {MOTION_RUNTIME_V2_HASH, MOTION_RUNTIME_V3_HASH, MOTION_RUNTIME_HASH}
+)
 _TIMEOUT_S = 600
 _MAX_MOTION_ASSET_BYTES = 25 * 1024 * 1024
 _MAX_MOTION_ASSET_PIXELS = 25_000_000
@@ -51,6 +58,85 @@ def _runtime_root() -> Path:
 
 def _schema() -> dict:
     return json.loads((_runtime_root() / "motion-scene.schema.json").read_text())
+
+
+@lru_cache(maxsize=1)
+def _creator_catalog() -> dict:
+    return json.loads((_runtime_root() / "creator-blocks.catalog.json").read_text())
+
+
+@lru_cache(maxsize=1)
+def _creator_complexity_weights() -> dict[str, int]:
+    """Return catalog-owned v2 weights; immutable v1 scenes retain weight 1."""
+    return {
+        str(entry["preset_id"]): int(entry["complexity_weight"])
+        for entry in _creator_catalog().get("presets", [])
+    }
+
+
+def _validate_catalog_numeric_steps(items: list[dict]) -> None:
+    """Mirror TS decimal-step validation that JSON Schema cannot express safely."""
+    catalog = _creator_catalog()
+    controls = {item["key"]: item for item in catalog.get("control_definitions", [])}
+    presets = {item["preset_id"]: item for item in catalog.get("presets", [])}
+
+    def validate(definition: dict, value: object, path: str) -> None:
+        step = definition.get("step")
+        if (
+            definition.get("type") != "number"
+            or not isinstance(step, (int, float))
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+        ):
+            return
+        minimum = float(definition.get("minimum", 0))
+        quotient = (float(value) - minimum) / float(step)
+        if abs(quotient - round(quotient)) > 1e-8:
+            raise ValueError(f"{path}: {value} does not align to step {step}")
+
+    for index, item in enumerate(items):
+        if item.get("preset_version") != 2:
+            continue
+        preset = presets.get(item.get("preset_id"))
+        if not isinstance(preset, dict):
+            continue
+        params = item.get("params")
+        if isinstance(params, dict):
+            for definition in preset.get("parameters", []):
+                key = definition.get("key")
+                if key in params:
+                    validate(definition, params[key], f"motion_scenes.{index}.params.{key}")
+        motion = item.get("motion")
+        if isinstance(motion, dict):
+            for key in preset.get("supported_controls", []):
+                definition = controls.get(key)
+                if not isinstance(definition, dict) or definition.get("storage") != "motion":
+                    continue
+                effective = {**definition, **preset.get("control_overrides", {}).get(key, {})}
+                if key in motion:
+                    validate(effective, motion[key], f"motion_scenes.{index}.motion.{key}")
+
+
+def _weighted_motion_complexity(items: list[dict]) -> int:
+    events: dict[int, int] = {}
+    weights = _creator_complexity_weights()
+    for item in items:
+        weight = (
+            weights.get(str(item.get("preset_id")), 1) if item.get("preset_version") == 2 else 1
+        )
+        start = int(item["start_frame"])
+        end = int(item["end_frame_exclusive"])
+        events[start] = events.get(start, 0) + weight
+        events[end] = events.get(end, 0) - weight
+    total = 0
+    active_weight = 0
+    previous: int | None = None
+    for frame in sorted(events):
+        if previous is not None:
+            total += (frame - previous) * active_weight
+        active_weight += events[frame]
+        previous = frame
+    return total
 
 
 def validate_motion_instances(
@@ -96,6 +182,7 @@ def validate_motion_instances(
         raise ValueError(f"{prefix}: {exc.message}") from exc
 
     assert isinstance(value, list)
+    _validate_catalog_numeric_steps(value)
     ids: set[str] = set()
     intervals: list[tuple[int, int]] = []
     cleaned: list[dict] = []
@@ -134,6 +221,12 @@ def validate_motion_instances(
         raise ValueError(
             f"motion_scenes has {active_frames} active frames; "
             f"maximum is {MOTION_MAX_ACTIVE_FRAMES}"
+        )
+    complexity = _weighted_motion_complexity(cleaned)
+    if complexity > MOTION_MAX_COMPLEXITY_UNITS:
+        raise ValueError(
+            f"motion_scenes has {complexity} weighted complexity units; "
+            f"maximum is {MOTION_MAX_COMPLEXITY_UNITS}"
         )
     return cleaned
 
@@ -298,6 +391,7 @@ def _render_sequence(
     height: int,
     tmpdir: str,
     asset_generations: dict[str, str] | None = None,
+    prepared_asset_paths: dict[str, str] | None = None,
 ) -> tuple[str, list[dict], int]:
     runtime_root = _runtime_root()
     frames_dir = os.path.join(tmpdir, "motion_frames")
@@ -305,6 +399,12 @@ def _render_sequence(
     font_path = _creator_font_path()
     asset_paths: dict[str, str] = {}
     for index, ref in enumerate(_motion_asset_refs(instances)):
+        prepared_path = (prepared_asset_paths or {}).get(ref["asset_id"])
+        if prepared_path is not None:
+            if not os.path.isfile(prepared_path) or os.path.getsize(prepared_path) <= 0:
+                raise MotionSceneError("Prepared Creator Block asset is missing")
+            asset_paths[ref["asset_id"]] = prepared_path
+            continue
         local_path = os.path.join(tmpdir, f"motion_asset_{index:02d}")
         generation = (asset_generations or {}).get(ref["asset_id"])
         if asset_generations is not None and generation is None:
@@ -349,7 +449,13 @@ def _render_sequence(
             raise MotionSceneError("Deno cache directory could not be resolved") from exc
     if not os.path.isabs(deno_dir):
         raise MotionSceneError("Deno cache directory must be absolute")
-    read_roots = [str(runtime_root), tmpdir, deno_dir, str(font_path.parent)]
+    read_roots = [
+        str(runtime_root),
+        tmpdir,
+        deno_dir,
+        str(font_path.parent),
+        *(str(Path(path).parent) for path in asset_paths.values()),
+    ]
     allow_read = f"--allow-read={','.join(read_roots)}"
     cmd = [
         deno,

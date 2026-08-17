@@ -19,7 +19,7 @@
  */
 
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
-import { INTRO_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
+import { TEXT_ELEMENT_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
 import {
   LETTER_SPACING_MAX_EM,
   LETTER_SPACING_MIN_EM,
@@ -44,7 +44,7 @@ import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import type { CameraEffect, MediaOverlay, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
-import type { MotionPresetInstanceV1, MotionPresetPatch } from "@nova/motion-runtime";
+import type { MotionPresetInstance, MotionPresetPatch } from "@nova/motion-runtime";
 import {
   CAMERA_EFFECT_MAX_DURATION_S,
   CAMERA_EFFECT_MAX_INTENSITY,
@@ -52,6 +52,13 @@ import {
 } from "@/lib/camera-effects";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
+import TextMotionControls from "@/components/text-motion/TextMotionControls";
+import {
+  motionPatchForConfig,
+  motionPatchForEffect,
+  textMotionHasControls,
+  type TextMotionConfigV2,
+} from "@/lib/text-motion-v2";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { LookAdjustments, LookPreset } from "@/lib/generative-api";
 import {
@@ -84,8 +91,9 @@ import {
 } from "./editor-bars";
 import PresetGrid from "./PresetGrid";
 import SongWindowSelector, { type SongWindowControl } from "./SongWindowSelector";
-import MotionInspector from "./MotionInspector";
+import MotionInspector, { type CreatorBlockMotionControlPatch } from "./MotionInspector";
 import CarouselPanel, { type CarouselPanelControl } from "./CarouselPanel";
+import { InfoDot } from "@/components/ui/InfoDot";
 
 /** Fields with dedicated (potentially editable) rows in this panel. */
 const EDITABLE_ROW_FIELDS = new Set([
@@ -95,6 +103,7 @@ const EDITABLE_ROW_FIELDS = new Set([
   "font_family",
   "size_px",
   "effect",
+  "motion",
   "theme_transition",
   "color",
   "shadow_enabled",
@@ -118,6 +127,8 @@ const EDITOR_TEXT_SIZE_MAX = 300;
 
 const TEXT_BEHIND_SUBJECT_UI_ENABLED =
   process.env.NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED === "true";
+const TEXT_MOTION_V2_UI_ENABLED =
+  process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED === "true";
 
 /** How the panel is hosted. Every sub-inspector's CloseX reads this so sheet
  *  mode can drop the internal close buttons (the Sheet owns close; deselection
@@ -152,6 +163,7 @@ export default function InspectorPanel({
   motionScene = null,
   motionDurationS = 0,
   motionAssets = [],
+  evolvingTypeEnabled = false,
   cameraEffect = null,
   carousel = null,
   tab,
@@ -162,6 +174,9 @@ export default function InspectorPanel({
   contentRef,
   onEditText,
   onPatch,
+  onPreviewTextMotion,
+  onBeginTextMotion,
+  onCommitTextMotion,
   onSetTextBoxPosition,
   boxPositionXFrac,
   onPatchTextTiming,
@@ -178,6 +193,11 @@ export default function InspectorPanel({
   onRecordOverlay,
   onDeleteOverlay,
   onPatchMotion = () => {},
+  onPatchMotionControl = () => {},
+  onBeginMotionControl = () => {},
+  onPreviewMotionControl = () => {},
+  onCommitMotionControl = () => {},
+  onCancelMotionControl = () => {},
   onRemoveMotion = () => {},
   onPatchCameraEffect = () => {},
   onDeleteCameraEffect = () => {},
@@ -212,9 +232,10 @@ export default function InspectorPanel({
   clipTiming: InspectorClipTiming | null;
   sfx: SoundEffectPlacement | null;
   overlay: MediaOverlay | null;
-  motionScene?: MotionPresetInstanceV1 | null;
+  motionScene?: MotionPresetInstance | null;
   motionDurationS?: number;
   motionAssets?: PoolAsset[];
+  evolvingTypeEnabled?: boolean;
   cameraEffect?: CameraEffect | null;
   carousel?: CarouselPanelControl | null;
   tab: InspectorTab;
@@ -232,6 +253,9 @@ export default function InspectorPanel({
   contentRef: React.RefObject<HTMLTextAreaElement>;
   onEditText: (text: string) => void;
   onPatch: (patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onPreviewTextMotion?: (patch: Partial<TextMotionConfigV2>) => void;
+  onBeginTextMotion?: () => void;
+  onCommitTextMotion?: (patch: Partial<TextMotionConfigV2>) => void;
   onSetTextBoxPosition?: (position: TextBoxHorizontalPosition) => void;
   boxPositionXFrac?: number;
   onPatchTextTiming: (patch: { start_s?: number; end_s?: number }) => void;
@@ -248,6 +272,11 @@ export default function InspectorPanel({
   onRecordOverlay: () => void;
   onDeleteOverlay: (id: string) => void;
   onPatchMotion?: (id: string, patch: MotionPresetPatch) => void;
+  onPatchMotionControl?: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onBeginMotionControl?: () => void;
+  onPreviewMotionControl?: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onCommitMotionControl?: (id: string, patch: CreatorBlockMotionControlPatch) => void;
+  onCancelMotionControl?: () => void;
   onRemoveMotion?: (id: string) => void;
   onPatchCameraEffect?: (id: string, patch: Partial<CameraEffect>) => void;
   onDeleteCameraEffect?: (id: string) => void;
@@ -344,9 +373,13 @@ export default function InspectorPanel({
           contentRef={contentRef}
           onEditText={onEditText}
           onPatch={onPatch}
+          onPreviewTextMotion={onPreviewTextMotion}
+          onBeginTextMotion={onBeginTextMotion}
+          onCommitTextMotion={onCommitTextMotion}
           onSetTextBoxPosition={onSetTextBoxPosition}
           boxPositionXFrac={boxPositionXFrac}
           onPatchTiming={onPatchTextTiming}
+          videoDurationS={motionDurationS}
           smartPlaceAvailable={smartPlaceAvailable}
           onSmartPlace={onSmartPlace}
           onMergeCaptionCue={onMergeCaptionCue}
@@ -388,8 +421,14 @@ export default function InspectorPanel({
           scene={motionScene}
           durationS={motionDurationS}
           assets={motionAssets}
+          evolvingTypeEnabled={evolvingTypeEnabled}
           showClose={presentation === "panel"}
           onPatch={onPatchMotion}
+          onPatchMotionControl={onPatchMotionControl}
+          onBeginMotionControl={onBeginMotionControl}
+          onPreviewMotionControl={onPreviewMotionControl}
+          onCommitMotionControl={onCommitMotionControl}
+          onCancelMotionControl={onCancelMotionControl}
           onRemove={onRemoveMotion}
           onClose={onClose}
         />
@@ -398,7 +437,6 @@ export default function InspectorPanel({
           <div className="flex items-center justify-between px-5 pb-4 pt-5">
             <div>
               <h2 className="font-display text-[18px] text-[#0c0c0e]">Carousel</h2>
-              <p className="mt-0.5 text-[11px] text-[#71717a]">Visual effect and playback</p>
             </div>
             <CloseX onClose={onClose} />
           </div>
@@ -449,9 +487,6 @@ export default function InspectorPanel({
             </h2>
             <CloseX onClose={onClose} />
           </div>
-          <p className="mt-3 text-[13px] text-[#71717a]">
-            Controls for this element arrive with the timeline update.
-          </p>
         </div>
       )}
     </div>
@@ -654,7 +689,12 @@ function MixInspector({
       {editable ? (
         <div className="mt-4">
           <div className="flex items-center justify-between text-[12px] font-semibold text-[#3f3f46]">
-            <label htmlFor="editor-mix-level">Bed level</label>
+            <span className="flex items-center gap-1">
+              <label htmlFor="editor-mix-level">Bed level</label>
+              <InfoDot label="Bed level" size="compact">
+                Balances the background bed against your voiceover.
+              </InfoDot>
+            </span>
             <span>{Math.round(safeLevel * 100)}%</span>
           </div>
           <input
@@ -667,9 +707,6 @@ function MixInspector({
             onChange={(e) => onPatch?.(Number(e.target.value))}
             className="mt-2 h-11 w-full cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
           />
-          <p className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
-            Balance the background bed against your voiceover.
-          </p>
         </div>
       ) : (
         <p className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
@@ -949,7 +986,6 @@ function CameraInspector({
         <h2 className="font-display text-[18px] text-[#0c0c0e]">Camera</h2>
         <CloseX onClose={onClose} />
       </div>
-      <p className="mt-1 text-[12px] text-[#71717a]">Focus pulse</p>
 
       <TimingSection label="Timing">
         <TimingNumberInput
@@ -1239,9 +1275,13 @@ function TextInspector({
   contentRef,
   onEditText,
   onPatch,
+  onPreviewTextMotion,
+  onBeginTextMotion,
+  onCommitTextMotion,
   onSetTextBoxPosition,
   boxPositionXFrac,
   onPatchTiming,
+  videoDurationS,
   smartPlaceAvailable,
   onSmartPlace,
   onMergeCaptionCue,
@@ -1255,9 +1295,13 @@ function TextInspector({
   contentRef: React.RefObject<HTMLTextAreaElement>;
   onEditText: (text: string) => void;
   onPatch: (patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onPreviewTextMotion?: (patch: Partial<TextMotionConfigV2>) => void;
+  onBeginTextMotion?: () => void;
+  onCommitTextMotion?: (patch: Partial<TextMotionConfigV2>) => void;
   onSetTextBoxPosition?: (position: TextBoxHorizontalPosition) => void;
   boxPositionXFrac?: number;
   onPatchTiming: (patch: { start_s?: number; end_s?: number }) => void;
+  videoDurationS: number;
   smartPlaceAvailable: boolean;
   onSmartPlace?: () => void;
   onMergeCaptionCue?: (direction: "prev" | "next") => void;
@@ -1415,7 +1459,12 @@ function TextInspector({
       {isCaption && (
         <div className="mt-4 border-b border-zinc-100 pb-3">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-[13px] font-bold text-[#0c0c0e]">This caption</span>
+            <span className="flex items-center gap-1">
+              <span className="text-[13px] font-bold text-[#0c0c0e]">This caption</span>
+              <InfoDot label="This caption" size="compact">
+                Changes only this line. Use &ldquo;Match all captions&rdquo; to clear it.
+              </InfoDot>
+            </span>
             {hasAnyCueOverride && (
               <button
                 type="button"
@@ -1513,12 +1562,6 @@ function TextInspector({
             </span>
             <span className="text-[11px] text-[#71717a]">Size</span>
           </div>
-          {/* Self-contained: points at the "Match all captions" control right
-              above, NOT at an "All captions" section — that moved to the
-              Captions panel, so "below" named something no longer here. */}
-          <p className="mt-2 text-[11px] text-[#71717a]">
-            Changes only this line. Use &ldquo;Match all captions&rdquo; to clear it.
-          </p>
         </div>
       )}
 
@@ -1701,20 +1744,55 @@ function TextInspector({
             <select
               aria-label="Animation"
               value={bar.effect ?? "none"}
-              onChange={(e) => onPatch({ effect: e.target.value })}
+              onChange={(e) =>
+                onPatch(
+                  TEXT_MOTION_V2_UI_ENABLED
+                    ? motionPatchForEffect(bar, e.target.value, videoDurationS)
+                    : { effect: e.target.value },
+                )
+              }
               className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
             >
-              {/* Preserve an effect value outside the picker list (e.g. "static"). */}
-              {bar.effect && !INTRO_ANIMATIONS.some((a) => a.value === bar.effect) && (
+              {bar.effect === "smooth-type" && !TEXT_MOTION_V2_UI_ENABLED && (
+                <option value="smooth-type" disabled>Smooth type (saved; unavailable)</option>
+              )}
+              {/* Preserve an effect value outside the visible picker list (e.g. "static"). */}
+              {bar.effect &&
+                bar.effect !== "smooth-type" &&
+                !TEXT_ELEMENT_ANIMATIONS.some((a) => a.value === bar.effect) && (
                 <option value={bar.effect}>{bar.effect}</option>
               )}
-              {INTRO_ANIMATIONS.map((a) => (
+              {TEXT_ELEMENT_ANIMATIONS.filter(
+                (animation) =>
+                  animation.value !== "smooth-type" || TEXT_MOTION_V2_UI_ENABLED,
+              ).map((a) => (
                 <option key={a.value} value={a.value}>
                   {a.label}
                 </option>
               ))}
             </select>
           </label>
+
+          {TEXT_MOTION_V2_UI_ENABLED && bar.motion?.version === 2 &&
+            bar.effect && textMotionHasControls(bar.effect) && (
+              <TextMotionControls
+                effect={bar.effect}
+                motion={bar.motion}
+                onChange={(motionPatch) =>
+                  (onCommitTextMotion ?? ((patch) =>
+                    onPatch(motionPatchForConfig(bar, patch, videoDurationS))))(motionPatch)
+                }
+                onPreview={onPreviewTextMotion}
+                onBegin={onBeginTextMotion}
+                onResetLegacy={() =>
+                  onPatch(
+                    bar.effect === "smooth-type"
+                      ? { effect: "static", motion: null }
+                      : { motion: null },
+                  )
+                }
+              />
+            )}
 
           <label className="mt-3 block text-[12px] font-semibold text-[#3f3f46]">
             Theme transition
@@ -2081,7 +2159,13 @@ function ClipInspector({
       </p>
 
       <fieldset className="mt-5">
-        <legend className="text-[12px] font-semibold text-[#3f3f46]">Look</legend>
+        <legend className="flex items-center gap-1 text-[12px] font-semibold text-[#3f3f46]">
+          <span>Look</span>
+          <InfoDot label="Look" size="compact">
+            Each look is a color grade — warm olive, smoky split-tone, or stadium diffusion.
+            Thumbnails show the treatment.
+          </InfoDot>
+        </legend>
         <div className="mt-2 grid grid-cols-2 gap-2">
           {(
             [
@@ -2116,15 +2200,6 @@ function ClipInspector({
             );
           })}
         </div>
-        <p className="mt-2 text-[11px] leading-relaxed text-[#71717a]">
-          {selectedLook === "olive_film"
-            ? "Warm olive highlights, green-cool shadows, soft highlights, and restrained colour."
-            : selectedLook === "smoky_split_tone"
-              ? "A stronger warm/teal split with softened texture, grain, and a deeper vignette."
-              : selectedLook === "stadium_diffusion"
-                ? "Diffusion, optical edge pull, cool shadows, warm highlights, and film grain."
-                : "No source-media colour treatment."}
-        </p>
 
         {isCustomizableLook(selectedLook) && lookControls && (
           <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/70 p-3">

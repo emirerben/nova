@@ -9,7 +9,7 @@ import {
 import type { TextElement, VisualBlock } from "@/lib/plan-api";
 import {
   MOTION_RUNTIME_HASH,
-  type MotionPresetInstanceV1,
+  type MotionPresetInstance,
 } from "@nova/motion-runtime";
 
 const element: TextElement = {
@@ -348,7 +348,7 @@ describe("buildEditorCommitRequest", () => {
   });
 
   it("sends motion scenes with the exact runtime compatibility token", () => {
-    const scene: MotionPresetInstanceV1 = {
+    const scene: MotionPresetInstance = {
       id: "motion-1",
       preset_id: "card_stack",
       preset_version: 1,
@@ -881,6 +881,16 @@ describe("formatEditorCommitError", () => {
         "motion clean base unavailable",
         { detail: { code: "motion_clean_base_unavailable" } },
         "Creator Blocks need a clean video base, which is unavailable for this edit.",
+      ],
+      [
+        "guided story format rebuild unsupported",
+        { detail: { code: "guided_story_edit_unsupported" } },
+        "This story couldn't be rebuilt in that format. Your current video is unchanged.",
+      ],
+      [
+        "orientation unsupported",
+        { detail: { code: "orientation_unsupported" } },
+        "This edit can't be rebuilt in that format yet.",
       ],
     ];
 

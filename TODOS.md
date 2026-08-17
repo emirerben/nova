@@ -39,6 +39,66 @@ two related gaps neither introduced-nor-fully-fixable within that PR's scope.
   a download URL for the publication's own snapshot object instead of the
   live variant.
 
+## Declutter train — deferrals (v0.35.0.0, 2026-08-17)
+
+### Admin lane InfoDot sweep (16 items)
+**What:** Convert the 16 multi-sentence admin explainers inventoried in
+`docs/declutter-audit.md` (bottom table) to InfoDots.
+**Why:** Admin was audited with the product but deferred (decision D1) — internal
+tooling, zero end-user impact. The inventory is committed so this doesn't rot.
+**How:** Follow the table in docs/declutter-audit.md; InfoDot already exists.
+Note admin is the dark surface — restyle the popover tokens (zinc-900 card) or
+add a `tone="dark"` prop before using it there.
+**Effort:** S (CC: ~25m)
+**Priority:** P3
+**Depends on:** —
+
+### PersonaEditor duplicated heading block
+**What:** The "Meet your persona" heading + InfoDot block is now byte-identical in
+both render branches of PersonaEditor.tsx (~L195-205 and ~L307-317); extract once.
+**Why:** The duplication existed for divergent copy; the declutter collapsed both
+to one sentence, so it's pure repetition now (maintainability review, 2026-08-17).
+**Effort:** S (CC: ~5m)
+**Priority:** P3
+**Depends on:** —
+
+### InfoDot bundle placement sanity check
+**What:** One bundle-analyzer glance confirming the chunk carrying
+@radix-ui/react-popover + floating-ui is shared across routes, not duplicated
+per-page (InfoDot is statically imported from ~15 client components).
+**Why:** First floating-ui consumer in the app; performance review said "likely
+fine" but unmeasured.
+**Effort:** S (CC: ~10m)
+**Priority:** P3
+**Depends on:** —
+
+
+## Staged migrations — structural gap (from the 2026-08-13 persona-owner incident)
+
+The incident itself is CLOSED. Verified in production 2026-08-17: alembic revision
+`0076`, the global mismatch audit returns **0** rows, both `uq_personas_id_user_id`
+and `fk_content_plans_persona_owner` exist, and `fly.toml`'s `release_command` is
+back to `upgrade head`. The two remediation P0s that lived here are done and have
+been removed. What remains is the reason it happened.
+
+### `alembic upgrade head` cannot express a staged two-release migration
+**What:** #804 shipped `0072` and `0073` in one PR while its own runbook required
+them in two separate releases with manual remediation between. Fly's unconditional
+`upgrade head` chained them, `0073` threw, the chain rolled back, and API deploys
+failed for ~24h (4 consecutive, 2026-08-12 11:47 → 2026-08-13 03:32).
+**Why:** Any future migration with a data precondition will reproduce this exactly.
+The runbook's "do not combine these into one Fly release" instruction had no
+mechanism behind it.
+**How:** Options: a CI guard that fails a PR adding 2+ migrations when any contains a
+precondition `raise`; or a `TARGET_REVISION` env var the release command reads so
+staging is config, not a code edit; or require staged migrations to ship as separate PRs.
+Whatever lands must keep a genuine migration refusal loud — see #834, where the same
+tension shows up from the other side (a retry that hides real failures is worse than
+the flake it suppresses).
+**Effort:** M (CC: ~45m)
+**Priority:** P1
+**Depends on:** —
+
 ## Render-worker queue latency — deferrals (plans/014 eng review, 2026-08-04)
 
 Context: the 2026-08-04 "frozen Starting…" incident (plans/014). The single

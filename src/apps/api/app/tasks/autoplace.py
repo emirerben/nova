@@ -18,8 +18,8 @@ Both: soft_time_limit=240 / time_limit=300 (< broker visibility_timeout=1900,
 worker.py invariant) and wrapped in pipeline_trace_for (mandatory orchestrator
 contract — agent I/O must reach /admin/jobs).
 
-Queue: `settings.autoplace_queue` (default "celery"; local dev sets a dedicated
-queue so sibling worktree workers on the shared redis never grab unregistered tasks).
+Queues: asset analysis uses `settings.pool_asset_analysis_queue`; matchers use
+`settings.autoplace_queue`. Both default to "celery" outside configured environments.
 """
 
 from __future__ import annotations
@@ -28,10 +28,14 @@ import hashlib
 import os
 import subprocess
 import tempfile
+import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
+from billiard.exceptions import SoftTimeLimitExceeded
+from celery import current_task
 
 from app.database import sync_session as _sync_session
 from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, SoundEffect
@@ -59,6 +63,32 @@ _NO_OVERLAY_ATTEMPT_FENCE = object()
 # fabricated blocks baked into its render (prod job 96771038 got an unwanted
 # opening montage on a montage edit this way).
 VISUAL_BLOCK_AUTOPLAN_ARCHETYPES = frozenset({"talking_head", "narrated", "subtitled"})
+
+
+def _pool_attempt_token(explicit: str | None) -> str | None:
+    if explicit is not None:
+        return explicit
+    headers = getattr(getattr(current_task, "request", None), "headers", None) or {}
+    value = headers.get("pool_asset_attempt_token")
+    return value if isinstance(value, str) else None
+
+
+def _analysis_temp_filename(source_filename: str | None, kind: str) -> str:
+    """Keep only an allowlisted media suffix in worker-local paths.
+
+    Shared probe/provider helpers may log their local path.  Carrying the
+    creator's original basename into that path would leak a filename even
+    though the storage URL itself is never logged.
+    """
+    allowed = (
+        {".mp4", ".mov"}
+        if kind == "video"
+        else {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+    )
+    suffix = Path(source_filename or "").suffix.lower()
+    if suffix not in allowed:
+        suffix = ".mp4" if kind == "video" else ".png"
+    return f"asset{suffix}"
 
 
 def _record(event: str, **fields) -> None:
@@ -718,6 +748,15 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
 # identities in `brands`; v3/v4 real analyses are stale for both kinds so the
 # matcher can suppress already-satisfied brand wishlist rows.
 ANALYSIS_VERSION = 5
+_MAX_POOL_IMAGE_PIXELS = 50_000_000
+
+
+class AssetUnreadableError(RuntimeError):
+    """The uploaded bytes are not decodable as the declared media kind."""
+
+
+class AnalysisTemporarilyUnavailableError(RuntimeError):
+    """The media is readable but the configured analysis provider failed."""
 
 
 def _stub_analysis(asset: PlanItemAsset) -> dict:
@@ -759,17 +798,31 @@ def _analyze_image(
     dims: tuple[int, int] | None = None
     has_alpha = False
     try:
+        import pillow_heif  # type: ignore[import]  # noqa: PLC0415
         from PIL import Image  # noqa: PLC0415
 
         from app.pipeline.image_clip import image_has_alpha  # noqa: PLC0415
 
+        # Pool analysis runs as its own Celery task and cannot rely on a render
+        # module having registered Pillow's HEIC/HEIF decoder first. Without
+        # this, every iPhone photo fails at Image.open with
+        # UnidentifiedImageError even though pillow-heif is installed.
+        pillow_heif.register_heif_opener()
         with Image.open(local_path) as im:
             if im.height:
                 aspect = round(im.width / im.height, 4)
                 dims = (int(im.width), int(im.height))
+                if im.width * im.height > _MAX_POOL_IMAGE_PIXELS:
+                    raise AssetUnreadableError("image pixel limit exceeded")
+            im.verify()
         has_alpha = image_has_alpha(local_path)
+    except SoftTimeLimitExceeded:
+        raise
+    except AssetUnreadableError:
+        raise
     except Exception as exc:  # noqa: BLE001
-        log.warning("autoplace.image_size_failed", error=str(exc)[:160])
+        log.warning("autoplace.image_unreadable", error_type=type(exc).__name__)
+        raise AssetUnreadableError("image could not be decoded") from exc
 
     from app.config import settings  # noqa: PLC0415
 
@@ -796,6 +849,8 @@ def _analyze_image(
             mime = "image/webp"
         elif lower.endswith(".heic"):
             mime = "image/heic"
+        elif lower.endswith(".heif"):
+            mime = "image/heif"
         with open(local_path, "rb") as fh:
             data = fh.read()
         resp = _get_client().models.generate_content(
@@ -820,13 +875,15 @@ def _analyze_image(
             dims,
             has_alpha,
         )
+    except SoftTimeLimitExceeded:
+        raise
     except Exception as exc:  # noqa: BLE001
-        log.warning("autoplace.image_analysis_failed", error=str(exc)[:200])
-        return None, aspect, dims, has_alpha
+        log.warning("autoplace.image_analysis_failed", error_type=type(exc).__name__)
+        raise AnalysisTemporarilyUnavailableError("image analysis provider failed") from exc
 
 
 def _analyze_video(
-    local_path: str, job_scope: str
+    local_path: str,
 ) -> tuple[dict | None, float | None, float | None, tuple[int, int] | None]:
     """(analysis, aspect, duration_s, (width, height)) for a video asset."""
     aspect: float | None = None
@@ -840,8 +897,13 @@ def _analyze_video(
         if probe.height:
             aspect = round(probe.width / probe.height, 4)
             dims = (int(probe.width), int(probe.height))
+    except SoftTimeLimitExceeded:
+        raise
     except Exception as exc:  # noqa: BLE001
-        log.warning("autoplace.video_probe_failed", error=str(exc)[:160])
+        log.warning("autoplace.video_unreadable", error_type=type(exc).__name__)
+        raise AssetUnreadableError("video could not be decoded") from exc
+    if dims is None or duration is None:
+        raise AssetUnreadableError("video metadata is incomplete")
 
     from app.config import settings  # noqa: PLC0415
 
@@ -854,9 +916,14 @@ def _analyze_video(
         )
 
         file_ref = gemini_upload_and_wait(local_path)
-        meta = analyze_clip(file_ref, job_id=job_scope)
+        # A pool analysis belongs to a PlanItem, not a Job.  Passing the item
+        # UUID as RunContext.job_id makes agent_run persistence violate its Job
+        # FK and can dump SQL parameters (including provider payloads) into the
+        # fallback warning.  The outer pipeline trace and asset correlation ID
+        # remain the authoritative context for this task.
+        meta = analyze_clip(file_ref)
         if getattr(meta, "failed", False):
-            return None, aspect, duration, dims
+            raise AnalysisTemporarilyUnavailableError("video analysis provider failed")
         # Persist the content map the trim rule needs (plan 006 §1): every
         # best_moment, clamped later at USE time (pick_trim_window) against the
         # PROBED duration — Gemini timing is never trusted raw.
@@ -885,9 +952,28 @@ def _analyze_video(
             "analysis_version": ANALYSIS_VERSION,
         }
         return analysis, aspect, duration, dims
+    except SoftTimeLimitExceeded:
+        raise
+    except AnalysisTemporarilyUnavailableError:
+        raise
     except Exception as exc:  # noqa: BLE001
-        log.warning("autoplace.video_analysis_failed", error=str(exc)[:200])
-        return None, aspect, duration, dims
+        log.warning("autoplace.video_analysis_failed", error_type=type(exc).__name__)
+        raise AnalysisTemporarilyUnavailableError("video analysis provider failed") from exc
+
+
+# Public reuse boundary for other media-understanding workflows. Keep the
+# private implementations above so existing task-local monkeypatches and
+# regression tests remain stable while callers avoid importing task internals.
+def analyze_pool_image(
+    local_path: str, job_scope: str
+) -> tuple[dict | None, float | None, tuple[int, int] | None, bool]:
+    return _analyze_image(local_path, job_scope)
+
+
+def analyze_pool_video(
+    local_path: str,
+) -> tuple[dict | None, float | None, float | None, tuple[int, int] | None]:
+    return _analyze_video(local_path)
 
 
 def _plan_ownership_epoch(plan: ContentPlan) -> int:
@@ -923,7 +1009,11 @@ def _lock_owned_pool_asset(
 
 
 @celery_app.task(name="app.tasks.autoplace.analyze_pool_asset", **_AUTOPLACE_TASK_LIMITS)
-def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
+def analyze_pool_asset(
+    asset_id: str,
+    refresh: bool = False,
+    attempt_token: str | None = None,
+) -> None:
     """Analyze one pool asset.
 
     `refresh=True` (006 decision C backfill): the asset stays `status="ready"`
@@ -931,8 +1021,13 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
     flickers off; only the analysis payload is swapped on success. A failed
     refresh keeps the previous working analysis (never degrades a ready asset).
     """
+    # Keep the broker payload compatible with pre-0.28 workers during the
+    # rolling deploy: the fence travels in a Celery header, not a third
+    # positional argument. Direct task invocations may still pass it.
+    attempt_token = _pool_attempt_token(attempt_token)
+
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
-    from app.storage import download_to_file  # noqa: PLC0415
+    from app.storage import download_generation_to_file, download_to_file  # noqa: PLC0415
 
     try:
         aid = uuid.UUID(str(asset_id))
@@ -940,6 +1035,8 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
         log.warning("autoplace.asset_bad_id", asset_id=str(asset_id))
         return
 
+    started_monotonic = time.monotonic()
+    queue_wait_s: float | None = None
     with _sync_session() as db:
         # Resolve child -> Item first without locks, then acquire the complete
         # global Plan -> Persona -> Item -> Asset lock chain before the first
@@ -968,9 +1065,31 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
         ownership_epoch = _plan_ownership_epoch(plan)
         scope = str(asset.plan_item_id)
         gcs_path, kind = asset.gcs_path, asset.kind
-        filename = asset.source_filename or "asset"
+        upload_content_type = getattr(asset, "upload_content_type", None)
+        gcs_generation = getattr(asset, "gcs_generation", None)
+        correlation_id = getattr(asset, "correlation_id", None)
+        temp_filename = _analysis_temp_filename(asset.source_filename, kind)
         if not refresh:
+            current_token = getattr(asset, "analysis_attempt_token", None)
+            # Tokened attempts are single-owner. Legacy uploaded rows without a
+            # token remain claimable for backwards-compatible backfills.
+            if attempt_token and current_token != attempt_token:
+                log.info("autoplace.asset_stale_attempt", asset_id=asset_id, stage="claim")
+                return
+            if current_token and not attempt_token:
+                log.info("autoplace.asset_missing_attempt", asset_id=asset_id)
+                return
+            if asset.status not in {"uploaded", "queued"}:
+                return
+            now = datetime.now(UTC)
+            dispatched_at = getattr(asset, "analysis_last_dispatched_at", None)
+            if dispatched_at is not None:
+                queue_wait_s = max(0.0, (now - dispatched_at).total_seconds())
             asset.status = "analyzing"
+            asset.analysis_started_at = now
+            asset.error_code = None
+            asset.error_detail = None
+            asset.error_retryable = False
             db.commit()
 
     with pipeline_trace_for(scope):
@@ -980,16 +1099,85 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
         dims: tuple[int, int] | None = None
         has_alpha: bool | None = None
         failed = False
+        timeout_exc: SoftTimeLimitExceeded | None = None
+        failure_code: str | None = None
+        failure_detail: str | None = None
+        persisted_status = "ready" if refresh else "failed"
+        # None = preview step never reached (analysis failed first); "" = preview
+        # attempted and failed (do-not-retry sentinel); non-empty = preview key.
+        preview_path: str | None = None
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                local = os.path.join(tmpdir, filename.split("/")[-1] or "asset")
-                download_to_file(gcs_path, local)
+                local = os.path.join(tmpdir, temp_filename)
+                if gcs_generation:
+                    download_generation_to_file(
+                        gcs_path,
+                        local,
+                        generation=gcs_generation,
+                    )
+                else:
+                    # Compatibility for legacy assets registered before 0074.
+                    download_to_file(gcs_path, local)
                 if kind == "video":
-                    analysis, aspect, duration, dims = _analyze_video(local, scope)
+                    analysis, aspect, duration, dims = _analyze_video(local)
                 else:
                     analysis, aspect, dims, has_alpha = _analyze_image(local, scope)
+                # Preview generation is strictly best-effort: it must never turn a
+                # successful analysis into a failure. Any exception here is
+                # swallowed and persisted as the "" do-not-retry sentinel.
+                try:
+                    from app.services import pool_asset_preview  # noqa: PLC0415
+                    from app.storage import upload_local_file  # noqa: PLC0415
+
+                    if pool_asset_preview.needs_preview(kind, upload_content_type, gcs_path):
+                        preview_local = os.path.join(tmpdir, "preview.jpg")
+                        generated = (
+                            pool_asset_preview.write_video_poster(local, preview_local)
+                            if kind == "video"
+                            else pool_asset_preview.write_image_preview(local, preview_local)
+                        )
+                        if generated:
+                            preview_object = pool_asset_preview.preview_object_path(gcs_path)
+                            upload_local_file(
+                                preview_local,
+                                preview_object,
+                                content_type="image/jpeg",
+                            )
+                            preview_path = preview_object
+                        else:
+                            preview_path = ""
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "autoplace.pool_asset_preview_failed",
+                        asset_id=asset_id,
+                        error_type=type(exc).__name__,
+                    )
+                    preview_path = ""
+        except SoftTimeLimitExceeded as exc:
+            timeout_exc = exc
+            failure_code = "analysis_timed_out"
+            failure_detail = "Kria took too long to analyze this file. Try again."
+            failed = True
+        except AssetUnreadableError:
+            failure_code = "analysis_unreadable"
+            failure_detail = (
+                "Kria couldn't read this file. Export it as JPG, PNG, WebP, HEIC, HEIF, MP4, "
+                "or MOV."
+            )
+            failed = True
+        except AnalysisTemporarilyUnavailableError:
+            failure_code = "analysis_temporarily_unavailable"
+            failure_detail = "Kria temporarily couldn't analyze this file. Try again."
+            failed = True
         except Exception as exc:  # noqa: BLE001
-            log.warning("autoplace.analysis_failed", asset_id=asset_id, error=str(exc)[:200])
+            failure_code = "analysis_temporarily_unavailable"
+            failure_detail = "Kria temporarily couldn't analyze this file. Try again."
+            log.warning(
+                "autoplace.analysis_failed",
+                asset_id=asset_id,
+                error_code=failure_code,
+                error_type=type(exc).__name__,
+            )
             failed = True
 
         with _sync_session() as db:
@@ -1007,14 +1195,24 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
             if fenced is None:
                 return
             _plan, _item, asset = fenced
-            if failed and analysis is None and aspect is None and duration is None:
+            if not refresh and attempt_token:
+                if getattr(asset, "analysis_attempt_token", None) != attempt_token:
+                    log.info("autoplace.asset_stale_attempt", asset_id=asset_id, stage="persist")
+                    return
+            if failed:
                 if refresh:
                     # Refresh must never degrade a working asset (decision C):
                     # keep the previous analysis + ready status, just trace.
                     pass
                 else:
-                    # Couldn't even read the file — the honest "failed" tile (2A).
+                    # Partial probe metadata never turns a provider failure into
+                    # success. Only the intentional missing-key stub is ready.
                     asset.status = "failed"
+                    asset.error_code = failure_code or "analysis_failed"
+                    asset.error_detail = failure_detail or (
+                        "Kria couldn't analyze this file. Try again."
+                    )
+                    asset.error_retryable = failure_code != "analysis_unreadable"
             else:
                 if refresh and analysis is None:
                     # Refresh produced no better data (keyless / Gemini down):
@@ -1034,13 +1232,108 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
                 if duration:
                     asset.duration_s = duration
                 asset.status = "ready"
+                asset.error_code = None
+                asset.error_detail = None
+                asset.error_retryable = False
+                asset.preview_gcs_path = preview_path
+            if not refresh:
+                asset.analysis_started_at = None
+            persisted_status = asset.status
             db.commit()
+        duration_s = time.monotonic() - started_monotonic
+        log.info(
+            "autoplace.asset_analysis_finished",
+            asset_id=asset_id,
+            status=persisted_status,
+            queue_wait_s=round(queue_wait_s, 3) if queue_wait_s is not None else None,
+            duration_s=round(duration_s, 3),
+            error_code=failure_code if persisted_status == "failed" else None,
+            correlation_id=correlation_id,
+            attempt=getattr(asset, "analysis_attempt_count", None),
+        )
         _record(
             "pool_asset_analyzed",
             asset_id=asset_id,
-            status="failed" if failed else "ready",
+            status=persisted_status,
             has_llm_analysis=bool(analysis),
         )
+        if timeout_exc is not None:
+            raise timeout_exc
+
+
+@celery_app.task(name="app.tasks.autoplace.generate_pool_asset_preview", **_AUTOPLACE_TASK_LIMITS)
+def generate_pool_asset_preview(asset_id: str) -> None:
+    """Backfill task: generate a browser-safe preview for one `ready` asset.
+
+    Dispatched by `reconcile_stale_pool_assets` (maintenance.py) for pre-fix
+    `ready` rows that never got a preview (`preview_gcs_path IS NULL`). Purely
+    additive — it never touches `status`/`analysis`, and it re-checks both
+    conditions before AND after generation so it can never clobber a
+    concurrent update or a preview another dispatch already wrote.
+    """
+    from app.services import pool_asset_preview  # noqa: PLC0415
+    from app.storage import (  # noqa: PLC0415
+        download_generation_to_file,
+        download_to_file,
+        upload_local_file,
+    )
+
+    try:
+        aid = uuid.UUID(str(asset_id))
+    except (TypeError, ValueError):
+        log.warning("autoplace.preview_backfill_bad_id", asset_id=str(asset_id))
+        return
+
+    with _sync_session() as db:
+        asset = db.get(PlanItemAsset, aid)
+        if asset is None:
+            return
+        if asset.status != "ready" or getattr(asset, "preview_gcs_path", None) is not None:
+            return
+        gcs_path, kind = asset.gcs_path, asset.kind
+        gcs_generation = getattr(asset, "gcs_generation", None)
+        upload_content_type = getattr(asset, "upload_content_type", None)
+
+    if not pool_asset_preview.needs_preview(kind, upload_content_type, gcs_path):
+        return
+
+    preview_path = ""
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local = os.path.join(tmpdir, "asset")
+            if gcs_generation:
+                download_generation_to_file(gcs_path, local, generation=gcs_generation)
+            else:
+                download_to_file(gcs_path, local)
+            preview_local = os.path.join(tmpdir, "preview.jpg")
+            generated = (
+                pool_asset_preview.write_video_poster(local, preview_local)
+                if kind == "video"
+                else pool_asset_preview.write_image_preview(local, preview_local)
+            )
+            if generated:
+                preview_object = pool_asset_preview.preview_object_path(gcs_path)
+                upload_local_file(preview_local, preview_object, content_type="image/jpeg")
+                preview_path = preview_object
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "autoplace.preview_backfill_failed",
+            asset_id=asset_id,
+            error_type=type(exc).__name__,
+        )
+        preview_path = ""
+
+    with _sync_session() as db:
+        asset = db.get(PlanItemAsset, aid, with_for_update=True)
+        if asset is None:
+            return
+        if asset.status != "ready" or getattr(asset, "preview_gcs_path", None) is not None:
+            return
+        if asset.gcs_path != gcs_path:
+            return
+        asset.preview_gcs_path = preview_path
+        db.commit()
+    log.info("autoplace.preview_backfilled", asset_id=asset_id, produced=bool(preview_path))
 
 
 # ── the matcher ───────────────────────────────────────────────────────────────
@@ -1247,7 +1540,7 @@ def match_overlay_suggestions(
                         analyze_pool_asset.apply_async(
                             args=[a["id"]],
                             kwargs={"refresh": True},
-                            queue=settings.autoplace_queue,
+                            queue=settings.pool_asset_analysis_queue,
                         )
                     except Exception as exc:  # noqa: BLE001 — best-effort, like register
                         log.warning(

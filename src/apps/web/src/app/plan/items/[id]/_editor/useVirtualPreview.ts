@@ -29,6 +29,9 @@ type Deck = "a" | "b";
 const VIDEO_LAG_JUMP_S = 0.3;
 const MUSIC_FORWARD_CATCH_S = 0.35;
 const MUSIC_HARD_SEEK_S = 0.25;
+const COMMITTED_PLAYBACK_INTERVAL_MS = 200;
+const INCOMING_DECK_CORRECTION_INTERVAL_MS = 500;
+const INCOMING_DECK_DRIFT_TOLERANCE_S = 0.15;
 
 interface PendingSeek {
   timeS: number;
@@ -54,6 +57,11 @@ export interface UseVirtualPreviewOptions {
    * mixed in, so the decks must stay silent even if the music itself fails.
    */
   musicTrackActive?: boolean;
+  /** Enables decoded-frame output-timeline sampling. Flag-off preserves the
+   * legacy timeupdate/rAF transport exactly. */
+  frameDriven?: boolean;
+  /** High-frequency output-timeline time for authored layers and playheads. */
+  onFrameTimeUpdate?: (timeS: number) => void;
   onTimeUpdate: (timeS: number) => void;
   onDuration: (durationS: number) => void;
   onPlayingChange: (playing: boolean) => void;
@@ -75,6 +83,7 @@ export interface VirtualPreviewVideoProps {
   onSeeking: () => void;
   onSeeked: () => void;
   onTimeUpdate: () => void;
+  onRateChange?: () => void;
   onEnded: () => void;
   onPlay: () => void;
   onPause: () => void;
@@ -95,6 +104,8 @@ export interface VirtualPreviewController {
   timeline: VirtualTimeline;
   activeDeck: Deck;
   buffering: boolean;
+  /** Compatibility state sampled from committed transport time. Frame-driven
+   * consumers should evaluate `timeline` against the external frame clock. */
   transitionPreview?: VirtualTransitionPreview | null;
   videoAProps: VirtualPreviewVideoProps;
   videoBProps: VirtualPreviewVideoProps;
@@ -140,6 +151,17 @@ function getVirtualMusicAudio(ref: RefObject<HTMLAudioElement>): HTMLAudioElemen
   );
 }
 
+export function mapDeckMediaTimeToVirtualTime(
+  entry: Pick<VirtualTimelineEntry, "startS" | "durationS" | "inS">,
+  mediaTimeS: number,
+): number {
+  const localOffsetS = mediaTimeS - entry.inS;
+  return Math.max(
+    entry.startS,
+    Math.min(entry.startS + entry.durationS, entry.startS + localOffsetS),
+  );
+}
+
 export function useVirtualPreview({
   enabled,
   slots,
@@ -152,6 +174,8 @@ export function useVirtualPreview({
   musicStartS = 0,
   soundMuted = false,
   musicTrackActive = false,
+  frameDriven = false,
+  onFrameTimeUpdate,
   onTimeUpdate,
   onDuration,
   onPlayingChange,
@@ -167,7 +191,6 @@ export function useVirtualPreview({
     () => transitionPreviewAtTime(timeline, currentTime),
     [currentTime, timeline],
   );
-
   const videoARef = useRef<HTMLVideoElement>(null) as RefObject<HTMLVideoElement>;
   const videoBRef = useRef<HTMLVideoElement>(null) as RefObject<HTMLVideoElement>;
   const musicAudioRef = useRef<HTMLAudioElement>(null) as RefObject<HTMLAudioElement>;
@@ -187,6 +210,17 @@ export function useVirtualPreview({
   const deckSlotRef = useRef<Record<Deck, string | null>>({ a: null, b: null });
   const pendingSeekRef = useRef<Record<Deck, PendingSeek | null>>({ a: null, b: null });
   const playingRef = useRef(false);
+  const frameDrivenRef = useRef(frameDriven);
+  const onFrameTimeUpdateRef = useRef(onFrameTimeUpdate);
+  const deckFrameGenerationRef = useRef<Record<Deck, number>>({ a: 0, b: 0 });
+  const deckFrameCallbackRef = useRef<Record<Deck, number | null>>({ a: null, b: null });
+  const lastCommittedPlaybackRef = useRef(0);
+  const lastIncomingCorrectionRef = useRef<Record<Deck, number>>({
+    a: Number.NEGATIVE_INFINITY,
+    b: Number.NEGATIVE_INFINITY,
+  });
+  const lastEmittedCommittedTimeRef = useRef(currentTime);
+  const committedPropTimeRef = useRef(currentTime);
   // Carousel-window transport clock (bug fix: the block has no video deck to
   // source `timeupdate` from — a paused deck never fires it, so without this
   // the transport froze at the block's start the instant play carried the
@@ -206,12 +240,26 @@ export function useVirtualPreview({
   // forcing a declaration-order cycle or stale-closure bugs.
   const finishEntryRef = useRef<(entryIndex: number) => void>(() => {});
 
-  currentTimeRef.current = currentTime;
+  // The shell's committed time intentionally trails the decoded-frame clock.
+  // Do not let that throttled prop overwrite a newer live frame on unrelated
+  // shell renders. A value we did not just emit is an authoritative external
+  // seek/timeline correction and does take ownership of the transport ref.
+  if (!Object.is(committedPropTimeRef.current, currentTime)) {
+    committedPropTimeRef.current = currentTime;
+    if (
+      !playingRef.current ||
+      Math.abs(currentTime - lastEmittedCommittedTimeRef.current) > 0.001
+    ) {
+      currentTimeRef.current = currentTime;
+    }
+  }
   timelineRef.current = timeline;
   enabledRef.current = enabled;
   musicAudioUrlRef.current = musicAudioUrl ?? null;
   musicStartSRef.current = musicStartS;
   soundMutedRef.current = soundMuted;
+  frameDrivenRef.current = frameDriven;
+  onFrameTimeUpdateRef.current = onFrameTimeUpdate;
 
   useEffect(() => {
     onDuration(enabled ? timeline.totalDurationS : 0);
@@ -233,6 +281,84 @@ export function useVirtualPreview({
     return deck === "a" ? videoARef : videoBRef;
   }, []);
 
+  const publishFrameTime = useCallback((timeS: number) => {
+    currentTimeRef.current = timeS;
+    onFrameTimeUpdateRef.current?.(timeS);
+  }, []);
+
+  const publishCommittedTime = useCallback(
+    (timeS: number, publishFrame = true) => {
+      if (publishFrame) publishFrameTime(timeS);
+      lastCommittedPlaybackRef.current = performance.now();
+      lastEmittedCommittedTimeRef.current = timeS;
+      onTimeUpdate(timeS);
+    },
+    [onTimeUpdate, publishFrameTime],
+  );
+
+  const publishPlaybackTime = useCallback(
+    (
+      timeS: number,
+      { forceCommit = false, publishFrame = true }: {
+        forceCommit?: boolean;
+        publishFrame?: boolean;
+      } = {},
+    ) => {
+      if (!frameDrivenRef.current) {
+        publishCommittedTime(timeS);
+        return;
+      }
+      if (publishFrame) publishFrameTime(timeS);
+      const now = performance.now();
+      if (forceCommit || now - lastCommittedPlaybackRef.current >= COMMITTED_PLAYBACK_INTERVAL_MS) {
+        lastCommittedPlaybackRef.current = now;
+        lastEmittedCommittedTimeRef.current = timeS;
+        onTimeUpdate(timeS);
+      }
+    },
+    [onTimeUpdate, publishCommittedTime, publishFrameTime],
+  );
+
+  const sampleDeckFrameRef = useRef<(deck: Deck, mediaTimeS: number) => void>(() => {});
+
+  const cancelDeckFrameClock = useCallback(
+    (deck: Deck) => {
+      deckFrameGenerationRef.current[deck] += 1;
+      const video = refForDeck(deck).current;
+      const callbackId = deckFrameCallbackRef.current[deck];
+      if (video && callbackId != null && typeof video.cancelVideoFrameCallback === "function") {
+        video.cancelVideoFrameCallback(callbackId);
+      }
+      deckFrameCallbackRef.current[deck] = null;
+    },
+    [refForDeck],
+  );
+
+  const startDeckFrameClock = useCallback(
+    (deck: Deck) => {
+      if (!frameDrivenRef.current) return;
+      const video = refForDeck(deck).current;
+      if (!video || typeof video.requestVideoFrameCallback !== "function") return;
+
+      cancelDeckFrameClock(deck);
+      const generation = deckFrameGenerationRef.current[deck];
+      const drawDecodedFrame: VideoFrameRequestCallback = (_now, metadata) => {
+        if (
+          generation !== deckFrameGenerationRef.current[deck] ||
+          deck !== activeDeckRef.current ||
+          !enabledRef.current ||
+          !playingRef.current
+        ) {
+          return;
+        }
+        sampleDeckFrameRef.current(deck, metadata.mediaTime);
+        deckFrameCallbackRef.current[deck] = video.requestVideoFrameCallback(drawDecodedFrame);
+      };
+      deckFrameCallbackRef.current[deck] = video.requestVideoFrameCallback(drawDecodedFrame);
+    },
+    [cancelDeckFrameClock, refForDeck],
+  );
+
   const stopCarouselClock = useCallback(() => {
     const running = carouselClockRef.current;
     if (running) {
@@ -244,6 +370,8 @@ export function useVirtualPreview({
   const pauseAll = useCallback(() => {
     playingRef.current = false;
     stopCarouselClock();
+    cancelDeckFrameClock("a");
+    cancelDeckFrameClock("b");
     pendingSeekRef.current.a = null;
     pendingSeekRef.current.b = null;
     videoARef.current?.pause();
@@ -251,8 +379,9 @@ export function useVirtualPreview({
     for (const audio of getVirtualMusicAudio(musicAudioRef)) {
       audio.pause();
     }
+    if (frameDrivenRef.current) publishCommittedTime(currentTimeRef.current);
     onPlayingChange(false);
-  }, [onPlayingChange, stopCarouselClock]);
+  }, [cancelDeckFrameClock, onPlayingChange, publishCommittedTime, stopCarouselClock]);
 
   const loadDeck = useCallback(
     (deck: Deck, entry: VirtualTimelineEntry, timeS: number | null, play: boolean) => {
@@ -261,6 +390,7 @@ export function useVirtualPreview({
 
       const needsSource = deckSlotRef.current[deck] !== entry.slotKey || video.src !== entry.sourceUrl;
       if (needsSource) {
+        cancelDeckFrameClock(deck);
         deckSlotRef.current[deck] = entry.slotKey;
         pendingSeekRef.current[deck] = timeS == null ? null : { timeS, play };
         video.src = entry.sourceUrl;
@@ -276,10 +406,14 @@ export function useVirtualPreview({
         safeSetCurrentTime(video, timeS);
       }
       if (play) {
-        playIgnoringAbort(video, pauseAll);
+        if (video.paused) playIgnoringAbort(video, pauseAll);
+        // Only the active deck owns the output clock. Incoming crossfade
+        // decks may play for compositing, but registering/cancelling their
+        // callbacks on every outgoing frame creates needless decoder churn.
+        if (deck === activeDeckRef.current) startDeckFrameClock(deck);
       }
     },
-    [pauseAll, refForDeck],
+    [cancelDeckFrameClock, pauseAll, refForDeck, startDeckFrameClock],
   );
 
   const preloadNext = useCallback(
@@ -310,10 +444,32 @@ export function useVirtualPreview({
       }
       const incomingTimeS =
         next.inS + Math.max(0, Math.min(next.overlapBeforeS, virtualTimeS - next.startS));
-      loadDeck(otherDeck(activeDeckRef.current), next, incomingTimeS, play);
+      const incomingDeck = otherDeck(activeDeckRef.current);
+      const video = refForDeck(incomingDeck).current;
+      const needsSource =
+        !video ||
+        deckSlotRef.current[incomingDeck] !== next.slotKey ||
+        video.src !== next.sourceUrl;
+      if (needsSource || !play || video?.paused) {
+        loadDeck(incomingDeck, next, incomingTimeS, play);
+      } else {
+        const now = performance.now();
+        if (
+          now - lastIncomingCorrectionRef.current[incomingDeck] >=
+          INCOMING_DECK_CORRECTION_INTERVAL_MS
+        ) {
+          lastIncomingCorrectionRef.current[incomingDeck] = now;
+          if (
+            Math.abs(video.currentTime - incomingTimeS) >
+            INCOMING_DECK_DRIFT_TOLERANCE_S
+          ) {
+            safeSetCurrentTime(video, incomingTimeS);
+          }
+        }
+      }
       return true;
     },
-    [loadDeck],
+    [loadDeck, refForDeck],
   );
 
   const syncMusicToVirtualTime = useCallback(
@@ -361,7 +517,7 @@ export function useVirtualPreview({
     const endS = entry.startS + entry.durationS;
     const elapsedS = (performance.now() - running.startWallMs) / 1000;
     const virtualTimeS = Math.min(endS, running.startVirtualS + elapsedS);
-    onTimeUpdate(virtualTimeS);
+    publishPlaybackTime(virtualTimeS);
     // Music is the master clock (see the sync-policy note at the top of this
     // file): "soft" mode only forward-catches a stall, never rewinds a
     // running track, same as the clip-to-clip boundary swap below.
@@ -372,7 +528,7 @@ export function useVirtualPreview({
       return;
     }
     running.raf = requestAnimationFrame(tickCarouselClock);
-  }, [onTimeUpdate, syncMusicToVirtualTime]);
+  }, [publishPlaybackTime, syncMusicToVirtualTime]);
 
   const startCarouselClock = useCallback(
     (entryIndex: number, virtualTimeS: number) => {
@@ -401,6 +557,8 @@ export function useVirtualPreview({
         // window. Pause both decks and gate deck-driven playback, but keep
         // the music track (if any) in sync — the final render's audio bed
         // continues under whatever visual is on screen.
+        cancelDeckFrameClock("a");
+        cancelDeckFrameClock("b");
         videoARef.current?.pause();
         videoBRef.current?.pause();
         // Neither deck is "active" for the duration of the window — null out
@@ -421,7 +579,7 @@ export function useVirtualPreview({
         // branch's own preload of its neighboring deck below.
         preloadNext(otherDeck(activeDeckRef.current), mapping.entryIndex);
         syncMusicToVirtualTime(mapping.virtualTimeS, play);
-        onTimeUpdate(mapping.virtualTimeS);
+        publishCommittedTime(mapping.virtualTimeS);
         if (play) {
           startCarouselClock(mapping.entryIndex, mapping.virtualTimeS);
         } else {
@@ -441,12 +599,15 @@ export function useVirtualPreview({
         preloadNext(otherDeck(deck), mapping.entryIndex);
       }
       syncMusicToVirtualTime(mapping.virtualTimeS, play);
-      onTimeUpdate(mapping.virtualTimeS);
+      // In a video window the transport target is committed immediately, but
+      // authored layers wait for seeked/rVFC to confirm the decoded picture.
+      publishCommittedTime(mapping.virtualTimeS, !frameDrivenRef.current);
     },
     [
       loadDeck,
+      cancelDeckFrameClock,
       onSourceError,
-      onTimeUpdate,
+      publishCommittedTime,
       preloadNext,
       startCarouselClock,
       stopCarouselClock,
@@ -477,10 +638,9 @@ export function useVirtualPreview({
   );
 
   const toggle = useCallback(() => {
-    const activeVideo = refForDeck(activeDeckRef.current).current;
-    if (activeVideo && !activeVideo.paused) pause();
+    if (playingRef.current) pause();
     else play();
-  }, [pause, play, refForDeck]);
+  }, [pause, play]);
 
   const swapToNext = useCallback(
     (entryIndex: number) => {
@@ -500,7 +660,7 @@ export function useVirtualPreview({
       }
       if (!next || !next.sourceUrl) {
         pause();
-        onTimeUpdate(timelineRef.current.totalDurationS);
+        publishCommittedTime(timelineRef.current.totalDurationS);
         return;
       }
 
@@ -513,21 +673,23 @@ export function useVirtualPreview({
         (outgoing?.startS ?? next.startS) + (outgoing?.durationS ?? 0),
       );
 
+      cancelDeckFrameClock(prevDeck);
       prevVideo?.pause();
       // loadDeck owns the seek+play: covered decks seek and play immediately,
       // fresh sources defer to the onLoadedMetadata pending-seek. Seeking or
       // playing the element here as well made a fresh source play from frame
       // 0 and then snap to the in-point (visible "restart"/repeat).
-      loadDeck(nextDeck, next, next.inS + next.overlapBeforeS, true);
       activeDeckRef.current = nextDeck;
       setActiveDeck(nextDeck);
+      loadDeck(nextDeck, next, next.inS + next.overlapBeforeS, true);
       preloadNext(prevDeck, entryIndex + 1);
       syncMusicToVirtualTime(boundaryTimeS, true, "soft");
-      onTimeUpdate(boundaryTimeS);
+      publishCommittedTime(boundaryTimeS, !frameDrivenRef.current);
     },
     [
       loadDeck,
-      onTimeUpdate,
+      cancelDeckFrameClock,
+      publishCommittedTime,
       pause,
       preloadNext,
       refForDeck,
@@ -546,12 +708,12 @@ export function useVirtualPreview({
       }
       if (entry.startS + entry.durationS >= timelineRef.current.totalDurationS - 0.05) {
         pause();
-        onTimeUpdate(timelineRef.current.totalDurationS);
+        publishCommittedTime(timelineRef.current.totalDurationS);
       } else if (playingRef.current) {
         swapToNext(entryIndex);
       }
     },
-    [onTimeUpdate, pause, swapToNext],
+    [pause, publishCommittedTime, swapToNext],
   );
   // Kept fresh every render so `tickCarouselClock` (declared earlier — a real
   // mutual reference with `finishEntry`/`swapToNext`/`showMapping`) always
@@ -566,18 +728,23 @@ export function useVirtualPreview({
       pendingSeekRef.current[deck] = null;
       safeSetCurrentTime(video, pending.timeS);
       if (pending.play) {
-        playIgnoringAbort(video, pauseAll);
+        if (video.paused) playIgnoringAbort(video, pauseAll);
+        if (deck === activeDeckRef.current) startDeckFrameClock(deck);
       }
     },
-    [pauseAll, refForDeck],
+    [pauseAll, refForDeck, startDeckFrameClock],
   );
 
-  const handleTimeUpdate = useCallback(
-    (deck: Deck) => {
+  const sampleDeckMediaTime = useCallback(
+    (
+      deck: Deck,
+      mediaTimeS: number,
+      forceCommit: boolean,
+      authoritativeFrame = true,
+    ) => {
       if (!enabledRef.current || deck !== activeDeckRef.current) return;
       const slotKey = deckSlotRef.current[deck];
-      const video = refForDeck(deck).current;
-      if (slotKey == null || !video) return;
+      if (slotKey == null) return;
 
       const entryIndex = timelineRef.current.entries.findIndex(
         (entry) => entry.kind === "clip" && entry.slotKey === slotKey,
@@ -588,11 +755,8 @@ export function useVirtualPreview({
       // real runtime branch.
       if (!entry || entry.kind !== "clip") return;
 
-      const localOffsetS = video.currentTime - entry.inS;
-      const virtualTimeS = Math.max(
-        entry.startS,
-        Math.min(entry.startS + entry.durationS, entry.startS + localOffsetS),
-      );
+      const localOffsetS = mediaTimeS - entry.inS;
+      const virtualTimeS = mapDeckMediaTimeToVirtualTime(entry, mediaTimeS);
       syncIncomingDeck(entryIndex, virtualTimeS, playingRef.current);
       const audio = getVirtualMusicAudio(musicAudioRef)[0];
       if (audio && musicAudioUrlRef.current && !audio.paused && playingRef.current) {
@@ -614,13 +778,36 @@ export function useVirtualPreview({
           );
         }
       }
-      onTimeUpdate(virtualTimeS);
+      const video = refForDeck(deck).current;
+      const decodedFrameClockActive =
+        frameDrivenRef.current &&
+        video != null &&
+        typeof video.requestVideoFrameCallback === "function";
+      publishPlaybackTime(virtualTimeS, {
+        forceCommit,
+        // Native timeupdate is a compatibility/resync signal. When rVFC is
+        // available it must not move authored layers ahead of the decoded
+        // frame the user can actually see.
+        publishFrame: authoritativeFrame || !decodedFrameClockActive,
+      });
 
       if (localOffsetS >= entry.durationS - 0.05) {
         finishEntry(entryIndex);
       }
     },
-    [finishEntry, onTimeUpdate, refForDeck, showMapping, syncIncomingDeck],
+    [finishEntry, publishPlaybackTime, refForDeck, showMapping, syncIncomingDeck],
+  );
+  sampleDeckFrameRef.current = (deck, mediaTimeS) => {
+    sampleDeckMediaTime(deck, mediaTimeS, false);
+  };
+
+  const handleTimeUpdate = useCallback(
+    (deck: Deck) => {
+      const video = refForDeck(deck).current;
+      if (!video) return;
+      sampleDeckMediaTime(deck, video.currentTime, true, false);
+    },
+    [refForDeck, sampleDeckMediaTime],
   );
 
   const handleEnded = useCallback(
@@ -664,10 +851,58 @@ export function useVirtualPreview({
     syncMusicToVirtualTime(currentTimeRef.current, playingRef.current);
   }, [musicAudioUrl, syncMusicToVirtualTime]);
 
+  // A background tab can suppress both rAF and decoded-frame callbacks. On
+  // return, resample the authoritative media clock before scheduling a new
+  // callback so authored layers never resume from the stale pre-hide frame.
+  useEffect(() => {
+    if (!frameDriven || typeof document === "undefined") return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible" || !enabledRef.current) return;
+      const audio = getVirtualMusicAudio(musicAudioRef)[0];
+      if (audio && musicAudioUrlRef.current && playingRef.current && !audio.paused) {
+        const audioVirtualS = Math.max(
+          0,
+          Math.min(
+            timelineRef.current.totalDurationS,
+            audio.currentTime - Math.max(0, musicStartSRef.current),
+          ),
+        );
+        showMapping(audioVirtualS, true);
+        return;
+      }
+      const carouselClock = carouselClockRef.current;
+      if (carouselClock) {
+        cancelAnimationFrame(carouselClock.raf);
+        tickCarouselClock();
+        return;
+      }
+      const deck = activeDeckRef.current;
+      const video = refForDeck(deck).current;
+      if (video) sampleDeckMediaTime(deck, video.currentTime, true);
+      if (playingRef.current) startDeckFrameClock(deck);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [
+    frameDriven,
+    refForDeck,
+    sampleDeckMediaTime,
+    showMapping,
+    startDeckFrameClock,
+    tickCarouselClock,
+  ]);
+
   // Cancel any in-flight carousel-window clock on unmount — otherwise the
   // rAF loop keeps calling onTimeUpdate/onPlayingChange against a torn-down
   // editor.
-  useEffect(() => stopCarouselClock, [stopCarouselClock]);
+  useEffect(
+    () => () => {
+      stopCarouselClock();
+      cancelDeckFrameClock("a");
+      cancelDeckFrameClock("b");
+    },
+    [cancelDeckFrameClock, stopCarouselClock],
+  );
 
   const musicAudioProps: VirtualPreviewAudioProps | null = musicAudioUrl
     ? {
@@ -698,19 +933,47 @@ export function useVirtualPreview({
       "data-virtual-preview-deck": deck,
       "data-active": activeDeck === deck,
       onLoadedMetadata: () => handleLoadedMetadata(deck),
-      onCanPlay: () => setBuffering(false),
+      onCanPlay: () => {
+        setBuffering(false);
+        const video = refForDeck(deck).current;
+        if (frameDrivenRef.current && video && deck === activeDeckRef.current) {
+          sampleDeckMediaTime(deck, video.currentTime, true);
+          if (playingRef.current) startDeckFrameClock(deck);
+        }
+      },
       onPlaying: () => {
         setBuffering(false);
-        if (deck === activeDeckRef.current) onPlayingChange(true);
+        if (deck === activeDeckRef.current) {
+          onPlayingChange(true);
+          startDeckFrameClock(deck);
+        }
       },
       // Deck stalls do NOT touch the music: it is the master clock, and the
       // video catch-up in handleTimeUpdate re-aligns the picture when the
       // deck recovers. (Both the instant hold and the debounced hold gapped
       // the music audibly — boundary swaps stall briefly on almost every cut.)
       onWaiting: () => setBuffering(true),
-      onSeeking: () => setBuffering(true),
-      onSeeked: () => setBuffering(false),
+      onSeeking: () => {
+        setBuffering(true);
+        cancelDeckFrameClock(deck);
+      },
+      onSeeked: () => {
+        setBuffering(false);
+        if (!frameDrivenRef.current) return;
+        const video = refForDeck(deck).current;
+        if (video && deck === activeDeckRef.current) {
+          sampleDeckMediaTime(deck, video.currentTime, true);
+          if (playingRef.current) startDeckFrameClock(deck);
+        }
+      },
       onTimeUpdate: () => handleTimeUpdate(deck),
+      onRateChange: () => {
+        if (!frameDrivenRef.current) return;
+        const video = refForDeck(deck).current;
+        if (!video || deck !== activeDeckRef.current) return;
+        sampleDeckMediaTime(deck, video.currentTime, true);
+        if (playingRef.current) startDeckFrameClock(deck);
+      },
       onEnded: () => handleEnded(deck),
       onPlay: () => {
         if (deck === activeDeckRef.current) onPlayingChange(true);

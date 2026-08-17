@@ -1,6 +1,7 @@
 """Tests for Settings.normalize_postgres_scheme and asyncpg_database_url."""
 
 import pytest
+from pydantic import ValidationError
 
 
 @pytest.fixture()
@@ -21,9 +22,7 @@ class TestNormalizePostgresScheme:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_postgres_scheme_is_rewritten(self, monkeypatch):
-        monkeypatch.setenv(
-            "DATABASE_URL", "postgres://u:p@host:5432/db"
-        )
+        monkeypatch.setenv("DATABASE_URL", "postgres://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
@@ -32,9 +31,7 @@ class TestNormalizePostgresScheme:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_postgresql_scheme_unchanged(self, monkeypatch):
-        monkeypatch.setenv(
-            "DATABASE_URL", "postgresql://u:p@host:5432/db"
-        )
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
@@ -46,9 +43,7 @@ class TestAsyncpgDatabaseUrl:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_scheme_swap(self, monkeypatch):
-        monkeypatch.setenv(
-            "DATABASE_URL", "postgresql://u:p@host:5432/db"
-        )
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
@@ -70,9 +65,7 @@ class TestAsyncpgDatabaseUrl:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_no_sslmode_no_ssl_param(self, monkeypatch):
-        monkeypatch.setenv(
-            "DATABASE_URL", "postgresql://u:p@host:5432/db"
-        )
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
@@ -93,3 +86,48 @@ class TestAsyncpgDatabaseUrl:
         # sslmode is removed, but existing ssl=prefer is preserved
         assert "sslmode" not in url
         assert "ssl=prefer" in url
+
+
+class TestGuidedEditRolloutSafety:
+    @pytest.mark.usefixtures("_clean_env")
+    def test_conversation_requires_capability(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://test.invalid/nova_test")
+        from app.config import Settings
+
+        monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "false")
+        monkeypatch.setenv("GUIDED_EDIT_CONVERSATION_ENABLED", "true")
+
+        with pytest.raises(ValidationError, match="conversation requires guided edit capability"):
+            Settings()
+
+    @pytest.mark.usefixtures("_clean_env")
+    def test_enforcement_requires_capability(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
+        monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "false")
+        monkeypatch.setenv("GUIDED_EDIT_ENFORCEMENT_ENABLED", "true")
+        from app.config import Settings
+
+        with pytest.raises(ValidationError, match="requires guided edit capability"):
+            Settings()
+
+    @pytest.mark.usefixtures("_clean_env")
+    def test_enforcement_is_available_with_capability_after_strict_renderer(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
+        monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "true")
+        monkeypatch.setenv("GUIDED_EDIT_ENFORCEMENT_ENABLED", "true")
+        from app.config import Settings
+
+        settings = Settings()
+        assert settings.guided_edit_capability_enabled is True
+        assert settings.guided_edit_enforcement_enabled is True
+
+    @pytest.mark.usefixtures("_clean_env")
+    def test_enforcement_still_fails_closed_without_renderer_readiness(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
+        monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "true")
+        monkeypatch.setenv("GUIDED_EDIT_ENFORCEMENT_ENABLED", "true")
+        import app.config as config
+
+        monkeypatch.setattr(config, "GUIDED_STORY_RENDERER_READY", False)
+        with pytest.raises(ValidationError, match="requires the strict story renderer"):
+            config.Settings()

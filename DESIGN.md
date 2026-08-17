@@ -50,6 +50,7 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
 - **Editorial interview layout:** Fraunces question, LEFT-aligned answers, one prior-answer pull-quote with accent left-border (lime), NO message bubbles, NO bot avatar.
 - **Editor Nova copilot drawer exception:** the full-screen editor's Nova tool may use texting bubbles because it is a command/receipt surface, not an onboarding interview. Tokens: user bubble `bg-[#0c0c0e] text-white` with 18px radius / 6px bottom-right corner; assistant bubble `bg-zinc-100 text-[#0c0c0e]` with 18px radius / 6px bottom-left corner; change chips `border-lime-200 bg-lime-50 text-lime-800`; rejected chips `border-dashed border-zinc-300 bg-white text-[#71717a]`; suggestion chips `border-zinc-200 bg-white` with lime hover/focus.
 - **D16 lime contrast rule:** lime TEXT under ~18px and text-bearing lime fills → `lime-700`. Display ems, bars, dots, non-text fills → `lime-600`.
+- **InfoDot (ⓘ popover, `components/ui/InfoDot.tsx`):** the ONLY sanctioned home for optional helper copy. 16px zinc-400 glyph inline after a label (sibling, never inside a `<label>`); hover/focus ink on zinc-100 disc; open lime-700 on lime-50. Popover: Radix portal `z-[130]` (above the editor Sheet/CopilotDrawer `z-[95]` and the `z-[120]` overlay tier — the popover is always the topmost transient), white `border-zinc-200 rounded-[12px]` shadow, max-w 280px, 13/19 Inter `#3f3f46`, plain sentences only (no heading, no CTA, ≤3 lines). Motion: 180ms scale 0.96→1 + 4px rise from the trigger origin, 120ms fade-out, reduced-motion = fade only (`.info-dot-pop` in `globals.css`). Click/tap toggles; outside tap/Esc dismisses. Hit area 44px (`size="compact"` = 32px in dense inspector rows). NEVER for warnings, errors, disabled reasons, or destructive confirms — those stay visible. Max ~2 dots per screen section.
 
 ---
 
@@ -121,7 +122,7 @@ closing the §6 D17 gap per-surface. Source skill: `npx skills add Jakubantalik/
 | step-slide (derived #8) | `--page-slide-dur/fade-dur: 250ms`, `--page-slide-distance: 8px`, `--page-blur: 3px`, `--page-slide/fade-ease` | `OnboardingShell` `<StepSlide key={step}>` — slide+blur entrance on each wizard step. |
 | `t-skel` (#14) | `--reveal-dur: 400ms`, `--reveal-blur: 2px`, `--reveal-ease: ease-in-out` | `VariantRenderCard` shimmer→video cross-blur reveal when status becomes `ready`. |
 | `t-stagger` (#18) | `--stagger-dur: 500ms`, `--stagger-distance: 12px`, `--stagger-stagger: 40ms`, `--stagger-blur: 3px`, `--stagger-ease` | Landing hero `<section class="t-stagger is-shown">` — 4 lines stagger in on page load. |
-| `t-accordion` | `--t-accordion-dur: 300ms`, `--t-accordion-ease: cubic-bezier(0.23,1,0.32,1)` | `NovaStepRow` detail-line reveal (render-progress `NovaActivityFeed`, behind `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED`). Grid-rows `0fr → 1fr` + opacity crossfade, same duration; `prefers-reduced-motion` zeroes it. Chat compact rows (a later PR) reuse the same token pair so both surfaces expand identically. |
+| `t-accordion` | `--t-accordion-dur: 300ms`, `--t-accordion-ease: cubic-bezier(0.23,1,0.32,1)` | `NovaStepRow` detail-line reveal (render-progress `NovaActivityFeed`, behind `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED`). Grid-rows `0fr → 1fr` + opacity crossfade, same duration; `prefers-reduced-motion` zeroes it. Chat compact rows (a later PR) and the plan-item `SetupPicker` disclosure rows (v0.34.0.0) reuse the same token pair so all surfaces expand identically. |
 
 **Follow-up scope (not this PR):** `t-tabs`, `t-success-check`, `t-error-shake`, upload-dropzone drag feedback, spinner component consolidation.
 
@@ -233,6 +234,7 @@ Celebrate then recede.
 - **Chat = editorial interview** (see §3) — bubbles are an instant fail except for the editor Nova copilot drawer scoped in §2.
 - **Empty states lead with the action, not the absence:** a serif invitation line + the single next-step CTA. Never icon-in-circle + "Nothing here yet!"; never apologize. On product surfaces an empty list is quiet zinc — no illustration.
 - **Copy: product language.** If deleting 30% improves it, keep deleting.
+- **No inline helper paragraphs.** Static "how it works" copy next to a control is clutter: delete it, or move it behind an `InfoDot` (§2) if it earns a first-use read. Visible text is reserved for load-bearing states — constraints, disabled reasons, warnings, confirms. Audit inventory: `docs/declutter-audit.md`.
 
 ---
 
@@ -262,7 +264,7 @@ Rules here supplement §2 (light editorial system).
 
 ### Ideas ledger (`/plan` home)
 - **Canvas:** `bg-[#fafaf8]`; centered column `max-w-[760px] px-6 pt-14`.
-- **Header:** Fraunces `font-display text-[44px] font-medium` "Ideas"; sub-line `text-[14px] text-[#71717a]` "Every idea here becomes a video."
+- **Header:** Fraunces `font-display text-[44px] font-medium` "Ideas"; no sub-line (the "Every idea here becomes a video." explainer was removed in the 2026-08 declutter train — status pills carry that meaning).
 - **Stat line:** right-baseline `text-[13px] text-[#71717a]`; zero fragments hidden; whole line hidden when ready+rendering are zero. Ready fragment `font-semibold text-lime-700`; rendering plain zinc; `/library` link hover underline.
 - **Composer:** add input `min-h-[44px] rounded-lg border border-dashed border-zinc-300 bg-white`, focus `border-lime-500/60`, lime `+`, placeholder "A video idea, rough is fine…"; commits on Enter/blur. Button `min-h-[44px] rounded-lg border border-zinc-200 bg-white px-4 text-[12px] text-[#71717a]`, hover `border-lime-400 text-lime-700`, disabled `opacity-50 cursor-not-allowed`, copy "✦ Generate with AI".
 - **Ledger rows:** semantic `ol`; `plan.items` sorted newest-first by `position` descending. Row `min-h-[48px] border-t border-zinc-100 py-2.5`; grid numeral | link | status | delete.
@@ -281,7 +283,7 @@ Rules here supplement §2 (light editorial system).
 - Proposal card: `rounded-xl border border-lime-200 bg-lime-50 p-4`. Eyebrow `text-[11px] uppercase tracking-[.15em] text-lime-700`. Theme in Fraunces `text-lg font-medium`. Filming suggestion `text-sm text-[#3f3f46]`.
 - Shot list renders inside the card: italic Fraunces numerals `text-[17px] text-lime-600`, shot `what` `text-[15px] font-medium text-[#0c0c0e]`, `how` `text-[13.5px] text-[#3f3f46]`, duration chip `text-[11px] border-zinc-200 bg-white text-[#3f3f46]`.
 - Accept CTA: `bg-lime-600 text-white rounded-lg text-[12px] font-semibold` copy "Use this plan". Dismiss: `border-zinc-200 bg-white text-[#71717a]`. Rationale `text-xs italic text-[#71717a]` under the card.
-- Non-slot accepted plans (existing-footage montage, Voiceover "I have the videos", talking-to-camera) show a compact white `Plan summary` reference above the uploader instead of converting the flow to shot slots.
+- Non-slot accepted plans (existing-footage montage, Voiceover, talking-to-camera) show a compact white `Plan summary` reference above the uploader instead of converting the flow to shot slots.
 
 ---
 

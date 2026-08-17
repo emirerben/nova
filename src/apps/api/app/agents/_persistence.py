@@ -165,5 +165,8 @@ def persist_agent_run(
             "agent_run_persist_failed",
             agent=agent_name,
             job_id=job_id,
-            error=str(exc),
+            # SQLAlchemy exceptions can embed bound parameters containing raw
+            # model input/output and provider URLs.  The exception class is
+            # enough to diagnose the persistence layer without leaking them.
+            error_type=type(exc).__name__,
         )

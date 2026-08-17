@@ -153,6 +153,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         "text_designer",
         "transition_picker",
         "edit_director",
+        "edit_proposal",
+        "edit_guide",
     ):
         fixture_paths.extend(discover_fixtures(agent_dir))
 

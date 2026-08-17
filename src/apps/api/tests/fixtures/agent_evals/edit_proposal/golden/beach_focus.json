@@ -1,0 +1,23 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.0.1",
+  "input": {
+    "idea": "Corfu coast",
+    "theme": "A day by the water",
+    "direction": "fast_montage",
+    "goal": "Make a quick coastal sequence that still has a beginning and ending",
+    "pace": "fast",
+    "target_duration_s": 18,
+    "media": [
+      {"media_id":"b1","lane":"clip","kind":"video","subject":"sailboat leaving harbor"},
+      {"media_id":"b2","lane":"asset","kind":"image","subject":"rocky beach"},
+      {"media_id":"b3","lane":"asset","kind":"video","subject":"swimming underwater"},
+      {"media_id":"b4","lane":"asset","kind":"image","subject":"boats at anchor"},
+      {"media_id":"b5","lane":"asset","kind":"video","subject":"waves at shore"},
+      {"media_id":"b6","lane":"asset","kind":"image","subject":"coastline viewpoint"},
+      {"media_id":"b7","lane":"asset","kind":"image","subject":"sunset over sea"}
+    ]
+  },
+  "raw_text": "{\"title\":\"Corfu by the water\",\"duration_s\":18,\"story_beats\":[{\"topic\":\"Leaving shore\",\"thought\":\"\",\"media_ids\":[\"b1\",\"b4\"],\"layout\":\"fullscreen\",\"duration_s\":4},{\"topic\":\"In the water\",\"thought\":\"\",\"media_ids\":[\"b2\",\"b3\",\"b5\"],\"layout\":\"fullscreen\",\"duration_s\":7},{\"topic\":\"Last light\",\"thought\":\"\",\"media_ids\":[\"b6\",\"b7\"],\"layout\":\"fullscreen\",\"duration_s\":5}]}",
+  "meta": {"source":"hand_authored_golden","expected_topics":["leaving","water","light"]}
+}

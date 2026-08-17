@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,6 +13,15 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.schemas.edit_proposal import (
+    ApprovedProposalSnapshot,
+    EditProposal,
+    EditProposalSnapshot,
+    MediaRef,
+    ProposalBrief,
+    StoryBeat,
+    canonical_media_digest,
+)
 from app.tasks.content_plan_build import DispatchResult
 
 
@@ -137,6 +147,124 @@ def test_generate_requires_clips(client: TestClient) -> None:
     app.dependency_overrides[get_db] = lambda: db
     resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 409
+
+
+def test_generate_allows_current_approved_asset_only_story(monkeypatch, client: TestClient) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[])
+    media = MediaRef(
+        lane="asset",
+        media_id=str(uuid.uuid4()),
+        gcs_path=f"users/{user.id}/plan/{item.id}/pool/town.mp4",
+        generation="51",
+        kind="video",
+    )
+    snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Tell the trip in five places",
+        pace="relaxed",
+        duration_s=10,
+        title="Summer 26",
+        media=[media],
+        story_beats=[
+            StoryBeat(
+                beat_id="lisbon",
+                topic="Lisbon",
+                thought="Lisbon",
+                media_ids=[media.media_id],
+                duration_s=2,
+            )
+        ],
+    )
+    digest = canonical_media_digest(snapshot.media)
+    item.edit_proposal = EditProposal(
+        proposal_version=3,
+        generation_attempt_id="attempt-1",
+        media_digest=digest,
+        status="approved",
+        draft=snapshot,
+        last_approved=ApprovedProposalSnapshot(
+            proposal_version=3,
+            media_digest=digest,
+            approved_at=datetime.now(UTC),
+            snapshot=snapshot,
+        ),
+    ).model_dump(mode="json")
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with _patch_dispatch_ok() as dispatch:
+        response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 200
+    dispatch.assert_called_once_with(str(item.id), 0)
+
+
+def test_collection_shape_omits_full_proposal_and_preview_signing(monkeypatch) -> None:
+    from app.routes import plan_items as routes  # noqa: PLC0415
+
+    user = _user()
+    item, _plan = _owned_item(user.id)
+    item.clip_assignments = []
+    item.edit_proposal = EditProposal(
+        proposal_version=1,
+        generation_attempt_id="attempt-1",
+        status="analyzing",
+    ).model_dump(mode="json")
+    monkeypatch.setattr(
+        routes,
+        "_edit_proposal_response",
+        lambda _item: (_ for _ in ()).throw(AssertionError("must not sign list previews")),
+    )
+
+    response = routes.plan_item_response(item, include_edit_proposal=False)
+
+    assert response.edit_proposal is None
+
+
+@pytest.mark.parametrize(
+    ("proposal_status", "expected_code"),
+    [
+        (None, "proposal_required"),
+        ("analyzing", "proposal_analyzing"),
+        ("drafting", "proposal_analyzing"),
+        ("draft", "proposal_draft"),
+        ("failed", "proposal_draft"),
+        ("stale", "proposal_stale"),
+    ],
+)
+def test_generate_returns_explicit_proposal_gate_codes(
+    monkeypatch,
+    client: TestClient,
+    proposal_status: str | None,
+    expected_code: str,
+) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_proposal = None
+    if proposal_status is not None:
+        item.edit_proposal = EditProposal(
+            proposal_version=1,
+            generation_attempt_id="attempt-1",
+            status=proposal_status,
+            brief=ProposalBrief(),
+        ).model_dump(mode="json")
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == expected_code
 
 
 def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
@@ -322,7 +450,7 @@ def test_attach_clips_rejects_foreign_prefix(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
-def _db_for_pool_attach(item, plan, *, asset_kind):
+def _db_for_pool_attach(item, plan, *, asset_kind, asset_status="ready"):
     """_db_for + a second execute() result for the pool-promotion kind check.
     asset_kind None → no PlanItemAsset row found (deleted/foreign object)."""
     db = _db_for(item, plan)
@@ -335,6 +463,7 @@ def _db_for_pool_attach(item, plan, *, asset_kind):
             MagicMock(
                 gcs_path=f"users/{plan.user_id}/plan/{item.id}/pool/asset.bin",
                 kind=asset_kind,
+                status=asset_status,
             )
         ]
     asset_result.scalars = MagicMock(return_value=rows)
@@ -405,6 +534,27 @@ def test_attach_clips_rejects_pool_path_without_asset_row(client: TestClient) ->
         f"/plan-items/{item.id}/clips",
         json={"clip_gcs_paths": [pool_path]},
     )
+    assert resp.status_code == 422
+
+
+def test_attach_clips_rejects_pool_asset_being_deleted(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    pool_path = f"users/{user.id}/plan/{item.id}/pool/asset.bin"
+    db = _db_for_pool_attach(
+        item,
+        plan,
+        asset_kind="video",
+        asset_status="cleanup_pending",
+    )
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post(
+        f"/plan-items/{item.id}/clips",
+        json={"clip_gcs_paths": [pool_path]},
+    )
+
     assert resp.status_code == 422
 
 

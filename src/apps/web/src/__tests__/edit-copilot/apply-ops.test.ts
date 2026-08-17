@@ -9,6 +9,10 @@ import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement, VisualBlock } from "@/lib/plan-api";
 import { barsToCaptionCues } from "@/app/plan/items/[id]/_editor/editor-bars";
+import {
+  creatorBlockDurationFramesV2,
+  type MotionPresetInstance,
+} from "@nova/motion-runtime";
 
 function bar(over: Partial<TextElementBar> = {}): TextElementBar {
   return {
@@ -52,6 +56,8 @@ function ctx(over: {
   slots?: DraftSlot[];
   capabilities?: Parameters<typeof buildCopilotSnapshot>[3];
   extras?: Parameters<typeof buildCopilotSnapshot>[5];
+  videoDurationS?: number;
+  textMotionV2Enabled?: boolean;
 } = {}) {
   const bars = over.bars ?? [bar(), bar({ id: "bar-2", text: "second", start_s: 3, end_s: 5 })];
   const slots = over.slots ?? [
@@ -65,6 +71,8 @@ function ctx(over: {
     slots,
     snapshot: buildCopilotSnapshot(bars, slots, clips, capabilities, [], over.extras),
     capabilities,
+    videoDurationS: over.videoDurationS,
+    textMotionV2Enabled: over.textMotionV2Enabled,
     makeTextBarId: () => "new-text",
     makeSlotKey: (s: DraftSlot) => `${s.key}-split`,
   };
@@ -192,6 +200,82 @@ describe("applyCopilotOps", () => {
     expect(remove.textActions).toEqual([]);
     expect(remove.rejected).toEqual([
       expect.objectContaining({ detail: "Lyric timing is locked to the vocal." }),
+    ]);
+  });
+
+  it("migrates explicit Copilot effects and retimes v2 trims", () => {
+    const legacy = ctx({ videoDurationS: 10, textMotionV2Enabled: true });
+    const selected = applyCopilotOps(
+      [{ op: "patch_text_style", bar_index: 0, patch: { effect: "smooth-type" } }],
+      legacy,
+    );
+    expect(selected.rejected).toEqual([]);
+    expect(selected.textActions).toEqual([
+      {
+        type: "PATCH_BAR",
+        id: "bar-1",
+        patch: expect.objectContaining({
+          effect: "smooth-type",
+          motion: expect.objectContaining({ version: 2 }),
+        }),
+      },
+    ]);
+
+    const motion = {
+      version: 2 as const,
+      speed: 1,
+      intensity: 1,
+      easing: "ease-out-cubic" as const,
+      stagger_ms: 45,
+      order: "forward" as const,
+      direction: "up" as const,
+      travel_px: 10,
+      overshoot: 0,
+      blur_px: 3,
+      cursor: "none" as const,
+      cursor_blink_hz: 2,
+      hold_s: 2,
+      exit_s: 0,
+      reveal_ramp_ms: 120,
+    };
+    const animatedBars = [bar({ effect: "smooth-type", motion, start_s: 0, end_s: 3 })];
+    const trimmed = applyCopilotOps(
+      [{ op: "set_text_timing", bar_index: 0, end_s: 1 }],
+      ctx({ bars: animatedBars, videoDurationS: 10, textMotionV2Enabled: true }),
+    );
+    expect(trimmed.textActions).toEqual([
+      {
+        type: "PATCH_BAR",
+        id: "bar-1",
+        patch: expect.objectContaining({
+          end_s: 1,
+          motion: expect.objectContaining({ hold_s: expect.any(Number) }),
+        }),
+      },
+    ]);
+
+    const retexted = applyCopilotOps(
+      [{ op: "edit_text", bar_index: 0, text: "A much longer animated line" }],
+      ctx({ bars: animatedBars, videoDurationS: 10, textMotionV2Enabled: true }),
+    );
+    expect(retexted.textActions).toEqual([
+      {
+        type: "PATCH_BAR",
+        id: "bar-1",
+        patch: expect.objectContaining({
+          text: "A much longer animated line",
+          end_s: expect.any(Number),
+        }),
+      },
+    ]);
+
+    const disabled = applyCopilotOps(
+      [{ op: "patch_text_style", bar_index: 0, patch: { effect: "smooth-type" } }],
+      ctx({ textMotionV2Enabled: false }),
+    );
+    expect(disabled.textActions).toEqual([]);
+    expect(disabled.rejected).toEqual([
+      expect.objectContaining({ reason: "capability_disabled" }),
     ]);
   });
 
@@ -2068,13 +2152,15 @@ describe("Creator Block operations", () => {
     asset({ id: "image-2", gcs_path: "users/user/plan/item/pool/image-2.png" }),
   ];
 
-  function motionCtx() {
+  function motionCtx(evolvingTypeEnabled = false) {
     const bars = [bar()];
     const slots = [slot({ durationS: 9 })];
+    const motionScenes: MotionPresetInstance[] = [motionScene];
     const capabilities = { text_elements: true, timeline: true, motion_scenes: true };
     const snapshot = buildCopilotSnapshot(bars, slots, clips, capabilities, [], {
       motionScenesEnabled: true,
-      motionScenes: [motionScene],
+      evolvingTypeEnabled,
+      motionScenes,
       poolAssets: imageAssets,
     });
     return {
@@ -2082,7 +2168,7 @@ describe("Creator Block operations", () => {
       slots,
       snapshot,
       capabilities,
-      motionScenes: [motionScene],
+      motionScenes,
       poolAssets: imageAssets,
       videoDurationS: 9,
       makeMotionId: () => "motion-2",
@@ -2132,5 +2218,177 @@ describe("Creator Block operations", () => {
       op: "remove_motion_block",
       motion_id: "motion-1",
     }], motionCtx()).nextMotionScenes).toEqual([]);
+  });
+
+  it("preserves preset v1 for content-only patches and upgrades only motion controls", () => {
+    const content = applyCopilotOps([{
+      op: "patch_motion_block",
+      motion_id: "motion-1",
+      patch: { params: { text: "NEW" } },
+    }], motionCtx());
+    expect(content.nextMotionScenes?.[0]).toMatchObject({
+      preset_version: 1,
+      params: { text: "NEW" },
+      start_frame: 0,
+      end_frame_exclusive: 75,
+    });
+    expect(content.nextMotionScenes?.[0]).not.toHaveProperty("motion");
+
+    const selectedOnlyContext = motionCtx();
+    const untouchedScene = {
+      ...motionScene,
+      id: "motion-untouched",
+      start_frame: 150,
+      end_frame_exclusive: 225,
+      params: { text: "UNTOUCHED" },
+    };
+    selectedOnlyContext.motionScenes = [motionScene, untouchedScene];
+    selectedOnlyContext.snapshot = buildCopilotSnapshot(
+      selectedOnlyContext.bars,
+      selectedOnlyContext.slots,
+      clips,
+      selectedOnlyContext.capabilities,
+      [],
+      {
+        motionScenesEnabled: true,
+        motionScenes: selectedOnlyContext.motionScenes,
+        poolAssets: imageAssets,
+      },
+    );
+    const speed = applyCopilotOps([{
+      op: "patch_motion_block",
+      motion_id: "motion-1",
+      patch: { speed: 2 },
+    }], selectedOnlyContext);
+    expect(speed.rejected).toEqual([]);
+    expect(speed.nextMotionScenes?.[0]).toMatchObject({
+      preset_version: 2,
+      start_frame: 0,
+      end_frame_exclusive: 62,
+      motion: { version: 2, speed: 2 },
+    });
+    expect(speed.nextMotionScenes?.[1]).toEqual(untouchedScene);
+  });
+
+  it("upgrades easing without retiming and retimes only speed or hold", () => {
+    const easing = applyCopilotOps([{
+      op: "patch_motion_block",
+      motion_id: "motion-1",
+      patch: { easing: "ease-out-cubic" },
+    }], motionCtx());
+    expect(easing.rejected).toEqual([]);
+    expect(easing.nextMotionScenes?.[0]).toMatchObject({
+      preset_version: 2,
+      start_frame: 0,
+      end_frame_exclusive: 75,
+      motion: { version: 2, easing: "ease-out-cubic" },
+    });
+
+    const hold = applyCopilotOps([{
+      op: "patch_motion_block",
+      motion_id: "motion-1",
+      patch: { hold_frames: 60 },
+    }], motionCtx());
+    expect(hold.rejected).toEqual([]);
+    expect(hold.nextMotionScenes?.[0]).toMatchObject({
+      preset_version: 2,
+      start_frame: 0,
+      end_frame_exclusive: 105,
+      motion: { version: 2, hold_frames: 60 },
+    });
+  });
+
+  it("canonicalizes custom speed and hold timing on add", () => {
+    const result = applyCopilotOps([{
+      op: "add_motion_block",
+      preset_id: "kinetic_word",
+      start_s: 2,
+      end_s: 6,
+      params: { text: "FAST" },
+      speed: 2,
+      hold_frames: 0,
+    }], motionCtx());
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextMotionScenes?.[1]).toMatchObject({
+      preset_version: 2,
+      start_frame: 60,
+      end_frame_exclusive: 92,
+      motion: { version: 2, speed: 2, hold_frames: 0 },
+    });
+  });
+
+  it("reconciles the requested span when v2 defaults are used on add", () => {
+    const result = applyCopilotOps([{
+      op: "add_motion_block",
+      preset_id: "kinetic_word",
+      start_s: 2,
+      end_s: 3,
+      params: { text: "SHORT" },
+    }], motionCtx());
+
+    expect(result.rejected).toEqual([]);
+    const added = result.nextMotionScenes?.[1];
+    expect(added?.preset_version).toBe(2);
+    if (!added || added.preset_version !== 2) throw new Error("Expected Creator Block v2");
+    expect(added.start_frame).toBe(60);
+    expect(added.end_frame_exclusive - added.start_frame).toBe(
+      creatorBlockDurationFramesV2(added),
+    );
+    expect(added.end_frame_exclusive).toBe(90);
+    expect(added.motion.speed).toBeGreaterThan(1);
+  });
+
+  it("consumes hold before changing speed on a manual v2 trim", () => {
+    const context = motionCtx();
+    const v2Scene = {
+      ...motionScene,
+      preset_version: 2 as const,
+      motion: {
+        version: 2 as const,
+        speed: 1,
+        easing: "ease-in-out-cubic" as const,
+        hold_frames: 30,
+      },
+    };
+    context.motionScenes = [v2Scene];
+    context.snapshot = buildCopilotSnapshot(
+      context.bars,
+      context.slots,
+      clips,
+      context.capabilities,
+      [],
+      { motionScenesEnabled: true, motionScenes: [v2Scene], poolAssets: imageAssets },
+    );
+
+    const result = applyCopilotOps([{
+      op: "patch_motion_block",
+      motion_id: "motion-1",
+      patch: { end_s: 2 },
+    }], context);
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextMotionScenes?.[0]).toMatchObject({
+      preset_version: 2,
+      start_frame: 0,
+      end_frame_exclusive: 60,
+      motion: { version: 2, speed: 1, hold_frames: 15 },
+    });
+  });
+
+  it("fails closed for Evolving Type when its exposure flag is off", () => {
+    const result = applyCopilotOps([{
+      op: "add_motion_block",
+      preset_id: "evolving_type",
+      start_s: 0,
+      end_s: 5.3,
+      params: {
+        headline: "EVOLVE THE IDEA",
+        subtitle: "Shape, split, and settle into focus",
+      },
+    }], { ...motionCtx(true), evolvingTypeEnabled: false });
+
+    expect(result.nextMotionScenes).toBeUndefined();
+    expect(result.rejected).toMatchObject([{ reason: "capability_disabled" }]);
   });
 });

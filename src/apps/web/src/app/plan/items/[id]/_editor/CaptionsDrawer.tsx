@@ -33,6 +33,7 @@ import type { CaptionLanguage } from "@/lib/plan-api";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import { normalizeEditableHex } from "./editor-color";
 import { FontSelect, HexInput } from "./inspector-fields";
+import { InfoDot } from "@/components/ui/InfoDot";
 
 /** Caption size range — mirrors the inspector's per-cue override slider so the
  *  global and the override can never express different sizes. */
@@ -482,29 +483,33 @@ export default function CaptionsDrawer({
       {/* ── ZONE 3 · fixed ─────────────────────────────────────────────── */}
       {enabled && (
         <div className="flex-none border-t border-zinc-100 px-5 py-2">
-          <button
-            type="button"
-            aria-expanded={globalsOpen}
-            onClick={() => setGlobalsOpen((o) => !o)}
-            className="flex min-h-11 w-full items-center justify-between gap-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-          >
-            <span className="min-w-0 truncate">
-              <span className="text-[12px] font-semibold text-[#3f3f46]">All captions</span>
-              {!globalsOpen && (
-                // Informative while closed — read the current styling without opening.
-                <span className="ml-2 text-[11px] text-[#a1a1aa]">
-                  {fontLabel} · {sizePx}
-                </span>
-              )}
-            </span>
-            <span aria-hidden className="shrink-0 text-[9px] text-[#a1a1aa]">
-              {globalsOpen ? "⌄" : "⌃"}
-            </span>
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-expanded={globalsOpen}
+              onClick={() => setGlobalsOpen((o) => !o)}
+              className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              <span className="min-w-0 truncate">
+                <span className="text-[12px] font-semibold text-[#3f3f46]">All captions</span>
+                {!globalsOpen && (
+                  // Informative while closed — read the current styling without opening.
+                  <span className="ml-2 text-[11px] text-[#a1a1aa]">
+                    {fontLabel} · {sizePx}
+                  </span>
+                )}
+              </span>
+              <span aria-hidden className="shrink-0 text-[9px] text-[#a1a1aa]">
+                {globalsOpen ? "⌄" : "⌃"}
+              </span>
+            </button>
+            <InfoDot label="All captions" size="compact">
+              Style changes here apply to every caption line.
+            </InfoDot>
+          </div>
 
           {globalsOpen && (
             <div className="pb-1">
-              <p className="mb-2 text-[11px] text-[#71717a]">Applies to every line</p>
               <FontSelect
                 value={meta?.font ?? null}
                 onChange={(name) => patch({ font: name })}

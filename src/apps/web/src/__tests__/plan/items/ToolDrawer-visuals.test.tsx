@@ -57,6 +57,26 @@ function renderVisuals(overrides: Partial<ComponentProps<typeof ToolDrawer>> = {
 }
 
 describe("ToolDrawer visual blocks", () => {
+  it("keeps upload recovery visible without disabling the picker after a failed file", () => {
+    renderVisuals({
+      visualUploading: false,
+      visualUploadFeedback: (
+        <div>
+          <p>broken.mov</p>
+          <p>Upload interrupted. Check your connection and retry.</p>
+          <button type="button">Retry</button>
+          <button type="button">Remove</button>
+        </div>
+      ),
+    });
+
+    expect(screen.getByText("broken.mov")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/upload images or videos/i)).toBeEnabled();
+    expect(screen.queryByText("Uploading visuals…")).toBeNull();
+  });
+
   it("creates a montage from the user's ordered asset selection", () => {
     const onAddMontage = jest.fn();
     renderVisuals({ onAddMontage });
@@ -89,6 +109,39 @@ describe("ToolDrawer visual blocks", () => {
       assets[0],
       "Use this when I mention onboarding",
     );
+  });
+
+  it("uses the completed analysis state for ready videos without optional copy", () => {
+    renderVisuals({
+      visualAssets: [
+        {
+          ...assets[0],
+          kind: "video",
+          source_filename: "sunset.mov",
+          nova_description: "",
+          nova_on_screen_text: "",
+        },
+      ],
+    });
+
+    expect(screen.getByText("Analysis complete")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis pending")).not.toBeInTheDocument();
+  });
+
+  it("identifies a filename-only fallback in the editor", () => {
+    renderVisuals({
+      visualAssets: [
+        {
+          ...assets[0],
+          nova_description: null,
+          nova_on_screen_text: null,
+          source_type: "stub",
+        },
+      ],
+    });
+
+    expect(screen.getByText("Basic file details ready")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis pending")).not.toBeInTheDocument();
   });
 
   it("exposes card background, transition, duplication, and audio controls", () => {
@@ -245,11 +298,12 @@ describe("ToolDrawer Creator Blocks", () => {
     process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED = previousFlag;
   });
 
-  it("shows the eight-item catalog separately from route trace and inserts at the chosen preset", () => {
+  it("shows the eight-item catalog flag-off separately from route trace", () => {
     const onAddMotion = jest.fn();
     renderVisuals({
       motionAvailable: true,
       motionRuntimeCompatible: true,
+      evolvingTypeEnabled: false,
       onAddMotion,
     });
 
@@ -258,6 +312,51 @@ describe("ToolDrawer Creator Blocks", () => {
     expect(onAddMotion).toHaveBeenCalledWith("kinetic_word");
     expect(screen.getByText("Existing effect")).toBeInTheDocument();
     expect(screen.getByText("Route trace")).toBeInTheDocument();
+  });
+
+  it("shows the ninth Evolving Type insertion only when its exposure flag is on", () => {
+    const onAddMotion = jest.fn();
+    renderVisuals({
+      motionAvailable: true,
+      motionRuntimeCompatible: true,
+      evolvingTypeEnabled: true,
+      onAddMotion,
+    });
+
+    expect(screen.getByTestId("creator-block-grid").querySelectorAll("button")).toHaveLength(9);
+    fireEvent.click(screen.getByRole("button", { name: "Evolving Type" }));
+    expect(onAddMotion).toHaveBeenCalledWith("evolving_type");
+  });
+
+  it("keeps a persisted Evolving Type chip selectable when insertion exposure is off", () => {
+    const onSelectMotion = jest.fn();
+    renderVisuals({
+      motionAvailable: true,
+      motionRuntimeCompatible: true,
+      evolvingTypeEnabled: false,
+      onSelectMotion,
+      motionScenes: [{
+        id: "motion-evolving",
+        preset_id: "evolving_type",
+        preset_version: 2,
+        start_frame: 0,
+        end_frame_exclusive: 159,
+        palette: { primary: "#0c0c0e", accent: "#c7ff3d" },
+        intensity: 0.72,
+        motion: { version: 2, speed: 1, easing: "ease-in-out-cubic", hold_frames: 30 },
+        params: {
+          headline: "EVOLVE THE IDEA", subtitle: "Shape, split, and settle into focus",
+          icon_count: 4, icon_style: "organic", text_stagger_ms: 45,
+          icon_stagger_ms: 70, morph_amplitude: 0.65, density: "medium",
+          layout: "compact", order: "forward", typography_scale: 1,
+          backdrop_opacity: 0.7, split_icons: true,
+        },
+      }],
+    });
+
+    expect(screen.queryByTestId("creator-block-grid")?.querySelector('[data-preset="evolving_type"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Evolving Type" }));
+    expect(onSelectMotion).toHaveBeenCalledWith("motion-evolving");
   });
 
   it("keeps media cards visible with an honest minimum-image requirement", () => {

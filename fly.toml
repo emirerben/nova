@@ -9,12 +9,26 @@ kill_timeout = 300
 # lets Celery spend four of those minutes in soft shutdown, then restore any
 # unfinished late-acknowledged task with a one-minute margin before hard stop.
 [env]
+  # REMAP_SIGTERM is read by the Celery worker process itself (a Celery 5.5
+  # soft-shutdown feature) — not by Fly's init. It's inert on any non-Celery
+  # process, including the temporary release_command machine that inherits
+  # this env block. It is NOT the cause of the intermittent release-machine
+  # kills tracked in issue #834: those exit with code 143 (128+15 = plain
+  # SIGTERM); a SIGQUIT death from a remap would instead be 131. Root cause
+  # is a Fly platform-side machine lifecycle race — see agents/DECISIONS.md
+  # (2026-08-17) and scripts/fly-deploy-with-retry.sh, which retries that
+  # specific signature once.
   REMAP_SIGTERM = "SIGQUIT"
+  # Deploy the dedicated worker before switching POOL_ASSET_ANALYSIS_QUEUE via
+  # a Fly secret. Initial routing deliberately remains the code default: celery.
 
 [build]
   dockerfile = "Dockerfile"
 
 [deploy]
+  # The persona-owner remediation completed before this release. Keep every
+  # application process gated behind the complete linear schema, including the
+  # upload-reservation fields in 0074.
   release_command = "python -m alembic upgrade head"
 
 # ---------------------------------------------------------------------------
@@ -49,6 +63,9 @@ kill_timeout = 300
   # light, non-FFmpeg tasks — no encode-contention concern like the worker
   # process has.
   light = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q maintenance"
+  # Image/video metadata analysis is network-bound but downloads media, so it
+  # must not share the 1GB maintenance VM or wait behind long render jobs.
+  autoplace = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q autoplace-jobs"
   # Celery Beat — single instance, drives the every-5-min stale-job
   # sweeper (app/tasks/maintenance.py) that catches orphans created when
   # autoretry budgets are exhausted AND _mark_failed itself failed.
@@ -119,6 +136,11 @@ kill_timeout = 300
   auto_stop_machines = false
   auto_start_machines = true
 
+[[services]]
+  processes = ["autoplace"]
+  auto_stop_machines = false
+  auto_start_machines = true
+
 # ---------------------------------------------------------------------------
 # VM sizing per process group
 # ---------------------------------------------------------------------------
@@ -170,6 +192,15 @@ kill_timeout = 300
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 1024
+
+# Dedicated pool-analysis worker. Two shared CPUs let two Gemini/metadata jobs
+# overlap without competing with FFmpeg renders; 2GB covers app imports plus
+# two bounded media downloads/probes.
+[[vm]]
+  processes = ["autoplace"]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 2048
 
 [[vm]]
   processes = ["worker"]

@@ -1,6 +1,6 @@
 .PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint verify \
         local-render local-render-build local-render-up local-render-down \
-        local-render-logs local-render-migrate verify-overlays \
+        local-render-logs local-render-migrate verify-overlays verify-motion-performance \
         carousel-capture carousel-verify verify-editor-timeline \
         workspace-pull workspace-push workspace-status
 
@@ -98,6 +98,9 @@ local-render: local-render-migrate
 # add automated OCR content matching, run the host stage afterward:
 #   cd src/apps/api && python -m app.cli.verify_overlays --stage ocr --out ../../../.overlay-verify
 OVERLAY_VERIFY_OUT ?= .overlay-verify
+OVERLAY_VERIFY_HOST_OUT := $(abspath $(OVERLAY_VERIFY_OUT))
+OVERLAY_VERIFY_FIXTURES ?= src/apps/api/tests/fixtures/overlay_verify
+OVERLAY_VERIFY_FIXTURES_HOST := $(abspath $(OVERLAY_VERIFY_FIXTURES))
 ARGS ?= --fixtures
 
 verify-overlays:
@@ -107,9 +110,23 @@ verify-overlays:
 	$(LOCAL_RENDER_COMPOSE) build api
 	$(LOCAL_RENDER_COMPOSE) run --rm --no-deps \
 		-e NOVA_IN_PROD_IMAGE=1 \
-		-v "$(CURDIR)/$(OVERLAY_VERIFY_OUT):/app/$(OVERLAY_VERIFY_OUT)" \
-		-v "$(CURDIR)/src/apps/api/tests/fixtures/overlay_verify:/app/tests/fixtures/overlay_verify:ro" \
-		api python -m app.cli.verify_overlays $(ARGS) --out /app/$(OVERLAY_VERIFY_OUT)
+		-v "$(OVERLAY_VERIFY_HOST_OUT):/app/.overlay-verify" \
+		-v "$(OVERLAY_VERIFY_FIXTURES_HOST):/app/tests/fixtures/overlay_verify:ro" \
+		api python -m app.cli.verify_overlays $(ARGS) --out /app/.overlay-verify
+
+# Maximum accepted Creator Block workload in the production image. The CLI
+# renders all 240 1080x1920 frames and fails above 180s or 2.5GB child RSS.
+MOTION_VERIFY_OUT ?= .motion-verify
+MOTION_VERIFY_HOST_OUT := $(abspath $(MOTION_VERIFY_OUT))
+
+verify-motion-performance:
+	@mkdir -p $(MOTION_VERIFY_OUT)
+	@[ -f .env.local-render ] || touch .env.local-render
+	$(LOCAL_RENDER_COMPOSE) build api
+	$(LOCAL_RENDER_COMPOSE) run --rm --no-deps \
+		-e NOVA_IN_PROD_IMAGE=1 \
+		-v "$(MOTION_VERIFY_HOST_OUT):/app/.motion-verify" \
+		api python -m app.cli.verify_motion_performance --out /app/.motion-verify
 
 # ── Carousel parity (browser reference vs. our Python/Skia render) ────────────
 # `carousel-capture` drives the gstack browse daemon through one of the four
@@ -163,13 +180,21 @@ verify-editor-timeline:
 		src/__tests__/plan/items/EditorTimelineBody-carousel.test.tsx \
 		src/__tests__/plan/items/carousel-preview-impl/CarouselBlockPreviewImpl.test.tsx \
 		src/__tests__/plan/items/carousel-preview-impl/geometry.test.ts \
+		src/__tests__/plan/items/editor-timeline-ai-sequence-marker.test.tsx \
+		src/__tests__/plan/items/inspector-panel-motion.test.tsx \
+		src/__tests__/plan/items/ToolDrawer-visuals.test.tsx \
+		src/__tests__/lib/motion-runtime.test.ts \
+		src/__tests__/lib/motion-preview-performance.test.ts \
+		src/__tests__/lib/motion-runtime-generated-contract.test.ts \
 		src/lib/__tests__/carousel-timing.test.ts \
 		src/lib/timeline/__tests__/timeline-scale.test.ts && \
 		npx playwright test --project=desktop-editor)
 	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m pytest -q \
 		tests/pipeline/carousel/test_choreography.py \
 		tests/pipeline/carousel/test_segment_kill_switch.py \
+		tests/pipeline/test_motion_scene.py \
 		tests/routes/test_editor_commit.py \
+		tests/tasks/test_motion_scene_cache.py \
 		tests/tasks/test_carousel_timed_lane_projection.py)
 
 # ── Tests ──────────────────────────────────────────────────────────────────────

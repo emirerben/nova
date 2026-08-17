@@ -1,0 +1,72 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-14-v23",
+  "input": {
+    "utterance": "make the Wild Type block twice as fast",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["motion"],
+      "total_duration_s": 10,
+      "motion": {
+        "available": true,
+        "catalog": [
+          {
+            "preset_id": "kinetic_word",
+            "preset_version": 2,
+            "label": "Wild Type",
+            "kind": "text",
+            "default_duration_s": 2.5,
+            "min_assets": 0,
+            "defaults": {"text": "MAKE IT WILD"},
+            "controls": [
+              {"key": "speed", "type": "number", "minimum": 0.25, "maximum": 4, "step": 0.05},
+              {"key": "easing", "type": "enum", "values": ["ease-out-cubic", "ease-in-out-cubic"]},
+              {"key": "hold_frames", "type": "number", "minimum": 0, "maximum": 240, "step": 1}
+            ],
+            "parameters": [
+              {"key": "text", "type": "string", "required": true, "max_length": 80}
+            ]
+          }
+        ],
+        "blocks": [
+          {
+            "id": "motion_1",
+            "preset_id": "kinetic_word",
+            "preset_version": 2,
+            "label": "Wild Type",
+            "start_s": 0,
+            "end_s": 2.5,
+            "motion": {
+              "version": 2,
+              "speed": 1,
+              "easing": "ease-in-out-cubic",
+              "hold_frames": 30
+            },
+            "intensity": 0.72,
+            "params": {"text": "OLD HOOK"}
+          }
+        ],
+        "asset_pool": []
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_motion_block\",\"motion_id\":\"motion_1\",\"patch\":{\"speed\":2}}],\"confidence\":0.97,\"reply\":\"Made the Wild Type block twice as fast.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_motion_block",
+        "motion_id": "motion_1",
+        "patch": {"speed": 2}
+      }
+    ],
+    "confidence": 0.97,
+    "reply": "Made the Wild Type block twice as fast.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Creator Block Motion v2 speed control uses catalog-backed bounds and existing normalized motion state"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.0.1",
+  "input": {
+    "idea": "Corfu architecture",
+    "theme": "Walking through town",
+    "direction": "guided_story",
+    "goal": "Show how the streets, buildings, and small details relate",
+    "pace": "balanced",
+    "target_duration_s": 24,
+    "media": [
+      {"media_id":"a1","lane":"clip","kind":"video","subject":"walking into old town"},
+      {"media_id":"a2","lane":"asset","kind":"image","subject":"stone arch"},
+      {"media_id":"a3","lane":"asset","kind":"image","subject":"colorful shutters"},
+      {"media_id":"a4","lane":"asset","kind":"video","subject":"narrow street pan"},
+      {"media_id":"a5","lane":"asset","kind":"image","subject":"balcony details"},
+      {"media_id":"a6","lane":"asset","kind":"video","subject":"open square"},
+      {"media_id":"a7","lane":"asset","kind":"image","subject":"weathered doorway"}
+    ]
+  },
+  "raw_text": "{\"title\":\"How Corfu town unfolds\",\"duration_s\":24,\"story_beats\":[{\"topic\":\"Streets\",\"thought\":\"The route moves from tight lanes into open space.\",\"media_ids\":[\"a1\",\"a4\",\"a6\"],\"layout\":\"fullscreen\",\"duration_s\":8},{\"topic\":\"Buildings\",\"thought\":\"Stone shapes and bright shutters create the larger rhythm.\",\"media_ids\":[\"a2\",\"a3\"],\"layout\":\"fullscreen\",\"duration_s\":6},{\"topic\":\"Details\",\"thought\":\"Balconies and doorways reward a slower look.\",\"media_ids\":[\"a5\",\"a7\"],\"layout\":\"supporting_card\",\"duration_s\":6}]}",
+  "meta": {"source":"hand_authored_golden","expected_topics":["streets","buildings","details"]}
+}

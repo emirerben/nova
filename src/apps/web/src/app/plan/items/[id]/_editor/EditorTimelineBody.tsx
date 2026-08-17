@@ -43,12 +43,17 @@ import {
 } from "@/lib/timeline/timeline-scale";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import type { TimelineClip } from "@/lib/generative-api";
+import type { MotionPresetInstance } from "@nova/motion-runtime";
 import type {
   EditorSelection,
   EditorSelectionKind,
 } from "./useEditorSelection";
 import Filmstrip, { allocateFilmstripSeekBudget } from "./Filmstrip";
 import { anchoredTimelineScrollLeft } from "./editor-timeline-scroll";
+import {
+  useEditorPlaybackTime,
+  type EditorPlaybackClock,
+} from "./editor-playback-clock";
 import {
   AI_SEQUENCE_BADGE_TOOLTIP,
   deriveLaneRows,
@@ -129,6 +134,8 @@ export interface EditorMotionBar {
   label: string;
   start_s: number;
   end_s: number;
+  sourceScene: MotionPresetInstance;
+  readOnly?: boolean;
 }
 
 export type CarouselBlockPosition = "intro" | "middle" | "outro";
@@ -153,6 +160,7 @@ export interface EditorTimelineBodyProps {
   /** Real rendered player duration, used to calibrate transition overlap. */
   renderedOutputDurationS?: number | null;
   currentTimeS: number;
+  playbackClock?: EditorPlaybackClock | null;
   /** Zoom factor: 1 = fit-to-width. */
   zoom: number;
   /** Incremented only when the user explicitly presses Fit. */
@@ -179,6 +187,8 @@ export interface EditorTimelineBodyProps {
   onPreviewTextTiming?: (
     id: string,
     patch: Pick<TextElementBar, "start_s" | "end_s">,
+    handle: "left" | "right" | "body",
+    origin: TextElementBar,
   ) => void;
 
   visualBlocks: EditorVisualBlockBar[];
@@ -192,6 +202,7 @@ export interface EditorTimelineBodyProps {
   onPreviewMotionTiming?: (
     id: string,
     patch: Pick<EditorMotionBar, "start_s" | "end_s">,
+    origin: EditorMotionBar,
   ) => void;
 
   cameraEffects?: CameraEffect[];
@@ -216,6 +227,8 @@ export interface EditorTimelineBodyProps {
     TimelineClip,
     "clip_index" | "signed_url" | "duration_s"
   >[];
+  /** Append an uploaded source that the rendered cut did not select. */
+  onAddClip?: (clipIndex: number) => void;
 
   /** Staged carousel-moment block, or null/undefined when none is staged. */
   carouselBlock?: EditorCarouselBlockBar | null;
@@ -276,7 +289,7 @@ type ActiveDrag =
       handle: "left" | "right" | "body";
       startTimelineX: number;
       pxPerSecond: number;
-      origin: Pick<TextElementBar, "start_s" | "end_s">;
+      origin: TextElementBar;
       active: boolean;
     }
   | {
@@ -323,7 +336,7 @@ type ActiveDrag =
       handle: "left" | "right" | "body";
       startTimelineX: number;
       pxPerSecond: number;
-      origin: Pick<EditorMotionBar, "start_s" | "end_s">;
+      origin: EditorMotionBar;
       active: boolean;
     }
   | {
@@ -342,6 +355,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     timelineProjection,
     renderedOutputDurationS,
     currentTimeS,
+    playbackClock,
     zoom,
     fitRequestKey,
     scaleResetKey,
@@ -374,6 +388,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     clipPreviewMode = "rendered",
     clipsLoading,
     filmstripClips,
+    onAddClip,
     carouselBlock = null,
     carouselReadOnly = false,
     carouselDisabledReason,
@@ -530,7 +545,6 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     previousScaleRef.current = { pps, trackW };
   }, [currentTimeS, effectiveDurationS, pps, trackW, viewportW]);
 
-  const playheadPx = secondsToPx(currentTimeS, pps);
   const projectedClipBySlot = new Map(
     timelineProjection.entries
       .filter((entry) => entry.kind === "clip")
@@ -563,6 +577,13 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const filmstripSourceByIndex = new Map(
     filmstripClips.map((clip) => [clip.clip_index, clip]),
   );
+  const activeClipIndices = new Set(
+    slots.filter((slot) => !slot.removed).map((slot) => slot.clipIndex),
+  );
+  const unusedFilmstripClips = filmstripClips.filter(
+    (clip) => !activeClipIndices.has(clip.clip_index),
+  );
+  const videoLaneHeight = unusedFilmstripClips.length > 0 ? 76 : 48;
   const activeFilmstripCount = filmstripLayout.windows.reduce(
     (count, win, i) => {
       const slot = filmstripSlots[i];
@@ -645,7 +666,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     ...(cameraEffects.length > 0
       ? [{ label: "Camera", heightPx: cameraLane.totalHeightPx }]
       : []),
-    { label: "Video", heightPx: 48 },
+    { label: "Video", heightPx: videoLaneHeight },
     { label: "Sound", heightPx: soundLaneHeight },
     { label: "Overlays", heightPx: overlayLane.totalHeightPx },
   ];
@@ -741,7 +762,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         deltaS,
         videoDurationS: effectiveDurationS,
       });
-      onPreviewTextTiming?.(active.id, toBaseRange(next));
+      onPreviewTextTiming?.(active.id, toBaseRange(next), active.handle, active.origin);
       setDragLabel({
         x: clientX,
         y: window.innerHeight - 118,
@@ -835,7 +856,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       if (active.kind === "visual") {
         onPreviewVisualTiming?.(active.id, toBaseRange(next));
       } else if (active.kind === "motion") {
-        onPreviewMotionTiming?.(active.id, toBaseRange(next));
+        onPreviewMotionTiming?.(active.id, toBaseRange(next), active.origin);
       } else if (active.kind === "camera") {
         onPreviewCameraTiming?.(active.id, toBaseRange(next));
       } else {
@@ -869,7 +890,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       }),
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
-      origin: { start_s: bar.start_s, end_s: bar.end_s },
+      origin: bar,
       active: false,
     };
   }
@@ -981,7 +1002,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       }),
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
-      origin: { start_s: block.start_s, end_s: block.end_s },
+      origin: block,
       active: false,
     };
   }
@@ -990,7 +1011,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     e: React.PointerEvent<HTMLElement>,
     block: EditorMotionBar,
   ) {
-    if (readOnly) return;
+    if (readOnly || block.readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -1004,7 +1025,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       }),
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
-      origin: { start_s: block.start_s, end_s: block.end_s },
+      origin: block,
       active: false,
     };
   }
@@ -1060,6 +1081,15 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     dragRef.current = null;
     if (drag?.kind === "clip") {
       setFilmstripSlots(slots);
+    } else if (drag?.kind === "text") {
+      onPreviewTextTiming?.(
+        drag.id,
+        { start_s: drag.origin.start_s, end_s: drag.origin.end_s },
+        "body",
+        drag.origin,
+      );
+    } else if (drag?.kind === "motion") {
+      onPreviewMotionTiming?.(drag.id, toBaseRange(drag.origin), drag.origin);
     }
     setDragLabel(null);
   }
@@ -1175,7 +1205,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   </span>
                 </div>
               ))}
-              <Playline px={playheadPx} withHead />
+              <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} withHead />
             </div>
           </div>
           <div
@@ -1195,7 +1225,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 heightPx={textLane.totalHeightPx}
                 testId="editor-text-lane"
               >
-                <Playline px={playheadPx} />
+                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                 {plainTextBars.length === 0 ? (
                   <GhostRow text="Add text from the Text tool" />
                 ) : (
@@ -1314,7 +1344,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   heightPx={captionsLaneHeight}
                   testId="editor-captions-lane"
                 >
-                  <Playline px={playheadPx} />
+                  <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                   <div
                     className={captionsEnabled ? undefined : "opacity-40"}
                     style={{ height: captionsLaneHeight }}
@@ -1389,7 +1419,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 heightPx={visualLane.totalHeightPx}
                 testId="editor-visuals-lane"
               >
-                <Playline px={playheadPx} />
+                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                 {visualBlocks.length === 0 ? (
                   <GhostRow text="Montages and text cards appear here" />
                 ) : (
@@ -1445,7 +1475,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   heightPx={motionLane.totalHeightPx}
                   testId="editor-motion-lane"
                 >
-                  <Playline px={playheadPx} />
+                  <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                   {motionBlocks.length === 0 ? (
                     <GhostRow text="Creator Blocks appear here" />
                   ) : (
@@ -1466,12 +1496,12 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           dataKind="motion"
                           dataId={block.id}
                           dataRowIndex={rowIndex}
-                          onPointerDown={(event) => startMotionDrag(event, block)}
+                          onPointerDown={block.readOnly ? undefined : (event) => startMotionDrag(event, block)}
                           onPointerMove={(event) => updateDrag(event.clientX)}
                           onPointerUp={(event) => finishDrag(event, "motion", block.id)}
                           onPointerCancel={cancelDrag}
                           suppressClickRef={suppressClickRef}
-                          showTrimHandles
+                          showTrimHandles={!block.readOnly}
                           className="border border-lime-300 bg-lime-50 text-[#3f3f46]"
                         >
                           <span className="pointer-events-none truncate px-2 text-[10px] font-semibold">{block.label}</span>
@@ -1488,7 +1518,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   heightPx={cameraLane.totalHeightPx}
                   testId="editor-camera-lane"
                 >
-                  <Playline px={playheadPx} />
+                  <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                   {cameraLane.rows.map(
                     ({ item: effect, rowIndex, topPx, heightPx }) => {
                       const left = secondsToPx(effect.start_s, pps);
@@ -1532,11 +1562,11 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               {/* ── Video lane (Clips + filmstrip) ── */}
               <LaneTrack
                 trackW={trackW}
-                heightPx={TEXT_LANE_BASE_HEIGHT_PX}
+                heightPx={videoLaneHeight}
                 onDragOver={handleCarouselDragOver}
                 onDrop={handleCarouselDrop}
               >
-                <Playline px={playheadPx} />
+                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                 {clipsLoading ? (
                   <div className="absolute inset-1 rounded bg-zinc-200/60 motion-safe:animate-pulse" />
                 ) : (
@@ -1581,7 +1611,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           onSelect("clip", slot.key);
                         }}
                         className={[
-                          "group absolute inset-y-0.5 min-w-11 overflow-hidden rounded border bg-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                          "group absolute min-w-11 overflow-hidden rounded border bg-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                          unusedFilmstripClips.length > 0 ? "top-0.5 h-11" : "inset-y-0.5",
                           clipReadOnly
                             ? "cursor-default active:cursor-default"
                             : "cursor-grab active:cursor-grabbing",
@@ -1626,6 +1657,36 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     );
                   })
                 )}
+                {unusedFilmstripClips.length > 0 && (
+                  <div
+                    className="absolute inset-x-1 bottom-1 flex h-6 items-center gap-1 overflow-x-auto"
+                    aria-label="Unused uploaded clips"
+                  >
+                    <span className="sticky left-0 z-10 shrink-0 bg-white/90 px-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+                      Unused
+                    </span>
+                    {unusedFilmstripClips.map((source) => (
+                      <button
+                        key={source.clip_index}
+                        type="button"
+                        aria-label={`Add source clip ${source.clip_index + 1} to timeline`}
+                        disabled={clipReadOnly || !onAddClip}
+                        title={
+                          clipReadOnly
+                            ? (clipDisabledReason ?? "Clip timing is locked")
+                            : `Add Clip ${source.clip_index + 1} to the end`
+                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onAddClip?.(source.clip_index);
+                        }}
+                        className="h-6 shrink-0 rounded border border-dashed border-zinc-300 bg-white px-2 text-[9px] font-semibold text-[#3f3f46] hover:border-lime-500 hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        + Clip {source.clip_index + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {carouselBlock && carouselWindow && (
                   <div
                     role="button"
@@ -1656,7 +1717,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                         onSelectCarousel?.();
                       }
                     }}
-                    className={`absolute inset-y-0.5 flex min-w-11 items-center overflow-hidden rounded border border-zinc-600 bg-[#0c0c0e] px-2 text-[10px] font-semibold text-white shadow-sm transition-colors hover:border-zinc-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                    className={`absolute flex min-w-11 items-center overflow-hidden rounded border border-zinc-600 bg-[#0c0c0e] px-2 text-[10px] font-semibold text-white shadow-sm transition-colors hover:border-zinc-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                      unusedFilmstripClips.length > 0 ? "top-0.5 h-11" : "inset-y-0.5"
+                    } ${
                       carouselReadOnly
                         ? "cursor-default opacity-70"
                         : "cursor-grab active:cursor-grabbing"
@@ -1700,7 +1763,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
 
               {/* ── Sound lane (SFX sub-row above the music bed) ── */}
               <LaneTrack trackW={trackW} heightPx={soundLaneHeight}>
-                <Playline px={playheadPx} />
+                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                 {/* SFX rows above the fixed music bed. */}
                 <div
                   className="absolute inset-x-0 top-0"
@@ -1816,7 +1879,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 heightPx={overlayLane.totalHeightPx}
                 testId="editor-overlays-lane"
               >
-                <Playline px={playheadPx} />
+                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
                 {overlays.length === 0 ? (
                   <GhostRow text="Overlays appear here" />
                 ) : (
@@ -1905,16 +1968,21 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
 
 /** One px-positioned playhead segment (line only; head on the ruler copy). */
 function Playline({
-  px,
+  currentTimeS,
+  playbackClock,
+  pps,
   withHead = false,
 }: {
-  px: number;
+  currentTimeS: number;
+  playbackClock?: EditorPlaybackClock | null;
+  pps: number;
   withHead?: boolean;
 }) {
+  const playbackTimeS = useEditorPlaybackTime(playbackClock, currentTimeS);
   return (
     <div
       className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-[#0c0c0e]/80"
-      style={{ left: px }}
+      style={{ left: secondsToPx(playbackTimeS, pps) }}
       aria-hidden
     >
       {withHead && (

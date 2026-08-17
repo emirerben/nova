@@ -34,11 +34,9 @@ import {
   NotAuthenticatedError,
   confirmOverlayUploads,
   listPoolAssets,
-  registerPoolAsset,
+  reanalyzePoolAsset,
   retimeVisualBlock,
   requestOverlayUploadUrls,
-  requestPoolAssetUploadUrls,
-  sha256HexOfFile,
   updatePoolAssetContext,
   uploadToGcs,
   type CameraEffect,
@@ -49,6 +47,7 @@ import {
   type PlanItem,
   type PlanItemVariant,
   type PoolAsset,
+  type PoolReservationCapacity,
   type CaptionCue,
   type CaptionLanguage,
   setPlanItemCaptionLanguage,
@@ -56,6 +55,7 @@ import {
   type TextElement,
   type VisualBlock,
 } from "@/lib/plan-api";
+import { mergePoolAssetsPreservingDisplayUrls } from "@/lib/pool-assets";
 import type { CarouselClipThumb } from "./CarouselPanel";
 import type { NovaStep } from "@/lib/job-phases";
 import { POLL_INTERVAL_MS } from "@/components/progress";
@@ -130,12 +130,20 @@ import {
   textReducer,
   type TextElementBar,
 } from "@/lib/timeline/text-timeline-reducer";
+import {
+  motionPatchForConfig,
+  motionPatchForManualEnd,
+  motionPatchForEffect,
+  motionPatchForText,
+  type TextMotionConfigV2,
+} from "@/lib/text-motion-v2";
 import { InkButton } from "@/components/ui/InkButton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
 import type { DraftSlot } from "@/app/generative/timeline-math";
+import { timelineReducer } from "@/app/generative/timeline-reducer";
 import {
   barsToCaptionCues,
   barsToPreviewTextElements,
@@ -152,6 +160,7 @@ import {
 } from "./editor-bars";
 import { isCaptionArchetype } from "@/lib/variant-editor/eligibility";
 import {
+  canEditIntroControls,
   captionToolState,
   computeToolDisabledReasons,
   editorReasonCopy,
@@ -182,9 +191,13 @@ import {
   sequentialSlotLayout,
 } from "./editor-bar-drag";
 import TransportBar from "./TransportBar";
-import type { EditorTimelineBodyProps } from "./EditorTimelineBody";
+import type {
+  EditorMotionBar,
+  EditorTimelineBodyProps,
+} from "./EditorTimelineBody";
 import EditorCanvas from "./EditorCanvas";
-import OverlaySuggestions, { type PendingUpload } from "./OverlaySuggestions";
+import OverlaySuggestions from "./OverlaySuggestions";
+import { usePoolAssetUploader } from "@/app/plan/_hooks/usePoolAssetUploader";
 import { computeReseedSections } from "./editor-reseed";
 import InspectorPanel from "./InspectorPanel";
 import InspectorRail, { type InspectorTab } from "./InspectorRail";
@@ -208,6 +221,10 @@ import ToolRail, { type EditorTool } from "./ToolRail";
 import type { SongWindowState } from "./SongWindowSelector";
 import PresetGrid, { presetMatchesFields } from "./PresetGrid";
 import { useVirtualPreview } from "./useVirtualPreview";
+import {
+  createEditorPlaybackClock,
+  type EditorPlaybackClock,
+} from "./editor-playback-clock";
 import { useEditorLayoutMode } from "./useEditorLayoutMode";
 import type { EditorLayoutMode } from "./useEditorLayoutMode";
 import {
@@ -240,15 +257,21 @@ import {
 } from "./useEditorOverlaySuggestions";
 import {
   creatorBlockEntry,
+  creatorBlockDurationFramesV2,
   createCreatorBlockInstance,
   MOTION_FPS,
   MOTION_MAX_INSTANCES,
   MOTION_RUNTIME_HASH,
+  isCompatiblePersistedMotionRuntimeHash,
+  retimeCreatorBlockManualSpan,
+  retimeCreatorBlockSpeed,
+  upgradeCreatorBlockInstanceToV2,
   validateMotionInstances,
   type MotionPresetId,
-  type MotionPresetInstanceV1,
+  type MotionPresetInstance,
   type MotionPresetPatch,
 } from "@nova/motion-runtime";
+import type { CreatorBlockMotionControlPatch } from "./MotionInspector";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
 
@@ -275,6 +298,12 @@ const VISUAL_BLOCKS_UI_ENABLED =
   process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
 const MOTION_SCENES_UI_ENABLED =
   process.env.NEXT_PUBLIC_MOTION_SCENES_ENABLED === "true";
+const EVOLVING_TYPE_PUBLIC_ENABLED =
+  process.env.NEXT_PUBLIC_EVOLVING_TYPE_ENABLED === "true";
+const FRAME_DRIVEN_PREVIEW_ENABLED =
+  process.env.NEXT_PUBLIC_FRAME_DRIVEN_PREVIEW_ENABLED === "true";
+const TEXT_MOTION_V2_UI_ENABLED =
+  process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED === "true";
 // Nova AI sandboxed effect language (PR6, effect-language train). Dual-flag
 // with the backend's CUSTOM_EFFECTS_ENABLED (app/config.py) — Fly first,
 // then Vercel, per this repo's dual-flag convention.
@@ -348,15 +377,6 @@ function retimeLinkedTextBar(
         newDuration,
   };
 }
-const POOL_MIME_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "video/mp4",
-  "video/quicktime",
-];
-
 type LyricsCapability = NonNullable<
   NonNullable<PlanItemVariant["editor_capabilities"]>["lyrics"]
 >;
@@ -424,6 +444,13 @@ function persistedLyricsEnabled(variant: PlanItemVariant | null): boolean {
 }
 
 function persistedOrientation(variant: PlanItemVariant | null): EditorOrientation {
+  // `orientation.value` is the read adapter's authoritative projection of the
+  // format that actually rendered. Prefer it so older variants that predate
+  // the top-level `orientation` field still open on the correct canvas.
+  const capabilityValue = variant?.editor_capabilities?.orientation?.value;
+  if (capabilityValue === "landscape" || capabilityValue === "portrait") {
+    return capabilityValue;
+  }
   return variant?.orientation === "landscape" ? "landscape" : "portrait";
 }
 
@@ -609,11 +636,13 @@ function SaveSpinner() {
 function OrientationToggle({
   value,
   disabled,
+  busy,
   disabledHint,
   onChange,
 }: {
   value: EditorOrientation;
   disabled: boolean;
+  busy: boolean;
   disabledHint: string | null;
   onChange: (orientation: EditorOrientation) => void;
 }) {
@@ -622,6 +651,7 @@ function OrientationToggle({
     <div
       role="group"
       aria-label="Output format"
+      aria-busy={busy}
       title={title}
       className="flex min-h-11 items-center rounded-lg border border-zinc-200 bg-white p-0.5"
     >
@@ -726,7 +756,7 @@ export default function EditorShell({
   const [localSfxAudioUrls, setLocalSfxAudioUrls] = useState<Record<string, string>>({});
   const [localOverlays, setLocalOverlays] = useState<MediaOverlay[]>([]);
   const [localVisualBlocks, setLocalVisualBlocks] = useState<VisualBlock[]>([]);
-  const [localMotionScenes, setLocalMotionScenes] = useState<MotionPresetInstanceV1[]>([]);
+  const [localMotionScenes, setLocalMotionScenes] = useState<MotionPresetInstance[]>([]);
   const [localCameraEffects, setLocalCameraEffects] = useState<CameraEffect[]>([]);
   // AI-suggestion provenance (Overlays drawer): accepted envelope id + the
   // overlay card id it staged. Kept OFF the MediaOverlay objects — the save
@@ -743,6 +773,10 @@ export default function EditorShell({
   const [overlaysDirty, setOverlaysDirty] = useState(false);
   const [visualBlocksDirty, setVisualBlocksDirty] = useState(false);
   const [motionScenesDirty, setMotionScenesDirty] = useState(false);
+  const motionControlGestureOriginRef = useRef<{
+    document: EditorDocument;
+    motionScenesDirty: boolean;
+  } | null>(null);
   const [cameraEffectsDirty, setCameraEffectsDirty] = useState(false);
   const [mixLevel, setMixLevel] = useState<number | null>(null);
   const [mixDirty, setMixDirty] = useState(false);
@@ -787,7 +821,15 @@ export default function EditorShell({
     setLyricSeedsLoading(false);
   }, [variant?.variant_id]);
   const hasLyricBars = useMemo(() => state.bars.some(isLyricBar), [state.bars]);
-  const previewOrientation = LANDSCAPE_UI ? orientation : "portrait";
+  // The flag gates mutation, not truth. A landscape variant must always open
+  // on a landscape canvas even when the output-format control is rolled back.
+  // Use the response value on the first loaded paint too; the working-state
+  // seeding effect runs after paint and must not flash a portrait canvas or a
+  // false dirty Save state in the meantime.
+  const orientationSeeded = seededVariantIdRef.current === variant?.variant_id;
+  const previewOrientation = orientationSeeded
+    ? orientation
+    : persistedOrientation(variant);
   const activeCanvas = useMemo(
     () => canvasForOrientation(previewOrientation),
     [previewOrientation],
@@ -922,7 +964,25 @@ export default function EditorShell({
   const [sessionHasCopilotEdits, setSessionHasCopilotEdits] = useState(false);
   const [copilotSaveNoticeDismissed, setCopilotSaveNoticeDismissed] = useState(true);
   const panEnabled = zoomPct > 100;
-  const [currentTime, setCurrentTime] = useState(0);
+  const playbackClockRef = useRef<EditorPlaybackClock | null>(null);
+  if (FRAME_DRIVEN_PREVIEW_ENABLED && playbackClockRef.current == null) {
+    playbackClockRef.current = createEditorPlaybackClock(0);
+  }
+  const playbackClock = playbackClockRef.current;
+  const [currentTime, setCommittedCurrentTime] = useState(0);
+  const setCurrentTime = useCallback(
+    (timeS: number) => {
+      playbackClock?.publish(timeS);
+      setCommittedCurrentTime(timeS);
+    },
+    [playbackClock],
+  );
+  // Playback sources publish decoded-frame time separately. Their native
+  // timeupdate cadence only commits transport/scrub state and must not move
+  // authored layers ahead of the frame actually on screen.
+  const commitPlaybackTime = useCallback((timeS: number) => {
+    setCommittedCurrentTime(timeS);
+  }, []);
   const outputToBaseTimeRef = useRef<(seconds: number) => number>((seconds) => seconds);
   const baseToOutputTimeRef = useRef<(seconds: number) => number>((seconds) => seconds);
   const [pendingCopilotFocus, setPendingCopilotFocus] =
@@ -982,10 +1042,37 @@ export default function EditorShell({
   const musicHydratedVariantIdRef = useRef<string | null>(null);
   const [overlayUploading, setOverlayUploading] = useState(false);
   const [poolAssets, setPoolAssets] = useState<PoolAsset[]>([]);
+  const [serverPoolReservations, setServerPoolReservations] = useState<
+    PoolReservationCapacity[]
+  >([]);
+  const [serverPoolOccupiedCount, setServerPoolOccupiedCount] = useState(0);
   const [maxPoolAssets, setMaxPoolAssets] = useState(20);
-  const [pendingPoolUploads, setPendingPoolUploads] = useState<PendingUpload[]>([]);
   const [poolUnavailable, setPoolUnavailable] = useState(false);
   const [poolError, setPoolError] = useState<string | null>(null);
+  const poolListEpoch = useRef(0);
+  const poolPollInFlight = useRef(false);
+  const poolUploader = usePoolAssetUploader({
+    itemId,
+    assetCount: poolAssets.length,
+    maxAssets: maxPoolAssets,
+    onRegistered: (asset) => {
+      poolListEpoch.current += 1;
+      setPoolAssets((prev) => [...prev.filter((row) => row.id !== asset.id), asset]);
+    },
+    onUnavailable: () => setPoolUnavailable(true),
+    serverReservations: serverPoolReservations,
+    serverOccupiedCount: serverPoolOccupiedCount,
+    onReservationFinalized: (reservationId, releasedCapacity) => {
+      setServerPoolReservations((current) =>
+        current.filter((reservation) => reservation.reservation_id !== reservationId),
+      );
+      if (releasedCapacity) {
+        setServerPoolOccupiedCount((current) => Math.max(0, current - 1));
+      }
+    },
+  });
+  const pendingPoolUploads = poolUploader.uploads;
+  const addPoolFiles = poolUploader.addFiles;
 
   // Clip slots — the shell's local working state for split/delete (seeded from
   // the shared clip-timeline handle, then edited locally; persisted via
@@ -1153,6 +1240,8 @@ export default function EditorShell({
   // Save disabled + every mutating command no-ops. The server's honest reason
   // is surfaced verbatim.
   const capabilities = variant?.editor_capabilities;
+  const evolvingTypeExposureEnabled =
+    EVOLVING_TYPE_PUBLIC_ENABLED && capabilities?.evolving_type === true;
   const readOnly =
     !!capabilities &&
     capabilities.text_elements === false &&
@@ -1168,6 +1257,7 @@ export default function EditorShell({
     capabilities.orientation?.editable !== true &&
     capabilities.music_window?.editable !== true;
   const readOnlyReason = editorReasonCopy(capabilities?.reason);
+  const introControlsEditable = canEditIntroControls(capabilities, readOnly);
   // Text-elements gate (plan 010 OV-1): once sfx/overlays flip true on
   // subtitled variants the shell is editable, but optional authored text still
   // respects the rollout flag. Caption cue bars remain directly editable.
@@ -1277,7 +1367,7 @@ export default function EditorShell({
       setCaptionMeta(doc.captionMeta ?? null);
       setCaptionMetaDirty(doc.captionMetaDirty ?? false);
       setCaptionMetaPatch(doc.captionMetaPatch ?? {});
-      setTitle(doc.title);
+      if (introControlsEditable) setTitle(doc.title);
       setTextDirty(
         doc.bars.some((bar) => !isCaptionBar(bar) && (lyricsOptionalActive || !isLyricBar(bar))),
       );
@@ -1294,7 +1384,7 @@ export default function EditorShell({
       if (capabilities?.camera_effects !== false) {
         setCameraEffectsDirty(!cameraEffectsEqual(doc.cameraEffects, variant?.camera_effects));
       }
-      setTitleDirty(true);
+      if (introControlsEditable) setTitleDirty(true);
       // Undo of a delete (or redo of an add) resurrects a bar → re-select it
       // (plan §5 — the one selection rule that reaches into undo).
       const resurrected = doc.bars.find((b) => !beforeIds.has(b.id));
@@ -1303,7 +1393,7 @@ export default function EditorShell({
         setInspectorTab("basic");
       }
     },
-    [state.bars, select, variant, capabilities, lyricsOptionalActive],
+    [state.bars, select, variant, capabilities, lyricsOptionalActive, introControlsEditable],
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
@@ -1311,7 +1401,10 @@ export default function EditorShell({
   const motionRuntimeCompatible =
     capabilities?.motion_scenes_reason !== "motion_runtime_mismatch" &&
     (!capabilities?.motion_runtime_hash ||
-      capabilities.motion_runtime_hash === MOTION_RUNTIME_HASH);
+      isCompatiblePersistedMotionRuntimeHash(
+        capabilities.motion_runtime_hash,
+        localMotionScenes.every((scene) => scene.preset_id === "route_trace"),
+      ));
   const motionPreviewRuntimeHash = motionRuntimeCompatible
     ? MOTION_RUNTIME_HASH
     : (capabilities?.motion_required_runtime_hash ?? "unsupported-motion-runtime");
@@ -1321,12 +1414,17 @@ export default function EditorShell({
       !MOTION_SCENES_UI_ENABLED ||
       capabilities?.motion_scenes === false ||
       !motionRuntimeCompatible ||
+      (presetId === "evolving_type" && !evolvingTypeExposureEnabled) ||
       localMotionScenes.length >= MOTION_MAX_INSTANCES
     ) {
       return;
     }
-    const motionDuration =
-      duration > 0 ? duration : Math.max(0, Number(variant?.duration_s ?? 0));
+    const baseLayoutDuration = sequentialSlotLayout(slots, clip.state.grid).totalDurationS;
+    const motionDuration = baseLayoutDuration > 0
+      ? baseLayoutDuration
+      : duration > 0
+        ? duration
+        : Math.max(0, Number(variant?.duration_s ?? 0));
     const durationFrames = Math.max(1, Math.round(motionDuration * MOTION_FPS));
     const baseCurrentTime = outputToBaseTimeRef.current(currentTime);
     let startFrame = Math.max(
@@ -1344,7 +1442,7 @@ export default function EditorShell({
       startFrame = Math.max(0, durationFrames - 2 * MOTION_FPS);
       endFrame = durationFrames;
     }
-    let candidate: MotionPresetInstanceV1 =
+    let candidate: MotionPresetInstance =
       presetId === "route_trace"
         ? {
         id: `motion-${crypto.randomUUID()}`,
@@ -1372,7 +1470,7 @@ export default function EditorShell({
       candidate = {
         ...candidate,
         end_frame_exclusive: candidate.end_frame_exclusive - 1,
-      } as MotionPresetInstanceV1;
+      } as MotionPresetInstance;
     }
     if (!validateMotionInstances([...localMotionScenes, candidate], durationFrames).ok) return;
     history.record();
@@ -1387,7 +1485,10 @@ export default function EditorShell({
     history,
     localMotionScenes,
     motionRuntimeCompatible,
+    evolvingTypeExposureEnabled,
     poolAssets,
+    slots,
+    clip.state.grid,
     pocketActive,
     readOnly,
     select,
@@ -1398,24 +1499,145 @@ export default function EditorShell({
   const patchMotionScene = useCallback(
     (id: string, patch: MotionPresetPatch) => {
       if (readOnly || capabilities?.motion_scenes === false) return;
-      const candidate = localMotionScenes.map((scene) =>
-        scene.id === id ? ({ ...scene, ...patch } as MotionPresetInstanceV1) : scene,
-      );
+      const target = localMotionScenes.find((scene) => scene.id === id);
+      if (target?.preset_id === "evolving_type" && !evolvingTypeExposureEnabled) return;
+      const baseLayoutDuration = sequentialSlotLayout(slots, clip.state.grid).totalDurationS;
       const durationFrames = Math.max(
         1,
-        Math.round((duration || variant?.duration_s || 60) * MOTION_FPS),
+        Math.round((baseLayoutDuration || duration || variant?.duration_s || 60) * MOTION_FPS),
       );
+      const candidate = localMotionScenes.map((scene) => {
+        if (scene.id !== id) return scene;
+        const {
+          start_frame: requestedStart,
+          end_frame_exclusive: requestedEnd,
+          ...nonTimingPatch
+        } = patch;
+        const patched = { ...scene, ...nonTimingPatch } as MotionPresetInstance;
+        if (
+          patched.preset_id !== "route_trace" &&
+          (requestedStart !== undefined || requestedEnd !== undefined)
+        ) {
+          return retimeCreatorBlockManualSpan(
+            patched,
+            requestedStart ?? scene.start_frame,
+            requestedEnd ?? scene.end_frame_exclusive,
+            durationFrames,
+          ) as MotionPresetInstance;
+        }
+        return {
+          ...patched,
+          ...(requestedStart === undefined ? {} : { start_frame: requestedStart }),
+          ...(requestedEnd === undefined ? {} : { end_frame_exclusive: requestedEnd }),
+        } as MotionPresetInstance;
+      });
       const validation = validateMotionInstances(candidate, durationFrames);
       if (!validation.ok) {
         setToast(validation.errors[0] ?? "That Creator Block edit is outside the allowed range.");
         return;
       }
-      history.record(`motion:${id}`);
+      history.record();
       setLocalMotionScenes(candidate);
       setMotionScenesDirty(true);
     },
-    [capabilities?.motion_scenes, duration, history, localMotionScenes, readOnly, variant?.duration_s],
+    [capabilities?.motion_scenes, clip.state.grid, duration, evolvingTypeExposureEnabled, history, localMotionScenes, readOnly, slots, variant?.duration_s],
   );
+
+  const motionDurationFrames = useCallback(() => {
+    const baseLayoutDuration = sequentialSlotLayout(slots, clip.state.grid).totalDurationS;
+    return Math.max(
+      1,
+      Math.round((baseLayoutDuration || duration || variant?.duration_s || 60) * MOTION_FPS),
+    );
+  }, [clip.state.grid, duration, slots, variant?.duration_s]);
+
+  const buildMotionControlScenes = useCallback((
+    id: string,
+    patch: CreatorBlockMotionControlPatch,
+  ): MotionPresetInstance[] | null => {
+    const videoEndFrame = motionDurationFrames();
+    const index = localMotionScenes.findIndex((scene) => scene.id === id);
+    const current = index >= 0 ? localMotionScenes[index] : null;
+    if (!current || current.preset_id === "route_trace") return null;
+    if (current.preset_id === "evolving_type" && !evolvingTypeExposureEnabled) return null;
+    let next = upgradeCreatorBlockInstanceToV2(current);
+    if (patch.motion?.speed !== undefined) {
+      next = retimeCreatorBlockSpeed(next, patch.motion.speed, videoEndFrame);
+    }
+    if (patch.motion) {
+      const motion = { ...next.motion, ...patch.motion, version: 2 as const };
+      next = {
+        ...next,
+        motion,
+        ...(patch.motion.speed !== undefined || patch.motion.hold_frames !== undefined
+          ? {
+              end_frame_exclusive: Math.max(
+                next.start_frame + 1,
+                Math.min(videoEndFrame, next.start_frame + creatorBlockDurationFramesV2(next, motion)),
+              ),
+            }
+          : {}),
+      };
+    }
+    if (patch.intensity !== undefined) next = { ...next, intensity: patch.intensity };
+    if (patch.params) {
+      next = { ...next, params: { ...next.params, ...patch.params } } as typeof next;
+    }
+    const candidate = localMotionScenes.map((scene, sceneIndex) =>
+      sceneIndex === index ? next : scene,
+    );
+    const validation = validateMotionInstances(candidate, videoEndFrame);
+    if (!validation.ok) {
+      setToast(validation.errors[0] ?? "That Creator Block edit is outside the allowed range.");
+      return null;
+    }
+    return candidate;
+  }, [evolvingTypeExposureEnabled, localMotionScenes, motionDurationFrames]);
+
+  const beginMotionControl = useCallback(() => {
+    if (readOnly || capabilities?.motion_scenes === false) return;
+    if (motionControlGestureOriginRef.current) return;
+    motionControlGestureOriginRef.current = {
+      document: getCurrent(),
+      motionScenesDirty,
+    };
+  }, [capabilities?.motion_scenes, getCurrent, motionScenesDirty, readOnly]);
+
+  const previewMotionControl = useCallback((id: string, patch: CreatorBlockMotionControlPatch) => {
+    if (readOnly || capabilities?.motion_scenes === false) return;
+    const candidate = buildMotionControlScenes(id, patch);
+    if (!candidate) return;
+    setLocalMotionScenes(candidate);
+    setMotionScenesDirty(true);
+  }, [buildMotionControlScenes, capabilities?.motion_scenes, readOnly]);
+
+  const commitMotionControl = useCallback((id: string, patch: CreatorBlockMotionControlPatch) => {
+    const origin = motionControlGestureOriginRef.current;
+    if (origin) {
+      history.recordDocument(origin.document);
+      motionControlGestureOriginRef.current = null;
+    } else {
+      history.record();
+    }
+    previewMotionControl(id, patch);
+  }, [history, previewMotionControl]);
+
+  const cancelMotionControl = useCallback(() => {
+    const origin = motionControlGestureOriginRef.current;
+    if (!origin) return;
+    motionControlGestureOriginRef.current = null;
+    setLocalMotionScenes(origin.document.motionScenes ?? []);
+    setMotionScenesDirty(origin.motionScenesDirty);
+  }, []);
+
+  const patchMotionControl = useCallback((id: string, patch: CreatorBlockMotionControlPatch) => {
+    if (readOnly || capabilities?.motion_scenes === false) return;
+    const candidate = buildMotionControlScenes(id, patch);
+    if (!candidate) return;
+    history.record();
+    setLocalMotionScenes(candidate);
+    setMotionScenesDirty(true);
+  }, [buildMotionControlScenes, capabilities?.motion_scenes, history, readOnly]);
 
   const removeMotionScene = useCallback(
     (id: string) => {
@@ -1453,7 +1675,10 @@ export default function EditorShell({
     !lyricsOptionalActive &&
     lyricsFeatureAvailable &&
     (lyricsEnabled !== persistedLyricsEnabled(variant) || lyricOverridesDirty);
-  const orientationDirty = LANDSCAPE_UI && orientation !== persistedOrientation(variant);
+  const orientationDirty =
+    LANDSCAPE_UI &&
+    orientationSeeded &&
+    orientation !== persistedOrientation(variant);
 
   // Every mutation (text, slots, mutes, title) records into the undo stack.
   // A redo-only stack is clean only when the original baseline is still
@@ -1778,9 +2003,9 @@ export default function EditorShell({
   // Referentially stable across renders unless the block's position/duration
   // actually changes: `useVirtualPreview`'s `timeline` is a `useMemo` keyed on
   // this object's IDENTITY (see virtual-timeline splice deps), and EditorShell
-  // re-renders on every `currentTime` tick during playback (`onTimeUpdate:
-  // setCurrentTime` below). A fresh object literal here on every render broke
-  // that memo, rebuilding the whole virtual timeline dozens of times a second
+  // re-renders on throttled committed-time ticks during playback. A fresh
+  // object literal here on every render would still break that memo, rebuilding
+  // the whole virtual timeline on each transport commit
   // and re-firing useVirtualPreview's mapping effect (keyed on `timeline`) on
   // every tick — which redundantly re-seeks/re-loads the ACTIVE deck outside
   // the carousel window on every render, fighting its own smooth playback.
@@ -1818,7 +2043,9 @@ export default function EditorShell({
     musicStartS: virtualMusicStartS,
     soundMuted,
     musicTrackActive: effectiveAudioTrackId != null,
-    onTimeUpdate: setCurrentTime,
+    frameDriven: FRAME_DRIVEN_PREVIEW_ENABLED,
+    onFrameTimeUpdate: playbackClock?.publish,
+    onTimeUpdate: commitPlaybackTime,
     onDuration: () => {},
     onPlayingChange: setPlaying,
     onSourceError: handleVirtualSourceError,
@@ -2099,6 +2326,7 @@ export default function EditorShell({
     [
       duration,
       seekVirtualPreview,
+      setCurrentTime,
       virtualPreview.timeline.totalDurationS,
       virtualPreviewActive,
     ],
@@ -2273,12 +2501,18 @@ export default function EditorShell({
   useEffect(() => {
     if (!overlayPoolShouldLoad) return;
     let cancelled = false;
+    const startedAtEpoch = poolListEpoch.current;
     listPoolAssets(itemId)
       .then((res) => {
-        if (cancelled) return;
-        setPoolAssets(res.assets);
+        if (cancelled || poolListEpoch.current !== startedAtEpoch) return;
+        setPoolAssets((current) =>
+          mergePoolAssetsPreservingDisplayUrls(current, res.assets),
+        );
         setMaxPoolAssets(res.max_assets);
+        setServerPoolReservations(res.active_reservations ?? []);
+        setServerPoolOccupiedCount(res.occupied_assets ?? res.assets.length);
         setPoolUnavailable(false);
+        setPoolError(null);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -2290,18 +2524,30 @@ export default function EditorShell({
     };
   }, [itemId, overlayPoolShouldLoad]);
 
-  const hasBusyPoolAssets = poolAssets.some(
-    (a) => a.status === "analyzing" || a.status === "uploaded" || a.status === "uploading",
-  );
+  const hasBusyPoolAssets =
+    poolAssets.some(
+      (a) => a.status === "queued" || a.status === "analyzing" || a.status === "uploaded",
+    ) || serverPoolReservations.some((reservation) => reservation.release_at === null);
   useEffect(() => {
     if (!overlayPoolShouldLoad || !hasBusyPoolAssets || poolUnavailable) return;
     const id = setInterval(() => {
+      if (poolPollInFlight.current) return;
+      poolPollInFlight.current = true;
+      const startedAtEpoch = poolListEpoch.current;
       listPoolAssets(itemId)
         .then((res) => {
-          setPoolAssets(res.assets);
+          if (poolListEpoch.current !== startedAtEpoch) return;
+          setPoolAssets((current) =>
+            mergePoolAssetsPreservingDisplayUrls(current, res.assets),
+          );
           setMaxPoolAssets(res.max_assets);
+          setServerPoolReservations(res.active_reservations ?? []);
+          setServerPoolOccupiedCount(res.occupied_assets ?? res.assets.length);
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          poolPollInFlight.current = false;
+        });
     }, SUGGESTION_POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [hasBusyPoolAssets, itemId, overlayPoolShouldLoad, poolUnavailable]);
@@ -2319,51 +2565,21 @@ export default function EditorShell({
   });
 
   const handlePoolFiles = useCallback(
-    (fileList: FileList | File[] | null) => {
-      if (!fileList) return;
-      const files = Array.from(fileList).filter((f) => POOL_MIME_TYPES.includes(f.type));
-      if (files.length === 0) return;
+    (files: FileList | File[] | null) => {
       setPoolError(null);
-
-      const locals: PendingUpload[] = files.map((f, i) => ({
-        localId: `pending-${Date.now()}-${i}-${f.name}`,
-        filename: f.name,
-      }));
-      setPendingPoolUploads((prev) => [...prev, ...locals]);
-
-      void (async () => {
-        for (let i = 0; i < files.length; i++) {
-          const file = files[i];
-          const local = locals[i];
-          try {
-            const [signed] = await requestPoolAssetUploadUrls(itemId, [
-              { filename: file.name, content_type: file.type, file_size_bytes: file.size },
-            ]);
-            await uploadToGcs(signed.upload_url, file);
-            const contentHash = await sha256HexOfFile(file);
-            const registered = await registerPoolAsset(itemId, {
-              gcs_path: signed.gcs_path,
-              content_type: file.type,
-              content_hash: contentHash,
-              source_filename: file.name,
-            });
-            setPendingPoolUploads((prev) => prev.filter((p) => p.localId !== local.localId));
-            if (!registered.deduped) setPoolAssets((prev) => [...prev, registered]);
-          } catch (err) {
-            setPendingPoolUploads((prev) => prev.filter((p) => p.localId !== local.localId));
-            if (isUnavailableError(err)) setPoolUnavailable(true);
-            else setPoolError(err instanceof Error ? err.message : "Upload failed");
-          }
-        }
-      })();
+      addPoolFiles(files);
     },
-    [itemId],
+    [addPoolFiles],
   );
 
   const handleRemovePoolAsset = useCallback(
     (asset: PoolAsset) => {
       void deletePoolAsset(itemId, asset.id)
-        .then(() => setPoolAssets((prev) => prev.filter((a) => a.id !== asset.id)))
+        .then(() => {
+          poolListEpoch.current += 1;
+          setPoolAssets((prev) => prev.filter((a) => a.id !== asset.id));
+          setServerPoolOccupiedCount((current) => Math.max(0, current - 1));
+        })
         .catch((err) => {
           if (isUnavailableError(err)) setPoolUnavailable(true);
           else setPoolError(err instanceof Error ? err.message : "Couldn't remove that file");
@@ -2372,9 +2588,27 @@ export default function EditorShell({
     [itemId],
   );
 
+  const handleRetryPoolAsset = useCallback(
+    (asset: PoolAsset) => {
+      void reanalyzePoolAsset(itemId, asset.id)
+        .then((updated) => {
+          poolListEpoch.current += 1;
+          setPoolAssets((prev) =>
+            prev.map((row) => (row.id === updated.id ? updated : row)),
+          );
+        })
+        .catch((err) => {
+          if (isUnavailableError(err)) setPoolUnavailable(true);
+          else setPoolError(err instanceof Error ? err.message : "Kria couldn’t retry that analysis.");
+        });
+    },
+    [itemId],
+  );
+
   const handleSavePoolAssetContext = useCallback(
     async (asset: PoolAsset, userContext: string) => {
       const updated = await updatePoolAssetContext(itemId, asset.id, userContext || null);
+      poolListEpoch.current += 1;
       setPoolAssets((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       overlaySuggestions.clearLocal();
     },
@@ -2519,6 +2753,18 @@ export default function EditorShell({
       if (readOnly) return;
       const target = state.bars.find((bar) => bar.id === id);
       let patchToApply = patch;
+      if (
+        target &&
+        !isCaptionBar(target) &&
+        TEXT_MOTION_V2_UI_ENABLED &&
+        typeof patch.effect === "string" &&
+        !Object.prototype.hasOwnProperty.call(patch, "motion")
+      ) {
+        patchToApply = {
+          ...patch,
+          ...motionPatchForEffect(target, patch.effect, duration),
+        };
+      }
       if (isCaptionBar(target)) {
         const hasCaptionCuePatch =
           Object.prototype.hasOwnProperty.call(patch, "start_s") ||
@@ -2562,11 +2808,41 @@ export default function EditorShell({
     },
     [
       history,
+      duration,
       lyricsOptionalActive,
       readOnly,
       state.bars,
       variant,
     ],
+  );
+
+  const beginTextMotionGesture = useCallback(() => {
+    if (!readOnly) history.record();
+  }, [history, readOnly]);
+
+  const previewSelectedTextMotion = useCallback(
+    (motionPatch: Partial<TextMotionConfigV2>) => {
+      if (!selectedBar || readOnly) return;
+      dispatch({
+        type: "PREVIEW_BAR",
+        id: selectedBar.id,
+        patch: motionPatchForConfig(selectedBar, motionPatch, duration),
+      });
+    },
+    [duration, readOnly, selectedBar],
+  );
+
+  const commitSelectedTextMotion = useCallback(
+    (motionPatch: Partial<TextMotionConfigV2>) => {
+      if (!selectedBar || readOnly) return;
+      setTextDirty(true);
+      dispatch({
+        type: "PREVIEW_BAR",
+        id: selectedBar.id,
+        patch: motionPatchForConfig(selectedBar, motionPatch, duration),
+      });
+    },
+    [duration, readOnly, selectedBar],
   );
 
   /**
@@ -2933,16 +3209,27 @@ export default function EditorShell({
     : undefined;
 
   const previewTextTiming = useCallback(
-    (id: string, patch: Pick<TextElementBar, "start_s" | "end_s">) => {
+    (
+      id: string,
+      patch: Pick<TextElementBar, "start_s" | "end_s">,
+      handle: "left" | "right" | "body",
+      origin: TextElementBar,
+    ) => {
       if (readOnly) return;
       if (state.bars.find((bar) => bar.id === id)?.role === "lyric_line") return;
       setTextDirty(true);
       dispatch({
         type: "RESET",
-        bars: state.bars.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+        bars: state.bars.map((bar) => {
+          if (bar.id !== id) return bar;
+          const next = { ...origin, ...patch };
+          return handle === "body"
+            ? next
+            : { ...next, ...motionPatchForManualEnd(next, next.end_s, duration) };
+        }),
       });
     },
-    [readOnly, state.bars],
+    [duration, readOnly, state.bars],
   );
 
   const patchSelectedTextTiming = useCallback(
@@ -2954,7 +3241,15 @@ export default function EditorShell({
         videoDurationS: duration,
       });
       if (!rangesDiffer(selectedBar, next)) return;
-      patchBar(selectedBar.id, next);
+      const motionTimingPatch =
+        patch.end_s !== undefined || patch.start_s !== undefined
+          ? motionPatchForManualEnd(
+              { ...selectedBar, start_s: next.start_s },
+              next.end_s,
+              duration,
+            )
+          : {};
+      patchBar(selectedBar.id, { ...next, ...motionTimingPatch });
     },
     [duration, patchBar, readOnly, selectedBar],
   );
@@ -2971,6 +3266,34 @@ export default function EditorShell({
       setTimelineDirty(true);
     },
     [clipEditingLocked, readOnly, slots],
+  );
+
+  const addClipToTimeline = useCallback(
+    (clipIndex: number) => {
+      if (readOnly || clipEditingLocked) return;
+      if (slots.some((slot) => !slot.removed && slot.clipIndex === clipIndex)) return;
+
+      const nextState = timelineReducer(
+        {
+          ...clip.state,
+          slots,
+          past: [],
+          future: [],
+        },
+        { type: "ADD", clipIndex },
+      );
+      if (nextState.slots.length === slots.length) {
+        setToast("This cut has no room for another clip. Shorten or remove a clip first.");
+        return;
+      }
+
+      const added = nextState.slots[nextState.slots.length - 1];
+      history.record();
+      setLocalSlots(nextState.slots.map((slot) => ({ ...slot })));
+      setTimelineDirty(true);
+      if (added) select("clip", added.key);
+    },
+    [clip.state, clipEditingLocked, history, readOnly, select, slots],
   );
 
   const patchSelectedClipTiming = useCallback(
@@ -3247,30 +3570,44 @@ export default function EditorShell({
   );
 
   const previewMotionTiming = useCallback(
-    (id: string, patch: { start_s: number; end_s: number }) => {
+    (
+      id: string,
+      patch: { start_s: number; end_s: number },
+      origin: EditorMotionBar,
+    ) => {
       if (readOnly || capabilities?.motion_scenes === false) return;
+      const target = origin.sourceScene;
+      if (!target || (target.preset_id === "evolving_type" && !evolvingTypeExposureEnabled)) {
+        return;
+      }
       setLocalMotionScenes((scenes) => {
-        const candidate = scenes.map((scene) =>
-          scene.id === id
-            ? ({
-                ...scene,
-                start_frame: Math.max(0, Math.round(patch.start_s * MOTION_FPS)),
-                end_frame_exclusive: Math.max(
-                  Math.round(patch.start_s * MOTION_FPS) + 1,
-                  Math.round(patch.end_s * MOTION_FPS),
-                ),
-              } as MotionPresetInstanceV1)
-            : scene,
+        const durationFrames = motionDurationFrames();
+        const requestedStart = Math.max(0, Math.round(patch.start_s * MOTION_FPS));
+        const requestedEnd = Math.max(
+          requestedStart + 1,
+          Math.round(patch.end_s * MOTION_FPS),
         );
-        const durationFrames = Math.max(
-          1,
-          Math.round((duration || variant?.duration_s || 60) * MOTION_FPS),
-        );
+        const candidate = scenes.map((scene) => {
+          if (scene.id !== id) return scene;
+          if (target.preset_id === "route_trace") {
+            return {
+              ...target,
+              start_frame: requestedStart,
+              end_frame_exclusive: requestedEnd,
+            } as MotionPresetInstance;
+          }
+          return retimeCreatorBlockManualSpan(
+            target,
+            requestedStart,
+            requestedEnd,
+            durationFrames,
+          ) as MotionPresetInstance;
+        });
         return validateMotionInstances(candidate, durationFrames).ok ? candidate : scenes;
       });
       setMotionScenesDirty(true);
     },
-    [capabilities?.motion_scenes, duration, readOnly, variant?.duration_s],
+    [capabilities?.motion_scenes, evolvingTypeExposureEnabled, motionDurationFrames, readOnly],
   );
 
   const previewOverlayPatch = useCallback(
@@ -3489,7 +3826,11 @@ export default function EditorShell({
         }),
         preset,
       });
-      dispatch({ type: "ADD_TEXT", bar });
+      const authoredBar =
+        TEXT_MOTION_V2_UI_ENABLED && preset !== DEFAULT_TEXT_PRESET && preset.fields.effect
+          ? { ...bar, ...motionPatchForEffect(bar, preset.fields.effect, duration) }
+          : bar;
+      dispatch({ type: "ADD_TEXT", bar: authoredBar });
       selectText(bar.id);
     },
     [
@@ -3573,22 +3914,35 @@ export default function EditorShell({
         setToast("Add text first, then apply a style.");
         return;
       }
-      const patch: Partial<Omit<TextElementBar, "id" | "role">> = {
+      const basePatch: Partial<Omit<TextElementBar, "id" | "role">> = {
         font_family: styleSet.font_family ?? styleSet.intro?.font_family ?? undefined,
         color: styleSet.text_color ?? styleSet.intro?.text_color ?? undefined,
         highlight_color:
           styleSet.highlight_color ?? styleSet.intro?.highlight_color ?? undefined,
         stroke_width: styleSet.intro?.stroke_width ?? undefined,
-        effect: styleSet.effect ?? styleSet.intro?.effect ?? undefined,
       };
+      const nextEffect = styleSet.effect ?? styleSet.intro?.effect ?? undefined;
       history.record();
       if (lyricsOptionalActive || targetBars.some((bar) => !isLyricBar(bar))) {
         setTextDirty(true);
       }
-      targetBars.forEach((b) => dispatch({ type: "PATCH_BAR", id: b.id, patch }));
+      targetBars.forEach((b) =>
+        dispatch({
+          type: "PATCH_BAR",
+          id: b.id,
+          patch: {
+            ...basePatch,
+            ...(nextEffect
+              ? TEXT_MOTION_V2_UI_ENABLED && !isLyricBar(b)
+                ? motionPatchForEffect(b, nextEffect, duration)
+                : { effect: nextEffect }
+              : {}),
+          },
+        }),
+      );
       setAppliedStyleSetId(styleSet.id);
     },
-    [readOnly, visibleTextBars, lyricsOptionalActive, history],
+    [duration, readOnly, visibleTextBars, lyricsOptionalActive, history],
   );
 
   // Legacy lyrics-variant restyle for flag-off clients: route through the
@@ -3623,12 +3977,17 @@ export default function EditorShell({
     (preset: TextPreset) => {
       if (selectedBar) {
         // Apply to the selected element.
+        const nextEffect = preset.fields.effect ?? undefined;
         patchBar(selectedBar.id, {
           font_family: preset.fields.font_family ?? undefined,
           color: preset.fields.color ?? undefined,
           highlight_color: preset.fields.highlight_color ?? undefined,
           stroke_width: preset.fields.stroke_width ?? 0,
-          effect: preset.fields.effect ?? undefined,
+          ...(nextEffect
+            ? TEXT_MOTION_V2_UI_ENABLED && !isLyricBar(selectedBar)
+              ? motionPatchForEffect(selectedBar, nextEffect, duration)
+              : { effect: nextEffect }
+            : {}),
         });
       } else {
         // No selection → create a text element at the playhead with this
@@ -3636,7 +3995,7 @@ export default function EditorShell({
         addTextAtPlayhead(preset);
       }
     },
-    [selectedBar, patchBar, addTextAtPlayhead],
+    [duration, selectedBar, patchBar, addTextAtPlayhead],
   );
 
   const nextVisualBlockWindow = useCallback(
@@ -3999,7 +4358,9 @@ export default function EditorShell({
       (captionCuesEditable
         ? visibleTextBars.some(isCaptionBar)
         : !!variant && isCaptionArchetype(variant) && (variant.caption_cues?.length ?? 0) > 0);
-    const musicSwappable = !!variant?.music_track_id && !readOnly;
+    const musicSwappable =
+      !!variant?.music_track_id && capabilities?.swap_song !== false && !readOnly;
+    const titleEditable = introControlsEditable;
     const mixAllowed = capabilities?.mix !== false && mixLevel !== undefined;
     const introText = variant?.intro_text?.trim() ?? "";
     const introWordCount = introText ? introText.split(/\s+/).filter(Boolean).length : 0;
@@ -4081,7 +4442,7 @@ export default function EditorShell({
         VISUAL_BLOCKS_UI_ENABLED && capabilities?.visual_blocks !== false,
       motionScenesEnabled:
         MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes === true,
-      titleEditable: !readOnly,
+      titleEditable,
       openTools,
       readOnly,
     });
@@ -4091,11 +4452,11 @@ export default function EditorShell({
       captionsPresent,
       musicSwappable,
       mixAllowed,
-      titleEditable: !readOnly,
+      titleEditable,
       openTools,
       // Slot-less variants (subtitled) have a 0 layout total — the real video
       // duration keeps every timing clamp from collapsing at_s values to 0.
-      videoDurationS: duration,
+      videoDurationS: timelineDuration,
       sfxPlacements: localSfx,
       sfxCatalog: sfxGlossaryEffects,
       // Speech marks describe the PERSISTED render's timeline — hide them while
@@ -4127,6 +4488,7 @@ export default function EditorShell({
       motionScenes: localMotionScenes,
       motionScenesEnabled:
         MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes === true,
+      evolvingTypeEnabled: evolvingTypeExposureEnabled,
       readOnly: readOnly || allowedFamilies.length === 0,
       // PR1 (backend, parallel) wires an actual render-step source into this
       // context; recentEditHistory always comes from the hook's own message
@@ -4158,6 +4520,7 @@ export default function EditorShell({
     effectiveMusicTitle,
     effectiveMusicTrackId,
     dirty,
+    evolvingTypeExposureEnabled,
     history.canUndo,
     history.version,
     localOverlays,
@@ -4169,7 +4532,7 @@ export default function EditorShell({
     musicTracks,
     overlaySuggestions.rows,
     poolAssets,
-    duration,
+    timelineDuration,
     readOnly,
     sfxGlossaryEffects,
     slots,
@@ -4199,7 +4562,8 @@ export default function EditorShell({
         snapshot,
         capabilities,
         grid: clip.state.grid,
-        videoDurationS: duration,
+        videoDurationS: timelineDuration,
+        evolvingTypeEnabled: evolvingTypeExposureEnabled,
         sfx: localSfx,
         sfxCatalog: sfxGlossaryEffects,
         overlays: localOverlays,
@@ -4233,6 +4597,7 @@ export default function EditorShell({
       carouselMoment,
       clip.state.grid,
       effectiveMusicTrackId,
+      evolvingTypeExposureEnabled,
       history.canUndo,
       history.version,
       localOverlays,
@@ -4243,7 +4608,7 @@ export default function EditorShell({
       mixLevel,
       overlaySuggestions.rows,
       poolAssets,
-      duration,
+      timelineDuration,
       sfxGlossaryEffects,
       slots,
       state.bars,
@@ -4541,7 +4906,7 @@ export default function EditorShell({
         setSoundMuted(result.nextMixLevel === 0);
         setMixDirty(true);
       }
-      if (result.nextTitle !== undefined) {
+      if (result.nextTitle !== undefined && introControlsEditable) {
         setTitle(result.nextTitle);
         setTitleDirty(true);
       }
@@ -4594,6 +4959,7 @@ export default function EditorShell({
     },
     [
       applyCarouselMoment,
+      capabilities,
       clip.state.grid,
       clear,
       flashCopilotTargets,
@@ -4871,7 +5237,7 @@ export default function EditorShell({
       if (!scene) return;
       const deltaFrames = Math.round(deltaS * MOTION_FPS);
       const span = scene.end_frame_exclusive - scene.start_frame;
-      const durationFrames = Math.max(1, Math.round(duration * MOTION_FPS));
+      const durationFrames = motionDurationFrames();
       const startFrame = Math.max(
         0,
         Math.min(durationFrames - span, scene.start_frame + deltaFrames),
@@ -4882,7 +5248,7 @@ export default function EditorShell({
         end_frame_exclusive: startFrame + span,
       });
     },
-    [duration, localMotionScenes, patchMotionScene, readOnly, selection],
+    [localMotionScenes, motionDurationFrames, patchMotionScene, readOnly, selection],
   );
 
   // Transport enablement (plan §6).
@@ -5510,7 +5876,7 @@ export default function EditorShell({
   }
 
   const isVoiceoverVariant = variant.variant_id.startsWith("voiceover");
-  const musicSwapEditable = !readOnly;
+  const musicSwapEditable = capabilities?.swap_song !== false && !readOnly;
   const hasPlayableMusic =
     !!effectiveAudioTrackId &&
     (!!virtualMusicAudioUrl ||
@@ -5533,6 +5899,112 @@ export default function EditorShell({
     return `${missing.join(", ").replace(/, ([^,]*)$/, " and $1")} preview after Save`;
   })();
 
+  const releasingPoolSlots = Math.max(
+    0,
+    poolUploader.reservedSlots - pendingPoolUploads.length,
+  );
+  const poolAtCapacity = poolAssets.length + poolUploader.reservedSlots >= maxPoolAssets;
+  const visualUploadFeedback =
+    poolError ||
+    poolUploader.batchMessage ||
+    poolUploader.summary ||
+    releasingPoolSlots > 0 ||
+    pendingPoolUploads.length > 0 ||
+    poolAssets.some((asset) => asset.status !== "ready") ? (
+      <div className="mb-3 space-y-2 text-[12px] text-[#71717a]">
+        {poolError && (
+          <p className="rounded border border-zinc-200 bg-white px-3 py-2 text-[#3f3f46]">
+            {poolError}
+          </p>
+        )}
+        {poolUploader.batchMessage && (
+          <p className="rounded border border-zinc-200 bg-white px-3 py-2 text-[#3f3f46]">
+            {poolUploader.batchMessage}
+          </p>
+        )}
+        {poolUploader.summary && <p aria-live="polite">{poolUploader.summary}</p>}
+        {releasingPoolSlots > 0 && (
+          <p className="rounded border border-zinc-200 bg-white px-3 py-2 text-[#3f3f46]">
+            Kria is releasing a removed upload slot. You can add another visual when cleanup finishes.
+          </p>
+        )}
+        {pendingPoolUploads.map((upload) => (
+          <div key={upload.localId} className="rounded border border-dashed border-zinc-300 p-2">
+            <p className="truncate font-medium text-[#3f3f46]">{upload.filename}</p>
+            <p>
+              {upload.stage === "failed"
+                ? upload.message
+                : upload.stage === "preparing"
+                  ? "Preparing upload…"
+                  : upload.stage === "registering"
+                    ? "Adding to your visuals…"
+                    : "Uploading…"}
+            </p>
+            {upload.stage === "failed" && (
+              <div className="mt-1 flex gap-3">
+                {upload.retryable && (
+                  <button
+                    type="button"
+                    aria-label={`Retry ${upload.filename}`}
+                    onClick={() => poolUploader.retry(upload.localId)}
+                    className="min-h-7 text-lime-700 underline underline-offset-2"
+                  >
+                    Retry
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label={`Remove ${upload.filename}`}
+                  onClick={() => poolUploader.remove(upload.localId)}
+                  className="min-h-7 underline underline-offset-2"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+        {poolAssets
+          .filter((asset) => asset.status !== "ready")
+          .map((asset) => (
+            <div key={asset.id} className="rounded border border-dashed border-zinc-300 p-2">
+              <p className="truncate font-medium text-[#3f3f46]">
+                {asset.source_filename ?? "This visual"}
+              </p>
+              <p>
+                {asset.status === "queued"
+                  ? "Queued for analysis…"
+                  : asset.status === "analyzing" || asset.status === "uploaded"
+                    ? "Analyzing…"
+                    : asset.error_detail ?? "Kria couldn't analyze this file. Try again."}
+              </p>
+              {asset.status === "failed" && (
+                <div className="mt-1 flex gap-3">
+                  {asset.retryable !== false && (
+                    <button
+                      type="button"
+                      aria-label={`Retry analysis ${asset.source_filename ?? "visual"}`}
+                      onClick={() => handleRetryPoolAsset(asset)}
+                      className="min-h-7 text-lime-700 underline underline-offset-2"
+                    >
+                      Retry analysis
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${asset.source_filename ?? "visual"}`}
+                    onClick={() => handleRemovePoolAsset(asset)}
+                    className="min-h-7 underline underline-offset-2"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+      </div>
+    ) : null;
+
   // AI suggestions inside the Overlays drawer — dual-gated (frontend flag +
   // the variant's honest capability). A false capability (e.g.
   // song_or_lyric_variant) renders NOTHING: no dead chrome in the drawer.
@@ -5542,10 +6014,16 @@ export default function EditorShell({
       assets={poolAssets}
       maxAssets={maxPoolAssets}
       pending={pendingPoolUploads}
+      reservedSlots={poolUploader.reservedSlots}
       poolUnavailable={poolUnavailable}
       poolError={poolError}
+      poolMessage={poolUploader.batchMessage}
+      poolSummary={poolUploader.summary}
       onFiles={handlePoolFiles}
+      onRetryPending={poolUploader.retry}
+      onRemovePending={poolUploader.remove}
       onRemoveAsset={handleRemovePoolAsset}
+      onRetryAsset={handleRetryPoolAsset}
       onAccept={handleAcceptSuggestion}
       onSeek={seekPlaybackTo}
     />
@@ -5581,12 +6059,15 @@ export default function EditorShell({
   };
   const orientationCap = capabilities?.orientation;
   const orientationToggleVisible = LANDSCAPE_UI && orientationCap != null;
-  const orientationToggleDisabled = readOnly || orientationCap?.editable !== true;
-  const orientationToggleHint = orientationDisabledHint(orientationCap?.reason);
+  const orientationToggleDisabled = saving || readOnly || orientationCap?.editable !== true;
+  const orientationToggleHint = saving
+    ? "Saving your edits…"
+    : orientationDisabledHint(orientationCap?.reason);
   const orientationToggle = orientationToggleVisible ? (
     <OrientationToggle
-      value={orientation}
+      value={previewOrientation}
       disabled={orientationToggleDisabled}
+      busy={saving}
       disabledHint={orientationToggleHint}
       onChange={(next) => {
         if (orientationToggleDisabled) {
@@ -5605,6 +6086,7 @@ export default function EditorShell({
     timelineProjection: virtualPreview.timeline,
     renderedOutputDurationS: duration,
     currentTimeS: currentTime,
+    playbackClock,
     zoom,
     fitRequestKey: timelineFitRequestKey,
     scaleResetKey: timelineVariantId,
@@ -5642,6 +6124,8 @@ export default function EditorShell({
           : creatorBlockEntry(scene.preset_id).label,
       start_s: scene.start_frame / MOTION_FPS,
       end_s: scene.end_frame_exclusive / MOTION_FPS,
+      sourceScene: scene,
+      readOnly: scene.preset_id === "evolving_type" && !evolvingTypeExposureEnabled,
     })),
     showMotionBlocks:
       MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes !== false,
@@ -5661,6 +6145,7 @@ export default function EditorShell({
     clipPreviewMode: virtualPreviewActive ? "virtual" : "rendered",
     clipsLoading: clip.loadState === "loading",
     filmstripClips: clip.clips,
+    onAddClip: addClipToTimeline,
     carouselBlock: carouselMoment
       ? {
           id: CAROUSEL_SELECTION_ID,
@@ -5811,7 +6296,7 @@ export default function EditorShell({
                 : (splitReason ?? "Move the playhead inside this clip to split."),
               muted: videoMuted,
               onToggleMute: () => {
-                if (readOnly) return;
+                if (!introControlsEditable) return;
                 history.record();
                 setVideoMuted((m) => !m);
               },
@@ -5930,13 +6415,13 @@ export default function EditorShell({
               type="text"
               value={title}
               onChange={(e) => {
-                if (readOnly) return;
+                if (readOnly || capabilities?.intro_controls === false) return;
                   // Coalesce typing bursts into one undo step.
                   history.record("title");
                   setTitleDirty(true);
                   setTitle(e.target.value);
               }}
-              readOnly={readOnly}
+              readOnly={!introControlsEditable}
               placeholder="add title for your video"
               aria-label="Video title"
               className="min-h-11 w-[240px] rounded-md border border-transparent bg-transparent px-2 py-1 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-lime-500/25"
@@ -6110,6 +6595,7 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            playbackClock={playbackClock}
             lookPreset="none"
             virtualDeckLookPresets={virtualDeckLookPresets}
             virtualDeckLookAdjustments={virtualDeckLookAdjustments}
@@ -6135,7 +6621,7 @@ export default function EditorShell({
                 setLightSheetOpen(true);
               }
             }}
-            onTimeUpdate={setCurrentTime}
+            onTimeUpdate={commitPlaybackTime}
             onDuration={setDuration}
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
@@ -6245,11 +6731,14 @@ export default function EditorShell({
               selectedMotionId={selection?.kind === "motion" ? selection.id : null}
               motionAvailable={capabilities?.motion_scenes === true}
               motionRuntimeCompatible={motionRuntimeCompatible}
+              evolvingTypeEnabled={evolvingTypeExposureEnabled}
               onAddMotion={addMotionScene}
               onSelectMotion={(id) => selectElement("motion", id)}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
-              visualUploading={pendingPoolUploads.length > 0}
+              visualUploading={poolUploader.busy}
+              visualUploadDisabled={poolAtCapacity}
+              visualUploadFeedback={visualUploadFeedback}
               onVisualUpload={handlePoolFiles}
               onAddMontage={addMontageBlock}
               onAddTextCard={addTextCard}
@@ -6323,11 +6812,14 @@ export default function EditorShell({
               selectedMotionId={selection?.kind === "motion" ? selection.id : null}
               motionAvailable={capabilities?.motion_scenes === true}
               motionRuntimeCompatible={motionRuntimeCompatible}
+              evolvingTypeEnabled={evolvingTypeExposureEnabled}
               onAddMotion={addMotionScene}
               onSelectMotion={(id) => selectElement("motion", id)}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
-              visualUploading={pendingPoolUploads.length > 0}
+              visualUploading={poolUploader.busy}
+              visualUploadDisabled={poolAtCapacity}
+              visualUploadFeedback={visualUploadFeedback}
               onVisualUpload={handlePoolFiles}
               onAddMontage={addMontageBlock}
               onAddTextCard={addTextCard}
@@ -6404,6 +6896,7 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            playbackClock={playbackClock}
             lookPreset="none"
             virtualDeckLookPresets={virtualDeckLookPresets}
             virtualDeckLookAdjustments={virtualDeckLookAdjustments}
@@ -6418,7 +6911,7 @@ export default function EditorShell({
             onPatchBar={patchBar}
             onPatchOverlay={patchOverlay}
             onFocusContent={focusContent}
-            onTimeUpdate={setCurrentTime}
+            onTimeUpdate={commitPlaybackTime}
             onDuration={setDuration}
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
@@ -6438,8 +6931,9 @@ export default function EditorShell({
           sfx={selectedSfx}
           overlay={selectedOverlay}
           motionScene={selectedMotionScene}
-          motionDurationS={previewDuration}
+          motionDurationS={timelineDuration}
           motionAssets={poolAssets}
+          evolvingTypeEnabled={evolvingTypeExposureEnabled}
           cameraEffect={selectedCameraEffect}
           carousel={carouselInspectorControl}
           tab={inspectorTab}
@@ -6455,12 +6949,19 @@ export default function EditorShell({
               } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
                 setTextDirty(true);
               }
-              dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
+              dispatch({
+                type: "PATCH_BAR",
+                id: selectedBar.id,
+                patch: motionPatchForText(selectedBar, text, previewDuration),
+              });
             }
           }}
           onPatch={(patch) => {
             if (selectedBar) patchBar(selectedBar.id, patch);
           }}
+          onPreviewTextMotion={previewSelectedTextMotion}
+          onBeginTextMotion={beginTextMotionGesture}
+          onCommitTextMotion={commitSelectedTextMotion}
           onSetTextBoxPosition={setSelectedTextBoxPosition}
           boxPositionXFrac={selectedTextBoxScreenXFrac}
           onPatchTextTiming={patchSelectedTextTiming}
@@ -6477,6 +6978,11 @@ export default function EditorShell({
           onRecordOverlay={recordTimelineDrag}
           onDeleteOverlay={removeOverlay}
           onPatchMotion={patchMotionScene}
+          onPatchMotionControl={patchMotionControl}
+          onBeginMotionControl={beginMotionControl}
+          onPreviewMotionControl={previewMotionControl}
+          onCommitMotionControl={commitMotionControl}
+          onCancelMotionControl={cancelMotionControl}
           onRemoveMotion={removeMotionScene}
           onPatchCameraEffect={patchCameraEffect}
           onDeleteCameraEffect={deleteCameraEffect}
@@ -6535,6 +7041,7 @@ export default function EditorShell({
                   segments={miniStripSegments}
                   durationS={virtualPreview.timeline.totalDurationS || timelineDuration || previewDuration}
                   currentTimeS={currentTime}
+                  playbackClock={playbackClock}
                   selectedClipId={selection?.kind === "clip" ? selection.id : null}
                   marks={[
                     ...localMotionScenes.map((scene) => ({
@@ -6710,7 +7217,11 @@ export default function EditorShell({
             } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
               setTextDirty(true);
             }
-            dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
+            dispatch({
+              type: "PATCH_BAR",
+              id: selectedBar.id,
+              patch: motionPatchForText(selectedBar, text, previewDuration),
+            });
           }
         }}
         onPickPreset={pickPreset}
@@ -6794,11 +7305,14 @@ export default function EditorShell({
             selectedMotionId={selection?.kind === "motion" ? selection.id : null}
             motionAvailable={capabilities?.motion_scenes === true}
             motionRuntimeCompatible={motionRuntimeCompatible}
+            evolvingTypeEnabled={evolvingTypeExposureEnabled}
             onAddMotion={addMotionScene}
             onSelectMotion={(id) => selectElement("motion", id)}
             visualAssets={poolAssets}
             visualTextElements={state.bars}
-            visualUploading={pendingPoolUploads.length > 0}
+            visualUploading={poolUploader.busy}
+            visualUploadDisabled={poolAtCapacity}
+            visualUploadFeedback={visualUploadFeedback}
             onVisualUpload={handlePoolFiles}
             onAddMontage={addMontageBlock}
             onAddTextCard={addTextCard}
@@ -6838,8 +7352,9 @@ export default function EditorShell({
             sfx={selectedSfx}
             overlay={selectedOverlay}
             motionScene={selectedMotionScene}
-            motionDurationS={previewDuration}
+            motionDurationS={timelineDuration}
             motionAssets={poolAssets}
+            evolvingTypeEnabled={evolvingTypeExposureEnabled}
             cameraEffect={selectedCameraEffect}
             carousel={carouselInspectorControl}
             tab={inspectorTab}
@@ -6854,12 +7369,19 @@ export default function EditorShell({
                 } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
                   setTextDirty(true);
                 }
-                dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
+                dispatch({
+                  type: "PATCH_BAR",
+                  id: selectedBar.id,
+                  patch: motionPatchForText(selectedBar, text, previewDuration),
+                });
               }
             }}
             onPatch={(patch) => {
               if (selectedBar) patchBar(selectedBar.id, patch);
             }}
+            onPreviewTextMotion={previewSelectedTextMotion}
+            onBeginTextMotion={beginTextMotionGesture}
+            onCommitTextMotion={commitSelectedTextMotion}
             onSetTextBoxPosition={setSelectedTextBoxPosition}
             boxPositionXFrac={selectedTextBoxScreenXFrac}
             onPatchTextTiming={patchSelectedTextTiming}
@@ -6876,6 +7398,11 @@ export default function EditorShell({
             onRecordOverlay={recordTimelineDrag}
             onDeleteOverlay={removeOverlay}
             onPatchMotion={patchMotionScene}
+            onPatchMotionControl={patchMotionControl}
+            onBeginMotionControl={beginMotionControl}
+            onPreviewMotionControl={previewMotionControl}
+            onCommitMotionControl={commitMotionControl}
+            onCancelMotionControl={cancelMotionControl}
             onRemoveMotion={removeMotionScene}
             onPatchCameraEffect={patchCameraEffect}
             onDeleteCameraEffect={deleteCameraEffect}
@@ -7302,7 +7829,6 @@ function LightEditSheet({
           <h2 id="light-edit-title" className="font-display text-[18px] text-[#0c0c0e]">
             Edit text
           </h2>
-          <p className="mt-0.5 text-[12px] text-[#71717a]">Full timeline editing on desktop</p>
         </div>
         <button
           type="button"

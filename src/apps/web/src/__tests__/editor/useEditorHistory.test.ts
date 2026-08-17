@@ -342,6 +342,19 @@ describe("serializeDraft / deserializeDraft", () => {
 // ── Hook integration ──────────────────────────────────────────────────────────
 
 describe("useEditorHistory (hook)", () => {
+  it("records an explicit pre-preview document at gesture commit", () => {
+    const origin = doc([bar("origin")]);
+    let current: EditorDocument = doc([bar("preview")]);
+    const { result } = renderHook(() =>
+      useEditorHistory({ getCurrent: () => current, apply: (next) => (current = next) }),
+    );
+
+    act(() => result.current.recordDocument(origin));
+    act(() => result.current.undo());
+
+    expect(current.bars.map((item) => item.id)).toEqual(["origin"]);
+  });
+
   it("push → undo → redo drives canUndo/canRedo and calls apply", () => {
     let current: EditorDocument = doc([bar("a")]);
     const applied: EditorDocument[] = [];

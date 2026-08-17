@@ -21,6 +21,7 @@ from app.config import settings
 from app.database import get_db
 from app.main import app
 from app.models import ContentPlan, Job, Persona, PlanItem
+from app.routes import plan_items
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "copilot-ops"
 
@@ -1527,6 +1528,31 @@ def test_copilot_route_clarification_empties_ops(client: TestClient, monkeypatch
     assert resp.json()["needs_clarification"] is True
 
 
+def test_copilot_route_allows_guided_story_text_drafts(client: TestClient, monkeypatch) -> None:
+    settings.edit_copilot_enabled = True
+    user = _user()
+    item, plan = _item_and_plan(user.id)
+    item.current_job.assembly_plan["variants"][0]["resolved_archetype"] = "guided_story"
+    _install_route_deps(user, item, plan)
+    run = AsyncMock(
+        return_value={
+            "intent": "edit",
+            "ops": [{"op": "set_text", "element_id": "thought-1", "text": "Clearer"}],
+            "confidence": 0.9,
+            "reply": "Updated the thought.",
+            "suggestions": [],
+            "needs_clarification": False,
+        }
+    )
+    monkeypatch.setattr(plan_items, "run_copilot_turn", run)
+
+    resp = client.post(f"/plan-items/{item.id}/variants/v1/copilot/turn", json=_payload())
+
+    assert resp.status_code == 200
+    assert resp.json()["ops"][0]["op"] == "set_text"
+    run.assert_awaited_once()
+
+
 def test_copilot_route_non_edit_intent_empties_ops(client: TestClient, monkeypatch) -> None:
     """A disobedient model returning intent='reject' WITH ops must not have
     them applied while the reply says nothing was done (review F5)."""
@@ -1703,12 +1729,14 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # (2026-08-11-v20) for the RECENT STEPS / RECENT EDIT HISTORY sections
     # (copilot step awareness), then (2026-08-11-v21) for apply_custom_effect
     # (PR6, effect-language train), then (2026-08-11-v22) for undo_last_edit /
-    # repeat_last_edit and the HISTORY STATE snapshot section (PR7) — update
+    # repeat_last_edit and the HISTORY STATE snapshot section (PR7), then
+    # (2026-08-14-v23) for catalog-backed Creator Block Motion v2 controls and
+    # normalized existing-block motion state — update
     # this pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the
     # prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-11-v22"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-14-v23"
 
 
 def _motion_snapshot() -> dict:
@@ -1718,15 +1746,22 @@ def _motion_snapshot() -> dict:
         "motion": {
             "available": True,
             "catalog": [
-                {"preset_id": "kinetic_word", "label": "Wild Type"},
-                {"preset_id": "card_stack", "label": "Card Stack"},
+                {"preset_id": "kinetic_word", "preset_version": 2, "label": "Wild Type"},
+                {"preset_id": "card_stack", "preset_version": 2, "label": "Card Stack"},
+                {"preset_id": "evolving_type", "preset_version": 2, "label": "Evolving Type"},
             ],
             "blocks": [
                 {
                     "id": "motion_1",
                     "preset_id": "kinetic_word",
+                    "preset_version": 2,
                     "start_s": 0,
                     "end_s": 2.5,
+                    "motion": {
+                        "speed": 1.25,
+                        "easing": "ease-out-cubic",
+                        "hold_frames": 18,
+                    },
                     "params": {"text": "OLD"},
                 }
             ],
@@ -1804,12 +1839,65 @@ def test_creator_block_ops_reject_unknown_assets_params_and_active_budget() -> N
     assert all(_parse_op(op, snapshot, _ParseState(0.9)) is None for op in invalid)
 
 
+def test_creator_block_v2_controls_and_typed_params_are_catalog_validated() -> None:
+    from app.agents.edit_copilot import _parse_op, _ParseState
+
+    snapshot = _motion_snapshot()
+    params = {
+        "headline": "EVOLVE THE IDEA",
+        "subtitle": "Shape, split, and settle into focus",
+        "icon_count": 4,
+        "icon_style": "organic",
+        "text_stagger_ms": 45,
+        "icon_stagger_ms": 70,
+        "morph_amplitude": 0.65,
+        "density": "medium",
+        "layout": "compact",
+        "order": "center-out",
+        "typography_scale": 1.1,
+        "backdrop_opacity": 0.7,
+        "split_icons": True,
+    }
+    operation = {
+        "op": "add_motion_block",
+        "preset_id": "evolving_type",
+        "start_s": 4,
+        "end_s": 8,
+        "params": params,
+        "intensity": 0.8,
+        "speed": 0.75,
+        "easing": "ease-in-out-cubic",
+        "hold_frames": 12,
+    }
+    assert _parse_op(operation, snapshot, _ParseState(0.9)) == operation
+
+    patch = {
+        "op": "patch_motion_block",
+        "motion_id": "motion_1",
+        "patch": {
+            "speed": 4,
+            "easing": "ease-out-cubic",
+            "hold_frames": 0,
+            "intensity": 0.5,
+        },
+    }
+    assert _parse_op(patch, snapshot, _ParseState(0.9)) == patch
+
+    invalid_speed = {**operation, "speed": 0.25}
+    invalid_enum = {**operation, "params": {**params, "order": "random"}}
+    invalid_boolean = {**operation, "params": {**params, "split_icons": "yes"}}
+    assert _parse_op(invalid_speed, snapshot, _ParseState(0.9)) is None
+    assert _parse_op(invalid_enum, snapshot, _ParseState(0.9)) is None
+    assert _parse_op(invalid_boolean, snapshot, _ParseState(0.9)) is None
+
+
 def test_creator_block_catalog_is_rendered_without_paths() -> None:
     from app.agents.edit_copilot import _format_snapshot
 
     rendered = _format_snapshot(_motion_snapshot())
     assert "CREATOR BLOCK CATALOG" in rendered
-    assert "kinetic_word" in rendered
+    assert "preset_id='kinetic_word' preset_version='2'" in rendered
+    assert "speed=1.25 easing='ease-out-cubic' hold_frames=18" in rendered
     assert "image_1" in rendered
     assert "gcs_path" not in rendered
 

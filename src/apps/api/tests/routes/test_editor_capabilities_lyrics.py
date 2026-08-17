@@ -68,6 +68,7 @@ def test_timeline_lyrics_sync_present_for_legacy_baked_variant(monkeypatch) -> N
 
 def test_lyrics_capabilities_flag_off_preserves_existing_locks(monkeypatch) -> None:
     monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", False, raising=False)
+    monkeypatch.setattr(settings, "lyrics_optional_enabled", False, raising=False)
     monkeypatch.setattr(settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", True, raising=False)
 
     caps = gj._editor_capabilities(_job(), _variant())
@@ -79,6 +80,40 @@ def test_lyrics_capabilities_flag_off_preserves_existing_locks(monkeypatch) -> N
     assert caps["lyrics"]["editable"] is False
     assert caps["lyrics"]["reason"] == "disabled"
     assert caps["lyrics"]["lyrics_model"] == "baked"
+
+
+def test_song_text_elements_model_uses_optional_flag_not_legacy_editor_flag(monkeypatch) -> None:
+    monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", False, raising=False)
+    monkeypatch.setattr(settings, "lyrics_optional_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", True, raising=False)
+    variant = _variant(
+        variant_id="song_text",
+        text_mode="agent_text",
+        lyrics_enabled=False,
+        lyrics_baked=False,
+    )
+
+    caps = gj._editor_capabilities(_job(), variant)
+
+    assert caps["lyrics"] == {
+        "editable": False,
+        "enabled": False,
+        "can_toggle_on": True,
+        "reason": None,
+        "lyrics_model": "elements",
+    }
+
+
+def test_optional_flag_does_not_unlock_legacy_song_lyrics_editor(monkeypatch) -> None:
+    monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", False, raising=False)
+    monkeypatch.setattr(settings, "lyrics_optional_enabled", True, raising=False)
+    variant = _variant(lyrics_baked=False, lyrics_enabled=False)
+
+    caps = gj._editor_capabilities(_job(), variant)
+
+    assert caps["lyrics"]["can_toggle_on"] is False
+    assert caps["lyrics"]["reason"] == "disabled"
+    assert caps["lyrics"]["lyrics_model"] == "elements"
 
 
 @pytest.mark.parametrize(
@@ -95,13 +130,18 @@ def test_lyrics_capabilities_flag_off_preserves_existing_locks(monkeypatch) -> N
             },
         ),
         (
-            _variant(variant_id="song_text", text_mode="agent_text", lyrics_enabled=False),
+            _variant(
+                variant_id="song_text",
+                text_mode="agent_text",
+                lyrics_enabled=False,
+                lyrics_baked=False,
+            ),
             {
                 "editable": False,
                 "enabled": False,
                 "can_toggle_on": True,
                 "reason": None,
-                "lyrics_model": "baked",
+                "lyrics_model": "elements",
             },
         ),
         (

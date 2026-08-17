@@ -74,6 +74,7 @@ import { resolveSfxPreviewUrls, sfxUrlKey } from "@/lib/sfx-preview-urls";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
 import AskKriaPanel from "./components/AskKriaPanel";
+import SetupPicker from "./components/SetupPicker";
 import {
   getGenerativeStyleSets,
   type GenerativeStyleSet,
@@ -97,6 +98,7 @@ import { StableVideo } from "@/components/StableVideo";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { InkButton } from "@/components/ui/InkButton";
+import { InfoDot } from "@/components/ui/InfoDot";
 import { SeedProvenanceBadge } from "../../_components/ui/SeedProvenanceBadge";
 import AssetPool from "../../_components/AssetPool";
 import SuggestionRail from "../../_components/SuggestionRail";
@@ -139,6 +141,7 @@ import {
   type PickerEditFormat,
 } from "@/lib/edit-format";
 import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
+import EditProposalCard from "./components/EditProposalCard";
 import { TikTokPublishDialog } from "@/components/TikTokPublishDialog";
 import { TikTokReleaseRail } from "@/components/TikTokReleaseRail";
 import {
@@ -190,6 +193,7 @@ const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRa
 // and the server's editor_capabilities are unconditionally present; this flag
 // only controls whether the entry point is shown.
 const TIKTOK_EDITOR_ENABLED = process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED === "true";
+const GUIDED_EDIT_ENABLED = process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
 
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 const TIKTOK_POLL_MAX_FAILURES = 3;
@@ -200,20 +204,9 @@ type PendingEdit = {
   targetGeneration?: string | null;
 };
 
-// Edit-style picker copy, keyed by `edit_format`. NOTE: "Talking to camera" here
-// is a DIFFERENT namespace than persona.footage_type_bias="talking_head" (see
-// the persona/onboarding footage options, which use the same
-// phrase for a persona-level content preference, not an edit style). Do not
-// merge these two label maps — they answer different questions.
-const EDIT_FORMAT_LABELS: Record<string, { label: string; desc: string }> = {
-  montage: { label: "Montage", desc: "Multiple clips cut to music" },
-  narrated_planned: { label: "Voiceover", desc: "Tell the story with narration" },
-  subtitled: { label: "Talking to camera", desc: "You on screen, with auto subtitles" },
-  talking_head: {
-    label: "Talking-head B-roll",
-    desc: "Use a spoken clip as the spine, with other clips cut in",
-  },
-};
+// Edit-style picker copy lives in components/SetupPicker (TYPE_COPY). NOTE:
+// "Talking to camera" there is a DIFFERENT namespace than
+// persona.footage_type_bias="talking_head".
 
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
 // applied-fit display (post-render).
@@ -222,72 +215,8 @@ const LANDSCAPE_FIT_OPTIONS: { value: "fit" | "fill"; label: string; desc: strin
   { value: "fill", label: "Fill", desc: "Crop to fill the vertical frame" },
 ];
 
-const MONTAGE_PRESET_OPTIONS: { value: MontagePreset; label: string; desc: string }[] = [
-  { value: "classic", label: "Classic", desc: "Full-screen cuts in sequence" },
-  { value: "masonry", label: "Masonry collage", desc: "Rounded clips on a white wall" },
-  { value: "polaroid_wall", label: "Polaroid wall", desc: "Oversized photo cards on a wall" },
-];
 const COLLAGE_MONTAGE_PRESETS = new Set<MontagePreset>(["masonry", "polaroid_wall"]);
 
-function MontagePresetPreview({ value }: { value: MontagePreset }) {
-  if (value === "polaroid_wall") {
-    const cards = [
-      ["left-[4%] top-[9%] h-[44%] w-[24%] rotate-[-4deg]", "bg-lime-200"],
-      ["left-[32%] top-[4%] h-[29%] w-[44%] rotate-[2deg]", "bg-sky-200"],
-      ["left-[80%] top-[8%] h-[39%] w-[25%] rotate-[5deg]", "bg-rose-200"],
-      ["left-[36%] top-[36%] h-[55%] w-[31%] rotate-[-2deg]", "bg-amber-200"],
-      ["left-[4%] top-[61%] h-[27%] w-[29%] rotate-[3deg]", "bg-zinc-200"],
-      ["left-[72%] top-[55%] h-[31%] w-[37%] rotate-[-3deg]", "bg-indigo-200"],
-    ] as const;
-    return (
-      <div className="relative h-24 overflow-hidden rounded-lg border border-zinc-200 bg-white">
-        <div className="absolute inset-y-0 left-0 w-[136%] motion-safe:animate-[montage-masonry-pan_2.8s_ease-in-out_infinite_alternate]">
-          {cards.map(([pos, color], idx) => (
-            <span
-              key={idx}
-              className={`absolute rounded-[9px] bg-white p-[5px] pb-[13px] shadow-sm ring-1 ring-black/5 ${pos}`}
-            >
-              <span className={`block h-full w-full rounded-[6px] ${color}`} />
-            </span>
-          ))}
-        </div>
-        <span className="absolute left-1/2 top-1/2 h-6 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/80 blur-sm" />
-      </div>
-    );
-  }
-
-  if (value === "masonry") {
-    const tiles = [
-      ["left-[4%] top-[9%] h-[50%] w-[24%]", "bg-lime-200"],
-      ["left-[32%] top-[7%] h-[25%] w-[36%]", "bg-sky-200"],
-      ["left-[72%] top-[12%] h-[48%] w-[25%]", "bg-rose-200"],
-      ["left-[7%] top-[64%] h-[24%] w-[36%]", "bg-zinc-200"],
-      ["left-[48%] top-[39%] h-[50%] w-[25%]", "bg-amber-200"],
-      ["left-[78%] top-[67%] h-[23%] w-[35%]", "bg-indigo-200"],
-    ] as const;
-    return (
-      <div className="relative h-24 overflow-hidden rounded-lg border border-zinc-200 bg-white">
-        <div className="absolute inset-y-0 left-0 w-[132%] motion-safe:animate-[montage-masonry-pan_2.8s_ease-in-out_infinite_alternate]">
-          {tiles.map(([pos, color], idx) => (
-            <span
-              key={idx}
-              className={`absolute rounded-[10px] ${pos} ${color} shadow-sm ring-1 ring-black/5`}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative h-24 overflow-hidden rounded-lg border border-zinc-200 bg-[#0c0c0e]">
-      <span className="absolute inset-1 rounded-md bg-[linear-gradient(135deg,#bef264,#38bdf8)] motion-safe:animate-[montage-classic-a_3.6s_steps(1,end)_infinite]" />
-      <span className="absolute inset-1 rounded-md bg-[linear-gradient(135deg,#fb7185,#facc15)] motion-safe:animate-[montage-classic-b_3.6s_steps(1,end)_infinite]" />
-      <span className="absolute inset-1 rounded-md bg-[linear-gradient(135deg,#a78bfa,#22c55e)] motion-safe:animate-[montage-classic-c_3.6s_steps(1,end)_infinite]" />
-      <span className="absolute bottom-2 left-1/2 h-1 w-10 -translate-x-1/2 rounded-full bg-white/80" />
-    </div>
-  );
-}
 
 const VIDEO_UPLOAD_ACCEPT = "video/mp4,video/quicktime";
 const AUDIO_UPLOAD_ACCEPT = "audio/*,.mp3,.m4a,.mp4,.wav,.webm,.ogg,.aac";
@@ -447,7 +376,7 @@ function CompactPlanSummary({ item }: { item: PlanItem }) {
   if (shots.length === 0) return null;
   return (
     <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-4">
-      <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-zinc-400">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
         Plan summary
       </p>
       {item.filming_suggestion && (
@@ -531,8 +460,6 @@ export default function PlanItemPage() {
   const [loading, setLoading] = useState(true);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [smartCaptionsSaving, setSmartCaptionsSaving] = useState(false);
-  const [smartCaptionsError, setSmartCaptionsError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   // Pool uploads in flight: one optimistic card each. Page-level because only
   // ONE PoolUploadCard renders at a time (the call sites are mutually
@@ -724,6 +651,16 @@ export default function PlanItemPage() {
         pending.size === 0 &&
         item.status !== "generating" &&
         !(item.current_job_id && item.status !== "ready" && item.status !== "failed");
+
+      if (
+        GUIDED_EDIT_ENABLED &&
+        item.guided_edit_available === true &&
+        (item.edit_proposal?.status === "analyzing" ||
+          item.edit_proposal?.status === "drafting" ||
+          item.edit_proposal?.conversation_in_progress === true)
+      ) {
+        return false;
+      }
 
       // Keep polling while a just-dispatched render hasn't minted its Job yet.
       // Uses hasRenderRegistered(), not a bare current_job_id check — on a
@@ -1546,7 +1483,17 @@ export default function PlanItemPage() {
   // voiceover; the footage's own audio drives the edit.
   const selfNarrationEnabled =
     process.env.NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED === "true";
-  // Button + hint from ONE decision so they can never disagree (plan-generate-gate).
+  const guidedEditActive = GUIDED_EDIT_ENABLED && item.guided_edit_available === true;
+  const guidedEditApproved = item.edit_proposal?.status === "approved";
+  const hasApprovedGuidedMedia = Boolean(
+    guidedEditActive &&
+      guidedEditApproved &&
+      item.edit_proposal?.last_approved?.snapshot.story_beats.some(
+        (beat) => beat.media_ids.length > 0,
+      ),
+  );
+  // Existing upload/format rules come from one decision; guided-edit approval
+  // composes a second explicit gate immediately below.
   const gate = generateGate({
     generating,
     isGenerating,
@@ -1556,12 +1503,21 @@ export default function PlanItemPage() {
     // "Finishing upload…" would be a lie for an upload that already failed.
     uploaderBusy: uploaderBusy || uploading || hasActivePoolUploads,
     clipCount,
+    hasApprovedGuidedMedia,
     isNarrated,
     hasVoiceover: !!voiceoverGcsPath,
     selfNarrationEnabled,
     isInstructed,
     shotsLeft,
   });
+  const guidedEditHint =
+    item.edit_proposal?.status === "stale"
+      ? "Your media changed — plan the edit again."
+      : item.edit_proposal?.status === "analyzing" || item.edit_proposal?.status === "drafting"
+        ? "Nova is still planning this edit."
+        : item.edit_proposal?.status === "draft"
+          ? "Review and approve the edit plan first."
+          : "Plan this edit before generating.";
   // "Your narrated render became a montage" explanation (no_speech etc.) —
   // persisted by the orchestrator, surfaced here so the swap is never silent.
   const fallbackBanner = narrationFallbackBanner(
@@ -1650,282 +1606,39 @@ export default function PlanItemPage() {
                 }
               }}
               placeholder="Add notes…"
+              aria-label="Notes"
               rows={2}
-              className="mb-4 mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-zinc-400 focus:outline-none"
+              className="mb-4 mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
             />
 
-            {/* Format picker — shown when item hasn't started generating */}
+            {/* TYPE / STYLE accordion — poster cards collapse to receipts after
+                each choice (design: Paper "Item page — Format card explorations"). */}
             {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
-              <div className="mb-4">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Edit style
-                </p>
-                {/* Stack on mobile (3 cards don't fit a 375px row), equal columns from sm:. */}
-                <div className="grid gap-2 sm:grid-flow-col sm:auto-cols-fr">
-                  {(
-                    [
-                      { value: "montage", ...EDIT_FORMAT_LABELS.montage },
-                      ...(isTalkingHead
-                        ? [{ value: "talking_head", ...EDIT_FORMAT_LABELS.talking_head }]
-                        : []),
-                      { value: "narrated_planned", ...EDIT_FORMAT_LABELS.narrated_planned },
-                      ...(SUBTITLED_ENABLED
-                        ? [{ value: "subtitled", ...EDIT_FORMAT_LABELS.subtitled }]
-                        : []),
-                    ] as { value: string; label: string; desc: string }[]
-                  ).map(({ value, label, desc }) => {
-                    const active = resolvedFormat === value;
-                    return (
-                      <button
-                        key={label}
-                        type="button"
-                        onClick={async () => {
-                          if (active) return;
-                          await updatePlanItem(item.id, {
-                            edit_format: value,
-                            ...(value !== "subtitled" && item.smart_captions_enabled
-                              ? { smart_captions_enabled: false }
-                              : {}),
-                          }).catch(() => null);
-                          refetch();
-                        }}
-                        className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          active
-                            ? "border-lime-400 bg-lime-50"
-                            : "border-zinc-200 bg-white hover:border-zinc-300"
-                        }`}
-                      >
-                        <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
-                          {label}
-                        </span>
-                        <span className="mt-0.5 text-xs text-[#71717a]">{desc}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {resolvedFormat === "subtitled" && item.smart_captions_available && (
-                  <div
-                    className={`mt-3 flex items-center justify-between gap-4 rounded-xl border px-4 py-3 ${
-                      item.smart_captions_enabled
-                        ? "border-lime-200 bg-lime-50"
-                        : "border-zinc-200 bg-white"
-                    }`}
-                  >
-                    <div className="min-w-0">
-                      <p
-                        className={`text-sm font-semibold ${
-                          item.smart_captions_enabled ? "text-lime-800" : "text-[#0c0c0e]"
-                        }`}
-                      >
-                        Smart captions
-                      </p>
-                      <p
-                        className={`mt-0.5 text-xs leading-5 ${
-                          item.smart_captions_enabled ? "text-lime-800" : "text-[#71717a]"
-                        }`}
-                      >
-                        Shape captions, contextual visuals, sounds, and transitions around what you say.
-                      </p>
-                      {smartCaptionsError && (
-                        <p role="alert" className="mt-1 text-xs font-medium text-[#3f3f46]">
-                          {smartCaptionsError}
-                        </p>
-                      )}
-                      {item.smart_captions_enabled && (
-                        <div className="mt-3 flex items-center gap-2" aria-label="Sound design">
-                          <span className="mr-1 text-xs font-medium text-lime-900">
-                            Sound design
-                          </span>
-                          {([true, false] as const).map((enabled) => {
-                            const active = (item.smart_sound_design_enabled ?? true) === enabled;
-                            return (
-                              <button
-                                key={String(enabled)}
-                                type="button"
-                                aria-pressed={active}
-                                disabled={smartCaptionsSaving}
-                                onClick={async () => {
-                                  if (active) return;
-                                  setSmartCaptionsSaving(true);
-                                  setSmartCaptionsError(null);
-                                  try {
-                                    await updatePlanItem(item.id, {
-                                      smart_sound_design_enabled: enabled,
-                                    });
-                                    await refetch();
-                                  } catch {
-                                    setSmartCaptionsError("Couldn't update sound design — try again.");
-                                  } finally {
-                                    setSmartCaptionsSaving(false);
-                                  }
-                                }}
-                                className={`rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors disabled:cursor-wait disabled:opacity-60 ${
-                                  active
-                                    ? "border-lime-500 bg-lime-600 text-white"
-                                    : "border-lime-200 bg-white text-lime-900 hover:border-lime-400"
-                                }`}
-                              >
-                                {enabled ? "Auto" : "Off"}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-label="Smart captions"
-                      aria-checked={item.smart_captions_enabled === true}
-                      aria-busy={smartCaptionsSaving}
-                      disabled={smartCaptionsSaving}
-                      onClick={async () => {
-                        setSmartCaptionsSaving(true);
-                        setSmartCaptionsError(null);
-                        try {
-                          await updatePlanItem(item.id, {
-                            smart_captions_enabled: item.smart_captions_enabled !== true,
-                          });
-                          await refetch();
-                        } catch {
-                          setSmartCaptionsError("Couldn't update Smart captions — try again.");
-                        } finally {
-                          setSmartCaptionsSaving(false);
-                        }
-                      }}
-                      className="relative h-11 w-14 shrink-0 rounded-full transition-transform hover:opacity-90 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      <span
-                        aria-hidden="true"
-                        className={`absolute inset-x-1 top-2 h-7 rounded-full transition-colors ${
-                          item.smart_captions_enabled ? "bg-lime-600" : "bg-zinc-300"
-                        }`}
-                      />
-                      <span
-                        aria-hidden="true"
-                        className={`absolute left-2 top-3 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
-                          item.smart_captions_enabled ? "translate-x-6" : "translate-x-0"
-                        }`}
-                      />
-                    </button>
-                  </div>
-                )}
-
-                {/* Narrated sub-mode picker */}
-                {isNarrated && (
-                  <div className="mt-3 flex gap-2">
-                    {(
-                      [
-                        { value: "narrated_planned", label: "Planning to film", desc: "Get a step guide, then film each shot" },
-                        { value: "narrated_ready",   label: "I have the videos", desc: "Upload clips and we'll match them to your voice" },
-                      ] as { value: string; label: string; desc: string }[]
-                    ).map(({ value, label, desc }) => {
-                      const active = isNarratedReady
-                        ? value === "narrated_ready"
-                        : value === "narrated_planned";
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={async () => {
-                            if (active) return;
-                            await updatePlanItem(item.id, { edit_format: value }).catch(() => null);
-                            refetch();
-                          }}
-                          className={`flex flex-1 flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
-                            active
-                              ? "border-zinc-900 bg-zinc-900"
-                              : "border-zinc-200 bg-white hover:border-zinc-300"
-                          }`}
-                        >
-                          <span className={`text-xs font-semibold ${active ? "text-white" : "text-[#0c0c0e]"}`}>
-                            {label}
-                          </span>
-                          <span className={`mt-0.5 text-[11px] ${active ? "text-zinc-400" : "text-zinc-400"}`}>{desc}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Montage sub-mode picker — "Planning to film" vs "I already have footage".
-                    Flips the per-item content_mode override so the user can skip shot-plan
-                    generation and go straight to the pool uploader. Only shown when Montage
-                    is the active style (narrated + subtitled have no content_mode sub-modes). */}
-                {isMontage && (
-                  <div className="mt-3 space-y-3">
-                    <div className="flex gap-2">
-                      {(
-                        [
-                          { value: "create_new",       label: "Planning to film",        desc: "Get a shot plan, film each shot" },
-                          { value: "existing_footage", label: "I already have footage",  desc: "Skip the plan — just upload your footage" },
-                        ] as { value: "create_new" | "existing_footage"; label: string; desc: string }[]
-                      ).map(({ value, label, desc }) => {
-                        // "I already have footage" is active when content_mode is explicitly
-                        // existing_footage; otherwise "Planning to film" is the default.
-                        const active = value === "existing_footage"
-                          ? contentMode === "existing_footage"
-                          : contentMode !== "existing_footage";
-                        return (
-                          <button
-                            key={value}
-                            type="button"
-                            onClick={async () => {
-                              if (active) return;
-                              await updatePlanItem(item.id, { content_mode: value }).catch(() => null);
-                              refetch();
-                            }}
-                            className={`flex flex-1 flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
-                              active
-                                ? "border-zinc-900 bg-zinc-900"
-                                : "border-zinc-200 bg-white hover:border-zinc-300"
-                            }`}
-                          >
-                            <span className={`text-xs font-semibold ${active ? "text-white" : "text-[#0c0c0e]"}`}>
-                              {label}
-                            </span>
-                            <span className={`mt-0.5 text-[11px] ${active ? "text-zinc-400" : "text-zinc-400"}`}>{desc}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <div>
-                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                        Preset
-                      </p>
-                      <div className="grid gap-2 sm:grid-cols-3">
-                        {MONTAGE_PRESET_OPTIONS.map(({ value, label, desc }) => {
-                          const active = montagePreset === value;
-                          return (
-                            <button
-                              key={value}
-                              type="button"
-                              onClick={async () => {
-                                if (active) return;
-                                await updatePlanItem(item.id, { montage_preset: value }).catch(() => null);
-                                refetch();
-                              }}
-                              className={`flex flex-col rounded-xl border p-2 text-left transition-colors ${
-                                active
-                                  ? "border-lime-400 bg-lime-50"
-                                  : "border-zinc-200 bg-white hover:border-zinc-300"
-                              }`}
-                            >
-                              <MontagePresetPreview value={value} />
-                              <span className={`mt-2 text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
-                                {label}
-                              </span>
-                              <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <SetupPicker
+                resolvedFormat={resolvedFormat}
+                rawEditFormat={rawEditFormat}
+                montagePreset={montagePreset}
+                subtitledEnabled={SUBTITLED_ENABLED}
+                // Intentionally shown only for legacy talking_head items — not a
+                // generally reachable card in the current picker.
+                showTalkingHead={isTalkingHead}
+                hasGuide={(item.filming_guide?.length ?? 0) > 0}
+                contentMode={contentMode}
+                startCollapsed={
+                  (item.clip_gcs_paths?.length ?? 0) > 0 ||
+                  (item.filming_guide?.length ?? 0) > 0 ||
+                  Boolean(item.voiceover_gcs_path)
+                }
+                onPatch={async (updates) => {
+                  // Rejections propagate so the picker can drop its optimistic
+                  // state; refetch either way so props reflect the server.
+                  try {
+                    await updatePlanItem(item.id, updates);
+                  } finally {
+                    refetch();
+                  }
+                }}
+              />
             )}
 
             {/* Landscape-clip fit picker — only appears once a wide clip is detected on
@@ -1936,7 +1649,7 @@ export default function PlanItemPage() {
               variants.length === 0 &&
               hasLandscapeClip && (
               <div className="mb-4">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Landscape clip detected
                 </p>
                 <div className="flex gap-2">
@@ -1953,7 +1666,7 @@ export default function PlanItemPage() {
                         }}
                         className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
                           active
-                            ? "border-lime-400 bg-lime-50"
+                            ? "border-lime-200 bg-lime-50"
                             : "border-zinc-200 bg-white hover:border-zinc-300"
                         }`}
                       >
@@ -1979,7 +1692,7 @@ export default function PlanItemPage() {
                     setExpandError(null);
                     setAcceptExpandError(null);
                   }}
-                  className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex min-h-11 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                 >
                   <span aria-hidden>✦</span>
                   Plan this for me
@@ -2011,7 +1724,7 @@ export default function PlanItemPage() {
                     type="button"
                     disabled={expanding}
                     onClick={() => handleExpandIdea(expandContext)}
-                    className="rounded-lg bg-lime-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-11 rounded-lg bg-lime-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                   >
                     {expanding ? "Thinking…" : "Generate plan"}
                   </button>
@@ -2019,7 +1732,7 @@ export default function PlanItemPage() {
                     type="button"
                     disabled={expanding}
                     onClick={() => handleExpandIdea(null)}
-                    className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-[12px] text-[#71717a] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-11 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-[12px] text-[#71717a] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                   >
                     Skip and generate
                   </button>
@@ -2043,7 +1756,7 @@ export default function PlanItemPage() {
             {totalShots === 0 && clipCount === 0 && expandProposal && (
               <div className="mb-4">
                 <div className="rounded-xl border border-lime-200 bg-lime-50 p-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-lime-700">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-700">
                     AI SUGGESTION
                   </p>
                   <p className="mt-1 font-display text-lg font-medium text-[#0c0c0e]">
@@ -2084,6 +1797,11 @@ export default function PlanItemPage() {
                             theme: expandProposal.theme,
                             filming_suggestion: expandProposal.filming_suggestion,
                             filming_guide: expandProposal.filming_guide,
+                            // Accepting a filming plan re-enters the guided
+                            // (create_new) flow even if the type picker had
+                            // stamped existing_footage earlier — otherwise the
+                            // shot-slot uploader is unreachable for this item.
+                            content_mode: "create_new",
                           });
                           setExpandProposal(null);
                           setExpandContext("");
@@ -2127,7 +1845,7 @@ export default function PlanItemPage() {
             {/* Narrated walkthrough: sticky voice recorder bar — shown for both narrated sub-modes */}
             {isNarrated && (
               <div className="sticky top-0 z-10 -mx-6 mb-6 border-b border-zinc-100 bg-[#fafaf8] px-6 py-3">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Voice recording
                 </p>
                 <VoiceRecorder onVoiceover={handleVoiceover} />
@@ -2175,11 +1893,11 @@ export default function PlanItemPage() {
                 2. narrated_ready: audio-first flow, pool upload, no step spine
                 3. masonry montage → compact pool strip even when guide present
                 4. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
-                5. isFilmThis but no guide yet → no uploader until Plan this for me is accepted
+                5. isFilmThis, no guide → pool upload (Plan-this-for-me offered above)
                 6. existing_footage → PoolUploadCard (use footage you already have) */}
             {isSubtitled ? (
               <div>
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Your clip
                 </p>
                 <p className="mb-4 text-sm text-[#71717a]">
@@ -2202,7 +1920,7 @@ export default function PlanItemPage() {
               </div>
             ) : isTalkingHead ? (
               <div>
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Your clips
                 </p>
                 <p className="mb-4 text-sm text-[#71717a]">
@@ -2223,7 +1941,7 @@ export default function PlanItemPage() {
               </div>
             ) : isNarratedReady ? (
               <div>
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Your clips
                 </p>
                 {/* Self-narration mode keeps this line short — the gate hint under
@@ -2249,7 +1967,7 @@ export default function PlanItemPage() {
               </div>
             ) : isCollagePreset ? (
               <div>
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Your clips
                 </p>
                 <PoolUploadCard
@@ -2274,10 +1992,9 @@ export default function PlanItemPage() {
                 }}
                 onBusyChange={setUploaderBusy}
               />
-            ) : isFilmThis ? (
-              null
             ) : (
-              /* existing_footage — pool upload (find the footage you already have) */
+              /* isFilmThis (no guide yet) OR existing_footage — both fall through
+                 to pool upload (find/upload the footage you already have). */
               <>
                 {!hasGuide && item.filming_suggestion ? (
                   <p className="mb-4 text-sm text-[#71717a]">{item.filming_suggestion}</p>
@@ -2306,12 +2023,27 @@ export default function PlanItemPage() {
                 attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
                 onUseInEdit={promotePoolAsset}
                 attachBusy={uploading || uploaderBusy || hasActivePoolUploads}
+                onMutated={() => {
+                  forceFreshFetchRef.current = true;
+                  refetch();
+                }}
                 onAssetContextUpdated={(updated) => {
                   overlaySuggestions.setRows([]);
                   overlaySuggestions.setKeptIds(new Set());
                   setSuggestionPoolAssets((prev) =>
                     prev.map((asset) => (asset.id === updated.id ? updated : asset)),
                   );
+                }}
+              />
+            )}
+
+            {guidedEditActive && (
+              <EditProposalCard
+                item={item}
+                onRefresh={refetch}
+                onChanged={() => {
+                  forceFreshFetchRef.current = true;
+                  refetch();
                 }}
               />
             )}
@@ -2349,11 +2081,14 @@ export default function PlanItemPage() {
               />
             )}
 
-            {/* Generate + hint caption — both from generateGate (plan-generate-gate)
-                so the disabled state and its explanation can never disagree. */}
+            {/* Generate + hint caption compose the shared upload/format gate with
+                the guided-edit approval gate. */}
             {!isGenerating && (
               <div className="mt-4 space-y-2">
-                <InkButton onClick={handleGenerate} disabled={gate.disabled}>
+                <InkButton
+                  onClick={handleGenerate}
+                  disabled={gate.disabled || (guidedEditActive && !guidedEditApproved)}
+                >
                   {generating
                     ? "Starting…"
                     : uploaderBusy
@@ -2363,7 +2098,9 @@ export default function PlanItemPage() {
                 {/* #71717a, not the faint #a1a1aa: this line now carries must-read
                     gating copy (why the button is off / what drives the edit) —
                     DESIGN.md §8 keeps faint ink decorative-only. */}
-                <p className="text-center text-sm text-[#71717a]">{gate.hint}</p>
+                <p className="text-center text-sm text-[#71717a]">
+                  {guidedEditActive && !guidedEditApproved ? guidedEditHint : gate.hint}
+                </p>
               </div>
             )}
 
@@ -2646,6 +2383,15 @@ function FocusedResults({
   const textLaneOpen = activeTab === "timeline" && !!variant && variant.text_mode !== "none";
   const requestedTabAppliedRef = useRef<string | null>(null);
 
+  // Frozen-frame veil visibility — lifted from Hero (the only surface that
+  // knows whether the stale video errored) so this component, the single
+  // owner of both Hero and the ProgressTheater (`renderProgress`) mount
+  // points, can enforce "the veil is the sole rendering voice while it's
+  // visible": theater renders below except in the exact window the veil
+  // covers the hero. See the `veilVisible` computation further down, once
+  // `instantEligible` (LiveEditPreview vs. Hero) is known.
+  const [playbackFailed, setPlaybackFailed] = useState(false);
+
   // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
   const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
     variant?.media_overlays ?? [],
@@ -2821,19 +2567,35 @@ function FocusedResults({
   const [tiktokReceiptRefresh, setTikTokReceiptRefresh] = useState(0);
   const [tiktokPollStalled, setTikTokPollStalled] = useState(false);
   const [tiktokComparisonAvailable, setTikTokComparisonAvailable] = useState(true);
+  // Newest-first by submission time. A slow status poll for an OLDER publication
+  // can resolve after a newer one was created; prepending blindly would make the
+  // settled old row the "latest", which unlocks republish while the new delivery
+  // is still submitting.
+  const mergeTikTokPublication = (
+    current: TikTokPublication[],
+    publication: TikTokPublication,
+  ) => [publication, ...current.filter((value) => value.id !== publication.id)]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
   const upsertTikTokPublication = useCallback((publication: TikTokPublication) => {
-    setTikTokPublications((current) => [
-      publication,
-      ...current.filter((value) => value.id !== publication.id),
-    ]);
-    setAllTikTokPublications((current) => [
-      publication,
-      ...current.filter((value) => value.id !== publication.id),
-    ]);
+    setTikTokPublications((current) => mergeTikTokPublication(current, publication));
+    setAllTikTokPublications((current) => mergeTikTokPublication(current, publication));
   }, []);
+
+  // Bumped ONLY when a publish creates a row the server fetch may not know about
+  // yet. Status polls deliberately do NOT bump: they refresh rows the fetch also
+  // returns, and counting them would make the effect below discard legitimate
+  // variant-switch results and strand the new variant on stale publications.
+  const tiktokPublishWrite = useRef(0);
+  const onTikTokPublished = useCallback((publication: TikTokPublication) => {
+    tiktokPublishWrite.current += 1;
+    upsertTikTokPublication(publication);
+  }, [upsertTikTokPublication]);
 
   useEffect(() => {
     let cancelled = false;
+    const focusedVariantId = variant?.variant_id ?? null;
+    const publishWriteAtStart = tiktokPublishWrite.current;
     setTikTokReceiptState("loading");
     setTikTokPollStalled(false);
     setTikTokComparisonAvailable(true);
@@ -2846,14 +2608,14 @@ function FocusedResults({
       });
     void Promise.all([
       item.current_job_id
-        ? getTikTokPublicationReceipt(item.current_job_id, variant?.variant_id)
+        ? getTikTokPublicationReceipt(item.current_job_id, focusedVariantId ?? undefined)
         : Promise.resolve(null),
       item.current_job_id
-        ? listTikTokPublications({ jobId: item.current_job_id, variantId: variant?.variant_id })
+        ? listTikTokPublications({ jobId: item.current_job_id, variantId: focusedVariantId ?? undefined })
             .then((publications) => publications.filter(
               (publication) =>
                 publication.job_id === item.current_job_id &&
-                (!variant?.variant_id || publication.variant_id === variant.variant_id),
+                (!focusedVariantId || publication.variant_id === focusedVariantId),
             ))
             .catch(() => [])
         : Promise.resolve([] as TikTokPublication[]),
@@ -2863,8 +2625,23 @@ function FocusedResults({
     ])
       .then(([itemPublication, itemHistory, comparisonResult]) => {
         if (cancelled) return;
-        setTikTokPublications(itemPublication
-          ? [itemPublication, ...itemHistory.filter((publication) => publication.id !== itemPublication.id)]
+        // The receipt endpoint only filters by variant when the param is sent,
+        // so a variant-less call returns the job's latest publication across ALL
+        // variants. Trust it as this variant's receipt only when it matches;
+        // otherwise fall back to the already variant-scoped history, so one
+        // variant's publication never becomes another's receipt.
+        const matchedPublication =
+          itemPublication && itemPublication.variant_id === focusedVariantId
+            ? itemPublication
+            : null;
+        // A publish landed while this request was in flight — its result is
+        // already staler than local state. Keep the receipt, drop the response.
+        if (tiktokPublishWrite.current !== publishWriteAtStart) {
+          setTikTokReceiptState("ready");
+          return;
+        }
+        setTikTokPublications(matchedPublication
+          ? [matchedPublication, ...itemHistory.filter((publication) => publication.id !== matchedPublication.id)]
           : itemHistory);
         setAllTikTokPublications(comparisonResult.publications);
         setTikTokComparisonAvailable(comparisonResult.available);
@@ -2874,7 +2651,9 @@ function FocusedResults({
         if (!cancelled) setTikTokReceiptState("error");
       });
     return () => { cancelled = true; };
-  }, [item.current_job_id, variant?.variant_id, tiktokReceiptRefresh]);
+    // render_finished_at: an edit reburns the SAME variant_id, so without it the
+    // receipt goes stale after the creator edits a published video.
+  }, [item.current_job_id, variant?.variant_id, variant?.render_finished_at, tiktokReceiptRefresh]);
   const latestTikTokPublication = tiktokPublications[0] ?? null;
   useEffect(() => {
     if (!latestTikTokPublication || !shouldPollTikTokPublication(latestTikTokPublication)) return;
@@ -2944,6 +2723,24 @@ function FocusedResults({
   });
   const instantEligible = variant ? isInstantEditEligible(variant) : false;
   const textLaneEligible = variant ? isTextLaneEligible(variant) : false;
+
+  // Mirrors the ternary below that picks LiveEditPreview vs. Hero — only Hero
+  // ever mounts the frozen-frame veil, so the theater must stay untouched
+  // whenever LiveEditPreview (no veil at all) is the active preview surface.
+  const usingLiveEditPreview =
+    instantEligible && !!variant && (activeTab !== "timeline" || textLaneOpen);
+  // Single source of truth for "the veil is covering the hero right now" —
+  // matches the veil's own render gate in Hero (`rendering && output_url &&
+  // !playbackFailed`). ProgressTheater (`renderProgress`, below) is hidden
+  // exactly when this is true, per the "one rendering voice at a time"
+  // contract: elsewhere (no output yet, a non-focused variant rendering,
+  // or the stale video failing to play) the theater is the only indicator.
+  const veilVisible =
+    !usingLiveEditPreview &&
+    !!variant &&
+    variant.render_status === "rendering" &&
+    !!variant.output_url &&
+    !playbackFailed;
 
   // ── Auto-open the Captions tab for caption archetypes (caption-edit
   // discoverability fix) ────────────────────────────────────────────────────
@@ -3184,6 +2981,10 @@ function FocusedResults({
   const modePill = variant
     ? variant.resolved_archetype === "narrated"
       ? "Voiceover"
+      : variant.track_title || variant.music_track_id
+        ? variant.text_mode === "lyrics"
+          ? "With lyrics"
+          : "Music"
       : (TEXT_MODE_PILL[variant.text_mode] ?? "Original audio")
     : null;
 
@@ -3286,6 +3087,8 @@ function FocusedResults({
                 onRemoveCard={handleRemoveFailedCard}
                 onRequestEditCard={handleRequestEditCard}
                 onDownload={handleDownload}
+                playbackFailed={playbackFailed}
+                onPlaybackFailedChange={setPlaybackFailed}
               />
             )}
           </div>
@@ -3296,7 +3099,11 @@ function FocusedResults({
               onSelect={onVariantSelect}
             />
           )}
-          {renderProgress && <div className="mt-6">{renderProgress}</div>}
+          {/* Veil-vs-theater dedup: while the frozen-frame veil covers the hero
+              (same-variant reburn, output already present, stale playback OK)
+              it is the sole rendering indicator — don't also show the theater
+              below it with different wording/ETA for the same event. */}
+          {renderProgress && !veilVisible && <div className="mt-6">{renderProgress}</div>}
         </div>
 
         <div className="order-3 lg:pt-3">
@@ -3319,6 +3126,7 @@ function FocusedResults({
             baking={baking}
             editHref={editorHref}
             durationSeconds={variant?.duration_s ?? null}
+            renderFinishedAt={variant?.render_finished_at ?? null}
             variantLabel={releaseVariantLabel}
             captionPreview={item.idea}
             onPublish={handlePublish}
@@ -3357,7 +3165,7 @@ function FocusedResults({
               }
             : null}
           onClose={() => setPublishOpen(false)}
-          onPublished={upsertTikTokPublication}
+          onPublished={onTikTokPublished}
         />
       )}
     </div>
@@ -4370,6 +4178,8 @@ function Hero({
   onRemoveCard,
   onRequestEditCard,
   onDownload,
+  playbackFailed,
+  onPlaybackFailedChange,
 }: {
   variant: PlanItemVariant | null;
   generating: boolean;
@@ -4393,10 +4203,14 @@ function Hero({
   onRemoveCard?: (cardId: string) => void;
   onRequestEditCard?: (cardId: string) => void;
   onDownload?: () => void;
+  /** Lifted to FocusedResults (owner of the theater-vs-veil dedup decision):
+   *  the veil is the sole rendering voice while it's visible, and visibility
+   *  depends on this stale-playback-error flag, which only Hero can observe. */
+  playbackFailed: boolean;
+  onPlaybackFailedChange: (failed: boolean) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoTime, setVideoTime] = useState(0);
-  const [playbackFailed, setPlaybackFailed] = useState(false);
   const [playbackRetry, setPlaybackRetry] = useState(0);
 
   // Sync SFX audio elements to the video playhead for instant preview.
@@ -4461,9 +4275,9 @@ function Hero({
       : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
 
   useEffect(() => {
-    setPlaybackFailed(false);
+    onPlaybackFailedChange(false);
     setPlaybackRetry(0);
-  }, [heroIdentity]);
+  }, [heroIdentity, onPlaybackFailedChange]);
 
   // Frozen-frame veil (V2): pause the old video the instant a re-render
   // starts so it reads as a still frame, not live playback, under the blur.
@@ -4504,8 +4318,8 @@ function Hero({
             tabIndex={rendering ? -1 : undefined}
             playsInline
             preload="metadata"
-            onLoadedData={() => setPlaybackFailed(false)}
-            onError={() => setPlaybackFailed(true)}
+            onLoadedData={() => onPlaybackFailedChange(false)}
+            onError={() => onPlaybackFailedChange(true)}
             className="h-full w-full object-contain"
           />
         </div>
@@ -4525,7 +4339,7 @@ function Hero({
               type="button"
               aria-label="Try video again"
               onClick={() => {
-                setPlaybackFailed(false);
+                onPlaybackFailedChange(false);
                 setPlaybackRetry((value) => value + 1);
               }}
               className="min-h-10 rounded-full bg-[#0c0c0e] px-3 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 lg:min-h-11 lg:px-5 lg:text-sm"
@@ -4783,9 +4597,6 @@ function ConformanceVerdictPanel({
           Hide this read
         </button>
       </div>
-      <p className="mt-2 text-xs text-[#71717a]">
-        You can generate anyway — this is just a read on the brief.
-      </p>
     </div>
   );
 }
@@ -5139,17 +4950,19 @@ function PoolUploadCard({
               save) — a concurrent handleFiles there would double-save the
               voiceover. Clip TRANSFERS clear `uploading` first, so adding
               more clips mid-batch stays possible. */}
-          <button
-            type="button"
-            disabled={uploading}
-            onClick={() => inputRef.current?.click()}
-            className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:opacity-40 sm:min-h-0"
-          >
-            {maxClips === 1 ? "Add your clip" : "Add clips"}
-          </button>
-          <p className="mt-2 text-xs text-[#71717a]">
-            Videos stored in iCloud may take a moment to prepare before they appear here.
-          </p>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => inputRef.current?.click()}
+              className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:opacity-40 sm:min-h-0"
+            >
+              {maxClips === 1 ? "Add your clip" : "Add clips"}
+            </button>
+            <InfoDot label="Adding clips">
+              iCloud videos may take a moment to prepare before they appear here.
+            </InfoDot>
+          </div>
         </>
       )}
       {uploading && pending.length === 0 && (

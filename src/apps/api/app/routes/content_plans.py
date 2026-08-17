@@ -138,6 +138,7 @@ def _plan_response(
         items=[
             plan_item_response(
                 it,
+                include_edit_proposal=False,
                 seed_text_by_id=_seed_map,
                 content_mode=_resolve_item_content_mode(it, persona_content_mode),
             )
@@ -292,7 +293,11 @@ async def create_plan(
             horizon_days=plan.horizon_days,
             events=plan.events,
             items=[
-                plan_item_response(it, content_mode=_resolve_item_content_mode(it, _persona_mode))
+                plan_item_response(
+                    it,
+                    include_edit_proposal=False,
+                    content_mode=_resolve_item_content_mode(it, _persona_mode),
+                )
                 for it in items
             ],
             idea_seeds=raw_seeds,

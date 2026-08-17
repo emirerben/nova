@@ -1,8 +1,23 @@
 name: CI
 
+# `push: main` is not redundant with `pull_request`. A PR is tested as a MERGE
+# of its branch with main, so a suite can be green on every open PR while main
+# itself is broken — and the breakage then surfaces on whichever unrelated PR
+# opens next, attributed to the wrong author.
+#
+# That is not hypothetical here. On 2026-08-13 a stale-read bug on main made
+# tests/routes/test_plan_item_sync_dispatch.py fail deterministically. test-api
+# is a REQUIRED check, so it blocked every PR in the repo, and it was first seen
+# on a frontend-only PR that touched zero Python — costing an hour to prove the
+# failure was not that PR's. Running on push attributes it to the commit that
+# caused it, immediately.
+#
+# Cost: roughly double the CI minutes (test-api alone is ~8 min).
 on:
   pull_request:
     branches: [main, dev]
+  push:
+    branches: [main]
 
 jobs:
   lint:

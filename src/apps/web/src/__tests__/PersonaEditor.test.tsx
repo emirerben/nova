@@ -46,11 +46,11 @@ describe("PersonaEditor — reveal moves the CTA, and changes nothing else", () 
     expect(cta.compareDocumentPosition(pillars) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("keeps the status badge, the subline and the rationale card", () => {
+  it("keeps the status badge, the persona info dot and the rationale card", () => {
     render(<PersonaEditor {...baseProps} variant="reveal" />);
 
     expect(screen.getByText("AI-generated")).toBeInTheDocument();
-    expect(screen.getByText(/This is who we think you are\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "About Your persona" })).toBeInTheDocument();
     expect(screen.getByText("Why this lane")).toBeInTheDocument();
   });
 
@@ -114,5 +114,25 @@ describe("PersonaEditor — reveal with an empty persona", () => {
   it("still renders the supporting detail for a real persona", () => {
     render(<PersonaEditor {...baseProps} variant="reveal" />);
     expect(screen.getByText("Content pillars")).toBeInTheDocument();
+  });
+});
+
+describe("PersonaEditor — posts-per-week field after the declutter refactor", () => {
+  beforeAll(() => {
+    if (typeof globalThis.ResizeObserver === "undefined") {
+      class RO {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+      (globalThis as unknown as Record<string, unknown>).ResizeObserver = RO;
+    }
+  });
+
+  it("keeps the input labelled and exposes the cadence explainer via InfoDot", () => {
+    render(<PersonaEditor {...baseProps} startInEdit />);
+    expect(screen.getByLabelText("Posts per week")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "About Posts per week" }));
+    expect(screen.getByText(/infers it from your cadence/)).toBeInTheDocument();
   });
 });

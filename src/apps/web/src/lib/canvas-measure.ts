@@ -17,6 +17,7 @@ let _ctx: CanvasRenderingContext2D | null = null;
 function context(): CanvasRenderingContext2D | null {
   if (_ctx) return _ctx;
   if (typeof document === "undefined") return null;
+  if (typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent)) return null;
   const canvas = document.createElement("canvas");
   _ctx = canvas.getContext("2d");
   return _ctx;
@@ -27,11 +28,15 @@ function context(): CanvasRenderingContext2D | null {
  * registry's `css_family` value (e.g. `'Playfair Display', serif`) — the
  * canvas font shorthand accepts the full fallback list.
  */
-export function makeCanvasMeasureAt(cssFamily: string, weight: number): MeasureAtSize {
+export function makeCanvasMeasureAt(
+  cssFamily: string,
+  weight: number,
+  style: "normal" | "italic" = "normal",
+): MeasureAtSize {
   return (sizePx: number) => {
     const ctx = context();
     if (!ctx) return (text: string) => text.length * sizePx * 0.6; // SSR/jsdom fallback
-    const fontSpec = `${weight} ${sizePx}px ${cssFamily}`;
+    const fontSpec = `${style} ${weight} ${sizePx}px ${cssFamily}`;
     return (text: string) => {
       // Re-assert per call — the context is shared, so an interleaved factory
       // (e.g. two previews measuring different faces) must not corrupt widths.

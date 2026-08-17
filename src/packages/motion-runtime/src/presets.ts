@@ -97,3 +97,168 @@ export function routeTraceFrame(
     accent: instance.palette.accent.toUpperCase(),
   };
 }
+
+export type MotionEasingName = "ease-out-cubic" | "ease-in-out-cubic";
+
+export interface MotionV2TimingDefinition {
+  base_choreography_frames: number;
+  fixed_exit_frames: number;
+}
+
+export interface MotionV2Like {
+  start_frame: number;
+  end_frame_exclusive: number;
+  intensity: number;
+  motion?: {
+    version?: 2;
+    speed?: number;
+    easing?: MotionEasingName;
+    hold_frames?: number;
+  };
+}
+
+export type MotionPhase = "enter" | "choreography" | "hold" | "exit";
+
+export interface MotionV2Frame extends CreatorBlockFrame {
+  /** Continuous authored-frame position before output retiming. */
+  authoredFrame: number;
+  choreography: number;
+  hold: number;
+  phase: MotionPhase;
+  choreographyFrames: number;
+  holdFrames: number;
+  exitFrames: number;
+  /** The only allowed v2 hard cut. */
+  choreographyEvent: "offer-swap" | null;
+}
+
+export function evaluateMotionEasing(name: MotionEasingName, value: number): number {
+  if (name === "ease-out-cubic") return easeOutCubic(value);
+  return easeInOutCubic(value);
+}
+
+/**
+ * Deterministic preset-v2 output timeline. Catalog timing is authored at 30fps;
+ * speed retimes choreography only; hold and the fixed exit remain output-frame phases.
+ * Every phase boundary lands on an integer output frame.
+ */
+export function creatorBlockFrameV2(
+  instance: MotionV2Like,
+  frame: number,
+  timing: MotionV2TimingDefinition,
+  options: { offerSwapEvent?: boolean } = {},
+): MotionV2Frame {
+  const speed = Math.max(0.25, Math.min(4, instance.motion?.speed ?? 1));
+  const easing = instance.motion?.easing ?? "ease-in-out-cubic";
+  const span = Math.max(1, instance.end_frame_exclusive - instance.start_frame);
+  const requestedChoreography = Math.max(1, Math.round(timing.base_choreography_frames / speed));
+  const requestedExit = Math.max(1, Math.round(timing.fixed_exit_frames));
+  const requestedHold = Math.max(0, Math.round(instance.motion?.hold_frames ?? 0));
+  const exitFrames = Math.min(requestedExit, Math.max(1, span - 1));
+  const beforeExit = Math.max(1, span - exitFrames);
+  const choreographyFrames = Math.min(requestedChoreography, beforeExit);
+  const holdFrames = Math.min(requestedHold, Math.max(0, beforeExit - choreographyFrames));
+  const localFrame = Math.max(0, Math.min(span - 1, frame - instance.start_frame));
+  const choreographyRaw = clamp01(localFrame / Math.max(1, choreographyFrames - 1));
+  const choreography = evaluateMotionEasing(easing, choreographyRaw);
+  const enterWindow = Math.max(1, Math.min(choreographyFrames, Math.round(choreographyFrames * 0.28)));
+  const degenerateStatic = span <= 2;
+  const enter = degenerateStatic
+    ? 1
+    : evaluateMotionEasing(easing, localFrame / Math.max(1, enterWindow - 1));
+  const exitStart = span - exitFrames;
+  const exit = degenerateStatic
+    ? 0
+    : localFrame < exitStart
+    ? 0
+    : easeInOutCubic((localFrame - exitStart) / Math.max(1, exitFrames - 1));
+  const holdStart = choreographyFrames;
+  const hold = holdFrames === 0
+    ? 0
+    : clamp01((localFrame - holdStart) / Math.max(1, holdFrames));
+  const phase: MotionPhase = degenerateStatic
+    ? "hold"
+    : localFrame < enterWindow
+    ? "enter"
+    : localFrame < choreographyFrames
+      ? "choreography"
+      : localFrame < exitStart
+        ? "hold"
+        : "exit";
+  const intensity = clamp01(instance.intensity);
+  const authoredFrame = choreography * Math.max(0, timing.base_choreography_frames - 1);
+  return {
+    local: clamp01(localFrame / Math.max(1, span - 1)),
+    enter,
+    exit,
+    opacity: enter * (1 - exit),
+    scale: (0.94 + 0.06 * enter) * (1 - exit * (0.04 + intensity * 0.06)),
+    rotation: (1 - enter) * (-5 * intensity) + exit * (3 * intensity),
+    pulse: 0.5 - 0.5 * Math.cos(choreography * Math.PI * 2),
+    cycle: choreography,
+    authoredFrame,
+    choreography,
+    hold,
+    phase,
+    choreographyFrames,
+    holdFrames,
+    exitFrames,
+    choreographyEvent:
+      options.offerSwapEvent && authoredFrame >= timing.base_choreography_frames * 0.48
+        ? "offer-swap"
+        : null,
+  };
+}
+
+export function staggerProgress(
+  authoredFrame: number,
+  index: number,
+  count: number,
+  staggerFrames: number,
+  rampFrames: number,
+  order: "forward" | "reverse" | "center-out" = "forward",
+): number {
+  const safeCount = Math.max(1, count);
+  const rank = staggerOrderRank(index, safeCount, order);
+  return smootherstep((authoredFrame - rank * staggerFrames) / Math.max(1, rampFrames));
+}
+
+export function staggerOrderRank(
+  index: number,
+  count: number,
+  order: "forward" | "reverse" | "center-out" = "forward",
+): number {
+  const safeCount = Math.max(1, count);
+  return order === "reverse"
+    ? safeCount - 1 - index
+    : order === "center-out"
+      ? Math.abs(index - (safeCount - 1) / 2) * 2
+      : index;
+}
+
+/** Quintic phase curve with zero velocity and acceleration at both joins. */
+export function smootherstep(value: number): number {
+  const t = clamp01(value);
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+export interface ContinuousCardPose {
+  angle: number;
+  depth: number;
+  x: number;
+}
+
+/** Continuous replacement for v1's floor(cycle * count) active-card snap. */
+export function continuousCardPose(
+  choreography: number,
+  index: number,
+  count: number,
+): ContinuousCardPose {
+  const safeCount = Math.max(1, count);
+  const angle = index / safeCount * Math.PI * 2 - clamp01(choreography) * Math.PI * 2;
+  return {
+    angle,
+    depth: (1 - Math.cos(angle)) / 2,
+    x: Math.sin(angle),
+  };
+}

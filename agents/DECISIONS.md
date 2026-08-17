@@ -1023,3 +1023,350 @@ left unchanged — only presentation strings changed, no migration.
 `draft_upload` being the auto-selected default whenever `video.publish` isn't
 granted (`TikTokPublishDialog.tsx`) keeps causing this complaint — that's a
 scope grant-recovery problem, not a copy problem.
+
+## [2026-08-14] Optional lyrics must not erase the content-plan intro
+
+A Corfu content-plan item rendered a technically valid 3.2-second sailboat
+video with no visible text. The intro writer had produced “pov: sailboat
+mornings in korfu,” and the selected song had usable lyrics, but two individually
+tested decisions interacted badly: content-plan primary montages chose the
+first renderable music variant (`song_lyrics`), while optional-lyrics mode made
+that variant start with lyrics off. Because a lyrics-mode variant does not burn
+the agent intro, both possible text layers disappeared. The renderer correctly
+produced an MP4; the product contract was wrong.
+
+**Decisions:**
+
+- **A generated intro is the default visible text.** With
+  `LYRICS_OPTIONAL_ENABLED=true`, a track-backed content-plan montage selects
+  `song_text` / `agent_text`, so the authored intro is persisted and burned.
+- **Lyrics are a capability, not a competing variant.** A track-backed
+  `song_text` variant with renderable lyrics is marked `lyrics_baked=false`; the existing
+  lyric-seed endpoint and text-element editor can add lyrics later without
+  replacing the intro. Its API capability follows `LYRICS_OPTIONAL_ENABLED`,
+  not the separate legacy baked-lyrics editor flag.
+- **The kill switch preserves the old path.** With optional lyrics disabled,
+  the selector still takes the first renderable variant, so a lyric-capable
+  track produces legacy `song_lyrics` with baked lyrics and the persisted dict
+  shape remains unchanged.
+- **Test interactions, not only branches.** The critical guard renders a
+  lyric-capable `song_text` under optional-lyrics mode and requires both the
+  Corfu-style intro persistence and the lyric-seed capability. Separate tests
+  continue to pin the legacy flag-off behavior.
+
+## [2026-08-14] Guided edits require an approved, exact-media proposal
+
+The Corfu incident was not only missing text. Initial generation treated one attached sailboat
+clip as the story while twelve separately stored travel assets remained advisory overlay material.
+Trying to make overlay placement more aggressive would preserve the wrong abstraction: food,
+architecture, streets, and beaches are primary story moments, not decorations over a one-clip
+montage.
+
+**Decisions:**
+
+- **Approve the story before rendering.** Plan items get one versioned `edit_proposal` envelope
+  with a live draft and retained last approval. Direction, goal, pace, duration, title, media,
+  layouts, ordered beats, and thoughts become reviewable product data rather than implicit LLM
+  decisions inside the renderer.
+- **Unify references, not storage.** Attached clips and `PlanItemAsset` rows stay in their existing
+  lanes. A proposal-level `MediaRef` union gives both stable IDs and immutable storage generations.
+  Legacy clip assignments receive an ID only when Plan edit first processes them.
+- **Object identity is part of approval.** The canonical media digest includes lane, stable ID,
+  path, generation, kind, and content hash. Generate re-reads storage generations and snapshots the
+  approval under the Plan → Persona → PlanItem → Job lock order. A changed generation is stale even
+  when its filename is unchanged.
+- **AI thoughts remain visibly provisional.** The planner may describe visible qualities and infer
+  tone, but it may not claim where the creator went, what food tasted like, who was present, or how
+  the creator felt without creator-written context. AI thoughts retain `thought_source=ai_draft`
+  until the whole proposal is approved; direct user edits switch that thought to `user`.
+- **Proposal beats are chapters, not a file list.** Live evaluation showed the first planner could
+  produce one generic beat per upload and use experiential wording without creator context. The
+  planner now groups at least three distinct topics into no more than five chapters. Its parser
+  strips safe-to-remove sensory modifiers and rejects unsupported personal actions or remaining
+  sensory claims before a draft reaches the creator.
+- **No legacy bypass after enforcement.** Route and task-side dispatch both return
+  `proposal_required`, `proposal_draft`, `proposal_stale`, or `proposal_analyzing`. Media mutations
+  retain the last approval for comparison and mark the current plan stale. CAS versions prevent a
+  second tab from overwriting a newer edit.
+- **Planning and rendering ship dark and separately.** PR 2 can persist and snapshot proposals but
+  does not claim to render them. Capability, frontend, and enforcement switches all default off;
+  enforcement waits for PR 3's strict story assembler and the exact Corfu preview.
+
+## [2026-08-14] Approved guided stories render as their own strict timeline
+
+The proposal contract is now executable. An approved plan no longer becomes hints for the legacy
+montage matcher: it compiles once into a task-owned execution plan and renders directly from every
+selected photo/video beat.
+
+**Decisions:**
+
+- **Approval is the render program.** The compiler keeps the proposal version, media digest, ordered
+  beat/media IDs, exact source and music storage generations, source windows, layouts, wording,
+  duration, typography, transition policy, and whole-story music match. Redelivery reuses the saved
+  plan rather than making fresh creative decisions.
+- **Duration and transitions are reconciled before FFmpeg.** Beat durations are weights under the
+  approved top-level target. Crossfade inputs are extended by the overlap they consume, so the final
+  duration remains the approved duration; impossible short-source combinations fail instead of
+  dropping media.
+- **Photos and supporting cards are story footage.** Photos receive subtle motion, videos use the
+  existing crop/trim pipeline, and a requested supporting card renders as an inset over a blurred
+  background. Neither lane is treated as an optional post-render overlay.
+- **Publication requires measured evidence.** The receipt records exact downloaded generations and
+  hashes, every rendered moment, actual per-element alpha bounds, media/topic IDs, duration, canvas,
+  codecs, final hash, and exact published base/output object generations. Missing text, media, cards,
+  or format invariants keep the Job failed; there is no simple-montage fallback.
+- **Worker duplication is fenced, not assumed away.** A row-locked, heartbeating attempt lease admits
+  one renderer even when Celery delivers the same task twice. Losing deliveries cannot stamp the live
+  job finished; stale leases can be reclaimed after a worker disappears.
+- **Text stays editable without reopening creative decisions.** The renderer preserves a clean story
+  base. TextElement-only edits reburn that base and refresh alpha evidence. Legacy song/timeline/layout
+  operations fail closed for guided stories until they have proposal-aware implementations.
+- **Rollout remains dark by default.** Strict-renderer readiness now permits enforcement, but capability,
+  frontend, and enforcement flags stay false until a production-parity Corfu preview passes.
+
+## [2026-08-15] Guided-story photos use decoded render copies
+
+The first production retry of the approved Corfu story passed duration compilation but stopped on its
+first HEIC photo. Pillow had already verified the uploaded file; FFmpeg then selected its HEIF demuxer,
+which rejects the image2-only `-loop` input option used for photo motion.
+
+**Decisions:**
+
+- **Source evidence and render inputs are separate.** Exact-generation downloads remain untouched for
+  byte count, SHA-256, and publication receipts. The worker creates a separate EXIF-corrected JPEG, or
+  PNG when alpha is present, for FFmpeg assembly.
+- **Normalize every selected photo.** The renderer no longer relies on filename-specific FFmpeg demuxer
+  behavior. JPEG, PNG, WebP, HEIC, and HEIF all cross the same verified decode boundary before motion.
+- **Bound memory instead of parallelizing decode.** Downloads and video probes remain bounded-parallel,
+  while full-resolution phone photos decode serially so several large images cannot multiply peak
+  worker memory.
+- **Reject rather than fall back.** A photo that cannot fully decode keeps the stable
+  `guided_story_media_replaced` failure. The renderer never drops it or substitutes a simple montage.
+
+## [2026-08-16] Guided edits accept natural-language direction before and after planning
+
+The first guided-edit release exposed direction, pace, length, and goal as a form. It was safe, but
+it asked creators to translate creative intent into product controls before Kria helped.
+
+**Decisions:**
+
+- **Conversation produces the same typed contract.** Creators can speak in ordinary terms and the
+  edit guide persists a direction, goal, pace, and duration in the versioned proposal envelope.
+  `brief_ready` is advisory; creators may start planning at any time.
+- **The conversation continues during review.** Requests such as “put food first” or “use less text”
+  can revise a draft. Any revision returns an approved proposal to `draft`, so new wording and order
+  cannot render without approval.
+- **Media identity stays server-owned.** Model-authored revisions preserve every beat ID exactly once.
+  Media reassignment was added later through bounded short aliases; the route always rejoins real
+  identities and retains creator-written thoughts verbatim.
+- **Slow model calls do not hold item locks.** The route first persists a short-lived, token-fenced
+  single-flight reservation, closes the transaction, calls the model, then reloads under lock and
+  requires the same token and proposal version. A reload sees only safe thinking/retry state, never
+  the token, and generic planning stays blocked until the reply lands or the creator retries an
+  expired attempt. Concurrent changes cannot overwrite the older reply or duplicate model spend.
+- **Conversation has its own staged writer gate.** `briefing` is a new persisted state that older
+  readers reject. `GUIDED_EDIT_CONVERSATION_ENABLED` therefore stays off until every API and worker
+  runs the compatible reader; the API advertises the switch and the web keeps the existing brief
+  form until it is safe to write conversational state.
+
+## [2026-08-17] Guided-story results remain authoritative when reopened
+
+Production dogfood rendered the requested five-video travel cut, but reopening it exposed two legacy
+projections: the text reader collapsed the approved title and five thoughts into one intro, and the
+timeline reader marked every source unused because it only understood `ai_timeline`.
+
+**Decisions:**
+
+- **Persisted guided-story text wins on reads.** The renderer's verified `text_elements` document is
+  authoritative even before a creator manually edits it. Legacy intro projection must not replace it.
+- **The verified story cut is visible but read-only.** The editor projects `story_timeline` into its
+  existing clip-lane response so creators can inspect order, trims, and used media without making the
+  legacy timeline mutation APIs responsible for guided stories.
+- **Different text regions may share time.** A top-positioned title and bottom-positioned first thought
+  can both start at zero. Serializing them made the first thought only one frame long in short edits.
+
+## [2026-08-17] Fly release_command startup kill: retry once, don't touch REMAP_SIGTERM
+
+`Fly Deploy` intermittently went red with exit 143 (SIGTERM) on the release_command machine
+(`python -m alembic upgrade head`) — the machine reported `has state: destroyed` roughly 3 seconds
+after starting, well before alembic could plausibly have failed, and the very next deploy of the
+identical code succeeded. Rate: 2 in ~12 releases (v891, v896). The concerning part wasn't the
+occasional red run — it was that a deploy pipeline crying wolf 1-in-6 can't also be trusted as the
+signal for a real freeze; this exact noise class is how the 24-hour deploy freeze (#812) hid earlier.
+
+Issue #834 ranked three hypotheses, top of which was `REMAP_SIGTERM = "SIGQUIT"` in fly.toml `[env]`
+leaking onto the release machine. That was refuted during investigation: `REMAP_SIGTERM` is a Celery
+5.5 feature read by the Celery worker process itself (to reinterpret SIGTERM as cold shutdown, opening
+the soft-shutdown window used by `app/worker.py`'s late-ack design) — Fly's init never reads it, and
+it's absent from Fly's own configuration docs. The release machine does inherit the `[env]` block (Fly
+docs: the temporary release machine "has full access to the network, environment variables and
+secrets"), but `python -m alembic` never reads that variable, so it is inert there. The exit code is
+the tell: 143 = 128+15 = a plain, unremapped SIGTERM; a SIGQUIT death (what an actual remap would
+cause) would be 131. The observed 143 proves the process died from platform-side SIGTERM, not a
+Celery-side remap that doesn't even apply to this process. Conclusion: this is a Fly platform-side
+machine lifecycle race (flyctl and the machine disagreeing about state, per the accompanying "timeout
+waiting for release command logs" log line), not something fixable from our config.
+
+**Decisions:**
+
+- **Retry, don't reconfigure.** Nothing in fly.toml changed in value — `REMAP_SIGTERM` stays
+  `SIGQUIT` at the top-level `[env]` block, which `tests/test_deploy_shutdown_policy.py` continues to
+  pin, because the worker's late-ack soft-shutdown design is load-bearing on it. A comment was added
+  directly above the line recording the refutation, so the next person chasing a #834-shaped report
+  doesn't re-open the same dead end.
+- **Signature-gated, not blanket.** `scripts/fly-deploy-with-retry.sh` retries exactly once, and only
+  when the deploy log shows BOTH `has state: destroyed` and `release_command failed running on
+  machine ... with exit code 143` (word-bounded regex, ANSI-stripped first). Any other failure — most
+  importantly a genuine migration `raise`, which exits 1 — fails immediately on the first attempt.
+  Acceptance criterion from #834: a startup-killed release command no longer fails the deploy outright,
+  AND a real migration failure still fails on attempt one, visibly. A blanket retry-on-any-failure was
+  explicitly rejected — it would recreate the exact noise class that hid #812.
+- **The gate is log-based, NOT flyctl-exit-code-based — deliberately.** flyctl itself exits 1 on a
+  release_command failure (verified in run 31972609339: log says `exit code 143`, step says "Process
+  completed with exit code 1"); the 143 only ever appears in the LOG. Cross-model review suggested
+  "hardening" the gate with `$exit_code -eq 143` — that would silently disable the retry forever.
+  Pinned by `test_signature_then_success_retries_once_and_warns` (exit 1 + signature ⇒ retries).
+- **Known accepted over-match:** a migration that runs long enough to be SIGTERM'd by Fly's 5-minute
+  release timeout produces the same signature and gets the one loud retry. Accepted because alembic
+  migrations are transactional, every deploy attempt re-runs the release command anyway, and a second
+  timeout still fails the deploy. The retry annotations deliberately hedge the root-cause claim
+  ("usually the #834 race") rather than asserting it — the signature proves SIGTERM + destroyed, not
+  which SIGTERM.
+- **Loud, not silently green.** A retry emits a `::warning title=Fly deploy retried::` GitHub Actions
+  annotation (unconditional) plus a `$GITHUB_STEP_SUMMARY` block with a 40-line log tail, whenever that
+  var is set (CI only — local runs no-op instead of crashing). A green deploy after a retry should
+  still be visibly flagged as "retried," not indistinguishable from a clean first-attempt pass.
+
+**Revisit if:** the retried-signature rate rises materially above the observed ~2-in-12 baseline (would
+suggest the platform race is worsening, not just noise), or Fly ships a fix for release-machine
+lifecycle reporting — at that point the retry wrapper becomes a belt-and-braces fallback rather than a
+load-bearing part of the pipeline, and `timeout-minutes` can likely drop back toward 25.
+## [2026-08-17] Conversational revisions use short review references
+
+Production dogfood asked Kria to swap two named travel videos and shorten five thoughts. The model's
+reply described the correct change, but both schema attempts failed because one long generated beat ID
+was lost while reproducing the full revision.
+
+**Decisions:**
+
+- **Models edit aliases, servers retain identities.** Review prompts expose `beat_1`, `beat_2`, and
+  similar short references. Parsed revisions must preserve every alias exactly once, after which the
+  server maps them back to the original beat IDs.
+- **Visible-content references have an explicit join.** Media already supplied to the edit guide gets
+  a short `media_1`-style reference, and every review beat lists its associated media references. This
+  lets “the bridge video,” “the Istanbul clip,” and uploaded filenames resolve to the intended beat.
+- **Safety remains fail-closed.** Unknown, missing, or duplicated aliases are rejected. The model still
+  cannot add media, replace object identity, remove beats, or overwrite creator-authored thoughts.
+
+## [2026-08-17] Conversational revisions may reassign existing media safely
+
+The first filename-reference repair let the model understand which upload a creator meant, but the
+revision output could only reorder beat IDs. In production dogfood the model changed “Cityscape” to
+“Lisbon” while leaving the Istanbul source underneath it, then claimed the request was complete.
+
+**Decisions:**
+
+- **Every revised beat returns media aliases explicitly.** A request such as “moment 1 uses the bridge
+  video” can move `media_1` to that beat instead of merely changing its text.
+- **The server validates the complete assignment.** The multiset of returned aliases must exactly match
+  the currently assigned aliases. Unknown, missing, or duplicated media fails closed before persistence.
+- **Aliases never become authority.** Only the server maps validated aliases back to stable media IDs;
+  the model still cannot introduce another user's object, replace storage identity, or drop a source.
+
+## [2026-08-17] Approved guided media satisfies the Generate footage gate
+
+Production dogfood approved a five-source guided story built entirely from the visuals pool, then the
+page disabled Generate with “Add clips to generate.” The strict renderer already consumes both media
+lanes from the approved snapshot; only the legacy frontend gate still counted attached clips.
+
+**Decision:** A current approved proposal with at least one selected story-beat media ID satisfies both
+the frontend and API footage gates. Unguided items and empty/malformed approvals still require an
+attached clip, and the lock-owning dispatcher continues to revalidate the approved snapshot before
+dispatch. The initial frontend-only repair exposed the API twin in production; both layers now share
+the same contract.
+
+## [2026-08-17] Stale lock reads are gated by shape, not by convention
+
+PR #813 fixed a bug where `SELECT ... FOR UPDATE` serialized correctly but the Python object behind
+it did not refresh: SQLAlchemy only writes a freshly-locked row onto an instance it is loading for the
+first time in that session, so a prior unlocked read of the same PK makes the locked call return the
+cached object with pre-lock values. Two concurrent Generate posts each read `current_job_id` as `None`
+and each minted a Job. The same staleness let the ownership fence read a stale `ownership_epoch`.
+
+**Decisions:**
+
+- **The gate matches the bug shape, not the convention.** `tests/test_row_lock_policy.py` flags an
+  unlocked read of a PK followed by a locked re-read of the same PK in the same function that does not
+  pass `populate_existing=True`. Requiring the pairing at all ~78 `with_for_update` sites was rejected:
+  a bare lock in a fresh session with nothing cached is perfectly safe, and 60-odd allow-list entries
+  written to satisfy a linter is noise nobody reads. One guard people trust beats a broad one they mute.
+- **Matching is session-scoped, not function-scoped.** The identity map lives on the session, so two
+  reads only interact when they share one. A function that opens a session, closes it, does slow work,
+  then opens a SECOND session to take the lock is the safest possible shape. A function-scoped first
+  draft flagged four such cases — including `autoplace.generate_pool_asset_preview`, merged the same
+  day — so 4 of its 6 findings were noise. Scoping to the enclosing `with ... as <session>:` block
+  removed all four and left 2 verified instances. A gate that cries wolf is a gate people mute, which
+  would have defeated the whole point.
+- **The allow-list is a bug backlog and is asserted in both directions.** The 2 verified instances are
+  quarantined so the gate can protect new code immediately, not because they are believed correct
+  (issue #845). A second test fails if a listed entry stops matching, so a fixed or renamed entry
+  cannot rot the list into fiction — an allow-list nobody trusts is an allow-list nobody reads.
+- **The count is a floor.** The detector keys on the source text of the identifier expression, so the
+  same row reached two ways (`db.get(PlanItem, content_plan_item_id)` then
+  `db.get(PlanItem, item_ref.id, with_for_update=True)`) is the same bug and is not flagged. Stated in
+  the module docstring so the number is never mistaken for a total.
+
+Verified by reintroducing #813 (removing `populate_existing` from `dispatch_item_render_for`): the gate
+names the exact function and row, and goes green again when restored.
+
+## [2026-08-17] Deploy health is measured as drift, and staged migrations are enforced
+
+The 2026-08-12 freeze was two failures wearing one costume. #804 shipped migrations `0072` and `0073`
+together; `0073` refuses to apply while a mismatched content plan exists, so `alembic upgrade head`
+threw and rolled the chain back, and release 1 could never reach production. Its own runbook said "do
+not combine these into one Fly release" — an instruction with no mechanism behind it. Separately,
+nobody noticed for ~24 hours: Fly aborts a release *before* replacing machines, so the previous image
+kept serving, `/health` stayed 200, and four consecutive red `Fly Deploy` runs read as normal.
+
+**Decisions:**
+
+- **Deploy health is measured as drift, never as failure.** `deploy-drift.yml` compares main's HEAD
+  against the last successful `Fly Deploy` and fails once the oldest undeployed commit exceeds
+  `DRIFT_HOURS`. Alerting on red deploys was rejected deliberately: per #834 the release command is
+  killed during startup roughly 2 runs in 12 and self-heals on the next push, so a redness alarm would
+  fire twice a fortnight and be learned-past — which is exactly how the real freeze hid. A self-healing
+  flake leaves zero drift; only genuinely stuck code accumulates it. Drift is also cause-agnostic: a
+  migration refusal, a revoked token, a Fly outage and a persistent exit-143 all present identically.
+- **A PR adding 2+ migrations where any can refuse must declare its release order.**
+  `migration-staging-guard.yml` fails it unless the body carries `[staged-migration-ok]`. Verified
+  against the real incident: #804 added exactly `0072` and `0073`, both contain `raise`, so the guard
+  would have blocked it. A lone refusing migration is the safe shape and is not flagged.
+- **CI runs on pushes to main, not only on pull requests.** A PR is tested as a merge with main, so
+  main can be broken while every open PR is green. On 2026-08-13 a stale-read bug on main made a
+  required check fail deterministically and it surfaced on a frontend-only PR that touched zero Python.
+  Push-triggered CI attributes a breakage to the commit that caused it. The cost is roughly double CI
+  minutes, accepted consciously.
+
+The narrative lives here rather than in CLAUDE.md because that file is at 37,914 of its 38,000-char
+budget; the guards announce themselves through their own CI failure messages.
+
+## [2026-08-17] Guided stories inherit selected-media orientation
+
+Production dogfood proved that all five approved travel sources were 16:9 while the strict story
+renderer still hardcoded a 9:16 canvas. The output was technically valid but needlessly cropped, and
+the editor then disabled the control that could have corrected it.
+
+**Decisions:**
+
+- **Approved screen time chooses the default canvas.** Only media referenced by story beats votes;
+  each source is weighted by its approved exposure. Near-square and unknown aspects are neutral,
+  ties follow the first selected non-square source, and no usable metadata falls back to portrait.
+- **Orientation is part of the strict program.** Compiler v3 pins the chosen canvas and explanation;
+  moment rendering, text burn, receipt dimensions, variant projection, and the editor all read that
+  same value. Persisted v1/v2 plans remain portrait and replay without reinterpretation.
+- **Editor changes remain story-native.** A 9:16/16:9 change re-renders the pinned media, timing,
+  music, and validated text through the strict story renderer. Token-gated publication and the full
+  receipt apply again; a generic montage is never an orientation fallback.
+- **Editorial defaults do not outline text.** New guided titles use Fraunces and thoughts use DM Sans
+  with warm-white fill, a lime accent, and soft shadow. Both persist `stroke_width=0`; old plans and
+  user edits remain unchanged.

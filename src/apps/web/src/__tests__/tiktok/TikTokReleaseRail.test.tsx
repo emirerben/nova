@@ -211,7 +211,6 @@ it.each([
   ["draft", "complete", "Waiting in your TikTok app inbox"],
   ["removed", "complete", "No longer public"],
   ["unknown", "submission_unknown", "Check TikTok before retrying"],
-  ["unknown", "failed", "Publishing failed"],
 ] as const)("renders the %s/%s receipt state", (visibility, processing, heading) => {
   renderRail({
     ...basePublication,
@@ -316,32 +315,213 @@ it("fails closed when receipt history cannot be confirmed", () => {
   expect(onReceiptRetry).toHaveBeenCalledTimes(1);
 });
 
-it("allows a new reviewed attempt after a confirmed failure but not an unknown submission", () => {
+it("returns a confirmed failure to the full preparation pane instead of a dead receipt", () => {
   const onPublish = jest.fn();
-  const { rerender } = renderRail({
+  renderRail({
     ...basePublication,
     processing_status: "failed",
     retryable: false,
+    failure_detail: "TikTok rejected the video's aspect ratio.",
   }, undefined, { onPublish });
 
-  fireEvent.click(screen.getByRole("button", { name: "Review and try again" }));
+  expect(screen.queryByText("Publishing failed")).toBeNull();
+  expect(screen.getByText("Last attempt failed")).not.toBeNull();
+  expect(screen.getByText("TikTok rejected the video's aspect ratio.")).not.toBeNull();
+  expect(screen.getByRole("link", { name: "Edit video" })).not.toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "Publish to TikTok" }));
+  expect(onPublish).toHaveBeenCalledTimes(1);
+});
+
+it("sends an unconfirmed submission to TikTok recovery instead of a second delivery", () => {
+  // TikTok never confirmed it received the first one. A publish button here can
+  // post the same video twice; the fix is to go look in TikTok.
+  const onReceiptRetry = jest.fn();
+  renderRail(
+    { ...basePublication, processing_status: "submission_unknown" },
+    undefined,
+    { onReceiptRetry },
+  );
+
+  expect(screen.getByText("Check TikTok before retrying")).not.toBeNull();
+  expect(screen.getByRole("link", { name: "Open TikTok" })).not.toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Check status again" }));
+  expect(onReceiptRetry).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("link", { name: "Edit video" })).not.toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish to TikTok" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish again" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish updated video" })).toBeNull();
+});
+
+it("keeps a retrying failure in receipt mode so a manual publish cannot race the worker", () => {
+  renderRail({ ...basePublication, processing_status: "failed", retryable: true });
+
+  expect(screen.getByText("TikTok is retrying")).not.toBeNull();
+  expect(screen.queryByText("Last attempt failed")).toBeNull();
+  expect(screen.getByRole("link", { name: "Edit video" })).not.toBeNull();
+  // The worker is resubmitting this row itself. A publish button here races it
+  // into a duplicate post — the receipt spinner stops, but the delivery hasn't.
+  expect(screen.queryByRole("button", { name: "Publish again" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish updated video" })).toBeNull();
+});
+
+it("stays quiet about staleness when a timestamp will not parse", () => {
+  renderRail(
+    { ...basePublication, processing_status: "complete", visibility_status: "public" },
+    undefined,
+    { renderFinishedAt: "not-a-date" },
+  );
+
+  expect(screen.getByRole("button", { name: "Publish again" })).not.toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish updated video" })).toBeNull();
+});
+
+it("never hides Edit or Download once a publication exists for the job", () => {
+  // Regression: the rail used to swap ReleasePreparationPane out wholesale when
+  // `publication` went non-null, taking the only "Edit video" link in the app
+  // with it — permanently, since publication rows are never deleted.
+  renderRail(basePublication);
+
+  expect(screen.getByText("Sending to TikTok")).not.toBeNull();
+  expect(screen.getByRole("link", { name: "Edit video" }).getAttribute("href")).toBe("/edit/job-1");
+  fireEvent.click(screen.getByRole("button", { name: "More video actions" }));
+  expect(screen.getByRole("button", { name: "Download video" })).not.toBeNull();
+});
+
+it("offers a fresh publish in receipt mode, naming an edit made since the last attempt", () => {
+  const onPublish = jest.fn();
+  const published: TikTokPublication = {
+    ...basePublication,
+    processing_status: "complete",
+    visibility_status: "private",
+    created_at: "2026-08-01T10:00:00Z",
+  };
+
+  const { rerender } = renderRail(published, [published], {
+    onPublish,
+    renderFinishedAt: "2026-07-30T00:00:00Z",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Publish again" }));
   expect(onPublish).toHaveBeenCalledTimes(1);
 
   rerender(
     <TikTokReleaseRail
       connection={connection}
-      publication={{ ...basePublication, processing_status: "submission_unknown" }}
-      publications={[{ ...basePublication, processing_status: "submission_unknown" }]}
+      publication={published}
+      publications={[published]}
       canPublish
       baking={false}
       editHref="/edit/job-1"
       durationSeconds={18}
+      renderFinishedAt="2026-08-02T00:00:00Z"
       variantLabel="Original text"
       onPublish={onPublish}
       onDownload={jest.fn()}
     />,
   );
-  expect(screen.queryByRole("button", { name: "Review and try again" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Publish updated video" })).not.toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish again" })).toBeNull();
+});
+
+it("keeps a landed post calm but gives an edited cut primary weight", () => {
+  const published: TikTokPublication = {
+    ...basePublication,
+    processing_status: "complete",
+    visibility_status: "public",
+    created_at: "2026-08-01T10:00:00Z",
+  };
+
+  const { rerender } = renderRail(published, [published], {
+    renderFinishedAt: "2026-07-30T00:00:00Z",
+  });
+  // Nothing edited since posting — republish must not compete with the receipt.
+  expect(screen.getByRole("button", { name: "Publish again" }).className).toContain("border-zinc-300");
+  expect(screen.getByRole("button", { name: "Publish again" }).className).not.toContain("bg-[#0c0c0e]");
+
+  rerender(
+    <TikTokReleaseRail
+      connection={connection}
+      publication={published}
+      publications={[published]}
+      canPublish
+      baking={false}
+      editHref="/edit/job-1"
+      durationSeconds={18}
+      renderFinishedAt="2026-08-02T00:00:00Z"
+      variantLabel="Original text"
+      onPublish={jest.fn()}
+      onDownload={jest.fn()}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Publish updated video" }).className).toContain("bg-[#0c0c0e]");
+});
+
+it("withholds republish while the first submission is still in flight", () => {
+  // basePublication is processing_status "processing" — TikTok still owes an
+  // outcome. A publish button here would double-post.
+  renderRail(basePublication);
+
+  expect(screen.getByText("Sending to TikTok")).not.toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish again" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish updated video" })).toBeNull();
+  expect(screen.getByRole("link", { name: "Edit video" })).not.toBeNull();
+});
+
+it("offers republish once TikTok settles the outcome", () => {
+  renderRail({
+    ...basePublication,
+    processing_status: "complete",
+    visibility_status: "public",
+  });
+
+  expect(screen.getByRole("button", { name: "Publish again" })).not.toBeNull();
+});
+
+it("locks the receipt-mode republish while an exact export is baking", () => {
+  const onPublish = jest.fn();
+  renderRail(
+    { ...basePublication, processing_status: "complete", visibility_status: "private" },
+    undefined,
+    { onPublish, baking: true },
+  );
+
+  const republish = screen.getByRole("button", { name: "Preparing your video…" });
+  expect((republish as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(republish);
+  expect(onPublish).not.toHaveBeenCalled();
+  expect((screen.getByRole("button", { name: "More video actions" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it("drops the Edit link but keeps the overflow when the variant has no editor entry", () => {
+  renderRail(basePublication, undefined, { editHref: null });
+
+  expect(screen.queryByRole("link", { name: "Edit video" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "More video actions" }));
+  expect(screen.getByRole("button", { name: "Download video" })).not.toBeNull();
+});
+
+it("falls back to generic failure copy when TikTok gives no detail", () => {
+  renderRail({
+    ...basePublication,
+    processing_status: "failed",
+    retryable: false,
+    failure_detail: null,
+  });
+
+  expect(screen.getByText("Last attempt failed")).not.toBeNull();
+  expect(screen.getByText("TikTok could not publish this post. Nothing was posted.")).not.toBeNull();
+});
+
+it("does not offer a repeat publish when the account can no longer publish", () => {
+  renderRail(
+    { ...basePublication, processing_status: "complete", visibility_status: "private" },
+    undefined,
+    { canPublish: false },
+  );
+
+  expect(screen.queryByRole("button", { name: "Publish again" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish updated video" })).toBeNull();
+  expect(screen.getByRole("link", { name: "Edit video" })).not.toBeNull();
 });
 
 it("does not expose a dead-end learning state before publishing", () => {

@@ -32,6 +32,7 @@ from app.agents.creative_direction import CreativeDirectionOutput
 from app.agents.edit_copilot import _MAX_OPS as _EDIT_COPILOT_MAX_OPS
 from app.agents.edit_copilot import EditCopilotOutput
 from app.agents.edit_director import EditDirectorInput, EditDirectorOutput
+from app.agents.edit_proposal import minimum_required_sources
 from app.agents.idea_expander import IdeaExpanderInput, IdeaExpanderOutput
 from app.agents.intro_writer import (
     _MAX_WORDS as INTRO_MAX_WORDS,
@@ -2093,6 +2094,57 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
         return check_overlay_format_matcher(output)
+    if agent_name == "nova.plan.edit_proposal":
+        known = {media.media_id for media in input.media}
+        used = {media_id for beat in output.story_beats for media_id in beat.media_ids}
+        failures: list[str] = []
+        if not used <= known:
+            failures.append("story references unknown media")
+        if len(used) < minimum_required_sources(len(known)):
+            failures.append("story does not use enough distinct sources")
+        input_kinds = {media.kind for media in input.media}
+        used_kinds = {media.kind for media in input.media if media.media_id in used}
+        if len(input_kinds) > 1 and used_kinds != input_kinds:
+            failures.append("story does not use both photos and videos")
+        if input.direction in {"guided_story", "text_explainer"}:
+            if len(output.story_beats) < min(3, len(input.media)):
+                failures.append("guided story has fewer than three beats")
+            if any(not beat.thought.strip() for beat in output.story_beats):
+                failures.append("guided story has an empty thought")
+        for index, beat in enumerate(output.story_beats):
+            if len(beat.thought.split()) > 18:
+                failures.append(f"beat {index}: thought exceeds 18 words")
+        unsupported_personal_claims = (
+            "i ate",
+            "i tasted",
+            "we went",
+            "we stayed",
+            "my favorite",
+            "i felt",
+        )
+        if not any(media.user_context.strip() for media in input.media):
+            for index, beat in enumerate(output.story_beats):
+                lowered = beat.thought.lower()
+                if any(claim in lowered for claim in unsupported_personal_claims):
+                    failures.append(f"beat {index}: invents an unsupported personal experience")
+        return failures
+    if agent_name == "nova.plan.edit_guide":
+        failures: list[str] = []
+        if not output.reply.strip():
+            failures.append("reply is blank")
+        if input.phase == "briefing":
+            if output.revision is not None:
+                failures.append("briefing response contains a revision")
+            if not output.brief.goal.strip():
+                failures.append("briefing response has no creator goal")
+        elif output.revision is not None:
+            expected = {beat.beat_id for beat in input.beats}
+            actual = [beat.beat_id for beat in output.revision.story_beats]
+            if set(actual) != expected or len(actual) != len(set(actual)):
+                failures.append("review revision does not preserve exact beat IDs")
+            if any(len(beat.thought.split()) > 18 for beat in output.revision.story_beats):
+                failures.append("review revision contains an overlong thought")
+        return failures
     if agent_name == "nova.compose.overlay_placement":
         return check_overlay_placement(output, input)
     if agent_name == "nova.compose.intro_writer":

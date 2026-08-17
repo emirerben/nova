@@ -235,10 +235,12 @@ describe("VariantCard sequence-synced gating (intro_mode === 'sequence', D6/D19)
     expect(screen.getByRole("button", { name: /^edit text$/i })).toBeEnabled();
     const editorial = screen.getByRole("radio", { name: "Editorial layout" });
     expect(editorial).toBeDisabled(); // 8-word hook → gate intact
-    expect(editorial).toHaveAttribute(
-      "title",
-      "Editorial layout needs a 3-6 word hook — shorten the text first",
-    );
+    expect(editorial).not.toHaveAttribute("title");
+    // The disabled reason surfaces as visible copy under the toggle instead
+    // of a duplicate tooltip.
+    expect(
+      screen.getByText("Editorial needs a 3-6 word hook — shorten the text to unlock it."),
+    ).toBeInTheDocument();
   });
 });
 

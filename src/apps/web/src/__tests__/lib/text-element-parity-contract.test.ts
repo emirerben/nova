@@ -24,6 +24,13 @@ import {
 } from "@/lib/overlay-layout";
 import { PARITY_VERIFIED_FIELDS } from "@/lib/parity-verified-fields";
 import type { TextElement } from "@/lib/plan-api";
+import {
+  smoothTypeStateAt,
+  smoothTypeLineProgresses,
+  textMotionDurationS,
+  textMotionGraphemeCount,
+  textMotionSettleS,
+} from "@/lib/text-motion-v2";
 
 // repo_root/tests/fixtures/text-element-parity — shared with the pytest suite.
 const FIXTURES_DIR = path.resolve(
@@ -33,7 +40,7 @@ const FIXTURES_DIR = path.resolve(
 
 /** Fields whose gate is THIS suite (base fields predate the D17 mechanism).
  * Must mirror GATED_STYLE_FIELDS in test_text_element_parity_contract.py. */
-const GATED_STYLE_FIELDS = ["text_case", "letter_spacing", "line_spacing", "max_width_frac"];
+const GATED_STYLE_FIELDS = ["text_case", "letter_spacing", "line_spacing", "max_width_frac", "motion"];
 
 interface FixtureCase {
   name: string;
@@ -181,6 +188,51 @@ describe("max_width_frac contract (fixture: max_width_frac.json)", () => {
       expect(Math.max(...lines.map((line) => line.length * charWidth))).toBeLessThanOrEqual(
         maxWidthPx,
       );
+    },
+  );
+});
+
+describe("motion contract (fixture: motion.json)", () => {
+  const { cases } = loadFixture("motion");
+
+  it.each(cases.map((c) => [c.name, c] as const))(
+    "matches shared timing and frame states: %s",
+    (_name: string, c: FixtureCase) => {
+      const element = c.element as unknown as TextElement;
+      const expected = c.expected as {
+        grapheme_count: number;
+        settle_s: number;
+        total_s: number;
+        samples: Array<Record<string, unknown>>;
+      };
+      expect(textMotionGraphemeCount(element.text)).toBe(expected.grapheme_count);
+      expect(textMotionSettleS(element.effect!, element.text, element.motion)).toBeCloseTo(expected.settle_s, 9);
+      expect(textMotionDurationS(element.effect!, element.text, element.motion)).toBeCloseTo(expected.total_s, 9);
+      for (const sample of expected.samples) {
+        const state = smoothTypeStateAt(element.text, sample.t as number, element.motion);
+        expect(state.alpha).toBeCloseTo(sample.alpha as number, 9);
+        expect(state.xTranslate).toBeCloseTo(sample.x_translate as number, 9);
+        expect(state.yTranslate).toBeCloseTo(sample.y_translate as number, 9);
+        expect(state.blurPx).toBeCloseTo(sample.blur_px as number, 9);
+        expect(state.revealProgress).toBeCloseTo(sample.reveal_progress as number, 9);
+        expect(state.revealOrigin).toBe(sample.reveal_origin);
+        expect(state.settled).toBe(sample.settled);
+      }
+      const lineSamples = (c.expected.line_samples ?? []) as Array<{
+        t: number;
+        progresses: number[];
+      }>;
+      for (const sample of lineSamples) {
+        const progresses = smoothTypeLineProgresses(
+          element.text.split("\n"),
+          sample.t,
+          element.motion,
+        );
+        expect(progresses).toHaveLength(sample.progresses.length);
+        progresses.forEach((progress, index) => {
+          expect(progress).toBeCloseTo(sample.progresses[index], 9);
+        });
+      }
     },
   );
 });

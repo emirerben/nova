@@ -20,15 +20,362 @@ Beat or crash the worker.
 from __future__ import annotations
 
 import threading
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import and_, case, or_, select, text
 
+from app.database import sync_session
+from app.models import Job, PlanItem, PlanItemAsset
 from app.tasks.reaper import _live_job_ids, reap_orphans, reconcile_stuck_variants
 from app.worker import celery_app
 
 log = structlog.get_logger()
+
+# A full 20-file batch can legitimately wait behind ten waves at concurrency 2;
+# each task has a 5-minute hard limit. Do not invalidate healthy broker backlog.
+_POOL_QUEUED_STALE_AFTER = timedelta(minutes=60)
+_POOL_ANALYZING_STALE_AFTER = timedelta(minutes=10)
+_POOL_MAX_ATTEMPTS = 3
+_POOL_HEIF_DECODER_RECOVERY_MAX_ATTEMPTS = 2
+_POOL_RECONCILE_BATCH = 100
+_POOL_RESERVATION_TTL = timedelta(minutes=15)
+_POOL_RESERVATION_CLEANUP_GRACE = timedelta(minutes=15)
+# Bounded pass: pre-fix `ready` rows (video, or HEIC/HEIF image) that never got
+# a browser-safe preview generated (`preview_gcs_path IS NULL`). Small batch —
+# this is a backfill, not the fast path; new uploads get their preview inline
+# in `analyze_pool_asset`.
+_POOL_PREVIEW_BACKFILL_BATCH = 25
+
+
+def _heif_decoder_recovery_predicate():
+    """Rows terminalized by the missing HEIF decoder, eligible for one retry."""
+    return and_(
+        PlanItemAsset.status == "failed",
+        PlanItemAsset.error_code == "analysis_unreadable",
+        PlanItemAsset.upload_content_type.in_({"image/heic", "image/heif"}),
+        PlanItemAsset.analysis_attempt_count < _POOL_HEIF_DECODER_RECOVERY_MAX_ATTEMPTS,
+    )
+
+
+def _pool_reconcile_priority():
+    """Current creator work sorts ahead of historical decoder recovery."""
+    return case((PlanItemAsset.status == "failed", 1), else_=0)
+
+
+def _preview_backfill_predicate():
+    """`ready` rows that predate the preview pipeline and never got one.
+
+    Video (any codec — a poster helps everywhere) or HEIC/HEIF image.
+    `preview_gcs_path IS NULL` excludes both already-previewed rows AND the
+    ""-sentinel (attempted-and-failed) rows — a failed preview attempt is not
+    retried by this bounded sweep.
+    """
+    return and_(
+        PlanItemAsset.status == "ready",
+        PlanItemAsset.preview_gcs_path.is_(None),
+        or_(
+            PlanItemAsset.kind == "video",
+            PlanItemAsset.upload_content_type.in_({"image/heic", "image/heif"}),
+        ),
+    )
+
+
+def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
+    """Requeue unclaimed analyses and terminalize exhausted/stuck attempts.
+
+    A fresh token fences a late worker from overwriting the retry. Publication
+    happens after commit so a worker can always observe and atomically claim its
+    queued row.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
+
+    current = now or datetime.now(UTC)
+    queued_cutoff = current - _POOL_QUEUED_STALE_AFTER
+    analyzing_cutoff = current - _POOL_ANALYZING_STALE_AFTER
+    to_publish: list[tuple[str, str, str | None]] = []
+    expired_reservations: list[
+        tuple[
+            uuid.UUID,
+            uuid.UUID,
+            str,
+            str | None,
+            list[tuple[str, str | None]],
+            str | None,
+        ]
+    ] = []
+    touched = 0
+
+    with sync_session() as db:
+        rows = (
+            db.execute(
+                select(PlanItemAsset)
+                .where(
+                    or_(
+                        and_(
+                            PlanItemAsset.status.in_({"preparing", "promoting"}),
+                            or_(
+                                PlanItemAsset.upload_expires_at
+                                <= current - _POOL_RESERVATION_CLEANUP_GRACE,
+                                and_(
+                                    PlanItemAsset.upload_expires_at.is_(None),
+                                    PlanItemAsset.created_at
+                                    <= current
+                                    - (_POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE),
+                                ),
+                            ),
+                        ),
+                        PlanItemAsset.status == "cleanup_pending",
+                        and_(
+                            PlanItemAsset.status == "queued",
+                            or_(
+                                PlanItemAsset.analysis_last_dispatched_at <= queued_cutoff,
+                                and_(
+                                    PlanItemAsset.analysis_last_dispatched_at.is_(None),
+                                    PlanItemAsset.created_at <= queued_cutoff,
+                                ),
+                            ),
+                        ),
+                        and_(
+                            PlanItemAsset.status == "uploaded",
+                            PlanItemAsset.created_at <= queued_cutoff,
+                        ),
+                        and_(
+                            PlanItemAsset.status == "analyzing",
+                            or_(
+                                PlanItemAsset.analysis_started_at <= analyzing_cutoff,
+                                and_(
+                                    PlanItemAsset.analysis_started_at.is_(None),
+                                    PlanItemAsset.created_at <= analyzing_cutoff,
+                                ),
+                            ),
+                        ),
+                        # HEIC/HEIF pool analysis shipped without registering
+                        # Pillow's decoder, so every valid iPhone photo was
+                        # terminalized as unreadable on its first attempt. Give
+                        # those rows exactly one post-fix recovery attempt; a
+                        # genuinely corrupt HEIF then stops at attempt 2 rather
+                        # than looping forever.
+                        _heif_decoder_recovery_predicate(),
+                    )
+                )
+                # Current uploads and stale in-flight work stay ahead of the
+                # historical repair so rollout recovery cannot delay creators
+                # who are uploading now.
+                .order_by(
+                    _pool_reconcile_priority(),
+                    PlanItemAsset.created_at,
+                )
+                .with_for_update(skip_locked=True)
+                .limit(_POOL_RECONCILE_BATCH)
+            )
+            .scalars()
+            .all()
+        )
+        for asset in rows:
+            touched += 1
+            if asset.status in {"preparing", "promoting", "cleanup_pending"}:
+                # Claim cleanup before releasing the row lock. Registration
+                # accepts only preparing/promoting rows, so it cannot write after
+                # this transaction commits and before storage deletion.
+                generation = getattr(asset, "gcs_generation", None)
+                cleanup_targets: list[tuple[str, str | None]] = [(asset.gcs_path, generation)]
+                promotion = (
+                    (getattr(asset, "analysis", None) or {}).get("_upload_promotion")
+                    if isinstance(getattr(asset, "analysis", None), dict)
+                    else None
+                )
+                cleanup_previous_status = (
+                    (getattr(asset, "analysis", None) or {}).get("_pool_cleanup_previous_status")
+                    if isinstance(getattr(asset, "analysis", None), dict)
+                    else None
+                )
+                if isinstance(promotion, dict):
+                    source_path = promotion.get("source_path")
+                    source_generation = promotion.get("source_generation")
+                    destination_path = promotion.get("destination_path")
+                    if isinstance(source_path, str) and source_path:
+                        cleanup_targets[0] = (
+                            source_path,
+                            str(source_generation) if source_generation else None,
+                        )
+                    if isinstance(destination_path, str) and destination_path:
+                        cleanup_targets.append((destination_path, None))
+                asset.status = "cleanup_pending"
+                expired_reservations.append(
+                    (
+                        asset.id,
+                        asset.plan_item_id,
+                        asset.gcs_path,
+                        generation,
+                        cleanup_targets,
+                        str(cleanup_previous_status) if cleanup_previous_status else None,
+                    )
+                )
+                continue
+            attempts = int(asset.analysis_attempt_count or 0)
+            if attempts >= _POOL_MAX_ATTEMPTS:
+                asset.status = "failed"
+                asset.error_code = "analysis_timed_out"
+                asset.error_detail = "Kria couldn't finish analyzing this file. Try again."
+                asset.error_retryable = True
+                asset.analysis_started_at = None
+                continue
+            token = uuid.uuid4().hex
+            asset.status = "queued"
+            asset.analysis_attempt_token = token
+            asset.analysis_attempt_count = attempts + 1
+            asset.analysis_last_dispatched_at = current
+            asset.analysis_started_at = None
+            asset.error_code = None
+            asset.error_detail = None
+            asset.error_retryable = False
+            to_publish.append((str(asset.id), token, getattr(asset, "correlation_id", None)))
+        db.commit()
+
+    expired_cleaned = 0
+    if expired_reservations:
+        from app.services.pool_asset_refs import (  # noqa: PLC0415
+            item_references_pool_path,
+            job_references_pool_asset,
+        )
+        from app.storage import (  # noqa: PLC0415
+            delete_object_best_effort,
+            delete_object_generation_best_effort,
+        )
+
+        for (
+            asset_id,
+            plan_item_id,
+            path,
+            generation,
+            cleanup_targets,
+            previous_status,
+        ) in expired_reservations:
+            with sync_session() as db:
+                item = (
+                    db.get(PlanItem, plan_item_id, with_for_update=True)
+                    if previous_status
+                    else None
+                )
+                asset = db.get(PlanItemAsset, asset_id, with_for_update=True)
+                if not (
+                    asset is not None
+                    and asset.status == "cleanup_pending"
+                    and asset.gcs_path == path
+                    and str(getattr(asset, "gcs_generation", None) or "") == str(generation or "")
+                ):
+                    continue
+                if previous_status:
+                    job = (
+                        db.get(Job, item.current_job_id, with_for_update=True)
+                        if item is not None and item.current_job_id is not None
+                        else None
+                    )
+                    if item is not None and (
+                        item_references_pool_path(item, asset.gcs_path)
+                        or (
+                            job is not None
+                            and job.status != "cancelled"
+                            and job_references_pool_asset(
+                                job,
+                                asset_id=str(asset.id),
+                                gcs_path=asset.gcs_path,
+                            )
+                        )
+                    ):
+                        restored = dict(asset.analysis) if isinstance(asset.analysis, dict) else {}
+                        restored.pop("_pool_cleanup_previous_status", None)
+                        asset.analysis = restored or None
+                        asset.status = previous_status
+                        db.commit()
+                        continue
+                cleaned = True
+                for cleanup_path, cleanup_generation in dict.fromkeys(cleanup_targets):
+                    target_cleaned = (
+                        delete_object_generation_best_effort(
+                            cleanup_path, generation=str(cleanup_generation)
+                        )
+                        if cleanup_generation
+                        else delete_object_best_effort(cleanup_path)
+                    )
+                    cleaned = target_cleaned and cleaned
+                if not cleaned:
+                    log.warning("pool_asset_reservation_cleanup_deferred", asset_id=str(asset_id))
+                    continue
+                if asset.gcs_path != path or str(
+                    getattr(asset, "gcs_generation", None) or ""
+                ) != str(generation or ""):
+                    continue
+                db.delete(asset)
+                db.commit()
+                expired_cleaned += 1
+
+    for asset_id, token, correlation_id in to_publish:
+        try:
+            task_headers = {"pool_asset_attempt_token": token}
+            if correlation_id:
+                task_headers["x-correlation-id"] = correlation_id
+            analyze_pool_asset.apply_async(
+                args=[asset_id, False],
+                queue=settings.pool_asset_analysis_queue,
+                headers=task_headers,
+            )
+        except Exception as exc:  # noqa: BLE001
+            with sync_session() as db:
+                asset = db.get(PlanItemAsset, uuid.UUID(asset_id), with_for_update=True)
+                if asset is not None and asset.analysis_attempt_token == token:
+                    asset.status = "failed"
+                    asset.error_code = "analysis_temporarily_unavailable"
+                    asset.error_detail = "Kria couldn't restart analyzing this file. Try again."
+                    asset.error_retryable = True
+                    db.commit()
+            log.warning(
+                "pool_asset_requeue_failed",
+                asset_id=asset_id,
+                error_type=type(exc).__name__,
+            )
+    if touched:
+        log.info(
+            "pool_asset_reconciled",
+            count=touched,
+            republished=len(to_publish),
+            expired_reservations=expired_cleaned,
+        )
+
+    from app.tasks.autoplace import generate_pool_asset_preview  # noqa: PLC0415
+
+    with sync_session() as db:
+        preview_backfill_ids = (
+            db.execute(
+                select(PlanItemAsset.id)
+                .where(_preview_backfill_predicate())
+                .order_by(PlanItemAsset.created_at.desc())
+                .limit(_POOL_PREVIEW_BACKFILL_BATCH)
+            )
+            .scalars()
+            .all()
+        )
+    for asset_id in preview_backfill_ids:
+        try:
+            generate_pool_asset_preview.apply_async(
+                args=[str(asset_id)],
+                queue=settings.pool_asset_analysis_queue,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Best-effort backfill: dispatch failure just means this row waits
+            # for the next reconcile pass. Never fail the whole sweep over it.
+            log.warning(
+                "pool_asset_preview_backfill_dispatch_failed",
+                asset_id=str(asset_id),
+                error_type=type(exc).__name__,
+            )
+    if preview_backfill_ids:
+        log.info("pool_asset_preview_backfill_dispatched", count=len(preview_backfill_ids))
+
+    return touched
 
 
 @celery_app.task(
@@ -55,6 +402,10 @@ def sweep_stale_jobs(self) -> int:
     cuts that to 3.
     """
     try:
+        try:
+            reconcile_stale_pool_assets()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("reconcile_stale_pool_assets_failed", error_type=type(exc).__name__)
         live = _live_job_ids(celery_app)
         if live is None:
             # inspect() failed — both functions would no-op anyway; skip

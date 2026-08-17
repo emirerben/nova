@@ -47,7 +47,7 @@ function makeAsset(overrides: Record<string, unknown> = {}) {
   return {
     id: `asset-${Math.random().toString(36).slice(2)}`,
     kind: "image",
-    status: "uploaded",
+    status: "ready",
     source_filename: "shot.png",
     duration_s: null,
     aspect: null,
@@ -94,9 +94,11 @@ function listRoute(assets: unknown[], maxAssets = 20) {
       : undefined;
 }
 
-async function renderPool() {
+async function renderPool(
+  props: Omit<React.ComponentProps<typeof AssetPool>, "itemId"> = {},
+) {
   await act(async () => {
-    render(<AssetPool itemId="item-1" />);
+    render(<AssetPool itemId="item-1" {...props} />);
   });
 }
 
@@ -133,23 +135,43 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
   const UPLOAD_URLS_URL = "/api/plan/plan-items/item-1/assets/upload-urls";
   const REGISTER_URL = "/api/plan/plan-items/item-1/assets";
   const SIGNED_PUT = "https://storage.googleapis.com/bucket/users/u1/plan/item-1/pool/shot.png";
+  const signedTarget = (gcsPath: string, uploadUrl: string, clientUploadId: string) => ({
+    reservation_id: `reservation-${gcsPath.split("/").at(-1)}`,
+    client_upload_id: clientUploadId,
+    upload_url: uploadUrl,
+    gcs_path: gcsPath,
+    expires_at: "2026-08-14T10:00:00Z",
+    upload_headers: { "x-goog-if-generation-match": "0" },
+  });
 
   it("upload-urls → direct GCS PUT → register; tile appears; NO proxy body cap", async () => {
     process.env[FLAG] = "true";
+    const onMutated = jest.fn();
     const registered = makeAsset({ subject: "settings toggle" });
     let putBody: unknown = null;
+    let putHeaders: HeadersInit | undefined;
     let registerBody: Record<string, unknown> | null = null;
     mockFetch((method, url, init) => {
-      if (method === "GET" && url === REGISTER_URL) {
+      if (method === "GET" && url === "/api/plan/plan-items/item-1/assets") {
         return jsonResponse({ assets: [], max_assets: 20 });
       }
       if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
         return jsonResponse({
-          urls: [{ upload_url: SIGNED_PUT, gcs_path: "users/u1/plan/item-1/pool/shot.png" }],
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/shot.png",
+              SIGNED_PUT,
+              body.files[0].client_upload_id,
+            ),
+          ],
         });
       }
       if (method === "PUT" && url === SIGNED_PUT) {
         putBody = init?.body;
+        putHeaders = init?.headers;
         return jsonResponse({}, 200);
       }
       if (method === "POST" && url === REGISTER_URL) {
@@ -158,7 +180,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
       }
       return undefined;
     });
-    await renderPool();
+    await renderPool({ onMutated });
 
     const input = screen.getByLabelText(/add visuals to your pool/i);
     const file = new File(["png-bytes"], "shot.png", { type: "image/png" });
@@ -169,12 +191,17 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     await waitFor(() => {
       expect(screen.getByText("settings toggle")).toBeInTheDocument();
     });
+    expect(onMutated).toHaveBeenCalledTimes(1);
 
     // The bytes went straight to GCS via a direct PUT — never buffered through
     // the Next api-proxy multipart upload (that's the Vercel 4.5MB cap path).
     const fetchMock = global.fetch as jest.Mock;
     expect(fetchMock.mock.calls.some(([u]) => String(u) === SIGNED_PUT)).toBe(true);
     expect(putBody).toBe(file);
+    expect(putHeaders).toMatchObject({
+      "Content-Type": "image/png",
+      "x-goog-if-generation-match": "0",
+    });
     // The legacy one-shot multipart proxy is NOT used.
     expect(
       fetchMock.mock.calls.some(
@@ -183,6 +210,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     ).toBe(false);
     // Register carries the gcs_path + a client-computed content_hash for dedupe.
     expect(registerBody!.gcs_path).toBe("users/u1/plan/item-1/pool/shot.png");
+    expect(registerBody!.reservation_id).toBe("reservation-shot.png");
     expect(registerBody!.content_type).toBe("image/png");
     expect(registerBody!.source_filename).toBe("shot.png");
     expect(typeof registerBody!.content_hash).toBe("string");
@@ -197,8 +225,17 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
         return jsonResponse({ assets: [], max_assets: 20 });
       }
       if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
         return jsonResponse({
-          urls: [{ upload_url: SIGNED_PUT, gcs_path: "users/u1/plan/item-1/pool/shot.png" }],
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/shot.png",
+              SIGNED_PUT,
+              body.files[0].client_upload_id,
+            ),
+          ],
         });
       }
       if (method === "PUT" && url === SIGNED_PUT) {
@@ -207,7 +244,13 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
       }
       if (method === "POST" && url === "/api/plan/uploads/relay") {
         relayed = true;
+        expect(init?.headers).toMatchObject({
+          "X-Correlation-Id": expect.stringMatching(/^batch-/),
+        });
         expect(init?.body).toBeInstanceOf(FormData);
+        const form = init?.body as FormData;
+        expect(form.get("file_size_bytes")).toBe(String(file.size));
+        expect(form.get("if_generation_match")).toBe("0");
         return jsonResponse({ ok: true });
       }
       if (method === "POST" && url === REGISTER_URL) {
@@ -229,16 +272,881 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     expect(relayed).toBe(true);
   });
 
+  it("signs a batch once and never runs more than three direct transfers", async () => {
+    process.env[FLAG] = "true";
+    let presignCalls = 0;
+    let activePuts = 0;
+    let maxActivePuts = 0;
+    let registerCalls = 0;
+    const releases: Array<() => void> = [];
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        presignCalls += 1;
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ filename: string; client_upload_id: string }>;
+        };
+        expect(body.files).toHaveLength(4);
+        expect(new Set(body.files.map((file) => file.client_upload_id)).size).toBe(4);
+        expect(body.files.every((file) => file.client_upload_id.startsWith("file-"))).toBe(true);
+        return jsonResponse({
+          urls: body.files.map((file) =>
+            signedTarget(
+              `users/u1/plan/item-1/pool/${file.filename}`,
+              `https://storage.example/${file.filename}`,
+              file.client_upload_id,
+            ),
+          ),
+        });
+      }
+      if (method === "PUT" && url.startsWith("https://storage.example/")) {
+        activePuts += 1;
+        maxActivePuts = Math.max(maxActivePuts, activePuts);
+        await new Promise<void>((resolve) => {
+          releases.push(() => {
+            activePuts -= 1;
+            resolve();
+          });
+        });
+        return jsonResponse({});
+      }
+      if (method === "POST" && url === REGISTER_URL) {
+        registerCalls += 1;
+        const body = JSON.parse(String(init?.body)) as { source_filename: string };
+        return jsonResponse(
+          makeAsset({
+            id: `asset-${body.source_filename}`,
+            source_filename: body.source_filename,
+          }),
+        );
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    await renderPool();
+    const files = ["one.png", "two.png", "three.png", "four.png"].map(
+      (name) => new File([name], name, { type: "image/png" }),
+    );
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files },
+    });
+
+    await waitFor(() => expect(releases).toHaveLength(3));
+    expect(presignCalls).toBe(1);
+    expect(maxActivePuts).toBe(3);
+    await act(async () => releases[0]());
+    await waitFor(() => expect(releases).toHaveLength(4));
+    await waitFor(() => expect(registerCalls).toBe(1));
+    expect(maxActivePuts).toBe(3);
+    await act(async () => releases.slice(1).forEach((release) => release()));
+    await waitFor(() => expect(screen.getByText("4 of 4 added.")).toBeInTheDocument());
+  });
+
+  it("clamps selection to remaining capacity before requesting upload URLs", async () => {
+    process.env[FLAG] = "true";
+    const existing = Array.from({ length: 19 }, (_, index) =>
+      makeAsset({ id: `asset-${index}`, source_filename: `asset-${index}.png` }),
+    );
+    let signedFiles = 0;
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: existing, max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        signedFiles = body.files.length;
+        return jsonResponse({
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/only.png",
+              SIGNED_PUT,
+              body.files[0].client_upload_id,
+            ),
+          ],
+        });
+      }
+      if (method === "PUT" && url === SIGNED_PUT) return jsonResponse({});
+      if (method === "POST" && url === REGISTER_URL) return jsonResponse(makeAsset());
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: {
+        files: ["one.png", "two.png", "three.png"].map(
+          (name) => new File([name], name, { type: "image/png" }),
+        ),
+      },
+    });
+    await waitFor(() => expect(signedFiles).toBe(1));
+    expect(screen.getByText("Your pool has room for 1 more visual. Select up to 1.")).toBeInTheDocument();
+  });
+
+  it("rejects unknown empty-MIME extensions before networking", async () => {
+    process.env[FLAG] = "true";
+    const fetchMock = mockFetch(listRoute([]));
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["pdf"], "notes.pdf", { type: "" })] },
+    });
+    expect(
+      screen.getByText(/export them as JPG, PNG, WebP, HEIC\/HEIF, MP4, or MOV/i),
+    ).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url) === UPLOAD_URLS_URL && (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("replaces a presign 500 with actionable copy and a stage-specific retry", async () => {
+    process.env[FLAG] = "true";
+    let presignCalls = 0;
+    const correlationIds: string[] = [];
+    const clientUploadIds: string[] = [];
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        presignCalls += 1;
+        const headers = init?.headers as Record<string, string>;
+        correlationIds.push(headers["X-Correlation-Id"]);
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        clientUploadIds.push(body.files[0].client_upload_id);
+        if (presignCalls === 1) return jsonResponse({ detail: "Internal Server Error" }, 500);
+        return jsonResponse({
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/retry.png",
+              SIGNED_PUT,
+              body.files[0].client_upload_id,
+            ),
+          ],
+        });
+      }
+      if (method === "PUT" && url === SIGNED_PUT) return jsonResponse({});
+      if (method === "POST" && url === REGISTER_URL) return jsonResponse(makeAsset());
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["retry"], "retry.png", { type: "image/png" })] },
+    });
+    expect(
+      await screen.findByText("Kria couldn’t start this upload. Retry in a moment."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/internal server error/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByText("1 of 1 added.")).toBeInTheDocument());
+    expect(presignCalls).toBe(2);
+    expect(new Set(correlationIds).size).toBe(1);
+    expect(new Set(clientUploadIds).size).toBe(1);
+  });
+
+  it("preserves an actionable terminal 4xx and does not offer a futile retry", async () => {
+    process.env[FLAG] = "true";
+    mockFetch((method, url) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        return jsonResponse(
+          {
+            detail: "This upload retry does not match the originally selected file.",
+            code: "reservation_mismatch",
+            retryable: false,
+          },
+          409,
+        );
+      }
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["x"], "shot.png", { type: "image/png" })] },
+    });
+
+    expect(
+      await screen.findByText("This upload retry does not match the originally selected file."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+
+  it("keeps mixed partial successes and summarizes only the failed file", async () => {
+    process.env[FLAG] = "true";
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ filename: string; client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: body.files.map((file) =>
+            signedTarget(
+              `users/u1/plan/item-1/pool/${file.filename}`,
+              `https://storage.example/${file.filename}`,
+              file.client_upload_id,
+            ),
+          ),
+        });
+      }
+      if (method === "PUT" && url === "https://storage.example/bad.png") {
+        return jsonResponse({}, 503);
+      }
+      if (method === "PUT" && url.startsWith("https://storage.example/")) {
+        return jsonResponse({});
+      }
+      if (method === "POST" && url === REGISTER_URL) {
+        const body = JSON.parse(String(init?.body)) as { source_filename: string };
+        return jsonResponse(
+          makeAsset({ id: body.source_filename, source_filename: body.source_filename }),
+        );
+      }
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: {
+        files: ["good-a.png", "bad.png", "good-b.png"].map(
+          (name) => new File([name], name, { type: "image/png" }),
+        ),
+      },
+    });
+
+    expect(await screen.findByText("2 of 3 added; 1 needs attention.")).toBeInTheDocument();
+    expect(screen.getByText("Upload interrupted. Check your connection and retry.")).toBeInTheDocument();
+  });
+
+  it("retries registration without uploading the file a second time", async () => {
+    process.env[FLAG] = "true";
+    let putCalls = 0;
+    let registerCalls = 0;
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/register.png",
+              SIGNED_PUT,
+              body.files[0].client_upload_id,
+            ),
+          ],
+        });
+      }
+      if (method === "PUT" && url === SIGNED_PUT) {
+        putCalls += 1;
+        return jsonResponse({});
+      }
+      if (method === "POST" && url === REGISTER_URL) {
+        registerCalls += 1;
+        return registerCalls === 1
+          ? jsonResponse({ detail: "Internal Server Error" }, 500)
+          : jsonResponse(makeAsset({ source_filename: "register.png" }));
+      }
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["register"], "register.png", { type: "image/png" })] },
+    });
+    expect(
+      await screen.findByText("The file uploaded, but Kria couldn’t add it to your visuals."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByText("1 of 1 added.")).toBeInTheDocument());
+    expect(putCalls).toBe(1);
+    expect(registerCalls).toBe(2);
+  });
+
+  it("leaves registration failure actions before entering the serial retry lane", async () => {
+    process.env[FLAG] = "true";
+    let registerCalls = 0;
+    let releaseSecond: (() => void) | null = null;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ filename: string; client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: body.files.map((file) =>
+            signedTarget(
+              `users/u1/plan/item-1/pool/${file.filename}`,
+              `https://storage.example/registration-${file.filename}`,
+              file.client_upload_id,
+            ),
+          ),
+        });
+      }
+      if (method === "PUT" && url.startsWith("https://storage.example/registration-")) {
+        return jsonResponse({});
+      }
+      if (method === "POST" && url === REGISTER_URL) {
+        registerCalls += 1;
+        const body = JSON.parse(String(init?.body)) as { source_filename: string };
+        if (registerCalls === 1) return jsonResponse({ detail: "server" }, 500);
+        if (registerCalls === 2) {
+          await new Promise<void>((resolve) => {
+            releaseSecond = resolve;
+          });
+        }
+        return jsonResponse(makeAsset({ source_filename: body.source_filename }));
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: {
+        files: ["retry-a.png", "lane-b.png"].map(
+          (name) => new File([name], name, { type: "image/png" }),
+        ),
+      },
+    });
+    expect(
+      await screen.findByText("The file uploaded, but Kria couldn’t add it to your visuals."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(registerCalls).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.queryByRole("button", { name: "Remove retry-a.png" })).toBeNull();
+    expect(screen.getByLabelText("Adding… retry-a.png")).toBeInTheDocument();
+    await act(async () => releaseSecond?.());
+    await waitFor(() => expect(screen.getByText("2 of 2 added.")).toBeInTheDocument());
+    expect(registerCalls).toBe(3);
+  });
+
+  it("keeps a removed signed reservation counted until its signed lifetime ends", async () => {
+    process.env[FLAG] = "true";
+    let presignCalls = 0;
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 1 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        presignCalls += 1;
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: [
+            {
+              ...signedTarget(
+                "users/u1/plan/item-1/pool/held.png",
+                SIGNED_PUT,
+                body.files[0].client_upload_id,
+              ),
+              expires_at: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        });
+      }
+      if (method === "PUT" && url === SIGNED_PUT) return jsonResponse({}, 503);
+      return undefined;
+    });
+    await renderPool();
+    const input = screen.getByLabelText(/add visuals to your pool/i);
+    fireEvent.change(input, {
+      target: { files: [new File(["held"], "held.png", { type: "image/png" })] },
+    });
+    expect(await screen.findByText("Upload interrupted. Check your connection and retry.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.queryByText("held.png")).toBeNull();
+    expect(screen.getByLabelText(/add visuals to your pool/i)).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Kria is releasing a removed upload slot. You can add another visual when cleanup finishes.",
+      ),
+    ).toBeInTheDocument();
+    expect(presignCalls).toBe(1);
+  });
+
+  it("conservatively holds capacity when a presign response is lost after server commit", async () => {
+    process.env[FLAG] = "true";
+    mockFetch((method, url) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 1 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        throw new TypeError("response stream lost");
+      }
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["lost"], "lost.png", { type: "image/png" })] },
+    });
+    expect(
+      await screen.findByText("Kria couldn’t start this upload. Retry in a moment."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.getByLabelText(/add visuals to your pool/i)).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Kria is releasing a removed upload slot. You can add another visual when cleanup finishes.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps registration-failure capacity for a full TTL even when the old target expires", async () => {
+    process.env[FLAG] = "true";
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 1 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: [
+            {
+              ...signedTarget(
+                "users/u1/plan/item-1/pool/promoting.png",
+                SIGNED_PUT,
+                body.files[0].client_upload_id,
+              ),
+              expires_at: new Date(Date.now() - 1).toISOString(),
+            },
+          ],
+        });
+      }
+      if (method === "PUT" && url === SIGNED_PUT) return jsonResponse({});
+      if (method === "POST" && url === REGISTER_URL) return jsonResponse({ detail: "server" }, 500);
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: {
+        files: [new File(["promoting"], "promoting.png", { type: "image/png" })],
+      },
+    });
+    expect(
+      await screen.findByText("The file uploaded, but Kria couldn’t add it to your visuals."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.getByLabelText(/add visuals to your pool/i)).toBeDisabled();
+  });
+
+  it("restores hidden capacity from the authoritative list after reload", async () => {
+    process.env[FLAG] = "true";
+    mockFetch((method, url) =>
+      method === "GET" && url === REGISTER_URL
+        ? jsonResponse({
+            assets: [],
+            max_assets: 1,
+            occupied_assets: 1,
+            active_reservations: [
+              {
+                reservation_id: "reservation-from-server",
+                release_at: new Date(Date.now() + 60_000).toISOString(),
+              },
+            ],
+          })
+        : undefined,
+    );
+    await renderPool();
+    expect(screen.getByLabelText(/add visuals to your pool/i)).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add visuals" })).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Kria is releasing a removed upload slot. You can add another visual when cleanup finishes.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("limits a new batch against authoritative hidden reservations before networking", async () => {
+    process.env[FLAG] = "true";
+    let requestedFiles = -1;
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({
+          assets: [],
+          max_assets: 20,
+          occupied_assets: 10,
+          active_reservations: Array.from({ length: 10 }, (_, index) => ({
+            reservation_id: `server-reservation-${index}`,
+            release_at: new Date(Date.now() + 60_000).toISOString(),
+          })),
+        });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as { files: unknown[] };
+        requestedFiles = body.files.length;
+        return jsonResponse({ detail: "temporary" }, 503);
+      }
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: {
+        files: Array.from(
+          { length: 20 },
+          (_, index) => new File([`${index}`], `shot-${index}.png`, { type: "image/png" }),
+        ),
+      },
+    });
+    await waitFor(() => expect(requestedFiles).toBe(10));
+    expect(
+      screen.getByText("Your pool has room for 10 more visuals. Select up to 10."),
+    ).toBeInTheDocument();
+  });
+
+  it("polls a cleanup-pending hold until maintenance releases it", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method !== "GET" || url !== REGISTER_URL) return undefined;
+      listCalls += 1;
+      return listCalls === 1
+        ? jsonResponse({
+            assets: [],
+            max_assets: 1,
+            occupied_assets: 1,
+            active_reservations: [
+              { reservation_id: "cleanup-pending", release_at: null },
+            ],
+          })
+        : jsonResponse({
+            assets: [],
+            max_assets: 1,
+            occupied_assets: 0,
+            active_reservations: [],
+          });
+    });
+    await renderPool();
+    expect(screen.getByLabelText(/add visuals to your pool/i)).toBeDisabled();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5_000);
+    });
+    expect(listCalls).toBe(2);
+    expect(screen.getByLabelText(/add visuals to your pool/i)).toBeEnabled();
+  });
+
+  it("refreshes the signed target and retransfers after an interrupted PUT", async () => {
+    process.env[FLAG] = "true";
+    let presignCalls = 0;
+    let putCalls = 0;
+    let registerCalls = 0;
+    const clientIds: string[] = [];
+    const correlationIds: string[] = [];
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        presignCalls += 1;
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        clientIds.push(body.files[0].client_upload_id);
+        correlationIds.push((init?.headers as Record<string, string>)["X-Correlation-Id"]);
+        return jsonResponse({
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/interrupted.png",
+              `https://storage.example/interrupted-${presignCalls}`,
+              body.files[0].client_upload_id,
+            ),
+          ],
+        });
+      }
+      if (method === "PUT" && url.startsWith("https://storage.example/interrupted-")) {
+        putCalls += 1;
+        return putCalls === 1 ? jsonResponse({}, 503) : jsonResponse({});
+      }
+      if (method === "POST" && url === REGISTER_URL) {
+        registerCalls += 1;
+        return jsonResponse(makeAsset({ source_filename: "interrupted.png" }));
+      }
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["retry"], "interrupted.png", { type: "image/png" })] },
+    });
+    expect(
+      await screen.findByText("Upload interrupted. Check your connection and retry."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByText("1 of 1 added.")).toBeInTheDocument());
+    expect({ presignCalls, putCalls, registerCalls }).toEqual({
+      presignCalls: 2,
+      putCalls: 2,
+      registerCalls: 1,
+    });
+    expect(new Set(clientIds).size).toBe(1);
+    expect(new Set(correlationIds).size).toBe(1);
+  });
+
+  it("restarts transfer when registration reports an expired reservation", async () => {
+    process.env[FLAG] = "true";
+    let presignCalls = 0;
+    let putCalls = 0;
+    let registerCalls = 0;
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        presignCalls += 1;
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/expired.png",
+              `https://storage.example/expired-${presignCalls}`,
+              body.files[0].client_upload_id,
+            ),
+          ],
+        });
+      }
+      if (method === "PUT" && url.startsWith("https://storage.example/expired-")) {
+        putCalls += 1;
+        return jsonResponse({});
+      }
+      if (method === "POST" && url === REGISTER_URL) {
+        registerCalls += 1;
+        return registerCalls === 1
+          ? jsonResponse(
+              {
+                detail: "This upload expired. Upload the file again.",
+                code: "upload_reservation_expired",
+                stage: "transfer",
+                retryable: true,
+              },
+              404,
+            )
+          : jsonResponse(makeAsset({ source_filename: "expired.png" }));
+      }
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["expired"], "expired.png", { type: "image/png" })] },
+    });
+    expect(await screen.findByText("This upload expired. Upload the file again.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByText("1 of 1 added.")).toBeInTheDocument());
+    expect({ presignCalls, putCalls, registerCalls }).toEqual({
+      presignCalls: 2,
+      putCalls: 2,
+      registerCalls: 2,
+    });
+  });
+
+  it("rejects a mismatched signed target identity before any transfer", async () => {
+    process.env[FLAG] = "true";
+    let putCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        return jsonResponse({
+          urls: [signedTarget("users/u1/plan/item-1/pool/wrong.png", SIGNED_PUT, "wrong-id")],
+        });
+      }
+      if (method === "PUT") {
+        putCalls += 1;
+        return jsonResponse({});
+      }
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["wrong"], "wrong.png", { type: "image/png" })] },
+    });
+    expect(
+      await screen.findByText("Kria couldn’t start this upload. Retry in a moment."),
+    ).toBeInTheDocument();
+    expect(putCalls).toBe(0);
+  });
+
+  it("rejects a signed-target count mismatch before any transfer", async () => {
+    process.env[FLAG] = "true";
+    let putCalls = 0;
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/one.png",
+              SIGNED_PUT,
+              body.files[0].client_upload_id,
+            ),
+          ],
+        });
+      }
+      if (method === "PUT") {
+        putCalls += 1;
+        return jsonResponse({});
+      }
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: {
+        files: ["one.png", "two.png"].map(
+          (name) => new File([name], name, { type: "image/png" }),
+        ),
+      },
+    });
+    expect(
+      await screen.findAllByText("Kria couldn’t start this upload. Retry in a moment."),
+    ).toHaveLength(2);
+    expect(putCalls).toBe(0);
+  });
+
+  it("serializes digest and registration work to one active lane", async () => {
+    process.env[FLAG] = "true";
+    let registerCalls = 0;
+    let activeRegistrations = 0;
+    let maxActiveRegistrations = 0;
+    let releaseFirst: (() => void) | null = null;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ filename: string; client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: body.files.map((file) =>
+            signedTarget(
+              `users/u1/plan/item-1/pool/${file.filename}`,
+              `https://storage.example/lane-${file.filename}`,
+              file.client_upload_id,
+            ),
+          ),
+        });
+      }
+      if (method === "PUT" && url.startsWith("https://storage.example/lane-")) {
+        return jsonResponse({});
+      }
+      if (method === "POST" && url === REGISTER_URL) {
+        registerCalls += 1;
+        activeRegistrations += 1;
+        maxActiveRegistrations = Math.max(maxActiveRegistrations, activeRegistrations);
+        if (registerCalls === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        activeRegistrations -= 1;
+        const body = JSON.parse(String(init?.body)) as { source_filename: string };
+        return jsonResponse(makeAsset({ source_filename: body.source_filename }));
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: {
+        files: ["lane-a.png", "lane-b.png"].map(
+          (name) => new File([name], name, { type: "image/png" }),
+        ),
+      },
+    });
+    await waitFor(() => expect(registerCalls).toBe(1));
+    expect(maxActiveRegistrations).toBe(1);
+    await act(async () => releaseFirst?.());
+    await waitFor(() => expect(screen.getByText("2 of 2 added.")).toBeInTheDocument());
+    expect(registerCalls).toBe(2);
+    expect(maxActiveRegistrations).toBe(1);
+  });
+
+  it("does not let stale initial hydration erase a newly registered asset", async () => {
+    process.env[FLAG] = "true";
+    let releaseInitial: ((value: Response) => void) | null = null;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url === REGISTER_URL) {
+        return await new Promise<Response>((resolve) => {
+          releaseInitial = resolve;
+        });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/kept.png",
+              SIGNED_PUT,
+              body.files[0].client_upload_id,
+            ),
+          ],
+        });
+      }
+      if (method === "PUT" && url === SIGNED_PUT) return jsonResponse({});
+      if (method === "POST" && url === REGISTER_URL) {
+        return jsonResponse(makeAsset({ subject: "kept after hydration" }));
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    render(<AssetPool itemId="item-1" />);
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["kept"], "kept.png", { type: "image/png" })] },
+    });
+    expect(await screen.findByText("kept after hydration")).toBeInTheDocument();
+    await act(async () => releaseInitial?.(jsonResponse({ assets: [], max_assets: 20 })));
+    expect(screen.getByText("kept after hydration")).toBeInTheDocument();
+  });
+
   it("deduped=true → no duplicate tile + quiet notice", async () => {
     process.env[FLAG] = "true";
     const existing = makeAsset({ id: "asset-existing", subject: "dashboard" });
-    mockFetch((method, url) => {
+    mockFetch((method, url, init) => {
       if (method === "GET" && url === REGISTER_URL) {
         return jsonResponse({ assets: [existing], max_assets: 20 });
       }
       if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
         return jsonResponse({
-          urls: [{ upload_url: SIGNED_PUT, gcs_path: "users/u1/plan/item-1/pool/dup.png" }],
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/dup.png",
+              SIGNED_PUT,
+              body.files[0].client_upload_id,
+            ),
+          ],
         });
       }
       if (method === "PUT" && url === SIGNED_PUT) {
@@ -265,6 +1173,114 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     expect(screen.getAllByText("dashboard")).toHaveLength(1);
     expect(screen.getByText("1 of 20")).toBeInTheDocument();
   });
+
+  it("upserts a deduped registration that was absent from the last list snapshot", async () => {
+    process.env[FLAG] = "true";
+    const remoteDuplicate = makeAsset({
+      id: "asset-other-tab",
+      source_filename: "other-tab.png",
+      subject: "from another tab",
+      deduped: true,
+    });
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/other-tab.png",
+              SIGNED_PUT,
+              body.files[0].client_upload_id,
+            ),
+          ],
+        });
+      }
+      if (method === "PUT" && url === SIGNED_PUT) return jsonResponse({});
+      if (method === "POST" && url === REGISTER_URL) return jsonResponse(remoteDuplicate);
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["same"], "other-tab.png", { type: "image/png" })] },
+    });
+    expect(await screen.findByText("Already in your pool")).toBeInTheDocument();
+    expect(screen.getByText("from another tab")).toBeInTheDocument();
+    expect(screen.getByText("1 of 20")).toBeInTheDocument();
+  });
+
+  it("releases stale authoritative reservation capacity after dedupe", async () => {
+    process.env[FLAG] = "true";
+    const existing = makeAsset({ id: "asset-existing", subject: "existing visual" });
+    const reservationId = "reservation-dedupe-race.png";
+    let releaseList: ((response: Response) => void) | null = null;
+    let releasePut: (() => void) | null = null;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url === REGISTER_URL) {
+        return await new Promise<Response>((resolve) => {
+          releaseList = resolve;
+        });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: [
+            {
+              ...signedTarget(
+                "users/u1/plan/item-1/pool/dedupe-race.png",
+                SIGNED_PUT,
+                body.files[0].client_upload_id,
+              ),
+              reservation_id: reservationId,
+            },
+          ],
+        });
+      }
+      if (method === "PUT" && url === SIGNED_PUT) {
+        await new Promise<void>((resolve) => {
+          releasePut = resolve;
+        });
+        return jsonResponse({});
+      }
+      if (method === "POST" && url === REGISTER_URL) {
+        return jsonResponse({ ...existing, deduped: true });
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    render(<AssetPool itemId="item-1" />);
+    fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
+      target: { files: [new File(["same"], "dedupe-race.png", { type: "image/png" })] },
+    });
+    await waitFor(() => expect(releasePut).not.toBeNull());
+    await act(async () =>
+      releaseList?.(
+        jsonResponse({
+          assets: [existing],
+          max_assets: 2,
+          occupied_assets: 2,
+          active_reservations: [
+            {
+              reservation_id: reservationId,
+              release_at: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        }),
+      ),
+    );
+    expect(screen.getByLabelText(/add visuals to your pool/i)).toBeDisabled();
+    await act(async () => releasePut?.());
+    expect(await screen.findByText("Already in your pool")).toBeInTheDocument();
+    expect(screen.getByLabelText(/add visuals to your pool/i)).toBeEnabled();
+  });
 });
 
 describe("AssetPool — cap", () => {
@@ -289,11 +1305,12 @@ describe("AssetPool — cap", () => {
 describe("AssetPool — delete", () => {
   it("calls DELETE and removes the tile", async () => {
     process.env[FLAG] = "true";
+    const onMutated = jest.fn();
     const asset = makeAsset({ id: "asset-del", source_filename: "gone.png", subject: "toggle" });
     let deleteCalled = false;
     mockFetch((method, url) => {
       if (method === "GET" && url === "/api/plan/plan-items/item-1/assets") {
-        return jsonResponse({ assets: [asset], max_assets: 20 });
+        return jsonResponse({ assets: [asset], max_assets: 1, occupied_assets: 1 });
       }
       if (method === "DELETE" && url === "/api/plan/plan-items/item-1/assets/asset-del") {
         deleteCalled = true;
@@ -301,17 +1318,20 @@ describe("AssetPool — delete", () => {
       }
       return undefined;
     });
-    await renderPool();
+    await renderPool({ onMutated });
     expect(screen.getByText("toggle")).toBeInTheDocument();
+    expect(screen.getByLabelText(/add visuals to your pool/i)).toBeDisabled();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Remove gone.png" }));
     });
 
     expect(deleteCalled).toBe(true);
+    expect(onMutated).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(screen.queryByText("toggle")).toBeNull();
     });
+    expect(screen.getByLabelText(/add visuals to your pool/i)).toBeEnabled();
   });
 });
 
@@ -337,6 +1357,36 @@ describe("AssetPool — failed asset", () => {
     expect(screen.getByRole("button", { name: "Remove broken.heic" })).toBeInTheDocument();
     // Quiet zinc, never red (2A state table).
     expect(container.innerHTML).not.toMatch(/red-\d|text-red|bg-red|border-red/);
+  });
+
+  it("POSTs the idempotent reanalysis endpoint and renders the queued state", async () => {
+    process.env[FLAG] = "true";
+    const failed = makeAsset({
+      id: "asset-retry",
+      status: "failed",
+      source_filename: "retry.mov",
+      display_url: null,
+      error_detail: "Kria temporarily couldn't analyze this file. Try again.",
+      retryable: true,
+    });
+    let reanalyzeCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === "/api/plan/plan-items/item-1/assets") {
+        return jsonResponse({ assets: [failed], max_assets: 20 });
+      }
+      if (
+        method === "POST" &&
+        url === "/api/plan/plan-items/item-1/assets/asset-retry/reanalyze"
+      ) {
+        reanalyzeCalls += 1;
+        return jsonResponse({ ...failed, status: "queued", error_detail: null });
+      }
+      return undefined;
+    });
+    await renderPool();
+    fireEvent.click(screen.getByRole("button", { name: "Retry analysis" }));
+    await waitFor(() => expect(screen.getByText("Queued…")).toBeInTheDocument());
+    expect(reanalyzeCalls).toBe(1);
   });
 });
 
@@ -637,7 +1687,7 @@ describe("AssetPool — analysis status polling", () => {
       id: "asset-ready",
       status: "ready",
       subject: "dash",
-      display_url: "https://storage.example/signed/v1",
+      display_url: "https://storage.example/bucket/dash.png?signature=v1",
     });
     const spinner = makeAsset({ id: "asset-spin", status: "analyzing", subject: null });
     mockFetch((method, url) => {
@@ -645,7 +1695,7 @@ describe("AssetPool — analysis status polling", () => {
         // Every read re-signs → a NEW url each time (GCS V4 behavior).
         return jsonResponse({
           assets: [
-            { ...ready, display_url: "https://storage.example/signed/v2-resigned" },
+            { ...ready, display_url: "https://storage.example/bucket/dash.png?signature=v2" },
             spinner,
           ],
           max_assets: 20,
@@ -658,14 +1708,130 @@ describe("AssetPool — analysis status polling", () => {
       jsonResponse({ assets: [ready, spinner], max_assets: 20 }),
     );
     await renderPool();
-    expect(screen.getByAltText("dash")).toHaveAttribute("src", "https://storage.example/signed/v1");
+    expect(screen.getByAltText("dash")).toHaveAttribute(
+      "src",
+      "https://storage.example/bucket/dash.png?signature=v1",
+    );
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(5000);
     });
     // The poll re-signed to v2, but the merge kept the still-valid v1 → the
     // <img> src never changes, so the browser never reloads the thumbnail.
-    expect(screen.getByAltText("dash")).toHaveAttribute("src", "https://storage.example/signed/v1");
+    expect(screen.getByAltText("dash")).toHaveAttribute(
+      "src",
+      "https://storage.example/bucket/dash.png?signature=v1",
+    );
+  });
+
+  it("replaces the raw HEIC URL when analysis produces a browser-safe preview", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    const analyzing = makeAsset({
+      id: "asset-heic",
+      kind: "image",
+      status: "analyzing",
+      subject: null,
+      display_url:
+        "https://storage.googleapis.com/nova/users/u1/plan/item-1/pool/photo.heic?X-Goog-Signature=raw",
+    });
+    const ready = {
+      ...analyzing,
+      status: "ready",
+      subject: "Corfu coastline",
+      display_url:
+        "https://storage.googleapis.com/nova/users/u1/plan/item-1/pool/photo.heic.preview.jpg?X-Goog-Signature=preview",
+    };
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        listCalls += 1;
+        return jsonResponse({ assets: [listCalls === 1 ? analyzing : ready], max_assets: 20 });
+      }
+      return undefined;
+    });
+
+    await renderPool();
+    expect(screen.getByText("Analyzing…")).toBeInTheDocument();
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+
+    expect(screen.getByAltText("Corfu coastline")).toHaveAttribute(
+      "src",
+      "https://storage.googleapis.com/nova/users/u1/plan/item-1/pool/photo.heic.preview.jpg?X-Goog-Signature=preview",
+    );
+  });
+
+  it("keeps the existing URL when a fresh signing attempt returns no URL", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    const analyzing = makeAsset({
+      id: "asset-signing-gap",
+      status: "analyzing",
+      subject: null,
+      display_url: "https://storage.example/bucket/photo.jpg?signature=working",
+    });
+    const ready = {
+      ...analyzing,
+      status: "ready",
+      subject: "Signed preview",
+      display_url: null,
+    };
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        listCalls += 1;
+        return jsonResponse({ assets: [listCalls === 1 ? analyzing : ready], max_assets: 20 });
+      }
+      return undefined;
+    });
+
+    await renderPool();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+
+    expect(screen.getByAltText("Signed preview")).toHaveAttribute(
+      "src",
+      "https://storage.example/bucket/photo.jpg?signature=working",
+    );
+  });
+
+  it("accepts the fresh URL when a storage provider returns an invalid prior URL", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    const analyzing = makeAsset({
+      id: "asset-invalid-url",
+      status: "analyzing",
+      subject: null,
+      display_url: "not a valid url",
+    });
+    const ready = {
+      ...analyzing,
+      status: "ready",
+      subject: "Recovered preview",
+      display_url: "https://storage.example/bucket/recovered.jpg?signature=fresh",
+    };
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        listCalls += 1;
+        return jsonResponse({ assets: [listCalls === 1 ? analyzing : ready], max_assets: 20 });
+      }
+      return undefined;
+    });
+
+    await renderPool();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+
+    expect(screen.getByAltText("Recovered preview")).toHaveAttribute(
+      "src",
+      "https://storage.example/bucket/recovered.jpg?signature=fresh",
+    );
   });
 });
 
@@ -698,8 +1864,61 @@ describe("AssetPool — brand micro-label (analysis v5)", () => {
 });
 
 describe("AssetPool — creator context", () => {
+  it("does not label a ready video as pending when its optional description is empty", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-ready-video",
+      kind: "video",
+      status: "ready",
+      subject: "sunset over lake and mountains",
+      nova_description: "",
+      nova_on_screen_text: "",
+    });
+    mockFetch(listRoute([asset]));
+
+    await renderPool();
+
+    expect(screen.getByText("Analysis complete")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis pending")).not.toBeInTheDocument();
+  });
+
+  it("uses on-screen copy when the optional long description is empty", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-on-screen-copy",
+      status: "ready",
+      nova_description: "   ",
+      nova_on_screen_text: "Sunset over the bay",
+    });
+    mockFetch(listRoute([asset]));
+
+    await renderPool();
+
+    expect(screen.getByText("Sunset over the bay")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
+  });
+
+  it("labels a filename-only fallback without overstating its analysis", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-stub",
+      status: "ready",
+      nova_description: null,
+      nova_on_screen_text: null,
+      source_type: "stub",
+    });
+    mockFetch(listRoute([asset]));
+
+    await renderPool();
+
+    expect(screen.getByText("Basic file details ready")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
+    expect(screen.queryByText("Analysis pending")).not.toBeInTheDocument();
+  });
+
   it("labels user context separately from Nova analysis and saves edits", async () => {
     process.env[FLAG] = "true";
+    const onMutated = jest.fn();
     const asset = makeAsset({
       id: "asset-context",
       status: "ready",
@@ -727,7 +1946,13 @@ describe("AssetPool — creator context", () => {
       return undefined;
     });
     await act(async () => {
-      render(<AssetPool itemId="item-1" onAssetContextUpdated={onAssetContextUpdated} />);
+      render(
+        <AssetPool
+          itemId="item-1"
+          onAssetContextUpdated={onAssetContextUpdated}
+          onMutated={onMutated}
+        />,
+      );
     });
 
     expect(screen.getByText("You")).toBeInTheDocument();
@@ -744,6 +1969,95 @@ describe("AssetPool — creator context", () => {
       expect(onAssetContextUpdated).toHaveBeenCalledWith(updated);
     });
     expect(patchBody).toEqual({ user_context: "Use this when I mention churn" });
+    expect(onMutated).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Use this when I mention churn")).toBeInTheDocument();
+  });
+});
+
+describe("AssetPool — preview pipeline (HEIC/HEVC uploads)", () => {
+  it("falls back to the kind-label placeholder when the image thumbnail fails to decode", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-broken-heic",
+      kind: "image",
+      status: "ready",
+      subject: "phone photo",
+      display_url: "https://storage.example/signed/photo.heic",
+    });
+    mockFetch(listRoute([asset]));
+    await renderPool();
+
+    const img = screen.getByAltText("phone photo");
+    await act(async () => {
+      fireEvent.error(img);
+    });
+
+    expect(screen.queryByAltText("phone photo")).toBeNull();
+    expect(screen.getByText("image")).toBeInTheDocument();
+  });
+
+  it("passes preview_url as the poster on video tiles", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-video-preview",
+      kind: "video",
+      status: "ready",
+      subject: "clip",
+      display_url: "https://storage.example/signed/clip.mov",
+      preview_url: "https://storage.example/signed/clip.mov.preview.jpg",
+    });
+    mockFetch(listRoute([asset]));
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<AssetPool itemId="item-1" />));
+    });
+
+    const video = container.querySelector("video");
+    expect(video).toHaveAttribute(
+      "poster",
+      "https://storage.example/signed/clip.mov.preview.jpg",
+    );
+  });
+
+  it("renders no poster when preview_url is absent (never attempted / failed)", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-video-no-preview",
+      kind: "video",
+      status: "ready",
+      subject: "clip",
+      display_url: "https://storage.example/signed/clip.mov",
+    });
+    mockFetch(listRoute([asset]));
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<AssetPool itemId="item-1" />));
+    });
+
+    expect(container.querySelector("video")).not.toHaveAttribute("poster");
+  });
+
+  it("falls back to the kind-label placeholder when the video thumbnail fails to load", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      id: "asset-video-broken",
+      kind: "video",
+      status: "ready",
+      subject: "clip",
+      display_url: "https://storage.example/signed/clip.mov",
+    });
+    mockFetch(listRoute([asset]));
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<AssetPool itemId="item-1" />));
+    });
+
+    const video = container.querySelector("video")!;
+    await act(async () => {
+      fireEvent.error(video);
+    });
+
+    expect(container.querySelector("video")).toBeNull();
+    expect(screen.getByText("video")).toBeInTheDocument();
   });
 });

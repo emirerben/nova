@@ -1,5 +1,8 @@
 """Upload endpoints: presigned URLs, Google Drive import (single + batch)."""
 
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -689,8 +692,12 @@ async def relay_signed_upload(
             yield chunk
 
     upstream_headers = {"Content-Type": content_type}
-    if file_size_bytes is not None:
-        upstream_headers["Content-Length"] = str(file_size_bytes)
+    effective_size = file_size_bytes if file_size_bytes is not None else file.size
+    if effective_size is not None:
+        # Deployed pre-0.28 clients omit the form size, but UploadFile has the
+        # parsed multipart size. Forward it so exact-length signed pool staging
+        # URLs remain compatible without weakening their storage-side ceiling.
+        upstream_headers["Content-Length"] = str(effective_size)
     if if_generation_match is not None:
         upstream_headers["x-goog-if-generation-match"] = if_generation_match
 
@@ -700,12 +707,23 @@ async def relay_signed_upload(
             content=_chunks(),
             headers=upstream_headers,
         )
-    if upstream.status_code == 412 and if_generation_match == "0" and file_size_bytes is not None:
+    if upstream.status_code == 412 and if_generation_match == "0" and effective_size is not None:
         try:
             metadata = await run_in_threadpool(storage.object_metadata, object_path)
             expected_type = content_type.split(";", 1)[0].strip().lower()
             actual_type = metadata.content_type.split(";", 1)[0].strip().lower()
-            if metadata.size == file_size_bytes and actual_type == expected_type:
+            await file.seek(0)
+            digest = hashlib.md5(usedforsecurity=False)
+            while chunk := await file.read(1024 * 1024):
+                digest.update(chunk)
+            await file.seek(0)
+            uploaded_md5 = base64.b64encode(digest.digest()).decode("ascii")
+            if (
+                metadata.size == effective_size
+                and actual_type == expected_type
+                and metadata.md5_hash is not None
+                and hmac.compare_digest(metadata.md5_hash, uploaded_md5)
+            ):
                 return {"ok": True, "already_uploaded": True}
         except Exception:  # noqa: BLE001 — fall through to the upstream error
             pass

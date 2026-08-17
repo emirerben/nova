@@ -57,8 +57,9 @@ beforeAll(() => {
   window.HTMLMediaElement.prototype.play = jest.fn().mockResolvedValue(undefined);
 });
 
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
+import { GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
 
 jest.mock("next/navigation", () => ({
   useParams: jest.fn(() => ({ id: "test-item-id" })),
@@ -354,6 +355,51 @@ describe("Plan item hero — live preview edit mode", () => {
     expect(
       document.querySelector('[aria-label="Rendering new version"]'),
     ).not.toBeNull();
+  });
+});
+
+// ===== Instant-edit-eligible variant: the veil can never be on screen =====
+// Regression for the veil/theater dedup (v0.26.x): FocusedResults hides the
+// ProgressTheater when its `veilVisible` predicate is true, but the veil
+// only ever mounts inside Hero. An instant-edit-eligible variant (a base
+// video + editable text mode) renders through LiveEditPreview instead —
+// which has NO veil at all, ever. The dedup's `usingLiveEditPreview` guard
+// exists to keep `veilVisible` false for exactly this branch, even when the
+// variant is "rendering" with an `output_url` already present (the precise
+// condition that hides the theater for a Hero-rendered variant). Pins that
+// the theater is never wrongly suppressed here.
+describe("Plan item hero — instant-edit-eligible variant never triggers the veil", () => {
+  it("keeps LiveEditPreview active (no veil) and leaves the theater visible while rendering", async () => {
+    const instantVariant = makeVariant({
+      // isInstantEditEligible requires a base video + an editable text mode
+      // (already "agent_text" by default) — everything else about this
+      // fixture (render_status "rendering", output_url present) mirrors the
+      // exact Hero-veiled case from the dedup's other tests.
+      base_video_url: "https://cdn/base.mp4?sig=base",
+      render_status: "rendering",
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item: makeItem(),
+        job: { ...makeJob([instantVariant]), current_phase: "render_variants" },
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    // LiveEditPreview is the active surface: the burned output plays as a
+    // plain <video>, with none of Hero's veil-frame wrapper/aria-hidden.
+    expect(heroVideo()).toHaveAttribute("src", OUTPUT_URL);
+    expect(document.querySelector('[aria-label="Rendering new version"]')).toBeNull();
+
+    // The theater — the ONLY rendering indicator reachable on this branch —
+    // must still be present (same detection as the Hero-side dedup tests:
+    // the current phase's headline/chip label).
+    expect(screen.getAllByText(GENERATIVE_PHASE_LABEL.render_variants).length).toBeGreaterThan(0);
   });
 });
 

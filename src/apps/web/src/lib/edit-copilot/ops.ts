@@ -2,7 +2,10 @@ import fontRegistryJson from "@/data/font-registry.json";
 import type { CarouselMoment, EditorTransition } from "@/lib/generative-api";
 import {
   CREATOR_BLOCK_IDS,
+  creatorBlockControl,
+  creatorBlockEntry,
   type CreatorBlockPresetId,
+  type CreatorBlockEasing,
   type MotionPalette,
 } from "@nova/motion-runtime";
 
@@ -119,6 +122,9 @@ export type MotionCopilotPatch = Partial<{
   end_s: number;
   palette: MotionPalette;
   intensity: number;
+  speed: number;
+  easing: CreatorBlockEasing;
+  hold_frames: number;
   params: MotionCopilotParams;
 }>;
 
@@ -210,6 +216,9 @@ export type CopilotOp =
       params: MotionCopilotParams;
       palette?: MotionPalette;
       intensity?: number;
+      speed?: number;
+      easing?: CreatorBlockEasing;
+      hold_frames?: number;
     }
   | { op: "patch_motion_block"; motion_id: string; patch: MotionCopilotPatch }
   | { op: "remove_motion_block"; motion_id: string }
@@ -296,7 +305,8 @@ export interface CopilotValidationSnapshot {
   camera_effects?: unknown[];
   visual_blocks?: unknown[];
   motion?: {
-    blocks?: Array<{ id?: string }>;
+    catalog?: Array<{ preset_id?: string }>;
+    blocks?: Array<{ id?: string; preset_id?: string }>;
     asset_pool?: Array<{ id?: string }>;
   };
   sfx?: {
@@ -335,6 +345,7 @@ const ALLOWED_EFFECTS = new Set([
   "pop-in",
   "scale-up",
   "typewriter",
+  "smooth-type",
   "stream-in",
   "staggered-slice",
   "ink-reveal",
@@ -380,6 +391,49 @@ function nonNegativeNumber(value: unknown): value is number {
 
 function integerIndex(value: unknown): value is number {
   return Number.isInteger(value) && (value as number) >= 0;
+}
+
+function invalidCreatorBlockParams(
+  presetId: CreatorBlockPresetId,
+  params: Record<string, unknown>,
+): string | null {
+  const entry = creatorBlockEntry(presetId);
+  const definitions = new Map(entry.parameters.map((parameter) => [parameter.key, parameter]));
+  for (const [key, value] of Object.entries(params)) {
+    if (key === "asset_ids" && entry.kind === "media") continue;
+    const definition = definitions.get(key);
+    if (!definition) return `motion params.${key} is not supported`;
+    if (definition.type === "string") {
+      const length = typeof value === "string" ? Array.from(value).length : -1;
+      if (length < (definition.min_length ?? 0) || length > (definition.max_length ?? Infinity)) {
+        return `motion params.${key} is outside the text range`;
+      }
+    } else if (definition.type === "string_list") {
+      if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+        return `motion params.${key} must be a string list`;
+      }
+      if (value.length < (definition.min_items ?? 0) || value.length > (definition.max_items ?? Infinity)) {
+        return `motion params.${key} is outside the item range`;
+      }
+      if (value.some((item) => Array.from(item as string).length > (definition.max_length ?? Infinity))) {
+        return `motion params.${key} contains an overlong item`;
+      }
+    } else if (definition.type === "number") {
+      if (
+        !finiteNumber(value) ||
+        value < (definition.minimum ?? -Infinity) ||
+        value > (definition.maximum ?? Infinity) ||
+        (definition.integer === true && !Number.isInteger(value))
+      ) return `motion params.${key} is outside the numeric range`;
+    } else if (definition.type === "enum") {
+      if (typeof value !== "string" || !definition.values?.includes(value)) {
+        return `motion params.${key} is not supported`;
+      }
+    } else if (definition.type === "boolean" && typeof value !== "boolean") {
+      return `motion params.${key} must be boolean`;
+    }
+  }
+  return null;
 }
 
 function reject(
@@ -659,6 +713,31 @@ export function validateCopilotOp(
       ) {
         return reject("missing_required", "add_motion_block requires a catalog preset, timing, and params", opName);
       }
+      if (
+        snapshot?.motion?.catalog &&
+        !snapshot.motion.catalog.some((entry) => entry.preset_id === raw.preset_id)
+      ) {
+        return reject("invalid_value", "motion preset is not exposed in this editor", opName);
+      }
+      const entry = creatorBlockEntry(raw.preset_id as CreatorBlockPresetId);
+      const speedControl = creatorBlockControl(entry, "speed")!;
+      const holdControl = creatorBlockControl(entry, "hold_frames")!;
+      const easingControl = creatorBlockControl(entry, "easing")!;
+      if (raw.speed !== undefined && (
+        !finiteNumber(raw.speed) || raw.speed < speedControl.minimum! || raw.speed > speedControl.maximum!
+      )) {
+        return reject("invalid_value", "motion speed is outside the preset range", opName);
+      }
+      if (raw.easing !== undefined && (
+        typeof raw.easing !== "string" || !easingControl.values?.includes(raw.easing)
+      )) {
+        return reject("invalid_value", "motion easing is not supported", opName);
+      }
+      if (raw.hold_frames !== undefined && (
+        !finiteNumber(raw.hold_frames) || !Number.isInteger(raw.hold_frames) || raw.hold_frames < holdControl.minimum! || raw.hold_frames > holdControl.maximum!
+      )) {
+        return reject("invalid_value", "motion hold_frames is outside the preset range", opName);
+      }
       if (raw.end_s <= raw.start_s || raw.end_s - raw.start_s > 8) {
         return reject("invalid_time", "motion block timing must be positive and no longer than 8 seconds", opName);
       }
@@ -677,6 +756,11 @@ export function validateCopilotOp(
       if (assetIds.some((id) => typeof id !== "string" || !snapshot?.motion?.asset_pool?.some((asset) => asset.id === id))) {
         return reject("invalid_value", "motion asset_ids must copy eligible snapshot asset IDs", opName);
       }
+      const invalidParams = invalidCreatorBlockParams(
+        raw.preset_id as CreatorBlockPresetId,
+        raw.params,
+      );
+      if (invalidParams) return reject("invalid_value", invalidParams, opName);
       return {
         ok: true,
         op: {
@@ -687,6 +771,9 @@ export function validateCopilotOp(
           params: { ...raw.params },
           ...(palette ? { palette: { primary: String(palette.primary), accent: String(palette.accent) } } : {}),
           intensity,
+          ...(raw.speed === undefined ? {} : { speed: raw.speed }),
+          ...(raw.easing === undefined ? {} : { easing: raw.easing as CreatorBlockEasing }),
+          ...(raw.hold_frames === undefined ? {} : { hold_frames: raw.hold_frames as number }),
         },
       };
     }
@@ -697,7 +784,7 @@ export function validateCopilotOp(
       if (!snapshot?.motion?.blocks?.some((block) => block.id === raw.motion_id)) {
         return reject("invalid_index", "motion_id must copy an existing snapshot block ID", opName);
       }
-      const allowed = new Set(["start_s", "end_s", "palette", "intensity", "params"]);
+      const allowed = new Set(["start_s", "end_s", "palette", "intensity", "speed", "easing", "hold_frames", "params"]);
       if (Object.keys(raw.patch).length === 0 || Object.keys(raw.patch).some((key) => !allowed.has(key))) {
         return reject("empty_patch", "motion patch is empty or contains unsupported fields", opName);
       }
@@ -706,6 +793,32 @@ export function validateCopilotOp(
       }
       if (raw.patch.intensity !== undefined && (!finiteNumber(raw.patch.intensity) || raw.patch.intensity < 0 || raw.patch.intensity > 1)) {
         return reject("invalid_value", "motion intensity must be between 0 and 1", opName);
+      }
+      const block = snapshot.motion?.blocks?.find((candidate) => candidate.id === raw.motion_id);
+      const hasCreatorOnlyControl =
+        raw.patch.speed !== undefined ||
+        raw.patch.easing !== undefined ||
+        raw.patch.hold_frames !== undefined;
+      if (hasCreatorOnlyControl && (!block?.preset_id || block.preset_id === "route_trace")) {
+        return reject("invalid_value", "this motion block does not support Creator Block controls", opName);
+      }
+      if (block?.preset_id && block.preset_id !== "route_trace") {
+        const entry = creatorBlockEntry(block.preset_id as CreatorBlockPresetId);
+        const speedControl = creatorBlockControl(entry, "speed")!;
+        const holdControl = creatorBlockControl(entry, "hold_frames")!;
+        const easingControl = creatorBlockControl(entry, "easing")!;
+        if (raw.patch.speed !== undefined && (
+          !finiteNumber(raw.patch.speed) || raw.patch.speed < speedControl.minimum! || raw.patch.speed > speedControl.maximum!
+        )) return reject("invalid_value", "motion speed is outside the preset range", opName);
+        if (raw.patch.easing !== undefined && (
+          typeof raw.patch.easing !== "string" || !easingControl.values?.includes(raw.patch.easing)
+        )) return reject("invalid_value", "motion easing is not supported", opName);
+        if (raw.patch.hold_frames !== undefined && (
+          !finiteNumber(raw.patch.hold_frames) || !Number.isInteger(raw.patch.hold_frames) || raw.patch.hold_frames < holdControl.minimum! || raw.patch.hold_frames > holdControl.maximum!
+        )) return reject("invalid_value", "motion hold_frames is outside the preset range", opName);
+      }
+      if (raw.patch.speed !== undefined && (raw.patch.start_s !== undefined || raw.patch.end_s !== undefined)) {
+        return reject("invalid_value", "motion speed cannot be combined with manual timing", opName);
       }
       if (raw.patch.params !== undefined && !isRecord(raw.patch.params)) {
         return reject("invalid_type", "motion params must be an object", opName);
@@ -723,6 +836,13 @@ export function validateCopilotOp(
         : [];
       if (assetIds.some((id) => typeof id !== "string" || !snapshot?.motion?.asset_pool?.some((asset) => asset.id === id))) {
         return reject("invalid_value", "motion asset_ids must copy eligible snapshot asset IDs", opName);
+      }
+      if (block?.preset_id && block.preset_id !== "route_trace" && isRecord(raw.patch.params)) {
+        const invalidParams = invalidCreatorBlockParams(
+          block.preset_id as CreatorBlockPresetId,
+          raw.patch.params,
+        );
+        if (invalidParams) return reject("invalid_value", invalidParams, opName);
       }
       return { ok: true, op: { op: opName, motion_id: raw.motion_id, patch: { ...raw.patch } as MotionCopilotPatch } };
     }

@@ -3,6 +3,7 @@ import "@testing-library/jest-dom";
 
 import TextElementOverlayLayer, {
   TextElementOverlayContent,
+  smoothTypePreviewLayout,
   textElementAnchorTransform,
   textElementWrapperStyle,
 } from "@/app/plan/items/[id]/components/TextElementOverlayLayer";
@@ -94,6 +95,20 @@ describe("TextElementOverlayLayer", () => {
     render(<TextElementOverlayLayer elements={[element]} currentTime={6} />);
 
     expect(screen.queryByText("READY NOW")).not.toBeInTheDocument();
+  });
+
+  it("settles malformed Smooth Type without a v2 motion config", () => {
+    const previous = process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED;
+    process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED = "true";
+    const smoothWithoutMotion = { ...element, effect: "smooth-type" as const };
+
+    const { container } = render(
+      <TextElementOverlayLayer elements={[smoothWithoutMotion]} currentTime={1.1} />,
+    );
+
+    expect(screen.getByText("READY NOW")).toBeInTheDocument();
+    expect(container.querySelector("[data-smooth-type-line]")).not.toBeInTheDocument();
+    process.env.NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED = previous;
   });
 
   it("animates authoritative ink-reveal elements from the video playhead", () => {
@@ -194,6 +209,67 @@ describe("TextElementOverlayLayer", () => {
 
     expect(painted?.style.clipPath).toBe("");
     expect(painted?.style.willChange).toBe("");
+  });
+
+  it("masks Smooth Type lines independently in logical RTL order", () => {
+    const [layout] = resolveTextElementsLayout([
+      { ...element, text: "FIRST\nمرحبا", effect: "smooth-type" },
+    ]);
+    const { container } = render(
+      <TextElementOverlayContent
+        layout={layout}
+        fontSize="20px"
+        revealOrigin="forward"
+        lineRevealProgresses={[0.75, 0.25]}
+      />,
+    );
+    const first = container.querySelector<HTMLElement>("[data-smooth-type-line='0']");
+    const rtl = container.querySelector<HTMLElement>("[data-smooth-type-line='1']");
+    expect(first?.style.clipPath).toContain("25%");
+    expect(first?.style.clipPath).toContain(" 0)");
+    expect(rtl?.style.clipPath).toContain("75%");
+    expect(rtl?.style.clipPath).toContain("inset(-0.4em 0");
+  });
+
+  it("resolves auto-wrapped Smooth Type rows before computing line masks", () => {
+    const [layout] = resolveTextElementsLayout([
+      {
+        ...element,
+        text: "ONE TWO THREE",
+        effect: "smooth-type",
+        max_width_frac: 0.2,
+      },
+    ]);
+
+    expect(smoothTypePreviewLayout(layout).lines).toEqual(["ONE", "TWO", "THREE"]);
+  });
+
+  it("shrinks an overlong Smooth Type token instead of introducing browser-only rows", () => {
+    const [layout] = resolveTextElementsLayout([
+      {
+        ...element,
+        text: "SUPERCALIFRAGILISTIC",
+        effect: "smooth-type",
+        max_width_frac: 0.2,
+      },
+    ]);
+    const preview = smoothTypePreviewLayout(layout);
+
+    expect(preview.lines).toEqual(["SUPERCALIFRAGILISTIC"]);
+    expect(preview.sizePx).toBeLessThan(layout.sizePx);
+
+    const { container } = render(
+      <TextElementOverlayContent
+        layout={layout}
+        fontSize={`${preview.sizePx}px`}
+        revealLines={preview.lines}
+        lineRevealProgresses={[0.5]}
+      />,
+    );
+    expect(container.querySelector("[data-smooth-type-line='0']")).toHaveStyle({
+      whiteSpace: "pre",
+      wordBreak: "normal",
+    });
   });
 
   it("starts the ink-reveal clip at zero padded width", () => {

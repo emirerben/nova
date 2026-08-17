@@ -355,7 +355,20 @@ def test_variant_specs_missing_language_fails_open():
     assert specs[0]["variant_id"] == "song_lyrics"
 
 
-def test_content_plan_primary_montage_prefers_lyrics_when_renderable():
+def test_content_plan_primary_montage_uses_song_text_when_lyrics_are_optional(monkeypatch):
+    monkeypatch.setattr(gb.settings, "lyrics_optional_enabled", True)
+    specs = gb._specs_for_archetype(
+        "montage",
+        _track(),
+        variant_policy=gb.CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+    )
+    assert [s["variant_id"] for s in specs] == ["song_text"]
+    assert specs[0]["text_mode"] == "agent_text"
+    assert specs[0]["track"] is not None
+
+
+def test_content_plan_primary_montage_flag_off_preserves_baked_lyrics(monkeypatch):
+    monkeypatch.setattr(gb.settings, "lyrics_optional_enabled", False)
     specs = gb._specs_for_archetype(
         "montage",
         _track(),
@@ -4860,6 +4873,42 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     assert v["caption_position_user_edited"] is True
     # subtitled: the language must survive or the editor chip + re-transcribe lose it.
     assert v["caption_language"] == "tr"
+
+
+def test_finalize_job_preserves_guided_story_receipt(monkeypatch):
+    """Strict approval evidence must survive the finalizer whitelist."""
+    import uuid
+
+    job = _FakeJob(assembly_plan={"guided_edit": {"proposal_version": 9}})
+    _patch_job_session(monkeypatch, job)
+    result = {
+        "variant_id": "guided_story",
+        "rank": 1,
+        "text_mode": "agent_text",
+        "ok": True,
+        "render_status": "ready",
+        "output_url": "u",
+        "video_path": "generative-jobs/j/guided.mp4",
+        "resolved_archetype": "guided_story",
+        "story_timeline": [{"beat_id": "food", "media_id": "photo-1"}],
+        "proposal_version": 9,
+        "media_digest": "a" * 64,
+        "render_receipt": {"verified": True, "actual_media_ids": ["photo-1"]},
+        "duration_s": 24.0,
+    }
+
+    gb._finalize_job(str(uuid.uuid4()), [result])
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["story_timeline"] == [{"beat_id": "food", "media_id": "photo-1"}]
+    assert variant["proposal_version"] == 9
+    assert variant["media_digest"] == "a" * 64
+    assert variant["render_receipt"] == {
+        "verified": True,
+        "actual_media_ids": ["photo-1"],
+    }
+    assert variant["duration_s"] == 24.0
+    assert job.assembly_plan["guided_edit"] == {"proposal_version": 9}
     assert job.status == "variants_ready"
 
 

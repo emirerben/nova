@@ -8,6 +8,7 @@ import type {
   EditorCapabilities,
   PlanItem,
   PlanItemVariant,
+  PoolAsset,
   TextElement,
   VisualBlock,
 } from "@/lib/plan-api";
@@ -21,6 +22,19 @@ class ResizeObserverMock {
   ResizeObserverMock;
 window.HTMLMediaElement.prototype.pause = jest.fn();
 window.HTMLMediaElement.prototype.play = jest.fn().mockResolvedValue(undefined);
+
+const existingCrypto = (globalThis as Record<string, unknown>).crypto ?? {};
+Object.defineProperty(globalThis, "crypto", {
+  value: {
+    ...(existingCrypto as object),
+    subtle: { digest: jest.fn(async () => new Uint8Array(32).fill(0xab).buffer) },
+  },
+  configurable: true,
+  writable: true,
+});
+if (typeof File.prototype.arrayBuffer !== "function") {
+  File.prototype.arrayBuffer = async () => new ArrayBuffer(8);
+}
 
 Object.defineProperty(window, "matchMedia", {
   writable: true,
@@ -91,6 +105,7 @@ const mockGetPlanItem = getPlanItem as jest.MockedFunction<typeof getPlanItem>;
 const mockGetPlanItemJobStatus = getPlanItemJobStatus as jest.MockedFunction<
   typeof getPlanItemJobStatus
 >;
+const originalFetch = global.fetch;
 
 const ITEM = {
   id: "item-1",
@@ -170,13 +185,24 @@ async function renderShell(variant: PlanItemVariant) {
   });
   await act(async () => {
     render(<EditorShell itemId="item-1" variantParam="song_text" />);
+    await Promise.resolve();
+    await Promise.resolve();
   });
 }
 
 afterEach(() => {
   jest.clearAllMocks();
   window.sessionStorage.clear();
+  global.fetch = originalFetch;
 });
+
+function jsonResponse(body: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  } as Response;
+}
 
 describe("EditorShell linked text-card deletion", () => {
   it("deletes the parent card with its final linked text, restores both with Undo, and saves both sections", async () => {
@@ -387,5 +413,241 @@ describe("EditorShell rendered playback state", () => {
     fireEvent.timeUpdate(video as HTMLVideoElement);
 
     expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+  });
+});
+
+describe("EditorShell visuals upload lifecycle", () => {
+  function poolAsset(overrides: Partial<PoolAsset> = {}): PoolAsset {
+    return {
+      id: "asset-editor",
+      kind: "image",
+      status: "ready",
+      source_filename: "queued.png",
+      duration_s: null,
+      aspect: null,
+      width: 1080,
+      height: 1920,
+      subject: "queued visual",
+      user_context: "",
+      nova_description: null,
+      nova_on_screen_text: null,
+      display_url: "https://storage.example/queued.png",
+      deduped: false,
+      gcs_path: "users/u/plan/item-1/pool/queued.png",
+      error_code: null,
+      error_detail: null,
+      retryable: true,
+      ...overrides,
+    };
+  }
+
+  it("shows a failed transfer in the real drawer and retries it without disabling the picker", async () => {
+    let presignCalls = 0;
+    let putCalls = 0;
+    let registerCalls = 0;
+    const clientUploadIds: string[] = [];
+    const correlationIds: string[] = [];
+    const contentTypes: string[] = [];
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.endsWith("/assets")) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url.endsWith("/assets/upload-urls")) {
+        presignCalls += 1;
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string; content_type: string }>;
+        };
+        const clientUploadId = body.files[0].client_upload_id;
+        clientUploadIds.push(clientUploadId);
+        contentTypes.push(body.files[0].content_type);
+        correlationIds.push(new Headers(init?.headers).get("X-Correlation-Id") ?? "");
+        return jsonResponse({
+          urls: [
+            {
+              reservation_id: "reservation-editor",
+              client_upload_id: clientUploadId,
+              upload_url: `https://storage.example/editor-${presignCalls}`,
+              gcs_path: "users/u/plan/item-1/pool/broken.mov",
+              expires_at: new Date(Date.now() + 60_000).toISOString(),
+              upload_headers: { "x-goog-if-generation-match": "0" },
+            },
+          ],
+        });
+      }
+      if (method === "PUT" && url.startsWith("https://storage.example/editor-")) {
+        putCalls += 1;
+        return jsonResponse({}, putCalls === 1 ? 503 : 200);
+      }
+      if (method === "POST" && url.endsWith("/assets")) {
+        registerCalls += 1;
+        return jsonResponse(
+          poolAsset({
+            source_filename: "broken.mov",
+            kind: "video",
+            subject: "recovered visual",
+          }),
+        );
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    await renderShell(makeVariant([]));
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    const picker = screen.getByLabelText("Upload images or videos");
+    fireEvent.change(picker, {
+      target: { files: [new File(["video"], "broken.mov", { type: "" })] },
+    });
+
+    expect(
+      await screen.findByText("Upload interrupted. Check your connection and retry."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("broken.mov")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry broken.mov" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove broken.mov" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Upload images or videos")).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry broken.mov" }));
+    expect(await screen.findByRole("button", { name: "Select broken.mov" })).toBeInTheDocument();
+    expect(presignCalls).toBe(2);
+    expect(putCalls).toBe(2);
+    expect(registerCalls).toBe(1);
+    expect(new Set(clientUploadIds).size).toBe(1);
+    expect(new Set(correlationIds).size).toBe(1);
+    expect(contentTypes).toEqual(["video/quicktime", "video/quicktime"]);
+  });
+
+  it("honors an authoritative hidden reservation in the real Visuals drawer", async () => {
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.endsWith("/assets")) {
+        return jsonResponse({
+          assets: [],
+          max_assets: 1,
+          occupied_assets: 1,
+          active_reservations: [
+            {
+              reservation_id: "reservation-hidden",
+              release_at: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        });
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    await renderShell(makeVariant([]));
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    expect(await screen.findByLabelText("Visuals pool is full")).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Kria is releasing a removed upload slot. You can add another visual when cleanup finishes.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("reopens editor upload capacity after deleting the last full-pool asset", async () => {
+    const failed = poolAsset({
+      id: "asset-full",
+      status: "failed",
+      source_filename: "full.png",
+      display_url: null,
+      subject: null,
+      error_detail: "Kria temporarily couldn't analyze this file. Try again.",
+    });
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.endsWith("/assets")) {
+        return jsonResponse({
+          assets: [failed],
+          max_assets: 1,
+          occupied_assets: 1,
+          active_reservations: [],
+        });
+      }
+      if (method === "DELETE" && url.endsWith("/assets/asset-full")) {
+        return jsonResponse({ ok: true });
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    await renderShell(makeVariant([]));
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    expect(await screen.findByLabelText("Visuals pool is full")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Remove full.png" }));
+    expect(await screen.findByLabelText("Upload images or videos")).toBeEnabled();
+  });
+
+  it("fences stale hydration and polls a newly queued asset through to ready", async () => {
+    const queued = poolAsset({
+      status: "queued",
+      display_url:
+        "https://storage.googleapis.com/nova/users/u/plan/item-1/pool/queued.heic?signature=raw",
+      subject: null,
+    });
+    const ready = poolAsset({
+      display_url:
+        "https://storage.googleapis.com/nova/users/u/plan/item-1/pool/queued.heic.preview.jpg?signature=preview",
+    });
+    let listCalls = 0;
+    let releaseInitial: ((response: Response) => void) | null = null;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.endsWith("/assets")) {
+        listCalls += 1;
+        if (listCalls === 1) {
+          return await new Promise<Response>((resolve) => {
+            releaseInitial = resolve;
+          });
+        }
+        return jsonResponse({ assets: [ready], max_assets: 20 });
+      }
+      if (method === "POST" && url.endsWith("/assets/upload-urls")) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: [
+            {
+              reservation_id: "reservation-queued",
+              client_upload_id: body.files[0].client_upload_id,
+              upload_url: "https://storage.example/editor-queued",
+              gcs_path: queued.gcs_path,
+              expires_at: new Date(Date.now() + 60_000).toISOString(),
+              upload_headers: { "x-goog-if-generation-match": "0" },
+            },
+          ],
+        });
+      }
+      if (method === "PUT" && url === "https://storage.example/editor-queued") {
+        return jsonResponse({});
+      }
+      if (method === "POST" && url.endsWith("/assets")) return jsonResponse(queued);
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    await renderShell(makeVariant([]));
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    fireEvent.change(screen.getByLabelText("Upload images or videos"), {
+      target: { files: [new File(["image"], "queued.png", { type: "image/png" })] },
+    });
+
+    expect(await screen.findByText("Queued for analysis…")).toBeInTheDocument();
+    await act(async () => releaseInitial?.(jsonResponse({ assets: [], max_assets: 20 })));
+    expect(screen.getByText("Queued for analysis…")).toBeInTheDocument();
+    const readyButton = await screen.findByRole(
+      "button",
+      { name: "Select queued.png" },
+      { timeout: 4_000 },
+    );
+    expect(readyButton.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://storage.googleapis.com/nova/users/u/plan/item-1/pool/queued.heic.preview.jpg?signature=preview",
+    );
+    expect(listCalls).toBeGreaterThanOrEqual(2);
   });
 });

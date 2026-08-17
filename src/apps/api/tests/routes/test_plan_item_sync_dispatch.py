@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,7 +27,16 @@ from sqlalchemy.exc import OperationalError
 from app.config import settings
 from app.database import sync_session
 from app.main import app
-from app.models import ContentPlan, Job, Persona, PlanItem, User
+from app.models import ContentPlan, Job, Persona, PlanItem, PlanItemAsset, User
+from app.schemas.edit_proposal import (
+    ApprovedProposalSnapshot,
+    EditProposal,
+    EditProposalSnapshot,
+    MediaRef,
+    StoryBeat,
+    canonical_media_digest,
+)
+from app.storage import ObjectMetadata
 from app.tasks.content_plan_build import dispatch_item_render_for
 
 _ENQUEUE = "app.services.job_dispatch.enqueue_orchestrator_sync"
@@ -120,6 +130,116 @@ def _jobs_for(item_id: uuid.UUID) -> list[Job]:
         rows = s.execute(select(Job).where(Job.content_plan_item_id == item_id)).scalars().all()
         s.expunge_all()
         return list(rows)
+
+
+def _approve_clip_proposal(item_id: uuid.UUID, *, path: str, generation: str = "42") -> None:
+    media_id = str(uuid.uuid4())
+    media = MediaRef(
+        lane="clip",
+        media_id=media_id,
+        gcs_path=path,
+        generation=generation,
+        kind="video",
+    )
+    snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Share what stood out",
+        pace="balanced",
+        duration_s=24,
+        title="What I noticed",
+        media=[media],
+        story_beats=[
+            StoryBeat(
+                beat_id="coast",
+                topic="Coast",
+                thought="The water set the pace.",
+                media_ids=[media_id],
+                duration_s=4,
+            )
+        ],
+    )
+    digest = canonical_media_digest([media])
+    proposal = EditProposal(
+        proposal_version=3,
+        generation_attempt_id=str(uuid.uuid4()),
+        media_digest=digest,
+        status="approved",
+        draft=snapshot,
+        last_approved=ApprovedProposalSnapshot(
+            proposal_version=3,
+            media_digest=digest,
+            approved_at=datetime.now(UTC),
+            snapshot=snapshot,
+        ),
+    )
+    with sync_session() as s:
+        item = s.get(PlanItem, item_id)
+        assert item is not None
+        item.clip_assignments = [{"media_id": media_id, "gcs_path": path, "shot_id": None}]
+        item.edit_proposal = proposal.model_dump(mode="json")
+        s.commit()
+
+
+def _approve_asset_proposal(
+    user_id: uuid.UUID, item_id: uuid.UUID, *, path: str, generation: str = "51"
+) -> str:
+    asset_id = uuid.uuid4()
+    media = MediaRef(
+        lane="asset",
+        media_id=str(asset_id),
+        gcs_path=path,
+        generation=generation,
+        kind="image",
+    )
+    snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Tell the story with photos",
+        pace="balanced",
+        duration_s=18,
+        title="Corfu in details",
+        media=[media],
+        story_beats=[
+            StoryBeat(
+                beat_id="town",
+                topic="Town",
+                thought="The old streets hold the story.",
+                media_ids=[str(asset_id)],
+                duration_s=4,
+            )
+        ],
+    )
+    digest = canonical_media_digest([media])
+    proposal = EditProposal(
+        proposal_version=3,
+        generation_attempt_id=str(uuid.uuid4()),
+        media_digest=digest,
+        status="approved",
+        draft=snapshot,
+        last_approved=ApprovedProposalSnapshot(
+            proposal_version=3,
+            media_digest=digest,
+            approved_at=datetime.now(UTC),
+            snapshot=snapshot,
+        ),
+    )
+    with sync_session() as s:
+        item = s.get(PlanItem, item_id)
+        assert item is not None
+        item.clip_gcs_paths = []
+        item.edit_proposal = proposal.model_dump(mode="json")
+        s.add(
+            PlanItemAsset(
+                id=asset_id,
+                plan_item_id=item_id,
+                user_id=user_id,
+                gcs_path=path,
+                gcs_generation=generation,
+                kind="image",
+                status="ready",
+            )
+        )
+        s.commit()
+    return str(asset_id)
 
 
 def _link_job(item_id: uuid.UUID, user_id: uuid.UUID, *, status: str) -> uuid.UUID:
@@ -245,6 +365,97 @@ def test_generate_item_invalid_clips_422(client: TestClient) -> None:
     assert resp.status_code == 422
     enqueue.assert_not_called()
     assert _jobs_for(item_id) == []
+
+
+def test_task_side_enforcement_rejects_missing_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lock-owning dispatcher is the final proposal gate, not only the route."""
+
+    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", True)
+    _user_id, item_id = _seed_item()
+    with patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(str(item_id))
+    assert result.outcome == "proposal_required"
+    enqueue.assert_not_called()
+    assert _jobs_for(item_id) == []
+
+
+def test_approved_proposal_exact_media_is_snapshotted_into_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Generate freezes the approval and immutable media identity into the Job."""
+
+    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", True)
+    _user_id, item_id = _seed_item()
+    path = f"users/test/plan/{item_id}/a.mp4"
+    with sync_session() as s:
+        item = s.get(PlanItem, item_id)
+        assert item is not None
+        item.clip_gcs_paths = [path]
+        s.commit()
+    _approve_clip_proposal(item_id, path=path)
+    metadata = ObjectMetadata(
+        path=path,
+        generation="42",
+        etag="etag",
+        size=100,
+        content_type="video/mp4",
+    )
+
+    with patch("app.storage.object_metadata", return_value=metadata), patch(_ENQUEUE):
+        result = dispatch_item_render_for(str(item_id))
+
+    assert result.outcome == "dispatched"
+    job = _jobs_for(item_id)[0]
+    guided = job.assembly_plan["guided_edit"]
+    assert guided["proposal_version"] == 3
+    assert guided["approved_proposal"]["title"] == "What I noticed"
+    assert guided["media_identities"] == [
+        {
+            "lane": "clip",
+            "media_id": guided["approved_proposal"]["media"][0]["media_id"],
+            "gcs_path": path,
+            "generation": "42",
+            "kind": "video",
+        }
+    ]
+
+
+def test_capability_snapshots_approved_asset_only_story_without_enforcement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An approved pool-only edit must not fall back during staged rollout."""
+
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", False)
+    user_id, item_id = _seed_item(clips=[])
+    path = f"users/{user_id}/plan/{item_id}/pool/town.jpg"
+    media_id = _approve_asset_proposal(user_id, item_id, path=path)
+    metadata = ObjectMetadata(
+        path=path,
+        generation="51",
+        etag="etag",
+        size=100,
+        content_type="image/jpeg",
+    )
+
+    with patch("app.storage.object_metadata", return_value=metadata), patch(_ENQUEUE):
+        result = dispatch_item_render_for(str(item_id))
+
+    assert result.outcome == "dispatched"
+    job = _jobs_for(item_id)[0]
+    assert job.all_candidates["clip_paths"] == [path]
+    assert job.raw_storage_path == path
+    assert job.assembly_plan["guided_edit"]["media_identities"] == [
+        {
+            "lane": "asset",
+            "media_id": media_id,
+            "gcs_path": path,
+            "generation": "51",
+            "kind": "image",
+        }
+    ]
 
 
 def test_generate_item_publish_failure_marks_job_failed(client: TestClient) -> None:

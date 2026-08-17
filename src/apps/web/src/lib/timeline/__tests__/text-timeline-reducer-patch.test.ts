@@ -19,6 +19,32 @@ function bar(over: Partial<TextElementBar> = {}): TextElementBar {
 }
 
 describe("textReducer PATCH_BAR — behind_subject", () => {
+  it("previews a motion gesture live and records only its baseline on commit", () => {
+    const before = bar({ motion: { version: 2, speed: 1 } });
+    const state = initTextEditorState([before]);
+    const previewOne = textReducer(state, {
+      type: "PREVIEW_BAR",
+      id: "a",
+      patch: { motion: { version: 2, speed: 2 } },
+    });
+    const previewTwo = textReducer(previewOne, {
+      type: "PREVIEW_BAR",
+      id: "a",
+      patch: { motion: { version: 2, speed: 3 } },
+    });
+    expect(previewTwo.bars[0].motion?.speed).toBe(3);
+    expect(previewTwo.past).toHaveLength(0);
+
+    const committed = textReducer(previewTwo, {
+      type: "COMMIT_PREVIEW_BAR",
+      id: "a",
+      before,
+      patch: { motion: { version: 2, speed: 3 } },
+    });
+    expect(committed.past).toHaveLength(1);
+    expect(textReducer(committed, { type: "UNDO" }).bars[0].motion?.speed).toBe(1);
+  });
+
   it("sets behind_subject on the targeted bar, leaving others untouched", () => {
     const state = initTextEditorState([bar({ id: "a" }), bar({ id: "b" })]);
     const next = textReducer(state, {

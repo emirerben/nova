@@ -4,10 +4,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 
 import InspectorPanel from "@/app/plan/items/[id]/_editor/InspectorPanel";
 import type { PoolAsset } from "@/lib/plan-api";
-import type { MotionPresetInstanceV1 } from "@nova/motion-runtime";
+import { createCreatorBlockInstance, type MotionPresetInstance } from "@nova/motion-runtime";
 
 const noop = jest.fn();
-const scene: MotionPresetInstanceV1 = {
+const scene: MotionPresetInstance = {
   id: "motion-1",
   preset_id: "kinetic_word",
   preset_version: 1,
@@ -35,8 +35,16 @@ const assets: PoolAsset[] = [0, 1, 2].map((index) => ({
   gcs_path: `users/u/plan/i/pool/frame-${index}.jpg`,
 }));
 
-function renderInspector(selectedScene: MotionPresetInstanceV1 = scene) {
+function renderInspector(
+  selectedScene: MotionPresetInstance = scene,
+  evolvingTypeEnabled = false,
+) {
   const onPatchMotion = jest.fn();
+  const onPatchMotionControl = jest.fn();
+  const onBeginMotionControl = jest.fn();
+  const onPreviewMotionControl = jest.fn();
+  const onCommitMotionControl = jest.fn();
+  const onCancelMotionControl = jest.fn();
   const onRemoveMotion = jest.fn();
   render(
     <InspectorPanel
@@ -48,6 +56,7 @@ function renderInspector(selectedScene: MotionPresetInstanceV1 = scene) {
       motionScene={selectedScene}
       motionDurationS={10}
       motionAssets={assets}
+      evolvingTypeEnabled={evolvingTypeEnabled}
       tab="basic"
       sampleWord={null}
       appliedPresetId={null}
@@ -65,27 +74,51 @@ function renderInspector(selectedScene: MotionPresetInstanceV1 = scene) {
       onRecordOverlay={noop}
       onDeleteOverlay={noop}
       onPatchMotion={onPatchMotion}
+      onPatchMotionControl={onPatchMotionControl}
+      onBeginMotionControl={onBeginMotionControl}
+      onPreviewMotionControl={onPreviewMotionControl}
+      onCommitMotionControl={onCommitMotionControl}
+      onCancelMotionControl={onCancelMotionControl}
       onRemoveMotion={onRemoveMotion}
       onClose={noop}
       onPickPreset={noop}
     />,
   );
-  return { onPatchMotion, onRemoveMotion };
+  return {
+    onPatchMotion,
+    onPatchMotionControl,
+    onBeginMotionControl,
+    onPreviewMotionControl,
+    onCommitMotionControl,
+    onCancelMotionControl,
+    onRemoveMotion,
+  };
 }
 
 describe("InspectorPanel Creator Blocks", () => {
   it("owns block copy, timing, motion, palette, and removal in the right inspector", () => {
-    const { onPatchMotion, onRemoveMotion } = renderInspector();
+    const {
+      onPatchMotion,
+      onBeginMotionControl,
+      onPreviewMotionControl,
+      onCommitMotionControl,
+      onRemoveMotion,
+    } = renderInspector();
 
     expect(screen.getByTestId("selected-motion-inspector")).toHaveTextContent("Wild Type");
     fireEvent.change(screen.getByLabelText("Text"), { target: { value: "NEW" } });
-    fireEvent.change(screen.getByLabelText("Intensity"), { target: { value: "0.5" } });
+    const intensity = screen.getByLabelText("Intensity");
+    fireEvent.pointerDown(intensity);
+    fireEvent.change(intensity, { target: { value: "50" } });
+    fireEvent.pointerUp(intensity);
     fireEvent.change(screen.getByLabelText("Start (seconds)"), { target: { value: "0.5" } });
     fireEvent.change(screen.getByLabelText("primary"), { target: { value: "#112233" } });
     fireEvent.click(screen.getByRole("button", { name: "Remove block" }));
 
     expect(onPatchMotion).toHaveBeenCalledWith("motion-1", { params: { text: "NEW" } });
-    expect(onPatchMotion).toHaveBeenCalledWith("motion-1", { intensity: 0.5 });
+    expect(onBeginMotionControl).toHaveBeenCalledTimes(1);
+    expect(onPreviewMotionControl).toHaveBeenCalledWith("motion-1", { intensity: 0.5 });
+    expect(onCommitMotionControl).toHaveBeenCalledWith("motion-1", { intensity: 0.5 });
     expect(onPatchMotion).toHaveBeenCalledWith("motion-1", { start_frame: 15 });
     expect(onPatchMotion).toHaveBeenCalledWith("motion-1", {
       palette: { primary: "#112233", accent: "#c7ff3d" },
@@ -93,8 +126,51 @@ describe("InspectorPanel Creator Blocks", () => {
     expect(onRemoveMotion).toHaveBeenCalledWith("motion-1");
   });
 
+  it("restores a cancelled motion slider and starts the next gesture cleanly", () => {
+    const {
+      onBeginMotionControl,
+      onPreviewMotionControl,
+      onCommitMotionControl,
+      onCancelMotionControl,
+    } = renderInspector();
+    const intensity = screen.getByLabelText("Intensity");
+
+    fireEvent.pointerDown(intensity);
+    fireEvent.change(intensity, { target: { value: "50" } });
+    fireEvent.pointerCancel(intensity);
+
+    expect(onBeginMotionControl).toHaveBeenCalledTimes(1);
+    expect(onPreviewMotionControl).toHaveBeenNthCalledWith(1, "motion-1", {
+      intensity: 0.5,
+    });
+    expect(onCancelMotionControl).toHaveBeenCalledTimes(1);
+    expect(onCommitMotionControl).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(intensity);
+    fireEvent.change(intensity, { target: { value: "60" } });
+    fireEvent.pointerUp(intensity);
+
+    expect(onBeginMotionControl).toHaveBeenCalledTimes(2);
+    expect(onCommitMotionControl).toHaveBeenCalledWith("motion-1", {
+      intensity: 0.6,
+    });
+  });
+
+  it("cancels a gesture that returns to its initial value", () => {
+    const { onCancelMotionControl, onCommitMotionControl } = renderInspector();
+    const intensity = screen.getByLabelText("Intensity");
+
+    fireEvent.pointerDown(intensity);
+    fireEvent.change(intensity, { target: { value: "50" } });
+    fireEvent.change(intensity, { target: { value: "72" } });
+    fireEvent.pointerUp(intensity);
+
+    expect(onCancelMotionControl).toHaveBeenCalledTimes(1);
+    expect(onCommitMotionControl).not.toHaveBeenCalled();
+  });
+
   it("reorders media assets without allowing the preset to drop below its minimum", () => {
-    const mediaScene: MotionPresetInstanceV1 = {
+    const mediaScene: MotionPresetInstance = {
       ...scene,
       id: "motion-media",
       preset_id: "film_strip",
@@ -116,5 +192,39 @@ describe("InspectorPanel Creator Blocks", () => {
         ],
       },
     });
+  });
+
+  it("keeps a persisted Evolving Type chip removable while flag-off controls stay hidden", () => {
+    const evolving = createCreatorBlockInstance({
+      id: "motion-evolving",
+      presetId: "evolving_type",
+      startFrame: 0,
+      endFrameExclusive: 159,
+    });
+    const { onRemoveMotion } = renderInspector(evolving);
+
+    expect(screen.getByText("Evolving Type")).toBeInTheDocument();
+    expect(screen.getByText(/saved Evolving Type block is preserved/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Speed")).toBeNull();
+    expect(screen.queryByLabelText("Start (seconds)")).toBeNull();
+    expect(screen.queryByLabelText("primary")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove block" }));
+    expect(onRemoveMotion).toHaveBeenCalledWith("motion-evolving");
+  });
+
+  it("renders supported metadata controls for Evolving Type without invented fields", () => {
+    renderInspector(createCreatorBlockInstance({
+      id: "motion-evolving",
+      presetId: "evolving_type",
+      startFrame: 0,
+      endFrameExclusive: 159,
+    }), true);
+
+    expect(screen.getByLabelText("Speed")).toHaveAttribute("min", "0.75");
+    expect(screen.getByLabelText("Intensity")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Advanced motion"));
+    expect(screen.getByLabelText("Icon count")).toBeInTheDocument();
+    expect(screen.getByLabelText("Split icons")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Blur")).toBeNull();
   });
 });

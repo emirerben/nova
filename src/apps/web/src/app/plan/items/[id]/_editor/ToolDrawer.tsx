@@ -18,6 +18,7 @@ import {
   type PoolAsset,
   type VisualBlock,
 } from "@/lib/plan-api";
+import { poolAssetAnalysisLine } from "@/lib/pool-asset-display";
 import {
   filterTextPresetsByCategory,
   PRESET_CATEGORIES,
@@ -50,7 +51,7 @@ import {
   createCreatorBlockInstance,
   MOTION_MAX_INSTANCES,
   type MotionPresetId,
-  type MotionPresetInstanceV1,
+  type MotionPresetInstance,
 } from "@nova/motion-runtime";
 import { CreatorBlockCatalogPreview } from "./MotionCanvasLayer";
 
@@ -91,11 +92,14 @@ export default function ToolDrawer({
   selectedMotionId = null,
   motionAvailable = false,
   motionRuntimeCompatible = true,
+  evolvingTypeEnabled = false,
   onAddMotion,
   onSelectMotion,
   visualAssets = [],
   visualTextElements = [],
   visualUploading = false,
+  visualUploadDisabled = false,
+  visualUploadFeedback = null,
   onVisualUpload,
   onAddMontage,
   onAddTextCard,
@@ -151,10 +155,11 @@ export default function ToolDrawer({
    *  the autoplace flag + the variant's `suggestions` capability). */
   overlaySuggestions?: React.ReactNode;
   visualBlocks?: VisualBlock[];
-  motionScenes?: MotionPresetInstanceV1[];
+  motionScenes?: MotionPresetInstance[];
   selectedMotionId?: string | null;
   motionAvailable?: boolean;
   motionRuntimeCompatible?: boolean;
+  evolvingTypeEnabled?: boolean;
   onAddMotion?: (presetId: MotionPresetId) => void;
   onSelectMotion?: (id: string) => void;
   visualAssets?: PoolAsset[];
@@ -167,6 +172,8 @@ export default function ToolDrawer({
     color?: string;
   }>;
   visualUploading?: boolean;
+  visualUploadDisabled?: boolean;
+  visualUploadFeedback?: React.ReactNode;
   onVisualUpload?: (files: File[]) => void;
   onAddMontage?: (assetIds: string[]) => void;
   onAddTextCard?: (preset: "card" | "quote" | "statistic" | "transition") => void;
@@ -452,6 +459,7 @@ export default function ToolDrawer({
             selectedSceneId={selectedMotionId}
             available={motionAvailable}
             runtimeCompatible={motionRuntimeCompatible}
+            evolvingTypeEnabled={evolvingTypeEnabled}
             assets={visualAssets}
             onAdd={onAddMotion}
             onSelect={onSelectMotion}
@@ -461,6 +469,8 @@ export default function ToolDrawer({
             assets={visualAssets}
             textElements={visualTextElements}
             uploading={visualUploading}
+            uploadDisabled={visualUploadDisabled}
+            uploadFeedback={visualUploadFeedback}
             onUpload={onVisualUpload}
             onAddMontage={onAddMontage}
             onAddTextCard={onAddTextCard}
@@ -509,14 +519,16 @@ function MotionPresetsPanel({
   selectedSceneId,
   available,
   runtimeCompatible,
+  evolvingTypeEnabled,
   assets,
   onAdd,
   onSelect,
 }: {
-  scenes: MotionPresetInstanceV1[];
+  scenes: MotionPresetInstance[];
   selectedSceneId: string | null;
   available: boolean;
   runtimeCompatible: boolean;
+  evolvingTypeEnabled: boolean;
   assets: PoolAsset[];
   onAdd?: (presetId: MotionPresetId) => void;
   onSelect?: (id: string) => void;
@@ -532,11 +544,14 @@ function MotionPresetsPanel({
     <section className="border-b border-zinc-100 px-5 py-5">
       <div className="mb-4">
         <p className="text-[12px] font-semibold text-[#3f3f46]">Creator Blocks</p>
-        <p className="mt-0.5 text-[11px] text-[#71717a]">Animated building blocks, matched in export</p>
       </div>
       {reason && <p className="text-[11px] text-[#71717a]">{reason}</p>}
       <div className="grid grid-cols-2 gap-3" data-testid="creator-block-grid">
-        {CREATOR_BLOCK_CATALOG.map((entry) => {
+        {CREATOR_BLOCK_CATALOG.filter(
+          (entry) =>
+            entry.preset_id !== "evolving_type" ||
+            evolvingTypeEnabled,
+        ).map((entry) => {
           const readyImages = assets.filter(isBoundedCreatorImageAsset);
           const assetShortage = entry.min_assets > readyImages.length;
           const disabled = !!reason || !onAdd || scenes.length >= MOTION_MAX_INSTANCES || assetShortage;
@@ -628,6 +643,7 @@ function CreatorBlockThumbnail({
     card_stack: "▧ ▧",
     film_strip: "▥",
     donut_text: "CREATE · REPEAT",
+    evolving_type: "EVOLVE\n◌ ◍ ◉",
   };
   const assetIdentity = assets.map((asset) => `${asset.id}:${asset.status}:${asset.gcs_path}`).join("|");
   const instance = useMemo(() => {
@@ -665,6 +681,8 @@ function VisualsDrawer({
   assets,
   textElements,
   uploading,
+  uploadDisabled,
+  uploadFeedback,
   onUpload,
   onAddMontage,
   onAddTextCard,
@@ -690,6 +708,8 @@ function VisualsDrawer({
     color?: string;
   }>;
   uploading: boolean;
+  uploadDisabled: boolean;
+  uploadFeedback?: React.ReactNode;
   onUpload?: (files: File[]) => void;
   onAddMontage?: (assetIds: string[]) => void;
   onAddTextCard?: (preset: "card" | "quote" | "statistic" | "transition") => void;
@@ -814,20 +834,25 @@ function VisualsDrawer({
           <p className="text-[12px] font-semibold text-[#3f3f46]">Montage assets</p>
           <span className="text-[11px] text-[#71717a]">Choose 3–12</span>
         </div>
-        <label className="mb-3 flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-500">
-          {uploading ? "Uploading visuals…" : "Upload images or videos"}
+        <label className="mb-3 flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-500 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+          {uploading
+            ? "Uploading visuals…"
+            : uploadDisabled
+              ? "Visuals pool is full"
+              : "Upload images or videos"}
           <input
             type="file"
             multiple
             accept={OVERLAY_MIME_TYPES.join(",")}
             className="sr-only"
-            disabled={uploading}
+            disabled={uploading || uploadDisabled}
             onChange={(event) => {
               onUpload?.(Array.from(event.target.files ?? []));
               event.currentTarget.value = "";
             }}
           />
         </label>
+        {uploadFeedback}
         <div className="grid grid-cols-3 gap-2">
           {ready.map((asset) => {
             const selected = selectedAssetIds.includes(asset.id);
@@ -1505,11 +1530,20 @@ function VisualAssetButton({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(asset.user_context ?? "");
   const [saving, setSaving] = useState(false);
-  const novaLine = asset.nova_description ?? asset.nova_on_screen_text ?? null;
+  const novaLine = poolAssetAnalysisLine(asset);
+  // Videos can't render through <img> at all — they need the browser-safe
+  // poster preview. Images fall back to their raw display_url when no
+  // preview was generated (e.g. already browser-safe JPEG/PNG/WebP).
+  const tileSrc = asset.kind === "video" ? (asset.preview_url ?? null) : (asset.preview_url ?? asset.display_url);
+  const [mediaError, setMediaError] = useState(false);
 
   useEffect(() => {
     setDraft(asset.user_context ?? "");
   }, [asset.user_context]);
+
+  useEffect(() => {
+    setMediaError(false);
+  }, [tileSrc]);
 
   async function save() {
     if (!onSaveContext) return;
@@ -1533,9 +1567,14 @@ function VisualAssetButton({
           selected ? "border-lime-500" : "border-transparent"
         } focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500`}
       >
-        {asset.display_url ? (
+        {tileSrc && !mediaError ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={asset.display_url} alt="" className="h-full w-full object-cover" />
+          <img
+            src={tileSrc}
+            alt=""
+            onError={() => setMediaError(true)}
+            className="h-full w-full object-cover"
+          />
         ) : (
           <span className="flex h-full items-center justify-center bg-zinc-100 text-[10px] text-zinc-500">
             {asset.kind}
@@ -1603,7 +1642,7 @@ function VisualAssetButton({
         </div>
         <div>
           <span className="font-semibold text-[#3f3f46]">Nova</span>
-          <p className="line-clamp-2 text-[#71717a]">{novaLine || "Analysis pending"}</p>
+          <p className="line-clamp-2 text-[#71717a]">{novaLine}</p>
         </div>
       </div>
     </div>

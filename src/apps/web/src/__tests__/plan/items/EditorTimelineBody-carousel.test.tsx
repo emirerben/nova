@@ -264,3 +264,29 @@ describe("EditorTimelineBody — carousel-moment block chip", () => {
     expect(onSetCarouselPosition).not.toHaveBeenCalled();
   });
 });
+
+describe("EditorTimelineBody — unused source clips", () => {
+  it("surfaces an uploaded clip that is absent from the rendered cut and can add it", () => {
+    const onAddClip = jest.fn();
+    render(
+      <EditorTimelineBody
+        {...baseProps({
+          filmstripClips: Array.from({ length: 6 }, (_, clip_index) => ({
+            clip_index,
+            signed_url: `https://storage.example/clip-${clip_index}.mp4`,
+            duration_s: clip_index === 5 ? null : 4,
+          })),
+          onAddClip,
+        })}
+      />,
+    );
+
+    const addLastClip = screen.getByRole("button", {
+      name: "Add source clip 6 to timeline",
+    });
+    expect(addLastClip).toBeInTheDocument();
+
+    fireEvent.click(addLastClip);
+    expect(onAddClip).toHaveBeenCalledWith(5);
+  });
+});

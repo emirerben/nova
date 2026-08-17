@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 from unittest import mock
 
+import numpy as np
 import pytest
 import skia
 from PIL import Image
@@ -1004,6 +1006,33 @@ def test_sequence_write_on_combines_reveal_hold_and_fade_out(effect):
     assert 90 in hold_indices
     assert 164 in hold_indices
     assert 165 in render_indices
+
+
+def test_slow_v2_sequence_uses_v2_settle_in_per_overlay_and_composite_plans():
+    overlay = {
+        "text": "SLOW",
+        "role": tos.SEQUENCE_OVERLAY_ROLE,
+        "effect": "fade-in",
+        "motion": {"version": 2, "speed": 0.25, "exit_s": 0.25},
+        "fade_out_ms": 500,
+        "start_s": 0.0,
+        "end_s": 6.0,
+    }
+    assert tos._sequence_head_settle_s(overlay) == pytest.approx(1.6)
+    assert tos._sequence_tail_change_s(overlay, 6.0) == pytest.approx(0.5)
+
+    plan = tos._sequence_hold_plan(overlay, 181, 1.0 / tos.FPS, 6.0)
+    assert plan is not None
+    render_indices, settled_idx, hold_indices = plan
+    assert settled_idx == 48
+    assert 47 in render_indices
+    assert 49 in hold_indices
+    assert 164 in hold_indices
+    assert 165 in render_indices
+
+    assert tos._sequence_block_changing_at(overlay, 0.5, 6.0)
+    assert not tos._sequence_block_changing_at(overlay, 2.0, 6.0)
+    assert tos._sequence_block_changing_at(overlay, 5.75, 6.0)
 
 
 def test_skia_validation_restores_explicit_newlines_after_ass_sanitization():
@@ -3455,3 +3484,264 @@ def test_burn_frees_png_work_dir_after_encode(tmp_workdir, monkeypatch):
     assert os.path.exists(out_path)
     assert "work_dir" in seen
     assert not os.path.exists(seen["work_dir"])  # PNG scratch freed
+
+
+def test_smooth_type_uses_stable_shaped_full_run_for_complex_scripts(monkeypatch):
+    overlay = {
+        "text": "office 👩‍💻 e\u0301\nمرحبا\nİyi",
+        "effect": "smooth-type",
+        "motion": {"version": 2},
+        "position": "center",
+        "font_family": "Inter",
+        "text_size_px": 88,
+        "text_color": "#FFFFFF",
+    }
+    shaped_calls: list[tuple[str, float]] = []
+    original = tos._shaped_paragraph
+
+    def capture(text, font, spacing_px, paint):
+        shaped_calls.append((text, spacing_px))
+        return original(text, font, spacing_px, paint)
+
+    overlay["letter_spacing"] = 0.05
+    monkeypatch.setattr(tos, "_shaped_paragraph", capture)
+    frame = tos._draw_frame(overlay, 0.1, 3.0)
+    assert frame.width() == tos.CANVAS_W
+    assert any("مرحبا" in text for text, _spacing in shaped_calls)
+    assert all(spacing > 0 for _text, spacing in shaped_calls)
+
+
+def test_production_image_installs_emoji_fallback_for_shaped_runs():
+    dockerfile = Path(__file__).resolve().parents[5] / "Dockerfile"
+    assert "fonts-noto-color-emoji" in dockerfile.read_text(encoding="utf-8")
+
+
+def test_smooth_type_settled_frame_matches_shaped_static_geometry():
+    overlay = {
+        "text": "office 👩‍💻 e\u0301 مرحبا İyi",
+        "effect": "smooth-type",
+        "motion": {"version": 2},
+        "position": "center",
+        "font_family": "Inter",
+        "text_size_px": 88,
+        "text_color": "#FFFFFF",
+    }
+    settled = tos._draw_frame(overlay, 10.0, 3.0)
+    shaped_static = tos._draw_frame(
+        {**overlay, "effect": "static", "shape_text": True, "motion": None},
+        0.0,
+        3.0,
+    )
+    assert bytes(settled.encodeToData()) == bytes(shaped_static.encodeToData())
+    assert tos._is_animated(overlay) is True
+
+
+def test_smooth_type_long_window_uses_hold_links_without_four_second_truncation(tmp_workdir):
+    overlay = {
+        "text": "A",
+        "effect": "smooth-type",
+        "motion": {"version": 2},
+        "font_family": "Inter",
+        "text_size_px": 88,
+        "text_color": "#FFFFFF",
+        "start_s": 0.0,
+        "end_s": 5.3,
+    }
+    assert tos._uses_long_running_frame_ceiling(overlay)
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    assert seq["n_frames"] == int(round(5.3 * tos.FPS)) + 1
+    assert seq["n_frames"] > tos.MAX_OVERLAY_FRAMES
+    frames = sorted(name for name in os.listdir(tmp_workdir) if name.endswith(".png"))
+    assert len(frames) == seq["n_frames"]
+    # The settled middle is hard-linked, so its inode is stable across the hold.
+    assert (
+        os.stat(os.path.join(tmp_workdir, frames[10])).st_ino
+        == os.stat(os.path.join(tmp_workdir, frames[-2])).st_ino
+    )
+
+
+def test_smooth_type_long_trim_uses_full_duration_ceiling():
+    overlay = {"effect": "smooth-type", "motion": {"version": 2}}
+    assert tos._long_running_frame_ceiling(overlay) == tos.BEHIND_SUBJECT_FRAME_CEILING
+    assert tos._long_running_frame_ceiling(overlay) > 59 * tos.FPS
+
+
+def test_v2_holdable_effect_uses_full_window_and_links_settled_tail():
+    overlay = {
+        "text": "Hold this",
+        "effect": "fade-in",
+        "motion": {"version": 2, "hold_s": 10.0},
+    }
+    duration_s = 10.4
+    n_render = int(round(duration_s * tos.FPS)) + 1
+
+    assert tos._uses_long_running_frame_ceiling(overlay)
+    assert tos._long_running_frame_ceiling(overlay) == tos.BEHIND_SUBJECT_FRAME_CEILING
+    plan = tos._v2_motion_hold_plan(overlay, n_render, 1.0 / tos.FPS, duration_s)
+    assert plan is not None
+    render_indices, settled_idx, hold_indices = plan
+    assert settled_idx == 12
+    assert render_indices == list(range(13))
+    assert hold_indices[-1] == n_render - 1
+
+
+def test_v2_hold_plan_rejects_continuously_changing_unsupported_effect():
+    overlay = {"effect": tos.DISSOLVE_OUT, "motion": {"version": 2, "hold_s": 10.0}}
+    assert not tos._uses_long_running_frame_ceiling(overlay)
+    assert tos._v2_motion_hold_plan(overlay, 300, 1.0 / tos.FPS, 10.0) is None
+
+
+def test_smooth_type_configured_exit_fades_in_renderer(monkeypatch):
+    overlay = {
+        "text": "Smooth",
+        "effect": "smooth-type",
+        "motion": {"version": 2, "exit_s": 1.0, "easing": "linear"},
+    }
+    seen_alpha: list[float] = []
+
+    def capture(*_args, **kwargs):
+        seen_alpha.append(kwargs["alpha"])
+
+    monkeypatch.setattr(tos, "_draw_centered_text", capture)
+    surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
+    tos._draw_with_animation(surface.getCanvas(), overlay, 2.5, 3.0)
+    assert seen_alpha == pytest.approx([0.5])
+
+
+def test_v2_exit_joins_hold_with_zero_starting_velocity(monkeypatch):
+    overlay = {
+        "text": "A",
+        "effect": "fade-in",
+        "motion": {"version": 2, "exit_s": 1.0, "easing": "linear"},
+    }
+    seen_alpha: list[float] = []
+
+    def capture(*_args, **kwargs):
+        seen_alpha.append(kwargs["alpha"])
+
+    monkeypatch.setattr(tos, "_draw_centered_text", capture)
+    surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
+    tos._draw_with_animation(surface.getCanvas(), overlay, 2.0, 3.0)
+    tos._draw_with_animation(surface.getCanvas(), overlay, 2.0001, 3.0)
+    assert abs((seen_alpha[1] - seen_alpha[0]) / 0.0001) < 0.01
+
+
+def test_v2_legacy_effects_use_one_settle_scale_and_effective_intensity(monkeypatch):
+    captured: list[dict] = []
+
+    def capture(_canvas, text, _overlay, **kwargs):
+        captured.append({"text": text, **kwargs})
+
+    monkeypatch.setattr(tos, "_draw_centered_text", capture)
+    surface = skia.Surfaces.MakeRasterN32Premul(tos.CANVAS_W, tos.CANVAS_H)
+    canvas = surface.getCanvas()
+    tos._draw_with_animation(
+        canvas,
+        {"text": "FAST", "effect": "fade-in", "motion": {"version": 2, "speed": 4}},
+        0.1,
+        0.1,
+    )
+    assert captured[-1]["alpha"] == pytest.approx(1.0)
+
+    tos._draw_with_animation(
+        canvas,
+        {
+            "text": "ABCDEFGHIJ",
+            "effect": "typewriter",
+            "motion": {"version": 2, "intensity": 0.5},
+        },
+        0.0,
+        2.0,
+    )
+    assert 1 < len(captured[-1]["text"]) < len("ABCDEFGHIJ")
+
+
+def test_smooth_type_masks_lines_and_rtl_in_logical_order():
+    base = {
+        "effect": "smooth-type",
+        "motion": {
+            "version": 2,
+            "easing": "linear",
+            "stagger_ms": 80,
+            "reveal_ramp_ms": 120,
+            "direction": "none",
+            "blur_px": 0,
+            "intensity": 1,
+        },
+        "position": "center",
+        "font_family": "Inter",
+        "text_size_px": 96,
+        "text_color": "#FFFFFF",
+        "shadow_enabled": False,
+    }
+    forward = tos._skia_image_to_rgba_array(
+        tos._draw_frame({**base, "text": "FIRST\nSECOND"}, 0.2, 3.0)
+    )[..., 3]
+    reverse = tos._skia_image_to_rgba_array(
+        tos._draw_frame(
+            {**base, "text": "FIRST\nSECOND", "motion": {**base["motion"], "order": "reverse"}},
+            0.2,
+            3.0,
+        )
+    )[..., 3]
+    settled = tos._skia_image_to_rgba_array(
+        tos._draw_frame({**base, "text": "FIRST\nSECOND"}, 3.0, 3.0)
+    )[..., 3]
+    occupied_rows = np.flatnonzero(np.any(settled > 0, axis=1))
+    row_gaps = np.diff(occupied_rows)
+    largest_gap_index = int(np.argmax(row_gaps))
+    line_divider = int(
+        (occupied_rows[largest_gap_index] + occupied_rows[largest_gap_index + 1]) / 2
+    )
+    assert forward[:line_divider].sum() > forward[line_divider:].sum()
+    assert reverse[line_divider:].sum() > reverse[:line_divider].sum()
+
+    rtl_forward = tos._skia_image_to_rgba_array(
+        tos._draw_frame({**base, "text": "مرحبا بالعالم"}, 0.25, 3.0)
+    )[..., 3]
+    rtl_reverse = tos._skia_image_to_rgba_array(
+        tos._draw_frame(
+            {
+                **base,
+                "text": "مرحبا بالعالم",
+                "motion": {**base["motion"], "order": "reverse"},
+            },
+            0.25,
+            3.0,
+        )
+    )[..., 3]
+    _ys, forward_x = np.where(rtl_forward > 0)
+    _ys, reverse_x = np.where(rtl_reverse > 0)
+    assert forward_x.mean() > reverse_x.mean()
+
+
+def test_smooth_type_rotates_entrance_translation_in_layer_space():
+    overlay = {
+        "text": "ROTATE",
+        "effect": "smooth-type",
+        "motion": {
+            "version": 2,
+            "intensity": 0.5,
+            "direction": "up",
+            "travel_px": 100,
+            "blur_px": 0,
+        },
+        "rotation_deg": 90,
+        "position": "center",
+        "font_family": "Inter",
+        "text_size_px": 96,
+        "text_color": "#FFFFFF",
+        "shadow_enabled": False,
+    }
+    entrance = tos._skia_image_to_rgba_array(tos._draw_frame(overlay, 0.2, 3.0))[..., 3]
+    untranslated = tos._skia_image_to_rgba_array(
+        tos._draw_frame(
+            {**overlay, "motion": {**overlay["motion"], "direction": "none"}},
+            0.2,
+            3.0,
+        )
+    )[..., 3]
+    _y, entrance_x = np.where(entrance > 0)
+    _y, untranslated_x = np.where(untranslated > 0)
+    assert entrance_x.mean() > untranslated_x.mean()

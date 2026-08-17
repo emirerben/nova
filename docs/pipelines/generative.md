@@ -68,6 +68,27 @@ allowlist trap, and why a burn-dict reader must mirror the renderer's fallbacks.
 - `song_text` — matched song + AI hero-intro overlay
 - `original_text` — clips' original audio + AI intro
 
+### Content-plan primary text under optional lyrics
+
+When `LYRICS_OPTIONAL_ENABLED=true`, a content-plan montage with a matched
+track renders `song_text` as its primary variant. The generated intro is
+persisted and burned as the default visible text. If the matched track has
+renderable lyrics, that same variant persists `lyrics_available=true` and
+`lyrics_baked=false`; the editor can then fetch beat-synced lyric seeds and add
+them as ordinary `lyric_line` text elements. Lyrics are a capability of the
+track-backed edit, not a competing titleless primary variant. Backend
+capability discovery for this elements model is gated by
+`LYRICS_OPTIONAL_ENABLED`; it does not require the legacy
+`LYRICS_EDITOR_ENABLED` switch used by baked lyric variants. The frontend still
+uses the rollout twin `NEXT_PUBLIC_LYRICS_OPTIONAL_ENABLED`.
+
+With the flag off, selection and persistence retain the legacy contract:
+renderable lyrics make `song_lyrics` primary and lyrics are baked during the
+initial render. Guards:
+`test_content_plan_primary_montage_uses_song_text_when_lyrics_are_optional`,
+`test_content_plan_primary_montage_flag_off_preserves_baked_lyrics`, and
+`test_song_text_keeps_generated_intro_and_exposes_optional_lyric_seeds`.
+
 ## Browser upload and download contract
 
 `POST /generative-jobs/upload-url` signs one exact-size, create-only GCS `PUT`
@@ -100,7 +121,12 @@ creator is eligible only when `SUBTITLED_ARCHETYPE_ENABLED=true`, the plan item
 uses `edit_format="subtitled"`, and either an enabled
 `CreatorStyleAssignment` pins a preset id/version or
 `SMART_CAPTIONS_DEFAULT_PRESET_ID`/`SMART_CAPTIONS_DEFAULT_PRESET_VERSION`
-configure a fleet-wide default. Verify an eligible creator gets
+configure a fleet-wide default. Since v0.34.0.0 the item page has no
+Smart-captions (or Sound design) toggle — dispatch requests smart captions for
+every item (`requested=True` in `content_plan_build.py`) and this gate ladder
+alone decides; auto sound design likewise defaults on
+(`smart_sound_design_enabled` server-default `true`, `None` ⇒ enabled). Verify
+an eligible creator gets
 `smart_captions_available=true`, the job trace records
 `smart_captions.plan_compiled`, and the ready variant persists
 `smart_captions_applied=true`. Planner/compiler failures fail open to ordinary
@@ -567,6 +593,10 @@ default false. Lyrics variants remain excluded until they have the same durable
 clean-base contract.
 
 ## Local smoke test
+
+The review-before-render contract for media-aware plan items is documented in
+[`guided-edit.md`](guided-edit.md). Its approval snapshot is intentionally dark until the strict
+story assembler consumes it.
 
 ```bash
 make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"

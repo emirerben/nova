@@ -8,6 +8,15 @@ const config = {
   maxWorkers: "50%",
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
+    "^@nova/motion-runtime$": "<rootDir>/../../packages/motion-runtime/src/index.ts",
+    "^@nova/motion-runtime/canvaskit$":
+      "<rootDir>/../../packages/motion-runtime/src/canvaskit.ts",
+    "^@nova/motion-runtime/schema$":
+      "<rootDir>/../../packages/motion-runtime/motion-scene.schema.json",
+    "^@nova/motion-runtime/catalog$":
+      "<rootDir>/../../packages/motion-runtime/creator-blocks.catalog.json",
+    "^@nova/motion-runtime/ai-catalog$":
+      "<rootDir>/../../packages/motion-runtime/src/ai-catalog.ts",
   },
   // Runs after the test environment is set up — polyfills + jest-dom matchers.
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],

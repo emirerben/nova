@@ -7,6 +7,7 @@ import pytest
 
 from app.pipeline.motion_scene import (
     MOTION_MAX_ACTIVE_FRAMES,
+    MOTION_MAX_COMPLEXITY_UNITS,
     MOTION_RUNTIME_HASH,
     MotionSceneError,
     _normalize_motion_asset,
@@ -32,6 +33,41 @@ def _scene(**overrides) -> dict:
     return value
 
 
+def _evolving_scene(**overrides) -> dict:
+    value = {
+        "id": "evolving-1",
+        "preset_id": "evolving_type",
+        "preset_version": 2,
+        "start_frame": 0,
+        "end_frame_exclusive": 159,
+        "palette": {"primary": "#000000", "accent": "#ffffff"},
+        "intensity": 0.72,
+        "params": {
+            "headline": "EVOLVE THE IDEA",
+            "subtitle": "Shape, split, and settle into focus",
+            "icon_count": 4,
+            "icon_style": "organic",
+            "text_stagger_ms": 45,
+            "icon_stagger_ms": 70,
+            "morph_amplitude": 0.65,
+            "density": "medium",
+            "layout": "compact",
+            "order": "forward",
+            "typography_scale": 1,
+            "backdrop_opacity": 0.7,
+            "split_icons": True,
+        },
+        "motion": {
+            "version": 2,
+            "speed": 1,
+            "easing": "ease-in-out-cubic",
+            "hold_frames": 30,
+        },
+    }
+    value.update(overrides)
+    return value
+
+
 def test_motion_contract_accepts_bounded_preset_and_normalizes_colors() -> None:
     validated = validate_motion_instances([_scene()], duration_frames=90)
     assert validated == [
@@ -40,7 +76,46 @@ def test_motion_contract_accepts_bounded_preset_and_normalizes_colors() -> None:
             "palette": {"primary": "#8B5CF6", "accent": "#D9FF43"},
         }
     ]
-    assert MOTION_RUNTIME_HASH.startswith("motion-v3:ck0.40.0:")
+    assert MOTION_RUNTIME_HASH.startswith("motion-v4:ck0.40.0:")
+
+
+def test_motion_contract_accepts_evolving_type_v2_with_reference_defaults() -> None:
+    validated = validate_motion_instances([_evolving_scene()], duration_frames=159)
+
+    assert validated[0]["end_frame_exclusive"] == 159
+    assert validated[0]["params"]["icon_count"] == 4
+    assert validated[0]["params"]["text_stagger_ms"] == 45
+    assert validated[0]["params"]["icon_stagger_ms"] == 70
+    assert validated[0]["params"]["morph_amplitude"] == 0.65
+    assert validated[0]["palette"] == {"primary": "#000000", "accent": "#FFFFFF"}
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "path"),
+    [
+        ("speed", 1.013, "motion.speed"),
+        ("morph_amplitude", 0.673, "params.morph_amplitude"),
+    ],
+)
+def test_motion_contract_matches_ts_decimal_step_validation(
+    field: str,
+    value: float,
+    path: str,
+) -> None:
+    scene = _evolving_scene()
+    target = scene["motion"] if field == "speed" else scene["params"]
+    target[field] = value
+
+    with pytest.raises(ValueError, match=rf"{path}: .* does not align to step"):
+        validate_motion_instances([scene], duration_frames=159)
+
+
+def test_motion_contract_fails_closed_for_unknown_v2_controls() -> None:
+    scene = _evolving_scene()
+    scene["motion"] = {**scene["motion"], "shader_source": "void main() {}"}
+
+    with pytest.raises(ValueError, match="not valid under any of the given schemas"):
+        validate_motion_instances([scene], duration_frames=159)
 
 
 @pytest.mark.parametrize(
@@ -76,6 +151,31 @@ def test_motion_contract_uses_exclusive_end_and_bounded_active_union() -> None:
                 _scene(id="last", start_frame=300, end_frame_exclusive=301),
             ]
         )
+
+
+def test_motion_contract_weighted_complexity_accepts_boundary_and_rejects_overlap() -> None:
+    evolving = _evolving_scene(end_frame_exclusive=MOTION_MAX_ACTIVE_FRAMES)
+    validated = validate_motion_instances([evolving])
+    assert len(validated) == 1
+    assert MOTION_MAX_COMPLEXITY_UNITS == MOTION_MAX_ACTIVE_FRAMES * 4
+
+    overlapping_legacy = _scene(
+        id="legacy-overlap",
+        start_frame=0,
+        end_frame_exclusive=MOTION_MAX_ACTIVE_FRAMES,
+    )
+    with pytest.raises(ValueError, match="weighted complexity units"):
+        validate_motion_instances([evolving, overlapping_legacy])
+
+
+def test_motion_contract_back_to_back_weighted_scenes_do_not_overlap() -> None:
+    first = _evolving_scene(end_frame_exclusive=120)
+    second = _evolving_scene(
+        id="evolving-2",
+        start_frame=120,
+        end_frame_exclusive=240,
+    )
+    assert len(validate_motion_instances([first, second])) == 2
 
 
 def test_motion_contract_accepts_creator_text_and_media_params() -> None:
@@ -235,6 +335,68 @@ def test_deno_renderer_materializes_exact_media_generations(monkeypatch, tmp_pat
         ("users/u/plan/i/pool/one.png", "11"),
         ("users/u/plan/i/pool/two.png", "22"),
     ]
+
+
+def test_deno_renderer_accepts_prepared_benchmark_assets(monkeypatch, tmp_path) -> None:
+    prepared_root = tmp_path / "prepared"
+    prepared_root.mkdir()
+    prepared = prepared_root / "image.png"
+    prepared.write_bytes(b"normalized-png")
+    scene = {
+        **_scene(preset_id="film_strip", preset_version=2, end_frame_exclusive=36),
+        "params": {
+            "assets": [
+                {
+                    "asset_id": "image-1",
+                    "gcs_path": "users/u/plan/i/pool/one.png",
+                }
+            ]
+        },
+        "motion": {
+            "version": 2,
+            "speed": 4,
+            "easing": "ease-in-out-cubic",
+            "hold_frames": 0,
+        },
+    }
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, label: str, env=None):
+        del label, env
+        calls.append(cmd)
+        return SimpleNamespace(
+            stdout=(
+                f'{{"runtime_hash":"{MOTION_RUNTIME_HASH}",'
+                '"segments":[{"start_frame":0,"end_frame_exclusive":36}],'
+                '"frame_count":36}\n'
+            ).encode()
+        )
+
+    monkeypatch.setenv("DENO_DIR", "/tmp/deno-cache")
+    monkeypatch.setattr("app.pipeline.motion_scene.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene.storage.download_to_file",
+        lambda *_args, **_kwargs: pytest.fail("prepared assets must not hit storage"),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.motion_scene._normalize_motion_asset",
+        lambda *_args, **_kwargs: pytest.fail("prepared assets are already normalized"),
+    )
+    monkeypatch.setattr("app.pipeline.motion_scene._run", fake_run)
+    render_root = tmp_path / "render"
+    render_root.mkdir()
+
+    _render_sequence(
+        [scene],
+        width=1080,
+        height=1920,
+        tmpdir=str(render_root),
+        prepared_asset_paths={"image-1": str(prepared)},
+    )
+
+    render_cmd = calls[-1]
+    read_flag = next(part for part in render_cmd if part.startswith("--allow-read"))
+    assert str(prepared_root) in read_flag
 
 
 def test_motion_image_resource_is_probed_and_normalized_before_canvaskit(

@@ -1,8 +1,9 @@
 import "@testing-library/jest-dom";
 import React from "react";
-import { fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 
 import EditorCanvas from "@/app/plan/items/[id]/_editor/EditorCanvas";
+import { createEditorPlaybackClock } from "@/app/plan/items/[id]/_editor/editor-playback-clock";
 import type { PlanItemVariant, TextElement } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
@@ -47,7 +48,12 @@ const variant = {
   montage_preset_rendered: "masonry",
 } as unknown as PlanItemVariant;
 
-function canvas(currentTime: number, currentVariant = variant, currentBars = [bar]) {
+function canvas(
+  currentTime: number,
+  currentVariant = variant,
+  currentBars = [bar],
+  playbackClock: ReturnType<typeof createEditorPlaybackClock> | null = null,
+) {
   return (
     <EditorCanvas
       variant={currentVariant}
@@ -55,6 +61,7 @@ function canvas(currentTime: number, currentVariant = variant, currentBars = [ba
       bars={currentBars}
       selectedTextId={null}
       currentTime={currentTime}
+      playbackClock={playbackClock}
       masonryDurationS={8}
       zoomPct={100}
       tool="select"
@@ -70,7 +77,209 @@ function canvas(currentTime: number, currentVariant = variant, currentBars = [ba
 }
 
 describe("EditorCanvas masonry board motion", () => {
-  it("settles handwriting immediately when reduced motion is requested", () => {
+  it("publishes decoded rendered frames and rejects callbacks invalidated by a seek", () => {
+    const callbacks = new Map<number, VideoFrameRequestCallback>();
+    let nextId = 1;
+    const request = jest.fn((callback: VideoFrameRequestCallback) => {
+        const id = nextId++;
+        callbacks.set(id, callback);
+        return id;
+      });
+    const cancel = jest.fn();
+    Object.defineProperties(HTMLVideoElement.prototype, {
+      requestVideoFrameCallback: { configurable: true, value: request },
+      cancelVideoFrameCallback: { configurable: true, value: cancel },
+    });
+    const clock = createEditorPlaybackClock(0);
+    const videoRef = React.createRef<HTMLVideoElement>();
+    const view = render(
+      <EditorCanvas
+        variant={variant}
+        elements={[element]}
+        bars={[bar]}
+        selectedTextId={null}
+        currentTime={0}
+        playbackClock={clock}
+        playing
+        masonryDurationS={8}
+        zoomPct={100}
+        tool="select"
+        videoRef={videoRef}
+        onSelectText={jest.fn()}
+        onClearSelection={jest.fn()}
+        onPatchBar={jest.fn()}
+        onFocusContent={jest.fn()}
+        onTimeUpdate={jest.fn()}
+        onDuration={jest.fn()}
+      />,
+    );
+    const video = videoRef.current!;
+    const firstCallback = callbacks.get(1)!;
+
+    act(() => firstCallback(0, { mediaTime: 1.25 } as VideoFrameCallbackMetadata));
+    expect(clock.getSnapshot()).toBe(1.25);
+
+    video.currentTime = 2;
+    fireEvent.seeked(video);
+    expect(clock.getSnapshot()).toBe(2);
+    act(() => firstCallback(0, { mediaTime: 7 } as VideoFrameCallbackMetadata));
+    expect(clock.getSnapshot()).toBe(2);
+
+    const oldSourceCallback = callbacks.get(nextId - 1)!;
+    view.rerender(
+      <EditorCanvas
+        variant={{
+          ...variant,
+          output_url: "https://example.com/output-v2.mp4",
+          render_finished_at: "2026-08-13T16:00:00Z",
+        }}
+        elements={[element]}
+        bars={[bar]}
+        selectedTextId={null}
+        currentTime={2}
+        playbackClock={clock}
+        playing
+        masonryDurationS={8}
+        zoomPct={100}
+        tool="select"
+        videoRef={videoRef}
+        onSelectText={jest.fn()}
+        onClearSelection={jest.fn()}
+        onPatchBar={jest.fn()}
+        onFocusContent={jest.fn()}
+        onTimeUpdate={jest.fn()}
+        onDuration={jest.fn()}
+      />,
+    );
+    const afterSourceSwap = clock.getSnapshot();
+    act(() =>
+      oldSourceCallback(0, { mediaTime: 6 } as VideoFrameCallbackMetadata),
+    );
+    expect(clock.getSnapshot()).toBe(afterSourceSwap);
+
+    view.unmount();
+    expect(cancel).toHaveBeenCalled();
+    expect(request).toHaveBeenCalled();
+    delete (HTMLVideoElement.prototype as Partial<HTMLVideoElement>)
+      .requestVideoFrameCallback;
+    delete (HTMLVideoElement.prototype as Partial<HTMLVideoElement>)
+      .cancelVideoFrameCallback;
+  });
+
+  it("uses timeupdate as the compatibility clock when rendered rVFC is unavailable", () => {
+    const originalRequest = HTMLVideoElement.prototype.requestVideoFrameCallback;
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value: undefined,
+    });
+    const clock = createEditorPlaybackClock(0);
+    const videoRef = React.createRef<HTMLVideoElement>();
+    try {
+      const view = render(
+        <EditorCanvas
+          variant={variant}
+          elements={[element]}
+          bars={[bar]}
+          selectedTextId={null}
+          currentTime={0}
+          playbackClock={clock}
+          playing
+          masonryDurationS={8}
+          zoomPct={100}
+          tool="select"
+          videoRef={videoRef}
+          onSelectText={jest.fn()}
+          onClearSelection={jest.fn()}
+          onPatchBar={jest.fn()}
+          onFocusContent={jest.fn()}
+          onTimeUpdate={jest.fn()}
+          onDuration={jest.fn()}
+        />,
+      );
+      videoRef.current!.currentTime = 1.75;
+      fireEvent.timeUpdate(videoRef.current!);
+      expect(clock.getSnapshot()).toBe(1.75);
+      view.unmount();
+    } finally {
+      Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+        configurable: true,
+        value: originalRequest,
+      });
+    }
+  });
+
+  it("authoritatively resamples rendered video after canplay, rate, and visibility recovery", () => {
+    const callbacks = new Map<number, VideoFrameRequestCallback>();
+    let nextId = 1;
+    const request = jest.fn((callback: VideoFrameRequestCallback) => {
+      const id = nextId++;
+      callbacks.set(id, callback);
+      return id;
+    });
+    const cancel = jest.fn();
+    Object.defineProperties(HTMLVideoElement.prototype, {
+      requestVideoFrameCallback: { configurable: true, value: request },
+      cancelVideoFrameCallback: { configurable: true, value: cancel },
+    });
+    const visibilityDescriptor = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    const clock = createEditorPlaybackClock(0);
+    const videoRef = React.createRef<HTMLVideoElement>();
+    try {
+      const view = render(
+        <EditorCanvas
+          variant={variant}
+          elements={[element]}
+          bars={[bar]}
+          selectedTextId={null}
+          currentTime={0}
+          playbackClock={clock}
+          playing
+          masonryDurationS={8}
+          zoomPct={100}
+          tool="select"
+          videoRef={videoRef}
+          onSelectText={jest.fn()}
+          onClearSelection={jest.fn()}
+          onPatchBar={jest.fn()}
+          onFocusContent={jest.fn()}
+          onTimeUpdate={jest.fn()}
+          onDuration={jest.fn()}
+        />,
+      );
+      const video = videoRef.current!;
+
+      video.currentTime = 1.25;
+      act(() => fireEvent.canPlay(video));
+      expect(clock.getSnapshot()).toBe(1.25);
+
+      video.currentTime = 2.5;
+      act(() => fireEvent.rateChange(video));
+      expect(clock.getSnapshot()).toBe(2.5);
+
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: "visible",
+      });
+      video.currentTime = 3.75;
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      expect(clock.getSnapshot()).toBe(3.75);
+      expect(request).toHaveBeenCalledTimes(4);
+      expect(cancel).toHaveBeenCalledTimes(3);
+      view.unmount();
+    } finally {
+      if (visibilityDescriptor) {
+        Object.defineProperty(document, "visibilityState", visibilityDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "visibilityState");
+      }
+      delete (HTMLVideoElement.prototype as Partial<HTMLVideoElement>)
+        .requestVideoFrameCallback;
+      delete (HTMLVideoElement.prototype as Partial<HTMLVideoElement>)
+        .cancelVideoFrameCallback;
+    }
+  });
+
+  it("preserves the legacy reduced-motion behavior while flag-off", () => {
     const previousMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -97,6 +306,42 @@ describe("EditorCanvas masonry board motion", () => {
 
       expect(paths.length).toBeGreaterThan(0);
       expect(paths.every((path) => path.getAttribute("stroke-dashoffset") === "0")).toBe(true);
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: previousMatchMedia,
+      });
+    }
+  });
+
+  it("keeps authored handwriting timing under reduced motion when frame-driven", () => {
+    const previousMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: jest.fn().mockReturnValue({
+        matches: true,
+        media: "(prefers-reduced-motion: reduce)",
+        onchange: null,
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+        addListener: jest.fn(),
+        removeListener: jest.fn(),
+        dispatchEvent: jest.fn(),
+      }),
+    });
+
+    try {
+      const handwritingBar = { ...bar, effect: "handwriting" } as TextElementBar;
+      const view = render(
+        canvas(0.5, variant, [handwritingBar], createEditorPlaybackClock(0.5)),
+      );
+      const paths = Array.from(
+        view.container.querySelectorAll<SVGPathElement>(
+          "[data-handwriting-strokes] g:last-of-type path",
+        ),
+      );
+      expect(paths.length).toBeGreaterThan(0);
+      expect(paths.some((path) => path.getAttribute("stroke-dashoffset") !== "0")).toBe(true);
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,

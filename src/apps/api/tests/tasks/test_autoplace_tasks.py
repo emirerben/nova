@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -165,6 +167,13 @@ class _PoolAsset:
         self.aspect = None
         self.analysis = None
         self.status = "uploaded"
+        self.error_code = None
+        self.error_detail = None
+        self.error_retryable = False
+        self.analysis_attempt_token = None
+        self.analysis_attempt_count = 0
+        self.analysis_last_dispatched_at = None
+        self.analysis_started_at = None
 
 
 class _AnalyzeSess:
@@ -230,7 +239,10 @@ def _patch_analyze_pool_common(
     )
 
     def _download(_gcs_path: str, local_path: str) -> None:
-        Image.new("RGBA", (4, 2), (255, 0, 0, 128)).save(local_path)
+        if asset.kind == "video":
+            Path(local_path).write_bytes(b"mock video")
+        else:
+            Image.new("RGBA", (4, 2), (255, 0, 0, 128)).save(local_path)
 
     monkeypatch.setattr("app.storage.download_to_file", _download)
     monkeypatch.setattr("app.pipeline.image_clip.image_has_alpha", lambda _path: True)
@@ -431,6 +443,254 @@ def test_analyze_pool_asset_invalid_owner_exits_before_download_or_agent(
     assert asset.analysis is None
 
 
+def test_analyze_pool_asset_rejects_stale_attempt_token(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "current-attempt"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    downloads: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.download_to_file",
+        lambda path, _local: downloads.append(path),
+    )
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "stale-attempt")
+
+    assert downloads == []
+    assert asset.status == "queued"
+
+
+def test_pool_attempt_token_reads_rolling_deploy_compatible_header(monkeypatch) -> None:
+    task = SimpleNamespace(
+        request=SimpleNamespace(headers={"pool_asset_attempt_token": "attempt-from-header"})
+    )
+    monkeypatch.setattr(ap, "current_task", task)
+
+    assert ap._pool_attempt_token(None) == "attempt-from-header"
+    assert ap._pool_attempt_token("explicit") == "explicit"
+
+
+def test_analyze_pool_asset_discards_late_output_after_attempt_changes(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a, **_kw: None)
+
+    def _late_analysis(*_args):
+        asset.analysis_attempt_token = "attempt-2"
+        return ({"subject": "stale-result"}, 1.0, (100, 100), False)
+
+    monkeypatch.setattr(ap, "_analyze_image", _late_analysis)
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.analysis is None
+    assert asset.analysis_attempt_token == "attempt-2"
+    assert asset.status == "analyzing"
+
+
+def test_analyze_pool_asset_persists_safe_retryable_failure(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr(
+        "app.storage.download_to_file",
+        lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("private provider detail")),
+    )
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.status == "failed"
+    assert asset.error_code == "analysis_temporarily_unavailable"
+    assert asset.error_retryable is True
+    assert "private provider detail" not in asset.error_detail
+
+
+def test_analyze_pool_asset_downloads_verified_generation(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    asset.gcs_generation = "42"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key=None)
+    verified = MagicMock()
+    legacy = MagicMock()
+    monkeypatch.setattr("app.storage.download_generation_to_file", verified)
+    monkeypatch.setattr("app.storage.download_to_file", legacy)
+    monkeypatch.setattr(ap, "_analyze_image", lambda *_a: (None, 1.0, (100, 100), False))
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    verified.assert_called_once()
+    assert verified.call_args.kwargs["generation"] == "42"
+    legacy.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("source_filename", "kind", "expected"),
+    [
+        ("private campaign name.MOV", "video", "asset.mov"),
+        ("../../customer-secret.JPG", "image", "asset.jpg"),
+        ("phone-photo.HEIF", "image", "asset.heif"),
+        ("unsupported.tiff", "image", "asset.png"),
+        (None, "video", "asset.mp4"),
+    ],
+)
+def test_analysis_temp_filename_never_contains_user_basename(
+    source_filename: str | None,
+    kind: str,
+    expected: str,
+) -> None:
+    assert ap._analysis_temp_filename(source_filename, kind) == expected
+
+
+def test_analyze_image_registers_heif_decoder_before_opening(monkeypatch, tmp_path) -> None:
+    import pillow_heif
+    from PIL import Image
+
+    pillow_heif.register_heif_opener()
+    source = tmp_path / "phone-photo.heic"
+    Image.new("RGB", (12, 8), "#336699").save(source, format="HEIF")
+
+    # Reproduce a fresh worker process where no unrelated render module has
+    # registered pillow-heif yet. Pool analysis must own that initialization.
+    monkeypatch.delitem(Image.OPEN, "HEIF", raising=False)
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "gemini_api_key", None)
+
+    analysis, aspect, dims, has_alpha = ap._analyze_image(str(source), "test-scope")
+
+    assert analysis is None
+    assert aspect == 1.5
+    assert dims == (12, 8)
+    assert has_alpha is False
+
+
+def test_analyze_image_sends_heif_with_provider_mime(monkeypatch, tmp_path) -> None:
+    import pillow_heif
+    from PIL import Image
+
+    pillow_heif.register_heif_opener()
+    source = tmp_path / "phone-photo.heif"
+    Image.new("RGB", (12, 8), "#336699").save(source, format="HEIF")
+
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "gemini_api_key", "gemini-key")
+    captured: dict = {}
+
+    class _Models:
+        def generate_content(self, **kwargs):  # noqa: ANN003, ANN201
+            captured.update(kwargs)
+            return SimpleNamespace(
+                text=json.dumps(
+                    {
+                        "subject": "blue test image",
+                        "description": "solid blue test image",
+                        "on_screen_text": "",
+                        "brands": [],
+                        "kind_hint": "photo",
+                    }
+                )
+            )
+
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer._get_client",
+        lambda: SimpleNamespace(models=_Models()),
+    )
+    monkeypatch.setattr("app.pipeline.prompt_loader.load_prompt", lambda _name: "prompt")
+
+    analysis, _aspect, _dims, _has_alpha = ap._analyze_image(str(source), "test-scope")
+
+    assert analysis is not None
+    assert captured["contents"][0].inline_data.mime_type == "image/heif"
+
+
+def test_analyze_video_does_not_treat_plan_item_as_job_owner(monkeypatch) -> None:
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "gemini_api_key", "gemini-key")
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: SimpleNamespace(duration_s=4.0, width=720, height=1280),
+    )
+    file_ref = SimpleNamespace(uri="provider://file", mime_type="video/mp4")
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer.gemini_upload_and_wait",
+        lambda _path: file_ref,
+    )
+    analyze = MagicMock(
+        return_value=SimpleNamespace(
+            failed=False,
+            best_moments=[],
+            detected_subject="test pattern",
+            description="moving shapes",
+            transcript="",
+            brands=[],
+        )
+    )
+    monkeypatch.setattr("app.pipeline.agents.gemini_analyzer.analyze_clip", analyze)
+
+    analysis, aspect, duration, dims = ap._analyze_video("/tmp/asset.mp4")
+
+    analyze.assert_called_once_with(file_ref)
+    assert analysis is not None
+    assert aspect == 0.5625
+    assert duration == 4.0
+    assert dims == (720, 1280)
+
+
+def test_analyze_pool_video_reuses_privacy_safe_single_argument_boundary(monkeypatch) -> None:
+    expected = ({"subject": "coast"}, 0.5625, 4.0, (720, 1280))
+    analyze = MagicMock(return_value=expected)
+    monkeypatch.setattr(ap, "_analyze_video", analyze)
+
+    assert ap.analyze_pool_video("/tmp/asset.mp4") == expected
+    analyze.assert_called_once_with("/tmp/asset.mp4")
+
+
+def test_analyze_pool_asset_persists_timeout_then_propagates(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a: None)
+    monkeypatch.setattr(
+        ap,
+        "_analyze_image",
+        lambda *_a: (_ for _ in ()).throw(ap.SoftTimeLimitExceeded()),
+    )
+
+    with pytest.raises(ap.SoftTimeLimitExceeded):
+        ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.status == "failed"
+    assert asset.error_code == "analysis_timed_out"
+    assert asset.error_retryable is True
+
+
+def test_analyze_pool_asset_marks_unreadable_nonretryable(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a: None)
+    monkeypatch.setattr(
+        ap,
+        "_analyze_image",
+        lambda *_a: (_ for _ in ()).throw(ap.AssetUnreadableError()),
+    )
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.status == "failed"
+    assert asset.error_code == "analysis_unreadable"
+    assert asset.error_retryable is False
+    assert "Export it as" in asset.error_detail
+
+
 @pytest.mark.parametrize("fence_change", ["epoch", "quarantine"])
 def test_analyze_pool_asset_discards_output_when_fence_changes_during_analysis(
     monkeypatch,
@@ -535,6 +795,149 @@ def test_analyze_pool_asset_video_persists_brands(monkeypatch):
     assert asset.analysis["brands"] == ["Arçelik", "Çelik robot mascot"]
     assert asset.analysis["width"] == 1920
     assert asset.analysis["height"] == 1080
+
+
+# ── pool asset preview pipeline ───────────────────────────────────────────────
+
+
+def test_analyze_pool_asset_persists_video_poster_preview(monkeypatch) -> None:
+    asset = _PoolAsset(kind="video")
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key=None)
+    monkeypatch.setattr(
+        ap,
+        "_analyze_video",
+        lambda *_a, **_kw: ({"subject": "clip"}, 1.7778, 4.0, (1920, 1080)),
+    )
+    monkeypatch.setattr(
+        "app.services.pool_asset_preview.write_video_poster",
+        lambda _src, _dst: True,
+    )
+    uploads: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "app.storage.upload_local_file",
+        lambda local, obj, content_type: uploads.append((local, obj, content_type)),
+    )
+
+    ap.analyze_pool_asset(str(asset.id))
+
+    assert asset.status == "ready"
+    assert asset.preview_gcs_path == f"{asset.gcs_path}.preview.jpg"
+    assert len(uploads) == 1
+    assert uploads[0][1] == f"{asset.gcs_path}.preview.jpg"
+    assert uploads[0][2] == "image/jpeg"
+
+
+def test_analyze_pool_asset_preview_failure_still_marks_ready(monkeypatch) -> None:
+    """Preview generation is best-effort — a raising generator must never turn a
+    successful analysis into a failed asset; it persists the "" do-not-retry
+    sentinel instead."""
+    asset = _PoolAsset(kind="video")
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key=None)
+    monkeypatch.setattr(
+        ap,
+        "_analyze_video",
+        lambda *_a, **_kw: ({"subject": "clip"}, 1.7778, 4.0, (1920, 1080)),
+    )
+
+    def _boom(_src, _dst):
+        raise RuntimeError("ffmpeg not found")
+
+    monkeypatch.setattr("app.services.pool_asset_preview.write_video_poster", _boom)
+
+    ap.analyze_pool_asset(str(asset.id))
+
+    assert asset.status == "ready"
+    assert asset.preview_gcs_path == ""
+
+
+def test_analyze_pool_asset_jpeg_image_skips_preview(monkeypatch) -> None:
+    """An already browser-safe image (JPEG, not HEIC/HEIF) never attempts a
+    preview — preview_gcs_path stays None (never-attempted), not ""."""
+    asset = _PoolAsset(kind="image")
+    asset.gcs_path = f"users/u/plan/i/pool/{asset.id}.jpg"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key=None)
+    monkeypatch.setattr(
+        "app.services.pool_asset_preview.write_image_preview",
+        lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("must not attempt preview")),
+    )
+
+    ap.analyze_pool_asset(str(asset.id))
+
+    assert asset.status == "ready"
+    assert asset.preview_gcs_path is None
+
+
+class _PreviewBackfillSess:
+    """Minimal fake session for `generate_pool_asset_preview`: one shared asset,
+    `get()` ignores `with_for_update` (single-owner in tests)."""
+
+    def __init__(self, asset):  # noqa: ANN001
+        self.asset = asset
+        self.commits = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, _model, _pk, **_kw):
+        return self.asset
+
+    def commit(self):
+        self.commits += 1
+
+
+@pytest.mark.parametrize(
+    ("status", "preview_gcs_path"),
+    [
+        ("analyzing", None),  # not ready yet
+        ("failed", None),  # not ready
+        ("ready", "users/u/plan/i/pool/existing.jpg"),  # already previewed
+        ("ready", ""),  # attempted-and-failed sentinel — do not retry
+    ],
+)
+def test_generate_pool_asset_preview_skips_non_ready_or_already_previewed(
+    monkeypatch,
+    status: str,
+    preview_gcs_path: str | None,
+) -> None:
+    asset = _PoolAsset(kind="video")
+    asset.status = status
+    asset.preview_gcs_path = preview_gcs_path
+    monkeypatch.setattr(ap, "_sync_session", lambda: _PreviewBackfillSess(asset))
+    downloads: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.download_to_file",
+        lambda path, _local: downloads.append(path),
+    )
+
+    ap.generate_pool_asset_preview(str(asset.id))
+
+    assert downloads == []
+    assert asset.preview_gcs_path == preview_gcs_path
+
+
+def test_generate_pool_asset_preview_backfills_ready_asset(monkeypatch) -> None:
+    asset = _PoolAsset(kind="video")
+    asset.status = "ready"
+    asset.preview_gcs_path = None
+    monkeypatch.setattr(ap, "_sync_session", lambda: _PreviewBackfillSess(asset))
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        "app.services.pool_asset_preview.write_video_poster",
+        lambda _src, _dst: True,
+    )
+    uploads: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "app.storage.upload_local_file",
+        lambda local, obj, content_type: uploads.append((local, obj, content_type)),
+    )
+
+    ap.generate_pool_asset_preview(str(asset.id))
+
+    assert asset.preview_gcs_path == f"{asset.gcs_path}.preview.jpg"
+    assert len(uploads) == 1
 
 
 # ── no transcript → failed ────────────────────────────────────────────────────
