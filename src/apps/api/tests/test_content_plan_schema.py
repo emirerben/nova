@@ -67,6 +67,7 @@ _EXPECTED_CHAIN = {
     "0073": "0072",
     "0074": "0073",
     "0075": "0074",
+    "0077": "0076",
 }
 
 
@@ -78,7 +79,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0076"], f"expected a single head 0076, got {heads}"
+    assert heads == ["0077"], f"expected a single head 0077, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:

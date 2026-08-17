@@ -1065,6 +1065,7 @@ def analyze_pool_asset(
         ownership_epoch = _plan_ownership_epoch(plan)
         scope = str(asset.plan_item_id)
         gcs_path, kind = asset.gcs_path, asset.kind
+        upload_content_type = getattr(asset, "upload_content_type", None)
         gcs_generation = getattr(asset, "gcs_generation", None)
         correlation_id = getattr(asset, "correlation_id", None)
         temp_filename = _analysis_temp_filename(asset.source_filename, kind)
@@ -1102,6 +1103,9 @@ def analyze_pool_asset(
         failure_code: str | None = None
         failure_detail: str | None = None
         persisted_status = "ready" if refresh else "failed"
+        # None = preview step never reached (analysis failed first); "" = preview
+        # attempted and failed (do-not-retry sentinel); non-empty = preview key.
+        preview_path: str | None = None
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 local = os.path.join(tmpdir, temp_filename)
@@ -1118,6 +1122,37 @@ def analyze_pool_asset(
                     analysis, aspect, duration, dims = _analyze_video(local)
                 else:
                     analysis, aspect, dims, has_alpha = _analyze_image(local, scope)
+                # Preview generation is strictly best-effort: it must never turn a
+                # successful analysis into a failure. Any exception here is
+                # swallowed and persisted as the "" do-not-retry sentinel.
+                try:
+                    from app.services import pool_asset_preview  # noqa: PLC0415
+                    from app.storage import upload_local_file  # noqa: PLC0415
+
+                    if pool_asset_preview.needs_preview(kind, upload_content_type, gcs_path):
+                        preview_local = os.path.join(tmpdir, "preview.jpg")
+                        generated = (
+                            pool_asset_preview.write_video_poster(local, preview_local)
+                            if kind == "video"
+                            else pool_asset_preview.write_image_preview(local, preview_local)
+                        )
+                        if generated:
+                            preview_object = pool_asset_preview.preview_object_path(gcs_path)
+                            upload_local_file(
+                                preview_local,
+                                preview_object,
+                                content_type="image/jpeg",
+                            )
+                            preview_path = preview_object
+                        else:
+                            preview_path = ""
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "autoplace.pool_asset_preview_failed",
+                        asset_id=asset_id,
+                        error_type=type(exc).__name__,
+                    )
+                    preview_path = ""
         except SoftTimeLimitExceeded as exc:
             timeout_exc = exc
             failure_code = "analysis_timed_out"
@@ -1200,6 +1235,7 @@ def analyze_pool_asset(
                 asset.error_code = None
                 asset.error_detail = None
                 asset.error_retryable = False
+                asset.preview_gcs_path = preview_path
             if not refresh:
                 asset.analysis_started_at = None
             persisted_status = asset.status
@@ -1223,6 +1259,81 @@ def analyze_pool_asset(
         )
         if timeout_exc is not None:
             raise timeout_exc
+
+
+@celery_app.task(name="app.tasks.autoplace.generate_pool_asset_preview", **_AUTOPLACE_TASK_LIMITS)
+def generate_pool_asset_preview(asset_id: str) -> None:
+    """Backfill task: generate a browser-safe preview for one `ready` asset.
+
+    Dispatched by `reconcile_stale_pool_assets` (maintenance.py) for pre-fix
+    `ready` rows that never got a preview (`preview_gcs_path IS NULL`). Purely
+    additive — it never touches `status`/`analysis`, and it re-checks both
+    conditions before AND after generation so it can never clobber a
+    concurrent update or a preview another dispatch already wrote.
+    """
+    from app.services import pool_asset_preview  # noqa: PLC0415
+    from app.storage import (  # noqa: PLC0415
+        download_generation_to_file,
+        download_to_file,
+        upload_local_file,
+    )
+
+    try:
+        aid = uuid.UUID(str(asset_id))
+    except (TypeError, ValueError):
+        log.warning("autoplace.preview_backfill_bad_id", asset_id=str(asset_id))
+        return
+
+    with _sync_session() as db:
+        asset = db.get(PlanItemAsset, aid)
+        if asset is None:
+            return
+        if asset.status != "ready" or getattr(asset, "preview_gcs_path", None) is not None:
+            return
+        gcs_path, kind = asset.gcs_path, asset.kind
+        gcs_generation = getattr(asset, "gcs_generation", None)
+        upload_content_type = getattr(asset, "upload_content_type", None)
+
+    if not pool_asset_preview.needs_preview(kind, upload_content_type, gcs_path):
+        return
+
+    preview_path = ""
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local = os.path.join(tmpdir, "asset")
+            if gcs_generation:
+                download_generation_to_file(gcs_path, local, generation=gcs_generation)
+            else:
+                download_to_file(gcs_path, local)
+            preview_local = os.path.join(tmpdir, "preview.jpg")
+            generated = (
+                pool_asset_preview.write_video_poster(local, preview_local)
+                if kind == "video"
+                else pool_asset_preview.write_image_preview(local, preview_local)
+            )
+            if generated:
+                preview_object = pool_asset_preview.preview_object_path(gcs_path)
+                upload_local_file(preview_local, preview_object, content_type="image/jpeg")
+                preview_path = preview_object
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "autoplace.preview_backfill_failed",
+            asset_id=asset_id,
+            error_type=type(exc).__name__,
+        )
+        preview_path = ""
+
+    with _sync_session() as db:
+        asset = db.get(PlanItemAsset, aid, with_for_update=True)
+        if asset is None:
+            return
+        if asset.status != "ready" or getattr(asset, "preview_gcs_path", None) is not None:
+            return
+        if asset.gcs_path != gcs_path:
+            return
+        asset.preview_gcs_path = preview_path
+        db.commit()
+    log.info("autoplace.preview_backfilled", asset_id=asset_id, produced=bool(preview_path))
 
 
 # ── the matcher ───────────────────────────────────────────────────────────────
