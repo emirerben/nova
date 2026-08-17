@@ -41,6 +41,12 @@ describe("Header — isLight predicate", () => {
     expect(header!.className).toContain("bg-[#fafaf8]");
   });
 
+  it("test_header_light_on_auto_story: /auto-story is light", () => {
+    const { container } = renderWithPathname("/auto-story");
+    const header = container.querySelector("header");
+    expect(header!.className).toContain("bg-[#fafaf8]");
+  });
+
   it("test_header_light_on_plan: /plan is light", () => {
     const { container } = renderWithPathname("/plan");
     const header = container.querySelector("header");

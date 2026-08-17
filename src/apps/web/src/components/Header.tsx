@@ -35,11 +35,12 @@ export default function Header() {
 
   if (isAdmin) return null;
 
-  // Light surfaces: landing + all plan pages (incl. /plan/items) + library + TikTok + generative
+  // Light surfaces: landing variants + all plan pages (incl. /plan/items) + library + TikTok + generative
   // + the static legal pages (cream canvas, would clash with the dark sticky header).
   // Dark: template render job flow (/template-jobs) and /admin (early-return above).
   const isLight =
     pathname === "/" ||
+    pathname === "/auto-story" ||
     pathname.startsWith("/plan") ||
     pathname.startsWith("/library") ||
     pathname.startsWith("/tiktok") ||

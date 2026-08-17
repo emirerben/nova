@@ -25,6 +25,7 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
 
 - **Canvas:** `bg-[#fafaf8]` (`--cream`); alt section surface `bg-white` with `border-y border-zinc-200`.
 - **Ink scale:** `#0c0c0e` primary (`--ink`), `#3f3f46` secondary, `#71717a` muted, `#a1a1aa` faint.
+- **Landing story accent:** `#d7ff90` (`--story-lime`) is the light Paper-derived lime used only for explanatory feature chips and the automatic-play control.
 - **Lime accent roles (D16 contrast rule):**
   - `text-lime-700` — eyebrows, small text labels, emphasis under ~18px
   - `text-lime-600` — large display ems (h1/h2/h3 level), non-text fills, bars, dots
@@ -92,6 +93,7 @@ Dark + zinc like product but: no amber (CTAs `bg-white text-black`), errors `tex
 
 - `font-display` → `"Fraunces", Georgia, serif` (defined in `tailwind.config.ts`). Headings, display moments, and serif accents only. Fraunces is an optical-size variable font — load with `opsz,wght@9..144` to get smooth weight/size interpolation.
 - Body / labels: `"Inter", ui-sans-serif, system-ui` (explicit `font-sans` override in `tailwind.config.ts`). Body text is utility; Inter's neutrality pairs cleanly with Fraunces's personality.
+- **Landing edit-story exception:** the three over-video statements use oversized Inter at medium weight. They are moving image-composition elements, not section headings: each occupies the same centered slot and uses `mix-blend-mode: difference` as footage passes behind it. All ordinary landing and product headings remain Fraunces.
 - Fonts load via Google Fonts `@import` in `globals.css` (not `next/font`). Current import: `family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600`.
 - **Taste rule:** editorial serifs at restrained sizes. Oversized sans display type reads as slop; `system-ui` headlines are the "gave up" signal.
 
@@ -123,6 +125,7 @@ closing the §6 D17 gap per-surface. Source skill: `npx skills add Jakubantalik/
 | `t-skel` (#14) | `--reveal-dur: 400ms`, `--reveal-blur: 2px`, `--reveal-ease: ease-in-out` | `VariantRenderCard` shimmer→video cross-blur reveal when status becomes `ready`. |
 | `t-stagger` (#18) | `--stagger-dur: 500ms`, `--stagger-distance: 12px`, `--stagger-stagger: 40ms`, `--stagger-blur: 3px`, `--stagger-ease` | Landing hero `<section class="t-stagger is-shown">` — 4 lines stagger in on page load. |
 | `t-accordion` | `--t-accordion-dur: 300ms`, `--t-accordion-ease: cubic-bezier(0.23,1,0.32,1)` | `NovaStepRow` detail-line reveal (render-progress `NovaActivityFeed`, behind `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED`). Grid-rows `0fr → 1fr` + opacity crossfade, same duration; `prefers-reduced-motion` zeroes it. Chat compact rows (a later PR) and the plan-item `SetupPicker` disclosure rows (v0.34.0.0) reuse the same token pair so all surfaces expand identically. |
+| Landing edit story | `--story-move-dur: 500ms`, `--story-overlay-stagger: 60ms`, `--story-reduced-dur: 200ms`, `--story-ease-move`, `--story-ease-out` | `/` scroll choreography and `/auto-story` timed comparison. Movement is transform/opacity only; reduced motion removes positional travel. Navigation, CTA, and ambient background remain static. |
 
 **Follow-up scope (not this PR):** `t-tabs`, `t-success-check`, `t-error-shake`, upload-dropzone drag feedback, spinner component consolidation.
 

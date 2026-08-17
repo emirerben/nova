@@ -6,13 +6,13 @@ import { authOptions } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage() {
+export default async function AutoStoryPage() {
   const session = await getServerSession(authOptions);
   if (session) redirect("/plan");
 
   return (
     <main className="min-h-screen bg-[#fafaf8] text-[#0c0c0e]">
-      <KriaEditStory />
+      <KriaEditStory mode="auto" />
     </main>
   );
 }

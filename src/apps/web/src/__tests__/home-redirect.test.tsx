@@ -16,19 +16,16 @@ jest.mock("next/navigation", () => ({
   redirect: jest.fn(),
 }));
 
-// FadeInOnScroll uses IntersectionObserver (browser-only). Stub it so
-// children render immediately in Jest (jsdom has no IO).
-jest.mock("@/components/FadeInOnScroll", () => ({
+// KriaEditStory uses browser media and animation APIs. Stub it so this server-page
+// test stays focused on authentication and the landing composition boundary.
+jest.mock("@/components/KriaEditStory", () => ({
   __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
-
-// ShowcaseMarquee also uses IntersectionObserver + HTMLMediaElement.play(),
-// neither of which exists in jsdom. Stub it to render a labelled region so
-// the page still mounts cleanly.
-jest.mock("@/components/ShowcaseMarquee", () => ({
-  __esModule: true,
-  default: () => <section aria-label="Videos created by Kria" />,
+  default: () => (
+    <section aria-label="How Kria turns raw videos into a finished edit">
+      <h1>Save time. Let AI edit your videos. Create more.</h1>
+      <a href="/plan">Create my first edit</a>
+    </section>
+  ),
 }));
 
 const mockGetServerSession = getServerSession as jest.MockedFunction<
@@ -69,8 +66,9 @@ describe("HomePage", () => {
 
     expect(mockRedirect).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-    // Two CTA links exist — hero + closing section.
-    const ctaLinks = screen.getAllByRole("link", { name: /build my plan/i });
+    const ctaLinks = screen.getAllByRole("link", { name: /create my first edit/i });
     expect(ctaLinks.length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/how your agent works/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/it learns about you/i)).not.toBeInTheDocument();
   });
 });
