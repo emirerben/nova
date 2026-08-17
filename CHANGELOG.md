@@ -2,10 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.34.1.1] — 2026-08-17
-
-### Changed
-- **Closed out the persona-owner incident in TODOS.** Both remediation P0s are complete — production is at alembic `0076`, the global owner-mismatch audit returns zero rows, `uq_personas_id_user_id` and `fk_content_plans_persona_owner` are both installed, and `release_command` is back to `upgrade head`. The entries were removed and the section retitled around the one thing still open: `alembic upgrade head` cannot express a migration that must ship in two staged releases. Stale P0s teach you to skim past P0s, which is the habit that let a 24-hour deploy freeze hide in plain sight. Docs-only PR.
+## [0.34.1.2] — 2026-08-17
 
 ### Fixed
 - **Kria can now reliably revise a planned edit when creators name a specific upload or visible
@@ -14,6 +11,11 @@ All notable changes to this project will be documented in this file.
 - **Exact multi-scene revisions no longer fail after Kria describes the right change.** Reordering
   five or more moments no longer depends on the model perfectly copying long generated IDs; missing
   or duplicated moments still fail closed.
+
+## [0.34.1.1] — 2026-08-17
+
+### Changed
+- **Closed out the persona-owner incident in TODOS.** Both remediation P0s are complete — production is at alembic `0076`, the global owner-mismatch audit returns zero rows, `uq_personas_id_user_id` and `fk_content_plans_persona_owner` are both installed, and `release_command` is back to `upgrade head`. The entries were removed and the section retitled around the one thing still open: `alembic upgrade head` cannot express a migration that must ship in two staged releases. Stale P0s teach you to skim past P0s, which is the habit that let a 24-hour deploy freeze hide in plain sight. Docs-only PR.
 
 ## [0.34.1.0] — 2026-08-17
 
