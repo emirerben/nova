@@ -111,6 +111,39 @@ describe("ToolDrawer visual blocks", () => {
     );
   });
 
+  it("uses the completed analysis state for ready videos without optional copy", () => {
+    renderVisuals({
+      visualAssets: [
+        {
+          ...assets[0],
+          kind: "video",
+          source_filename: "sunset.mov",
+          nova_description: "",
+          nova_on_screen_text: "",
+        },
+      ],
+    });
+
+    expect(screen.getByText("Analysis complete")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis pending")).not.toBeInTheDocument();
+  });
+
+  it("identifies a filename-only fallback in the editor", () => {
+    renderVisuals({
+      visualAssets: [
+        {
+          ...assets[0],
+          nova_description: null,
+          nova_on_screen_text: null,
+          source_type: "stub",
+        },
+      ],
+    });
+
+    expect(screen.getByText("Basic file details ready")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis pending")).not.toBeInTheDocument();
+  });
+
   it("exposes card background, transition, duplication, and audio controls", () => {
     const onPatchVisualBlock = jest.fn();
     const onDuplicateVisualBlock = jest.fn();

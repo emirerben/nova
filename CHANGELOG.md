@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.35.0.1] — 2026-08-17
+
+### Fixed
+- **Finished visuals no longer look stuck on “Analysis pending.”** Video analysis can finish with a
+  subject and usable moments but no optional long description. The plan page and editor now use
+  the visual's real processing status instead of treating that empty description as unfinished.
+  Filename-only fallback metadata is labeled separately as “Basic file details ready” so Kria
+  does not overstate how much it understood.
+
 ## [0.34.1.13] — 2026-08-17
 
 ### Changed

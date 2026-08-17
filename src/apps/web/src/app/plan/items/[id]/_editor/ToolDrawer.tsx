@@ -18,6 +18,7 @@ import {
   type PoolAsset,
   type VisualBlock,
 } from "@/lib/plan-api";
+import { poolAssetAnalysisLine } from "@/lib/pool-asset-display";
 import {
   filterTextPresetsByCategory,
   PRESET_CATEGORIES,
@@ -1530,7 +1531,7 @@ function VisualAssetButton({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(asset.user_context ?? "");
   const [saving, setSaving] = useState(false);
-  const novaLine = asset.nova_description ?? asset.nova_on_screen_text ?? null;
+  const novaLine = poolAssetAnalysisLine(asset);
   // Videos can't render through <img> at all — they need the browser-safe
   // poster preview. Images fall back to their raw display_url when no
   // preview was generated (e.g. already browser-safe JPEG/PNG/WebP).
@@ -1642,7 +1643,7 @@ function VisualAssetButton({
         </div>
         <div>
           <span className="font-semibold text-[#3f3f46]">Nova</span>
-          <p className="line-clamp-2 text-[#71717a]">{novaLine || "Analysis pending"}</p>
+          <p className="line-clamp-2 text-[#71717a]">{novaLine}</p>
         </div>
       </div>
     </div>
