@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.edit_guide",
-  "prompt_version": "1.0.4",
+  "prompt_version": "1.0.5",
   "input": {
     "phase": "briefing",
     "idea": "Corfu trip",

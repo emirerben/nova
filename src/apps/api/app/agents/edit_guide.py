@@ -1,14 +1,15 @@
 """Conversational creative-direction agent for guided edits.
 
 The agent has two jobs: turn natural language into the existing typed proposal
-brief before analysis, and revise the editorial fields of a reviewable draft.
-Media identity never comes from this agent; review revisions are rejoined with
-the server-owned media and beat membership by the route.
+brief before analysis, and revise a reviewable draft. Real media identity never
+comes from this agent: review revisions use short media aliases that are
+validated and rejoined with server-owned identities by the route.
 """
 
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, ValidationError
@@ -50,6 +51,7 @@ class EditGuideRevisionBeat(BaseModel):
     thought: str = Field(default="", max_length=280)
     layout: Literal["fullscreen", "supporting_card"] = "fullscreen"
     duration_s: float = Field(ge=1.0, le=12.0)
+    media_refs: list[str] = Field(default_factory=list, max_length=4)
 
 
 class EditGuideRevision(BaseModel):
@@ -96,7 +98,7 @@ class EditGuideAgent(Agent[EditGuideInput, EditGuideOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_guide",
         prompt_id="edit_guide",
-        prompt_version="1.0.4",
+        prompt_version="1.0.5",
         model="gemini-2.5-flash",
         # Stay below the web proxy's 60s hard budget even when both attempts
         # reach their timeout. This prevents a late invisible DB commit after
@@ -192,6 +194,21 @@ class EditGuideAgent(Agent[EditGuideInput, EditGuideOutput]):
                         "edit_guide: revision must preserve every existing story beat exactly once"
                     )
                 existing_by_id = {beat.beat_id: beat for beat in input.beats}
+                expected_media_refs = [
+                    media_ref for beat in input.beats for media_ref in beat.media_refs
+                ]
+                returned_media_refs = [
+                    media_ref
+                    for beat in output.revision.story_beats
+                    for media_ref in beat.media_refs
+                ]
+                if expected_media_refs and Counter(returned_media_refs) != Counter(
+                    expected_media_refs
+                ):
+                    raise SchemaError(
+                        "edit_guide: revision must preserve every assigned media reference "
+                        "exactly once"
+                    )
                 for beat in output.revision.story_beats:
                     if len(beat.thought.split()) > 18:
                         raise SchemaError("edit_guide: revised thought exceeds 18 words")
@@ -222,8 +239,8 @@ class EditGuideAgent(Agent[EditGuideInput, EditGuideOutput]):
     def schema_clarification(self) -> str:
         return (
             "\n\nReturn only the documented JSON. In review mode, preserve every exact short "
-            "beat_id from CURRENT REVIEW PLAN once; omit revision when you are only asking "
-            "a clarifying question."
+            "beat_id and assigned media_ref from CURRENT REVIEW PLAN once; omit revision "
+            "when you are only asking a clarifying question."
         )
 
     def refusal_clarification(self) -> str:

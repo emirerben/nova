@@ -72,6 +72,57 @@ def _draft_item() -> SimpleNamespace:
     )
 
 
+def test_snapshot_revision_rejoins_reassigned_media_aliases() -> None:
+    current = _snapshot()
+    second = MediaRef(
+        lane="clip",
+        media_id="clip-2",
+        gcs_path="users/u/plan/i/istanbul.mp4",
+        generation="43",
+        kind="video",
+        duration_s=30,
+    )
+    current.media.append(second)
+    current.story_beats.append(
+        StoryBeat(
+            beat_id="city",
+            topic="Cityscape",
+            thought="Istanbul",
+            media_ids=[second.media_id],
+            duration_s=4,
+        )
+    )
+    revision = EditGuideRevision(
+        direction="guided_story",
+        goal="Match every city label to its video",
+        pace="balanced",
+        duration_s=24,
+        title="Summer 26",
+        story_beats=[
+            EditGuideRevisionBeat(
+                beat_id="coast",
+                topic="Lisbon",
+                thought="Lisbon",
+                layout="fullscreen",
+                duration_s=4,
+                media_refs=["media_2"],
+            ),
+            EditGuideRevisionBeat(
+                beat_id="city",
+                topic="Istanbul",
+                thought="Istanbul",
+                layout="fullscreen",
+                duration_s=4,
+                media_refs=["media_1"],
+            ),
+        ],
+    )
+
+    revised = plan_items._snapshot_from_edit_guide_revision(current, revision)
+
+    assert [beat.media_ids for beat in revised.story_beats] == [["clip-2"], ["clip-1"]]
+
+
 def _patch_route_dependencies(monkeypatch, item, *, media_current: bool) -> AsyncMock:
     monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
     monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
@@ -386,6 +437,7 @@ async def test_conversation_revision_preserves_media_and_creator_thought(monkeyp
                         thought="The still water creates a reflective pause.",
                         layout="supporting_card",
                         duration_s=6,
+                        media_refs=["media_1"],
                     )
                 ],
             ),
@@ -446,6 +498,7 @@ async def test_revision_validation_failure_releases_conversation_attempt(monkeyp
                         thought="The water sets the pace.",
                         layout="fullscreen",
                         duration_s=4,
+                        media_refs=["media_1"],
                     )
                 ],
             ),

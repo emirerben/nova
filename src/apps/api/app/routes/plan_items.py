@@ -1754,9 +1754,12 @@ async def _edit_guide_media_summary(
 
 
 def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapshot:  # noqa: ANN001
-    """Rejoin AI editorial changes with server-owned beat/media membership."""
+    """Rejoin AI aliases with server-owned beat and media identities."""
 
     beat_by_id = {beat.beat_id: beat for beat in current.story_beats}
+    media_id_by_ref = {
+        f"media_{index}": ref.media_id for index, ref in enumerate(current.media, start=1)
+    }
     beats: list[StoryBeat] = []
     for revised in revision.story_beats:
         existing = beat_by_id[revised.beat_id]
@@ -1769,7 +1772,9 @@ def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapsho
                 topic=revised.topic,
                 thought=existing.thought if keep_user_thought else revised.thought,
                 thought_source="user" if keep_user_thought else "ai_draft",
-                media_ids=existing.media_ids,
+                media_ids=[media_id_by_ref[media_ref] for media_ref in revised.media_refs]
+                if revised.media_refs
+                else existing.media_ids,
                 layout=revised.layout,
                 duration_s=revised.duration_s,
             )

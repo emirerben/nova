@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.3] — 2026-08-17
+
+### Fixed
+- **Kria now moves the referenced upload, not just its label, when revising an edit plan.** Requests
+  such as “make the bridge video moment one” explicitly reassign the already-selected source while
+  the server guarantees that no approved media is invented, duplicated, or silently dropped.
+- **Kria cannot claim a named-video correction while leaving the old footage underneath it.** Invalid
+  media assignments fail closed and retry instead of saving a visually mismatched draft.
+
 ## [0.34.1.2] — 2026-08-17
 
 ### Fixed

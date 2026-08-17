@@ -1123,7 +1123,8 @@ it asked creators to translate creative intent into product controls before Kria
   can revise a draft. Any revision returns an approved proposal to `draft`, so new wording and order
   cannot render without approval.
 - **Media identity stays server-owned.** Model-authored revisions preserve every beat ID exactly once.
-  The route rejoins the original media membership and retains creator-written thoughts verbatim.
+  Media reassignment was added later through bounded short aliases; the route always rejoins real
+  identities and retains creator-written thoughts verbatim.
 - **Slow model calls do not hold item locks.** The route first persists a short-lived, token-fenced
   single-flight reservation, closes the transaction, calls the model, then reloads under lock and
   requires the same token and proposal version. A reload sees only safe thinking/retry state, never
@@ -1160,9 +1161,24 @@ was lost while reproducing the full revision.
 
 - **Models edit aliases, servers retain identities.** Review prompts expose `beat_1`, `beat_2`, and
   similar short references. Parsed revisions must preserve every alias exactly once, after which the
-  server maps them back to the original beat IDs and rejoins immutable media membership.
+  server maps them back to the original beat IDs.
 - **Visible-content references have an explicit join.** Media already supplied to the edit guide gets
   a short `media_1`-style reference, and every review beat lists its associated media references. This
   lets “the bridge video,” “the Istanbul clip,” and uploaded filenames resolve to the intended beat.
 - **Safety remains fail-closed.** Unknown, missing, or duplicated aliases are rejected. The model still
   cannot add media, replace object identity, remove beats, or overwrite creator-authored thoughts.
+
+## [2026-08-17] Conversational revisions may reassign existing media safely
+
+The first filename-reference repair let the model understand which upload a creator meant, but the
+revision output could only reorder beat IDs. In production dogfood the model changed “Cityscape” to
+“Lisbon” while leaving the Istanbul source underneath it, then claimed the request was complete.
+
+**Decisions:**
+
+- **Every revised beat returns media aliases explicitly.** A request such as “moment 1 uses the bridge
+  video” can move `media_1` to that beat instead of merely changing its text.
+- **The server validates the complete assignment.** The multiset of returned aliases must exactly match
+  the currently assigned aliases. Unknown, missing, or duplicated media fails closed before persistence.
+- **Aliases never become authority.** Only the server maps validated aliases back to stable media IDs;
+  the model still cannot introduce another user's object, replace storage identity, or drop a source.

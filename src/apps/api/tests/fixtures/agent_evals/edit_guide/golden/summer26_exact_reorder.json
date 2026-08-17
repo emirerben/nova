@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.edit_guide",
-  "prompt_version": "1.0.4",
+  "prompt_version": "1.0.5",
   "input": {
     "phase": "review",
     "idea": "Five-stop summer travel reel",
@@ -33,6 +33,6 @@
       {"beat_id": "8ed97f75-34d2-42ab-bc2a-b42d6edb16ac", "topic": "Landmark", "thought": "The memorial closes the journey.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 2, "media_count": 1, "media_refs": ["media_5"]}
     ]
   },
-  "raw_text": "{\"reply\":\"I put River City first, kept the remaining destination order, and replaced each description with its location name. The edit stays at 10 seconds.\",\"suggestions\":[],\"brief\":{\"direction\":\"guided_story\",\"goal\":\"A nostalgic look back at five summer destinations\",\"pace\":\"relaxed\",\"duration_s\":10},\"ready_to_plan\":true,\"revision\":{\"direction\":\"guided_story\",\"goal\":\"A nostalgic look back at five summer destinations\",\"pace\":\"relaxed\",\"duration_s\":10,\"title\":\"Summer\",\"story_beats\":[{\"beat_id\":\"beat_2\",\"topic\":\"River City\",\"thought\":\"River City\",\"layout\":\"fullscreen\",\"duration_s\":2},{\"beat_id\":\"beat_1\",\"topic\":\"Harbor City\",\"thought\":\"Harbor City\",\"layout\":\"fullscreen\",\"duration_s\":2},{\"beat_id\":\"beat_3\",\"topic\":\"Old Town\",\"thought\":\"Old Town\",\"layout\":\"fullscreen\",\"duration_s\":2},{\"beat_id\":\"beat_4\",\"topic\":\"Coast\",\"thought\":\"Coast\",\"layout\":\"fullscreen\",\"duration_s\":2},{\"beat_id\":\"beat_5\",\"topic\":\"Memorial\",\"thought\":\"Memorial\",\"layout\":\"fullscreen\",\"duration_s\":2}]}}",
+  "raw_text": "{\"reply\":\"I put River City first, kept the remaining destination order, and replaced each description with its location name. The edit stays at 10 seconds.\",\"suggestions\":[],\"brief\":{\"direction\":\"guided_story\",\"goal\":\"A nostalgic look back at five summer destinations\",\"pace\":\"relaxed\",\"duration_s\":10},\"ready_to_plan\":true,\"revision\":{\"direction\":\"guided_story\",\"goal\":\"A nostalgic look back at five summer destinations\",\"pace\":\"relaxed\",\"duration_s\":10,\"title\":\"Summer\",\"story_beats\":[{\"beat_id\":\"beat_1\",\"topic\":\"River City\",\"thought\":\"River City\",\"layout\":\"fullscreen\",\"duration_s\":2,\"media_refs\":[\"media_1\"]},{\"beat_id\":\"beat_2\",\"topic\":\"Harbor City\",\"thought\":\"Harbor City\",\"layout\":\"fullscreen\",\"duration_s\":2,\"media_refs\":[\"media_2\"]},{\"beat_id\":\"beat_3\",\"topic\":\"Old Town\",\"thought\":\"Old Town\",\"layout\":\"fullscreen\",\"duration_s\":2,\"media_refs\":[\"media_3\"]},{\"beat_id\":\"beat_4\",\"topic\":\"Coast\",\"thought\":\"Coast\",\"layout\":\"fullscreen\",\"duration_s\":2,\"media_refs\":[\"media_4\"]},{\"beat_id\":\"beat_5\",\"topic\":\"Memorial\",\"thought\":\"Memorial\",\"layout\":\"fullscreen\",\"duration_s\":2,\"media_refs\":[\"media_5\"]}]}}",
   "meta": {"source": "synthetic_regression", "scenario": "exact filename and visible-content references with a five-beat reorder"}
 }
