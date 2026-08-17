@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.7] — 2026-08-17
+
+### Fixed
+- **Guided-story clip bars now match the rendered video exactly.** The editor accounts for the
+  verified crossfade overlap between adjacent moments, so its ruler, video lane, text timing, and
+  playback all end together instead of overstating the story length.
+
 ## [0.34.1.6] — 2026-08-17
 
 ### Fixed
