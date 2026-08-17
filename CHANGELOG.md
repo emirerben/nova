@@ -2,10 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.34.1.8] — 2026-08-17
+## [0.34.1.12] — 2026-08-17
 
 ### Changed
 - **Backend releases can no longer stall unnoticed.** A scheduled check now compares what is on the main branch against what has actually deployed, and raises an alarm if code sits undeployed for more than two hours. It measures the gap rather than watching for failed deploys, because deploys fail transiently and self-heal often enough that a failure alarm gets ignored — which is how a day-long stall went unnoticed on 2026-08-12 while the site itself stayed up and healthy. A pull request that adds two or more database migrations where one can refuse to apply is now blocked unless it says how the releases will be ordered, which is the packaging mistake that caused that stall. Tests also run on every merge to the main branch, so a breakage is attributed to the change that caused it instead of surfacing days later on someone else's unrelated work.
+
+## [0.34.1.10] — 2026-08-17
+
+### Fixed
+- **Visuals-pool uploads now show a preview for iPhone HEIC photos and HEVC-in-QuickTime .mov
+  clips.** The pool never had a preview pipeline — `display_url` signed the RAW uploaded object,
+  and Chromium can't decode either format, so `ready` assets rendered blank in the plan-item
+  editor and asset pool. `analyze_pool_asset` now generates a browser-safe JPEG preview (image
+  thumbnail via Pillow/pillow_heif, video poster frame via `ffmpeg`) alongside analysis and
+  persists it on the new `plan_item_assets.preview_gcs_path` column; preview generation is
+  strictly best-effort and never turns a successful analysis into a failure. A bounded
+  maintenance backfill (`generate_pool_asset_preview`, dispatched from
+  `reconcile_stale_pool_assets`) covers pre-fix `ready` rows that never got one. `_asset_out`
+  signs the preview for images (`display_url`) and exposes it separately for videos
+  (`preview_url`, poster on the `<video>` tile); the editor's Visuals drawer no longer renders
+  videos through a bare `<img>` (always broken) and both surfaces fall back to a kind-label
+  placeholder on a decode error.
+
+## [0.34.1.9] — 2026-08-17
+
+### Changed
+- **Guided stories now match the approved footage's natural format.** Kria chooses 16:9 or 9:16
+  from the selected story media and its approved screen time, so an all-landscape trip no longer
+  gets forced into a portrait crop. The editor shows the format that actually rendered and can
+  rebuild the same verified story in the other format when the creator changes it.
+- **New guided-story text uses a cleaner editorial system.** Titles use Fraunces, supporting
+  thoughts use DM Sans, sizing and placement are more deliberate, and the warm-white/lime palette
+  relies on a soft shadow for contrast. Default title and thought strokes are now always zero.
+
+## [0.34.1.8] — 2026-08-17
+
+### Fixed
+- **Fly Deploy no longer goes red when Fly kills the release machine during startup (#834).** The
+  deploy workflow now wraps `flyctl deploy` in `scripts/fly-deploy-with-retry.sh`, which retries
+  exactly once — and only when the log matches the full startup-kill signature (`has state:
+  destroyed` + `release_command failed ... with exit code 143`). Any other failure, most importantly
+  a genuine migration error, still fails on the first attempt; a retried deploy is loudly marked
+  with a `::warning` annotation and a job-summary block so it can never be mistaken for a clean
+  pass. Investigation refuted the leading `REMAP_SIGTERM` hypothesis (it's a Celery-only setting,
+  inert on the release machine — recorded in fly.toml comments and agents/DECISIONS.md); the root
+  cause is a Fly platform-side machine lifecycle race, which is why the fix is a targeted retry
+  rather than config. Pinned by 13 new tests driving the real script against a stub flyctl.
 
 ## [0.34.1.7] — 2026-08-17
 

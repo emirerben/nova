@@ -450,6 +450,10 @@ const TIMELINE_ERROR_MESSAGES: Record<string, string> = {
     "Creator Blocks need a clean video base, which is unavailable for this edit.",
   motion_runtime_mismatch:
     "Kria's motion renderer changed. Refresh before saving Creator Blocks.",
+  invalid_orientation: "Choose either 9:16 or 16:9, then try saving again.",
+  orientation_unsupported: "This edit can't be rebuilt in that format yet.",
+  guided_story_edit_unsupported:
+    "This story couldn't be rebuilt in that format. Your current video is unchanged.",
 };
 
 type TimelineOutOfBoundsDetail = {

@@ -2806,6 +2806,10 @@ export interface PoolAsset {
    *  matching) — null/absent on pre-v5 analyses, [] analyzed with none found. */
   brands?: string[] | null;
   display_url: string | null;
+  /** Signed browser-safe preview URL (pool asset preview pipeline). Populated
+   *  for videos (poster frame) when a preview was generated; null/absent
+   *  otherwise — images fold their preview into display_url directly. */
+  preview_url?: string | null;
   deduped: boolean;
   /** Object key under users/{uid}/plan/{itemId}/pool/ — already inside
    *  attach_clips' allowed prefix, so "Use in edit" can promote the asset to a

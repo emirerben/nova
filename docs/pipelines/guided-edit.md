@@ -54,6 +54,13 @@ the story assembler consumes the approved Job snapshot directly.
   media changes so the creator can compare before planning again.
 - `failure`: plain-language code, message, and retryability.
 
+Each draft and approval also persists `output_orientation` plus a plain-language
+`output_orientation_reason`. When the creator has not chosen a format, Kria considers only media
+selected by approved story beats. Each source votes portrait or landscape by its approved screen
+time; near-square or missing aspect metadata is neutral. A tie follows the first selected
+non-square source, and a story with no usable aspect metadata stays portrait. Unused uploads do not
+affect the decision.
+
 The two storage lanes remain independent:
 
 - `clip` refs point to `PlanItem.clip_assignments[*].media_id`.
@@ -148,15 +155,17 @@ prevents staged rollout from sending an already-approved story through the legac
 
 The worker pins `guided_story_execution_plan` before FFmpeg work. It contains the compiler version,
 proposal version and digest, ordered source windows, direction/pace policy, exact music object
-path/generation and window (or explicit no-match), typography identity, and approved text. Redelivery
-reuses this plan rather than rematching a changed music library.
+path/generation and window (or explicit no-match), output orientation and its explanation,
+typography identity, and approved text. Redelivery reuses this plan rather than rematching a changed
+music library.
 
-Compiler version 2 gives every approved moment its direction-specific minimum, caps each video at
+Compiler version 3 adds the approved output canvas while retaining version 2's timing allocator.
+Version 2 gives every approved moment its direction-specific minimum, caps each video at
 its real usable duration (including any transition overlap), and redistributes the rest of the beat
 to surrounding photos or longer videos. It still preserves the approved beat and total duration and
 fails before FFmpeg only when the complete selected set cannot fill the requested time. Persisted
-version 1 plans keep their original equal-share timing on redelivery; validation recompiles them with
-the version 1 rules so a rolling deploy cannot reinterpret queued work.
+version 1 and 2 plans keep their original portrait canvas, typography, and timing rules on
+redelivery, so a rolling deploy cannot reinterpret queued or already-rendered work.
 
 The renderer exact-generation downloads every source selected by a beat. Unselected catalog media
 remains authorized but is not required in the output. Photos and videos become sequential full-screen
@@ -166,14 +175,19 @@ before FFmpeg applies its still-image loop. This is required for HEIC/HEIF, whos
 demuxer rejects the image2-only loop option. Photos receive a subtle zoom, relaxed/balanced story directions use
 duration-compensated crossfades, and fast montages use hard cuts. Video source audio is muted and the
 finished base receives either the pinned track or silent stereo AAC. The approved title and thoughts
-become editable TextElements on a clean text-free base. A text-only edit reburns from that base and
-refreshes its rendered-alpha evidence; other legacy editor operations fail closed instead of rebuilding
-the story as a montage. Approved title/thought IDs must remain present exactly once with non-blank text;
-changing wording is allowed, silently deleting an approved layer is not.
+become editable TextElements on a clean text-free base. New plans use Fraunces for titles and DM Sans
+for thoughts, warm-white text with a lime accent, a soft shadow, and zero stroke. A text-only edit
+reburns from that base and refreshes its rendered-alpha evidence. The editor may also request an
+orientation-only rebuild: the worker reuses the pinned story media, timing, music, and current
+validated text, renders a new clean base and final output on the requested canvas, and issues a new
+strict receipt. It never enters the legacy montage path. Other legacy editor operations fail closed.
+Approved title/thought IDs must remain present exactly once with non-blank text; changing wording is
+allowed, silently deleting an approved layer is not.
 
 Ready status requires a verified `render_receipt`: exact beat/media IDs, per-moment FFmpeg evidence,
-per-text rendered-alpha bounds inside the canvas, duration, 1080×1920 H.264 video, AAC audio, and the
-exact uploaded base/output object generations. Live render attempts use a row-locked heartbeat lease;
+per-text rendered-alpha bounds inside the canvas, duration, the selected 1080×1920 or 1920×1080
+H.264 canvas, AAC audio, and the exact uploaded base/output object generations. Live render attempts
+use a row-locked heartbeat lease;
 duplicate deliveries neither render concurrently nor mark the owning task finished. Any missing
 approved layer fails with a guided-story reason. There is no montage fallback.
 

@@ -5083,9 +5083,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "lyrics_model": "elements",
             },
             "orientation": {
-                "editable": False,
+                "editable": _LANDSCAPE_OUTPUT_ENABLED,
                 "value": _variant_orientation(variant),
-                "reason": reason,
+                "reason": None if _LANDSCAPE_OUTPUT_ENABLED else "disabled",
             },
             "carousel": False,
             "carousel_reason": reason,
@@ -6077,8 +6077,8 @@ def require_guided_story_editor_commit(
     variant = _find_variant(job, variant_id)
     if not isinstance(variant, dict) or variant.get("resolved_archetype") != "guided_story":
         return
-    guided_text_only = (
-        payload.text_elements is not None
+    guided_text_or_orientation_only = (
+        (payload.text_elements is not None or payload.orientation is not None)
         and payload.caption_cues is None
         and payload.caption_meta is None
         and payload.timeline_slots is None
@@ -6087,7 +6087,6 @@ def require_guided_story_editor_commit(
         and payload.music_window is None
         and payload.background_music is None
         and payload.lyrics is None
-        and payload.orientation is None
         and payload.sound_effects is None
         and payload.media_overlays is None
         and payload.visual_blocks is None
@@ -6097,12 +6096,13 @@ def require_guided_story_editor_commit(
         and not payload.remove_music
         and "carousel_moment" not in payload.model_fields_set
     )
-    if not guided_text_only:
+    if not guided_text_or_orientation_only:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=_GUIDED_STORY_EDIT_ERROR,
         )
-    _require_guided_story_text_ids(variant, payload.text_elements or [])
+    if payload.text_elements is not None:
+        _require_guided_story_text_ids(variant, payload.text_elements)
 
 
 def prepare_editor_commit(
