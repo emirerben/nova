@@ -882,6 +882,16 @@ describe("formatEditorCommitError", () => {
         { detail: { code: "motion_clean_base_unavailable" } },
         "Creator Blocks need a clean video base, which is unavailable for this edit.",
       ],
+      [
+        "guided story format rebuild unsupported",
+        { detail: { code: "guided_story_edit_unsupported" } },
+        "This story couldn't be rebuilt in that format. Your current video is unchanged.",
+      ],
+      [
+        "orientation unsupported",
+        { detail: { code: "orientation_unsupported" } },
+        "This edit can't be rebuilt in that format yet.",
+      ],
     ];
 
     for (const [name, payload, expected] of cases) {

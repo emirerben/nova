@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.9] — 2026-08-17
+
+### Changed
+- **Guided stories now match the approved footage's natural format.** Kria chooses 16:9 or 9:16
+  from the selected story media and its approved screen time, so an all-landscape trip no longer
+  gets forced into a portrait crop. The editor shows the format that actually rendered and can
+  rebuild the same verified story in the other format when the creator changes it.
+- **New guided-story text uses a cleaner editorial system.** Titles use Fraunces, supporting
+  thoughts use DM Sans, sizing and placement are more deliberate, and the warm-white/lime palette
+  relies on a soft shadow for contrast. Default title and thought strokes are now always zero.
+
 ## [0.34.1.8] — 2026-08-17
 
 ### Fixed
