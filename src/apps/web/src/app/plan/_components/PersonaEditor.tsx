@@ -559,7 +559,7 @@ function PersonaForm({
           <label htmlFor="persona-posts-per-week" className="block text-sm font-medium text-[#3f3f46]">
             Posts per week
           </label>
-          <InfoDot label="Posts per week" size="compact">
+          <InfoDot label="Posts per week">
             Drives your plan&apos;s idea count. Leave blank and Kria infers it from your cadence.
           </InfoDot>
         </div>

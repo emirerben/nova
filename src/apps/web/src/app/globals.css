@@ -560,7 +560,11 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+@keyframes info-dot-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
 @media (prefers-reduced-motion: reduce) {
   .info-dot-pop { animation: info-dot-fade 120ms ease-out; }
-  .info-dot-pop[data-state="closed"] { animation: info-dot-fade 120ms ease-in reverse forwards; }
+  .info-dot-pop[data-state="closed"] { animation: info-dot-fade-out 120ms ease-in forwards; }
 }

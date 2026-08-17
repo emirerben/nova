@@ -221,7 +221,7 @@ export default function CopilotDrawer({
       <div className="flex flex-none items-center justify-between px-5 pb-3 pt-4">
         <span className="flex items-center gap-1">
           <h2 className="font-display text-[18px] font-medium text-[#0c0c0e]">Nova</h2>
-          <InfoDot label="Nova" size="compact">
+          <InfoDot label="Nova">
             Nova can rewrite your hook, restyle text, and tighten or reorder cuts. Draft
             edits preview instantly.
           </InfoDot>

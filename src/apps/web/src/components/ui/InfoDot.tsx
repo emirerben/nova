@@ -53,7 +53,7 @@ export function InfoDot({
           aria-label={`About ${label}`}
           className={`group -my-2 inline-flex ${hitArea} shrink-0 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-lime-500 ${className}`}
         >
-          <span className="flex h-7 w-7 items-center justify-center rounded-full transition-colors group-hover:bg-zinc-100 group-data-[state=open]:bg-lime-50">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full transition-colors group-hover:bg-zinc-100 group-focus-visible:bg-zinc-100 group-data-[state=open]:bg-lime-50">
             <InfoGlyph />
           </span>
         </button>
@@ -63,7 +63,14 @@ export function InfoDot({
           side={side}
           sideOffset={6}
           collisionPadding={12}
-          className="info-dot-pop z-[80] max-w-[280px] rounded-[12px] border border-zinc-200 bg-white px-3.5 py-3 text-[13px] leading-[19px] text-[#3f3f46] shadow-[0_12px_30px_rgba(0,0,0,0.10)]"
+          onEscapeKeyDown={(e) => {
+            // Radix listens for Escape in the capture phase; stopping immediate
+            // propagation keeps host surfaces with their own document-level
+            // Escape handlers (editor Sheet, CopilotDrawer) from also closing.
+            // The popover itself still dismisses.
+            e.stopImmediatePropagation();
+          }}
+          className="info-dot-pop z-[130] max-w-[280px] rounded-[12px] border border-zinc-200 bg-white px-3.5 py-3 text-[13px] leading-[19px] text-[#3f3f46] shadow-[0_12px_30px_rgba(0,0,0,0.10)]"
         >
           {children}
           <Popover.Arrow className="fill-white drop-shadow-[0_1px_0_#e4e4e7]" width={12} height={6} />

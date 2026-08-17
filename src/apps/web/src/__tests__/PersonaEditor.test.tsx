@@ -116,3 +116,23 @@ describe("PersonaEditor — reveal with an empty persona", () => {
     expect(screen.getByText("Content pillars")).toBeInTheDocument();
   });
 });
+
+describe("PersonaEditor — posts-per-week field after the declutter refactor", () => {
+  beforeAll(() => {
+    if (typeof globalThis.ResizeObserver === "undefined") {
+      class RO {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+      (globalThis as unknown as Record<string, unknown>).ResizeObserver = RO;
+    }
+  });
+
+  it("keeps the input labelled and exposes the cadence explainer via InfoDot", () => {
+    render(<PersonaEditor {...baseProps} startInEdit />);
+    expect(screen.getByLabelText("Posts per week")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "About Posts per week" }));
+    expect(screen.getByText(/infers it from your cadence/)).toBeInTheDocument();
+  });
+});

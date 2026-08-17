@@ -577,7 +577,7 @@ export default function CaptionEditor({
       <div>
         <p className="mb-1.5 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
           Caption style
-          <InfoDot label="Caption style" size="compact">
+          <InfoDot label="Caption style">
             Sentence shows full lines like subtitles. Word-by-word pops one big word at a time.
           </InfoDot>
         </p>

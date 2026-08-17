@@ -306,8 +306,8 @@ export default function GenerativePage() {
               Generate edits
             </InkButton>
             <InfoDot label="How length and audio work">
-              Length comes from your clips and the matched song — never longer than your footage. Add a
-              voiceover and Kria builds the edit around your voice.
+              Length is set by your clips and the song. A voiceover makes Kria cut to your
+              voice.
             </InfoDot>
           </div>
         </section>

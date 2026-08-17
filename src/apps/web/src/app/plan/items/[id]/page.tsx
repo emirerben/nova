@@ -4959,7 +4959,7 @@ function PoolUploadCard({
             >
               {maxClips === 1 ? "Add your clip" : "Add clips"}
             </button>
-            <InfoDot label="Adding clips" size="compact">
+            <InfoDot label="Adding clips">
               iCloud videos may take a moment to prepare before they appear here.
             </InfoDot>
           </div>

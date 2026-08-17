@@ -2161,7 +2161,7 @@ function ClipInspector({
       <fieldset className="mt-5">
         <legend className="flex items-center gap-1 text-[12px] font-semibold text-[#3f3f46]">
           <span>Look</span>
-          <InfoDot label="Looks" size="compact">
+          <InfoDot label="Look" size="compact">
             Each look is a color grade — warm olive, smoky split-tone, or stadium diffusion.
             Thumbnails show the treatment.
           </InfoDot>

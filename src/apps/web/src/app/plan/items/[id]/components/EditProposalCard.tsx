@@ -880,7 +880,7 @@ export default function EditProposalCard({
         >
           {workingAction === "approve" ? "Approving…" : "Approve plan"}
         </button>
-        <InfoDot label="Plan approval" size="compact">
+        <InfoDot label="Plan approval">
           AI thoughts stay drafts until you approve this plan.
         </InfoDot>
       </div>
