@@ -537,3 +537,30 @@
   from { transform: translateX(0); }
   to { transform: translateX(-20%); }
 }
+
+/* InfoDot popover (DESIGN.md §2): 180ms rise from the dot, 120ms fade-out.
+   Radix drives [data-state]; transform-origin comes from Radix so the scale
+   grows out of the trigger, not the card center. Reduced-motion: fade only. */
+.info-dot-pop {
+  transform-origin: var(--radix-popover-content-transform-origin);
+  animation: info-dot-in 180ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.info-dot-pop[data-state="closed"] {
+  animation: info-dot-out 120ms ease-in forwards;
+}
+@keyframes info-dot-in {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes info-dot-out {
+  from { opacity: 1; }
+  to { opacity: 0; transform: scale(0.98); }
+}
+@keyframes info-dot-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .info-dot-pop { animation: info-dot-fade 120ms ease-out; }
+  .info-dot-pop[data-state="closed"] { animation: info-dot-fade 120ms ease-in reverse forwards; }
+}

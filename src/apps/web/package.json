@@ -16,6 +16,7 @@
   "dependencies": {
     "@nova/motion-runtime": "file:../../packages/motion-runtime",
     "@radix-ui/react-dialog": "^1.0.5",
+    "@radix-ui/react-popover": "^1.1.23",
     "@radix-ui/react-progress": "^1.0.3",
     "@swc/helpers": "^0.5.21",
     "@xyflow/react": "^12.10.1",
