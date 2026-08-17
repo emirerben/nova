@@ -378,6 +378,8 @@ function PublicationReceipt({
             <div className="mt-3">
               <p className="text-sm leading-relaxed text-[#71717a]">
                 No notification? Download the video and post it from the TikTok app yourself.
+                If you&apos;ve edited this video since sending it, the download reflects your
+                latest edits, not necessarily what TikTok already has.
               </p>
               <button
                 type="button"

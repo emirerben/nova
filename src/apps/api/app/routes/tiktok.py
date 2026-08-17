@@ -482,11 +482,13 @@ async def create_publication(
     if not body.music_usage_confirmed:
         raise HTTPException(status_code=400, detail="Music usage confirmation is required")
     if body.delivery_mode == "draft_upload" and not settings.tiktok_draft_upload_enabled:
-        raise HTTPException(status_code=404, detail="TikTok draft upload is not available")
+        raise HTTPException(
+            status_code=404, detail="Sending to the TikTok app inbox is not available"
+        )
     if body.delivery_mode == "draft_upload" and not body.draft_handoff_confirmed:
         raise HTTPException(
             status_code=400,
-            detail="Confirm that you will finish this draft inside TikTok",
+            detail="Confirm that you'll finish this in the TikTok app",
         )
     # Validate the Job before the idempotency fast path: cancellation also
     # suppresses retries of an older queued/failed publication receipt.

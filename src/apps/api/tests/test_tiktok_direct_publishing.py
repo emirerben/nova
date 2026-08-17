@@ -785,7 +785,7 @@ async def test_mutating_routes_fail_closed_before_external_side_effects() -> Non
     ):
         with pytest.raises(HTTPException, match="Music usage"):
             await create_publication(_body(music_usage_confirmed=False), user, db)
-        with pytest.raises(HTTPException, match="finish this draft inside TikTok"):
+        with pytest.raises(HTTPException, match="finish this in the TikTok app"):
             await create_publication(
                 _body(delivery_mode="draft_upload", draft_handoff_confirmed=False),
                 user,
@@ -797,7 +797,7 @@ async def test_mutating_routes_fail_closed_before_external_side_effects() -> Non
         patch("app.routes.tiktok.settings.tiktok_draft_upload_enabled", False),
         patch("app.routes.tiktok.settings.tiktok_content_posting_audited", True),
     ):
-        with pytest.raises(HTTPException, match="draft upload is not available"):
+        with pytest.raises(HTTPException, match="Sending to the TikTok app inbox is not available"):
             await create_publication(
                 _body(delivery_mode="draft_upload", draft_handoff_confirmed=True),
                 user,
@@ -1123,7 +1123,7 @@ def test_submit_worker_fails_closed_when_draft_rollout_is_disabled() -> None:
 
     assert row.processing_status == "failed"
     assert row.failure_code == "draft_upload_disabled"
-    assert row.failure_detail == "TikTok draft upload is temporarily unavailable"
+    assert row.failure_detail == "Sending to the TikTok app inbox is temporarily unavailable"
     assert row.retryable is False
     assert row.next_poll_at is None
     copy_media.assert_not_called()

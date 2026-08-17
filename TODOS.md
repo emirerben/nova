@@ -8,6 +8,37 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## TikTok inbox-copy fix — deferred follow-ups (from red-team review, 2026-08-12)
+
+Context: the "stop calling it TikTok drafts" bug fix (v0.26.2.0) added a
+download fallback to the post-publish receipt and adversarial review surfaced
+two related gaps neither introduced-nor-fully-fixable within that PR's scope.
+
+- **Receipt polling goes silent once `visibility_status` reaches "draft" and never resumes.**
+  Priority: P2. Pre-existing behavior, not introduced by v0.26.2.0 — confirmed
+  unchanged on `origin/main` before that PR. `shouldPollTikTokPublication()`
+  (`src/apps/web/src/lib/tiktok-api.ts`) returns `false` once a `draft_upload`
+  publication reaches `processing_status === "complete"`, so an open receipt
+  tab never learns if the publication later transitions out of `"draft"` (the
+  creator posts from their TikTok inbox, or TikTok's webhook reports
+  `removed`/`public`). No focus/visibilitychange refetch exists either. Fix:
+  add a focus-triggered refetch for `draft_upload` receipts still in `"draft"`,
+  or resume a slow background poll until the state leaves `"draft"`.
+- **Receipt "Download the video" fallback serves the live variant, not the immutable snapshot TikTok received.**
+  Priority: P3. Introduced by v0.26.2.0 — the fallback is new; before that PR,
+  download only appeared pre-publish, where "current variant" and "about to
+  publish" were the same thing. `TikTokPublication` rows persist an immutable
+  snapshot (`snapshot_object_path`/`source_revision`) of what was actually
+  streamed to TikTok, but `handleDownload` → `prepareExactExport` in
+  `src/apps/web/src/app/plan/items/[id]/page.tsx` downloads the variant's
+  CURRENT `output_url` (and will trigger a fresh bake for pending overlay/SFX
+  edits first). If a creator edits the video after sending it to TikTok, then
+  uses the fallback, they get the edited cut, not what's in their TikTok
+  inbox. Mitigated for v0.26.2.0 with an inline caveat
+  (`TikTokReleaseRail.tsx`); the complete fix is a backend endpoint that signs
+  a download URL for the publication's own snapshot object instead of the
+  live variant.
+
 ## Render-worker queue latency — deferrals (plans/014 eng review, 2026-08-04)
 
 Context: the 2026-08-04 "frozen Starting…" incident (plans/014). The single
