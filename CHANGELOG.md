@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.9] — 2026-08-17
+
+### Changed
+- **A row-locking mistake that could start the same video twice can no longer be reintroduced.** A new check reads the code and flags the specific pattern behind that bug — locking a database row after already having read it, which quietly hands back the older copy. It looks for the shape of the mistake rather than policing every lock in the codebase, so it stays worth paying attention to. Eight suspected existing instances were found while building it; they are recorded as a tracked backlog rather than silently approved, and the check fails if that list grows or goes out of date.
+
 ## [0.34.1.7] — 2026-08-17
 
 ### Fixed
