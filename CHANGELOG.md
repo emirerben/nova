@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.10] — 2026-08-17
+
+### Fixed
+- **Visuals-pool uploads now show a preview for iPhone HEIC photos and HEVC-in-QuickTime .mov
+  clips.** The pool never had a preview pipeline — `display_url` signed the RAW uploaded object,
+  and Chromium can't decode either format, so `ready` assets rendered blank in the plan-item
+  editor and asset pool. `analyze_pool_asset` now generates a browser-safe JPEG preview (image
+  thumbnail via Pillow/pillow_heif, video poster frame via `ffmpeg`) alongside analysis and
+  persists it on the new `plan_item_assets.preview_gcs_path` column; preview generation is
+  strictly best-effort and never turns a successful analysis into a failure. A bounded
+  maintenance backfill (`generate_pool_asset_preview`, dispatched from
+  `reconcile_stale_pool_assets`) covers pre-fix `ready` rows that never got one. `_asset_out`
+  signs the preview for images (`display_url`) and exposes it separately for videos
+  (`preview_url`, poster on the `<video>` tile); the editor's Visuals drawer no longer renders
+  videos through a bare `<img>` (always broken) and both surfaces fall back to a kind-label
+  placeholder on a decode error.
+
 ## [0.34.1.9] — 2026-08-17
 
 ### Changed

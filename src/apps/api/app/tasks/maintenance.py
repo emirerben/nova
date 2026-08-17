@@ -42,6 +42,11 @@ _POOL_HEIF_DECODER_RECOVERY_MAX_ATTEMPTS = 2
 _POOL_RECONCILE_BATCH = 100
 _POOL_RESERVATION_TTL = timedelta(minutes=15)
 _POOL_RESERVATION_CLEANUP_GRACE = timedelta(minutes=15)
+# Bounded pass: pre-fix `ready` rows (video, or HEIC/HEIF image) that never got
+# a browser-safe preview generated (`preview_gcs_path IS NULL`). Small batch —
+# this is a backfill, not the fast path; new uploads get their preview inline
+# in `analyze_pool_asset`.
+_POOL_PREVIEW_BACKFILL_BATCH = 25
 
 
 def _heif_decoder_recovery_predicate():
@@ -57,6 +62,24 @@ def _heif_decoder_recovery_predicate():
 def _pool_reconcile_priority():
     """Current creator work sorts ahead of historical decoder recovery."""
     return case((PlanItemAsset.status == "failed", 1), else_=0)
+
+
+def _preview_backfill_predicate():
+    """`ready` rows that predate the preview pipeline and never got one.
+
+    Video (any codec — a poster helps everywhere) or HEIC/HEIF image.
+    `preview_gcs_path IS NULL` excludes both already-previewed rows AND the
+    ""-sentinel (attempted-and-failed) rows — a failed preview attempt is not
+    retried by this bounded sweep.
+    """
+    return and_(
+        PlanItemAsset.status == "ready",
+        PlanItemAsset.preview_gcs_path.is_(None),
+        or_(
+            PlanItemAsset.kind == "video",
+            PlanItemAsset.upload_content_type.in_({"image/heic", "image/heif"}),
+        ),
+    )
 
 
 def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
@@ -321,6 +344,37 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
             republished=len(to_publish),
             expired_reservations=expired_cleaned,
         )
+
+    from app.tasks.autoplace import generate_pool_asset_preview  # noqa: PLC0415
+
+    with sync_session() as db:
+        preview_backfill_ids = (
+            db.execute(
+                select(PlanItemAsset.id)
+                .where(_preview_backfill_predicate())
+                .order_by(PlanItemAsset.created_at.desc())
+                .limit(_POOL_PREVIEW_BACKFILL_BATCH)
+            )
+            .scalars()
+            .all()
+        )
+    for asset_id in preview_backfill_ids:
+        try:
+            generate_pool_asset_preview.apply_async(
+                args=[str(asset_id)],
+                queue=settings.pool_asset_analysis_queue,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Best-effort backfill: dispatch failure just means this row waits
+            # for the next reconcile pass. Never fail the whole sweep over it.
+            log.warning(
+                "pool_asset_preview_backfill_dispatch_failed",
+                asset_id=str(asset_id),
+                error_type=type(exc).__name__,
+            )
+    if preview_backfill_ids:
+        log.info("pool_asset_preview_backfill_dispatched", count=len(preview_backfill_ids))
+
     return touched
 
 

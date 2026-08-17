@@ -165,15 +165,23 @@ def teardown_function() -> None:
     app.dependency_overrides.clear()
 
 
-def _asset_row(item_id, user_id, *, content_hash="abc123") -> MagicMock:
+def _asset_row(
+    item_id,
+    user_id,
+    *,
+    content_hash="abc123",
+    kind="image",
+    preview_gcs_path=None,
+) -> MagicMock:
     a = MagicMock()
     a.id = uuid.uuid4()
     a.plan_item_id = item_id
     a.user_id = user_id
-    a.gcs_path = f"users/{user_id}/plan/{item_id}/pool/x.png"
-    a.kind = "image"
+    ext = "mp4" if kind == "video" else "png"
+    a.gcs_path = f"users/{user_id}/plan/{item_id}/pool/x.{ext}"
+    a.kind = kind
     a.content_hash = content_hash
-    a.source_filename = "x.png"
+    a.source_filename = f"x.{ext}"
     a.duration_s = None
     a.aspect = None
     a.analysis = None
@@ -181,6 +189,10 @@ def _asset_row(item_id, user_id, *, content_hash="abc123") -> MagicMock:
     a.status = "uploaded"
     a.gcs_generation = None
     a.correlation_id = None
+    # Explicit (not MagicMock auto-attr, which is always truthy) — preview_gcs_path
+    # is read via `getattr(asset, "preview_gcs_path", None)` and MUST be able to
+    # be falsy/None like a real never-previewed row.
+    a.preview_gcs_path = preview_gcs_path
     return a
 
 
@@ -1572,6 +1584,69 @@ def test_list_returns_assets_with_display_urls(client: TestClient):
     assert body["occupied_assets"] == 2
     assert body["active_reservations"] == []
     assert body["assets"][0]["display_url"] == "https://get"
+
+
+# ── preview pipeline: _asset_out signing ────────────────────────────────────────
+
+
+def test_asset_out_image_prefers_preview_over_raw():
+    from app.routes import plan_items as routes  # noqa: PLC0415
+
+    user = _user()
+    item, _plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id, kind="image", preview_gcs_path="x.png.preview.jpg")
+    signed = []
+    with patch(
+        "app.routes.plan_items.storage.signed_get_url",
+        side_effect=lambda path, **_kw: signed.append(path) or f"https://signed/{path}",
+    ):
+        out = routes._asset_out(asset)
+
+    assert out.display_url == "https://signed/x.png.preview.jpg"
+    assert signed == ["x.png.preview.jpg"]
+    # Images fold the preview into display_url — preview_url is video-only.
+    assert out.preview_url is None
+
+
+def test_asset_out_video_emits_preview_url_and_keeps_raw_display():
+    from app.routes import plan_items as routes  # noqa: PLC0415
+
+    user = _user()
+    item, _plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id, kind="video", preview_gcs_path="x.mp4.preview.jpg")
+    signed = []
+    with patch(
+        "app.routes.plan_items.storage.signed_get_url",
+        side_effect=lambda path, **_kw: signed.append(path) or f"https://signed/{path}",
+    ):
+        out = routes._asset_out(asset)
+
+    assert out.display_url == f"https://signed/{asset.gcs_path}"
+    assert out.preview_url == "https://signed/x.mp4.preview.jpg"
+    assert signed == [asset.gcs_path, "x.mp4.preview.jpg"]
+
+
+def test_asset_out_empty_string_preview_treated_as_absent():
+    """Empty-string preview is the attempted-and-failed sentinel — must never
+    be signed as a path."""
+    from app.routes import plan_items as routes  # noqa: PLC0415
+
+    user = _user()
+    item, _plan = _owned_item(user.id)
+    image_asset = _asset_row(item.id, user.id, kind="image", preview_gcs_path="")
+    video_asset = _asset_row(item.id, user.id, kind="video", preview_gcs_path="")
+    signed = []
+    with patch(
+        "app.routes.plan_items.storage.signed_get_url",
+        side_effect=lambda path, **_kw: signed.append(path) or f"https://signed/{path}",
+    ):
+        image_out = routes._asset_out(image_asset)
+        video_out = routes._asset_out(video_asset)
+
+    assert image_out.display_url == f"https://signed/{image_asset.gcs_path}"
+    assert video_out.display_url == f"https://signed/{video_asset.gcs_path}"
+    assert video_out.preview_url is None
+    assert signed == [image_asset.gcs_path, video_asset.gcs_path]
 
 
 def test_list_exposes_authoritative_hidden_reservation_capacity(client: TestClient):

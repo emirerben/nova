@@ -1095,6 +1095,11 @@ class PlanItemAsset(Base):
     analysis_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     analysis_last_dispatched_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     analysis_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # Browser-safe JPEG preview object key (pool preview pipeline). NULL = never
+    # attempted; "" = attempted, none produced (failure sentinel — do not retry
+    # from the fast paths, only the bounded maintenance backfill); non-empty =
+    # object key of a JPEG sibling under the same persistent pool prefix.
+    preview_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
 
