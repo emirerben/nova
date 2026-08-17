@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.34.1.2] — 2026-08-17
+## [0.34.1.8] — 2026-08-17
 
 ### Fixed
 - **Fly Deploy no longer goes red when Fly kills the release machine during startup (#834).** The
@@ -15,6 +15,53 @@ All notable changes to this project will be documented in this file.
   inert on the release machine — recorded in fly.toml comments and agents/DECISIONS.md); the root
   cause is a Fly platform-side machine lifecycle race, which is why the fix is a targeted retry
   rather than config. Pinned by 13 new tests driving the real script against a stub flyctl.
+
+## [0.34.1.7] — 2026-08-17
+
+### Fixed
+- **Guided-story clip bars now match the rendered video exactly.** The editor accounts for the
+  verified crossfade overlap between adjacent moments, so its ruler, video lane, text timing, and
+  playback all end together instead of overstating the story length.
+
+## [0.34.1.6] — 2026-08-17
+
+### Fixed
+- **The video editor now shows every approved guided-story source.** Stories assembled entirely
+  from the visuals pool no longer collapse their video lane to the first compatibility clip; each
+  verified moment appears in the rendered order and at its real duration.
+
+## [0.34.1.5] — 2026-08-17
+
+### Fixed
+- **Generate now reaches the strict renderer for approved visual-pool-only stories.** The API no
+  longer asks for a duplicate primary clip after the creator has approved a story with selected
+  photos or videos; the dispatcher still verifies every approved source before creating the job.
+
+## [0.34.1.4] — 2026-08-17
+
+### Fixed
+- **Approved guided edits can now generate directly from photos and videos in the visuals pool.** A
+  plan that already shows five selected sources no longer disables Generate with “Add clips to
+  generate” merely because those sources are not duplicated in the legacy primary-clips lane.
+
+## [0.34.1.3] — 2026-08-17
+
+### Fixed
+- **Kria now moves the referenced upload, not just its label, when revising an edit plan.** Requests
+  such as “make the bridge video moment one” explicitly reassign the already-selected source while
+  the server guarantees that no approved media is invented, duplicated, or silently dropped.
+- **Kria cannot claim a named-video correction while leaving the old footage underneath it.** Invalid
+  media assignments fail closed and retry instead of saving a visually mismatched draft.
+
+## [0.34.1.2] — 2026-08-17
+
+### Fixed
+- **Kria can now reliably revise a planned edit when creators name a specific upload or visible
+  scene.** Requests such as “put the bridge video before the skyline clip” use short review
+  references tied to the analyzed media, while the server still owns every real media and beat ID.
+- **Exact multi-scene revisions no longer fail after Kria describes the right change.** Reordering
+  five or more moments no longer depends on the model perfectly copying long generated IDs; missing
+  or duplicated moments still fail closed.
 
 ## [0.34.1.1] — 2026-08-17
 

@@ -1123,7 +1123,8 @@ it asked creators to translate creative intent into product controls before Kria
   can revise a draft. Any revision returns an approved proposal to `draft`, so new wording and order
   cannot render without approval.
 - **Media identity stays server-owned.** Model-authored revisions preserve every beat ID exactly once.
-  The route rejoins the original media membership and retains creator-written thoughts verbatim.
+  Media reassignment was added later through bounded short aliases; the route always rejoins real
+  identities and retains creator-written thoughts verbatim.
 - **Slow model calls do not hold item locks.** The route first persists a short-lived, token-fenced
   single-flight reservation, closes the transaction, calls the model, then reloads under lock and
   requires the same token and proposal version. A reload sees only safe thinking/retry state, never
@@ -1206,3 +1207,46 @@ waiting for release command logs" log line), not something fixable from our conf
 suggest the platform race is worsening, not just noise), or Fly ships a fix for release-machine
 lifecycle reporting — at that point the retry wrapper becomes a belt-and-braces fallback rather than a
 load-bearing part of the pipeline, and `timeout-minutes` can likely drop back toward 25.
+## [2026-08-17] Conversational revisions use short review references
+
+Production dogfood asked Kria to swap two named travel videos and shorten five thoughts. The model's
+reply described the correct change, but both schema attempts failed because one long generated beat ID
+was lost while reproducing the full revision.
+
+**Decisions:**
+
+- **Models edit aliases, servers retain identities.** Review prompts expose `beat_1`, `beat_2`, and
+  similar short references. Parsed revisions must preserve every alias exactly once, after which the
+  server maps them back to the original beat IDs.
+- **Visible-content references have an explicit join.** Media already supplied to the edit guide gets
+  a short `media_1`-style reference, and every review beat lists its associated media references. This
+  lets “the bridge video,” “the Istanbul clip,” and uploaded filenames resolve to the intended beat.
+- **Safety remains fail-closed.** Unknown, missing, or duplicated aliases are rejected. The model still
+  cannot add media, replace object identity, remove beats, or overwrite creator-authored thoughts.
+
+## [2026-08-17] Conversational revisions may reassign existing media safely
+
+The first filename-reference repair let the model understand which upload a creator meant, but the
+revision output could only reorder beat IDs. In production dogfood the model changed “Cityscape” to
+“Lisbon” while leaving the Istanbul source underneath it, then claimed the request was complete.
+
+**Decisions:**
+
+- **Every revised beat returns media aliases explicitly.** A request such as “moment 1 uses the bridge
+  video” can move `media_1` to that beat instead of merely changing its text.
+- **The server validates the complete assignment.** The multiset of returned aliases must exactly match
+  the currently assigned aliases. Unknown, missing, or duplicated media fails closed before persistence.
+- **Aliases never become authority.** Only the server maps validated aliases back to stable media IDs;
+  the model still cannot introduce another user's object, replace storage identity, or drop a source.
+
+## [2026-08-17] Approved guided media satisfies the Generate footage gate
+
+Production dogfood approved a five-source guided story built entirely from the visuals pool, then the
+page disabled Generate with “Add clips to generate.” The strict renderer already consumes both media
+lanes from the approved snapshot; only the legacy frontend gate still counted attached clips.
+
+**Decision:** A current approved proposal with at least one selected story-beat media ID satisfies both
+the frontend and API footage gates. Unguided items and empty/malformed approvals still require an
+attached clip, and the lock-owning dispatcher continues to revalidate the approved snapshot before
+dispatch. The initial frontend-only repair exposed the API twin in production; both layers now share
+the same contract.

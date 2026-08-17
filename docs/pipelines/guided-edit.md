@@ -21,15 +21,19 @@ the story assembler consumes the approved Job snapshot directly.
    not invent personal experiences.
 6. The item page shows combined photo/video thumbnails. The creator can continue the same
    conversation with requests such as “put food first,” “make it slower,” or “use less text.”
-   Conversational revisions may reorder and rewrite editorial fields, but the server preserves
-   every beat's media membership and creator-written thoughts. Direction, goal, pace, title,
-   order, layouts, and thoughts also remain manually editable. AI-written thoughts carry an
-   **AI draft** label.
+   Conversational revisions may reorder and rewrite editorial fields. They may also move the
+   already-assigned media between existing beats through short aliases; the server validates that
+   every assigned source remains present exactly once, then rejoins the real identities.
+   Creator-written thoughts remain authoritative. Direction, goal, pace, title, order, layouts,
+   and thoughts also remain manually editable. AI-written thoughts carry an **AI draft** label.
 7. **Approve plan** saves corrections and approves them using compare-and-swap against
    `expected_proposal_version`.
 8. Generate revalidates every storage generation and snapshots the exact approved proposal and
    media identities into `Job.assembly_plan.guided_edit` while holding the established
    Plan → Persona → PlanItem → Job locks.
+   The web and API generation gates treat selected media in that approved snapshot as footage,
+   including asset-lane-only stories; neither requires a duplicate legacy clip attachment. The
+   lock-owning dispatcher still revalidates every object before it creates the Job.
 
 ## Stored envelope
 

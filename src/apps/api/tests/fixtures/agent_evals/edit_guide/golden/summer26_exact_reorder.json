@@ -1,0 +1,38 @@
+{
+  "agent": "nova.plan.edit_guide",
+  "prompt_version": "1.0.5",
+  "input": {
+    "phase": "review",
+    "idea": "Five-stop summer travel reel",
+    "theme": "Summer recap",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Put bridge.mov first as River City, then skyline.mov as Harbor City. Keep Old Town, Coast, and Memorial next. Replace every long thought with only its location name. Keep the edit at 10 seconds."
+      }
+    ],
+    "brief": {
+      "direction": "guided_story",
+      "goal": "A nostalgic look back at five summer destinations",
+      "pace": "relaxed",
+      "duration_s": 10
+    },
+    "media": [
+      {"media_ref": "media_1", "kind": "video", "source_filename": "bridge.mov", "subject": "suspension bridge"},
+      {"media_ref": "media_2", "kind": "video", "source_filename": "skyline.mov", "subject": "harbor skyline"},
+      {"media_ref": "media_3", "kind": "video", "source_filename": "old-town.mov", "subject": "historic old-town street"},
+      {"media_ref": "media_4", "kind": "video", "source_filename": "coast.mov", "subject": "swimmers by a coastal fortress"},
+      {"media_ref": "media_5", "kind": "video", "source_filename": "memorial.mov", "subject": "hilltop memorial"}
+    ],
+    "title": "Summer Travel Reel",
+    "beats": [
+      {"beat_id": "e984706a-e702-4f54-b6e8-fce4ad11e50e", "topic": "Cityscape", "thought": "City skyline views capture the urban landscape.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 2, "media_count": 1, "media_refs": ["media_2"]},
+      {"beat_id": "7dd5e0f6-4a16-4ef5-9584-c81b811a819f", "topic": "Architecture", "thought": "A suspension bridge connects distant shores.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 2, "media_count": 1, "media_refs": ["media_1"]},
+      {"beat_id": "af323c5c-4f7b-44b4-acf7-1fc3a82a5a5d", "topic": "Historic Town", "thought": "Trulli houses line a charming street.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 2, "media_count": 1, "media_refs": ["media_3"]},
+      {"beat_id": "369f54d0-149d-44bc-9371-5e65cf922d2f", "topic": "Coastal Scenes", "thought": "Clear water meets an old fortress.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 2, "media_count": 1, "media_refs": ["media_4"]},
+      {"beat_id": "8ed97f75-34d2-42ab-bc2a-b42d6edb16ac", "topic": "Landmark", "thought": "The memorial closes the journey.", "thought_source": "ai_draft", "layout": "fullscreen", "duration_s": 2, "media_count": 1, "media_refs": ["media_5"]}
+    ]
+  },
+  "raw_text": "{\"reply\":\"I put River City first, kept the remaining destination order, and replaced each description with its location name. The edit stays at 10 seconds.\",\"suggestions\":[],\"brief\":{\"direction\":\"guided_story\",\"goal\":\"A nostalgic look back at five summer destinations\",\"pace\":\"relaxed\",\"duration_s\":10},\"ready_to_plan\":true,\"revision\":{\"direction\":\"guided_story\",\"goal\":\"A nostalgic look back at five summer destinations\",\"pace\":\"relaxed\",\"duration_s\":10,\"title\":\"Summer\",\"story_beats\":[{\"beat_id\":\"beat_1\",\"topic\":\"River City\",\"thought\":\"River City\",\"layout\":\"fullscreen\",\"duration_s\":2,\"media_refs\":[\"media_1\"]},{\"beat_id\":\"beat_2\",\"topic\":\"Harbor City\",\"thought\":\"Harbor City\",\"layout\":\"fullscreen\",\"duration_s\":2,\"media_refs\":[\"media_2\"]},{\"beat_id\":\"beat_3\",\"topic\":\"Old Town\",\"thought\":\"Old Town\",\"layout\":\"fullscreen\",\"duration_s\":2,\"media_refs\":[\"media_3\"]},{\"beat_id\":\"beat_4\",\"topic\":\"Coast\",\"thought\":\"Coast\",\"layout\":\"fullscreen\",\"duration_s\":2,\"media_refs\":[\"media_4\"]},{\"beat_id\":\"beat_5\",\"topic\":\"Memorial\",\"thought\":\"Memorial\",\"layout\":\"fullscreen\",\"duration_s\":2,\"media_refs\":[\"media_5\"]}]}}",
+  "meta": {"source": "synthetic_regression", "scenario": "exact filename and visible-content references with a five-beat reorder"}
+}

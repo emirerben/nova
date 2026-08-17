@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,7 +13,15 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
-from app.schemas.edit_proposal import EditProposal, ProposalBrief
+from app.schemas.edit_proposal import (
+    ApprovedProposalSnapshot,
+    EditProposal,
+    EditProposalSnapshot,
+    MediaRef,
+    ProposalBrief,
+    StoryBeat,
+    canonical_media_digest,
+)
 from app.tasks.content_plan_build import DispatchResult
 
 
@@ -138,6 +147,62 @@ def test_generate_requires_clips(client: TestClient) -> None:
     app.dependency_overrides[get_db] = lambda: db
     resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 409
+
+
+def test_generate_allows_current_approved_asset_only_story(monkeypatch, client: TestClient) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[])
+    media = MediaRef(
+        lane="asset",
+        media_id=str(uuid.uuid4()),
+        gcs_path=f"users/{user.id}/plan/{item.id}/pool/town.mp4",
+        generation="51",
+        kind="video",
+    )
+    snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Tell the trip in five places",
+        pace="relaxed",
+        duration_s=10,
+        title="Summer 26",
+        media=[media],
+        story_beats=[
+            StoryBeat(
+                beat_id="lisbon",
+                topic="Lisbon",
+                thought="Lisbon",
+                media_ids=[media.media_id],
+                duration_s=2,
+            )
+        ],
+    )
+    digest = canonical_media_digest(snapshot.media)
+    item.edit_proposal = EditProposal(
+        proposal_version=3,
+        generation_attempt_id="attempt-1",
+        media_digest=digest,
+        status="approved",
+        draft=snapshot,
+        last_approved=ApprovedProposalSnapshot(
+            proposal_version=3,
+            media_digest=digest,
+            approved_at=datetime.now(UTC),
+            snapshot=snapshot,
+        ),
+    ).model_dump(mode="json")
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with _patch_dispatch_ok() as dispatch:
+        response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 200
+    dispatch.assert_called_once_with(str(item.id), 0)
 
 
 def test_collection_shape_omits_full_proposal_and_preview_signing(monkeypatch) -> None:

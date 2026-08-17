@@ -1747,13 +1747,19 @@ async def _edit_guide_media_summary(
                 "description": str(analysis.get("description") or "")[:500],
             }
         )
-    return summaries[:60]
+    limited = summaries[:60]
+    for index, summary in enumerate(limited, start=1):
+        summary["media_ref"] = f"media_{index}"
+    return limited
 
 
 def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapshot:  # noqa: ANN001
-    """Rejoin AI editorial changes with server-owned beat/media membership."""
+    """Rejoin AI aliases with server-owned beat and media identities."""
 
     beat_by_id = {beat.beat_id: beat for beat in current.story_beats}
+    media_id_by_ref = {
+        f"media_{index}": ref.media_id for index, ref in enumerate(current.media, start=1)
+    }
     beats: list[StoryBeat] = []
     for revised in revision.story_beats:
         existing = beat_by_id[revised.beat_id]
@@ -1766,7 +1772,9 @@ def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapsho
                 topic=revised.topic,
                 thought=existing.thought if keep_user_thought else revised.thought,
                 thought_source="user" if keep_user_thought else "ai_draft",
-                media_ids=existing.media_ids,
+                media_ids=[media_id_by_ref[media_ref] for media_ref in revised.media_refs]
+                if revised.media_refs
+                else existing.media_ids,
                 layout=revised.layout,
                 duration_s=revised.duration_s,
             )
@@ -1965,6 +1973,11 @@ async def edit_proposal_conversation_turn(
                             layout=beat.layout,
                             duration_s=beat.duration_s,
                             media_count=len(beat.media_ids),
+                            media_refs=[
+                                f"media_{index}"
+                                for index, ref in enumerate(review_snapshot.media, start=1)
+                                if ref.media_id in beat.media_ids
+                            ],
                         )
                         for beat in review_snapshot.story_beats
                     ]
@@ -2238,7 +2251,7 @@ async def generate_item(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
-    """Enqueue a generative render for this item's themed clips (≥1 required)."""
+    """Enqueue a render from attached clips or an approved guided story."""
     item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     # Narrated walkthroughs are spined by narration. With self-narration OFF that
@@ -2256,6 +2269,16 @@ async def generate_item(
         if proposal_error := proposal_generate_error(item):
             _raise_proposal_generate_conflict(proposal_error)
 
+    approved_guided_media = False
+    if settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled:
+        proposal = parse_edit_proposal(item.edit_proposal)
+        approved_guided_media = bool(
+            proposal
+            and proposal.status == "approved"
+            and proposal.last_approved
+            and any(beat.media_ids for beat in proposal.last_approved.snapshot.story_beats)
+        )
+
     if (
         (item.edit_format or "") in NARRATED_EDIT_FORMATS
         and not item.voiceover_gcs_path
@@ -2265,7 +2288,7 @@ async def generate_item(
             status_code=status.HTTP_409_CONFLICT,
             detail="Record or upload your voiceover before generating a Voiceover edit",
         )
-    if not (item.clip_gcs_paths or []):
+    if not (item.clip_gcs_paths or []) and not approved_guided_media:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload at least one clip before generating",
