@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.0.0] — 2026-08-17
+
+### Added
+- **The landing page now shows how Kria builds an edit, using real footage.** Raw landscape clips, captions and visual effects, placed image and video overlays, sound, and the final message arrive in sequence around a clean phone screen. Visitors can follow the story by scrolling or compare it with an automatic, sound-enabled version.
+
+### Changed
+- **The landing page now ends at “Create my first edit.”** The previous process section and footer content below the primary action were removed so the page stays focused on the product story and its single next step.
+- **The animation adapts cleanly across devices and accessibility settings.** Mobile layouts retain the same ordered story, viewport changes preserve every travel destination, and reduced-motion users see the completed composition without positional movement.
+
+### Fixed
+- **Automatic playback now survives real browser media failures.** Blocked audio, delayed video readiness, buffering, pause/resume, replay, and viewport changes no longer leave the story silent, stuck, or visually out of sync.
+
 ## [0.36.0.0] — 2026-08-17
 
 ### Added
