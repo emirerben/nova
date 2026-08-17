@@ -261,14 +261,18 @@ def test_get_asset_only_guided_story_projects_every_verified_source(monkeypatch)
     )
     first_path = job.all_candidates["clip_paths"][0]
     story_paths = [first_path, "users/u/plan/i/pool/istanbul.mov", "users/u/plan/i/pool/corfu.mov"]
+    output_windows = [(0.0, 2.2), (2.0, 4.2), (4.0, 6.7)]
+    durations = [2.2, 2.2, 2.7]
     job.assembly_plan["variants"][0]["story_timeline"] = [
         {
             "moment_id": f"place-{index}",
             "topic": f"Place {index}",
             "gcs_path": path,
             "source_start_s": float(index),
-            "source_end_s": float(index + 2),
-            "duration_s": 2.0,
+            "source_end_s": float(index) + durations[index],
+            "duration_s": durations[index],
+            "output_start_s": output_windows[index][0],
+            "output_end_s": output_windows[index][1],
         }
         for index, path in enumerate(story_paths)
     ]
@@ -278,9 +282,15 @@ def test_get_asset_only_guided_story_projects_every_verified_source(monkeypatch)
 
     assert out["editable"] is False
     assert out["reason"] == "unsupported_variant"
-    assert out["total_duration_s"] == 6.0
+    assert out["total_duration_s"] == 6.7
     assert [slot["clip_index"] for slot in out["slots"]] == [0, 1, 2]
     assert [slot["order"] for slot in out["slots"]] == [0, 1, 2]
+    assert [slot["transition_after"] for slot in out["slots"]] == [
+        "crossfade",
+        "crossfade",
+        "cut",
+    ]
+    assert [slot["transition_duration_s"] for slot in out["slots"]] == [0.2, 0.2, None]
     assert [clip["used"] for clip in out["clips"]] == [True, True, True]
     assert [clip["signed_url"] for clip in out["clips"]] == [
         f"https://media/{path}" for path in story_paths

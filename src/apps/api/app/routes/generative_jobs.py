@@ -5270,6 +5270,7 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
     reason = _timeline_ineligibility(job, variant)
     ai_slots, user_slots, beat_grid = _timeline_parts(variant)
     clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
+    projected_story_duration_s: float | None = None
     # Guided stories deliberately have no editable legacy ``ai_timeline``;
     # their immutable, verified cut lives in ``story_timeline`` instead.  Still
     # project that cut into the read-only timeline response so the editor can
@@ -5282,23 +5283,34 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
     # only the first beat.  Preserve any legacy pool entries so older jobs keep
     # stable clip indexes and still show their unused sources.
     if not ai_slots and variant.get("resolved_archetype") == "guided_story":
+        story_moments = [
+            moment for moment in (variant.get("story_timeline") or []) if isinstance(moment, dict)
+        ]
         story_paths: list[str] = []
-        for moment in variant.get("story_timeline") or []:
-            if not isinstance(moment, dict):
-                continue
+        for moment in story_moments:
             path = nonblank_str(moment.get("gcs_path"))
             if path and path not in story_paths:
                 story_paths.append(path)
         clip_paths.extend(path for path in story_paths if path not in clip_paths)
         clip_index_by_path = {path: index for index, path in enumerate(clip_paths)}
         ai_slots = []
-        for order, moment in enumerate(variant.get("story_timeline") or []):
-            if not isinstance(moment, dict):
-                continue
+        for order, moment in enumerate(story_moments):
             path = moment.get("gcs_path")
             clip_index = clip_index_by_path.get(path)
             if clip_index is None:
                 continue
+            next_moment = story_moments[order + 1] if order + 1 < len(story_moments) else None
+            overlap_s = 0.0
+            if next_moment is not None:
+                try:
+                    overlap_s = max(
+                        0.0,
+                        float(moment.get("output_end_s"))
+                        - float(next_moment.get("output_start_s")),
+                    )
+                except (TypeError, ValueError):
+                    overlap_s = 0.0
+            transition_duration_s = round(min(1.0, overlap_s), 3) if overlap_s >= 0.1 else None
             ai_slots.append(
                 {
                     "slot_id": moment.get("moment_id") or f"guided-story-{order}",
@@ -5311,12 +5323,22 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
                     "order": order,
                     "moment_description": moment.get("topic"),
                     "removed": False,
+                    "transition_after": "crossfade" if transition_duration_s else "cut",
+                    "transition_duration_s": transition_duration_s,
                 }
             )
+        try:
+            story_end_s = max(float(moment.get("output_end_s")) for moment in story_moments)
+            if story_end_s > 0:
+                projected_story_duration_s = story_end_s
+        except (TypeError, ValueError):
+            projected_story_duration_s = None
     has_user_edits = bool(user_slots)
     effective = user_slots if has_user_edits else ai_slots
     active = [s for s in effective if not s.get("removed")]
     total = _active_timeline_duration_s(active)
+    if projected_story_duration_s is not None:
+        total = projected_story_duration_s
     used_indices = {s.get("clip_index") for s in active}
 
     # Source durations are only known where the worker probed them (ai_timeline).
