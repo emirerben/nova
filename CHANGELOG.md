@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.0.0] — 2026-08-17
+
+### Added
+- **Helper text is now on demand instead of in your face.** A small ⓘ dot sits next to controls that used to carry explanatory paragraphs — tap it and a small card opens with the explanation (180ms, dismisses on tap-outside or Escape, honors reduced motion, keyboard accessible). It works on top of every editor sheet and drawer, and the design system now documents when a ⓘ is allowed and when text must stay visible.
+
+### Changed
+- **Every product page reads cleaner.** Nineteen paragraphs of restating sublines, how-it-works blurbs, and internal jargon were deleted outright across the ideas home, library, upload flows, transcript helper, the editor, and the render-result page (the "Assembly breakdown" list of internal shot types is gone; timeline chips now use plain words). Seventeen more explainers moved behind ⓘ dots — persona, upload cards, audio bed, caption styles, carousel modes, Nova's capabilities. Warnings, disabled-state reasons, and confirmations all stay visible; a committed audit inventory records every keep/move/delete call.
+
+### Fixed
+- **The old caption instructions block shrank to one line** ("Pause and tap a caption to fix a word.") instead of a two-sentence lecture, and a leaked internal roadmap note ("Controls for this element arrive with the timeline update.") no longer shows to users.
+
 ## [0.35.0.1] — 2026-08-17
 
 ### Fixed

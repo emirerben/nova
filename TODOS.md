@@ -8,6 +8,40 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Declutter train — deferrals (v0.35.0.0, 2026-08-17)
+
+### Admin lane InfoDot sweep (16 items)
+**What:** Convert the 16 multi-sentence admin explainers inventoried in
+`docs/declutter-audit.md` (bottom table) to InfoDots.
+**Why:** Admin was audited with the product but deferred (decision D1) — internal
+tooling, zero end-user impact. The inventory is committed so this doesn't rot.
+**How:** Follow the table in docs/declutter-audit.md; InfoDot already exists.
+Note admin is the dark surface — restyle the popover tokens (zinc-900 card) or
+add a `tone="dark"` prop before using it there.
+**Effort:** S (CC: ~25m)
+**Priority:** P3
+**Depends on:** —
+
+### PersonaEditor duplicated heading block
+**What:** The "Meet your persona" heading + InfoDot block is now byte-identical in
+both render branches of PersonaEditor.tsx (~L195-205 and ~L307-317); extract once.
+**Why:** The duplication existed for divergent copy; the declutter collapsed both
+to one sentence, so it's pure repetition now (maintainability review, 2026-08-17).
+**Effort:** S (CC: ~5m)
+**Priority:** P3
+**Depends on:** —
+
+### InfoDot bundle placement sanity check
+**What:** One bundle-analyzer glance confirming the chunk carrying
+@radix-ui/react-popover + floating-ui is shared across routes, not duplicated
+per-page (InfoDot is statically imported from ~15 client components).
+**Why:** First floating-ui consumer in the app; performance review said "likely
+fine" but unmeasured.
+**Effort:** S (CC: ~10m)
+**Priority:** P3
+**Depends on:** —
+
+
 ## Staged migrations — structural gap (from the 2026-08-13 persona-owner incident)
 
 The incident itself is CLOSED. Verified in production 2026-08-17: alembic revision
