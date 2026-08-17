@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.0.0] — 2026-08-17
+
+### Added
+- **Visual setup picker on the video page.** Edit types (Montage, Voiceover, Talking to camera, Talking-head B-roll) and montage styles (Classic, Masonry collage, Polaroid wall) are now full poster cards with real footage — hover a card to watch that style in motion, click to choose. Each choice collapses into a compact receipt row that reopens with one tap, so returning to a video shows a calm summary instead of a wall of controls.
+
+### Changed
+- **Smart captions are now automatic** on eligible talk-to-camera videos — there's no toggle to remember; the server applies them whenever they fit.
+- **"Already filmed" is the default.** The plan-to-film/already-filmed chips are gone: choosing a type goes straight to uploading the footage you have, and accepting a "Plan this for me" filming plan switches the video back into the guided shot-by-shot flow.
+- Voiceover videos start in the ready-to-upload flow; older "planned" voiceover videos switch over with one click.
+- Mobile: the card rails swipe edge-to-edge with snap points, and setup controls meet the 44px touch-target minimum.
+
+### Fixed
+- A save that fails mid-pick no longer leaves the page showing a choice that didn't stick — it reverts to the saved setup and the card can simply be clicked again.
+- Accessibility pass on the new picker: real radio-group keyboard navigation, focus survives saves, collapsed sections are skipped by keyboard and screen readers, hover videos respect reduced-motion and never download on touch devices.
+- Selected-state contrast, one consistent label style across the setup area, and a proper label + focus style on the notes field.
+
+### Removed
+- The per-video Smart captions and Sound design switches (both features now run on their defaults), the "you can change this until the first render" hint, and nine unused bundled assets; poster images were recompressed for faster loads.
 ## [0.33.3.0] — 2026-08-16
 
 ### Added
