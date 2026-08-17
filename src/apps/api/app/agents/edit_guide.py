@@ -25,6 +25,7 @@ from app.schemas.edit_proposal import (
 
 
 class EditGuideMediaSummary(BaseModel):
+    media_ref: str = ""
     kind: Literal["image", "video"]
     source_filename: str = ""
     creator_context: str = ""
@@ -40,6 +41,7 @@ class EditGuideBeatInput(BaseModel):
     layout: Literal["fullscreen", "supporting_card"] = "fullscreen"
     duration_s: float
     media_count: int = Field(ge=1)
+    media_refs: list[str] = Field(default_factory=list, max_length=4)
 
 
 class EditGuideRevisionBeat(BaseModel):
@@ -94,7 +96,7 @@ class EditGuideAgent(Agent[EditGuideInput, EditGuideOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_guide",
         prompt_id="edit_guide",
-        prompt_version="1.0.3",
+        prompt_version="1.0.4",
         model="gemini-2.5-flash",
         # Stay below the web proxy's 60s hard budget even when both attempts
         # reach their timeout. This prevents a late invisible DB commit after
@@ -116,9 +118,17 @@ class EditGuideAgent(Agent[EditGuideInput, EditGuideOutput]):
         return ["reply", "brief"]
 
     def render_prompt(self, input: EditGuideInput) -> str:  # noqa: A002
+        review_beats = []
+        for index, beat in enumerate(input.beats, start=1):
+            payload = beat.model_dump(mode="json")
+            # Opaque generated IDs are ownership tokens, not useful editorial
+            # language. Short aliases are easier for the model to preserve
+            # exactly through a reorder and are mapped back in ``parse``.
+            payload["beat_id"] = f"beat_{index}"
+            review_beats.append(payload)
         current_plan = {
             "title": input.title,
-            "beats": [beat.model_dump(mode="json") for beat in input.beats],
+            "beats": review_beats,
         }
         return load_prompt(
             "edit_guide",
@@ -157,8 +167,27 @@ class EditGuideAgent(Agent[EditGuideInput, EditGuideOutput]):
                 output = output.model_copy(update={"brief": input.brief})
             if output.revision is not None:
                 expected_ids = [beat.beat_id for beat in input.beats]
-                actual_ids = [beat.beat_id for beat in output.revision.story_beats]
-                if len(actual_ids) != len(set(actual_ids)) or set(actual_ids) != set(expected_ids):
+                alias_to_id = {
+                    f"beat_{index}": beat.beat_id for index, beat in enumerate(input.beats, start=1)
+                }
+                returned_ids = [beat.beat_id for beat in output.revision.story_beats]
+                if len(returned_ids) != len(set(returned_ids)):
+                    raise SchemaError(
+                        "edit_guide: revision must preserve every existing story beat exactly once"
+                    )
+                if set(returned_ids) == set(alias_to_id):
+                    mapped_beats = [
+                        beat.model_copy(update={"beat_id": alias_to_id[beat.beat_id]})
+                        for beat in output.revision.story_beats
+                    ]
+                    output = output.model_copy(
+                        update={
+                            "revision": output.revision.model_copy(
+                                update={"story_beats": mapped_beats}
+                            )
+                        }
+                    )
+                elif set(returned_ids) != set(expected_ids):
                     raise SchemaError(
                         "edit_guide: revision must preserve every existing story beat exactly once"
                     )
@@ -192,8 +221,9 @@ class EditGuideAgent(Agent[EditGuideInput, EditGuideOutput]):
 
     def schema_clarification(self) -> str:
         return (
-            "\n\nReturn only the documented JSON. In review mode, preserve every exact beat_id "
-            "once; omit revision when you are only asking a clarifying question."
+            "\n\nReturn only the documented JSON. In review mode, preserve every exact short "
+            "beat_id from CURRENT REVIEW PLAN once; omit revision when you are only asking "
+            "a clarifying question."
         )
 
     def refusal_clarification(self) -> str:

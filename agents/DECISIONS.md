@@ -1149,3 +1149,20 @@ timeline reader marked every source unused because it only understood `ai_timeli
   legacy timeline mutation APIs responsible for guided stories.
 - **Different text regions may share time.** A top-positioned title and bottom-positioned first thought
   can both start at zero. Serializing them made the first thought only one frame long in short edits.
+
+## [2026-08-17] Conversational revisions use short review references
+
+Production dogfood asked Kria to swap two named travel videos and shorten five thoughts. The model's
+reply described the correct change, but both schema attempts failed because one long generated beat ID
+was lost while reproducing the full revision.
+
+**Decisions:**
+
+- **Models edit aliases, servers retain identities.** Review prompts expose `beat_1`, `beat_2`, and
+  similar short references. Parsed revisions must preserve every alias exactly once, after which the
+  server maps them back to the original beat IDs and rejoins immutable media membership.
+- **Visible-content references have an explicit join.** Media already supplied to the edit guide gets
+  a short `media_1`-style reference, and every review beat lists its associated media references. This
+  lets “the bridge video,” “the Istanbul clip,” and uploaded filenames resolve to the intended beat.
+- **Safety remains fail-closed.** Unknown, missing, or duplicated aliases are rejected. The model still
+  cannot add media, replace object identity, remove beats, or overwrite creator-authored thoughts.
