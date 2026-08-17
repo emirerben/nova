@@ -163,7 +163,7 @@ callback, webhook, and media URLs directly on FastAPI.
 | `POST` | `/tiktok/publications` | Create an idempotent direct or draft delivery |
 | `GET` | `/tiktok/publications` | List the creator's recent delivery records, optionally filtered to one render |
 | `GET` | `/tiktok/publications/receipt` | Read the newest receipt for one render, or `null` before its first delivery |
-| `GET` | `/tiktok/publications/{id}` | Read delivery lifecycle |
+| `GET` | `/tiktok/publications/{id}` | Read delivery lifecycle; response includes `tiktok_publish_id` (TikTok's own id) for support correlation without reading Fly logs |
 | `POST` | `/tiktok/sync` | Queue official metrics sync; disabled for this review because it requires deferred analytics scopes |
 | `GET`, `HEAD` | `/tiktok/media/{id}/{token}.mp4` | Serve the immutable snapshot to TikTok |
 | `POST` | `/tiktok/webhook` | Verify and reconcile TikTok lifecycle events |
@@ -188,7 +188,7 @@ ruff check app/routes/tiktok.py app/services/tiktok_client.py app/tasks/tiktok.p
 
 cd ../web
 npx tsc --noEmit
-npm test -- --runInBand src/__tests__/tiktok src/__tests__/lib/tiktok-api.test.ts src/__tests__/tiktok-product-workspace.test.tsx
+npm test -- --runInBand src/__tests__/tiktok src/__tests__/lib/tiktok-api.test.ts src/__tests__/tiktok-product-workspace.test.tsx src/__tests__/library/LibraryTile.test.tsx
 ```
 
 The automated suite mocks TikTok. The sandbox recording is the required final
