@@ -35,6 +35,7 @@ import {
   upgradeCarouselTiming,
 } from "@/lib/carousel-timing";
 import { MAX_CARDS, naturalFocusTimelineLengthS } from "./carousel-preview-impl/geometry";
+import { InfoDot } from "@/components/ui/InfoDot";
 
 export interface CarouselClipThumb {
   clipIndex: number;
@@ -100,11 +101,6 @@ export function createDefaultCarouselMoment(clipIndices: readonly number[]): Car
     transition: "crossfade",
   }, clipIndices);
 }
-
-const MODE_DESCRIPTION: Record<NonNullable<CarouselMoment["mode"]>, string> = {
-  focus: "One tile plays fullscreen while the rest swipe past behind it.",
-  rolling: "Every tile plays through the carousel in sequence.",
-};
 
 /** "stills" is a legal persisted `mode` (auto-authored moments can land on
  *  it; see director.py) but is deliberately NOT one of the Focus/Rolling
@@ -249,7 +245,13 @@ export default function CarouselPanel({
       </section>
 
       <section>
-        <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Mode</p>
+        <p className="mb-2 flex items-center gap-1 text-[12px] font-semibold text-[#3f3f46]">
+          Mode
+          <InfoDot label="Carousel mode" size="compact">
+            Focus plays one tile fullscreen while the rest swipe past behind it. Rolling
+            plays every tile in sequence.
+          </InfoDot>
+        </p>
         <div role="group" aria-label="Carousel mode" className="flex gap-1">
           {(["focus", "rolling"] as const).map((m) => (
             <button
@@ -285,11 +287,7 @@ export default function CarouselPanel({
             </button>
           ))}
         </div>
-        {mode === null ? (
-          <p className="mt-1.5 text-[11px] text-[#3f3f46]">{LEGACY_MODE_HINT}</p>
-        ) : (
-          <p className="mt-1.5 text-[11px] text-[#71717a]">{MODE_DESCRIPTION[mode]}</p>
-        )}
+        {mode === null && <p className="mt-1.5 text-[11px] text-[#3f3f46]">{LEGACY_MODE_HINT}</p>}
       </section>
 
       {mode !== null && (

@@ -544,7 +544,6 @@ function MotionPresetsPanel({
     <section className="border-b border-zinc-100 px-5 py-5">
       <div className="mb-4">
         <p className="text-[12px] font-semibold text-[#3f3f46]">Creator Blocks</p>
-        <p className="mt-0.5 text-[11px] text-[#71717a]">Animated building blocks, matched in export</p>
       </div>
       {reason && <p className="text-[11px] text-[#71717a]">{reason}</p>}
       <div className="grid grid-cols-2 gap-3" data-testid="creator-block-grid">

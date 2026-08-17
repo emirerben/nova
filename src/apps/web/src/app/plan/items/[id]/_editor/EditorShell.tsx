@@ -7829,7 +7829,6 @@ function LightEditSheet({
           <h2 id="light-edit-title" className="font-display text-[18px] text-[#0c0c0e]">
             Edit text
           </h2>
-          <p className="mt-0.5 text-[12px] text-[#71717a]">Full timeline editing on desktop</p>
         </div>
         <button
           type="button"

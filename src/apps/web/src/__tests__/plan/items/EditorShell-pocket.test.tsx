@@ -25,7 +25,7 @@ delete process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED;
  *     (Escape, the sheet's Close button) are pinned instead.
  *  4. Legacy displacement: double-tapping a canvas text element opens the
  *     POCKET inspector sheet ("Edit text"), NOT the legacy LightEditSheet —
- *     the legacy-only "Full timeline editing on desktop" copy never appears.
+ *     the legacy-only "Close text editor" close button never appears.
  *  5. Closing the inspector keeps the selection and surfaces the
  *     "pocket-context-strip" (Edit / Style / Timing / Delete pills); the Edit
  *     pill re-opens the inspector sheet.
@@ -381,8 +381,8 @@ describe("EditorShell — pocket editor flag ON (light mode)", () => {
     expect(screen.getByRole("dialog", { name: "Edit text" })).toBe(sheet);
     expect(within(sheet).getByRole("heading", { name: "Edit text" })).toBeInTheDocument();
 
-    // Legacy LightEditSheet is displaced — its unique strapline never renders.
-    expect(screen.queryByText("Full timeline editing on desktop")).toBeNull();
+    // Legacy LightEditSheet is displaced — its unique close affordance never renders.
+    expect(screen.queryByRole("button", { name: "Close text editor" })).toBeNull();
   });
 
   it("closing the inspector keeps the selection and surfaces the context strip; Edit re-opens it", async () => {

@@ -98,6 +98,7 @@ import { StableVideo } from "@/components/StableVideo";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { InkButton } from "@/components/ui/InkButton";
+import { InfoDot } from "@/components/ui/InfoDot";
 import { SeedProvenanceBadge } from "../../_components/ui/SeedProvenanceBadge";
 import AssetPool from "../../_components/AssetPool";
 import SuggestionRail from "../../_components/SuggestionRail";
@@ -4596,9 +4597,6 @@ function ConformanceVerdictPanel({
           Hide this read
         </button>
       </div>
-      <p className="mt-2 text-xs text-[#71717a]">
-        You can generate anyway — this is just a read on the brief.
-      </p>
     </div>
   );
 }
@@ -4952,17 +4950,19 @@ function PoolUploadCard({
               save) — a concurrent handleFiles there would double-save the
               voiceover. Clip TRANSFERS clear `uploading` first, so adding
               more clips mid-batch stays possible. */}
-          <button
-            type="button"
-            disabled={uploading}
-            onClick={() => inputRef.current?.click()}
-            className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:opacity-40 sm:min-h-0"
-          >
-            {maxClips === 1 ? "Add your clip" : "Add clips"}
-          </button>
-          <p className="mt-2 text-xs text-[#71717a]">
-            Videos stored in iCloud may take a moment to prepare before they appear here.
-          </p>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => inputRef.current?.click()}
+              className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:opacity-40 sm:min-h-0"
+            >
+              {maxClips === 1 ? "Add your clip" : "Add clips"}
+            </button>
+            <InfoDot label="Adding clips">
+              iCloud videos may take a moment to prepare before they appear here.
+            </InfoDot>
+          </div>
         </>
       )}
       {uploading && pending.length === 0 && (

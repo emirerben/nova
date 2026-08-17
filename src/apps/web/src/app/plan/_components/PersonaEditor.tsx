@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
+import { InfoDot } from "@/components/ui/InfoDot";
 import type { PersonaContent, PersonaStatus, TikTokProfile } from "@/lib/plan-api";
 
 const PIN_COMFORT_PX = 24;
@@ -191,15 +192,17 @@ export default function PersonaEditor({
 
         <div className="mb-8 flex items-start justify-between gap-4">
           <div>
-            <h1
-              className="font-display text-3xl text-[#0c0c0e] animate-fade-up"
-              style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
-            >
-              Meet your persona
-            </h1>
-            <p className="mt-1 text-[#71717a]">
-              This is who we think you are. It guides every video we make for you.
-            </p>
+            <div className="flex items-center gap-1">
+              <h1
+                className="font-display text-3xl text-[#0c0c0e] animate-fade-up"
+                style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
+              >
+                Meet your persona
+              </h1>
+              <InfoDot label="Your persona">
+                This guides every video Kria makes for you. Edit anything that feels off.
+              </InfoDot>
+            </div>
           </div>
           <StatusBadge status={status} />
         </div>
@@ -301,17 +304,17 @@ export default function PersonaEditor({
 
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>
-          <h1
-            className="font-display text-3xl text-[#0c0c0e] animate-fade-up"
-            style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
-          >
-            Meet your persona
-          </h1>
-          <p className="mt-1 text-[#71717a]">
-            {editing
-              ? "This is the lane your plan builds on — edit anything that feels off."
-              : "This is who we think you are. It guides every video we make for you."}
-          </p>
+          <div className="flex items-center gap-1">
+            <h1
+              className="font-display text-3xl text-[#0c0c0e] animate-fade-up"
+              style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
+            >
+              Meet your persona
+            </h1>
+            <InfoDot label="Your persona">
+              This guides every video Kria makes for you. Edit anything that feels off.
+            </InfoDot>
+          </div>
         </div>
         <StatusBadge status={status} />
       </div>
@@ -551,9 +554,17 @@ function PersonaForm({
       ))}
 
       {/* Numeric posts-per-week control — drives how many ideas appear in the plan */}
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-[#3f3f46]">Posts per week</span>
+      <div className="block">
+        <div className="mb-1 flex items-center gap-1">
+          <label htmlFor="persona-posts-per-week" className="block text-sm font-medium text-[#3f3f46]">
+            Posts per week
+          </label>
+          <InfoDot label="Posts per week">
+            Drives your plan&apos;s idea count. Leave blank and Kria infers it from your cadence.
+          </InfoDot>
+        </div>
         <input
+          id="persona-posts-per-week"
           type="number"
           min={1}
           max={7}
@@ -570,10 +581,7 @@ function PersonaForm({
           placeholder="1–7"
           className="w-24 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[#0c0c0e] transition-colors focus:border-lime-600/60 focus:outline-none"
         />
-        <p className="mt-1 text-xs text-[#71717a]">
-          How many posts per week? This drives your plan&apos;s idea count (blank = inferred from cadence).
-        </p>
-      </label>
+      </div>
 
       {LIST_FIELDS.map((f) => (
         <ChipListEditor
