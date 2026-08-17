@@ -1194,3 +1194,24 @@ the frontend and API footage gates. Unguided items and empty/malformed approvals
 attached clip, and the lock-owning dispatcher continues to revalidate the approved snapshot before
 dispatch. The initial frontend-only repair exposed the API twin in production; both layers now share
 the same contract.
+
+## [2026-08-17] Guided stories inherit selected-media orientation
+
+Production dogfood proved that all five approved travel sources were 16:9 while the strict story
+renderer still hardcoded a 9:16 canvas. The output was technically valid but needlessly cropped, and
+the editor then disabled the control that could have corrected it.
+
+**Decisions:**
+
+- **Approved screen time chooses the default canvas.** Only media referenced by story beats votes;
+  each source is weighted by its approved exposure. Near-square and unknown aspects are neutral,
+  ties follow the first selected non-square source, and no usable metadata falls back to portrait.
+- **Orientation is part of the strict program.** Compiler v3 pins the chosen canvas and explanation;
+  moment rendering, text burn, receipt dimensions, variant projection, and the editor all read that
+  same value. Persisted v1/v2 plans remain portrait and replay without reinterpretation.
+- **Editor changes remain story-native.** A 9:16/16:9 change re-renders the pinned media, timing,
+  music, and validated text through the strict story renderer. Token-gated publication and the full
+  receipt apply again; a generic montage is never an orientation fallback.
+- **Editorial defaults do not outline text.** New guided titles use Fraunces and thoughts use DM Sans
+  with warm-white fill, a lime accent, and soft shadow. Both persist `stroke_width=0`; old plans and
+  user edits remain unchanged.

@@ -1871,6 +1871,11 @@ def _claim_guided_story_attempt(
             "resolved_archetype": "guided_story",
             "proposal_version": plan["proposal_version"],
             "media_digest": plan["media_digest"],
+            "orientation": plan.get("output_orientation", "portrait"),
+            "orientation_reason": plan.get(
+                "output_orientation_reason",
+                "Legacy guided stories used the portrait canvas.",
+            ),
             "render_generation_id": attempt_id,
             "render_claimed_at": now,
             "render_heartbeat_at": now,
@@ -1977,6 +1982,11 @@ def _run_guided_story_job(job_id: str, guided_snapshot: dict, *, render_trace_id
             "proposal_version": plan["proposal_version"],
             "media_count": len(plan["selected_media_ids"]),
             "beat_count": len(plan["beat_windows"]),
+            "output_orientation": plan.get("output_orientation", "portrait"),
+            "output_orientation_reason": plan.get(
+                "output_orientation_reason",
+                "Legacy guided stories used the portrait canvas.",
+            ),
             "track_id": track.id if track is not None else None,
         },
     )
@@ -7193,10 +7203,34 @@ def _guided_text_reburn_only(variant: dict, controls: dict[str, Any]) -> bool:
     return True
 
 
+def _guided_orientation_rerender_only(controls: dict[str, Any]) -> bool:
+    """Accept one strict full render whose only base change is the canvas."""
+
+    if controls.get("orientation_override") not in {"portrait", "landscape"}:
+        return False
+    for name, value in controls.items():
+        if name == "orientation_override":
+            continue
+        if name == "force_full_render":
+            if value is not True:
+                return False
+        elif name == "remove_text":
+            if value is not False:
+                return False
+        elif name in _GUIDED_REGEN_SENTINEL_CONTROLS:
+            if value != CAROUSEL_MOMENT_UNSET:
+                return False
+        elif value is not None:
+            return False
+    return True
+
+
 def _reject_unsupported_guided_regen(variant: dict | None, controls: dict[str, Any]) -> None:
     if not isinstance(variant, dict) or variant.get("resolved_archetype") != "guided_story":
         return
     if _guided_text_reburn_only(variant, controls):
+        return
+    if _guided_orientation_rerender_only(controls):
         return
     from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
 
@@ -7204,6 +7238,89 @@ def _reject_unsupported_guided_regen(variant: dict | None, controls: dict[str, A
         "guided_story_edit_unsupported",
         "This guided story edit must be changed in Plan edit, then generated again.",
     )
+
+
+def _rerender_guided_story_orientation(
+    job_id: str,
+    existing: dict[str, Any],
+    *,
+    orientation: str,
+    render_gen_id: str | None,
+) -> None:
+    """Rebuild a guided story on a new canvas without entering montage code."""
+
+    from app.pipeline.guided_story import (  # noqa: PLC0415
+        GuidedStoryRenderReceipt,
+        execution_plan_with_editor_state,
+        render_execution_plan,
+        validate_execution_plan,
+        validate_ready_result,
+    )
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return
+        assembly = dict(job.assembly_plan or {})
+        guided_snapshot = assembly.get("guided_edit")
+        pinned_plan = assembly.get("guided_story_execution_plan")
+    canonical = validate_execution_plan(pinned_plan, guided_snapshot)
+    runtime_plan = execution_plan_with_editor_state(
+        canonical,
+        output_orientation="landscape" if orientation == "landscape" else "portrait",
+        text_elements=list(existing.get("text_elements") or canonical["text_elements"]),
+    )
+    music = runtime_plan.get("music")
+    track = (
+        SimpleNamespace(
+            id=str(music["track_id"]),
+            title=str(music["title"]),
+            audio_gcs_path=str(music["audio_gcs_path"]),
+            generation=str(music["generation"]),
+        )
+        if music is not None
+        else None
+    )
+    attempt_id = render_gen_id or uuid.uuid4().hex
+    with tempfile.TemporaryDirectory(
+        prefix="nova_guided_orientation_", ignore_cleanup_errors=True
+    ) as tmpdir:
+        result = render_execution_plan(
+            runtime_plan,
+            job_id=job_id,
+            tmpdir=tmpdir,
+            track=track,
+            attempt_id=attempt_id,
+        )
+    previous_receipt = existing.get("render_receipt")
+    receipt = GuidedStoryRenderReceipt.model_validate(result["render_receipt"])
+    if isinstance(previous_receipt, dict):
+        previous = GuidedStoryRenderReceipt.model_validate(previous_receipt)
+        receipt = receipt.model_copy(
+            update={
+                "approved_text_ids": previous.approved_text_ids or previous.expected_text_ids,
+                "text_edited_after_approval": previous.text_edited_after_approval,
+            }
+        )
+        result["render_receipt"] = receipt.model_dump(mode="json")
+    result.update(
+        {
+            "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            "render_generation_id": attempt_id,
+            "base_video_stale": False,
+            "text_elements_user_edited": bool(existing.get("text_elements_user_edited")),
+        }
+    )
+    validate_ready_result(runtime_plan, result, job_id=job_id, verify_storage=False)
+    if not _update_variant_entry(
+        job_id,
+        "guided_story",
+        result,
+        expected_render_gen_id=render_gen_id,
+        outcome="guided_story_orientation_complete",
+    ):
+        _discard_generation_storage(result, job_id=job_id, generation=None)
+        return
 
 
 def _run_regenerate_variant(
@@ -7377,6 +7494,17 @@ def _run_regenerate_variant(
             log.error("generative_regenerate_variant_unknown", job_id=job_id, variant_id=variant_id)
             return
         _reject_unsupported_guided_regen(existing, guided_controls)
+        if (
+            existing.get("resolved_archetype") == "guided_story"
+            and orientation_override is not None
+        ):
+            _rerender_guided_story_orientation(
+                job_id,
+                existing,
+                orientation=orientation_override,
+                render_gen_id=render_gen_id,
+            )
+            return
         effective_orientation = _resolve_variant_orientation(existing, orientation_override)
         _is_subtitled_text_reburn = (
             existing.get("resolved_archetype") == "subtitled"

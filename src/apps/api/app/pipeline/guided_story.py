@@ -19,13 +19,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.agents._schemas.text_element import TextElement
 from app.config import settings
-from app.pipeline.canvas import PORTRAIT
+from app.pipeline.canvas import LANDSCAPE, PORTRAIT, Canvas
 from app.pipeline.probe import probe_video
 from app.schemas.edit_proposal import EditProposalSnapshot, canonical_media_digest
 
 log = structlog.get_logger()
 
-COMPILER_VERSION = 2
+COMPILER_VERSION = 3
 VARIANT_ID = "guided_story"
 _FRAME_S = 1.0 / 30.0
 _ALLOCATION_EPSILON_S = 0.0005
@@ -41,6 +41,10 @@ _DIRECTION_POLICY = {
         "text_effect": "fade-in",
     },
 }
+
+
+def _story_canvas(orientation: str | None) -> Canvas:
+    return LANDSCAPE if orientation == "landscape" else PORTRAIT
 
 
 class GuidedStoryError(RuntimeError):
@@ -92,7 +96,7 @@ class GuidedStoryTransitionPolicy(BaseModel):
 class GuidedStoryTypography(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    style_id: Literal["guided_story_v1"]
+    style_id: Literal["guided_story_v1", "guided_story_v2"]
     font: str = Field(min_length=1)
 
 
@@ -111,7 +115,7 @@ class GuidedStoryExecutionPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    compiler_version: Literal[1, 2]
+    compiler_version: Literal[1, 2, 3]
     proposal_version: int = Field(ge=1)
     media_digest: str = Field(min_length=64, max_length=64)
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
@@ -119,6 +123,8 @@ class GuidedStoryExecutionPlan(BaseModel):
     pace: Literal["relaxed", "balanced", "fast"]
     approved_duration_s: float = Field(gt=0)
     resolved_duration_s: float = Field(gt=0)
+    output_orientation: Literal["portrait", "landscape"] = "portrait"
+    output_orientation_reason: str = "Legacy guided stories used the portrait canvas."
     selected_media_ids: list[str] = Field(min_length=1)
     story_timeline: list[GuidedStoryMoment] = Field(min_length=1)
     beat_windows: list[GuidedStoryBeatWindow] = Field(min_length=1)
@@ -192,6 +198,8 @@ class GuidedStoryRenderReceipt(BaseModel):
     video_count: int = Field(ge=0)
     expected_duration_s: float = Field(gt=0)
     actual_duration_s: float = Field(gt=0)
+    output_orientation: Literal["portrait", "landscape"] = "portrait"
+    output_orientation_reason: str = "Legacy guided stories used the portrait canvas."
     music_applied: bool
     music: GuidedStoryMusic | None
     output: GuidedStoryOutputReceipt
@@ -455,10 +463,59 @@ def _allocate_beat_durations(
 
 
 def _text_elements(
-    snapshot: EditProposalSnapshot, beat_windows: list[dict], policy: dict
+    snapshot: EditProposalSnapshot,
+    beat_windows: list[dict],
+    policy: dict,
+    *,
+    compiler_version: Literal[1, 2, 3],
 ) -> list[dict]:
     total_s = float(snapshot.duration_s)
     title_end = min(total_s, 3.2 if snapshot.direction != "fast_montage" else 2.2)
+    if compiler_version < 3:
+        elements = [
+            TextElement(
+                id="guided-title",
+                text=snapshot.title,
+                start_s=0.0,
+                end_s=title_end,
+                role="generative_intro",
+                position="top",
+                font_family="Inter-Bold",
+                size_px=78 if snapshot.direction == "fast_montage" else 84,
+                color="#FFFFFF",
+                highlight_color="#6FE7F7",
+                stroke_width=5,
+                shadow_enabled=True,
+                effect=policy["text_effect"],
+                alignment="center",
+                max_width_frac=0.86,
+            ).model_dump(mode="json", exclude_none=True)
+        ]
+        for beat, window in zip(snapshot.story_beats, beat_windows, strict=True):
+            thought = beat.thought.strip()
+            if not thought:
+                continue
+            elements.append(
+                TextElement(
+                    id=f"guided-thought-{beat.beat_id}",
+                    text=thought,
+                    start_s=max(0.0, round(float(window["start_s"]), 3)),
+                    end_s=float(window["end_s"]),
+                    role="generative_intro",
+                    position="bottom",
+                    font_family="Inter-Bold",
+                    size_px=54 if snapshot.direction == "text_explainer" else 50,
+                    color="#FFFFFF",
+                    highlight_color="#6FE7F7",
+                    stroke_width=4,
+                    shadow_enabled=True,
+                    effect=policy["text_effect"],
+                    alignment="center",
+                    max_width_frac=0.84,
+                ).model_dump(mode="json", exclude_none=True)
+            )
+        return elements
+
     elements = [
         TextElement(
             id="guided-title",
@@ -466,16 +523,21 @@ def _text_elements(
             start_s=0.0,
             end_s=title_end,
             role="generative_intro",
-            position="top",
-            font_family="Inter-Bold",
-            size_px=78 if snapshot.direction == "fast_montage" else 84,
-            color="#FFFFFF",
-            highlight_color="#6FE7F7",
-            stroke_width=5,
+            position="custom",
+            x_frac=0.5,
+            y_frac=0.16,
+            font_family="Fraunces",
+            size_px=92 if snapshot.direction == "fast_montage" else 104,
+            color="#FFF8F0",
+            highlight_color="#D9FF70",
+            stroke_width=0,
             shadow_enabled=True,
+            shadow_style="standard",
             effect=policy["text_effect"],
             alignment="center",
-            max_width_frac=0.86,
+            letter_spacing=-0.025,
+            line_spacing=1.0,
+            max_width_frac=0.8,
         ).model_dump(mode="json", exclude_none=True)
     ]
     for beat, window in zip(snapshot.story_beats, beat_windows, strict=True):
@@ -490,16 +552,20 @@ def _text_elements(
                 start_s=max(0.0, round(start_s, 3)),
                 end_s=float(window["end_s"]),
                 role="generative_intro",
-                position="bottom",
-                font_family="Inter-Bold",
-                size_px=54 if snapshot.direction == "text_explainer" else 50,
-                color="#FFFFFF",
-                highlight_color="#6FE7F7",
-                stroke_width=4,
+                position="custom",
+                x_frac=0.5,
+                y_frac=0.8,
+                font_family="DM Sans",
+                size_px=64 if snapshot.direction == "text_explainer" else 60,
+                color="#FFF8F0",
+                highlight_color="#D9FF70",
+                stroke_width=0,
                 shadow_enabled=True,
+                shadow_style="standard",
                 effect=policy["text_effect"],
                 alignment="center",
-                max_width_frac=0.84,
+                line_spacing=1.08,
+                max_width_frac=0.76,
             ).model_dump(mode="json", exclude_none=True)
         )
     return elements
@@ -509,7 +575,7 @@ def _compile_execution_plan_version(
     guided_snapshot: object,
     *,
     track: dict[str, Any] | None,
-    compiler_version: Literal[1, 2],
+    compiler_version: Literal[1, 2, 3],
 ) -> dict[str, Any]:
     """Compile a deterministic plan with an explicitly versioned allocator."""
 
@@ -521,6 +587,12 @@ def _compile_execution_plan_version(
     by_id = {ref.media_id: ref for ref in snapshot.media}
     if not selected_ids:
         raise GuidedStoryError("guided_story_snapshot_invalid", "The approved edit has no media.")
+    if compiler_version >= 3:
+        output_orientation = snapshot.output_orientation or "portrait"
+        output_orientation_reason = snapshot.output_orientation_reason
+    else:
+        output_orientation = "portrait"
+        output_orientation_reason = "Legacy guided stories used the portrait canvas."
 
     weight_total = sum(float(beat.duration_s) for beat in snapshot.story_beats)
     if weight_total <= 0:
@@ -623,15 +695,26 @@ def _compile_execution_plan_version(
             pace=snapshot.pace,
             approved_duration_s=float(snapshot.duration_s),
             resolved_duration_s=round(cursor, 3),
+            output_orientation=output_orientation,
+            output_orientation_reason=output_orientation_reason,
             selected_media_ids=selected_ids,
             story_timeline=moments,
             beat_windows=beat_windows,
-            text_elements=_text_elements(snapshot, beat_windows, policy),
+            text_elements=_text_elements(
+                snapshot,
+                beat_windows,
+                policy,
+                compiler_version=compiler_version,
+            ),
             transition_policy={
                 "type": transition_type,
                 "duration_s": transition_duration_s,
             },
-            typography={"style_id": "guided_story_v1", "font": "Inter-Bold"},
+            typography=(
+                {"style_id": "guided_story_v2", "font": "Fraunces"}
+                if compiler_version >= 3
+                else {"style_id": "guided_story_v1", "font": "Inter-Bold"}
+            ),
             music=track,
         )
     except Exception as exc:  # noqa: BLE001
@@ -702,6 +785,46 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
             "guided_story_snapshot_invalid", "The saved render plan was changed after approval."
         )
     return normalized
+
+
+def execution_plan_with_editor_state(
+    plan: object,
+    *,
+    output_orientation: Literal["portrait", "landscape"],
+    text_elements: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Create a strict render-time plan for an approved editor canvas change.
+
+    Media, timing, music, proposal version, and digest remain pinned. Only the
+    output canvas and already-validated text document may differ from approval.
+    """
+
+    try:
+        typed = GuidedStoryExecutionPlan.model_validate(plan)
+        updated = typed.model_copy(
+            update={
+                "output_orientation": output_orientation,
+                "output_orientation_reason": (
+                    "The creator selected this output format in the editor."
+                ),
+                "text_elements": (
+                    [TextElement.model_validate(row) for row in text_elements]
+                    if text_elements is not None
+                    else typed.text_elements
+                ),
+            }
+        )
+        approved_ids = [element.id for element in typed.text_elements]
+        if [element.id for element in updated.text_elements] != approved_ids:
+            raise ValueError("edited text identities must match approval")
+        return GuidedStoryExecutionPlan.model_validate(updated).model_dump(
+            mode="json", exclude_none=False
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid",
+            "The approved story could not be safely resized.",
+        ) from exc
 
 
 def _sha256(path: str) -> str:
@@ -887,10 +1010,17 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
     return local_by_id, receipts
 
 
-def _render_image_moment(source: str, output: str, *, duration_s: float, layout: str) -> None:
+def _render_image_moment(
+    source: str,
+    output: str,
+    *,
+    duration_s: float,
+    layout: str,
+    canvas: Canvas,
+) -> None:
     from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
 
-    width, height, fps = settings.output_width, settings.output_height, settings.output_fps
+    width, height, fps = canvas.width, canvas.height, settings.output_fps
     total_frames = max(1, int(round(duration_s * fps)))
     zoom = f"1.0+(0.06*on/{max(1, total_frames - 1)})"
     zoom_xy = "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
@@ -939,7 +1069,7 @@ def _render_image_moment(source: str, output: str, *, duration_s: float, layout:
         "-map",
         "1:a:0",
         "-shortest",
-        *_encoding_args(output, preset="ultrafast", crf="14", canvas=PORTRAIT),
+        *_encoding_args(output, preset="ultrafast", crf="14", canvas=canvas),
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
     if result.returncode != 0:
@@ -956,6 +1086,7 @@ def _render_video_moment(
     start_s: float,
     end_s: float,
     layout: str,
+    canvas: Canvas = PORTRAIT,
 ) -> None:
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
 
@@ -975,7 +1106,7 @@ def _render_video_moment(
             output_fit="letterbox_blur" if layout == "supporting_card" else "crop",
             color_trc=probe.color_trc,
             has_audio=False,
-            canvas=PORTRAIT,
+            canvas=canvas,
         )
     except Exception as exc:  # noqa: BLE001
         raise GuidedStoryError(
@@ -988,6 +1119,7 @@ def _render_moments(
 ) -> tuple[list[str], list[dict]]:
     outputs: list[str] = []
     receipts: list[dict] = []
+    canvas = _story_canvas(str(plan["output_orientation"]))
     for index, moment in enumerate(plan["story_timeline"]):
         output = os.path.join(tmpdir, f"moment_{index:02d}.mp4")
         if moment["kind"] == "image":
@@ -996,6 +1128,7 @@ def _render_moments(
                 output,
                 duration_s=float(moment["duration_s"]),
                 layout=moment["layout"],
+                canvas=canvas,
             )
         else:
             _render_video_moment(
@@ -1004,11 +1137,12 @@ def _render_moments(
                 start_s=float(moment["source_start_s"]),
                 end_s=float(moment["source_end_s"]),
                 layout=moment["layout"],
+                canvas=canvas,
             )
         probe = probe_video(output)
         if (
-            probe.width != settings.output_width
-            or probe.height != settings.output_height
+            probe.width != canvas.width
+            or probe.height != canvas.height
             or abs(probe.duration_s - float(moment["duration_s"])) > 0.15
         ):
             raise GuidedStoryError(
@@ -1058,6 +1192,7 @@ def _verify_receipt(
     expected_text = [row["id"] for row in plan["text_elements"]]
     actual_text = [row["element_id"] for row in text_receipts if row.get("visible")]
     probe = probe_video(final_path)
+    canvas = _story_canvas(str(plan["output_orientation"]))
     audio_codec = _audio_codec(final_path)
     duration_ok = abs(probe.duration_s - float(plan["resolved_duration_s"])) <= max(
         0.2, len(moment_receipts) * 0.04
@@ -1069,8 +1204,8 @@ def _verify_receipt(
         and set(expected_text) == set(actual_text)
         and len(media_receipts) == len(expected_media)
         and duration_ok
-        and probe.width == settings.output_width
-        and probe.height == settings.output_height
+        and probe.width == canvas.width
+        and probe.height == canvas.height
         and probe.codec == "h264"
         and audio_codec == "aac"
         and os.path.getsize(final_path) > 0
@@ -1093,6 +1228,8 @@ def _verify_receipt(
         "video_count": len({r["media_id"] for r in moment_receipts if r["kind"] == "video"}),
         "expected_duration_s": plan["resolved_duration_s"],
         "actual_duration_s": round(float(probe.duration_s), 3),
+        "output_orientation": plan["output_orientation"],
+        "output_orientation_reason": plan["output_orientation_reason"],
         "music_applied": music_applied,
         "music": plan.get("music") if music_applied else None,
         "output": {
@@ -1155,11 +1292,12 @@ def verify_guided_text_reburn(
     probe = probe_video(final_path)
     audio_codec = _audio_codec(final_path)
     output_hash = _sha256(final_path)
+    canvas = _story_canvas(previous.output_orientation)
     verified = bool(
         expected_ids == actual_ids
         and abs(float(probe.duration_s) - duration_s) <= 0.2
-        and probe.width == settings.output_width
-        and probe.height == settings.output_height
+        and probe.width == canvas.width
+        and probe.height == canvas.height
         and probe.codec == "h264"
         and audio_codec == "aac"
         and output_hash != _sha256(clean_base_path)
@@ -1290,8 +1428,9 @@ def validate_ready_result(
         and staged_text == receipt.actual_text_ids
         and receipt.expected_duration_s == typed_plan.resolved_duration_s
         and abs(receipt.actual_duration_s - typed_plan.resolved_duration_s) <= 0.2
-        and receipt.output.width == settings.output_width
-        and receipt.output.height == settings.output_height
+        and receipt.output_orientation == typed_plan.output_orientation
+        and receipt.output.width == _story_canvas(typed_plan.output_orientation).width
+        and receipt.output.height == _story_canvas(typed_plan.output_orientation).height
         and base_path.startswith(prefix)
         and video_path.startswith(prefix)
         and base_path.endswith(".mp4")
@@ -1437,6 +1576,7 @@ def render_execution_plan(
     local_by_id, media_receipts = _download_selected(plan, tmpdir)
     moment_paths, moment_receipts = _render_moments(plan, local_by_id, tmpdir)
     assembled = os.path.join(tmpdir, "guided_story_assembled.mp4")
+    canvas = _story_canvas(plan.get("output_orientation"))
     transition = plan["transition_policy"]
     if len(moment_paths) > 1 and transition["type"] != "none":
         from app.pipeline.transitions import join_with_transitions  # noqa: PLC0415
@@ -1448,6 +1588,7 @@ def render_execution_plan(
                 [float(row["duration_s"]) for row in plan["story_timeline"]],
                 assembled,
                 transition_duration_s=float(transition["duration_s"]),
+                canvas=canvas,
             )
         except Exception as exc:  # noqa: BLE001
             raise GuidedStoryError(
@@ -1460,6 +1601,7 @@ def render_execution_plan(
             assembled,
             tmpdir,
             expected_duration_s=float(plan["resolved_duration_s"]),
+            canvas=canvas,
         )
     music = plan.get("music")
     if music is not None:
@@ -1497,7 +1639,7 @@ def render_execution_plan(
         final_path,
         tmpdir,
         required_element_ids=[row["id"] for row in plan["text_elements"]],
-        canvas=PORTRAIT,
+        canvas=canvas,
     )
     receipt = _verify_receipt(
         plan,
@@ -1539,7 +1681,8 @@ def render_execution_plan(
         "base_video_path": base_key,
         "video_path": output_key,
         "output_url": output_url,
-        "orientation": "portrait",
+        "orientation": plan["output_orientation"],
+        "orientation_reason": plan["output_orientation_reason"],
         "duration_s": plan["resolved_duration_s"],
         "text_elements": plan["text_elements"],
         "text_elements_user_edited": False,

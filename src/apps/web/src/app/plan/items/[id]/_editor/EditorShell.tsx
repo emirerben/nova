@@ -443,6 +443,13 @@ function persistedLyricsEnabled(variant: PlanItemVariant | null): boolean {
 }
 
 function persistedOrientation(variant: PlanItemVariant | null): EditorOrientation {
+  // `orientation.value` is the read adapter's authoritative projection of the
+  // format that actually rendered. Prefer it so older variants that predate
+  // the top-level `orientation` field still open on the correct canvas.
+  const capabilityValue = variant?.editor_capabilities?.orientation?.value;
+  if (capabilityValue === "landscape" || capabilityValue === "portrait") {
+    return capabilityValue;
+  }
   return variant?.orientation === "landscape" ? "landscape" : "portrait";
 }
 
@@ -628,11 +635,13 @@ function SaveSpinner() {
 function OrientationToggle({
   value,
   disabled,
+  busy,
   disabledHint,
   onChange,
 }: {
   value: EditorOrientation;
   disabled: boolean;
+  busy: boolean;
   disabledHint: string | null;
   onChange: (orientation: EditorOrientation) => void;
 }) {
@@ -641,6 +650,7 @@ function OrientationToggle({
     <div
       role="group"
       aria-label="Output format"
+      aria-busy={busy}
       title={title}
       className="flex min-h-11 items-center rounded-lg border border-zinc-200 bg-white p-0.5"
     >
@@ -810,7 +820,15 @@ export default function EditorShell({
     setLyricSeedsLoading(false);
   }, [variant?.variant_id]);
   const hasLyricBars = useMemo(() => state.bars.some(isLyricBar), [state.bars]);
-  const previewOrientation = LANDSCAPE_UI ? orientation : "portrait";
+  // The flag gates mutation, not truth. A landscape variant must always open
+  // on a landscape canvas even when the output-format control is rolled back.
+  // Use the response value on the first loaded paint too; the working-state
+  // seeding effect runs after paint and must not flash a portrait canvas or a
+  // false dirty Save state in the meantime.
+  const orientationSeeded = seededVariantIdRef.current === variant?.variant_id;
+  const previewOrientation = orientationSeeded
+    ? orientation
+    : persistedOrientation(variant);
   const activeCanvas = useMemo(
     () => canvasForOrientation(previewOrientation),
     [previewOrientation],
@@ -1656,7 +1674,10 @@ export default function EditorShell({
     !lyricsOptionalActive &&
     lyricsFeatureAvailable &&
     (lyricsEnabled !== persistedLyricsEnabled(variant) || lyricOverridesDirty);
-  const orientationDirty = LANDSCAPE_UI && orientation !== persistedOrientation(variant);
+  const orientationDirty =
+    LANDSCAPE_UI &&
+    orientationSeeded &&
+    orientation !== persistedOrientation(variant);
 
   // Every mutation (text, slots, mutes, title) records into the undo stack.
   // A redo-only stack is clean only when the original baseline is still
@@ -6043,12 +6064,15 @@ export default function EditorShell({
   };
   const orientationCap = capabilities?.orientation;
   const orientationToggleVisible = LANDSCAPE_UI && orientationCap != null;
-  const orientationToggleDisabled = readOnly || orientationCap?.editable !== true;
-  const orientationToggleHint = orientationDisabledHint(orientationCap?.reason);
+  const orientationToggleDisabled = saving || readOnly || orientationCap?.editable !== true;
+  const orientationToggleHint = saving
+    ? "Saving your edits…"
+    : orientationDisabledHint(orientationCap?.reason);
   const orientationToggle = orientationToggleVisible ? (
     <OrientationToggle
-      value={orientation}
+      value={previewOrientation}
       disabled={orientationToggleDisabled}
+      busy={saving}
       disabledHint={orientationToggleHint}
       onChange={(next) => {
         if (orientationToggleDisabled) {
