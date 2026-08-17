@@ -1251,6 +1251,38 @@ attached clip, and the lock-owning dispatcher continues to revalidate the approv
 dispatch. The initial frontend-only repair exposed the API twin in production; both layers now share
 the same contract.
 
+<<<<<<< HEAD
+## [2026-08-17] Deploy health is measured as drift, and staged migrations are enforced
+
+The 2026-08-12 freeze was two failures wearing one costume. #804 shipped migrations `0072` and `0073`
+together; `0073` refuses to apply while a mismatched content plan exists, so `alembic upgrade head`
+threw and rolled the chain back, and release 1 could never reach production. Its own runbook said "do
+not combine these into one Fly release" — an instruction with no mechanism behind it. Separately,
+nobody noticed for ~24 hours: Fly aborts a release *before* replacing machines, so the previous image
+kept serving, `/health` stayed 200, and four consecutive red `Fly Deploy` runs read as normal.
+
+**Decisions:**
+
+- **Deploy health is measured as drift, never as failure.** `deploy-drift.yml` compares main's HEAD
+  against the last successful `Fly Deploy` and fails once the oldest undeployed commit exceeds
+  `DRIFT_HOURS`. Alerting on red deploys was rejected deliberately: per #834 the release command is
+  killed during startup roughly 2 runs in 12 and self-heals on the next push, so a redness alarm would
+  fire twice a fortnight and be learned-past — which is exactly how the real freeze hid. A self-healing
+  flake leaves zero drift; only genuinely stuck code accumulates it. Drift is also cause-agnostic: a
+  migration refusal, a revoked token, a Fly outage and a persistent exit-143 all present identically.
+- **A PR adding 2+ migrations where any can refuse must declare its release order.**
+  `migration-staging-guard.yml` fails it unless the body carries `[staged-migration-ok]`. Verified
+  against the real incident: #804 added exactly `0072` and `0073`, both contain `raise`, so the guard
+  would have blocked it. A lone refusing migration is the safe shape and is not flagged.
+- **CI runs on pushes to main, not only on pull requests.** A PR is tested as a merge with main, so
+  main can be broken while every open PR is green. On 2026-08-13 a stale-read bug on main made a
+  required check fail deterministically and it surfaced on a frontend-only PR that touched zero Python.
+  Push-triggered CI attributes a breakage to the commit that caused it. The cost is roughly double CI
+  minutes, accepted consciously.
+
+The narrative lives here rather than in CLAUDE.md because that file is at 37,914 of its 38,000-char
+budget; the guards announce themselves through their own CI failure messages.
+=======
 ## [2026-08-17] Guided stories inherit selected-media orientation
 
 Production dogfood proved that all five approved travel sources were 16:9 while the strict story
@@ -1271,3 +1303,4 @@ the editor then disabled the control that could have corrected it.
 - **Editorial defaults do not outline text.** New guided titles use Fraunces and thoughts use DM Sans
   with warm-white fill, a lime accent, and soft shadow. Both persist `stroke_width=0`; old plans and
   user edits remain unchanged.
+>>>>>>> origin/main

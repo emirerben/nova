@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1.12] — 2026-08-17
+
+### Changed
+- **Backend releases can no longer stall unnoticed.** A scheduled check now compares what is on the main branch against what has actually deployed, and raises an alarm if code sits undeployed for more than two hours. It measures the gap rather than watching for failed deploys, because deploys fail transiently and self-heal often enough that a failure alarm gets ignored — which is how a day-long stall went unnoticed on 2026-08-12 while the site itself stayed up and healthy. A pull request that adds two or more database migrations where one can refuse to apply is now blocked unless it says how the releases will be ordered, which is the packaging mistake that caused that stall. Tests also run on every merge to the main branch, so a breakage is attributed to the change that caused it instead of surfacing days later on someone else's unrelated work.
+
 ## [0.34.1.11] — 2026-08-17
 
 ### Fixed
