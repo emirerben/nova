@@ -461,7 +461,9 @@ describe("KriaEditStory reduced motion", () => {
       "false",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /play with sound/i }));
+    // Playback rejection can take long enough for the visual clock to advance,
+    // so this control may correctly read either "Play" or "Resume" with sound.
+    fireEvent.click(screen.getByRole("button", { name: /with sound/i }));
     expect(audio.play).toHaveBeenCalledTimes(2);
     expect(
       await screen.findByRole("button", { name: /pause automatic demo/i }),
