@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   approveEditProposal,
   draftEditProposal,
+  editProposalConversationTurn,
   updateEditProposal,
   type EditProposalDirection,
   type EditProposalPace,
@@ -26,6 +27,25 @@ const PACE_OPTIONS: Array<{ value: EditProposalPace; label: string }> = [
   { value: "balanced", label: "Balanced" },
   { value: "fast", label: "Fast" },
 ];
+
+const DEFAULT_BRIEF = {
+  direction: "guided_story" as EditProposalDirection,
+  goal: "",
+  pace: "balanced" as EditProposalPace,
+  duration_s: 24,
+};
+
+const DIRECTION_LABELS: Record<EditProposalDirection, string> = {
+  guided_story: "Story with thoughts",
+  fast_montage: "Fast montage",
+  text_explainer: "Text explainer",
+};
+
+const PACE_LABELS: Record<EditProposalPace, string> = {
+  relaxed: "Relaxed",
+  balanced: "Balanced",
+  fast: "Fast",
+};
 
 function withoutPreviewUrls(snapshot: EditProposalSnapshot): EditProposalSnapshot {
   return {
@@ -77,41 +97,54 @@ function MediaThumb({
 export default function EditProposalCard({
   item,
   onChanged,
+  onRefresh,
 }: {
   item: PlanItem;
   onChanged: (item: PlanItem) => void;
+  onRefresh?: () => void;
 }) {
   const proposal = item.edit_proposal ?? null;
-  const [briefOpen, setBriefOpen] = useState(false);
-  const [direction, setDirection] = useState<EditProposalDirection>("guided_story");
-  const [goal, setGoal] = useState("");
-  const [pace, setPace] = useState<EditProposalPace>("balanced");
-  const [duration, setDuration] = useState(24);
-  const [working, setWorking] = useState(false);
+  const conversationEnabled = item.guided_edit_conversation_available === true;
+  const [conversationOpen, setConversationOpen] = useState(
+    conversationEnabled && proposal?.status === "briefing",
+  );
+  const [legacyBriefOpen, setLegacyBriefOpen] = useState(false);
+  const [legacyBrief, setLegacyBrief] = useState(DEFAULT_BRIEF);
+  const [message, setMessage] = useState("");
+  const [workingAction, setWorkingAction] = useState<
+    "conversation" | "plan" | "approve" | null
+  >(null);
   const [editingApproved, setEditingApproved] = useState(false);
   const [draft, setDraft] = useState<EditProposalSnapshot | null>(proposal?.draft ?? null);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const working = workingAction !== null;
+  const conversationInProgress = proposal?.conversation_in_progress === true;
+  const conversationRetryRequired = proposal?.conversation_retry_required === true;
+  const conversationBlocked = conversationInProgress || conversationRetryRequired;
   // Poll responses recreate the draft object; only the CAS version denotes a
   // durable server revision that should replace the creator's unsaved edits.
   const appliedProposalRevision = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (conversationEnabled && proposal?.status === "briefing") setConversationOpen(true);
+  }, [conversationEnabled, proposal?.status]);
 
   useEffect(() => {
     const revision = `${item.id}:${proposal?.proposal_version ?? "none"}`;
     if (appliedProposalRevision.current === revision) return;
     appliedProposalRevision.current = revision;
     setDraft(proposal?.draft ?? null);
-    const retryDirection =
-      proposal?.status === "stale" ? proposal.last_approved?.snapshot : null;
-    if (retryDirection) {
-      setDirection(retryDirection.direction);
-      setGoal(retryDirection.goal);
-      setPace(retryDirection.pace);
-      setDuration(retryDirection.duration_s);
-    } else if (proposal?.brief) {
-      setDirection(proposal.brief.direction);
-      setGoal(proposal.brief.goal);
-      setPace(proposal.brief.pace);
-      setDuration(proposal.brief.duration_s);
+    const retryBrief = proposal?.status === "stale"
+      ? proposal.last_approved?.snapshot
+      : proposal?.brief;
+    if (retryBrief) {
+      setLegacyBrief({
+        direction: retryBrief.direction,
+        goal: retryBrief.goal,
+        pace: retryBrief.pace,
+        duration_s: retryBrief.duration_s,
+      });
     }
     if (proposal?.status !== "approved") setEditingApproved(false);
   }, [item.id, proposal]);
@@ -121,23 +154,66 @@ export default function EditProposalCard({
     [draft?.media],
   );
 
+  const conversation = proposal?.conversation ?? [];
+  const lastAgentTurn = [...conversation].reverse().find((turn) => turn.role === "agent");
+  const lastUserTurn = [...conversation].reverse().find((turn) => turn.role === "user");
+  const brief = proposal?.brief ?? DEFAULT_BRIEF;
+
+  async function sendConversation(text: string, reviewing = false) {
+    const trimmed = text.trim();
+    if (!trimmed || working) return;
+    setWorkingAction("conversation");
+    setError(null);
+    setMessage("");
+    try {
+      let expectedVersion = proposal?.proposal_version ?? 0;
+      if (reviewing && proposal?.draft && draft) {
+        const localSnapshot = withoutPreviewUrls(draft);
+        const persistedSnapshot = withoutPreviewUrls(proposal.draft);
+        if (JSON.stringify(localSnapshot) !== JSON.stringify(persistedSnapshot)) {
+          const saved = await updateEditProposal(item.id, expectedVersion, localSnapshot);
+          const savedVersion = saved.edit_proposal?.proposal_version;
+          if (!savedVersion) throw new Error("The saved plan could not be verified.");
+          // Make manual edits durable before Kria reads/revises the proposal.
+          // If the conversation fails, retry continues from this saved version.
+          onChanged(saved);
+          expectedVersion = savedVersion;
+        }
+      }
+      const updated = await editProposalConversationTurn(
+        item.id,
+        expectedVersion,
+        trimmed,
+      );
+      onChanged(updated);
+    } catch (err) {
+      setMessage(trimmed);
+      setError(err instanceof Error ? err.message : "Kria couldn't think that through.");
+      // A network timeout is ambiguous: the server may have committed the
+      // turn even though this response was lost. Reconcile before a retry so
+      // the browser adopts that durable version instead of resending stale CAS.
+      onRefresh?.();
+    } finally {
+      setWorkingAction(null);
+    }
+  }
+
   async function startDraft() {
     if (working) return;
-    setWorking(true);
+    setWorkingAction("plan");
     setError(null);
     try {
-      const updated = await draftEditProposal(item.id, {
-        direction,
-        goal: goal.trim(),
-        pace,
-        duration_s: duration,
-      });
-      setBriefOpen(false);
+      const updated = await draftEditProposal(
+        item.id,
+        conversationEnabled ? brief : legacyBrief,
+      );
+      setConversationOpen(false);
+      setLegacyBriefOpen(false);
       onChanged(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Kria couldn't start planning this edit.");
     } finally {
-      setWorking(false);
+      setWorkingAction(null);
     }
   }
 
@@ -165,7 +241,7 @@ export default function EditProposalCard({
 
   async function approve() {
     if (working || !draft || !proposal) return;
-    setWorking(true);
+    setWorkingAction("approve");
     setError(null);
     try {
       const saved = await updateEditProposal(
@@ -185,33 +261,175 @@ export default function EditProposalCard({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Kria couldn't approve this plan.");
     } finally {
-      setWorking(false);
+      setWorkingAction(null);
     }
   }
 
-  if (!proposal && !briefOpen) {
+  function conversationSurface({ reviewing = false }: { reviewing?: boolean } = {}) {
+    const opener = proposal?.status === "stale"
+      ? "Your uploads changed. What should the new edit keep or emphasize?"
+      : proposal?.status === "failed"
+        ? "Your direction is saved. Tell me what to change, or I can try planning it again."
+        : reviewing
+          ? "What would you change about this draft? You can be as specific or as rough as you like."
+          : "What do you want this video to feel like—and what should people remember after watching it?";
+    const contextualAgentTurn = reviewing
+      ? [...conversation].reverse().find(
+          (turn) => turn.role === "agent" && turn.phase === "review",
+        )
+      : lastAgentTurn;
+    const contextualUserTurn = reviewing
+      ? [...conversation].reverse().find(
+          (turn) => turn.role === "user" && turn.phase === "review",
+        )
+      : lastUserTurn;
+    const reply = contextualAgentTurn?.content ?? opener;
+    const suggestions = contextualAgentTurn
+      ? contextualAgentTurn.suggestions
+      : reviewing
+        ? ["Make it more personal", "Use less text", "Put food first"]
+        : ["A personal travel diary", "Fast highlights, little text", "Explain what stood out"];
+    const showBrief = Boolean(proposal);
+
     return (
-      <div className="mt-5 border-t border-zinc-200 pt-5">
-        <button
-          type="button"
-          onClick={() => setBriefOpen(true)}
-          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-[#0c0c0e] outline-none transition-colors hover:border-lime-500 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
-        >
-          <span aria-hidden>✦</span>
-          Plan edit
-        </button>
-        <p className="mt-2 text-sm text-[#71717a]">
-          Ask Nova to understand all your uploads and propose a sequence before rendering.
+      <div data-testid="edit-guide-conversation">
+        <p className="text-[11px] font-semibold uppercase tracking-[.18em] text-lime-700">
+          {reviewing ? "Shape the draft with Kria" : "Plan with Kria"}
         </p>
+        {contextualUserTurn ? (
+          <blockquote className="mt-3 border-l-2 border-lime-600 pl-3">
+            <p className="line-clamp-3 text-sm text-[#71717a]">{contextualUserTurn.content}</p>
+          </blockquote>
+        ) : null}
+        <p
+          className="mt-3 max-w-prose font-display text-xl leading-snug text-[#0c0c0e]"
+          aria-live="polite"
+        >
+          {reply}
+        </p>
+
+        {workingAction === "conversation" || conversationInProgress ? (
+          <p role="status" className="mt-3 flex items-center gap-2 text-sm text-[#71717a]">
+            <span className="h-1.5 w-1.5 rounded-full bg-lime-600 motion-safe:animate-ping" />
+            Thinking it through…
+          </p>
+        ) : conversationRetryRequired ? (
+          <p role="status" className="mt-3 text-sm text-[#71717a]">
+            That reply took too long. Send your direction again to continue.
+          </p>
+        ) : (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                onClick={() => void sendConversation(suggestion, reviewing)}
+                className="min-h-11 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] outline-none transition-colors hover:border-lime-600 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <form
+          className="mt-4 flex items-end gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 focus-within:border-lime-500 focus-within:ring-2 focus-within:ring-lime-500/20"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void sendConversation(message, reviewing);
+          }}
+        >
+          <label htmlFor="edit-guide-message" className="sr-only">
+            Tell Kria what you want in the edit
+          </label>
+          <textarea
+            ref={inputRef}
+            id="edit-guide-message"
+            value={message}
+            onChange={(event) => setMessage(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void sendConversation(message, reviewing);
+              }
+            }}
+            disabled={working || conversationInProgress}
+            rows={1}
+            maxLength={1000}
+            placeholder={reviewing ? "For example: focus more on the food…" : "Tell me in your own words…"}
+            className="min-h-11 flex-1 resize-none bg-transparent py-2 text-base text-[#0c0c0e] outline-none placeholder:text-[#a1a1aa] [field-sizing:content]"
+          />
+          <button
+            type="submit"
+            disabled={working || conversationInProgress || !message.trim()}
+            aria-label="Send direction"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-full bg-[#0c0c0e] text-white outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:opacity-25"
+          >
+            →
+          </button>
+        </form>
+
+        {showBrief ? (
+          <div className="mt-4 border-t border-zinc-200 pt-4">
+            <p className="text-xs font-medium text-[#71717a]">What I heard</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <span className="rounded-full border border-lime-200 bg-lime-50 px-3 py-1 text-xs text-lime-800">
+                {DIRECTION_LABELS[brief.direction]}
+              </span>
+              <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-[#3f3f46]">
+                {PACE_LABELS[brief.pace]} pace
+              </span>
+              <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-[#3f3f46]">
+                About {brief.duration_s}s
+              </span>
+            </div>
+            {brief.goal ? <p className="mt-2 text-sm text-[#3f3f46]">{brief.goal}</p> : null}
+          </div>
+        ) : null}
+
+        {error ? <p role="alert" className="mt-3 text-sm text-red-700">{error}</p> : null}
+
+        {!reviewing ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={working || conversationBlocked}
+              onClick={() => void startDraft()}
+              className="min-h-11 rounded-lg bg-lime-600 px-4 py-2 text-sm font-semibold text-white outline-none hover:bg-lime-700 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:opacity-50"
+            >
+              {workingAction === "plan"
+                ? "Starting…"
+                : proposal?.status === "failed"
+                  ? "Try planning again"
+                  : "Build this edit plan"}
+            </button>
+            {!proposal ? (
+              <button
+                type="button"
+                disabled={working}
+                onClick={() => setConversationOpen(false)}
+                className="min-h-11 text-sm text-[#71717a] underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     );
   }
 
-  if (briefOpen || proposal?.status === "failed" || proposal?.status === "stale") {
+  function legacyBriefSurface() {
     const stale = proposal?.status === "stale";
     return (
-      <section className="mt-5 rounded-xl border border-zinc-200 bg-white p-4" aria-labelledby="plan-edit-heading">
-        <h2 id="plan-edit-heading" className="font-display text-lg font-medium text-[#0c0c0e]">
+      <section
+        className="mt-5 rounded-xl border border-zinc-200 bg-white p-4"
+        aria-labelledby="legacy-plan-edit-heading"
+      >
+        <h2
+          id="legacy-plan-edit-heading"
+          className="font-display text-lg font-medium text-[#0c0c0e]"
+        >
           {stale ? "Your media changed" : "What should this edit do?"}
         </h2>
         {stale && proposal?.last_approved ? (
@@ -219,7 +437,9 @@ export default function EditProposalCard({
             Your last approved plan, “{proposal.last_approved.snapshot.title},” is saved for comparison.
           </p>
         ) : null}
-        {proposal?.failure ? <p className="mt-2 text-sm text-[#71717a]">{proposal.failure.message}</p> : null}
+        {proposal?.failure ? (
+          <p className="mt-2 text-sm text-[#71717a]">{proposal.failure.message}</p>
+        ) : null}
 
         <fieldset className="mt-4">
           <legend className="text-sm font-medium text-[#0c0c0e]">Edit direction</legend>
@@ -228,15 +448,17 @@ export default function EditProposalCard({
               <label
                 key={option.value}
                 className={`min-h-16 cursor-pointer rounded-lg border p-3 outline-none transition-colors focus-within:ring-2 focus-within:ring-lime-600 ${
-                  direction === option.value ? "border-lime-500 bg-lime-50" : "border-zinc-200"
+                  legacyBrief.direction === option.value
+                    ? "border-lime-500 bg-lime-50"
+                    : "border-zinc-200"
                 }`}
               >
                 <input
                   type="radio"
                   name="edit-direction"
                   value={option.value}
-                  checked={direction === option.value}
-                  onChange={() => setDirection(option.value)}
+                  checked={legacyBrief.direction === option.value}
+                  onChange={() => setLegacyBrief({ ...legacyBrief, direction: option.value })}
                   className="sr-only"
                 />
                 <span className="block text-sm font-medium text-[#0c0c0e]">{option.label}</span>
@@ -249,8 +471,8 @@ export default function EditProposalCard({
         <label className="mt-4 block text-sm font-medium text-[#0c0c0e]">
           Goal or context
           <textarea
-            value={goal}
-            onChange={(event) => setGoal(event.currentTarget.value)}
+            value={legacyBrief.goal}
+            onChange={(event) => setLegacyBrief({ ...legacyBrief, goal: event.currentTarget.value })}
             maxLength={500}
             rows={3}
             placeholder="For example: show what surprised me about the food, town, and beaches."
@@ -262,8 +484,13 @@ export default function EditProposalCard({
           <label className="text-sm font-medium text-[#0c0c0e]">
             Pace
             <select
-              value={pace}
-              onChange={(event) => setPace(event.currentTarget.value as EditProposalPace)}
+              value={legacyBrief.pace}
+              onChange={(event) =>
+                setLegacyBrief({
+                  ...legacyBrief,
+                  pace: event.currentTarget.value as EditProposalPace,
+                })
+              }
               className="mt-2 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
             >
               {PACE_OPTIONS.map((option) => (
@@ -274,8 +501,10 @@ export default function EditProposalCard({
           <label className="text-sm font-medium text-[#0c0c0e]">
             Target length
             <select
-              value={duration}
-              onChange={(event) => setDuration(Number(event.currentTarget.value))}
+              value={legacyBrief.duration_s}
+              onChange={(event) =>
+                setLegacyBrief({ ...legacyBrief, duration_s: Number(event.currentTarget.value) })
+              }
               className="mt-2 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
             >
               {[15, 20, 24, 30, 45, 60].map((seconds) => (
@@ -289,23 +518,101 @@ export default function EditProposalCard({
           <button
             type="button"
             disabled={working}
-            onClick={startDraft}
-            className="min-h-11 rounded-lg bg-lime-600 px-4 py-2 text-sm font-semibold text-white outline-none hover:bg-lime-700 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => void startDraft()}
+            className="min-h-11 rounded-lg bg-lime-600 px-4 py-2 text-sm font-semibold text-white outline-none hover:bg-lime-700 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:opacity-50"
           >
-            {working ? "Starting…" : stale ? "Plan again" : "Build edit plan"}
+            {workingAction === "plan" ? "Starting…" : stale ? "Plan again" : "Build edit plan"}
           </button>
-          {!proposal && (
+          {!proposal ? (
             <button
               type="button"
               disabled={working}
-              onClick={() => setBriefOpen(false)}
+              onClick={() => setLegacyBriefOpen(false)}
               className="min-h-11 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
             >
               Cancel
             </button>
-          )}
+          ) : null}
         </div>
-        {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+        {error ? <p role="alert" className="mt-3 text-sm text-red-700">{error}</p> : null}
+      </section>
+    );
+  }
+
+  if (!conversationEnabled) {
+    if (!proposal && !legacyBriefOpen) {
+      return (
+        <div className="mt-5 border-t border-zinc-200 pt-5">
+          <button
+            type="button"
+            onClick={() => setLegacyBriefOpen(true)}
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-[#0c0c0e] outline-none transition-colors hover:border-lime-500 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+          >
+            <span aria-hidden>✦</span>
+            Plan edit
+          </button>
+          <p className="mt-2 text-sm text-[#71717a]">
+            Choose the direction, pace, and goal before Kria plans every upload.
+          </p>
+        </div>
+      );
+    }
+    if (
+      legacyBriefOpen ||
+      proposal?.status === "briefing" ||
+      proposal?.status === "failed" ||
+      proposal?.status === "stale"
+    ) {
+      return legacyBriefSurface();
+    }
+  }
+
+  if (!proposal && !conversationOpen) {
+    return (
+      <div className="mt-5 border-t border-zinc-200 pt-5">
+        <button
+          type="button"
+          onClick={() => {
+            setConversationOpen(true);
+            window.setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-[#0c0c0e] outline-none transition-colors hover:border-lime-500 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+        >
+          <span aria-hidden>✦</span>
+          Plan edit
+        </button>
+        <p className="mt-2 text-sm text-[#71717a]">
+          Tell Kria what you want. It will understand all your uploads and propose the edit before rendering.
+        </p>
+      </div>
+    );
+  }
+
+  if (
+    (conversationOpen &&
+      (!proposal || ["briefing", "failed", "stale"].includes(proposal.status))) ||
+    proposal?.status === "briefing" ||
+    proposal?.status === "failed" ||
+    proposal?.status === "stale"
+  ) {
+    const stale = proposal?.status === "stale";
+    return (
+      <section
+        className="mt-5 rounded-xl border border-zinc-200 bg-white p-4"
+        aria-labelledby="plan-edit-heading"
+      >
+        <h2 id="plan-edit-heading" className="sr-only">Describe your edit to Kria</h2>
+        {stale && proposal?.last_approved ? (
+          <p className="mb-4 text-sm text-[#71717a]">
+            Your last approved plan, “{proposal.last_approved.snapshot.title},” is saved for comparison.
+          </p>
+        ) : null}
+        {proposal?.failure ? (
+          <p className="mb-4 rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46]">
+            {proposal.failure.message}
+          </p>
+        ) : null}
+        {conversationSurface()}
       </section>
     );
   }
@@ -340,21 +647,58 @@ export default function EditProposalCard({
         <p className="mt-1 text-sm text-[#3f3f46]">
           {visibleDraft.story_beats.length} moments · {visibleDraft.media.length} sources · about {visibleDraft.duration_s}s
         </p>
-        <button
-          type="button"
-          onClick={() => setEditingApproved(true)}
-          className="mt-3 min-h-11 rounded-lg border border-lime-700 px-4 py-2 text-sm font-medium text-lime-700 outline-none focus-visible:ring-2 focus-visible:ring-lime-700"
-        >
-          Edit plan
-        </button>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setEditingApproved(true)}
+            className="min-h-11 rounded-lg border border-lime-700 px-4 py-2 text-sm font-medium text-lime-700 outline-none focus-visible:ring-2 focus-visible:ring-lime-700"
+          >
+            Edit plan
+          </button>
+          {conversationEnabled ? (
+            <button
+              type="button"
+              onClick={() => {
+                setEditingApproved(true);
+                setConversationOpen(true);
+              }}
+              className="min-h-11 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-[#3f3f46] outline-none hover:border-lime-500 focus-visible:ring-2 focus-visible:ring-lime-600"
+            >
+              Tell Kria a change
+            </button>
+          ) : null}
+        </div>
       </section>
     );
   }
 
   return (
     <section className="mt-5 rounded-xl border border-lime-200 bg-lime-50 p-4" aria-labelledby="draft-plan-heading">
-      <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-lime-700">Nova’s draft</p>
+      <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-lime-700">Kria’s draft</p>
       <h2 id="draft-plan-heading" className="sr-only">Review edit plan</h2>
+      {conversationEnabled && conversationOpen ? (
+        <div className="mt-3 rounded-xl border border-zinc-200 bg-white p-4">
+          {conversationSurface({ reviewing: true })}
+          <button
+            type="button"
+            onClick={() => setConversationOpen(false)}
+            className="mt-4 min-h-11 text-sm text-[#71717a] underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+          >
+            Close conversation
+          </button>
+        </div>
+      ) : conversationEnabled ? (
+        <button
+          type="button"
+          onClick={() => {
+            setConversationOpen(true);
+            window.setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+          className="mt-3 min-h-11 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-[#3f3f46] outline-none hover:border-lime-500 focus-visible:ring-2 focus-visible:ring-lime-600"
+        >
+          Tell Kria what to change
+        </button>
+      ) : null}
       <label className="mt-2 block text-sm font-medium text-[#0c0c0e]">
         Title
         <input
@@ -519,7 +863,7 @@ export default function EditProposalCard({
         onClick={approve}
         className="mt-4 min-h-11 w-full rounded-lg bg-lime-600 px-4 py-2 text-sm font-semibold text-white outline-none hover:bg-lime-700 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {working ? "Approving…" : "Approve plan"}
+        {workingAction === "approve" ? "Approving…" : "Approve plan"}
       </button>
       <p className="mt-2 text-center text-xs text-[#71717a]">
         AI thoughts stay drafts until you approve this plan.

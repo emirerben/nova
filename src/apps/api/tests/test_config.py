@@ -90,6 +90,17 @@ class TestAsyncpgDatabaseUrl:
 
 class TestGuidedEditRolloutSafety:
     @pytest.mark.usefixtures("_clean_env")
+    def test_conversation_requires_capability(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://test.invalid/nova_test")
+        from app.config import Settings
+
+        monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "false")
+        monkeypatch.setenv("GUIDED_EDIT_CONVERSATION_ENABLED", "true")
+
+        with pytest.raises(ValidationError, match="conversation requires guided edit capability"):
+            Settings()
+
+    @pytest.mark.usefixtures("_clean_env")
     def test_enforcement_requires_capability(self, monkeypatch):
         monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "false")

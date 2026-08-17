@@ -39,6 +39,8 @@ _EXPECTED = {
     "nova.plan.persona_generator",
     "nova.plan.content_plan_generator",
     "nova.plan.clip_plan_matcher",
+    # Guided-edit creative brief and proposal revisions
+    "nova.plan.edit_guide",
     # Creator Agent M1 — style derivation
     "nova.plan.style_derivation",
     # Creator Agent M2 — style intent (interview agent)

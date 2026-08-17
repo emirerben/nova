@@ -88,6 +88,7 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "ContentPlanGeneratorAgent",
     ),
     ("nova.plan.clip_plan_matcher", "app.agents.clip_plan_matcher", "ClipPlanMatcherAgent"),
+    ("nova.plan.edit_guide", "app.agents.edit_guide", "EditGuideAgent"),
     # Creator Agent M1: derive per-user style from persona + TikTok analysis.
     ("nova.plan.style_derivation", "app.agents.style_derivation", "StyleDerivationAgent"),
     # Creator Agent M2: parse a free-text style utterance into a typed intent.
