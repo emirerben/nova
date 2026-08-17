@@ -1194,3 +1194,30 @@ the frontend and API footage gates. Unguided items and empty/malformed approvals
 attached clip, and the lock-owning dispatcher continues to revalidate the approved snapshot before
 dispatch. The initial frontend-only repair exposed the API twin in production; both layers now share
 the same contract.
+
+## [2026-08-17] Stale lock reads are gated by shape, not by convention
+
+PR #813 fixed a bug where `SELECT ... FOR UPDATE` serialized correctly but the Python object behind
+it did not refresh: SQLAlchemy only writes a freshly-locked row onto an instance it is loading for the
+first time in that session, so a prior unlocked read of the same PK makes the locked call return the
+cached object with pre-lock values. Two concurrent Generate posts each read `current_job_id` as `None`
+and each minted a Job. The same staleness let the ownership fence read a stale `ownership_epoch`.
+
+**Decisions:**
+
+- **The gate matches the bug shape, not the convention.** `tests/test_row_lock_policy.py` flags an
+  unlocked read of a PK followed by a locked re-read of the same PK in the same function that does not
+  pass `populate_existing=True`. Requiring the pairing at all ~78 `with_for_update` sites was rejected:
+  a bare lock in a fresh session with nothing cached is perfectly safe, and 60-odd allow-list entries
+  written to satisfy a linter is noise nobody reads. One guard people trust beats a broad one they mute.
+- **The allow-list is a bug backlog and is asserted in both directions.** The 8 pre-existing instances
+  the gate found are quarantined so it can protect new code immediately, not because they are believed
+  correct (issue #845). A second test fails if a listed entry stops matching, so a fixed or renamed
+  entry cannot rot the list into fiction — an allow-list nobody trusts is an allow-list nobody reads.
+- **The count is a floor.** The detector keys on the source text of the identifier expression, so the
+  same row reached two ways (`db.get(PlanItem, content_plan_item_id)` then
+  `db.get(PlanItem, item_ref.id, with_for_update=True)`) is the same bug and is not flagged. Stated in
+  the module docstring so the number is never mistaken for a total.
+
+Verified by reintroducing #813 (removing `populate_existing` from `dispatch_item_render_for`): the gate
+names the exact function and row, and goes green again when restored.
