@@ -483,8 +483,6 @@ def _text_elements(
         if not thought:
             continue
         start_s = float(window["start_s"])
-        if start_s == 0:
-            start_s = min(float(window["end_s"]) - _FRAME_S, title_end)
         elements.append(
             TextElement(
                 id=f"guided-thought-{beat.beat_id}",

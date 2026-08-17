@@ -210,6 +210,46 @@ def test_get_no_timeline_reason(monkeypatch):
     assert out["total_duration_s"] == 0.0
 
 
+def test_get_guided_story_projects_verified_cut_as_read_only_timeline(monkeypatch):
+    _set_flag(monkeypatch, True)
+    job = _timeline_job(
+        variant_id="guided_story",
+        archetype="guided_story",
+        with_ai=False,
+        n_clips=3,
+    )
+    clip_paths = job.all_candidates["clip_paths"]
+    job.assembly_plan["variants"][0]["story_timeline"] = [
+        {
+            "moment_id": "lisbon:1",
+            "beat_id": "lisbon",
+            "topic": "Lisbon",
+            "gcs_path": clip_paths[2],
+            "source_start_s": 2.5,
+            "source_end_s": 4.5,
+            "duration_s": 2.0,
+        },
+        {
+            "moment_id": "corfu:1",
+            "beat_id": "corfu",
+            "topic": "Corfu",
+            "gcs_path": clip_paths[0],
+            "source_start_s": 1.0,
+            "source_end_s": 3.0,
+            "duration_s": 2.0,
+        },
+    ]
+
+    out = gj.dispatch_get_timeline(job, "guided_story")
+
+    assert out["editable"] is False
+    assert out["reason"] == "unsupported_variant"
+    assert out["total_duration_s"] == 4.0
+    assert [slot["clip_index"] for slot in out["slots"]] == [2, 0]
+    assert [slot["in_s"] for slot in out["slots"]] == [2.5, 1.0]
+    assert [clip["used"] for clip in out["clips"]] == [True, False, True]
+
+
 def test_get_sources_expired_reason(monkeypatch):
     # Non-durable source paths = legacy job cutting from 24h-swept uploads.
     _set_flag(monkeypatch, True)

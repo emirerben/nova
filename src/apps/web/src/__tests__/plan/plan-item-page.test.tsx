@@ -712,6 +712,32 @@ describe("PlanItemPage — result cleanup", () => {
     );
   });
 
+  it("labels a track-backed guided edit as music instead of original audio", async () => {
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-guided",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variant = {
+      ...makeVariant("guided_story", "ready", "https://cdn/guided.mp4"),
+      resolved_archetype: "guided_story",
+      music_track_id: "track-1",
+      track_title: "Maui Wowie",
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: makeJob({ status: "variants_ready", variants: [variant] }) },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Kria's pick · Music")).toBeInTheDocument();
+    expect(screen.queryByText("Kria's pick · Original audio")).toBeNull();
+  });
+
   it("replaces a failed preview in-frame with recovery actions", async () => {
     const item = makeItem({
       status: "ready",

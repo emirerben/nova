@@ -1044,6 +1044,14 @@ def merge_projected_text_elements_for_variant(
     )
     saved = coerce_text_elements(variant.get("text_elements") or []) or []
     if not variant.get("text_elements_user_edited"):
+        # Guided-story text is compiled from the approved proposal and persisted
+        # with exact beat windows.  The legacy intro projection only understands
+        # ``intro_text`` and would collapse that authoritative title + thought
+        # list into one full-duration bar on reads.  Preserve the renderer's
+        # verified document even before the creator makes a manual text edit.
+        if variant.get("resolved_archetype") == "guided_story" and saved:
+            visible_saved = [e.model_dump() for e in saved if not e.removed]
+            return visible_saved or None
         visible_projected = [e.model_dump() for e in projected if not e.removed]
         if visible_projected:
             return visible_projected
