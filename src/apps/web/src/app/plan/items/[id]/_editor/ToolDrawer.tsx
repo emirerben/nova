@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import type { GenerativeStyleSet } from "@/lib/generative-api";
+import type { GenerativeStyleSet, LookPreset } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import {
@@ -74,6 +74,11 @@ export default function ToolDrawer({
   onPickPreset,
   appliedStyleSetId = null,
   onRestyleAll,
+  availableLookPresets = [],
+  selectedLookPreset = null,
+  lookPresetMixed = false,
+  lookPreviewUrl = null,
+  onSelectLook,
   sfxEffects = [],
   sfxLoading = false,
   onAddSfx,
@@ -137,6 +142,11 @@ export default function ToolDrawer({
   onPickPreset: (preset: TextPreset) => void;
   appliedStyleSetId?: string | null;
   onRestyleAll?: (styleSet: GenerativeStyleSet) => void;
+  availableLookPresets?: LookPreset[];
+  selectedLookPreset?: LookPreset | null;
+  lookPresetMixed?: boolean;
+  lookPreviewUrl?: string | null;
+  onSelectLook?: (preset: LookPreset) => void;
   sfxEffects?: SoundEffectSummary[];
   sfxLoading?: boolean;
   onAddSfx?: (effect: SoundEffectSummary) => void;
@@ -445,6 +455,11 @@ export default function ToolDrawer({
             sampleText={sampleWord}
             appliedStyleSetId={appliedStyleSetId}
             onRestyleAll={onRestyleAll}
+            availableLookPresets={availableLookPresets}
+            selectedLookPreset={selectedLookPreset}
+            lookPresetMixed={lookPresetMixed}
+            lookPreviewUrl={lookPreviewUrl}
+            onSelectLook={onSelectLook}
           />
         </div>
       )}

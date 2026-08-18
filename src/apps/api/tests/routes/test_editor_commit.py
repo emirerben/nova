@@ -105,6 +105,7 @@ def _arm(monkeypatch, *, object_exists=True):
     monkeypatch.setattr(settings, "motion_scenes_enabled", False, raising=False)
     monkeypatch.setattr(settings, "overlay_autoplace_enabled", False, raising=False)
     monkeypatch.setattr(settings, "subtitled_text_lane_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "edit_wide_looks_enabled", True, raising=False)
     monkeypatch.setattr(gj.storage, "object_exists", lambda p: object_exists)
     monkeypatch.setattr(
         gj.storage,
@@ -140,6 +141,16 @@ def test_timeline_slot_look_preset_distinguishes_omission_and_rejects_unknown() 
     )
     assert explicit_original.look_preset == "none"
 
+    for fixed_edit_wide_look in ("golden_hour", "faded_analog"):
+        accepted = gj.TimelineSlotEdit(
+            slot_id="s1",
+            clip_index=0,
+            in_s=0.0,
+            duration_beats=2,
+            look_preset=fixed_edit_wide_look,
+        )
+        assert accepted.look_preset == fixed_edit_wide_look
+
     with pytest.raises(ValidationError):
         gj.TimelineSlotEdit(
             slot_id="s1",
@@ -159,11 +170,14 @@ def test_timeline_slot_look_preset_distinguishes_omission_and_rejects_unknown() 
         )
 
 
-def test_timeline_slot_look_preset_round_trips_through_jsonb_resolution(monkeypatch) -> None:
+@pytest.mark.parametrize("look_preset", ["stadium_diffusion", "golden_hour", "faded_analog"])
+def test_timeline_slot_look_preset_round_trips_through_jsonb_resolution(
+    monkeypatch, look_preset
+) -> None:
     _arm(monkeypatch)
     job = _job()
     slots = _slot_edits()
-    slots[0].look_preset = "stadium_diffusion"
+    slots[0].look_preset = look_preset
 
     resolved = gj.resolve_timeline_slots_for_edit(
         job,
@@ -171,8 +185,36 @@ def test_timeline_slot_look_preset_round_trips_through_jsonb_resolution(monkeypa
         slots,
     )
 
-    assert resolved[0]["look_preset"] == "stadium_diffusion"
+    assert resolved[0]["look_preset"] == look_preset
     assert resolved[1]["look_preset"] == "none"
+
+
+def test_rollout_flag_rejects_new_fixed_look_but_preserves_saved_value(monkeypatch) -> None:
+    _arm(monkeypatch)
+    monkeypatch.setattr(gj.settings, "edit_wide_looks_enabled", False)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+
+    edits = _slot_edits()
+    edits[0].look_preset = "golden_hour"
+    with pytest.raises(HTTPException) as exc_info:
+        gj.resolve_timeline_slots_for_edit(job, variant, edits)
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "LOOK_PRESET_NOT_AVAILABLE"
+
+    variant["user_timeline"] = {
+        "beat_grid": list(variant["ai_timeline"]["beat_grid"]),
+        "slots": [dict(slot) for slot in variant["ai_timeline"]["slots"]],
+    }
+    variant["user_timeline"]["slots"][0]["look_preset"] = "golden_hour"
+    unchanged = _slot_edits()
+    unchanged[0].look_preset = "golden_hour"
+    resolved = gj.resolve_timeline_slots_for_edit(job, variant, unchanged)
+    assert resolved[0]["look_preset"] == "golden_hour"
+
+    unchanged[0].look_preset = "none"
+    cleared = gj.resolve_timeline_slots_for_edit(job, variant, unchanged)
+    assert cleared[0]["look_preset"] == "none"
 
 
 def test_timeline_reference_look_controls_round_trip_and_validate(monkeypatch) -> None:

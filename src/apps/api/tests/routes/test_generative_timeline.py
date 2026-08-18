@@ -167,9 +167,26 @@ def test_get_unknown_variant_404(monkeypatch):
 
 def test_get_disabled_reason(monkeypatch):
     _set_flag(monkeypatch, False)
+    monkeypatch.setattr(gj.settings, "edit_wide_looks_enabled", True)
     out = gj.dispatch_get_timeline(_timeline_job(), "song_text")
     assert out["editable"] is False
     assert out["reason"] == "disabled"
+    assert out["edit_wide_look_presets"] == []
+
+
+def test_get_advertises_edit_wide_looks_only_after_activation(monkeypatch):
+    _set_flag(monkeypatch, True)
+    job = _timeline_job()
+
+    monkeypatch.setattr(gj.settings, "edit_wide_looks_enabled", False)
+    assert gj.dispatch_get_timeline(job, "song_text")["edit_wide_look_presets"] == []
+
+    monkeypatch.setattr(gj.settings, "edit_wide_looks_enabled", True)
+    assert gj.dispatch_get_timeline(job, "song_text")["edit_wide_look_presets"] == [
+        "none",
+        "golden_hour",
+        "faded_analog",
+    ]
 
 
 def test_get_lyrics_variant_reason(monkeypatch):

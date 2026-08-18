@@ -55,6 +55,19 @@ describe("customizable video looks", () => {
     expect(olive.video.filter).not.toEqual(smoky.video.filter);
   });
 
+  it("keeps the approved fixed edit-wide looks visually distinct", () => {
+    const golden = lookPreviewStyles("golden_hour");
+    const faded = lookPreviewStyles("faded_analog");
+
+    expect(golden.video.filter).toContain("saturate(1.22)");
+    expect(golden.grain).toBeNull();
+    expect(faded.video.filter).toContain("saturate(.76)");
+    expect(faded.grain?.opacity).toBe(0.12);
+    expect(golden.video.filter).not.toEqual(faded.video.filter);
+    expect(defaultLookAdjustments("golden_hour")).toBeNull();
+    expect(defaultLookAdjustments("faded_analog")).toBeNull();
+  });
+
   it("keeps Original an exact preview bypass and compares every control", () => {
     expect(lookPreviewStyles("none")).toEqual({
       video: {},

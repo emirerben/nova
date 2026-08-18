@@ -999,7 +999,6 @@ export default function EditorShell({
   const [videoMuted, setVideoMuted] = useState(false);
   const [soundMuted, setSoundMuted] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [timelineDirty, setTimelineDirty] = useState(false);
   const [sfxGlossaryEffects, setSfxGlossaryEffects] = useState<SoundEffectSummary[]>([]);
   const [sfxGlossaryLoading, setSfxGlossaryLoading] = useState(false);
   const [musicTracks, setMusicTracks] = useState<MusicTrackSummary[]>([]);
@@ -1086,7 +1085,6 @@ export default function EditorShell({
     if (slotsSeededRef.current === variant?.variant_id) return;
     slotsSeededRef.current = variant?.variant_id ?? null;
     setLocalSlots(clip.state.slots.map((s) => ({ ...s })));
-    setTimelineDirty(false);
   }, [clip.loadState, clip.state.slots, timelineVariantId, variant]);
   useEffect(() => {
     const nextVariantId = variant?.variant_id ?? null;
@@ -1124,6 +1122,29 @@ export default function EditorShell({
   ]);
   const slots = localSlots ?? clip.state.slots;
   const reloadClipTimeline = clip.reload;
+  const editWideLookPresets = useMemo(
+    () => clip.editWideLookPresets ?? [],
+    [clip.editWideLookPresets],
+  );
+  const selectedEditWideLookPreset = useMemo<LookPreset | null>(() => {
+    if (slots.length === 0) return null;
+    const first = slots[0].lookPreset ?? "none";
+    const uniform = slots.every((slot) => (slot.lookPreset ?? "none") === first);
+    return uniform && editWideLookPresets.includes(first) ? first : null;
+  }, [editWideLookPresets, slots]);
+  const editWideLookPresetMixed = useMemo(() => {
+    if (slots.length < 2) return false;
+    const first = slots[0].lookPreset ?? "none";
+    return slots.some((slot) => (slot.lookPreset ?? "none") !== first);
+  }, [slots]);
+  const editWideLookPreviewUrl = useMemo(() => {
+    for (const slot of slots) {
+      if (slot.removed) continue;
+      const source = clip.clips.find((candidate) => candidate.clip_index === slot.clipIndex);
+      if (source?.signed_url) return source.signed_url;
+    }
+    return clip.clips.find((candidate) => candidate.signed_url)?.signed_url ?? null;
+  }, [clip.clips, slots]);
   // Carousel focus-tile strip: one thumbnail per clip actually in the
   // timeline, in slot order, deduped (a clip can occupy more than one slot).
   // Reuses the same clip.clips (signed_url per clip_index) the Filmstrip
@@ -1397,6 +1418,32 @@ export default function EditorShell({
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
+
+  const applyEditWideLook = useCallback(
+    (preset: LookPreset) => {
+      if (
+        readOnly ||
+        clipEditingLocked ||
+        slots.length === 0 ||
+        !editWideLookPresets.includes(preset)
+      ) {
+        return;
+      }
+      const unchanged = slots.every(
+        (slot) => (slot.lookPreset ?? "none") === preset && slot.lookAdjustments == null,
+      );
+      if (unchanged) return;
+      history.record();
+      setLocalSlots(
+        slots.map((slot) => ({
+          ...slot,
+          lookPreset: preset,
+          lookAdjustments: null,
+        })),
+      );
+    },
+    [clipEditingLocked, editWideLookPresets, history, readOnly, slots],
+  );
 
   const motionRuntimeCompatible =
     capabilities?.motion_scenes_reason !== "motion_runtime_mismatch" &&
@@ -3263,7 +3310,6 @@ export default function EditorShell({
       setLocalSlots((cur) =>
         (cur ?? slots).map((s) => (s.key === key ? { ...s, ...patch } : s)),
       );
-      setTimelineDirty(true);
     },
     [clipEditingLocked, readOnly, slots],
   );
@@ -3290,7 +3336,6 @@ export default function EditorShell({
       const added = nextState.slots[nextState.slots.length - 1];
       history.record();
       setLocalSlots(nextState.slots.map((slot) => ({ ...slot })));
-      setTimelineDirty(true);
       if (added) select("clip", added.key);
     },
     [clip.state, clipEditingLocked, history, readOnly, select, slots],
@@ -3338,7 +3383,6 @@ export default function EditorShell({
             : slot,
         ),
       );
-      setTimelineDirty(true);
     },
     [clipEditingLocked, history, readOnly, selectedClip, slots],
   );
@@ -3358,7 +3402,6 @@ export default function EditorShell({
             : slot,
         ),
       );
-      setTimelineDirty(true);
     },
     [clipEditingLocked, readOnly, selectedClip, slots],
   );
@@ -3972,6 +4015,7 @@ export default function EditorShell({
   // text_elements, never the legacy whole-style-set route.
   const onRestyleAll =
     isLyrics && !lyricBarsAvailable && !lyricsOptionalActive ? restyleLyrics : restyleAll;
+  const textStyleHandler = textElementsLocked && !isLyrics ? undefined : onRestyleAll;
 
   const pickPreset = useCallback(
     (preset: TextPreset) => {
@@ -4333,8 +4377,16 @@ export default function EditorShell({
         readOnlyReason,
         isLyrics,
         captions: captionsToolState,
+        videoLooksAvailable: editWideLookPresets.length > 0,
       }),
-    [capabilities, captionsToolState, readOnly, readOnlyReason, isLyrics],
+    [
+      capabilities,
+      captionsToolState,
+      editWideLookPresets.length,
+      readOnly,
+      readOnlyReason,
+      isLyrics,
+    ],
   );
 
   const buildCopilotDraftSnapshot = useCallback((context?: CopilotSnapshotContext) => {
@@ -4857,7 +4909,6 @@ export default function EditorShell({
       }
       if (result.nextSlots) {
         setLocalSlots(result.nextSlots);
-        setTimelineDirty(true);
       }
       if (result.nextSfx) {
         setLocalSfx(result.nextSfx);
@@ -5095,7 +5146,6 @@ export default function EditorShell({
       if (res.didDelete) {
         history.record();
         setLocalSlots(res.slots);
-        setTimelineDirty(true);
         clear();
       } else {
         setToast("Keep at least one clip.");
@@ -5183,7 +5233,6 @@ export default function EditorShell({
       if (res.didSplit) {
         history.record();
         setLocalSlots(res.slots);
-        setTimelineDirty(true);
       } else {
         setToast("Move the playhead over the clip to split it.");
       }
@@ -5388,7 +5437,7 @@ export default function EditorShell({
       setMusicAlignmentPrompt(true);
       return;
     }
-    if (!commitMusicWindow && musicDirty && (timelineDirty || clipDirty)) {
+    if (!commitMusicWindow && musicDirty && clipDirty) {
       const proceed = window.confirm(
         "Changing the song resets clip cuts to the new beat grid. Save with the new song?",
       );
@@ -5416,7 +5465,7 @@ export default function EditorShell({
         textDirty,
         captionDirty,
         captionMetaDirty,
-        timelineDirty,
+        timelineDirty: clipDirty,
         slots,
         mixDirty,
         mixLevel,
@@ -5534,7 +5583,6 @@ export default function EditorShell({
     state.bars,
     title,
     router,
-    timelineDirty,
     clipDirty,
     slots,
     mixDirty,
@@ -6712,7 +6760,12 @@ export default function EditorShell({
               smartPlaceAllAvailable={smartPlaceAllAvailable}
               onPickPreset={pickPreset}
               appliedStyleSetId={appliedStyleSetId}
-              onRestyleAll={onRestyleAll}
+              onRestyleAll={textStyleHandler}
+              availableLookPresets={editWideLookPresets}
+              selectedLookPreset={selectedEditWideLookPreset}
+              lookPresetMixed={editWideLookPresetMixed}
+              lookPreviewUrl={editWideLookPreviewUrl}
+              onSelectLook={applyEditWideLook}
               sfxEffects={sfxGlossaryEffects}
               sfxLoading={sfxGlossaryLoading}
               onAddSfx={addSfxFromGlossary}
@@ -6793,7 +6846,12 @@ export default function EditorShell({
               smartPlaceAllAvailable={smartPlaceAllAvailable}
               onPickPreset={pickPreset}
 	              appliedStyleSetId={appliedStyleSetId}
-	              onRestyleAll={onRestyleAll}
+	              onRestyleAll={textStyleHandler}
+	              availableLookPresets={editWideLookPresets}
+	              selectedLookPreset={selectedEditWideLookPreset}
+	              lookPresetMixed={editWideLookPresetMixed}
+	              lookPreviewUrl={editWideLookPreviewUrl}
+	              onSelectLook={applyEditWideLook}
 	              sfxEffects={sfxGlossaryEffects}
 	              sfxLoading={sfxGlossaryLoading}
 	              onAddSfx={addSfxFromGlossary}
@@ -6967,6 +7025,7 @@ export default function EditorShell({
           onPatchTextTiming={patchSelectedTextTiming}
           onPatchClipTiming={patchSelectedClipTiming}
           onPatchClipLook={patchSelectedClipLook}
+          availableLookPresets={editWideLookPresets}
           onPatchClipLookAdjustments={patchSelectedClipLookAdjustments}
           onRecordClipLookAdjustments={recordSelectedClipLookAdjustment}
           onPreviewClipTiming={previewSelectedClipTiming}
@@ -7286,7 +7345,12 @@ export default function EditorShell({
             smartPlaceAllAvailable={smartPlaceAllAvailable}
             onPickPreset={pickPreset}
             appliedStyleSetId={appliedStyleSetId}
-            onRestyleAll={onRestyleAll}
+            onRestyleAll={textStyleHandler}
+            availableLookPresets={editWideLookPresets}
+            selectedLookPreset={selectedEditWideLookPreset}
+            lookPresetMixed={editWideLookPresetMixed}
+            lookPreviewUrl={editWideLookPreviewUrl}
+            onSelectLook={applyEditWideLook}
             sfxEffects={sfxGlossaryEffects}
             sfxLoading={sfxGlossaryLoading}
             onAddSfx={addSfxFromGlossary}
@@ -7387,6 +7451,7 @@ export default function EditorShell({
             onPatchTextTiming={patchSelectedTextTiming}
             onPatchClipTiming={patchSelectedClipTiming}
             onPatchClipLook={patchSelectedClipLook}
+            availableLookPresets={editWideLookPresets}
             onPatchClipLookAdjustments={patchSelectedClipLookAdjustments}
             onRecordClipLookAdjustments={recordSelectedClipLookAdjustment}
             onPreviewClipTiming={previewSelectedClipTiming}
@@ -7481,7 +7546,7 @@ export default function EditorShell({
                   // Re-seed non-dirty sections from the refetch (see
                   // conflictReseedRef) and refresh the slot baseline.
                   conflictReseedRef.current = true;
-                  if (!timelineDirty) {
+                  if (!clipDirty) {
                     slotsSeededRef.current = null;
                     reloadClipTimeline();
                   }

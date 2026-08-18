@@ -667,7 +667,9 @@ export type LookPreset =
   | "none"
   | "stadium_diffusion"
   | "olive_film"
-  | "smoky_split_tone";
+  | "smoky_split_tone"
+  | "golden_hour"
+  | "faded_analog";
 
 export interface LookAdjustments {
   intensity: number;
@@ -714,6 +716,8 @@ export interface TimelineResponse {
   has_user_edits: boolean;
   slots: TimelineSlot[];
   clips: TimelineClip[];
+  /** Capability-advertised edit-wide looks. Missing/empty keeps the UI hidden. */
+  edit_wide_look_presets?: LookPreset[];
 }
 
 /** One slot in the POST body. Exactly one of duration_beats / duration_s set. */

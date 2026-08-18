@@ -10,9 +10,10 @@
  *   // pass clipHandle to ClipsLane (header bars) and InlineClipsEditor (panel)
  */
 
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   getTimeline,
+  type LookPreset,
   type TimelineBase,
   type TimelineClip,
 } from "@/lib/generative-api";
@@ -41,6 +42,7 @@ export interface ClipTimelineHandle {
   /** Total assembled-video duration in seconds (sum of active slot durations). */
   totalS: number;
   loadState: "loading" | "error" | "ready";
+  editWideLookPresets: LookPreset[];
   /** Refetch from the server (call after Apply / Reset). */
   reload: () => void;
 }
@@ -75,22 +77,34 @@ export function useClipTimeline(
     "loading",
   );
   const [clips, setClips] = useState<TimelineClip[]>([]);
+  const [editWideLookPresets, setEditWideLookPresets] = useState<LookPreset[]>([]);
   const [state, dispatch] = useReducer(timelineReducer, EMPTY_EDITOR_STATE);
+  const requestEpochRef = useRef(0);
 
   const reload = useCallback(async () => {
+    const requestEpoch = requestEpochRef.current + 1;
+    requestEpochRef.current = requestEpoch;
     setLoadState("loading");
+    setEditWideLookPresets([]);
     try {
       const data = await getTimeline(ownerId, variantId, base);
+      if (requestEpoch !== requestEpochRef.current) return;
       setClips(data.clips);
+      setEditWideLookPresets(data.edit_wide_look_presets ?? []);
       dispatch({ type: "RESET_DRAFT", timeline: data });
       setLoadState("ready");
     } catch {
+      if (requestEpoch !== requestEpochRef.current) return;
+      setEditWideLookPresets([]);
       setLoadState("error");
     }
   }, [ownerId, variantId, base]);
 
   useEffect(() => {
     void reload();
+    return () => {
+      requestEpochRef.current += 1;
+    };
   }, [reload]);
 
   const windows = useMemo(
@@ -103,5 +117,14 @@ export function useClipTimeline(
     [state.slots, state.grid],
   );
 
-  return { state, dispatch, clips, windows, totalS, loadState, reload };
+  return {
+    state,
+    dispatch,
+    clips,
+    windows,
+    totalS,
+    loadState,
+    editWideLookPresets,
+    reload,
+  };
 }
