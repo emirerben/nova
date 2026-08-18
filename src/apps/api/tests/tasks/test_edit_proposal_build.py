@@ -671,3 +671,53 @@ def test_auto_finalize_infeasible_footage_with_pool_assets_never_falls_back(
     assert persisted.failure.retryable is True
     assert persisted.design_fallback is None
     assert dispatch_calls == []
+
+
+def test_duplicate_task_invocation_while_a_newer_attempt_is_active_is_a_no_op(
+    monkeypatch,
+) -> None:
+    """A second draft_edit_proposal invocation carrying a STALE attempt_id
+
+    (e.g. a redelivered/duplicate Celery message, or an auto-design attempt
+    racing a manual one) must never touch state or dispatch anything once a
+    newer attempt already owns the proposal.
+    """
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    # The envelope's live attempt is "attempt-current" — a different attempt
+    # than the one this task invocation carries.
+    current = parse_edit_proposal(item.edit_proposal)
+    assert current is not None
+    item.edit_proposal = current.model_copy(
+        update={"generation_attempt_id": "attempt-current"}
+    ).model_dump(mode="json")
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
+    )
+
+    dispatch_calls = []
+    monkeypatch.setattr(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        lambda *a, **kw: dispatch_calls.append((a, kw)) or SimpleNamespace(outcome="dispatched"),
+    )
+
+    proposal_build.draft_edit_proposal.run(
+        str(item_id), "attempt-stale-duplicate", 0, auto_finalize=True
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.generation_attempt_id == "attempt-current"
+    assert persisted.status == "analyzing"  # untouched by the stale invocation
+    assert db.commits == 0
+    assert dispatch_calls == []
