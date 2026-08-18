@@ -7,6 +7,19 @@ export const CUSTOMIZABLE_LOOK_PRESETS = [
   "smoky_split_tone",
 ] as const satisfies readonly LookPreset[];
 
+export const LOOK_PRESET_LABELS: Record<LookPreset, string> = {
+  none: "Original",
+  stadium_diffusion: "Stadium Diffusion",
+  olive_film: "Olive Film",
+  smoky_split_tone: "Smoky Split-Tone",
+  golden_hour: "Golden Hour",
+  faded_analog: "Faded Analog",
+};
+
+export function lookPresetLabel(preset: LookPreset): string {
+  return LOOK_PRESET_LABELS[preset];
+}
+
 const DEFAULTS: Record<(typeof CUSTOMIZABLE_LOOK_PRESETS)[number], LookAdjustments> = {
   olive_film: {
     intensity: 1,
@@ -95,6 +108,38 @@ export function lookPreviewStyles(
         boxShadow: "inset 0 0 42px rgba(3,12,15,.22)",
       },
       grain: null,
+    };
+  }
+  if (preset === "golden_hour") {
+    return {
+      video: {
+        filter: "brightness(1.025) contrast(1.08) saturate(1.22) sepia(.07)",
+      },
+      tint: {
+        background:
+          "linear-gradient(145deg, rgba(255,184,92,.08), transparent 48%, rgba(116,54,12,.06))",
+        mixBlendMode: "soft-light",
+      },
+      grain: null,
+    };
+  }
+  if (preset === "faded_analog") {
+    return {
+      video: {
+        filter: "brightness(1.025) contrast(.93) saturate(.76) sepia(.055)",
+      },
+      tint: {
+        background:
+          "linear-gradient(155deg, rgba(46,72,82,.08), rgba(174,126,77,.055) 58%, rgba(87,47,31,.08))",
+        boxShadow: "inset 0 0 36px rgba(17,12,10,.18)",
+        mixBlendMode: "soft-light",
+      },
+      grain: {
+        backgroundImage: GRAIN_IMAGE,
+        backgroundSize: "140px 140px",
+        mixBlendMode: "soft-light",
+        opacity: 0.12,
+      },
     };
   }
 

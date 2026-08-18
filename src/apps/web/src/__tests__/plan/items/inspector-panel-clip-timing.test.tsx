@@ -41,6 +41,7 @@ describe("InspectorPanel clip timing", () => {
         onPatchTextTiming={noop}
         onPatchClipTiming={onPatchClipTiming}
         onPatchClipLook={onPatchClipLook}
+        availableLookPresets={["none", "golden_hour", "faded_analog"]}
         onPreviewClipTiming={noop}
         onRecordClipTiming={noop}
         onPatchSfx={noop}
@@ -67,6 +68,10 @@ describe("InspectorPanel clip timing", () => {
     expect(onPatchClipLook).toHaveBeenCalledWith("smoky_split_tone");
     fireEvent.click(screen.getByRole("radio", { name: "Stadium Diffusion" }));
     expect(onPatchClipLook).toHaveBeenCalledWith("stadium_diffusion");
+    fireEvent.click(screen.getByRole("radio", { name: "Golden Hour" }));
+    expect(onPatchClipLook).toHaveBeenCalledWith("golden_hour");
+    fireEvent.click(screen.getByRole("radio", { name: "Faded Analog" }));
+    expect(onPatchClipLook).toHaveBeenCalledWith("faded_analog");
   });
 
   it("shows and emits all per-clip controls for a customizable look", () => {
@@ -127,6 +132,7 @@ describe("InspectorPanel clip timing", () => {
     );
 
     expect(screen.getByRole("radio", { name: "Olive Film" })).toBeChecked();
+    expect(screen.queryByRole("radio", { name: "Golden Hour" })).not.toBeInTheDocument();
     expect(screen.getByRole("slider", { name: "Look strength" })).toHaveValue("80");
     expect(screen.getByRole("slider", { name: "Look warmth" })).toHaveValue("10");
     expect(screen.getByRole("slider", { name: "Look contrast" })).toHaveValue("-20");

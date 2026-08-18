@@ -9,8 +9,11 @@ import pytest
 
 from app.pipeline.canvas import Canvas
 from app.pipeline.look_presets import (
+    FADED_VIGNETTE_MASK_PATH,
     LookAdjustments,
     default_look_adjustments,
+    faded_analog_filter,
+    golden_hour_filter,
     look_preset_filter,
     normalize_look_adjustments,
     normalize_look_preset,
@@ -31,6 +34,29 @@ def test_neutral_preset_is_exact_bypass() -> None:
 def test_unknown_preset_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unknown look preset"):
         normalize_look_preset("stadium_diffusion_plus")
+
+
+def test_fixed_edit_wide_look_graphs_match_approved_treatments() -> None:
+    golden = golden_hour_filter(width=1080, height=1920)
+    faded = faded_analog_filter(width=1080, height=1920)
+
+    assert golden == (
+        "eq=brightness=0.015:contrast=1.08:gamma=1.025,"
+        "colorcorrect=rl=0.005:bl=-0.015:rh=0.055:bh=-0.055:saturation=1.22,"
+        "convolution=0m='0 -0.05 0 -0.05 1.2 -0.05 0 -0.05 0'"
+    )
+    assert faded == (
+        "eq=brightness=0.045:contrast=0.93:saturation=0.76:gamma=1.025,"
+        "colorcorrect=rl=-0.010:bl=0.025:rh=0.040:bh=-0.035,"
+        "noise=alls=3:allf=u:all_seed=9321,"
+        "split=1[faded_base];"
+        f"movie=filename='{FADED_VIGNETTE_MASK_PATH}',"
+        "scale=1080:1920,format=yuv420p[faded_mask];"
+        "[faded_base][faded_mask]"
+        "blend=c0_mode=multiply:c1_mode=normal:c2_mode=normal"
+    )
+    assert default_look_adjustments("golden_hour") is None
+    assert default_look_adjustments("faded_analog") is None
 
 
 def test_reference_look_defaults_and_persisted_fallbacks() -> None:
@@ -169,15 +195,64 @@ def test_reference_looks_share_single_and_multi_pass_plumbing(preset, builder, s
     assert shared in single
 
 
-def test_filter_order_is_after_crop_and_recipe_grade_before_graphics() -> None:
+@pytest.mark.parametrize(
+    ("preset", "builder", "marker"),
+    [
+        ("golden_hour", golden_hour_filter, "saturation=1.22"),
+        ("faded_analog", faded_analog_filter, "all_seed=9321"),
+    ],
+)
+def test_fixed_edit_wide_looks_share_single_and_multi_pass_plumbing(
+    preset, builder, marker
+) -> None:
+    canvas = Canvas(width=320, height=568)
+    multi = _build_video_filter(
+        "9:16",
+        None,
+        color_hint="warm",
+        look_preset=preset,
+        look_label_prefix="look_0",
+        canvas=canvas,
+    )
+    single = _per_clip_filter_chain(
+        SinglePassInput(
+            kind="clip",
+            clip_path="/tmp/source.mp4",
+            start_s=0,
+            end_s=1,
+            color_hint="warm",
+            look_preset=preset,
+        ),
+        0,
+        "v0",
+        canvas=canvas,
+    )
+    shared = builder(width=320, height=568, label_prefix="look_0")
+
+    assert marker in shared
+    assert shared in multi
+    assert shared in single
+
+
+@pytest.mark.parametrize(
+    ("preset", "marker"),
+    [
+        ("stadium_diffusion", "all_seed=5144"),
+        ("golden_hour", "saturation=1.22"),
+        ("faded_analog", "all_seed=9321"),
+    ],
+)
+def test_filter_order_is_after_crop_and_recipe_grade_before_graphics(
+    preset: str, marker: str
+) -> None:
     filters = _build_video_filter(
         "9:16",
         None,
         color_hint="warm",
-        look_preset="stadium_diffusion",
+        look_preset=preset,
         has_grid=True,
     )
-    look_index = next(i for i, value in enumerate(filters) if "all_seed=5144" in value)
+    look_index = next(i for i, value in enumerate(filters) if marker in value)
     crop_index = max(i for i, value in enumerate(filters) if value.startswith("crop="))
     recipe_grade_index = next(i for i, value in enumerate(filters) if "colorbalance" in value)
     grid_index = next(i for i, value in enumerate(filters) if value.startswith("drawbox="))
@@ -186,7 +261,13 @@ def test_filter_order_is_after_crop_and_recipe_grade_before_graphics() -> None:
 
 
 @pytest.mark.parametrize("color_trc", ["arib-std-b67", "smpte2084"])
-def test_hdr_normalization_stays_before_the_source_look(monkeypatch, color_trc: str) -> None:
+@pytest.mark.parametrize(
+    ("preset", "marker"),
+    [("stadium_diffusion", "all_seed=5144"), ("golden_hour", "saturation=1.22")],
+)
+def test_hdr_normalization_stays_before_the_source_look(
+    monkeypatch, color_trc: str, preset: str, marker: str
+) -> None:
     """The preset must consume SDR pixels, never the source HDR transfer."""
     monkeypatch.setattr("app.pipeline.reframe._zscale_available", lambda: True)
 
@@ -194,12 +275,12 @@ def test_hdr_normalization_stays_before_the_source_look(monkeypatch, color_trc: 
         "9:16",
         None,
         color_trc=color_trc,
-        look_preset="stadium_diffusion",
+        look_preset=preset,
         canvas=Canvas(width=320, height=568),
     )
 
     tonemap_index = next(i for i, value in enumerate(filters) if "tonemap=" in value)
-    look_index = next(i for i, value in enumerate(filters) if "all_seed=5144" in value)
+    look_index = next(i for i, value in enumerate(filters) if marker in value)
     assert tonemap_index < look_index
 
 
@@ -245,15 +326,16 @@ def test_approved_portrait_geometry_is_preserved_exactly() -> None:
         assert segment in graph
 
 
+@pytest.mark.parametrize("preset", ["stadium_diffusion", "golden_hour", "faded_analog"])
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg unavailable")
-def test_preset_executes_in_the_production_simple_filter_chain(tmp_path) -> None:
+def test_preset_executes_in_the_production_simple_filter_chain(tmp_path, preset: str) -> None:
     """Guard the real ``-vf`` integration, not only the isolated complex graph."""
-    output = tmp_path / "simple-filter.mp4"
+    output = tmp_path / f"simple-filter-{preset}.mp4"
     vf = ",".join(
         _build_video_filter(
             "9:16",
             None,
-            look_preset="stadium_diffusion",
+            look_preset=preset,
             canvas=Canvas(width=320, height=568),
         )
     )
@@ -336,9 +418,11 @@ def test_reference_look_executes_with_custom_controls(tmp_path, preset: str) -> 
     assert output.stat().st_size > 0
 
 
+@pytest.mark.parametrize("preset", ["stadium_diffusion", "faded_analog"])
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg unavailable")
-def test_filter_renders_deterministically_to_valid_h264_aac(tmp_path) -> None:
-    graph = stadium_diffusion_filter(width=320, height=568, label_prefix="render")
+def test_filter_renders_deterministically_to_valid_h264_aac(tmp_path, preset: str) -> None:
+    graph = look_preset_filter(preset, width=320, height=568, label_prefix="render")
+    assert graph is not None
 
     def render(name: str) -> bytes:
         output = tmp_path / name
@@ -400,6 +484,6 @@ def test_filter_renders_deterministically_to_valid_h264_aac(tmp_path) -> None:
         assert "aac" in probe
         return output.read_bytes()
 
-    first = render("first.mp4")
-    second = render("second.mp4")
+    first = render(f"first-{preset}.mp4")
+    second = render(f"second-{preset}.mp4")
     assert hashlib.sha256(first).digest() == hashlib.sha256(second).digest()

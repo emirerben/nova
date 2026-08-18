@@ -13,7 +13,7 @@ import type {
 } from "@/lib/plan-api";
 import { normalizeCameraEffect } from "@/lib/camera-effects";
 import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
-import { defaultLookAdjustments } from "@/lib/look-presets";
+import { defaultLookAdjustments, lookPresetLabel } from "@/lib/look-presets";
 import {
   motionPatchForEffect,
   motionPatchForManualEnd,
@@ -476,13 +476,6 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "repeat_last_edit") return "Repeat";
   const _exhaustive: never = op;
   return _exhaustive;
-}
-
-function lookPresetLabel(preset: DraftSlot["lookPreset"]): string {
-  if (preset === "stadium_diffusion") return "Stadium Diffusion";
-  if (preset === "olive_film") return "Olive Film";
-  if (preset === "smoky_split_tone") return "Smoky Split-Tone";
-  return "Original";
 }
 
 /** Beat fidelity is not prompt-only: a model-proposed timing within this window

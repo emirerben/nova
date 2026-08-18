@@ -11,6 +11,15 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **The "Kria couldn't plan this edit" dead end is fixed at the root.** Clip-analysis errors during drafting (the crash that permanently wedged plan items) now retry when transient and fail fast with a diagnosable reason when the media is unreadable; failed plans map to a distinct, actionable error instead of a generic one, and Generate can always recover from a failed plan.
 - **Planning chat can no longer be started without media, and its stall window is shorter.** The conversation now asks for a photo or video first; the reservation timeout matches the request timeout (60s) so the composer can't dead-lock; Kria's suggestion chips survive replies that don't end in a question.
+- **Editors can now give an entire video a consistent Golden Hour or Faded Analog look from the Styles drawer.** Both fixed looks apply to every clip—including removed timeline slots—while captions, text, and graphics keep their original colors. The same controls work in desktop and mobile editors, show mixed selections, and support one-step undo and redo back to Original.
+
+### Changed
+- **Video looks are advertised only when an edit can safely use them.** The editor keeps Styles available even when text styling is unavailable, ignores stale capability responses after variant changes, and preserves existing per-clip looks and saved edits.
+- **Color grading now follows one explicit render order.** HDR normalization and the edit's existing recipe grade run before the selected look; overlays and captions run afterward. Unknown presets are rejected instead of silently falling through to another look.
+
+### Fixed
+- **Undoing a video look back to the saved baseline no longer triggers an unnecessary full timeline render on a later unrelated save.** Style previews also avoid restarting their API request during ordinary editor updates.
+
 ## [0.38.0.0] — 2026-08-18
 
 ### Added
