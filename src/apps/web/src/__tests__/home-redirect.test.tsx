@@ -24,6 +24,7 @@ const mockStory = jest.fn(({ mode }: { mode?: string }) => (
     data-mode={mode}
   >
     <h1>Save time. Let AI edit your videos. Create more.</h1>
+    <a href="/plan">Create my first edit</a>
     <a href="/terms">Terms</a>
     <a href="/privacy">Privacy</a>
   </section>
@@ -72,7 +73,10 @@ describe("HomePage", () => {
 
     expect(mockRedirect).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /create my first edit/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /create my first edit/i })).toHaveAttribute(
+      "href",
+      "/plan",
+    );
     expect(
       screen.getByLabelText("How Kria turns raw videos into a finished edit"),
     ).toHaveAttribute("data-mode", "auto");

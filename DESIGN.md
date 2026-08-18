@@ -41,7 +41,7 @@ Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/componen
   - Feature chips: Inter 15/18 desktop and 11/16 mobile, weight 700.
   - Ordinary product headings remain Fraunces; see the landing exception in §5.
 - **CTA (InkButton):** ink pill `rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80`.
-  **Single-primary-CTA rule on landing:** one CTA to `/plan` in the landing header — never duplicate it inside or below the edit story.
+  **Single-primary-CTA rule on landing:** one CTA to `/plan` in its original centered position near the bottom of the edit story — never duplicate it in the header or below the story.
 - **Primary-action viewport budget:** on any flow step whose purpose is a single next action, keep that action visible in the first viewport at 1280×720 and 375×667, using realistic maximum AI-generated content length.
 - **Light-surface pinned action bar:** when adaptive pinning is needed on `#fafaf8`, use `sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#fafaf8] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0` (bleeds to the pane edge on mobile, aligns to the text column on desktop). The bar's `border-t` is its only divider — never pair it with a `border-t` on the section that follows.
   Apply it only when the action would otherwise fall below the fold; the existing always-on variant lives in `ChatInterview.tsx`.
@@ -78,7 +78,7 @@ Token source: `src/apps/web/src/app/template-jobs/` on origin/main (the `/templa
   - Serif accent moments: `text-lg` / `text-xl` (incl. italic `text-amber-300` in `PersonaEditor`); ChatInterview prior-answer pull-quote is `text-sm text-zinc-400 line-clamp-3` (zinc, not amber)
   - Body: default sans; secondary: `text-sm text-zinc-400`
 - **Radius roles:** `rounded-full` = buttons/pills; `rounded-lg` = inputs/surfaces.
-- **Header:** product routes get sticky scroll-fade header (`rgba(0,0,0,0.6·progress)` + blur); landing routes (`/`, `/auto-story`) get a static, borderless cream header where “Create my first edit” replaces anonymous Sign in. Landing Terms and Privacy links sit quietly at the bottom of the story rather than in the header. `/admin` hides Header entirely.
+- **Header:** product routes get sticky scroll-fade header (`rgba(0,0,0,0.6·progress)` + blur); landing routes (`/`, `/auto-story`) get a static, borderless cream header with no anonymous auth action. Their single “Create my first edit” CTA stays centered near the bottom of the story, with Terms and Privacy beneath it rather than in the header. `/admin` hides Header entirely.
 - **Chat / interview surfaces:** editorial interview, not chat app — left-aligned Fraunces questions, one prior-answer pull-quote (amber left-border on dark surfaces; lime left-border on light surfaces), NO message bubbles, NO bot avatar.
 
 ---

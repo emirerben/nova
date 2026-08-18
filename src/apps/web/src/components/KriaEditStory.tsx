@@ -652,6 +652,10 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
           </div>
         </div>
 
+        <Link href="/plan" className={styles.cta}>
+          Create my first edit <span aria-hidden="true">→</span>
+        </Link>
+
         <p className={styles.legalLinks}>
           By continuing, you agree to our <Link href="/terms">Terms</Link> and{" "}
           <Link href="/privacy">Privacy</Link>.

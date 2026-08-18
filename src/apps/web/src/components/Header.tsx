@@ -141,14 +141,7 @@ function AuthControl({
 
   if (!session?.user) {
     if (isLanding) {
-      return (
-        <Link
-          href="/plan"
-          className="inline-flex min-h-10 items-center justify-center rounded-full bg-[#0c0c0e] px-3 text-[13px] font-semibold text-white transition-opacity hover:opacity-80 active:opacity-65 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600 sm:px-4 sm:text-sm"
-        >
-          Create my first edit
-        </Link>
-      );
+      return null;
     }
 
     return (

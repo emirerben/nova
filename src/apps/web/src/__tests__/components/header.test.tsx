@@ -41,15 +41,12 @@ describe("Header — isLight predicate", () => {
     useSession.mockReturnValue({ data: null, status: "unauthenticated" });
   });
 
-  it("test_header_light_on_landing: / is light, borderless, and uses the primary CTA", () => {
+  it("test_header_light_on_landing: / is light, borderless, and leaves actions to the story", () => {
     const { container } = renderWithPathname("/");
     const header = container.querySelector("header");
     expect(header!.className).toContain("bg-[#fafaf8]");
     expect(header!.className).not.toContain("border-b");
-    expect(screen.getByRole("link", { name: /create my first edit/i })).toHaveAttribute(
-      "href",
-      "/plan",
-    );
+    expect(screen.queryByRole("link", { name: /create my first edit/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /sign in/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Terms" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Privacy" })).not.toBeInTheDocument();
@@ -60,7 +57,7 @@ describe("Header — isLight predicate", () => {
     const header = container.querySelector("header");
     expect(header!.className).toContain("bg-[#fafaf8]");
     expect(header!.className).not.toContain("border-b");
-    expect(screen.getByRole("link", { name: /create my first edit/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /create my first edit/i })).not.toBeInTheDocument();
   });
 
   it("test_header_light_on_plan: /plan keeps the standard light auth header", () => {

@@ -233,7 +233,7 @@ describe("KriaEditStory reduced motion", () => {
     expect(container.querySelectorAll('[data-feature-group="captions-effects"]')).toHaveLength(2);
   });
 
-  it("leaves the primary CTA to the header and keeps legal links below the story", () => {
+  it("keeps the primary CTA in the story and legal links below it", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: jest.fn().mockReturnValue({
@@ -246,7 +246,10 @@ describe("KriaEditStory reduced motion", () => {
 
     render(<KriaEditStory mode="auto" />);
 
-    expect(screen.queryByRole("link", { name: /create my first edit/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /create my first edit/i })).toHaveAttribute(
+      "href",
+      "/plan",
+    );
     expect(screen.getByRole("link", { name: "Terms" })).toHaveAttribute("href", "/terms");
     expect(screen.getByRole("link", { name: "Privacy" })).toHaveAttribute(
       "href",

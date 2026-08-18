@@ -32,6 +32,16 @@
   white-space: nowrap;
 }
 
+@media (hover: hover) {
+  .cta:hover {
+    opacity: 0.8;
+  }
+}
+
+.cta:active {
+  opacity: 0.62;
+}
+
 .headline {
   position: absolute;
   z-index: 7;
@@ -253,6 +263,31 @@
 
 .activeShot { opacity: 1; }
 
+.cta {
+  position: absolute;
+  z-index: 11;
+  bottom: 8.26%;
+  left: 50%;
+  display: inline-flex;
+  width: 220px;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: var(--ink);
+  color: white;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: 0 10px 32px rgb(12 12 14 / 14%);
+}
+
+.cta:focus-visible {
+  outline: 3px solid #65a30d;
+  outline-offset: 3px;
+}
+
 .legalLinks {
   position: absolute;
   z-index: 11;
@@ -361,6 +396,13 @@
   .captionChip { bottom: 9%; left: 4%; }
   .visualEffectsChip { top: auto; right: 2%; bottom: 25%; }
   .soundChip { top: 6%; right: 2%; }
+
+  .cta {
+    bottom: 55px;
+    width: 190px;
+    min-height: 46px;
+    font-size: 13px;
+  }
 
   .legalLinks {
     bottom: 8px;
