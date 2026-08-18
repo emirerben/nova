@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 import uuid
@@ -64,15 +65,77 @@ def _kind(content_type: str, path: str) -> str:
     return "video"
 
 
-def _fail(item: PlanItem, proposal: EditProposal, code: str, message: str) -> None:
+# No artificial duration floor: the planner adapts to whatever footage is
+# actually uploaded (product decision, 2026-08-18 — see agents/DECISIONS.md).
+# Below this, a guided story cannot show anything meaningful.
+MIN_GUIDED_DURATION_S = 3
+# Images are not length-constrained by a source clip, so estimating "feasible"
+# story length can't sum their real duration the way video works. Credit each
+# image the guided_story per-media floor (guided_story.py STYLE_POLICY
+# "guided_story"."min_moment_s") rather than an unbounded amount.
+_IMAGE_FEASIBLE_CREDIT_S = 1.4
+
+
+def feasible_guided_duration_s(media: list[MediaRef]) -> float:
+    """Conservative estimate of story length the uploaded media can support.
+
+    Videos contribute their own probed duration once; a beat can never be
+    stretched past what was actually filmed (no slow-mo/loop). This is a
+    pre-agent planning estimate — guided_story.py's `_source_window` /
+    `_allocate_beat_durations` remain the exact, authoritative render-time
+    feasibility check.
+    """
+
+    total = 0.0
+    for ref in media:
+        if ref.kind == "video" and ref.duration_s:
+            total += float(ref.duration_s)
+        else:
+            total += _IMAGE_FEASIBLE_CREDIT_S
+    return total
+
+
+def adapt_target_duration_s(brief_duration_s: int, feasible_s: float) -> int:
+    """Clamp the brief's target to what the footage can actually support.
+
+    Never exceeds the feasible estimate (floored, so the agent's target is
+    never longer than real footage allows) and never exceeds the creator's
+    requested duration. Callers must treat
+    ``feasible_s < MIN_GUIDED_DURATION_S`` as infeasible before calling this.
+    """
+
+    return max(MIN_GUIDED_DURATION_S, min(int(brief_duration_s), math.floor(feasible_s)))
+
+
+def _fail(
+    item: PlanItem,
+    proposal: EditProposal,
+    code: str,
+    message: str,
+    *,
+    retryable: bool = True,
+    detail: str | None = None,
+) -> None:
     failed = proposal.model_copy(
         update={
             "proposal_version": proposal.proposal_version + 1,
             "status": "failed",
-            "failure": ProposalFailure(code=code, message=message, retryable=True),
+            "failure": ProposalFailure(
+                code=code, message=message, retryable=retryable, detail=detail
+            ),
         }
     )
     item.edit_proposal = failed.model_dump(mode="json")
+
+
+def _exc_detail(exc: BaseException) -> str:
+    """Admin/debug-only diagnostic string — never surfaced to end users.
+
+    _edit_proposal_response() in routes/plan_items.py strips ProposalFailure.detail
+    before the public PlanItem response is built.
+    """
+
+    return f"{type(exc).__name__}: {exc}"[:2000]
 
 
 def _pool_refs(db, item: PlanItem, owner_id: uuid.UUID) -> list[MediaRef]:  # noqa: ANN001
@@ -311,13 +374,74 @@ def draft_edit_proposal(self, item_id: str, attempt_id: str, expected_ownership_
                 ]
                 idea, theme, brief = item.idea, item.theme or "", proposal.brief
 
+            # Pool/clip media analysis (_analyze_clip_assignment -> analyze_pool_video /
+            # analyze_pool_image) runs a raw Gemini call outside the Agent framework, so
+            # it never produces an agent_run row — any failure here is otherwise
+            # invisible to admin/debug. autoplace already distinguishes a permanently
+            # unreadable file from a transient provider hiccup (same split
+            # analyze_pool_asset uses); mirror that here instead of letting both
+            # collapse into the outer blanket-exception handler below, which used to
+            # wedge a creator behind a retryable=True failure that never actually
+            # retried anything (2026-08 guided-auto-design incident).
+            from app.tasks.autoplace import (  # noqa: PLC0415
+                AnalysisTemporarilyUnavailableError,
+                AssetUnreadableError,
+            )
+
             pool_by_path = {row.gcs_path: row for row in pool}
             analyzed_assignments: list[dict] = []
             clip_refs: list[MediaRef] = []
             for assignment in assignments:
                 if not _attempt_is_active(iid, attempt_id, ownership_epoch):
                     return
-                analyzed, ref = _analyze_clip_assignment(assignment, pool_by_path)
+                try:
+                    analyzed, ref = _analyze_clip_assignment(assignment, pool_by_path)
+                except AssetUnreadableError as exc:
+                    with sync_session() as db:
+                        locked = _locked_item(db, iid, ownership_epoch)
+                        item = locked[0] if locked else None
+                        current = parse_edit_proposal(item.edit_proposal) if item else None
+                        if (
+                            item
+                            and current
+                            and current.generation_attempt_id == attempt_id
+                            and current.status == "analyzing"
+                        ):
+                            _fail(
+                                item,
+                                current,
+                                "media_unreadable",
+                                "Kria couldn't read one of these clips. Export it as JPG, "
+                                "PNG, WebP, HEIC, HEIF, MP4, or MOV and try again.",
+                                retryable=False,
+                                detail=_exc_detail(exc),
+                            )
+                            db.commit()
+                    return
+                except AnalysisTemporarilyUnavailableError as exc:
+                    try:
+                        raise self.retry(countdown=15)
+                    except MaxRetriesExceededError:
+                        with sync_session() as db:
+                            locked = _locked_item(db, iid, ownership_epoch)
+                            item = locked[0] if locked else None
+                            current = parse_edit_proposal(item.edit_proposal) if item else None
+                            if (
+                                item
+                                and current
+                                and current.generation_attempt_id == attempt_id
+                                and current.status == "analyzing"
+                            ):
+                                _fail(
+                                    item,
+                                    current,
+                                    "media_analysis_temporarily_unavailable",
+                                    "Kria temporarily couldn't analyze one of these clips. "
+                                    "Try again in a bit.",
+                                    detail=_exc_detail(exc),
+                                )
+                                db.commit()
+                        return
                 analyzed_assignments.append(analyzed)
                 clip_refs.append(ref)
             # De-duplicate pool assets promoted into the clip lane: they remain
@@ -338,6 +462,29 @@ def draft_edit_proposal(self, item_id: str, attempt_id: str, expected_ownership_
                         )
                         db.commit()
                 return
+            feasible_duration_s = feasible_guided_duration_s(media)
+            if feasible_duration_s < MIN_GUIDED_DURATION_S:
+                with sync_session() as db:
+                    locked = _locked_item(db, iid, ownership_epoch)
+                    item = locked[0] if locked else None
+                    current = parse_edit_proposal(item.edit_proposal) if item else None
+                    if (
+                        item
+                        and current
+                        and current.generation_attempt_id == attempt_id
+                        and current.status == "analyzing"
+                    ):
+                        _fail(
+                            item,
+                            current,
+                            "guided_edit_infeasible",
+                            "This footage is only about "
+                            f"{feasible_duration_s:.1f}s long — too short for a guided "
+                            "edit. Add more media or use a shorter format.",
+                        )
+                        db.commit()
+                return
+            target_duration_s = adapt_target_duration_s(brief.duration_s, feasible_duration_s)
             digest = canonical_media_digest(media)
 
             with sync_session() as db:
@@ -426,7 +573,7 @@ def draft_edit_proposal(self, item_id: str, attempt_id: str, expected_ownership_
                     direction=brief.direction,
                     goal=brief.goal,
                     pace=brief.pace,
-                    target_duration_s=brief.duration_s,
+                    target_duration_s=target_duration_s,
                     media=agent_media,
                 )
             )
@@ -492,7 +639,7 @@ def draft_edit_proposal(self, item_id: str, attempt_id: str, expected_ownership_
                     )
                     db.commit()
             raise
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             log.exception("edit_proposal.draft_failed", item_id=item_id)
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)
@@ -509,5 +656,6 @@ def draft_edit_proposal(self, item_id: str, attempt_id: str, expected_ownership_
                         current,
                         "proposal_generation_failed",
                         "Kria couldn't plan this edit. Try again.",
+                        detail=_exc_detail(exc),
                     )
                     db.commit()

@@ -67,7 +67,8 @@ class EditProposalSnapshot(BaseModel):
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
     pace: ProposalPace = "balanced"
-    duration_s: int = Field(ge=10, le=60)
+    # No artificial floor — see ProposalBrief.duration_s.
+    duration_s: int = Field(ge=3, le=60)
     title: str = Field(min_length=1, max_length=100)
     media: list[MediaRef] = Field(min_length=1, max_length=60)
     story_beats: list[StoryBeat] = Field(min_length=1, max_length=20)
@@ -171,13 +172,20 @@ class ProposalFailure(BaseModel):
     code: str = Field(min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=500)
     retryable: bool = True
+    # Admin/debug-only diagnostic (exception type + short reason). Never shown
+    # to end users — _edit_proposal_response() strips this key before the
+    # public PlanItem response is built (routes/plan_items.py).
+    detail: str | None = Field(default=None, max_length=2000)
 
 
 class ProposalBrief(BaseModel):
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
     pace: ProposalPace = "balanced"
-    duration_s: int = Field(default=24, ge=10, le=60)
+    # No artificial floor: the planner adapts the story length to whatever
+    # footage is actually available (draft_edit_proposal clamps this against
+    # analyzed media before it reaches the agent). See agents/DECISIONS.md.
+    duration_s: int = Field(default=24, ge=3, le=60)
 
 
 class EditConversationTurn(BaseModel):

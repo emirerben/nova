@@ -269,6 +269,10 @@ def _edit_proposal_response(item: PlanItem) -> dict | None:
     if proposal is None:
         return None
     payload = proposal.model_dump(mode="json")
+    # Admin/debug-only diagnostic (exception type + short reason) — never
+    # surfaced to end users. See ProposalFailure.detail / _exc_detail().
+    if isinstance(payload.get("failure"), dict):
+        payload["failure"].pop("detail", None)
     attempt = proposal.conversation_attempt
     if attempt is not None:
         from app.services.edit_proposals import (  # noqa: PLC0415

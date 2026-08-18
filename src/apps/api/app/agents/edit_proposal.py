@@ -74,7 +74,9 @@ class EditProposalAgentInput(BaseModel):
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
     goal: str = ""
     pace: Literal["relaxed", "balanced", "fast"]
-    target_duration_s: int = Field(ge=10, le=60)
+    # No artificial floor — the caller clamps this to what the uploaded
+    # footage can actually support before invoking the agent.
+    target_duration_s: int = Field(ge=3, le=60)
     media: list[EditProposalMedia] = Field(min_length=1, max_length=60)
 
 
@@ -88,7 +90,7 @@ class DraftStoryBeat(BaseModel):
 
 class EditProposalAgentOutput(BaseModel):
     title: str = Field(min_length=1, max_length=100)
-    duration_s: int = Field(ge=10, le=60)
+    duration_s: int = Field(ge=3, le=60)
     story_beats: list[DraftStoryBeat] = Field(min_length=1, max_length=5)
 
 
@@ -96,7 +98,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.0.1",
+        prompt_version="1.1.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -111,6 +113,17 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         return ["title", "story_beats"]
 
     def render_prompt(self, input: EditProposalAgentInput) -> str:  # noqa: A002
+        video_footage_s = sum(
+            m.duration_s for m in input.media if m.kind == "video" and m.duration_s
+        )
+        footage_note = (
+            f"Real available video footage totals about {video_footage_s:.1f}s across "
+            f"{sum(1 for m in input.media if m.kind == 'video')} clip(s). Plan beats that "
+            "fit inside what was actually filmed — never invent extra footage or imply a "
+            "clip is longer than it is."
+            if video_footage_s > 0
+            else "No video footage was uploaded — every beat must use only the photos provided."
+        )
         return load_prompt(
             "edit_proposal",
             idea=input.idea[:500],
@@ -120,6 +133,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             or "Make the uploaded material feel intentional and worth sharing.",
             pace=input.pace,
             target_duration_s=str(input.target_duration_s),
+            footage_note=footage_note,
             media_json=json.dumps([row.model_dump() for row in input.media], ensure_ascii=False),
         )
 
