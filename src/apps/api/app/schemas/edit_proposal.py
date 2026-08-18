@@ -35,6 +35,9 @@ ConversationRole = Literal["user", "agent"]
 ConversationPhase = Literal["briefing", "review"]
 ConversationSuggestion = Annotated[str, Field(min_length=1, max_length=100)]
 EDIT_CONVERSATION_MAX_TURNS = 20
+# Who/what approved a proposal — "auto" for AI-designs-by-default
+# (GUIDED_AUTO_DESIGN_ENABLED); "user" for an explicit creator approval.
+ApprovalMode = Literal["user", "auto"]
 
 
 class MediaRef(BaseModel):
@@ -166,6 +169,11 @@ class ApprovedProposalSnapshot(BaseModel):
     media_digest: str = Field(min_length=64, max_length=64)
     approved_at: datetime
     snapshot: EditProposalSnapshot
+    # Recorded distinctly from the envelope's mutable EditProposal.approval_mode
+    # (which a later reservation can overwrite) so an approved-and-rendered
+    # story permanently remembers whether a human or the auto-design flow
+    # approved it. None = legacy approvals predating this field (treat as "user").
+    approval_mode: ApprovalMode | None = None
 
 
 class ProposalFailure(BaseModel):
@@ -213,6 +221,11 @@ class EditProposal(BaseModel):
     generation_attempt_id: str = Field(min_length=1, max_length=100)
     media_digest: str | None = Field(default=None, min_length=64, max_length=64)
     status: ProposalStatus
+    # Who/what approved this attempt — "auto" for AI-designs-by-default
+    # (GUIDED_AUTO_DESIGN_ENABLED); None/"user" for an explicit creator
+    # approval. Set when the attempt is reserved (begin_proposal_attempt) and
+    # carried through to ApprovedProposalSnapshot.approval_mode on approval.
+    approval_mode: ApprovalMode | None = None
     brief: ProposalBrief = Field(default_factory=ProposalBrief)
     conversation: list[EditConversationTurn] = Field(
         default_factory=list, max_length=EDIT_CONVERSATION_MAX_TURNS

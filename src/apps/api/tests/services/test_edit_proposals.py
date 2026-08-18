@@ -270,7 +270,7 @@ def test_conversation_keeps_latest_twenty_turns_and_attempt_preserves_brief() ->
         ("drafting", "proposal_analyzing"),
         ("briefing", "proposal_draft"),
         ("draft", "proposal_draft"),
-        ("failed", "proposal_draft"),
+        ("failed", "proposal_failed"),
         ("stale", "proposal_stale"),
     ],
 )
@@ -280,3 +280,66 @@ def test_generate_error_codes_are_stable(status: str, expected: str) -> None:
     item.edit_proposal = {**item.edit_proposal, "status": status}
     assert item.edit_proposal["proposal_version"] == proposal.proposal_version
     assert proposal_generate_error(item) == expected
+
+
+def test_edit_conversation_attempt_ttl_matches_proxy_max_duration() -> None:
+    from app.services.edit_proposals import EDIT_CONVERSATION_ATTEMPT_TTL_S
+
+    # Must match src/apps/web/src/lib/api-proxy.ts proxyMaxDuration (60s) so a
+    # client-visible proxy timeout and the server-side reservation expire
+    # together (Task 5, was 90s).
+    assert EDIT_CONVERSATION_ATTEMPT_TTL_S == 60
+
+
+def test_auto_design_approval_mode_survives_draft_and_approve() -> None:
+    """GUIDED_AUTO_DESIGN_ENABLED state machine: approval_mode="auto" set at
+
+    reservation time rides through drafting onto the ApprovedProposalSnapshot,
+    distinctly from any later manual reservation that overwrites the mutable
+    envelope field.
+    """
+
+    item = _item()
+    analyzing = begin_proposal_attempt(item, approval_mode="auto")
+    assert analyzing.approval_mode == "auto"
+    assert item.edit_proposal["approval_mode"] == "auto"
+
+    snapshot = _snapshot()
+    raw = dict(item.edit_proposal)
+    raw["media_digest"] = canonical_media_digest(snapshot.media)
+    raw["status"] = "drafting"
+    item.edit_proposal = raw
+
+    draft = save_proposal_draft(
+        item, expected_version=analyzing.proposal_version, snapshot=snapshot
+    )
+    assert draft.approval_mode == "auto"  # model_copy preserves fields it doesn't update
+
+    approved = approve_proposal(item, expected_version=draft.proposal_version)
+    assert approved.status == "approved"
+    assert approved.last_approved is not None
+    assert approved.last_approved.approval_mode == "auto"
+
+    # A later EXPLICIT (manual) reservation does not retroactively rewrite the
+    # already-approved snapshot's recorded approval_mode.
+    begin_proposal_attempt(item, brief=ProposalBrief())
+    assert item.edit_proposal["approval_mode"] is None
+    assert item.edit_proposal["last_approved"]["approval_mode"] == "auto"
+
+
+def test_manual_approval_mode_defaults_to_none() -> None:
+    item = _item()
+    analyzing = begin_proposal_attempt(item)
+    assert analyzing.approval_mode is None
+
+    snapshot = _snapshot()
+    raw = dict(item.edit_proposal)
+    raw["media_digest"] = canonical_media_digest(snapshot.media)
+    raw["status"] = "drafting"
+    item.edit_proposal = raw
+    draft = save_proposal_draft(
+        item, expected_version=analyzing.proposal_version, snapshot=snapshot
+    )
+    approved = approve_proposal(item, expected_version=draft.proposal_version)
+    assert approved.last_approved is not None
+    assert approved.last_approved.approval_mode is None

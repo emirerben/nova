@@ -529,6 +529,7 @@ DispatchOutcome = Literal[
     "proposal_draft",
     "proposal_stale",
     "proposal_analyzing",
+    "proposal_failed",
 ]
 
 

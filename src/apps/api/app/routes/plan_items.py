@@ -1806,6 +1806,11 @@ _PROPOSAL_GENERATE_MESSAGES = {
     "proposal_draft": "Approve the edit plan before generating.",
     "proposal_stale": "Your media changed. Plan the edit again before generating.",
     "proposal_analyzing": "Kria is still planning this edit.",
+    # Was unmapped and fell through to "proposal_draft"'s generic "Approve the
+    # edit plan before generating" — misleading for a plan that was never
+    # drafted (2026-08 guided-auto-design incident). See
+    # proposal_generate_error() in services/edit_proposals.py.
+    "proposal_failed": "Kria couldn't finish planning this edit — open the planner to try again.",
 }
 
 
@@ -1903,6 +1908,30 @@ async def edit_proposal_conversation_turn(
         reserve_edit_conversation_attempt,
         save_edit_conversation_turn,
     )
+
+    # Mirror draft_item_edit_proposal's media gate: talking to Kria about an
+    # edit with nothing uploaded yet burns a model call for advice the item
+    # page can't act on. Registered assets still finishing their own analysis
+    # count as media (they'll be ready by the time the creator approves). Only
+    # queries the pool when clip_assignments is empty — the common case never
+    # pays for the extra round trip.
+    if not (item.clip_assignments or []):
+        ready_assets = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.status.in_({"queued", "analyzing", "ready"}),
+                    )
+                )
+            ).scalar_one()
+        )
+        if ready_assets == 0:
+            raise _proposal_http_conflict(
+                "media_required", "Add a photo or video first — then tell Kria what to make."
+            )
 
     try:
         _reserved, conversation_token = reserve_edit_conversation_attempt(
@@ -2369,6 +2398,7 @@ async def generate_item(
         "proposal_draft",
         "proposal_stale",
         "proposal_analyzing",
+        "proposal_failed",
     }:
         _raise_proposal_generate_conflict(result.outcome)
     if result.outcome not in ("dispatched", "already_active"):

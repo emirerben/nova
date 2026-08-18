@@ -682,6 +682,20 @@ class Settings(BaseSettings):
         "the API and synchronous dispatch worker; changing it requires API and worker "
         "restarts. Startup also requires the code-owned strict-renderer readiness pin.",
     )
+    guided_auto_design_enabled: bool = Field(
+        default=True,
+        description="AI-designs-by-default: when enforcement would otherwise 409 Generate on a "
+        "missing/failed/unapproved guided-edit proposal and the item already has media, silently "
+        "reserve + draft + auto-approve a proposal (approval_mode='auto') and dispatch the render "
+        "instead of blocking the creator on an explicit review step — one-click Generate always "
+        "works when media exists. Kill switch: off restores today's strict enforcement "
+        "byte-identically (existing 409s). Only relevant when guided_edit_enforcement_enabled is "
+        "on. Flipping it off does NOT retroactively un-approve proposals an earlier auto-design "
+        "already approved — see docs/runbooks/conversational-edit-rollback.md. Read by the API "
+        "and sync dispatch worker; changing it requires API and worker restarts. Fly: `fly "
+        "secrets set GUIDED_AUTO_DESIGN_ENABLED=false --app nova-video` + `fly machine restart "
+        "<id>` for the api and worker process groups.",
+    )
 
     @model_validator(mode="after")
     def reject_guided_edit_before_strict_renderer(self) -> "Settings":

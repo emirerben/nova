@@ -234,7 +234,7 @@ def test_collection_shape_omits_full_proposal_and_preview_signing(monkeypatch) -
         ("analyzing", "proposal_analyzing"),
         ("drafting", "proposal_analyzing"),
         ("draft", "proposal_draft"),
-        ("failed", "proposal_draft"),
+        ("failed", "proposal_failed"),
         ("stale", "proposal_stale"),
     ],
 )
@@ -244,9 +244,16 @@ def test_generate_returns_explicit_proposal_gate_codes(
     proposal_status: str | None,
     expected_code: str,
 ) -> None:
+    """Kill-switch pin: GUIDED_AUTO_DESIGN_ENABLED=False keeps today's strict
+
+    enforcement byte-identical (explicit proposal_generate_error 409s), even
+    though the item has media the auto-design flow would otherwise pick up.
+    """
+
     from app.config import settings as app_settings
 
     monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_auto_design_enabled", False)
     user = _user()
     item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
     item.edit_proposal = None

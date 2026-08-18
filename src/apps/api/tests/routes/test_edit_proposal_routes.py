@@ -307,6 +307,43 @@ async def test_active_conversation_reservation_blocks_duplicate_model_call(monke
 
 
 @pytest.mark.asyncio
+async def test_conversation_rejects_empty_media_before_reserving_attempt(monkeypatch) -> None:
+    """Mirrors draft_item_edit_proposal's media gate — no model call for advice
+
+    the item page can't act on when nothing has been uploaded yet.
+    """
+
+    item = SimpleNamespace(id=uuid.uuid4(), clip_assignments=[], edit_proposal=None)
+    run = AsyncMock()
+    monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr("app.agents.edit_guide.EditGuideAgent.run", run)
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalar_one=lambda: 0)
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items.edit_proposal_conversation_turn(
+            _request(),
+            str(item.id),
+            plan_items.EditGuideTurnBody(
+                expected_proposal_version=0,
+                message="Put food first.",
+            ),
+            SimpleNamespace(id=uuid.uuid4()),
+            db,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "media_required"
+    assert "Add a photo or video" in exc.value.detail["message"]
+    run.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    # No attempt reservation was persisted for this rejected turn.
+    assert item.edit_proposal is None
+
+
+@pytest.mark.asyncio
 async def test_draft_rejects_live_conversation_attempt_without_dispatch(monkeypatch) -> None:
     from app.services.edit_proposals import reserve_edit_conversation_attempt
 
