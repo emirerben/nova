@@ -18,6 +18,7 @@ from app.routes import (
     admin_generative,
     admin_jobs,
     admin_music,
+    admin_plan_items,
     admin_review,
     admin_sound_effects,
     auth,
@@ -166,6 +167,7 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
+app.include_router(admin_plan_items.router, prefix="/admin/plan-items", tags=["admin-plan-items"])
 app.include_router(admin_music.router, prefix="/admin/music-tracks", tags=["admin-music"])
 app.include_router(
     admin_sound_effects.router, prefix="/admin/sound-effects", tags=["admin-sound-effects"]

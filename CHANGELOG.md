@@ -14,6 +14,12 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Undoing a video look back to the saved baseline no longer triggers an unnecessary full timeline render on a later unrelated save.** Style previews also avoid restarting their API request during ordinary editor updates.
 
+## [0.38.0.0] — 2026-08-18
+
+### Added
+- **Operators can now inspect a stuck plan item in one call.** `GET /admin/plan-items/{id}/debug` (admin-token gated) returns the item's derived status, clip lane and pool-asset states, every linked render job, and the edit-plan envelope — enough to triage "user can't generate" without touching the database. A new runbook (`docs/runbooks/guided-edit-triage.md`) walks the decision tree.
+- **Creator privacy is enforced by design and by test.** Conversation turns, story goals, and clip notes are reduced to structural metadata (roles, lengths, counts); regression tests assert the creator's words never appear in a response, and internal write-fence tokens stay internal.
+
 ## [0.37.2.0] — 2026-08-18
 
 ### Added
