@@ -50,6 +50,7 @@ from app.database import get_db
 from app.limiter import limiter
 from app.models import AgentRun, ContentPlan, Job, MusicTrack, PlanItem, User
 from app.pipeline.look_presets import (
+    EDIT_WIDE_LOOK_PRESETS,
     LookAdjustments,
     LookPreset,
     normalize_look_adjustments,
@@ -818,6 +819,7 @@ class TimelineResponse(BaseModel):
     has_user_edits: bool
     slots: list[TimelineSlotOut]
     clips: list[TimelineClipOut]
+    edit_wide_look_presets: list[LookPreset] = Field(default_factory=list)
 
 
 # ── Transactional editor commit (E2) ──────────────────────────────────────────
@@ -5372,6 +5374,11 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
         "beat_grid": beat_grid,
         "total_duration_s": round(total, 3),
         "has_user_edits": has_user_edits,
+        "edit_wide_look_presets": (
+            list(EDIT_WIDE_LOOK_PRESETS)
+            if reason is None and settings.edit_wide_looks_enabled
+            else []
+        ),
         "slots": [
             {
                 **dict(s),
@@ -5896,6 +5903,16 @@ def resolve_timeline_slots_for_edit(
             look_preset = normalize_look_preset(baseline.get("look_preset"))
         else:
             look_preset = e.look_preset
+        if (
+            look_preset in EDIT_WIDE_LOOK_PRESETS[1:]
+            and not settings.edit_wide_looks_enabled
+            and look_preset != baseline_preset
+        ):
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "LOOK_PRESET_NOT_AVAILABLE",
+                look_preset=look_preset,
+            )
         if "look_adjustments" in e.model_fields_set:
             raw_look_adjustments: object = e.look_adjustments
         elif look_preset == baseline_preset:

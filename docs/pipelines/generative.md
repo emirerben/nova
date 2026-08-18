@@ -315,8 +315,9 @@ AI's assembly decisions, not pixels.
   pattern). Slots key on `clip_index` into `all_candidates["clip_paths"]` — matcher
   clip_ids are Gemini-ref-derived and unstable. Windows are post-resolution values.
 - **Source-media look:** each slot carries `look_preset: "none" |
-  "olive_film" | "smoky_split_tone" | "stadium_diffusion"`. Original (`none`) remains
-  the exact default bypass, and Stadium Diffusion remains a fixed whole-slot treatment.
+  "olive_film" | "smoky_split_tone" | "stadium_diffusion" | "golden_hour" |
+  "faded_analog"`. Original (`none`) remains the exact default bypass. Stadium
+  Diffusion, Golden Hour, and Faded Analog are fixed whole-slot treatments.
   Olive Film and Smoky Split-Tone persist a `look_adjustments` object with bounded
   `intensity`, `warmth`, `contrast`, `grain`, and `vignette` controls. Their authored
   defaults are respectively grain/vignette `0.18/0.22` and `0.36/0.55`, with full
@@ -326,6 +327,17 @@ AI's assembly decisions, not pixels.
   persisted controls fail safe to authored defaults, and invalid route values are
   rejected. Reorder and source swap keep both fields, split copies them to both halves,
   and new slots default to `none`.
+- **Edit-wide looks:** `GET .../timeline` advertises
+  `edit_wide_look_presets=[none,golden_hour,faded_analog]` only for an editable
+  timeline while `EDIT_WIDE_LOOKS_ENABLED=true`. The Styles drawer applies the chosen
+  value to every slot, including removed slots, and clears `look_adjustments`. The
+  server flag defaults off so compatible API, worker, and web code can deploy first;
+  setting it false hides new writes while already-persisted values continue rendering.
+  Roll back the UI/activation release to that compatibility floor, not to code that
+  predates the new enum values. Before activation, run a representative full multi-clip
+  production render against Original: Golden must stay within 1.5x wall time/output
+  size and Faded within 2x. An isolated reframe benchmark is useful diagnostics but does
+  not satisfy this full-render activation gate.
 - **Render ordering:** the shared `look_presets.py` graph runs after HDR normalization,
   output crop, and the recipe color hint, but before grids, visual blocks, authored text,
   captions, media overlays, and sound effects. Both multi-pass `reframe_and_export` and

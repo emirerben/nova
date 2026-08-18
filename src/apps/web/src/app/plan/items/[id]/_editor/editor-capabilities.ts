@@ -162,12 +162,14 @@ export function computeToolDisabledReasons({
   readOnlyReason,
   isLyrics = false,
   captions = "unavailable",
+  videoLooksAvailable = false,
 }: {
   capabilities: EditorCapabilities | null | undefined;
   readOnly: boolean;
   readOnlyReason: string;
   isLyrics?: boolean;
   captions?: CaptionToolState;
+  videoLooksAvailable?: boolean;
 }): Partial<Record<EditorTool, string>> {
   const out: Partial<Record<EditorTool, string>> = {};
   // Captions are text, so a read-only shell locks them like Text/Styles.
@@ -190,7 +192,7 @@ export function computeToolDisabledReasons({
   ) {
     const reason = textElementsLockedCopy(capabilities);
     out.text = reason;
-    if (!isLyrics) out.styles = reason;
+    if (!isLyrics && !videoLooksAvailable) out.styles = reason;
   }
   // Sounds also owns the song-window selector. Keep the drawer reachable when
   // that capability exists, even if SFX are disabled or the selector itself

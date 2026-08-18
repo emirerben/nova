@@ -183,7 +183,13 @@ export interface CopilotSlotSnapshot {
   output_end_s: number | null;
   transition_after?: EditorTransition;
   transition_duration_s?: number | null;
-  look_preset: "none" | "stadium_diffusion" | "olive_film" | "smoky_split_tone";
+  look_preset:
+    | "none"
+    | "stadium_diffusion"
+    | "olive_film"
+    | "smoky_split_tone"
+    | "golden_hour"
+    | "faded_analog";
   mutation_fingerprint?: string;
 }
 
