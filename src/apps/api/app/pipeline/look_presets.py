@@ -8,14 +8,39 @@ the same treatment.
 
 from __future__ import annotations
 
-from typing import Literal, cast
+from pathlib import Path
+from typing import Literal, assert_never, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-LookPreset = Literal["none", "stadium_diffusion", "olive_film", "smoky_split_tone"]
+LookPreset = Literal[
+    "none",
+    "stadium_diffusion",
+    "olive_film",
+    "smoky_split_tone",
+    "golden_hour",
+    "faded_analog",
+]
 
-LOOK_PRESETS = frozenset({"none", "stadium_diffusion", "olive_film", "smoky_split_tone"})
+LOOK_PRESETS = frozenset(
+    {
+        "none",
+        "stadium_diffusion",
+        "olive_film",
+        "smoky_split_tone",
+        "golden_hour",
+        "faded_analog",
+    }
+)
 DEFAULT_LOOK_PRESET: LookPreset = "none"
+EDIT_WIDE_LOOK_PRESETS: tuple[LookPreset, ...] = (
+    "none",
+    "golden_hour",
+    "faded_analog",
+)
+FADED_VIGNETTE_MASK_PATH = (
+    Path(__file__).resolve().parents[2] / "assets/looks/faded-vignette-mask.png"
+).as_posix()
 
 
 class LookAdjustments(BaseModel):
@@ -222,6 +247,39 @@ def smoky_split_tone_filter(
     )
 
 
+def golden_hour_filter(*, width: int, height: int, label_prefix: str = "golden") -> str:
+    """Approved fixed warm grade for edit-wide application."""
+    _validate_filter_args(width, height, label_prefix)
+    return ",".join(
+        [
+            "eq=brightness=0.015:contrast=1.08:gamma=1.025",
+            "colorcorrect=rl=0.005:bl=-0.015:rh=0.055:bh=-0.055:saturation=1.22",
+            "convolution=0m='0 -0.05 0 -0.05 1.2 -0.05 0 -0.05 0'",
+        ]
+    )
+
+
+def faded_analog_filter(*, width: int, height: int, label_prefix: str = "faded") -> str:
+    """Approved fixed low-saturation film grade with deterministic grain."""
+    _validate_filter_args(width, height, label_prefix)
+    base_label = f"{label_prefix}_base"
+    mask_label = f"{label_prefix}_mask"
+    return ",".join(
+        [
+            "eq=brightness=0.045:contrast=0.93:saturation=0.76:gamma=1.025",
+            "colorcorrect=rl=-0.010:bl=0.025:rh=0.040:bh=-0.035",
+            "noise=alls=3:allf=u:all_seed=9321",
+            (
+                f"split=1[{base_label}];"
+                f"movie=filename='{FADED_VIGNETTE_MASK_PATH}',"
+                f"scale={width}:{height},format=yuv420p[{mask_label}];"
+                f"[{base_label}][{mask_label}]"
+                "blend=c0_mode=multiply:c1_mode=normal:c2_mode=normal"
+            ),
+        ]
+    )
+
+
 def stadium_diffusion_filter(
     *,
     width: int,
@@ -386,8 +444,14 @@ def look_preset_filter(
             adjustments=adjustments,
             label_prefix=label_prefix,
         )
-    return stadium_diffusion_filter(
-        width=width,
-        height=height,
-        label_prefix=label_prefix,
-    )
+    if preset == "stadium_diffusion":
+        return stadium_diffusion_filter(
+            width=width,
+            height=height,
+            label_prefix=label_prefix,
+        )
+    if preset == "golden_hour":
+        return golden_hour_filter(width=width, height=height, label_prefix=label_prefix)
+    if preset == "faded_analog":
+        return faded_analog_filter(width=width, height=height, label_prefix=label_prefix)
+    assert_never(preset)

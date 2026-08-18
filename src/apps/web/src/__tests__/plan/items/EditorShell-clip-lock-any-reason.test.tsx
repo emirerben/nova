@@ -30,10 +30,11 @@ class ResizeObserverMock {
 (global as unknown as { ResizeObserver: typeof ResizeObserverMock }).ResizeObserver =
   ResizeObserverMock;
 
+let mockDesktopLayout = true;
 Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: jest.fn().mockImplementation((query: string) => ({
-    matches: query.includes("min-width"),
+    matches: query.includes("min-width") && mockDesktopLayout,
     media: query,
     onchange: null,
     addListener: jest.fn(),
@@ -54,8 +55,14 @@ jest.mock("@/lib/plan-api", () => ({
   getPlanItemJobStatus: jest.fn(),
 }));
 
+jest.mock("@/lib/generative-api", () => ({
+  ...jest.requireActual("@/lib/generative-api"),
+  getGenerativeStyleSets: jest.fn().mockResolvedValue([]),
+}));
+
 const mockCommitEditorSession = jest.fn();
 let mockTimelineLookPreset: "none" | "stadium_diffusion" = "none";
+let mockSecondSlotRemoved = false;
 jest.mock("@/lib/editor-commit", () => ({
   ...jest.requireActual("@/lib/editor-commit"),
   commitEditorSession: (...args: unknown[]) => mockCommitEditorSession(...args),
@@ -69,7 +76,29 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
     state: {
       grid: [],
       clipDurations: {},
-      baseline: [],
+      baseline: [
+        {
+          key: "slot-1",
+          slotId: "slot-1",
+          clipIndex: 0,
+          inS: 0,
+          durationBeats: null,
+          durationS: 3,
+          removed: false,
+          momentDescription: null,
+          lookPreset: mockTimelineLookPreset,
+        },
+        {
+          key: "slot-2",
+          slotId: "slot-2",
+          clipIndex: 1,
+          inS: 0,
+          durationBeats: null,
+          durationS: 3,
+          removed: mockSecondSlotRemoved,
+          momentDescription: null,
+        },
+      ],
       slots: [
         {
           key: "slot-1",
@@ -89,7 +118,7 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
           inS: 0,
           durationBeats: null,
           durationS: 3,
-          removed: false,
+          removed: mockSecondSlotRemoved,
           momentDescription: null,
         },
       ],
@@ -107,6 +136,7 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
     windows: [],
     totalS: 6,
     loadState: "ready",
+    editWideLookPresets: ["none", "golden_hour", "faded_analog"],
     reload: jest.fn(),
   }),
 }));
@@ -200,7 +230,9 @@ async function renderShell(variant: PlanItemVariant) {
 
 afterEach(() => {
   jest.clearAllMocks();
+  mockDesktopLayout = true;
   mockTimelineLookPreset = "none";
+  mockSecondSlotRemoved = false;
   window.sessionStorage.clear();
 });
 
@@ -305,6 +337,101 @@ describe("EditorShell — clip lane locks for ANY server timeline ineligibility"
         }),
       ],
     });
+  });
+
+  it("applies one edit-wide look to every slot in one action", async () => {
+    mockSecondSlotRemoved = true;
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    fireEvent.click(screen.getByRole("button", { name: "Styles tool" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Faded Analog" }));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalledTimes(1));
+    const timelineSlots = mockCommitEditorSession.mock.calls[0][2].timeline_slots;
+    expect(timelineSlots).toEqual([
+      expect.objectContaining({ look_preset: "faded_analog" }),
+      expect.objectContaining({ look_preset: "faded_analog", removed: true }),
+    ]);
+    expect(timelineSlots[0]).not.toHaveProperty("look_adjustments");
+    expect(timelineSlots[1]).not.toHaveProperty("look_adjustments");
+  });
+
+  it("applies an edit-wide look from the mobile Styles sheet", async () => {
+    mockDesktopLayout = false;
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    fireEvent.click(screen.getByRole("button", { name: "Styles tool" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Golden Hour" }));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalledTimes(1));
+    expect(mockCommitEditorSession.mock.calls[0][2].timeline_slots).toEqual([
+      expect.objectContaining({ look_preset: "golden_hour" }),
+      expect.objectContaining({ look_preset: "golden_hour" }),
+    ]);
+  });
+
+  it("does not dirty history when the selected edit-wide look is clicked again", async () => {
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    fireEvent.click(screen.getByRole("button", { name: "Styles tool" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Original" }));
+    expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Text tool" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add text" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalledTimes(1));
+    expect(mockCommitEditorSession.mock.calls[0][2].timeline_slots).toBeUndefined();
+  });
+
+  it("omits timeline after an edit-wide look is undone to baseline", async () => {
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    fireEvent.click(screen.getByRole("button", { name: "Styles tool" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Golden Hour" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Text tool" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add text" }));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalledTimes(1));
+    expect(mockCommitEditorSession.mock.calls[0][2].timeline_slots).toBeUndefined();
+    expect(mockCommitEditorSession.mock.calls[0][2].text_elements).toHaveLength(1);
+  });
+
+  it("resets an edit-wide look to Original with one-step undo and redo", async () => {
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    fireEvent.click(screen.getByRole("button", { name: "Styles tool" }));
+    const original = await screen.findByRole("radio", { name: "Original" });
+    const golden = screen.getByRole("radio", { name: "Golden Hour" });
+
+    fireEvent.click(golden);
+    expect(golden).toBeChecked();
+    fireEvent.click(original);
+    expect(original).toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(golden).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+    expect(original).toBeChecked();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalledTimes(1));
+    expect(mockCommitEditorSession.mock.calls[0][2].timeline_slots).toBeUndefined();
   });
 
   it("records one undo step for an entire look-slider drag", async () => {

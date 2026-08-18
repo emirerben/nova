@@ -541,6 +541,16 @@ class Settings(BaseSettings):
         "nova-video` + `fly machine restart <id>` — no deploy needed.",
     )
 
+    edit_wide_looks_enabled: bool = Field(
+        default=False,
+        description="Advertise Golden Hour and Faded Analog as edit-wide look "
+        "controls after compatible API, worker, and web code is deployed. The "
+        "renderer continues honoring already-persisted values when this is false. "
+        "Activate with `fly secrets set EDIT_WIDE_LOOKS_ENABLED=true --app "
+        "nova-video` + API restart; set false to hide new writes without breaking "
+        "existing edits.",
+    )
+
     GENERATIVE_PARALLEL_VARIANTS_ENABLED: bool = Field(
         default=False,
         description="Render a generative job's variants concurrently (bounded by "

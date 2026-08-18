@@ -149,6 +149,18 @@ describe("computeToolDisabledReasons", () => {
     });
   });
 
+  it("keeps Styles available for edit-wide video looks while Text remains locked", () => {
+    expect(
+      computeToolDisabledReasons({
+        capabilities: SUBTITLED_EFFECTS_LIVE,
+        readOnly: false,
+        readOnlyReason: CAPTIONS_TAB_REASON,
+        captions: "editable",
+        videoLooksAvailable: true,
+      }),
+    ).toEqual({ text: CAPTIONS_TAB_REASON });
+  });
+
   it("uses the text-specific fallback (not the whole-shell copy) when text_elements is false with no reason", () => {
     expect(
       computeToolDisabledReasons({

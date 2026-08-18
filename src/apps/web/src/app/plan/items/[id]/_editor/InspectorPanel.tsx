@@ -64,6 +64,7 @@ import type { LookAdjustments, LookPreset } from "@/lib/generative-api";
 import {
   defaultLookAdjustments,
   isCustomizableLook,
+  lookPresetLabel,
   resolveLookAdjustments,
 } from "@/lib/look-presets";
 import type { EditorSelection } from "./useEditorSelection";
@@ -182,6 +183,7 @@ export default function InspectorPanel({
   onPatchTextTiming,
   onPatchClipTiming,
   onPatchClipLook,
+  availableLookPresets = [],
   onPatchClipLookAdjustments,
   onRecordClipLookAdjustments,
   onPreviewClipTiming,
@@ -261,6 +263,7 @@ export default function InspectorPanel({
   onPatchTextTiming: (patch: { start_s?: number; end_s?: number }) => void;
   onPatchClipTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
   onPatchClipLook?: (preset: LookPreset) => void;
+  availableLookPresets?: LookPreset[];
   onPatchClipLookAdjustments?: (patch: Partial<LookAdjustments>) => void;
   onRecordClipLookAdjustments?: () => void;
   onPreviewClipTiming: (patch: { inS: number; durationS: number }) => void;
@@ -394,6 +397,7 @@ export default function InspectorPanel({
           timing={clipTiming}
           onPatchTiming={onPatchClipTiming}
           onPatchLook={onPatchClipLook}
+          availableLookPresets={availableLookPresets}
           onPatchLookAdjustments={onPatchClipLookAdjustments}
           onRecordLookAdjustments={onRecordClipLookAdjustments}
           onPreviewTiming={onPreviewClipTiming}
@@ -2047,6 +2051,7 @@ function ClipInspector({
   timing,
   onPatchTiming,
   onPatchLook,
+  availableLookPresets,
   onPatchLookAdjustments,
   onRecordLookAdjustments,
   onPreviewTiming,
@@ -2056,6 +2061,7 @@ function ClipInspector({
   timing: InspectorClipTiming;
   onPatchTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
   onPatchLook?: (preset: LookPreset) => void;
+  availableLookPresets: LookPreset[];
   onPatchLookAdjustments?: (patch: Partial<LookAdjustments>) => void;
   onRecordLookAdjustments?: () => void;
   onPreviewTiming: (patch: { inS: number; durationS: number }) => void;
@@ -2085,6 +2091,18 @@ function ClipInspector({
     selectedLook,
     timing.slot.lookAdjustments,
   );
+  const lookOptions = useMemo(() => {
+    const values: LookPreset[] = [
+      "none",
+      "olive_film",
+      "smoky_split_tone",
+      "stadium_diffusion",
+    ];
+    for (const preset of [...availableLookPresets, selectedLook]) {
+      if (!values.includes(preset)) values.push(preset);
+    }
+    return values.map((preset) => [preset, lookPresetLabel(preset)] as const);
+  }, [availableLookPresets, selectedLook]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -2162,19 +2180,12 @@ function ClipInspector({
         <legend className="flex items-center gap-1 text-[12px] font-semibold text-[#3f3f46]">
           <span>Look</span>
           <InfoDot label="Look" size="compact">
-            Each look is a color grade — warm olive, smoky split-tone, or stadium diffusion.
-            Thumbnails show the treatment.
+            Each look is a color grade applied before captions and graphics. Thumbnails show
+            the treatment.
           </InfoDot>
         </legend>
         <div className="mt-2 grid grid-cols-2 gap-2">
-          {(
-            [
-              ["none", "Original"],
-              ["olive_film", "Olive Film"],
-              ["smoky_split_tone", "Smoky Split-Tone"],
-              ["stadium_diffusion", "Stadium Diffusion"],
-            ] as const
-          ).map(([preset, label]) => {
+          {lookOptions.map(([preset, label]) => {
             const selected = selectedLook === preset;
             return (
               <label
