@@ -18,7 +18,13 @@ the story assembler consumes the approved Job snapshot directly.
 5. `EditProposalAgent` sees the complete media set plus creator-written context. It proposes an
    ordered title and story beats. It must use every source when there are at most three, may leave
    one out when there are four to six, and must use at least seven when more are available. It may
-   not invent personal experiences.
+   not invent personal experiences. There is no artificial duration floor: `draft_edit_proposal`
+   computes a feasible-duration estimate from the analyzed media (`feasible_guided_duration_s` —
+   real video durations summed, plus a fixed per-image credit) and clamps the brief's requested
+   duration down to it (`adapt_target_duration_s`) before calling the agent, so a short clip still
+   yields an edit instead of failing schema validation trying to stretch it. Footage under 3s is
+   infeasible for a guided story — the agent is never called; the attempt fails with
+   `guided_edit_infeasible` naming the actual footage length.
 6. The item page shows combined photo/video thumbnails. The creator can continue the same
    conversation with requests such as “put food first,” “make it slower,” or “use less text.”
    Conversational revisions may reorder and rewrite editorial fields. They may also move the
@@ -44,6 +50,11 @@ the story assembler consumes the approved Job snapshot directly.
 - `media_digest`: SHA-256 of canonical lane, stable ID, object path, storage generation, kind,
   and content hash. Editorial ordering is intentionally excluded.
 - `status`: `briefing`, `analyzing`, `drafting`, `draft`, `approved`, `stale`, or `failed`.
+- `approval_mode`: `"user"` (explicit approval, the default/`null`) or `"auto"` — set at reservation
+  time (`begin_proposal_attempt`) and carried onto `last_approved.approval_mode` by `approve_proposal`
+  so it survives a later reservation overwriting the envelope. See "AI-designs-by-default" below.
+- `design_fallback`: set to the failure code that triggered a clip-only legacy-montage fallback
+  (auto-design only); `null` otherwise, including a normal failure with pool assets present.
 - `brief`: requested direction, goal, pace, and duration.
 - `conversation`: up to ten durable creator/Kria exchanges, including reply suggestions. The
   thread survives reloads and proposal-generation retries.
@@ -101,8 +112,12 @@ short-lived, token-fenced single-flight reservation, then releases the transacti
 the model. Duplicate tabs therefore cannot spend a second model call. The final write reloads under
 lock and must own both the token and proposal version. Responses expose only safe `thinking` or
 `retry required` state—not the token—so a reload disables generic planning while the creator's
-words are still being interpreted. An abandoned reservation expires after 90 seconds and can be
-reclaimed by resending the direction. Draft revisions must preserve every existing beat ID exactly
+words are still being interpreted. An abandoned reservation expires after 60 seconds (`EDIT_CONVERSATION_ATTEMPT_TTL_S`, matching the
+Next.js proxy's `maxDuration=60` so a client-visible timeout and the server reservation expire
+together) and can be reclaimed by resending the direction. The conversation endpoint additionally
+requires media before reserving an attempt — `clip_assignments` non-empty or a registered pool asset
+in `queued`/`analyzing`/`ready` — otherwise it returns `409 media_required` rather than spending a
+model call on advice the item page can't act on yet. Draft revisions must preserve every existing beat ID exactly
 once; the route rejoins server-owned media IDs and retains creator-authored thoughts verbatim.
 
 ## Conversational rollout
@@ -123,9 +138,60 @@ When enforcement is enabled, Generate returns one explicit 409 code:
 - `proposal_draft`
 - `proposal_stale`
 - `proposal_analyzing`
+- `proposal_failed` — the last attempt ended in `status="failed"`. Previously fell through to the
+  generic `proposal_draft` message ("Approve the edit plan before generating"), which was wrong for
+  a plan that was never actually drafted.
 
 The same checks run in the synchronous dispatch helper, so direct or delayed task delivery cannot
-bypass the route.
+bypass the route. With `GUIDED_AUTO_DESIGN_ENABLED` on, Generate reserves and drafts instead of
+raising most of these (see below) — the plain 409s above are what a creator sees only with that flag
+off, or with it on and the item has no media at all yet.
+
+## AI-designs-by-default (GUIDED_AUTO_DESIGN_ENABLED)
+
+Product decision (2026-08-18): asking the creator for direction stays optional. If they never open
+the planner, Kria designs the edit and Generate still works in one click, as long as media exists.
+
+`GUIDED_AUTO_DESIGN_ENABLED` defaults **true**. When it is on and `guided_edit_enforcement_enabled`
+would otherwise 409 Generate (`proposal_generate_error` returned any code above) and the item has
+media (`clip_gcs_paths` non-empty or at least one `ready` pool asset):
+
+1. `generate_item` (`routes/plan_items.py::_maybe_auto_design_generate`) re-locks the item. An
+   attempt already `analyzing`/`drafting` (auto or manual) returns the current state idempotently —
+   `200`, no duplicate reservation or task. Otherwise it reserves one
+   (`begin_proposal_attempt(item, approval_mode="auto")`), commits, and enqueues
+   `draft_edit_proposal(..., auto_finalize=True)`. No media at all → falls through to the ordinary
+   409 above (nothing for auto-design to work from).
+2. `draft_edit_proposal` runs its normal analyze → draft flow unchanged. With `auto_finalize=True`,
+   a successful draft is immediately approved (`approve_proposal`, `approval_mode` stays `"auto"` on
+   the resulting `last_approved` snapshot).
+3. `_dispatch_after_auto_design` runs exactly once after the attempt settles (success or any
+   failure), **after** the approval commit and outside the PlanItem row lock — dispatch never
+   publishes while holding it:
+   - `approved` → dispatch normally through `dispatch_item_render_for`.
+   - `failed`, zero registered pool assets, `clip_gcs_paths` non-empty → dispatch anyway with
+     `bypass_guided_edit_gate=True` (a new escape hatch on `_dispatch_item_render` /
+     `dispatch_item_render_for`, used **only** by this caller) to route around the very enforcement
+     check that would otherwise 409 a `"failed"` proposal — the legacy clip render path, exactly as
+     if guided edit had never been approved. `design_fallback` is set to the failure code that
+     triggered it.
+   - `failed`, pool assets present → **no fallback**. Registered pool media is never silently
+     dropped behind a clip-only render (the 2026-08-15 pool-media incident invariant) — the failure
+     stays exactly as persisted, retryable.
+   - dispatch itself fails (`publish_failed` etc.) → the proposal stays in whatever state already
+     committed (`approved`, or `failed`+`design_fallback`). The next manual Generate click either
+     dispatches directly (approved reads identically regardless of `approval_mode`) or re-triggers
+     auto-design (failed) — never wedged.
+
+`PlanItemResponse.guided_edit_auto_design` mirrors the flag (same pattern as
+`guided_edit_available`/`guided_edit_conversation_available`) so the frontend can gate the Generate
+button's enabled state and hint copy on it; absent/false on an old API keeps today's strict-gate
+behavior on a newer frontend build (deploy-skew safe).
+
+**Kill switch:** `GUIDED_AUTO_DESIGN_ENABLED=false` restores today's strict enforcement
+byte-identically — new Generate calls just 409 again. It does **not** retroactively un-approve
+proposals an earlier auto-design attempt already approved; see
+`docs/runbooks/conversational-edit-rollback.md`.
 
 ## Rollout
 
@@ -197,7 +263,12 @@ detail and proposal mutation responses carry the full review payload, keeping li
 ## Verification
 
 - State/CAS/digest tests: `tests/services/test_edit_proposals.py`
-- API Generate codes: `tests/routes/test_plan_item_generation.py`
+- API Generate codes + auto-design kill-switch pin + idempotency:
+  `tests/routes/test_plan_item_generation.py`
+- Draft-attempt crash regressions, duration-adaptation clamp, and the
+  `auto_finalize` state machine (approve+dispatch, dispatch failure, clip-only
+  montage fallback, pool-assets-present no-fallback):
+  `tests/tasks/test_edit_proposal_build.py`
 - Source-diversity, distinct-chapter, and observation-only draft guards:
   `tests/agents/test_edit_proposal_agent.py`
 - Replay/live+judge travel cases: `tests/evals/test_edit_proposal_evals.py`
