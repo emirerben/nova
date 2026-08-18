@@ -381,6 +381,51 @@ def test_task_side_enforcement_rejects_missing_proposal(
     assert _jobs_for(item_id) == []
 
 
+def test_bypass_guided_edit_gate_refuses_when_pool_asset_present() -> None:
+    """P2-4 (2026-08-18 adversarial review): draft_edit_proposal's clip-only
+
+    montage fallback checks zero-registered-pool-assets in a SEPARATE
+    transaction from this dispatch. The lock-owning dispatcher must
+    independently re-count under ITS OWN lock and refuse the bypass — never
+    silently drop a pool asset that appeared in the gap behind a montage.
+    """
+
+    user_id, item_id = _seed_item()
+    with sync_session() as s:
+        s.add(
+            PlanItemAsset(
+                plan_item_id=item_id,
+                user_id=user_id,
+                gcs_path=f"users/{user_id}/plan/{item_id}/pool/photo.jpg",
+                gcs_generation="1",
+                kind="image",
+                status="ready",
+            )
+        )
+        s.commit()
+
+    with patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(str(item_id), bypass_guided_edit_gate=True)
+
+    assert result.outcome == "guided_edit_bypass_unsafe"
+    enqueue.assert_not_called()
+    assert _jobs_for(item_id) == []
+
+
+def test_bypass_guided_edit_gate_dispatches_when_pool_is_genuinely_empty() -> None:
+    """The bypass still works for the real clip-only fallback case (no pool
+
+    assets at all) — the TOCTOU guard above must not block the legitimate path.
+    """
+
+    _user_id, item_id = _seed_item()
+    with patch(_ENQUEUE):
+        result = dispatch_item_render_for(str(item_id), bypass_guided_edit_gate=True)
+
+    assert result.outcome == "dispatched"
+    assert len(_jobs_for(item_id)) == 1
+
+
 def test_approved_proposal_exact_media_is_snapshotted_into_job(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

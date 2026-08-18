@@ -98,6 +98,31 @@ def test_attempt_fence_requires_exact_epoch_attempt_and_active_status(monkeypatc
     assert proposal_build._attempt_is_active(item_id, "attempt-1", 7) is False
 
 
+def test_attempt_wants_auto_finalize_reads_approval_mode_off_the_row(monkeypatch) -> None:
+    """P2-6: auto_finalize is derived from the persisted envelope, not a task
+
+    kwarg — this is the exact read that replaces it.
+    """
+
+    row = SimpleNamespace(edit_proposal=_proposal(approval_mode="auto"), ownership_epoch=7)
+    db = _Db(_Result(row=row))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    item_id = uuid.uuid4()
+
+    assert proposal_build._attempt_wants_auto_finalize(item_id, "attempt-1", 7) is True
+    # Wrong attempt (superseded/duplicate), wrong epoch, or a manual
+    # (non-"auto") attempt must all read False.
+    assert proposal_build._attempt_wants_auto_finalize(item_id, "stale-attempt", 7) is False
+    assert proposal_build._attempt_wants_auto_finalize(item_id, "attempt-1", 8) is False
+    row.edit_proposal = _proposal(approval_mode=None)
+    assert proposal_build._attempt_wants_auto_finalize(item_id, "attempt-1", 7) is False
+
+
 def test_pool_refs_rejects_asset_owned_by_another_user() -> None:
     owner_id = uuid.uuid4()
     foreign = SimpleNamespace(user_id=uuid.uuid4())
@@ -416,6 +441,13 @@ def test_adapt_target_duration_clamps_to_feasible_footage() -> None:
 
 
 def test_infeasible_footage_skips_agent_and_fails_with_actionable_message(monkeypatch) -> None:
+    """A video shorter than the renderer's own min_moment_s (1.4s) earns ZERO
+
+    feasibility credit (P2-1b, 2026-08-18 adversarial review) — it can never
+    be its own legible beat moment, so crediting it (even at the image floor)
+    would misrepresent what the footage can actually support.
+    """
+
     item_id = uuid.uuid4()
     owner_id = uuid.uuid4()
     short = dict(_PROD_CLIP_ASSIGNMENT)
@@ -454,8 +486,53 @@ def test_infeasible_footage_skips_agent_and_fails_with_actionable_message(monkey
     assert persisted.status == "failed"
     assert persisted.failure is not None
     assert persisted.failure.code == "guided_edit_infeasible"
-    assert "1.0" in persisted.failure.message
+    assert "0.0" in persisted.failure.message
     assert db.commits == 1
+
+
+def test_video_below_min_moment_earns_zero_credit_not_image_credit() -> None:
+    zero_duration = SimpleNamespace(kind="video", duration_s=None)
+    zero_flag = SimpleNamespace(kind="video", duration_s=0.0)
+    too_short = SimpleNamespace(kind="video", duration_s=1.0)
+    assert proposal_build.feasible_guided_duration_s([zero_duration]) == 0.0
+    assert proposal_build.feasible_guided_duration_s([zero_flag]) == 0.0
+    assert proposal_build.feasible_guided_duration_s([too_short]) == 0.0
+
+
+def test_guided_feasibility_threshold_scales_with_media_count_floored_at_min() -> None:
+    # 1-2 media: renderer minimum (1.4s each) never exceeds the agent's own
+    # Pydantic ge=3 floor, so the threshold stays pinned at MIN_GUIDED_DURATION_S.
+    assert proposal_build.guided_feasibility_threshold_s(1) == 3
+    assert proposal_build.guided_feasibility_threshold_s(2) == 3
+    # 3+ media: capped at 3 sources (minimum_required_sources' <=3 case uses
+    # every source in one story) -> 1.4 * 3 = 4.2, regardless of how many more.
+    assert proposal_build.guided_feasibility_threshold_s(3) == pytest.approx(4.2)
+    assert proposal_build.guided_feasibility_threshold_s(10) == pytest.approx(4.2)
+
+
+def test_many_too_short_videos_no_longer_overestimated_via_image_credit_bug() -> None:
+    """Four 0.8s clips (3.2s raw total) cleared the OLD flat 3s floor even
+
+    though not one of them is individually usable as its own beat moment —
+    each was silently credited the FULL _IMAGE_FEASIBLE_CREDIT_S (1.4s) under
+    the pre-P2-1 bug, overestimating total feasibility to 5.6s. Each now
+    correctly earns zero credit (below _RENDERER_MIN_MOMENT_S), so the whole
+    set is correctly infeasible.
+    """
+
+    media = [SimpleNamespace(kind="video", duration_s=0.8) for _ in range(4)]
+    feasible = proposal_build.feasible_guided_duration_s(media)
+    threshold = proposal_build.guided_feasibility_threshold_s(len(media))
+    assert feasible == 0.0
+    assert feasible < threshold
+
+
+def test_feasibility_credits_only_the_usable_videos_in_a_mixed_set() -> None:
+    usable = SimpleNamespace(kind="video", duration_s=5.0)
+    too_short = SimpleNamespace(kind="video", duration_s=0.5)
+    image = SimpleNamespace(kind="image", duration_s=None)
+    feasible = proposal_build.feasible_guided_duration_s([usable, too_short, image])
+    assert feasible == pytest.approx(5.0 + proposal_build._IMAGE_FEASIBLE_CREDIT_S)
 
 
 class _FakeBeat:
@@ -474,9 +551,68 @@ class _FakeAgentOutput:
         self.story_beats = [_FakeBeat(media_ids)]
 
 
+def test_agent_output_longer_than_feasible_footage_is_rejected(monkeypatch) -> None:
+    """The agent's +/-5s tolerance (EditProposalAgent.parse) checks output
+
+    against the TARGET fed to it, not against real footage. A target floored
+    by MIN_GUIDED_DURATION_S could still let a within-tolerance output exceed
+    what the footage actually supports — draft_edit_proposal must reject that
+    independently of the agent's own tolerance check (P2-1a).
+    """
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    clip = dict(_PROD_CLIP_ASSIGNMENT)
+    clip["duration_s"] = 10.0
+    item = _prod_item(item_id, clip_assignments=[clip])
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
+    )
+    monkeypatch.setattr(
+        "app.storage.object_metadata",
+        lambda _path: SimpleNamespace(
+            content_type="video/quicktime", generation="1787000010652201"
+        ),
+    )
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    # feasible=10.0 -> target=10, but the agent claims a 15s story anyway
+    # (within its own +/-5s tolerance of the 10s target it was given).
+    monkeypatch.setattr(
+        "app.agents.edit_proposal.EditProposalAgent.run",
+        lambda self, input: _FakeAgentOutput(  # noqa: A002
+            [_PROD_CLIP_ASSIGNMENT["media_id"]], duration_s=15
+        ),
+    )
+
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.failure is not None
+    assert persisted.failure.code == "guided_edit_infeasible"
+    assert persisted.draft is None  # the oversized snapshot was never persisted
+    assert db.commits == 2  # analyzing -> drafting, then drafting -> failed
+
+
 def _auto_finalize_common_mocks(monkeypatch, item, owner_id) -> None:
     monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
     monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    # P2-6: auto_finalize is derived from the persisted envelope
+    # (approval_mode="auto") via a cheap unlocked pre-read, not a task kwarg.
+    # These fakes don't wire a real DB shape for that pre-read's raw SQL
+    # query, so pin it directly — item.approval_mode is already "auto" on
+    # every fixture that reaches this helper.
+    monkeypatch.setattr(proposal_build, "_attempt_wants_auto_finalize", lambda *_a, **_kw: True)
     monkeypatch.setattr(
         "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
     )
@@ -516,7 +652,7 @@ def test_auto_finalize_success_approves_auto_and_dispatches_after_commit(monkeyp
 
     monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
 
-    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0, auto_finalize=True)
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
 
     persisted = parse_edit_proposal(item.edit_proposal)
     assert persisted is not None
@@ -557,7 +693,7 @@ def test_auto_finalize_dispatch_failure_leaves_approved_no_wedge(monkeypatch) ->
         lambda *_a, **_kw: SimpleNamespace(outcome="publish_failed"),
     )
 
-    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0, auto_finalize=True)
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
 
     persisted = parse_edit_proposal(item.edit_proposal)
     assert persisted is not None
@@ -599,7 +735,7 @@ def test_auto_finalize_infeasible_footage_falls_back_to_montage_clip_only(monkey
 
     monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
 
-    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0, auto_finalize=True)
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
 
     persisted = parse_edit_proposal(item.edit_proposal)
     assert persisted is not None
@@ -661,7 +797,7 @@ def test_auto_finalize_infeasible_footage_with_pool_assets_never_falls_back(
 
     monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
 
-    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0, auto_finalize=True)
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
 
     persisted = parse_edit_proposal(item.edit_proposal)
     assert persisted is not None
@@ -704,6 +840,12 @@ def test_duplicate_task_invocation_while_a_newer_attempt_is_active_is_a_no_op(
     monkeypatch.setattr(
         "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
     )
+    # Force "wants auto-finalize" True even though the item's approval_mode
+    # is "auto" too — the real safety net under test is
+    # _dispatch_after_auto_design's OWN generation_attempt_id re-check, which
+    # must catch this even when auto_finalize is (correctly or not)
+    # affirmatively true for this stale invocation.
+    monkeypatch.setattr(proposal_build, "_attempt_wants_auto_finalize", lambda *_a, **_kw: True)
 
     dispatch_calls = []
     monkeypatch.setattr(
@@ -711,9 +853,7 @@ def test_duplicate_task_invocation_while_a_newer_attempt_is_active_is_a_no_op(
         lambda *a, **kw: dispatch_calls.append((a, kw)) or SimpleNamespace(outcome="dispatched"),
     )
 
-    proposal_build.draft_edit_proposal.run(
-        str(item_id), "attempt-stale-duplicate", 0, auto_finalize=True
-    )
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-stale-duplicate", 0)
 
     persisted = parse_edit_proposal(item.edit_proposal)
     assert persisted is not None

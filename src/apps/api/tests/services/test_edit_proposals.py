@@ -327,6 +327,41 @@ def test_auto_design_approval_mode_survives_draft_and_approve() -> None:
     assert item.edit_proposal["last_approved"]["approval_mode"] == "auto"
 
 
+def test_human_edited_draft_clears_auto_approval_mode() -> None:
+    """P3 (2026-08-18 adversarial review): a creator submitting their own
+
+    corrected snapshot (PATCH /edit-proposal -> save_proposal_draft with
+    clear_approval_mode=True) is unambiguous manual review — a later approval
+    must never still record approval_mode="auto" from the original
+    auto-design reservation.
+    """
+
+    item = _item()
+    analyzing = begin_proposal_attempt(item, approval_mode="auto")
+    snapshot = _snapshot()
+    raw = dict(item.edit_proposal)
+    raw["media_digest"] = canonical_media_digest(snapshot.media)
+    raw["status"] = "drafting"
+    item.edit_proposal = raw
+    drafted = save_proposal_draft(
+        item, expected_version=analyzing.proposal_version, snapshot=snapshot
+    )
+    assert drafted.approval_mode == "auto"  # auto-design's OWN drafting step
+
+    # The creator now opens the planner and saves their own edit.
+    human_edit = save_proposal_draft(
+        item,
+        expected_version=drafted.proposal_version,
+        snapshot=snapshot,
+        clear_approval_mode=True,
+    )
+    assert human_edit.approval_mode is None
+
+    approved = approve_proposal(item, expected_version=human_edit.proposal_version)
+    assert approved.last_approved is not None
+    assert approved.last_approved.approval_mode is None
+
+
 def test_manual_approval_mode_defaults_to_none() -> None:
     item = _item()
     analyzing = begin_proposal_attempt(item)

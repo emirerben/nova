@@ -530,6 +530,12 @@ DispatchOutcome = Literal[
     "proposal_stale",
     "proposal_analyzing",
     "proposal_failed",
+    # bypass_guided_edit_gate's caller (draft_edit_proposal's clip-only
+    # montage fallback) checked zero registered pool assets in a SEPARATE
+    # transaction; this lock re-asserts it and refuses the bypass if a pool
+    # asset appeared in the gap (P2-4, 2026-08-18 adversarial review) —
+    # never silently drop pool media behind a montage.
+    "guided_edit_bypass_unsafe",
 ]
 
 
@@ -643,9 +649,25 @@ def _dispatch_item_render(
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
 
     approved_proposal: dict | None = None
-    if not bypass_guided_edit_gate and (
-        settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled
-    ):
+    if bypass_guided_edit_gate:
+        # The caller's zero-registered-pool-assets invariant was checked in a
+        # SEPARATE transaction — re-assert it under THIS lock (the item row is
+        # already FOR-UPDATE-locked by dispatch_item_render_for) before
+        # trusting it (P2-4). A pool asset registered in the gap between that
+        # check and this dispatch must never be silently dropped behind a
+        # clip-only montage.
+        from sqlalchemy import func  # noqa: PLC0415
+
+        from app.models import PlanItemAsset  # noqa: PLC0415
+
+        pool_count = session.execute(
+            select(func.count())
+            .select_from(PlanItemAsset)
+            .where(PlanItemAsset.plan_item_id == item.id)
+        ).scalar_one()
+        if pool_count > 0:
+            return DispatchResult("guided_edit_bypass_unsafe")
+    elif settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled:
         from app.services.edit_proposals import (  # noqa: PLC0415
             mark_edit_proposal_stale,
             validate_approved_proposal_media_sync,

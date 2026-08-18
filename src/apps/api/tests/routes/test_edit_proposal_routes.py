@@ -1007,3 +1007,245 @@ async def test_approval_validation_rejects_replaced_pool_asset_object(monkeypatc
         await plan_items._proposal_media_is_current(item, snapshot, db, user_id=uuid.uuid4())
         is False
     )
+
+
+# ── Auto-design status-machine guards (P2-2/P2-3, 2026-08-18 adversarial review) ──
+
+
+def _auto_design_plan() -> SimpleNamespace:
+    return SimpleNamespace(ownership_epoch=1)
+
+
+def _auto_design_user() -> SimpleNamespace:
+    return SimpleNamespace(id=uuid.uuid4())
+
+
+@pytest.mark.asyncio
+async def test_auto_design_never_clobbers_a_live_conversation_attempt(monkeypatch) -> None:
+    """P2-3: Generate racing a live Kria reply must never void the in-flight
+
+    turn — idempotent current-state response, no new reservation.
+
+    P1-1 regression: AsyncSession expires every ORM attribute on rollback
+    (expire_on_commit=False only covers commit) — serializing the row that
+    was locked BEFORE `await db.rollback()` without reloading first raises
+    MissingGreenlet in prod the instant a field is touched outside an awaited
+    context. `_load_owned_item` is mocked with two DISTINCT return values
+    (locked snapshot, then reload) so this test fails if the code path ever
+    goes back to serializing the pre-rollback object.
+    """
+
+    from app.services.edit_proposals import reserve_edit_conversation_attempt
+
+    locked_item = _draft_item()
+    locked_item.clip_gcs_paths = [locked_item.clip_assignments[0]["gcs_path"]]
+    locked_item.edit_proposal["status"] = "briefing"
+    reserve_edit_conversation_attempt(
+        locked_item, expected_version=locked_item.edit_proposal["proposal_version"]
+    )
+    reloaded_item = SimpleNamespace(**vars(locked_item))  # a DIFFERENT object, post-reload
+
+    monkeypatch.setattr(plan_items.settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(
+        plan_items, "_load_owned_item", AsyncMock(side_effect=[locked_item, reloaded_item])
+    )
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded, **_kw: loaded)
+    monkeypatch.setattr(plan_items, "_get_instruction_level", AsyncMock(return_value="full"))
+    db = AsyncMock()
+
+    result = await plan_items._maybe_auto_design_generate(
+        str(locked_item.id), locked_item, _auto_design_plan(), _auto_design_user(), db
+    )
+
+    assert result is reloaded_item  # serialized the RELOADED row, not the pre-rollback one
+    assert result is not locked_item
+    db.rollback.assert_awaited()
+    db.commit.assert_not_awaited()
+    # The live reservation is untouched.
+    assert locked_item.edit_proposal["conversation_attempt"] is not None
+
+
+@pytest.mark.asyncio
+async def test_auto_design_duplicate_click_while_analyzing_reloads_before_serializing(
+    monkeypatch,
+) -> None:
+    """P1-1: the original bug's exact location — a duplicate Generate click
+
+    while an attempt is already `analyzing`/`drafting` must serialize the
+    RELOADED row (post-rollback), never the row that was locked before
+    `await db.rollback()` expired it (MissingGreenlet in prod under a real
+    AsyncSession). Same two-distinct-objects technique as the
+    conversation_attempt test above.
+    """
+
+    locked_item = _draft_item()
+    locked_item.clip_gcs_paths = [locked_item.clip_assignments[0]["gcs_path"]]
+    locked_item.edit_proposal["status"] = "analyzing"
+    reloaded_item = SimpleNamespace(**vars(locked_item))
+
+    monkeypatch.setattr(plan_items.settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(
+        plan_items, "_load_owned_item", AsyncMock(side_effect=[locked_item, reloaded_item])
+    )
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded, **_kw: loaded)
+    monkeypatch.setattr(plan_items, "_get_instruction_level", AsyncMock(return_value="full"))
+    db = AsyncMock()
+
+    result = await plan_items._maybe_auto_design_generate(
+        str(locked_item.id), locked_item, _auto_design_plan(), _auto_design_user(), db
+    )
+
+    assert result is reloaded_item
+    assert result is not locked_item
+    db.rollback.assert_awaited()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_auto_design_preserves_creators_brief_on_a_fresh_attempt(monkeypatch) -> None:
+    """P2-2a/b: a stale/failed/briefing attempt reserves a FRESH attempt but
+
+    must preserve the creator's already-stated direction/goal/pace/duration —
+    never reset it to ProposalBrief() defaults.
+    """
+
+    stated_brief = ProposalBrief(
+        direction="fast_montage", goal="Quick highlights", pace="fast", duration_s=15
+    )
+    proposal = EditProposal(
+        proposal_version=4,
+        generation_attempt_id="attempt-old",
+        status="stale",
+        brief=stated_brief,
+    )
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        clip_gcs_paths=["users/u/plan/i/corfu.mp4"],
+        clip_assignments=[{"media_id": "clip-1", "gcs_path": "users/u/plan/i/corfu.mp4"}],
+        edit_proposal=proposal.model_dump(mode="json"),
+    )
+    monkeypatch.setattr(plan_items.settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded, **_kw: loaded)
+    monkeypatch.setattr(plan_items, "_get_instruction_level", AsyncMock(return_value="full"))
+    monkeypatch.setattr("app.services.plan_clips.ensure_clip_media_ids", lambda _item: False)
+    apply_calls = []
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kw: apply_calls.append(kw),
+    )
+    db = AsyncMock()
+
+    await plan_items._maybe_auto_design_generate(
+        str(item.id), item, _auto_design_plan(), _auto_design_user(), db
+    )
+
+    assert item.edit_proposal["status"] == "analyzing"
+    assert item.edit_proposal["approval_mode"] == "auto"
+    assert item.edit_proposal["brief"] == stated_brief.model_dump(mode="json")
+    assert len(apply_calls) == 1
+    assert "auto_finalize" not in apply_calls[0].get("kwargs", {})  # P2-6
+
+
+@pytest.mark.asyncio
+async def test_auto_design_finalizes_an_existing_draft_instead_of_redrafting(monkeypatch) -> None:
+    """P2-2c: status="draft" auto-finalizes THAT draft (approve + dispatch)
+
+    rather than discarding it for a fresh redraft.
+    """
+
+    from app.tasks.content_plan_build import DispatchResult
+
+    item = _draft_item()
+    item.clip_gcs_paths = [item.clip_assignments[0]["gcs_path"]]
+    monkeypatch.setattr(plan_items.settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded, **_kw: loaded)
+    monkeypatch.setattr(plan_items, "_get_instruction_level", AsyncMock(return_value="full"))
+    monkeypatch.setattr(
+        plan_items.storage,
+        "object_metadata",
+        lambda _path: SimpleNamespace(generation="42"),
+    )
+    dispatch_calls = []
+
+    def _fake_dispatch(item_id_arg, epoch):
+        dispatch_calls.append((item_id_arg, epoch))
+        return DispatchResult("dispatched", job_id=str(uuid.uuid4()))
+
+    monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
+    db = AsyncMock()
+
+    result = await plan_items._maybe_auto_design_generate(
+        str(item.id), item, _auto_design_plan(), _auto_design_user(), db
+    )
+
+    assert result is item
+    assert item.edit_proposal["status"] == "approved"
+    assert item.edit_proposal["last_approved"] is not None
+    assert len(dispatch_calls) == 1  # dispatched the EXISTING draft, no redraft/agent call
+
+
+@pytest.mark.asyncio
+async def test_auto_design_dispatches_directly_for_an_already_approved_proposal(
+    monkeypatch,
+) -> None:
+    """P2-2d: an "approved" proposal reached by a race (landed between the
+
+    caller's initial unlocked read and this lock) must never be reset —
+    begin_proposal_attempt must never clobber it back to "analyzing". It must
+    also not just return None: the caller's `item`/`proposal_error` are a
+    STALE pre-lock snapshot, so falling through to them would incorrectly
+    re-raise the ORIGINAL conflict for a proposal that is actually approved
+    now. Dispatch it directly instead.
+    """
+
+    from app.tasks.content_plan_build import DispatchResult
+
+    snapshot = _snapshot()
+    digest = canonical_media_digest(snapshot.media)
+    proposal = EditProposal(
+        proposal_version=5,
+        generation_attempt_id="attempt-approved",
+        media_digest=digest,
+        status="approved",
+        draft=snapshot,
+        last_approved={
+            "proposal_version": 5,
+            "media_digest": digest,
+            "approved_at": datetime.now(UTC).isoformat(),
+            "snapshot": snapshot.model_dump(mode="json"),
+        },
+    )
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        clip_gcs_paths=["users/u/plan/i/corfu.mp4"],
+        clip_assignments=[{"media_id": "clip-1", "gcs_path": "users/u/plan/i/corfu.mp4"}],
+        edit_proposal=proposal.model_dump(mode="json"),
+    )
+    monkeypatch.setattr(plan_items.settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded, **_kw: loaded)
+    monkeypatch.setattr(plan_items, "_get_instruction_level", AsyncMock(return_value="full"))
+    db = AsyncMock()
+
+    def _boom(*_a, **_kw):
+        raise AssertionError("must never reserve a fresh attempt over an approved proposal")
+
+    monkeypatch.setattr("app.services.edit_proposals.begin_proposal_attempt", _boom)
+    dispatch_calls = []
+
+    def _fake_dispatch(item_id_arg, epoch):
+        dispatch_calls.append((item_id_arg, epoch))
+        return DispatchResult("dispatched", job_id=str(uuid.uuid4()))
+
+    monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
+
+    result = await plan_items._maybe_auto_design_generate(
+        str(item.id), item, _auto_design_plan(), _auto_design_user(), db
+    )
+
+    assert result is item  # plan_item_response mocked to identity
+    assert len(dispatch_calls) == 1
+    db.rollback.assert_awaited()
+    assert item.edit_proposal["status"] == "approved"  # untouched

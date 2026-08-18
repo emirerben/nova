@@ -688,13 +688,15 @@ class Settings(BaseSettings):
         "missing/failed/unapproved guided-edit proposal and the item already has media, silently "
         "reserve + draft + auto-approve a proposal (approval_mode='auto') and dispatch the render "
         "instead of blocking the creator on an explicit review step — one-click Generate always "
-        "works when media exists. Kill switch: off restores today's strict enforcement "
-        "byte-identically (existing 409s). Only relevant when guided_edit_enforcement_enabled is "
-        "on. Flipping it off does NOT retroactively un-approve proposals an earlier auto-design "
-        "already approved — see docs/runbooks/conversational-edit-rollback.md. Read by the API "
-        "and sync dispatch worker; changing it requires API and worker restarts. Fly: `fly "
-        "secrets set GUIDED_AUTO_DESIGN_ENABLED=false --app nova-video` + `fly machine restart "
-        "<id>` for the api and worker process groups.",
+        "works when media exists. Kill switch: off restores strict enforcement (existing 409s) "
+        "for new Generate calls — NOT byte-identical to pre-auto-design rollback, since the "
+        "proposal_failed 409 mapping (services/edit_proposals.py) is unconditional regardless of "
+        "this flag, and proposals an earlier auto-design attempt already approved stay approved "
+        "(never retroactively un-approved) — see docs/runbooks/conversational-edit-rollback.md. "
+        "Only relevant when guided_edit_enforcement_enabled is on. Read by the API and sync "
+        "dispatch worker; changing it requires API and worker restarts. Fly: `fly secrets set "
+        "GUIDED_AUTO_DESIGN_ENABLED=false --app nova-video` + `fly machine restart <id>` for the "
+        "api and worker process groups.",
     )
 
     @model_validator(mode="after")

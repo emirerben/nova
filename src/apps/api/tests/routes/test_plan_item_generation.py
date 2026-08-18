@@ -279,8 +279,10 @@ def test_generate_auto_designs_instead_of_409_when_flag_on_and_media_present(
 ) -> None:
     """GUIDED_AUTO_DESIGN_ENABLED: no proposal + media present -> 200
 
-    "designing" (reserve + enqueue draft_edit_proposal with auto_finalize),
-    never the 409 a plain proposal_generate_error would raise.
+    "designing" (reserve with approval_mode="auto" + enqueue
+    draft_edit_proposal, which reads the auto-finalize intent off that
+    persisted envelope — no task kwarg, P2-6), never the 409 a plain
+    proposal_generate_error would raise.
     """
 
     from app.config import settings as app_settings
@@ -308,7 +310,7 @@ def test_generate_auto_designs_instead_of_409_when_flag_on_and_media_present(
 
     assert response.status_code == 200
     assert len(apply_calls) == 1
-    assert apply_calls[0]["kwargs"] == {"auto_finalize": True}
+    assert "auto_finalize" not in apply_calls[0].get("kwargs", {})  # P2-6: no task kwarg
     body = response.json()
     assert body["guided_edit_auto_design"] is True
     assert body["edit_proposal"]["status"] == "analyzing"
@@ -414,6 +416,79 @@ def test_generate_rejects_photo_clip_for_classic_montage(client: TestClient) -> 
     resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 422
     assert resp.json()["detail"] == "Photos require a collage preset"
+
+
+def test_generate_auto_design_never_bypasses_narrated_voiceover_requirement(
+    monkeypatch, client: TestClient
+) -> None:
+    """P1-2 (2026-08-18 adversarial review): _maybe_auto_design_generate must
+
+    never get a chance to intercept a narrated item with no voiceover and
+    self-narration off — that would re-open the "started a narrated render
+    with no audio" dogfood bug via auto-design's own clip-only montage
+    fallback, which dispatches through the exact same legacy path.
+    """
+
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "narrated_self_narration_enabled", False, raising=False)
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_auto_design_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_format = "narrated_ready"
+    item.voiceover_gcs_path = None
+    item.clip_assignments = [
+        {"gcs_path": f"users/{user.id}/plan/0/a.mp4", "shot_id": None, "user_note": ""}
+    ]
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    apply_calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kw: apply_calls.append(kw),
+    )
+
+    resp = client.post(f"/plan-items/{item.id}/generate")
+
+    assert resp.status_code == 409
+    assert "voiceover" in resp.json()["detail"].lower()
+    assert apply_calls == []  # auto-design never even started
+
+
+def test_generate_auto_design_never_bypasses_photo_collage_requirement(
+    monkeypatch, client: TestClient
+) -> None:
+    """P1-2: raw photos without a collage preset must still 422 even with
+
+    auto-design on and an eligible (but unapproved) guided-edit state.
+    """
+
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_auto_design_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/still.jpg"])
+    item.montage_preset = "classic"
+    item.clip_assignments = [
+        {"gcs_path": f"users/{user.id}/plan/0/still.jpg", "shot_id": None, "user_note": ""}
+    ]
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    apply_calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kw: apply_calls.append(kw),
+    )
+
+    resp = client.post(f"/plan-items/{item.id}/generate")
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Photos require a collage preset"
+    assert apply_calls == []
 
 
 def test_generate_blocks_narrated_without_voiceover(monkeypatch, client: TestClient) -> None:

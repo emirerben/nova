@@ -67,32 +67,65 @@ def _kind(content_type: str, path: str) -> str:
 
 # No artificial duration floor: the planner adapts to whatever footage is
 # actually uploaded (product decision, 2026-08-18 — see agents/DECISIONS.md).
-# Below this, a guided story cannot show anything meaningful.
+# This is the absolute floor on the agent's Pydantic-validated input/output
+# (EditProposalAgentInput.target_duration_s, EditProposalAgentOutput/
+# EditProposalSnapshot.duration_s all carry ge=3) — it exists independently
+# of guided_feasibility_threshold_s below and never changes.
 MIN_GUIDED_DURATION_S = 3
 # Images are not length-constrained by a source clip, so estimating "feasible"
 # story length can't sum their real duration the way video works. Credit each
-# image the guided_story per-media floor (guided_story.py STYLE_POLICY
+# image the guided_story per-media floor (guided_story.py _DIRECTION_POLICY
 # "guided_story"."min_moment_s") rather than an unbounded amount.
 _IMAGE_FEASIBLE_CREDIT_S = 1.4
+# guided_story.py's own per-moment minimum for the "guided_story" direction
+# (_DIRECTION_POLICY["guided_story"]["min_moment_s"]) — duplicated here as a
+# constant rather than imported to keep this module's planning estimate free
+# of a pipeline import; guided_story.py:377,395-399 is the actual render-time
+# enforcement this mirrors. A video shorter than this can never be its own
+# legible beat moment, so it earns zero credit below (P2-1, 2026-08-18
+# adversarial review) — it was previously falling into the image branch and
+# being credited as if it were a full _IMAGE_FEASIBLE_CREDIT_S image.
+_RENDERER_MIN_MOMENT_S = 1.4
 
 
 def feasible_guided_duration_s(media: list[MediaRef]) -> float:
-    """Conservative estimate of story length the uploaded media can support.
+    """Conservative, renderer-aware estimate of the story length the uploaded
 
-    Videos contribute their own probed duration once; a beat can never be
-    stretched past what was actually filmed (no slow-mo/loop). This is a
-    pre-agent planning estimate — guided_story.py's `_source_window` /
-    `_allocate_beat_durations` remain the exact, authoritative render-time
-    feasibility check.
+    media can support. Videos contribute their own probed duration once — a
+    beat can never be stretched past what was actually filmed (no
+    slow-mo/loop) — but ONLY when that duration clears
+    `_RENDERER_MIN_MOMENT_S`; a video with no probed duration, a zero
+    duration, or a duration too short to be its own legible moment
+    contributes nothing (not the image credit). This is a pre-agent planning
+    estimate — guided_story.py's `_source_window` / `_allocate_beat_durations`
+    remain the exact, authoritative render-time feasibility check.
     """
 
     total = 0.0
     for ref in media:
-        if ref.kind == "video" and ref.duration_s:
-            total += float(ref.duration_s)
+        if ref.kind == "video":
+            duration = float(ref.duration_s) if ref.duration_s else 0.0
+            if duration >= _RENDERER_MIN_MOMENT_S:
+                total += duration
         else:
             total += _IMAGE_FEASIBLE_CREDIT_S
     return total
+
+
+def guided_feasibility_threshold_s(media_count: int) -> float:
+    """The minimum footage the renderer can plausibly turn into a guided story.
+
+    Mirrors `_allocate_beat_durations`'s own hard requirement in
+    guided_story.py (`beat_duration_s >= min_moment_s * len(refs)`, ~line 377)
+    for a single beat holding every available source — `minimum_required_sources`
+    (agents/edit_proposal.py) uses every source in one story when at most 3
+    are available. Floored at `MIN_GUIDED_DURATION_S` so it never drops below
+    the agent's own Pydantic input/output minimum. Below this,
+    `feasible_guided_duration_s` never clears the bar, so `draft_edit_proposal`
+    never calls the agent at all — the montage-fallback path handles it.
+    """
+
+    return max(MIN_GUIDED_DURATION_S, _RENDERER_MIN_MOMENT_S * min(3, max(1, media_count)))
 
 
 def adapt_target_duration_s(brief_duration_s: int, feasible_s: float) -> int:
@@ -101,7 +134,11 @@ def adapt_target_duration_s(brief_duration_s: int, feasible_s: float) -> int:
     Never exceeds the feasible estimate (floored, so the agent's target is
     never longer than real footage allows) and never exceeds the creator's
     requested duration. Callers must treat
-    ``feasible_s < MIN_GUIDED_DURATION_S`` as infeasible before calling this.
+    ``feasible_s < guided_feasibility_threshold_s(len(media))`` as infeasible
+    before calling this — that threshold is always >= MIN_GUIDED_DURATION_S,
+    so in correct use ``math.floor(feasible_s)`` alone already clears the
+    ``max(MIN_GUIDED_DURATION_S, ...)`` floor below; it stays only as a
+    defensive absolute floor matching the agent's Pydantic ge=3.
     """
 
     return max(MIN_GUIDED_DURATION_S, min(int(brief_duration_s), math.floor(feasible_s)))
@@ -264,6 +301,40 @@ def _attempt_is_active(
         )
 
 
+def _attempt_wants_auto_finalize(
+    item_id: uuid.UUID,
+    attempt_id: str,
+    expected_ownership_epoch: int,
+) -> bool:
+    """Read approval_mode off the persisted envelope instead of trusting a
+
+    task kwarg (P2-6, 2026-08-18 adversarial review). The auto-design intent
+    is already durable on the proposal itself
+    (begin_proposal_attempt(..., approval_mode="auto")), so a worker mid-
+    deploy that predates auto-finalize entirely just never calls this
+    function's caller's follow-up dispatch — it produces a plain draft
+    (degraded: the creator manually approves) instead of either crashing on
+    an unexpected kwarg (old worker, new producer) or silently never
+    auto-finalizing (new worker, old producer that never set the kwarg).
+    Cheap unlocked read, mirroring _attempt_is_active.
+    """
+
+    with sync_session() as db:
+        row = db.execute(
+            select(PlanItem.edit_proposal, ContentPlan.ownership_epoch)
+            .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+            .where(PlanItem.id == item_id)
+        ).one_or_none()
+        current = parse_edit_proposal(row.edit_proposal) if row else None
+        return bool(
+            row
+            and int(row.ownership_epoch or 0) == expected_ownership_epoch
+            and current
+            and current.generation_attempt_id == attempt_id
+            and current.approval_mode == "auto"
+        )
+
+
 _ANALYSIS_FIELDS = ("generation", "kind", "duration_s", "aspect", "analysis")
 
 
@@ -373,13 +444,17 @@ def draft_edit_proposal(
     item_id: str,
     attempt_id: str,
     expected_ownership_epoch: int,
-    auto_finalize: bool = False,
 ) -> None:
     """Analyze media, draft the story, persist it.
 
-    ``auto_finalize=True`` (GUIDED_AUTO_DESIGN_ENABLED) auto-approves a
-    successful draft (approval_mode="auto", set by begin_proposal_attempt at
-    reservation time) and dispatches the render — AFTER the approval commits,
+    No auto_finalize kwarg (P2-6, 2026-08-18 adversarial review — a task
+    kwarg is a Celery deploy-skew hazard: an old worker consuming a message
+    from a new producer, or vice versa, either crashes on an unknown kwarg or
+    silently drops it). The GUIDED_AUTO_DESIGN_ENABLED intent is read
+    straight off the persisted envelope instead
+    (_attempt_wants_auto_finalize — approval_mode="auto", set by
+    begin_proposal_attempt at reservation time): a successful draft is
+    auto-approved and the render dispatched — AFTER the approval commits,
     never while holding the PlanItem row lock — or, on a drafting failure
     with zero registered pool assets, falls back to a legacy clip render
     instead (_dispatch_after_auto_design). On any other failure the proposal
@@ -394,6 +469,8 @@ def draft_edit_proposal(
         ownership_epoch = int(expected_ownership_epoch)
     except (TypeError, ValueError):
         return
+
+    auto_finalize = _attempt_wants_auto_finalize(iid, attempt_id, ownership_epoch)
 
     with pipeline_trace_for(item_id):
         _run_draft_attempt(self, iid, item_id, attempt_id, ownership_epoch, auto_finalize)
@@ -575,7 +652,8 @@ def _run_draft_attempt(
                     db.commit()
             return
         feasible_duration_s = feasible_guided_duration_s(media)
-        if feasible_duration_s < MIN_GUIDED_DURATION_S:
+        feasibility_threshold_s = guided_feasibility_threshold_s(len(media))
+        if feasible_duration_s < feasibility_threshold_s:
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)
                 item = locked[0] if locked else None
@@ -687,6 +765,38 @@ def _run_draft_attempt(
                 media=agent_media,
             )
         )
+        # EditProposalAgent.parse()'s +/-5s tolerance checks output.duration_s
+        # against target_duration_s, NOT against real footage — with a small
+        # target (e.g. the MIN_GUIDED_DURATION_S=3 floor) that tolerance
+        # window alone could still accept an output nobody validated against
+        # the true footage cap (P2-1a, 2026-08-18 adversarial review). Reject
+        # rather than silently rewrite per-beat durations the agent already
+        # sized for a specific total.
+        if output.duration_s > math.floor(feasible_duration_s):
+            with sync_session() as db:
+                locked = _locked_item(db, iid, ownership_epoch)
+                item = locked[0] if locked else None
+                current = parse_edit_proposal(item.edit_proposal) if item else None
+                if (
+                    item
+                    and current
+                    and current.generation_attempt_id == attempt_id
+                    and current.status == "drafting"
+                ):
+                    _fail(
+                        item,
+                        current,
+                        "guided_edit_infeasible",
+                        "Kria's draft ran longer than the actual footage allows. "
+                        "Try again or add more media.",
+                        detail=(
+                            f"output.duration_s={output.duration_s} exceeds "
+                            f"feasible={feasible_duration_s:.2f} "
+                            f"(target={target_duration_s})"
+                        ),
+                    )
+                    db.commit()
+            return
         snapshot = EditProposalSnapshot(
             direction=brief.direction,
             goal=brief.goal,

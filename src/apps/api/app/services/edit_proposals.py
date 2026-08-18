@@ -281,16 +281,31 @@ def save_proposal_draft(
     *,
     expected_version: int,
     snapshot: EditProposalSnapshot,
+    clear_approval_mode: bool = False,
 ) -> EditProposal:
+    """Persist a draft snapshot.
+
+    ``clear_approval_mode=True`` is for the human-driven PATCH /edit-proposal
+    endpoint ONLY (P3, 2026-08-18 adversarial review): a creator submitting
+    their own corrected snapshot is unambiguous evidence of manual review, so
+    the envelope's approval_mode must not still read "auto" from the original
+    auto-design reservation once approved. Default False preserves it — the
+    Celery auto-design pipeline (draft_edit_proposal -> save_proposal_draft ->
+    approve_proposal, all in the same attempt) relies on approval_mode
+    surviving THIS call so approve_proposal can carry it onto
+    last_approved.approval_mode.
+    """
+
     current = require_expected_version(item, expected_version)
-    proposal = current.model_copy(
-        update={
-            "proposal_version": current.proposal_version + 1,
-            "status": "draft",
-            "draft": snapshot,
-            "failure": None,
-        }
-    )
+    update: dict = {
+        "proposal_version": current.proposal_version + 1,
+        "status": "draft",
+        "draft": snapshot,
+        "failure": None,
+    }
+    if clear_approval_mode:
+        update["approval_mode"] = None
+    proposal = current.model_copy(update=update)
     item.edit_proposal = proposal.model_dump(mode="json")
     return proposal
 
