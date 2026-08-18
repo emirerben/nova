@@ -67,7 +67,7 @@ def submit_tiktok_publication(self, publication_id: str) -> None:  # noqa: ANN00
         ):
             row.processing_status = "failed"
             row.failure_code = "draft_upload_disabled"
-            row.failure_detail = "TikTok draft upload is temporarily unavailable"
+            row.failure_detail = "Sending to the TikTok app inbox is temporarily unavailable"
             row.retryable = False
             row.next_poll_at = None
             session.commit()

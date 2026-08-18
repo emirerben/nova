@@ -7,7 +7,12 @@ they approved by either of TikTok's Content Posting paths:
   access, the API and UI allow only `SELF_ONLY`.
 - **Finish in TikTok** uses Upload API (`video.upload`). TikTok creates an inbox
   notification; the creator opens TikTok and finishes the draft there. Kria
-  never describes a successful upload as a published post.
+  never describes a successful upload as a published post. The notification is
+  visible **only in the TikTok mobile app** — it never creates an entry in the
+  Drafts tab and never appears on tiktok.com in a desktop browser. Kria's UI
+  must say so explicitly wherever this path is surfaced (2026-08-12 incident:
+  a user searched tiktok.com for a delivered video labeled "TikTok drafts" and
+  could not find it — see agents/DECISIONS.md).
 
 Both paths use the same immutable GCS snapshot, generation check, lifecycle
 receipt, and creator music-rights confirmation.
@@ -25,7 +30,7 @@ The OAuth request and the TikTok Developer Portal must show exactly:
 | --- | --- | --- |
 | `user.info.basic` | Identify the connected TikTok account | Login Kit consent and the connected nickname in Kria |
 | `video.publish` | Submit the approved render as a Direct Post | Post now → Only you → processing receipt → private TikTok post |
-| `video.upload` | Send the approved render to TikTok for creator completion | Finish in TikTok → inbox notification → open TikTok draft composer |
+| `video.upload` | Send the approved render to TikTok for creator completion | Finish in TikTok → inbox notification in the TikTok mobile app → open TikTok's composer |
 
 Content Posting API automatically adds both content scopes in TikTok's portal,
 so both must be implemented and recorded. Do **not** add `user.info.profile`,
@@ -158,7 +163,7 @@ callback, webhook, and media URLs directly on FastAPI.
 | `POST` | `/tiktok/publications` | Create an idempotent direct or draft delivery |
 | `GET` | `/tiktok/publications` | List the creator's recent delivery records, optionally filtered to one render |
 | `GET` | `/tiktok/publications/receipt` | Read the newest receipt for one render, or `null` before its first delivery |
-| `GET` | `/tiktok/publications/{id}` | Read delivery lifecycle |
+| `GET` | `/tiktok/publications/{id}` | Read delivery lifecycle; response includes `tiktok_publish_id` (TikTok's own id) for support correlation without reading Fly logs |
 | `POST` | `/tiktok/sync` | Queue official metrics sync; disabled for this review because it requires deferred analytics scopes |
 | `GET`, `HEAD` | `/tiktok/media/{id}/{token}.mp4` | Serve the immutable snapshot to TikTok |
 | `POST` | `/tiktok/webhook` | Verify and reconcile TikTok lifecycle events |
@@ -183,7 +188,7 @@ ruff check app/routes/tiktok.py app/services/tiktok_client.py app/tasks/tiktok.p
 
 cd ../web
 npx tsc --noEmit
-npm test -- --runInBand src/__tests__/tiktok src/__tests__/lib/tiktok-api.test.ts src/__tests__/tiktok-product-workspace.test.tsx
+npm test -- --runInBand src/__tests__/tiktok src/__tests__/lib/tiktok-api.test.ts src/__tests__/tiktok-product-workspace.test.tsx src/__tests__/library/LibraryTile.test.tsx
 ```
 
 The automated suite mocks TikTok. The sandbox recording is the required final

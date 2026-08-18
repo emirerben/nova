@@ -95,19 +95,19 @@ describe("public TikTok product workspace", () => {
     render(<TikTokProductWorkspace videoSrc={null} />);
 
     fireEvent.click(screen.getByRole("radio", { name: /Finish in TikTok/ }));
-    expect(screen.getByRole("heading", { name: "TikTok draft handoff" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "TikTok app inbox handoff" })).toBeInTheDocument();
     expect(screen.getAllByText(/inbox notification/i)).not.toHaveLength(0);
-    expect(screen.getByRole("button", { name: "Review draft handoff" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Review handoff" })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /must open TikTok/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /must open the TikTok app on my phone/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /right to use the music/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Review draft handoff" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review handoff" }));
 
     expect(screen.getByRole("heading", { name: "Confirm the TikTok handoff" })).toBeInTheDocument();
-    expect(screen.getByText("Open the TikTok inbox notification")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Send demo to TikTok drafts" }));
+    expect(screen.getByText("Open the notification in the TikTok app")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send demo to TikTok inbox" }));
 
-    expect(screen.getByRole("heading", { name: "Ready to finish in TikTok" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Waiting in the TikTok app inbox" })).toBeInTheDocument();
     expect(screen.getByText("No post created")).toBeInTheDocument();
   });
 
