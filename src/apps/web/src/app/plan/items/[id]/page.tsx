@@ -1485,6 +1485,9 @@ export default function PlanItemPage() {
     process.env.NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED === "true";
   const guidedEditActive = GUIDED_EDIT_ENABLED && item.guided_edit_available === true;
   const guidedEditApproved = item.edit_proposal?.status === "approved";
+  // GUIDED_AUTO_DESIGN_ENABLED: absent/false on an old API keeps today's
+  // strict-gate behavior (deploy-skew safe) — see PlanItem.guided_edit_auto_design.
+  const guidedEditAutoDesign = item.guided_edit_auto_design ?? false;
   const hasApprovedGuidedMedia = Boolean(
     guidedEditActive &&
       guidedEditApproved &&
@@ -1514,10 +1517,16 @@ export default function PlanItemPage() {
     item.edit_proposal?.status === "stale"
       ? "Your media changed — plan the edit again."
       : item.edit_proposal?.status === "analyzing" || item.edit_proposal?.status === "drafting"
-        ? "Nova is still planning this edit."
+        ? guidedEditAutoDesign
+          ? "Kria is designing your edit…"
+          : "Nova is still planning this edit."
         : item.edit_proposal?.status === "draft"
           ? "Review and approve the edit plan first."
-          : "Plan this edit before generating.";
+          : item.edit_proposal?.status === "failed"
+            ? guidedEditAutoDesign
+              ? "Kria couldn't finish planning this edit — it'll retry when you hit Generate."
+              : "Kria couldn't finish planning this edit — open the planner to try again."
+            : "Plan this edit before generating.";
   // "Your narrated render became a montage" explanation (no_speech etc.) —
   // persisted by the orchestrator, surfaced here so the swap is never silent.
   const fallbackBanner = narrationFallbackBanner(
@@ -2087,7 +2096,10 @@ export default function PlanItemPage() {
               <div className="mt-4 space-y-2">
                 <InkButton
                   onClick={handleGenerate}
-                  disabled={gate.disabled || (guidedEditActive && !guidedEditApproved)}
+                  disabled={
+                    gate.disabled ||
+                    (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign)
+                  }
                 >
                   {generating
                     ? "Starting…"
@@ -2099,7 +2111,14 @@ export default function PlanItemPage() {
                     gating copy (why the button is off / what drives the edit) —
                     DESIGN.md §8 keeps faint ink decorative-only. */}
                 <p className="text-center text-sm text-[#71717a]">
-                  {guidedEditActive && !guidedEditApproved ? guidedEditHint : gate.hint}
+                  {guidedEditActive &&
+                  !guidedEditApproved &&
+                  // With auto-design on and no attempt yet, Generate just works —
+                  // only show guided-specific copy once there's a real state to
+                  // report (analyzing/drafting/failed/stale/draft).
+                  (!guidedEditAutoDesign || item.edit_proposal?.status)
+                    ? guidedEditHint
+                    : gate.hint}
                 </p>
               </div>
             )}

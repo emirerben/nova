@@ -2651,6 +2651,11 @@ export interface PlanItem {
   edit_proposal?: EditProposal | null;
   guided_edit_available?: boolean;
   guided_edit_conversation_available?: boolean;
+  /** GUIDED_AUTO_DESIGN_ENABLED (server flag). Absent/false on an old API —
+   * gate the AI-designs-by-default Generate button behavior on
+   * `item.guided_edit_auto_design ?? false` so a new web build against an
+   * old API deploy keeps today's strict-gate behavior (deploy-skew safe). */
+  guided_edit_auto_design?: boolean | null;
 }
 
 // Conformance trust fields (echo-back evidence + dismissal/contest state).

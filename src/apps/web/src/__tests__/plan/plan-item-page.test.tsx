@@ -188,7 +188,7 @@ function makeItem(overrides = {}) {
   };
 }
 
-function makeGuidedProposal(status: "analyzing" | "draft" | "approved" | "stale") {
+function makeGuidedProposal(status: "analyzing" | "draft" | "approved" | "stale" | "failed") {
   const snapshot = {
     direction: "guided_story",
     goal: "Tell the Corfu story",
@@ -1076,11 +1076,15 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
 });
 
 describe("PlanItemPage — guided edit Generate gating", () => {
-  function guidedItem(editProposal: ReturnType<typeof makeGuidedProposal> | null) {
+  function guidedItem(
+    editProposal: ReturnType<typeof makeGuidedProposal> | null,
+    options: { autoDesign?: boolean } = {},
+  ) {
     return makeItem({
       status: "awaiting_clips",
       edit_format: "montage",
       guided_edit_available: true,
+      guided_edit_auto_design: options.autoDesign ?? false,
       edit_proposal: editProposal,
       clip_gcs_paths: ["users/u1/plan/test-item-id/corfu.mp4"],
       clip_assignments: [
@@ -1119,6 +1123,94 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
     expect(screen.getByText(hint)).toBeInTheDocument();
   });
+
+  it("stays disabled with no approved proposal when guided_edit_auto_design is false", async () => {
+    const item = guidedItem(null, { autoDesign: false });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
+    expect(screen.getByText("Plan this edit before generating.")).toBeInTheDocument();
+  });
+
+  it("enables Generate with media and no approved proposal when auto-design is on", async () => {
+    const item = guidedItem(null, { autoDesign: true });
+    mockGeneratePlanItem.mockResolvedValue(item);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    // Clicking just works — Kria designs the edit, no planner step required.
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /generate video/i }));
+    });
+    await waitFor(() => {
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+  });
+
+  it("shows the designing hint while auto-design is drafting, but stays enabled", async () => {
+    const item = guidedItem(makeGuidedProposal("analyzing"), { autoDesign: true });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled();
+    expect(screen.getByText("Kria is designing your edit…")).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      true,
+      "Kria couldn't finish planning this edit — it'll retry when you hit Generate.",
+    ],
+    [
+      false,
+      "Kria couldn't finish planning this edit — open the planner to try again.",
+    ],
+  ])(
+    "shows the failed-status hint (auto-design=%s)",
+    async (autoDesign, hint) => {
+      const item = guidedItem(makeGuidedProposal("failed"), { autoDesign });
+      mockUsePolledJobStatus.mockReturnValue({
+        data: { item, job: null },
+        error: null,
+        refetch: mockRefetch,
+      });
+
+      await act(async () => {
+        render(<PlanItemPage />);
+      });
+
+      expect(screen.getByText(hint)).toBeInTheDocument();
+      const generateBtn = screen.getByRole("button", { name: /generate video/i });
+      if (autoDesign) {
+        expect(generateBtn).toBeEnabled();
+      } else {
+        expect(generateBtn).toBeDisabled();
+      }
+    },
+  );
 
   it("enables Generate for a current approved proposal", async () => {
     const item = guidedItem(makeGuidedProposal("approved"));
