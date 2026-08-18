@@ -16,19 +16,23 @@ jest.mock("next/navigation", () => ({
   redirect: jest.fn(),
 }));
 
-// FadeInOnScroll uses IntersectionObserver (browser-only). Stub it so
-// children render immediately in Jest (jsdom has no IO).
-jest.mock("@/components/FadeInOnScroll", () => ({
-  __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
+// KriaEditStory uses browser media and animation APIs. Stub it so this server-page
+// test stays focused on authentication and the landing composition boundary.
+const mockStory = jest.fn(({ mode }: { mode?: string }) => (
+  <section
+    aria-label="How Kria turns raw videos into a finished edit"
+    data-mode={mode}
+  >
+    <h1>Save time. Let AI edit your videos. Create more.</h1>
+    <a href="/plan">Create my first edit</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+  </section>
+));
 
-// ShowcaseMarquee also uses IntersectionObserver + HTMLMediaElement.play(),
-// neither of which exists in jsdom. Stub it to render a labelled region so
-// the page still mounts cleanly.
-jest.mock("@/components/ShowcaseMarquee", () => ({
+jest.mock("@/components/KriaEditStory", () => ({
   __esModule: true,
-  default: () => <section aria-label="Videos created by Kria" />,
+  default: (props: { mode?: string }) => mockStory(props),
 }));
 
 const mockGetServerSession = getServerSession as jest.MockedFunction<
@@ -54,23 +58,42 @@ describe("HomePage", () => {
 
     const { default: HomePage } = await import("../app/page");
 
-    await expect(HomePage()).rejects.toThrow("REDIRECT");
+    await expect(HomePage({})).rejects.toThrow("REDIRECT");
     expect(mockRedirect).toHaveBeenCalledWith("/plan");
   });
 
-  it("renders the landing page when no session is present", async () => {
+  it("renders the automatic landing story by default", async () => {
     mockGetServerSession.mockResolvedValue(null);
 
     const { default: HomePage } = await import("../app/page");
 
     // Need to isolate the module between tests since we import it dynamically.
-    const jsx = await HomePage();
+    const jsx = await HomePage({});
     render(jsx);
 
     expect(mockRedirect).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-    // Two CTA links exist — hero + closing section.
-    const ctaLinks = screen.getAllByRole("link", { name: /build my plan/i });
-    expect(ctaLinks.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("link", { name: /create my first edit/i })).toHaveAttribute(
+      "href",
+      "/plan",
+    );
+    expect(
+      screen.getByLabelText("How Kria turns raw videos into a finished edit"),
+    ).toHaveAttribute("data-mode", "auto");
+    expect(mockStory).toHaveBeenCalledWith({ mode: "auto" });
+    expect(screen.queryByText(/how your agent works/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/it learns about you/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the scroll comparison available through the mode query", async () => {
+    mockGetServerSession.mockResolvedValue(null);
+
+    const { default: HomePage } = await import("../app/page");
+    render(await HomePage({ searchParams: { mode: "scroll" } }));
+
+    expect(
+      screen.getByLabelText("How Kria turns raw videos into a finished edit"),
+    ).toHaveAttribute("data-mode", "scroll");
+    expect(mockStory).toHaveBeenCalledWith({ mode: "scroll" });
   });
 });

@@ -12,6 +12,7 @@ import { resetPersona } from "@/lib/plan-api";
 export default function Header() {
   const pathname = usePathname() ?? "";
   const isAdmin = pathname.startsWith("/admin");
+  const isLanding = pathname === "/" || pathname === "/auto-story";
   const { status: authStatus } = useSession();
   const [progress, setProgress] = useState(0);
 
@@ -35,11 +36,11 @@ export default function Header() {
 
   if (isAdmin) return null;
 
-  // Light surfaces: landing + all plan pages (incl. /plan/items) + library + TikTok + generative
+  // Light surfaces: landing variants + all plan pages (incl. /plan/items) + library + TikTok + generative
   // + the static legal pages (cream canvas, would clash with the dark sticky header).
   // Dark: template render job flow (/template-jobs) and /admin (early-return above).
   const isLight =
-    pathname === "/" ||
+    isLanding ||
     pathname.startsWith("/plan") ||
     pathname.startsWith("/library") ||
     pathname.startsWith("/tiktok") ||
@@ -49,7 +50,11 @@ export default function Header() {
 
   return (
     <header
-      className={`z-40 h-14 ${isLight ? "bg-[#fafaf8] border-b border-zinc-200/70" : "sticky top-0"}`}
+      className={`z-40 h-14 ${
+        isLight
+          ? `bg-[#fafaf8] ${isLanding ? "" : "border-b border-zinc-200/70"}`
+          : "sticky top-0"
+      }`}
       style={
         isLight
           ? {}
@@ -96,14 +101,20 @@ export default function Header() {
               Library
             </Link>
           )}
-          <AuthControl isLight={isLight} />
+          <AuthControl isLight={isLight} isLanding={isLanding} />
         </nav>
       </div>
     </header>
   );
 }
 
-function AuthControl({ isLight = false }: { isLight?: boolean }) {
+function AuthControl({
+  isLight = false,
+  isLanding = false,
+}: {
+  isLight?: boolean;
+  isLanding?: boolean;
+}) {
   const { data: session, status } = useSession();
   const [open, setOpen] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
@@ -129,6 +140,10 @@ function AuthControl({ isLight = false }: { isLight?: boolean }) {
   }
 
   if (!session?.user) {
+    if (isLanding) {
+      return null;
+    }
+
     return (
       // relative + absolute caption: the header row is a fixed h-14, and a
       // flex-col taller than that would spill the caption past the header's

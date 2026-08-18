@@ -58,6 +58,14 @@
   --t-accordion-dur: 300ms;
   --t-accordion-ease: cubic-bezier(0.23, 1, 0.32, 1);
 
+  /* Landing edit story: explanatory scroll motion from Emir's Paper storyboard. */
+  --story-move-dur: 500ms;
+  --story-overlay-stagger: 60ms;
+  --story-reduced-dur: 200ms;
+  --story-ease-move: cubic-bezier(0.77, 0, 0.175, 1);
+  --story-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --story-lime: #d7ff90;
+
   /* Nova Beam loader: decorative perimeter motion for video/AI wait states. */
   --beam-rotate-dur: 1.96s;
   --beam-line-dur: 3.1s;
