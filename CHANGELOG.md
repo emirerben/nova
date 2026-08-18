@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.39.0.0] — 2026-08-18
+
+### Added
+- **One click now always gets you an edit.** When a plan item has footage but no approved edit plan, Generate no longer blocks — Kria designs the edit automatically (adapting the story to your footage), approves it as an AI design, and starts the render. If a guided story can't work for the footage, the render falls back to the proven montage pipeline instead of failing, so uploading a single short clip and pressing Generate just works. Kill switch: `GUIDED_AUTO_DESIGN_ENABLED`.
+- **Stories now fit your footage instead of demanding 10+ seconds of it.** The guided planner's hard 10-second minimum is gone; the target length clamps to what your clips can actually support (renderer-aware feasibility, no slow-mo stretching), measured before the AI ever drafts.
+
+### Fixed
+- **The "Kria couldn't plan this edit" dead end is fixed at the root.** Clip-analysis errors during drafting (the crash that permanently wedged plan items) now retry when transient and fail fast with a diagnosable reason when the media is unreadable; failed plans map to a distinct, actionable error instead of a generic one, and Generate can always recover from a failed plan.
+- **Planning chat can no longer be started without media, and its stall window is shorter.** The conversation now asks for a photo or video first; the reservation timeout matches the request timeout (60s) so the composer can't dead-lock; Kria's suggestion chips survive replies that don't end in a question.
+
 ## [0.37.2.0] — 2026-08-18
 
 ### Added
