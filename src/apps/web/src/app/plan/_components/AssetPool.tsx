@@ -59,6 +59,7 @@ export default function AssetPool({
   attachBusy = false,
   onAssetContextUpdated,
   onMutated,
+  onAssetsChanged,
 }: {
   itemId: string;
   /** gcs_paths already attached as clips — flips a promoted tile to "In edit ✓". */
@@ -74,6 +75,11 @@ export default function AssetPool({
   onAssetContextUpdated?: (asset: PoolAsset) => void;
   /** Any successful pool mutation can stale an approved guided-edit proposal. */
   onMutated?: () => void;
+  /** Fires whenever the live pool list changes (initial fetch, poll tick,
+   *  register, delete, promote) — lets the parent page track e.g. whether a
+   *  ready pool asset exists for the auto-design Generate gate, without a
+   *  second fetch of the same list (P2-5, 2026-08-18 adversarial review). */
+  onAssetsChanged?: (assets: PoolAsset[]) => void;
 }) {
   const guidedEditEnabled = process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
   const enabled =
@@ -139,6 +145,14 @@ export default function AssetPool({
   useEffect(() => () => {
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
   }, []);
+
+  useEffect(() => {
+    onAssetsChanged?.(assets);
+    // onAssetsChanged intentionally excluded: an inline arrow prop would
+    // otherwise re-fire this effect every parent render even when `assets`
+    // itself hasn't changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assets]);
 
   useEffect(() => {
     if (!enabled) return;

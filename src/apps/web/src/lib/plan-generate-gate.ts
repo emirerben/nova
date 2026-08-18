@@ -31,6 +31,14 @@ export interface GenerateGateInput {
   clipCount: number;
   /** A current approved guided plan contains at least one selected media source. */
   hasApprovedGuidedMedia: boolean;
+  /** At least one registered pool asset is `status === "ready"`. Only pass a
+   * real value when guided-edit auto-design is available (item.guided_edit_auto_design)
+   * — the caller passes `false` otherwise so a pool-only item with auto-design
+   * OFF keeps today's exact gating (P2-5, 2026-08-18 adversarial review: with
+   * auto-design on, a pool-only item — no clip_gcs_paths, no approval yet —
+   * was otherwise unreachable from the Generate button even though the
+   * backend would happily design from pool media alone). */
+  hasReadyPoolMedia: boolean;
   /** edit_format is one of the narrated family. */
   isNarrated: boolean;
   /** voiceover_gcs_path present (recorded or uploaded). */
@@ -61,6 +69,7 @@ export function generateGate(input: GenerateGateInput): GenerateGateResult {
     uploaderBusy,
     clipCount,
     hasApprovedGuidedMedia,
+    hasReadyPoolMedia,
     isNarrated,
     hasVoiceover,
     selfNarrationEnabled,
@@ -71,7 +80,7 @@ export function generateGate(input: GenerateGateInput): GenerateGateResult {
   // Voiceover is only a hard requirement while self-narration is off.
   const voiceoverBlocked = isNarrated && !hasVoiceover && !selfNarrationEnabled;
 
-  const hasGenerateMedia = clipCount > 0 || hasApprovedGuidedMedia;
+  const hasGenerateMedia = clipCount > 0 || hasApprovedGuidedMedia || hasReadyPoolMedia;
   const disabled =
     generating || !hasGenerateMedia || isGenerating || uploaderBusy || voiceoverBlocked;
 
