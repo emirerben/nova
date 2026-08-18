@@ -1403,3 +1403,17 @@ A real user's plan item (6.77s clip, 0 pool assets) was permanently stuck: `stat
   just stays retryable. Flipping the flag off is not byte-identical rollback: proposals an earlier
   auto-design attempt already approved stay approved (see
   `docs/runbooks/conversational-edit-rollback.md`).
+
+**Adversarial review same day** found the first cut unconditionally clobbered any non-in-flight
+proposal (including one a human was reviewing or had already approved), serialized an
+already-`rollback()`-expired ORM row on the idempotent path (`MissingGreenlet` in prod under a real
+`AsyncSession`), let auto-design's clip-only montage fallback bypass the narrated-voiceover and
+photo-collage business rules, fed the agent a feasible-duration estimate that credited too-short
+videos as if they were full images, and passed `auto_finalize` as a Celery task kwarg (a rolling-
+deploy hazard). All fixed same day: `_maybe_auto_design_generate` now branches on the FOR-UPDATE-
+locked proposal status (never clobbers `approved`/`draft`/a live `conversation_attempt`; auto-
+finalizes an existing draft instead of redrafting it); the idempotent path always reloads after
+rollback before serializing; the two hard business-rule checks run before auto-design can intercept;
+`feasible_guided_duration_s` credits a video only when its own duration clears the renderer's
+per-moment minimum; the auto-finalize intent is read off the persisted `approval_mode` field instead
+of a task kwarg. See `docs/pipelines/guided-edit.md` for the full mechanism.

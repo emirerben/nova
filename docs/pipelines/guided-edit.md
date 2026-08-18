@@ -156,16 +156,42 @@ the planner, Kria designs the edit and Generate still works in one click, as lon
 would otherwise 409 Generate (`proposal_generate_error` returned any code above) and the item has
 media (`clip_gcs_paths` non-empty or at least one `ready` pool asset):
 
-1. `generate_item` (`routes/plan_items.py::_maybe_auto_design_generate`) re-locks the item. An
-   attempt already `analyzing`/`drafting` (auto or manual) returns the current state idempotently —
-   `200`, no duplicate reservation or task. Otherwise it reserves one
-   (`begin_proposal_attempt(item, approval_mode="auto")`), commits, and enqueues
-   `draft_edit_proposal(..., auto_finalize=True)`. No media at all → falls through to the ordinary
-   409 above (nothing for auto-design to work from).
-2. `draft_edit_proposal` runs its normal analyze → draft flow unchanged. With `auto_finalize=True`,
-   a successful draft is immediately approved (`approve_proposal`, `approval_mode` stays `"auto"` on
-   the resulting `last_approved` snapshot).
-3. `_dispatch_after_auto_design` runs exactly once after the attempt settles (success or any
+1. `generate_item` runs its two hard, guided-edit-independent business-rule checks FIRST — the
+   narrated-voiceover requirement and the photos-need-collage-preset requirement — before auto-design
+   gets a chance to intercept the request. Auto-design's own clip-only montage fallback (step 3)
+   dispatches through the exact same legacy path these checks guard, so letting auto-design run
+   first would silently re-open both: a narrated item with no voiceover could montage-fallback
+   captionless, and raw photos could skip the collage requirement (2026-08-18 adversarial review,
+   P1-2).
+2. `generate_item` (`routes/plan_items.py::_maybe_auto_design_generate`) re-locks the item and
+   branches on the CURRENT proposal state under that lock — it does not unconditionally clobber
+   whatever is there:
+   - a live `conversation_attempt` (creator mid-reply with Kria, regardless of proposal status) →
+     idempotent current-state response. Generate racing a live turn must never void it (P2-3).
+   - `analyzing`/`drafting` (an attempt — auto or manual — already in flight) → idempotent
+     current-state response, never a duplicate reservation/task.
+   - `approved` (reached by a race with a manual approval, or an already-approved auto-design
+     attempt, landing between the caller's initial unlocked read and this lock) → never reset —
+     dispatches directly from this fresh, locked read. Returning "no error" and letting the caller
+     fall through to its own stale pre-lock `item` would incorrectly re-raise the ORIGINAL 409 for a
+     proposal that is actually approved now (P2-2d).
+   - `draft` (a reviewable draft already exists — the creator's own edits, or an earlier auto-design
+     draft) → **auto-finalizes THAT draft** instead of discarding it for a redraft: revalidates its
+     media identity (`_proposal_media_is_current`, the same check `approve_item_edit_proposal` uses),
+     approves it under `expected_proposal_version` CAS, then dispatches synchronously — never spends
+     a second agent call on a story already worth approving (P2-2c).
+   - `None`/`failed`/`stale`/`briefing` → reserves a **fresh** attempt
+     (`begin_proposal_attempt(item, brief=current.brief if current else None, approval_mode="auto")`)
+     and enqueues `draft_edit_proposal` — but PRESERVES the creator's already-stated
+     direction/goal/pace/duration from that prior attempt rather than resetting it to
+     `ProposalBrief()` defaults (P2-2a/b). No media at all on the item → falls through to the
+     ordinary 409 (nothing for auto-design to work from).
+3. `draft_edit_proposal` no longer takes an `auto_finalize` kwarg — it reads the intent straight off
+   the persisted envelope (`_attempt_wants_auto_finalize`: `approval_mode == "auto"` on the matching
+   `generation_attempt_id`) before running its normal analyze → draft flow. A successful draft is
+   then immediately approved (`approve_proposal`; `approval_mode` stays `"auto"` on the resulting
+   `last_approved` snapshot). See "Celery deploy-skew" below for why the kwarg was removed.
+4. `_dispatch_after_auto_design` runs exactly once after the attempt settles (success or any
    failure), **after** the approval commit and outside the PlanItem row lock — dispatch never
    publishes while holding it:
    - `approved` → dispatch normally through `dispatch_item_render_for`.
@@ -174,22 +200,57 @@ media (`clip_gcs_paths` non-empty or at least one `ready` pool asset):
      `dispatch_item_render_for`, used **only** by this caller) to route around the very enforcement
      check that would otherwise 409 a `"failed"` proposal — the legacy clip render path, exactly as
      if guided edit had never been approved. `design_fallback` is set to the failure code that
-     triggered it.
+     triggered it. `_dispatch_item_render` independently RE-COUNTS registered pool assets under the
+     lock it already holds before honoring the bypass — the caller's zero-pool check ran in a
+     separate transaction, so a pool asset registered in that gap must still be caught, not silently
+     dropped behind the montage (`guided_edit_bypass_unsafe` outcome; P2-4).
    - `failed`, pool assets present → **no fallback**. Registered pool media is never silently
      dropped behind a clip-only render (the 2026-08-15 pool-media incident invariant) — the failure
      stays exactly as persisted, retryable.
-   - dispatch itself fails (`publish_failed` etc.) → the proposal stays in whatever state already
-     committed (`approved`, or `failed`+`design_fallback`). The next manual Generate click either
-     dispatches directly (approved reads identically regardless of `approval_mode`) or re-triggers
-     auto-design (failed) — never wedged.
+   - dispatch itself fails (`publish_failed`, `guided_edit_bypass_unsafe`, etc.) → the proposal stays
+     in whatever state already committed (`approved`, or `failed`+`design_fallback`). The next manual
+     Generate click either dispatches directly (approved reads identically regardless of
+     `approval_mode`) or re-triggers auto-design (failed) — never wedged.
+
+**Duration feasibility is renderer-aware end to end** (P2-1). `feasible_guided_duration_s` credits a
+video its own probed duration only when that duration clears the renderer's own per-moment minimum
+(`_RENDERER_MIN_MOMENT_S = 1.4`, mirroring guided_story.py's `_allocate_beat_durations`); a video
+with no duration, a zero duration, or a duration below that minimum earns ZERO credit — it previously
+fell into the image-credit branch and was overestimated. `guided_feasibility_threshold_s(media_count)`
+scales the infeasibility gate with how much media is being asked to share the story
+(`_RENDERER_MIN_MOMENT_S * min(3, media_count)`, floored at `MIN_GUIDED_DURATION_S`) instead of a flat
+constant. The agent's own `+/-5s` output tolerance (`EditProposalAgent.parse`) checks its output
+against the TARGET it was given, not against real footage — with a small target (e.g. the
+`MIN_GUIDED_DURATION_S=3` floor) that tolerance window alone could still accept an output nobody
+validated against the true footage cap, so `draft_edit_proposal` independently rejects
+`output.duration_s > floor(feasible_duration_s)` rather than trusting the agent's tolerance alone.
+
+**Celery deploy-skew (P2-6):** `draft_edit_proposal` does not accept an `auto_finalize` kwarg — a task
+kwarg is a rolling-deploy hazard (an old worker consuming a new producer's message, or the reverse,
+either crashes on an unknown kwarg or silently drops the intent). The intent is read straight off the
+DB row instead. A worker mid-deploy that predates auto-finalize just produces a normal, unapproved
+draft (degraded: the creator manually approves it) instead of either crashing or silently never
+auto-finalizing.
 
 `PlanItemResponse.guided_edit_auto_design` mirrors the flag (same pattern as
 `guided_edit_available`/`guided_edit_conversation_available`) so the frontend can gate the Generate
 button's enabled state and hint copy on it; absent/false on an old API keeps today's strict-gate
-behavior on a newer frontend build (deploy-skew safe).
+behavior on a newer frontend build (deploy-skew safe). The frontend's own media check
+(`plan-generate-gate.ts`'s `hasGenerateMedia`) additionally counts a `status === "ready"` pool asset
+reported up from `AssetPool` (via its `onAssetsChanged` callback) whenever auto-design is available —
+otherwise a pool-only item (no `clip_gcs_paths`, no approval yet) was unreachable from the Generate
+button even though the backend would happily design from pool media alone (P2-5); this only applies
+when `guided_edit_auto_design` is true, so a pool-only item with the flag off/undefined keeps today's
+exact gating.
 
-**Kill switch:** `GUIDED_AUTO_DESIGN_ENABLED=false` restores today's strict enforcement
-byte-identically — new Generate calls just 409 again. It does **not** retroactively un-approve
+The render-registration watchdog (`RENDER_REGISTER_TIMEOUT_MS`, 15 min) re-arms itself continuously
+while `edit_proposal.status` is `analyzing`/`drafting` — the design phase alone can legitimately run
+past 15 minutes under transient-analysis retries, and no render Job even exists yet to register. It
+only starts its real countdown once design settles and a render is actually expected to appear.
+
+**Kill switch:** `GUIDED_AUTO_DESIGN_ENABLED=false` restores strict enforcement for new Generate
+calls (they just 409 again) — NOT byte-identical to pre-auto-design rollback: the `proposal_failed`
+409 mapping is unconditional regardless of this flag, and it does **not** retroactively un-approve
 proposals an earlier auto-design attempt already approved; see
 `docs/runbooks/conversational-edit-rollback.md`.
 
