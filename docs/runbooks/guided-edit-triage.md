@@ -43,27 +43,49 @@ malformed one — treat both the same, there's no separate "bad request" case.
 
 ## What's in the payload
 
-- `item` — core fields: `item_status` (derived via `derive_item_status`, same as the
-  live app), `edit_format`, `content_mode`, `montage_preset`, `current_job_id`,
+- `item` — core fields: `item_status` (derived the same way `derive_item_status` does
+  live, cross-checked against the `jobs` array below rather than a separate full-Job
+  fetch), `edit_format`, `content_mode`, `montage_preset`, `current_job_id`,
   `has_voiceover` + `voiceover_gcs_path`, `scheduled_date`.
 - `clip_gcs_paths` — count + full paths.
 - `clip_assignments` — one summary per assignment: media id, gcs path, kind,
   duration/aspect, generation, and whether analysis has run (`has_analysis`,
-  `analysis_version`).
+  `analysis_version`). `user_note` (creator-authored free text about the clip) is
+  deliberately omitted.
 - `pool_assets` — every `PlanItemAsset` row for the item (status, error_code,
-  error_detail, analysis_attempt_count, etc).
-- `jobs` — every `Job` row linked to the item via `content_plan_item_id`.
-- `edit_proposal` — the reviewable guided-edit envelope (`status`, `proposal_version`,
-  `brief`, `failure` with full detail, a `last_approved` summary, a `draft` summary).
+  error_detail, analysis_attempt_count, etc). Analysis JSONB is not fetched.
+- `jobs` — every `Job` row linked to the item via `content_plan_item_id`. Heavy JSONB
+  columns (`assembly_plan`, `transcript`, `pipeline_trace`, etc.) are deferred — use
+  `/admin/jobs/{id}/debug` for those.
+- `edit_proposal` — the reviewable guided-edit envelope: `status`, `proposal_version`,
+  `brief` (direction/pace/duration_s + `goal_length` — NOT the goal text itself),
+  `failure` with full detail, a `conversation_attempt` presence flag (no token), a
+  `last_approved` summary, a `draft` summary.
+- `edit_proposal_unparseable` + `edit_proposal_raw_keys` — set when `PlanItem.edit_proposal`
+  is a non-empty dict that fails schema validation (corrupted/legacy JSONB). Tells you an
+  envelope exists and which top-level keys it has, with no values — treat this as "go look
+  at the row directly if you need the content," not as a payload bug.
 
-## Conversation is redacted by design
+## Redaction is by design
 
-`edit_proposal.conversation` (the briefing chat between the creator and the edit-guide
-agent) is **never** returned verbatim. Each turn collapses to
-`{role, phase, length, has_suggestions}` — the actual typed content is stripped before
-serialization. Same treatment for `draft`/`last_approved`: only structural counts
-(`beat_count`, `media_count`, `duration_s`) survive, not the creator's title/goal text.
+Nothing that carries the creator's own typed words, or an internal write-fence secret,
+survives into this response verbatim:
+
+- `edit_proposal.conversation` (the briefing chat between the creator and the edit-guide
+  agent) collapses each turn to `{role, phase, length, has_suggestions}`.
+- `edit_proposal.brief.goal`, `draft`, and `last_approved` reduce to structural counts
+  (`goal_length`, `beat_count`, `media_count`, `duration_s`) — never the title/goal text.
+- `clip_assignments[*].user_note` is omitted entirely.
+- `edit_proposal.conversation_attempt.token` (an internal write fence, see
+  `app/schemas/edit_proposal.py`) is never returned — only `has_conversation_attempt`
+  plus its `started_at`/version numbers.
+
 This is intentional — this endpoint is admin-only but still must never put a creator's
-own words in front of an operator, a screenshot, or a support ticket. If you need the
-actual conversation content for debugging a specific proposal-generation bug, that
-requires a separate, explicitly-scoped tool — don't extend this endpoint to include it.
+own words, or an internal secret, in front of an operator, a screenshot, or a support
+ticket. If you need the actual conversation content for debugging a specific
+proposal-generation bug, that requires a separate, explicitly-scoped tool — don't extend
+this endpoint to include it.
+
+Filenames and GCS object paths (`clip_gcs_paths`, `clip_assignments[*].gcs_path`,
+pool-asset `source_filename`) are the one exception and stay in the payload — they're
+operationally necessary to actually locate the media during triage.

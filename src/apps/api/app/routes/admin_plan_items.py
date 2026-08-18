@@ -11,25 +11,34 @@ triaged with raw SQL over SSH. See docs/runbooks/guided-edit-triage.md.
 Auth: X-Admin-Token header (same gate as the rest of admin.py) — reused via
 app.routes.admin._require_admin, not duplicated here.
 
-This is admin-only and read-only: no user scoping, no writes. The one
-sensitive area is `edit_proposal.conversation`, which carries the creator's
-own typed words — every turn is redacted to {role, phase, length,
-has_suggestions} so this endpoint never leaks creator text into logs, admin
-screenshots, or a support ticket.
+This is admin-only and read-only: no user scoping, no writes. Every field
+that can carry the creator's own typed words is either omitted or reduced
+to a structural summary before it reaches this response:
+  - `edit_proposal.conversation` — each turn becomes
+    {role, phase, length, has_suggestions}, never the actual content.
+  - `edit_proposal.brief.goal` / `draft` / `last_approved` — reduced to
+    length/counts (goal_length, beat_count, media_count, duration_s).
+  - `clip_assignments[*].user_note` — omitted entirely (creator-authored
+    free text attached to a clip).
+  - `edit_proposal_attempt.token` — never returned (internal write fence,
+    see schemas/edit_proposal.py); only has_conversation_attempt + its
+    started_at/versions survive.
+So this endpoint never leaks creator text into logs, admin screenshots, or
+a support ticket, even though it is admin-only.
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer
 
 from app.database import get_db
 from app.models import Job, PlanItem, PlanItemAsset
@@ -37,9 +46,20 @@ from app.routes.admin import _require_admin
 from app.routes.plan_items import derive_item_status
 from app.schemas.edit_proposal import parse_edit_proposal
 
-log = structlog.get_logger()
-
 router = APIRouter()
+
+# Same defer set as GET /admin/jobs (app/routes/admin_jobs.py list_jobs): these
+# JSONB columns can be multi-megabyte per row and this endpoint never surfaces
+# them — only id/status/mode/created_at/failure fields are read below.
+_JOB_LIST_DEFERS = (
+    defer(Job.assembly_plan),
+    defer(Job.probe_metadata),
+    defer(Job.transcript),
+    defer(Job.scene_cuts),
+    defer(Job.all_candidates),
+    defer(Job.phase_log),
+    defer(Job.pipeline_trace),
+)
 
 
 # ── Response schemas ─────────────────────────────────────────────────────────
@@ -65,6 +85,8 @@ class ClipGcsPathsPayload(BaseModel):
 
 
 class ClipAssignmentSummaryPayload(BaseModel):
+    """Deliberately omits `user_note` — creator-authored free text."""
+
     media_id: str | None
     gcs_path: str
     kind: str | None
@@ -99,7 +121,11 @@ class ItemJobPayload(BaseModel):
 
 class ProposalBriefPayload(BaseModel):
     direction: str
-    goal: str
+    # `goal` is free-text creator/story direction — in the review phase
+    # plan_items.py copies it straight from the review snapshot's goal, so
+    # it can carry the creator's own words. Never returned verbatim, only
+    # its length, so the UI can show "brief set" without leaking text.
+    goal_length: int
     pace: str
     duration_s: int
 
@@ -111,11 +137,14 @@ class ProposalFailurePayload(BaseModel):
 
 
 class ConversationAttemptPayload(BaseModel):
-    token: str
-    expected_proposal_version: int
-    reserved_proposal_version: int
-    started_at: datetime
-    placeholder: bool
+    """Attempt-fence summary. `token` is an internal write fence (see
+    schemas/edit_proposal.py) and is deliberately never returned."""
+
+    has_conversation_attempt: bool
+    expected_proposal_version: int | None = None
+    reserved_proposal_version: int | None = None
+    started_at: datetime | None = None
+    placeholder: bool | None = None
 
 
 class LastApprovedSummaryPayload(BaseModel):
@@ -147,7 +176,7 @@ class EditProposalDebugPayload(BaseModel):
     brief: ProposalBriefPayload
     brief_ready: bool
     generation_attempt_id: str
-    conversation_attempt: ConversationAttemptPayload | None
+    conversation_attempt: ConversationAttemptPayload
     media_digest: str | None
     failure: ProposalFailurePayload | None
     last_approved: LastApprovedSummaryPayload | None
@@ -162,6 +191,13 @@ class PlanItemDebugResponse(BaseModel):
     pool_assets: list[PoolAssetPayload]
     jobs: list[ItemJobPayload]
     edit_proposal: EditProposalDebugPayload | None
+    # Set when PlanItem.edit_proposal is a non-empty dict that failed
+    # EditProposal validation (corrupted/legacy JSONB — parse_edit_proposal
+    # fails closed and returns None). Surfaces that there IS an envelope an
+    # operator should know about, without ever emitting its values — only
+    # the top-level key names, which are schema field names, not content.
+    edit_proposal_unparseable: bool = False
+    edit_proposal_raw_keys: list[str] | None = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -203,15 +239,16 @@ def _edit_proposal_debug_payload(raw: Any) -> EditProposalDebugPayload | None:
             duration_s=proposal.draft.duration_s,
         )
 
-    conversation_attempt = None
     if proposal.conversation_attempt is not None:
         conversation_attempt = ConversationAttemptPayload(
-            token=proposal.conversation_attempt.token,
+            has_conversation_attempt=True,
             expected_proposal_version=proposal.conversation_attempt.expected_proposal_version,
             reserved_proposal_version=proposal.conversation_attempt.reserved_proposal_version,
             started_at=proposal.conversation_attempt.started_at,
             placeholder=proposal.conversation_attempt.placeholder,
         )
+    else:
+        conversation_attempt = ConversationAttemptPayload(has_conversation_attempt=False)
 
     failure = None
     if proposal.failure is not None:
@@ -227,7 +264,7 @@ def _edit_proposal_debug_payload(raw: Any) -> EditProposalDebugPayload | None:
         schema_version=proposal.schema_version,
         brief=ProposalBriefPayload(
             direction=proposal.brief.direction,
-            goal=proposal.brief.goal,
+            goal_length=len(proposal.brief.goal),
             pace=proposal.brief.pace,
             duration_s=proposal.brief.duration_s,
         ),
@@ -271,15 +308,14 @@ async def get_plan_item_debug(
     except (ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
 
-    item_res = await db.execute(
-        select(PlanItem).options(selectinload(PlanItem.current_job)).where(PlanItem.id == item_uuid)
-    )
+    item_res = await db.execute(select(PlanItem).where(PlanItem.id == item_uuid))
     item = item_res.scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
 
     assets_res = await db.execute(
         select(PlanItemAsset)
+        .options(defer(PlanItemAsset.analysis))
         .where(PlanItemAsset.plan_item_id == item_uuid)
         .order_by(PlanItemAsset.created_at)
     )
@@ -288,17 +324,49 @@ async def get_plan_item_debug(
     # Same linkage predicate as GET /admin/jobs?content_plan_item_id=
     # (app/routes/admin_jobs.py list_jobs) — kept in sync deliberately so this
     # endpoint and the jobs list agree on which jobs "belong" to an item.
+    # Deferring the heavy JSONB columns here mirrors that endpoint's list
+    # query — this route never surfaces them, only id/status/mode/
+    # created_at/failure fields.
     jobs_res = await db.execute(
-        select(Job).where(Job.content_plan_item_id == item_uuid).order_by(Job.created_at.desc())
+        select(Job)
+        .options(*_JOB_LIST_DEFERS)
+        .where(Job.content_plan_item_id == item_uuid)
+        .order_by(Job.created_at.desc())
     )
     jobs = list(jobs_res.scalars().all())
+
+    # Avoid a second, fully-hydrated Job fetch (via PlanItem.current_job)
+    # just to read one status string: reuse the row already fetched above
+    # by content_plan_item_id linkage. Falls back to None (item.item_status
+    # wins in derive_item_status) on the rare drift where current_job_id
+    # points at a job whose content_plan_item_id doesn't match this item —
+    # cross-check the `jobs` array in the response in that case.
+    current_job_row = (
+        next((j for j in jobs if j.id == item.current_job_id), None)
+        if item.current_job_id
+        else None
+    )
+    item_status = derive_item_status(
+        SimpleNamespace(item_status=item.item_status, current_job=current_job_row)
+    )
+
+    edit_proposal_payload = _edit_proposal_debug_payload(item.edit_proposal)
+    edit_proposal_unparseable = False
+    edit_proposal_raw_keys: list[str] | None = None
+    if (
+        edit_proposal_payload is None
+        and isinstance(item.edit_proposal, dict)
+        and item.edit_proposal
+    ):
+        edit_proposal_unparseable = True
+        edit_proposal_raw_keys = sorted(item.edit_proposal.keys())
 
     scheduled_date = getattr(item, "scheduled_date", None)
 
     return PlanItemDebugResponse(
         item=ItemCorePayload(
             id=str(item.id),
-            item_status=derive_item_status(item),
+            item_status=item_status,
             edit_format=item.edit_format,
             content_mode=item.content_mode,
             montage_preset=item.montage_preset,
@@ -344,5 +412,7 @@ async def get_plan_item_debug(
             )
             for j in jobs
         ],
-        edit_proposal=_edit_proposal_debug_payload(item.edit_proposal),
+        edit_proposal=edit_proposal_payload,
+        edit_proposal_unparseable=edit_proposal_unparseable,
+        edit_proposal_raw_keys=edit_proposal_raw_keys,
     )
