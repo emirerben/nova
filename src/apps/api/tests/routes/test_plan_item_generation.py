@@ -274,6 +274,86 @@ def test_generate_returns_explicit_proposal_gate_codes(
     assert response.json()["detail"]["code"] == expected_code
 
 
+def test_generate_auto_designs_instead_of_409_when_flag_on_and_media_present(
+    monkeypatch, client: TestClient
+) -> None:
+    """GUIDED_AUTO_DESIGN_ENABLED: no proposal + media present -> 200
+
+    "designing" (reserve + enqueue draft_edit_proposal with auto_finalize),
+    never the 409 a plain proposal_generate_error would raise.
+    """
+
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_auto_design_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_proposal = None
+    item.clip_assignments = [
+        {"gcs_path": f"users/{user.id}/plan/0/a.mp4", "shot_id": None, "user_note": ""}
+    ]
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    apply_calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kw: apply_calls.append(kw),
+    )
+
+    response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 200
+    assert len(apply_calls) == 1
+    assert apply_calls[0]["kwargs"] == {"auto_finalize": True}
+    body = response.json()
+    assert body["guided_edit_auto_design"] is True
+    assert body["edit_proposal"]["status"] == "analyzing"
+    assert body["edit_proposal"]["approval_mode"] == "auto"
+
+
+def test_generate_auto_design_in_flight_is_idempotent_no_duplicate_attempt(
+    monkeypatch, client: TestClient
+) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_auto_design_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.clip_assignments = [
+        {"gcs_path": f"users/{user.id}/plan/0/a.mp4", "shot_id": None, "user_note": ""}
+    ]
+    item.edit_proposal = EditProposal(
+        proposal_version=1,
+        generation_attempt_id="attempt-already-running",
+        status="analyzing",
+        approval_mode="auto",
+        brief=ProposalBrief(),
+    ).model_dump(mode="json")
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    apply_calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kw: apply_calls.append(kw),
+    )
+
+    response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 200
+    assert apply_calls == []  # no duplicate attempt/task
+    body = response.json()
+    assert body["edit_proposal"]["status"] == "analyzing"
+    assert body["edit_proposal"]["generation_attempt_id"] == "attempt-already-running"
+
+
 def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
     # plans/014: the sync path dispatches in-request via dispatch_item_render_for
     # (real-DB coverage lives in test_plan_item_sync_dispatch.py; here we pin

@@ -235,6 +235,12 @@ class EditProposal(BaseModel):
     draft: EditProposalSnapshot | None = None
     last_approved: ApprovedProposalSnapshot | None = None
     failure: ProposalFailure | None = None
+    # GUIDED_AUTO_DESIGN_ENABLED clip-only fallback: set to the failure code
+    # that triggered a legacy montage render instead of a guided story (e.g.
+    # "guided_edit_infeasible"). None everywhere else, including a normal
+    # failure with pool assets present (never silently dropped — see
+    # draft_edit_proposal's auto_finalize fallback).
+    design_fallback: str | None = Field(default=None, max_length=100)
 
 
 class MediaRefResponse(MediaRef):

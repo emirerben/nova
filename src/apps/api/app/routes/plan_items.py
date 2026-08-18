@@ -371,6 +371,11 @@ class PlanItemResponse(BaseModel):
     edit_proposal: EditProposalResponse | None = None
     guided_edit_available: bool = False
     guided_edit_conversation_available: bool = False
+    # GUIDED_AUTO_DESIGN_ENABLED (config.py). False on an old API that predates
+    # this field — the frontend gates the AI-designs-by-default Generate
+    # button behavior on this exact default so a new web build against an old
+    # API deploy keeps today's strict-gate behavior (deploy-skew safe).
+    guided_edit_auto_design: bool = False
     status: str
     current_job_id: str | None
     finished_at: datetime | None = None
@@ -482,6 +487,7 @@ def plan_item_response(
         edit_proposal=_edit_proposal_response(item) if include_edit_proposal else None,
         guided_edit_available=settings.guided_edit_capability_enabled,
         guided_edit_conversation_available=settings.guided_edit_conversation_enabled,
+        guided_edit_auto_design=settings.guided_auto_design_enabled,
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,
         finished_at=item.current_job.finished_at if item.current_job is not None else None,
@@ -1818,6 +1824,106 @@ def _raise_proposal_generate_conflict(code: str) -> NoReturn:
     raise _proposal_http_conflict(code, _PROPOSAL_GENERATE_MESSAGES[code])
 
 
+async def _maybe_auto_design_generate(
+    item_id: str,
+    item: PlanItem,
+    plan: ContentPlan,
+    user: CurrentUser,
+    db: AsyncSession,
+) -> PlanItemResponse | None:
+    """GUIDED_AUTO_DESIGN_ENABLED: reserve+draft instead of 409ing Generate.
+
+    Product decision (2026-08-18): asking the creator for direction stays
+    optional — if they never open the planner, Kria designs the edit and
+    Generate still works in one click, as long as media exists. Returns None
+    when the item has no media at all (nothing to auto-design — the caller
+    falls through to the ordinary 409) or when the flag is off. Returns a 200
+    PlanItemResponse otherwise: idempotent if an attempt is already in flight,
+    or a freshly reserved auto-design attempt (draft_edit_proposal itself
+    dispatches the render after it auto-approves — see
+    _dispatch_after_auto_design in tasks/edit_proposal_build.py).
+    """
+
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.guided_auto_design_enabled:
+        return None
+    if not (item.clip_gcs_paths or []):
+        ready_assets = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.status == "ready",
+                    )
+                )
+            ).scalar_one()
+        )
+        if ready_assets == 0:
+            return None  # nothing to design from — fall through to the normal 409
+
+    from app.schemas.edit_proposal import ProposalFailure  # noqa: PLC0415
+    from app.services.edit_proposals import begin_proposal_attempt  # noqa: PLC0415
+    from app.services.plan_clips import ensure_clip_media_ids  # noqa: PLC0415
+    from app.tasks.edit_proposal_build import draft_edit_proposal  # noqa: PLC0415
+
+    owner_id = user.id
+    locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
+    current = parse_edit_proposal(locked.edit_proposal)
+    if current and current.status in {"analyzing", "drafting"}:
+        # An attempt (auto or manual) is already in flight — idempotent
+        # no-op, never mint a duplicate attempt/task.
+        await db.rollback()
+        instruction_level = await _get_instruction_level(locked, db)
+        return plan_item_response(locked, instruction_level=instruction_level)
+
+    ensure_clip_media_ids(locked)
+    proposal = begin_proposal_attempt(locked, approval_mode="auto")
+    await db.commit()
+    try:
+        draft_edit_proposal.apply_async(
+            args=[
+                str(locked.id),
+                proposal.generation_attempt_id,
+                int(getattr(plan, "ownership_epoch", 0) or 0),
+            ],
+            kwargs={"auto_finalize": True},
+            queue=settings.pool_asset_analysis_queue,
+        )
+    except Exception as exc:  # noqa: BLE001
+        relocked = await _load_owned_item(item_id, owner_id, db, for_update=True)
+        relocked_current = parse_edit_proposal(relocked.edit_proposal)
+        if (
+            relocked_current
+            and relocked_current.generation_attempt_id == proposal.generation_attempt_id
+        ):
+            failed = relocked_current.model_copy(
+                update={
+                    "proposal_version": relocked_current.proposal_version + 1,
+                    "status": "failed",
+                    "failure": ProposalFailure(
+                        code="proposal_dispatch_failed",
+                        message="Kria couldn't start planning this edit. Try again.",
+                        retryable=True,
+                    ),
+                }
+            )
+            relocked.edit_proposal = failed.model_dump(mode="json")
+            await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "proposal_dispatch_failed",
+                "message": "Kria couldn't start planning this edit. Try again.",
+            },
+        ) from exc
+    reloaded = await _load_owned_item(item_id, owner_id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
 async def _proposal_media_is_current(
     item: PlanItem,
     snapshot: EditProposalSnapshot,
@@ -2300,6 +2406,9 @@ async def generate_item(
         from app.services.edit_proposals import proposal_generate_error  # noqa: PLC0415
 
         if proposal_error := proposal_generate_error(item):
+            auto_response = await _maybe_auto_design_generate(item_id, item, plan, user, db)
+            if auto_response is not None:
+                return auto_response
             _raise_proposal_generate_conflict(proposal_error)
 
     approved_guided_media = False

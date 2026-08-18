@@ -45,6 +45,9 @@ class _Result:
     def scalars(self):
         return self._rows
 
+    def scalar_one(self):
+        return len(self._rows)
+
 
 class _Db:
     def __init__(self, result: _Result | None = None):
@@ -57,14 +60,22 @@ class _Db:
     def commit(self):
         self.commits += 1
 
+    def flush(self) -> None:
+        pass
+
 
 def _proposal(
-    *, attempt_id: str = "attempt-1", status: str = "analyzing", brief: ProposalBrief | None = None
+    *,
+    attempt_id: str = "attempt-1",
+    status: str = "analyzing",
+    brief: ProposalBrief | None = None,
+    approval_mode: str | None = None,
 ) -> dict:
     return EditProposal(
         proposal_version=1,
         generation_attempt_id=attempt_id,
         status=status,
+        approval_mode=approval_mode,
         brief=brief or ProposalBrief(),
     ).model_dump(mode="json")
 
@@ -241,16 +252,21 @@ def test_soft_timeout_persists_retryable_failure_before_reraising(monkeypatch) -
 
 
 def _prod_item(
-    item_id: uuid.UUID, *, clip_assignments: list[dict] | None = None
+    item_id: uuid.UUID,
+    *,
+    clip_assignments: list[dict] | None = None,
+    approval_mode: str | None = None,
 ) -> SimpleNamespace:
+    assignments = (
+        clip_assignments if clip_assignments is not None else [dict(_PROD_CLIP_ASSIGNMENT)]
+    )
     return SimpleNamespace(
         id=item_id,
         idea="Athens",
         theme="",
-        clip_assignments=(
-            clip_assignments if clip_assignments is not None else [dict(_PROD_CLIP_ASSIGNMENT)]
-        ),
-        edit_proposal=_proposal(brief=ProposalBrief(duration_s=24)),
+        clip_assignments=assignments,
+        clip_gcs_paths=[str(a["gcs_path"]) for a in assignments if a.get("gcs_path")],
+        edit_proposal=_proposal(brief=ProposalBrief(duration_s=24), approval_mode=approval_mode),
     )
 
 
@@ -440,3 +456,218 @@ def test_infeasible_footage_skips_agent_and_fails_with_actionable_message(monkey
     assert persisted.failure.code == "guided_edit_infeasible"
     assert "1.0" in persisted.failure.message
     assert db.commits == 1
+
+
+class _FakeBeat:
+    def __init__(self, media_ids: list[str]) -> None:
+        self.topic = "Acropolis"
+        self.thought = "Ancient stone stands tall against the sky."
+        self.media_ids = media_ids
+        self.layout = "fullscreen"
+        self.duration_s = 6.0
+
+
+class _FakeAgentOutput:
+    def __init__(self, media_ids: list[str], *, duration_s: int = 6) -> None:
+        self.title = "Athens in a moment"
+        self.duration_s = duration_s
+        self.story_beats = [_FakeBeat(media_ids)]
+
+
+def _auto_finalize_common_mocks(monkeypatch, item, owner_id) -> None:
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
+    )
+    monkeypatch.setattr(
+        "app.storage.object_metadata",
+        lambda _path: SimpleNamespace(
+            content_type="video/quicktime", generation="1787000010652201"
+        ),
+    )  # cache hit — reuses the persisted analysis, no download/analyze call
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+
+
+def test_auto_finalize_success_approves_auto_and_dispatches_after_commit(monkeypatch) -> None:
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    _auto_finalize_common_mocks(monkeypatch, item, owner_id)
+    monkeypatch.setattr(
+        "app.agents.edit_proposal.EditProposalAgent.run",
+        lambda self, input: _FakeAgentOutput(  # noqa: A002
+            [_PROD_CLIP_ASSIGNMENT["media_id"]]
+        ),
+    )
+
+    dispatch_calls = []
+
+    def _fake_dispatch(item_id_arg, epoch, *, bypass_guided_edit_gate=False):
+        dispatch_calls.append((item_id_arg, epoch, bypass_guided_edit_gate))
+        return SimpleNamespace(outcome="dispatched")
+
+    monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
+
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0, auto_finalize=True)
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "approved"
+    assert persisted.approval_mode == "auto"
+    assert persisted.last_approved is not None
+    assert persisted.last_approved.approval_mode == "auto"
+    assert persisted.design_fallback is None
+    assert dispatch_calls == [(str(item_id), 0, False)]
+
+
+def test_auto_finalize_dispatch_failure_leaves_approved_no_wedge(monkeypatch) -> None:
+    """If dispatch fails after auto-approval, the proposal stays approved —
+
+    the next manual Generate click dispatches directly instead of re-running
+    auto-design or wedging the creator.
+    """
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    _auto_finalize_common_mocks(monkeypatch, item, owner_id)
+    monkeypatch.setattr(
+        "app.agents.edit_proposal.EditProposalAgent.run",
+        lambda self, input: _FakeAgentOutput(  # noqa: A002
+            [_PROD_CLIP_ASSIGNMENT["media_id"]]
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        lambda *_a, **_kw: SimpleNamespace(outcome="publish_failed"),
+    )
+
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0, auto_finalize=True)
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "approved"
+    assert persisted.approval_mode == "auto"
+
+
+def test_auto_finalize_infeasible_footage_falls_back_to_montage_clip_only(monkeypatch) -> None:
+    """guided-fail (infeasible footage) + zero registered pool assets ->
+
+    legacy clip render dispatched anyway (bypass_guided_edit_gate=True) with
+    design_fallback persisted.
+    """
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    short = dict(_PROD_CLIP_ASSIGNMENT)
+    short["duration_s"] = 1.0
+    item = _prod_item(item_id, clip_assignments=[short], approval_mode="auto")
+    db = _Db(_Result(rows=[]))  # zero pool assets
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    _auto_finalize_common_mocks(monkeypatch, item, owner_id)
+
+    def _boom_client():
+        raise AssertionError("the guided-edit agent must not run for infeasible footage")
+
+    monkeypatch.setattr("app.agents._model_client.default_client", _boom_client)
+
+    dispatch_calls = []
+
+    def _fake_dispatch(item_id_arg, epoch, *, bypass_guided_edit_gate=False):
+        dispatch_calls.append((item_id_arg, epoch, bypass_guided_edit_gate))
+        return SimpleNamespace(outcome="dispatched")
+
+    monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
+
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0, auto_finalize=True)
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.failure is not None
+    assert persisted.failure.code == "guided_edit_infeasible"
+    assert persisted.design_fallback == "guided_edit_infeasible"
+    assert dispatch_calls == [(str(item_id), 0, True)]
+
+
+def test_auto_finalize_infeasible_footage_with_pool_assets_never_falls_back(
+    monkeypatch,
+) -> None:
+    """Pool assets exist -> never silently drop them behind a clip-only
+
+    fallback (2026-08-15 incident invariant). The failure stays exactly as
+    persisted; no dispatch is attempted at all.
+    """
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    short = dict(_PROD_CLIP_ASSIGNMENT)
+    short["duration_s"] = 1.0
+    item = _prod_item(item_id, clip_assignments=[short], approval_mode="auto")
+    pool_asset = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=owner_id,
+        status="ready",
+        gcs_path="users/u/plan/i/pool/photo.jpg",
+        gcs_generation="7",
+        kind="image",
+        source_filename="photo.jpg",
+        duration_s=None,
+        aspect=None,
+        content_hash=None,
+        user_context="",
+        analysis={},
+        created_at=None,
+    )
+    db = _Db(_Result(rows=[pool_asset]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    _auto_finalize_common_mocks(monkeypatch, item, owner_id)
+
+    def _boom_client():
+        raise AssertionError("the guided-edit agent must not run for infeasible footage")
+
+    monkeypatch.setattr("app.agents._model_client.default_client", _boom_client)
+
+    dispatch_calls = []
+
+    def _fake_dispatch(*args, **kwargs):
+        dispatch_calls.append((args, kwargs))
+        return SimpleNamespace(outcome="dispatched")
+
+    monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
+
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0, auto_finalize=True)
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.failure is not None
+    assert persisted.failure.code == "guided_edit_infeasible"
+    assert persisted.failure.retryable is True
+    assert persisted.design_fallback is None
+    assert dispatch_calls == []

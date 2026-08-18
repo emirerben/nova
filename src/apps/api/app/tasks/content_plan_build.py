@@ -606,6 +606,7 @@ def _dispatch_item_render(
     persona_data: dict,
     *,
     ownership_epoch: int,
+    bypass_guided_edit_gate: bool = False,
 ) -> DispatchResult:
     """Mint a generative Job for an item's clips, persist it, dispatch its render.
 
@@ -621,6 +622,13 @@ def _dispatch_item_render(
     is a typed DispatchResult.
 
     `item.clip_gcs_paths` must already be set on the session before calling.
+
+    ``bypass_guided_edit_gate``: ONLY for draft_edit_proposal's
+    GUIDED_AUTO_DESIGN_ENABLED clip-only fallback (agent/infeasible-footage
+    failure, zero registered pool assets) — dispatches the legacy clip render
+    even though the proposal is not "approved" (it's "failed"; enforcement
+    would otherwise 409 it here exactly like the Generate route). Every other
+    caller must leave this False.
     """
     from app.config import settings  # noqa: PLC0415
     from app.schemas.montage_preset import coerce_montage_preset  # noqa: PLC0415
@@ -635,7 +643,9 @@ def _dispatch_item_render(
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
 
     approved_proposal: dict | None = None
-    if settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled:
+    if not bypass_guided_edit_gate and (
+        settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled
+    ):
         from app.services.edit_proposals import (  # noqa: PLC0415
             mark_edit_proposal_stale,
             validate_approved_proposal_media_sync,
@@ -883,6 +893,8 @@ def _load_persona_data(session, plan: ContentPlan) -> dict:  # noqa: ANN001
 def dispatch_item_render_for(
     plan_item_id: str,
     expected_ownership_epoch: int | None = None,
+    *,
+    bypass_guided_edit_gate: bool = False,
 ) -> DispatchResult:
     """Load + lock a plan item, re-check for an active render, then dispatch.
 
@@ -953,6 +965,7 @@ def dispatch_item_render_for(
             plan,
             persona_data,
             ownership_epoch=ownership_epoch,
+            bypass_guided_edit_gate=bypass_guided_edit_gate,
         )
 
 
