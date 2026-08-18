@@ -32,16 +32,6 @@
   white-space: nowrap;
 }
 
-@media (hover: hover) {
-  .cta:hover {
-    opacity: 0.8;
-  }
-}
-
-.cta:active {
-  opacity: 0.62;
-}
-
 .headline {
   position: absolute;
   z-index: 7;
@@ -263,29 +253,38 @@
 
 .activeShot { opacity: 1; }
 
-.cta {
+.legalLinks {
   position: absolute;
   z-index: 11;
-  bottom: 8.26%;
+  bottom: 16px;
   left: 50%;
-  display: inline-flex;
-  width: 220px;
-  min-height: 48px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  margin: 0;
   transform: translateX(-50%);
-  border-radius: 999px;
-  background: var(--ink);
-  color: white;
-  font-size: 15px;
-  font-weight: 700;
-  box-shadow: 0 10px 32px rgb(12 12 14 / 14%);
+  color: #71717a;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
 }
 
-.cta:focus-visible {
-  outline: 3px solid #65a30d;
-  outline-offset: 3px;
+.legalLinks a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 150ms ease;
+}
+
+@media (hover: hover) {
+  .legalLinks a:hover {
+    color: var(--ink);
+  }
+}
+
+.legalLinks a:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid #65a30d;
+  outline-offset: 2px;
 }
 
 @media (max-width: 900px) {
@@ -363,11 +362,11 @@
   .visualEffectsChip { top: auto; right: 2%; bottom: 25%; }
   .soundChip { top: 6%; right: 2%; }
 
-  .cta {
-    bottom: 55px;
-    width: 190px;
-    min-height: 46px;
-    font-size: 13px;
+  .legalLinks {
+    bottom: 8px;
+    width: calc(100% - 24px);
+    max-width: 360px;
+    font-size: 10px;
   }
 
 }

@@ -12,6 +12,7 @@ import { resetPersona } from "@/lib/plan-api";
 export default function Header() {
   const pathname = usePathname() ?? "";
   const isAdmin = pathname.startsWith("/admin");
+  const isLanding = pathname === "/" || pathname === "/auto-story";
   const { status: authStatus } = useSession();
   const [progress, setProgress] = useState(0);
 
@@ -39,8 +40,7 @@ export default function Header() {
   // + the static legal pages (cream canvas, would clash with the dark sticky header).
   // Dark: template render job flow (/template-jobs) and /admin (early-return above).
   const isLight =
-    pathname === "/" ||
-    pathname === "/auto-story" ||
+    isLanding ||
     pathname.startsWith("/plan") ||
     pathname.startsWith("/library") ||
     pathname.startsWith("/tiktok") ||
@@ -50,7 +50,11 @@ export default function Header() {
 
   return (
     <header
-      className={`z-40 h-14 ${isLight ? "bg-[#fafaf8] border-b border-zinc-200/70" : "sticky top-0"}`}
+      className={`z-40 h-14 ${
+        isLight
+          ? `bg-[#fafaf8] ${isLanding ? "" : "border-b border-zinc-200/70"}`
+          : "sticky top-0"
+      }`}
       style={
         isLight
           ? {}
@@ -97,14 +101,20 @@ export default function Header() {
               Library
             </Link>
           )}
-          <AuthControl isLight={isLight} />
+          <AuthControl isLight={isLight} isLanding={isLanding} />
         </nav>
       </div>
     </header>
   );
 }
 
-function AuthControl({ isLight = false }: { isLight?: boolean }) {
+function AuthControl({
+  isLight = false,
+  isLanding = false,
+}: {
+  isLight?: boolean;
+  isLanding?: boolean;
+}) {
   const { data: session, status } = useSession();
   const [open, setOpen] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
@@ -130,6 +140,17 @@ function AuthControl({ isLight = false }: { isLight?: boolean }) {
   }
 
   if (!session?.user) {
+    if (isLanding) {
+      return (
+        <Link
+          href="/plan"
+          className="inline-flex min-h-10 items-center justify-center rounded-full bg-[#0c0c0e] px-3 text-[13px] font-semibold text-white transition-opacity hover:opacity-80 active:opacity-65 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600 sm:px-4 sm:text-sm"
+        >
+          Create my first edit
+        </Link>
+      );
+    }
+
     return (
       // relative + absolute caption: the header row is a fixed h-14, and a
       // flex-col taller than that would spill the caption past the header's

@@ -233,7 +233,7 @@ describe("KriaEditStory reduced motion", () => {
     expect(container.querySelectorAll('[data-feature-group="captions-effects"]')).toHaveLength(2);
   });
 
-  it("ends at the primary CTA without a progress footer", () => {
+  it("leaves the primary CTA to the header and keeps legal links below the story", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: jest.fn().mockReturnValue({
@@ -246,10 +246,13 @@ describe("KriaEditStory reduced motion", () => {
 
     render(<KriaEditStory mode="auto" />);
 
-    expect(screen.getByRole("link", { name: /create my first edit/i })).toHaveAttribute(
+    expect(screen.queryByRole("link", { name: /create my first edit/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Terms" })).toHaveAttribute("href", "/terms");
+    expect(screen.getByRole("link", { name: "Privacy" })).toHaveAttribute(
       "href",
-      "/plan",
+      "/privacy",
     );
+    expect(screen.getByText(/by continuing, you agree to our/i)).toBeInTheDocument();
     expect(screen.queryByText("Auto")).not.toBeInTheDocument();
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
   });

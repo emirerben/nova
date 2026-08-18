@@ -35,22 +35,42 @@ function renderWithPathname(pathname: string) {
 }
 
 describe("Header — isLight predicate", () => {
-  it("test_header_light_on_landing: / is light (cream bg)", () => {
+  const { useSession } = require("next-auth/react");
+
+  beforeEach(() => {
+    useSession.mockReturnValue({ data: null, status: "unauthenticated" });
+  });
+
+  it("test_header_light_on_landing: / is light, borderless, and uses the primary CTA", () => {
     const { container } = renderWithPathname("/");
     const header = container.querySelector("header");
     expect(header!.className).toContain("bg-[#fafaf8]");
+    expect(header!.className).not.toContain("border-b");
+    expect(screen.getByRole("link", { name: /create my first edit/i })).toHaveAttribute(
+      "href",
+      "/plan",
+    );
+    expect(screen.queryByRole("button", { name: /sign in/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Terms" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Privacy" })).not.toBeInTheDocument();
   });
 
-  it("test_header_light_on_auto_story: /auto-story is light", () => {
+  it("test_header_light_on_auto_story: /auto-story is light and borderless", () => {
     const { container } = renderWithPathname("/auto-story");
     const header = container.querySelector("header");
     expect(header!.className).toContain("bg-[#fafaf8]");
+    expect(header!.className).not.toContain("border-b");
+    expect(screen.getByRole("link", { name: /create my first edit/i })).toBeInTheDocument();
   });
 
-  it("test_header_light_on_plan: /plan is light", () => {
+  it("test_header_light_on_plan: /plan keeps the standard light auth header", () => {
     const { container } = renderWithPathname("/plan");
     const header = container.querySelector("header");
     expect(header!.className).toContain("bg-[#fafaf8]");
+    expect(header!.className).toContain("border-b");
+    expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Terms" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Privacy" })).toBeInTheDocument();
   });
 
   it("test_header_light_on_plan_items: /plan/items/x is light", () => {

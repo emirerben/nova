@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 - **The landing page now shows how Kria builds an edit, using real footage.** Raw landscape clips, captions and visual effects, placed image and video overlays, sound, and the final message arrive automatically around a clean phone screen, with no mode picker or play step.
 
 ### Changed
-- **The landing page now ends at “Create my first edit.”** The previous process section and footer content below the primary action were removed so the page stays focused on the product story and its single next step.
+- **The landing page now keeps one clear next step in a borderless header.** “Create my first edit” replaces Sign in on landing routes, while the Terms and Privacy links move to a quiet line below the story. The previous process section and footer remain removed.
 - **The animation adapts cleanly across devices and accessibility settings.** Mobile layouts retain the same ordered story, viewport changes preserve every travel destination, and reduced-motion users see the completed composition without positional movement.
 
 ### Fixed
