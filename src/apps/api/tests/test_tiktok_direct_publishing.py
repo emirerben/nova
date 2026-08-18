@@ -173,6 +173,7 @@ def test_publication_response_carries_release_receipt_and_frozen_learning_fields
         retryable=False,
         evaluation_metrics={"view_count": 2000, "window_hours": 72},
         evaluation_captured_at=now,
+        tiktok_publish_id="publish-abc123",
         created_at=now,
         updated_at=now,
     )
@@ -189,6 +190,7 @@ def test_publication_response_carries_release_receipt_and_frozen_learning_fields
     assert response.public_at == now
     assert response.evaluation_metrics == {"view_count": 2000, "window_hours": 72}
     assert response.evaluation_captured_at == now
+    assert response.tiktok_publish_id == "publish-abc123"
 
 
 def test_publication_response_tolerates_malformed_legacy_creator_metadata() -> None:
@@ -209,7 +211,9 @@ def test_publication_response_tolerates_malformed_legacy_creator_metadata() -> N
         updated_at=now,
     )
 
-    assert _publication_response(row).creator_nickname is None
+    response = _publication_response(row)
+    assert response.creator_nickname is None
+    assert response.tiktok_publish_id is None
 
 
 @pytest.mark.asyncio
@@ -781,7 +785,7 @@ async def test_mutating_routes_fail_closed_before_external_side_effects() -> Non
     ):
         with pytest.raises(HTTPException, match="Music usage"):
             await create_publication(_body(music_usage_confirmed=False), user, db)
-        with pytest.raises(HTTPException, match="finish this draft inside TikTok"):
+        with pytest.raises(HTTPException, match="finish this in the TikTok app"):
             await create_publication(
                 _body(delivery_mode="draft_upload", draft_handoff_confirmed=False),
                 user,
@@ -793,7 +797,7 @@ async def test_mutating_routes_fail_closed_before_external_side_effects() -> Non
         patch("app.routes.tiktok.settings.tiktok_draft_upload_enabled", False),
         patch("app.routes.tiktok.settings.tiktok_content_posting_audited", True),
     ):
-        with pytest.raises(HTTPException, match="draft upload is not available"):
+        with pytest.raises(HTTPException, match="Sending to the TikTok app inbox is not available"):
             await create_publication(
                 _body(delivery_mode="draft_upload", draft_handoff_confirmed=True),
                 user,
@@ -1033,6 +1037,7 @@ def _session_context(row: TikTokPublication, *, first: bool = False) -> MagicMoc
     job = _job()
     job.id = job_id
     row.job_id = job_id
+
     def _get(model, *args, **kwargs):  # noqa: ANN001, ARG001
         return row if model is TikTokPublication else job
 
@@ -1118,7 +1123,7 @@ def test_submit_worker_fails_closed_when_draft_rollout_is_disabled() -> None:
 
     assert row.processing_status == "failed"
     assert row.failure_code == "draft_upload_disabled"
-    assert row.failure_detail == "TikTok draft upload is temporarily unavailable"
+    assert row.failure_detail == "Sending to the TikTok app inbox is temporarily unavailable"
     assert row.retryable is False
     assert row.next_poll_at is None
     copy_media.assert_not_called()

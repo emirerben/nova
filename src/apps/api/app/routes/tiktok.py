@@ -170,6 +170,7 @@ class PublicationResponse(BaseModel):
     processing_status: str
     visibility_status: str
     public_at: datetime | None
+    tiktok_publish_id: str | None = None
     retryable: bool
     failure_code: str | None
     failure_detail: str | None
@@ -197,6 +198,7 @@ def _publication_response(row: TikTokPublication) -> PublicationResponse:
         processing_status=row.processing_status,
         visibility_status=row.visibility_status,
         public_at=row.public_at,
+        tiktok_publish_id=row.tiktok_publish_id,
         retryable=row.retryable,
         failure_code=row.failure_code,
         failure_detail=row.failure_detail,
@@ -480,11 +482,13 @@ async def create_publication(
     if not body.music_usage_confirmed:
         raise HTTPException(status_code=400, detail="Music usage confirmation is required")
     if body.delivery_mode == "draft_upload" and not settings.tiktok_draft_upload_enabled:
-        raise HTTPException(status_code=404, detail="TikTok draft upload is not available")
+        raise HTTPException(
+            status_code=404, detail="Sending to the TikTok app inbox is not available"
+        )
     if body.delivery_mode == "draft_upload" and not body.draft_handoff_confirmed:
         raise HTTPException(
             status_code=400,
-            detail="Confirm that you will finish this draft inside TikTok",
+            detail="Confirm that you'll finish this in the TikTok app",
         )
     # Validate the Job before the idempotency fast path: cancellation also
     # suppresses retries of an older queued/failed publication receipt.

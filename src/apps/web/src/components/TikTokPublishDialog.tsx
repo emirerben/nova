@@ -211,7 +211,7 @@ export function TikTokPublishDialog({
     ? !musicConfirmed
       ? "Confirm TikTok's music usage terms."
       : !draftHandoffConfirmed
-        ? "Confirm that you will finish this draft inside TikTok."
+        ? "Confirm that you'll finish this in the TikTok app."
         : null
     : !privacy
       ? "Choose who can watch this video."
@@ -477,7 +477,7 @@ export function TikTokPublishDialog({
                       ? "Preview only — no post will be sent."
                       : step === "confirm"
                         ? deliveryMode === "draft_upload"
-                          ? "TikTok will notify you to finish editing and post this draft in the app."
+                          ? "TikTok will notify you in the app inbox to finish editing and post."
                           : "Publishing creates a TikTok post. Changes may need to be made in TikTok."
                         : "You will review everything before publishing."}
                   </p>
@@ -492,7 +492,7 @@ export function TikTokPublishDialog({
                   aria-describedby={!canReview ? "tiktok-review-blocker" : undefined}
                   className="min-h-12 w-full rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-35 lg:max-w-[300px]"
                 >
-                  Review {deliveryMode === "draft_upload" ? "draft handoff" : "post"}
+                  Review {deliveryMode === "draft_upload" ? "handoff" : "post"}
                 </button>
               ) : (
                 <>
@@ -512,7 +512,7 @@ export function TikTokPublishDialog({
                   >
                     {state === "submitting"
                       ? simulationEnabled ? "Simulating…" : "Sending to TikTok…"
-                      : simulationEnabled ? "Simulate delivery" : deliveryMode === "draft_upload" ? "Send to TikTok drafts" : "Publish now"}
+                      : simulationEnabled ? "Simulate delivery" : deliveryMode === "draft_upload" ? "Send to TikTok inbox" : "Publish now"}
                   </button>
                 </>
               )}
@@ -650,7 +650,7 @@ function DeliveryModePicker({
             />
             <span>
               <span className="block text-sm font-semibold text-[#0c0c0e]">Finish in TikTok</span>
-              <span className="mt-1 block text-xs leading-relaxed text-[#71717a]">Send a draft, then use TikTok&apos;s inbox notification to edit and post it.</span>
+              <span className="mt-1 block text-xs leading-relaxed text-[#71717a]">Send it to your TikTok inbox, then finish and post it in the TikTok phone app.</span>
             </span>
           </span>
         </label>
@@ -684,7 +684,7 @@ function DraftDetailsStep({
     <div className="grid gap-7 lg:grid-cols-[minmax(280px,0.72fr)_minmax(500px,1.28fr)] lg:items-start xl:gap-12">
       <div className="border-y border-zinc-200 py-4 lg:sticky lg:top-0">
         <div className="grid grid-cols-[88px_minmax(0,1fr)] items-start gap-4 sm:grid-cols-[112px_minmax(0,1fr)] lg:grid-cols-[132px_minmax(0,1fr)]">
-          <video src={options.preview_url} controls playsInline preload="metadata" className="aspect-[9/16] w-full rounded-lg bg-black object-cover" aria-label="Exact video TikTok will receive as a draft" />
+          <video src={options.preview_url} controls playsInline preload="metadata" className="aspect-[9/16] w-full rounded-lg bg-black object-cover" aria-label="Exact video TikTok will receive" />
           <div className="min-w-0">
             <AccountRow nickname={options.creator_nickname} avatarUrl={accountAvatarUrl} subline="Connected TikTok account" compact />
             <p className="mt-4 line-clamp-4 text-sm leading-relaxed text-[#3f3f46]">{videoTitle}</p>
@@ -703,7 +703,7 @@ function DraftDetailsStep({
         </label>
         <label className="flex min-h-14 items-start gap-3 border-y border-zinc-200 px-1 py-4 text-sm text-[#3f3f46] focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-600">
           <input type="checkbox" checked={handoffConfirmed} onChange={(event) => onHandoffConfirmed(event.target.checked)} className="mt-0.5 h-5 w-5 accent-lime-600" />
-          <span>I understand that I must open TikTok&apos;s inbox notification and finish the draft inside TikTok before it is posted.</span>
+          <span>I understand I must open the TikTok app on my phone, tap the notification in my Inbox, and finish and post it there. It will not appear in Drafts or on tiktok.com.</span>
         </label>
       </div>
     </div>
@@ -724,21 +724,21 @@ function DraftConfirmStep({
   return (
     <div className="mx-auto w-full max-w-[900px]">
       <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-4 border-b border-zinc-200 pb-6 sm:grid-cols-[112px_minmax(0,1fr)]">
-        <video src={options.preview_url} controls muted playsInline preload="metadata" className="aspect-[9/16] w-full rounded-lg bg-black object-cover" aria-label={simulation ? "Video being previewed" : "Video being sent to TikTok drafts"} />
-        <AccountRow nickname={options.creator_nickname} avatarUrl={accountAvatarUrl} subline="Sending to TikTok drafts" compact />
+        <video src={options.preview_url} controls muted playsInline preload="metadata" className="aspect-[9/16] w-full rounded-lg bg-black object-cover" aria-label={simulation ? "Video being previewed" : "Video being sent to your TikTok inbox"} />
+        <AccountRow nickname={options.creator_nickname} avatarUrl={accountAvatarUrl} subline="Sending to your TikTok inbox" compact />
       </div>
       <div className="mt-7 flex items-center justify-between gap-4">
-        <p className="font-display text-3xl text-[#0c0c0e]">Draft handoff summary</p>
+        <p className="font-display text-3xl text-[#0c0c0e]">Inbox handoff summary</p>
         <button type="button" onClick={onEdit} className="min-h-11 text-sm font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">Edit choice</button>
       </div>
       <dl className="mt-2 divide-y divide-zinc-200 border-y border-zinc-200">
-        <ReviewSummaryRow label="Destination" value="TikTok drafts" />
+        <ReviewSummaryRow label="Destination" value="TikTok inbox (phone app)" />
         <ReviewSummaryRow label="Next step" value="Open TikTok's inbox notification to edit and post" />
         <ReviewSummaryRow label="Music" value="Music usage confirmed" />
       </dl>
       <div className="mt-7 border border-lime-600 px-4 py-4">
         <p className="font-semibold text-[#0c0c0e]">Ready to send</p>
-        <p className="mt-1 text-sm text-[#3f3f46]">This does not create a TikTok post. You stay in control of the final edit and publish action inside TikTok.</p>
+        <p className="mt-1 text-sm text-[#3f3f46]">This does not create a TikTok post. After you send it, open the TikTok app on your phone, tap Inbox, then tap the notification to finish and post. It will not appear on tiktok.com or under Profile → Drafts.</p>
       </div>
     </div>
   );

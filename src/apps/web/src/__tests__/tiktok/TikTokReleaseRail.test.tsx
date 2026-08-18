@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { TikTokReleaseRail } from "@/components/TikTokReleaseRail";
 import type { TikTokConnection, TikTokPublication } from "@/lib/tiktok-api";
@@ -82,6 +82,17 @@ it("labels a simulated receipt as local instead of claiming TikTok is processing
   expect(screen.getByText(/Simulated Aug 1/)).not.toBeNull();
   expect(screen.getByRole("button", { name: "Preview history (1)" })).not.toBeNull();
   expect(screen.queryByText("Sending to TikTok")).toBeNull();
+});
+
+it("hides the inbox find-it guidance and download fallback during a simulated draft publish", () => {
+  renderRail(
+    { ...basePublication, delivery_mode: "draft_upload", processing_status: "complete", visibility_status: "draft" },
+    undefined,
+    { simulation: true },
+  );
+
+  expect(screen.queryByText("Where to find it")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Download the video/ })).toBeNull();
 });
 
 it("offers publishing only for a connected account with permission", () => {
@@ -197,7 +208,7 @@ it("uses account-wide publications for learning but item attempts for history", 
 
 it.each([
   ["private", "complete", "Published privately"],
-  ["draft", "complete", "Ready in TikTok drafts"],
+  ["draft", "complete", "Waiting in your TikTok app inbox"],
   ["removed", "complete", "No longer public"],
   ["unknown", "submission_unknown", "Check TikTok before retrying"],
 ] as const)("renders the %s/%s receipt state", (visibility, processing, heading) => {
@@ -209,6 +220,75 @@ it.each([
   });
 
   expect(screen.getByText(heading)).not.toBeNull();
+});
+
+it("names the real destination for an inbox handoff and never claims TikTok's Drafts tab", () => {
+  const onDownload = jest.fn();
+  renderRail(
+    {
+      ...basePublication,
+      delivery_mode: "draft_upload",
+      processing_status: "complete",
+      visibility_status: "draft",
+      tiktok_publish_id: "publish-abc123",
+    },
+    undefined,
+    { onDownload },
+  );
+
+  // Never claims the Drafts tab as the destination.
+  expect(screen.queryAllByText(/TikTok drafts/i)).toHaveLength(0);
+
+  // Names the real place and tells the creator how to reach it.
+  expect(screen.getByText("TikTok app inbox")).not.toBeNull();
+  expect(screen.getAllByText(/Open the TikTok app on your phone/).length).toBeGreaterThan(0);
+  expect(screen.getByText(/Tap the notification about your uploaded video/)).not.toBeNull();
+  expect(screen.getByText(/will not appear on tiktok\.com in a desktop browser/)).not.toBeNull();
+  expect(screen.getByText(/will not appear under Profile → Drafts/)).not.toBeNull();
+  expect(screen.getByText(/publish-abc123/)).not.toBeNull();
+
+  // Manual fallback is reachable from the receipt.
+  fireEvent.click(screen.getByRole("button", { name: "Download the video" }));
+  expect(onDownload).toHaveBeenCalledTimes(1);
+});
+
+it("disables the receipt's download fallback while the video is baking or not ready", () => {
+  const onDownload = jest.fn();
+  renderRail(
+    {
+      ...basePublication,
+      delivery_mode: "draft_upload",
+      processing_status: "complete",
+      visibility_status: "draft",
+    },
+    undefined,
+    { onDownload, baking: true, videoReady: false },
+  );
+
+  const button = screen.getByRole("button", { name: "Preparing…" }) as HTMLButtonElement;
+  expect(button.disabled).toBe(true);
+  fireEvent.click(button);
+  expect(onDownload).not.toHaveBeenCalled();
+
+  // No TikTok publish id on this publication — no reference line to show.
+  expect(screen.queryByText(/TikTok reference:/)).toBeNull();
+});
+
+it("labels a past draft-upload publication as a TikTok app inbox handoff in history, not a draft", () => {
+  const draftUpload: TikTokPublication = {
+    ...basePublication,
+    id: "publication-draft",
+    delivery_mode: "draft_upload",
+    privacy_level: "TIKTOK_DRAFT",
+    processing_status: "complete",
+    visibility_status: "unknown",
+  };
+  renderRail(draftUpload, [draftUpload]);
+
+  fireEvent.click(screen.getByRole("button", { name: "TikTok history (1)" }));
+  const historyPanel = within(screen.getByRole("dialog", { name: "TikTok history (1)" }));
+  expect(historyPanel.getByText("TikTok app inbox")).not.toBeNull();
+  expect(historyPanel.queryByText(/TikTok drafts/i)).toBeNull();
 });
 
 it("stops the working state after the creator posts an uploaded draft in TikTok", () => {

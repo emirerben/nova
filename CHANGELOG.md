@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.37.0.0] — 2026-08-17
+## [0.37.2.0] — 2026-08-18
 
 ### Added
 - **The landing page now shows how Kria builds an edit, using real footage.** Raw landscape clips, captions and visual effects, placed image and video overlays, sound, and the final message arrive automatically around a clean phone screen, with no mode picker or play step.
@@ -13,6 +13,16 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Automatic playback now survives real browser media failures.** Blocked audio, delayed video readiness, buffering, pause/resume, replay, and viewport changes no longer leave the story silent, stuck, or visually out of sync.
+
+## [0.37.1.0] — 2026-08-17
+
+### Fixed
+- **fix(tiktok): stop calling the TikTok inbox handoff "TikTok drafts."** TikTok's Upload API (`/v2/post/publish/inbox/video/init/`) delivers to the creator's TikTok **app inbox** as a notification — it never writes to the Drafts tab and never appears on tiktok.com in a desktop browser. Kria's UI called this destination "TikTok drafts" everywhere prominent (release receipt, publish dialog, library tile, the public TikTok-review demo page), so a user whose upload fully succeeded (confirmed by prod logs: init 200 OK, TikTok pulled the media, `status/fetch` reached a terminal state) searched tiktok.com and reported the video missing. Renamed every destination string to name the real place, added explicit find-it steps (open the TikTok app → Inbox → tap the notification) to the receipt and the pre-send confirm step, wired a download fallback into the receipt state (it previously had none), and exposed `tiktok_publish_id` on `GET /tiktok/publications/{id}` for support correlation without reading Fly logs. Internal identifiers (`delivery_mode="draft_upload"`, `privacy_level="TIKTOK_DRAFT"`, `visibility_status="draft"`) are unchanged — presentation only, no migration. New regression test asserts a draft-upload receipt never renders "TikTok drafts" as a destination.
+
+## [0.37.0.1] — 2026-08-17
+
+### Changed
+- **Info dots now open on hover.** On desktop, resting the pointer on a ⓘ dot opens its explanation after a beat and it fades away when you move on; clicking pins it open. Touch still taps to toggle. Hover-opening never steals your keyboard focus.
 
 ## [0.36.0.0] — 2026-08-17
 
@@ -364,6 +374,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Deploy-interrupted renders recover promptly.** Fly now gives Celery the supported five-minute stop budget and remaps deploy termination into Celery's four-minute soft shutdown, restoring unfinished late-acknowledged tasks with a one-minute safety margin instead of waiting for Redis visibility expiry. Celery 5.5+ is required and enforced because older releases do not implement soft shutdown; the existing 1,900-second visibility timeout, worker-loss rejection, late acknowledgements, and stale-job reapers remain backstops.
 - **Plan-item render progress is video-first.** The render headline, elapsed/ETA state, latest analysis step, and completed count now sit beneath the video and variant picker, with the full accessible feed behind a stable “Show analysis steps” disclosure. Controlled variant re-renders remain visible even while the parent item is ready, zero-preview failures retain their setup fallback, and the redundant standalone duration message is removed.
+
 ## [0.26.0.0] — 2026-08-11
 
 ### Added
