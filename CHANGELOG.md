@@ -11,6 +11,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **The "Kria couldn't plan this edit" dead end is fixed at the root.** Clip-analysis errors during drafting (the crash that permanently wedged plan items) now retry when transient and fail fast with a diagnosable reason when the media is unreadable; failed plans map to a distinct, actionable error instead of a generic one, and Generate can always recover from a failed plan.
 - **Planning chat can no longer be started without media, and its stall window is shorter.** The conversation now asks for a photo or video first; the reservation timeout matches the request timeout (60s) so the composer can't dead-lock; Kria's suggestion chips survive replies that don't end in a question.
+## [0.38.0.0] — 2026-08-18
+
+### Added
+- **Operators can now inspect a stuck plan item in one call.** `GET /admin/plan-items/{id}/debug` (admin-token gated) returns the item's derived status, clip lane and pool-asset states, every linked render job, and the edit-plan envelope — enough to triage "user can't generate" without touching the database. A new runbook (`docs/runbooks/guided-edit-triage.md`) walks the decision tree.
+- **Creator privacy is enforced by design and by test.** Conversation turns, story goals, and clip notes are reduced to structural metadata (roles, lengths, counts); regression tests assert the creator's words never appear in a response, and internal write-fence tokens stay internal.
 
 ## [0.37.2.0] — 2026-08-18
 
