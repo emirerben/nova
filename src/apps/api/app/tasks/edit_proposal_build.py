@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 import uuid
@@ -10,7 +11,7 @@ from pathlib import Path
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
 from celery.exceptions import MaxRetriesExceededError, Retry
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.database import sync_session
 from app.models import ContentPlan, PlanItem, PlanItemAsset
@@ -64,15 +65,114 @@ def _kind(content_type: str, path: str) -> str:
     return "video"
 
 
-def _fail(item: PlanItem, proposal: EditProposal, code: str, message: str) -> None:
+# No artificial duration floor: the planner adapts to whatever footage is
+# actually uploaded (product decision, 2026-08-18 — see agents/DECISIONS.md).
+# This is the absolute floor on the agent's Pydantic-validated input/output
+# (EditProposalAgentInput.target_duration_s, EditProposalAgentOutput/
+# EditProposalSnapshot.duration_s all carry ge=3) — it exists independently
+# of guided_feasibility_threshold_s below and never changes.
+MIN_GUIDED_DURATION_S = 3
+# Images are not length-constrained by a source clip, so estimating "feasible"
+# story length can't sum their real duration the way video works. Credit each
+# image the guided_story per-media floor (guided_story.py _DIRECTION_POLICY
+# "guided_story"."min_moment_s") rather than an unbounded amount.
+_IMAGE_FEASIBLE_CREDIT_S = 1.4
+# guided_story.py's own per-moment minimum for the "guided_story" direction
+# (_DIRECTION_POLICY["guided_story"]["min_moment_s"]) — duplicated here as a
+# constant rather than imported to keep this module's planning estimate free
+# of a pipeline import; guided_story.py:377,395-399 is the actual render-time
+# enforcement this mirrors. A video shorter than this can never be its own
+# legible beat moment, so it earns zero credit below (P2-1, 2026-08-18
+# adversarial review) — it was previously falling into the image branch and
+# being credited as if it were a full _IMAGE_FEASIBLE_CREDIT_S image.
+_RENDERER_MIN_MOMENT_S = 1.4
+
+
+def feasible_guided_duration_s(media: list[MediaRef]) -> float:
+    """Conservative, renderer-aware estimate of the story length the uploaded
+
+    media can support. Videos contribute their own probed duration once — a
+    beat can never be stretched past what was actually filmed (no
+    slow-mo/loop) — but ONLY when that duration clears
+    `_RENDERER_MIN_MOMENT_S`; a video with no probed duration, a zero
+    duration, or a duration too short to be its own legible moment
+    contributes nothing (not the image credit). This is a pre-agent planning
+    estimate — guided_story.py's `_source_window` / `_allocate_beat_durations`
+    remain the exact, authoritative render-time feasibility check.
+    """
+
+    total = 0.0
+    for ref in media:
+        if ref.kind == "video":
+            duration = float(ref.duration_s) if ref.duration_s else 0.0
+            if duration >= _RENDERER_MIN_MOMENT_S:
+                total += duration
+        else:
+            total += _IMAGE_FEASIBLE_CREDIT_S
+    return total
+
+
+def guided_feasibility_threshold_s(media_count: int) -> float:
+    """The minimum footage the renderer can plausibly turn into a guided story.
+
+    Mirrors `_allocate_beat_durations`'s own hard requirement in
+    guided_story.py (`beat_duration_s >= min_moment_s * len(refs)`, ~line 377)
+    for a single beat holding every available source — `minimum_required_sources`
+    (agents/edit_proposal.py) uses every source in one story when at most 3
+    are available. Floored at `MIN_GUIDED_DURATION_S` so it never drops below
+    the agent's own Pydantic input/output minimum. Below this,
+    `feasible_guided_duration_s` never clears the bar, so `draft_edit_proposal`
+    never calls the agent at all — the montage-fallback path handles it.
+    """
+
+    return max(MIN_GUIDED_DURATION_S, _RENDERER_MIN_MOMENT_S * min(3, max(1, media_count)))
+
+
+def adapt_target_duration_s(brief_duration_s: int, feasible_s: float) -> int:
+    """Clamp the brief's target to what the footage can actually support.
+
+    Never exceeds the feasible estimate (floored, so the agent's target is
+    never longer than real footage allows) and never exceeds the creator's
+    requested duration. Callers must treat
+    ``feasible_s < guided_feasibility_threshold_s(len(media))`` as infeasible
+    before calling this — that threshold is always >= MIN_GUIDED_DURATION_S,
+    so in correct use ``math.floor(feasible_s)`` alone already clears the
+    ``max(MIN_GUIDED_DURATION_S, ...)`` floor below; it stays only as a
+    defensive absolute floor matching the agent's Pydantic ge=3.
+    """
+
+    return max(MIN_GUIDED_DURATION_S, min(int(brief_duration_s), math.floor(feasible_s)))
+
+
+def _fail(
+    item: PlanItem,
+    proposal: EditProposal,
+    code: str,
+    message: str,
+    *,
+    retryable: bool = True,
+    detail: str | None = None,
+) -> None:
     failed = proposal.model_copy(
         update={
             "proposal_version": proposal.proposal_version + 1,
             "status": "failed",
-            "failure": ProposalFailure(code=code, message=message, retryable=True),
+            "failure": ProposalFailure(
+                code=code, message=message, retryable=retryable, detail=detail
+            ),
         }
     )
     item.edit_proposal = failed.model_dump(mode="json")
+
+
+def _exc_detail(exc: BaseException) -> str:
+    """Admin/debug-only diagnostic string — never surfaced to end users.
+
+    _edit_proposal_response() in routes/plan_items.py strips ProposalFailure.detail
+    before the public PlanItem response is built.
+    """
+
+    return f"{type(exc).__name__}: {exc}"[:2000]
 
 
 def _pool_refs(db, item: PlanItem, owner_id: uuid.UUID) -> list[MediaRef]:  # noqa: ANN001
@@ -201,6 +301,40 @@ def _attempt_is_active(
         )
 
 
+def _attempt_wants_auto_finalize(
+    item_id: uuid.UUID,
+    attempt_id: str,
+    expected_ownership_epoch: int,
+) -> bool:
+    """Read approval_mode off the persisted envelope instead of trusting a
+
+    task kwarg (P2-6, 2026-08-18 adversarial review). The auto-design intent
+    is already durable on the proposal itself
+    (begin_proposal_attempt(..., approval_mode="auto")), so a worker mid-
+    deploy that predates auto-finalize entirely just never calls this
+    function's caller's follow-up dispatch — it produces a plain draft
+    (degraded: the creator manually approves) instead of either crashing on
+    an unexpected kwarg (old worker, new producer) or silently never
+    auto-finalizing (new worker, old producer that never set the kwarg).
+    Cheap unlocked read, mirroring _attempt_is_active.
+    """
+
+    with sync_session() as db:
+        row = db.execute(
+            select(PlanItem.edit_proposal, ContentPlan.ownership_epoch)
+            .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+            .where(PlanItem.id == item_id)
+        ).one_or_none()
+        current = parse_edit_proposal(row.edit_proposal) if row else None
+        return bool(
+            row
+            and int(row.ownership_epoch or 0) == expected_ownership_epoch
+            and current
+            and current.generation_attempt_id == attempt_id
+            and current.approval_mode == "auto"
+        )
+
+
 _ANALYSIS_FIELDS = ("generation", "kind", "duration_s", "aspect", "analysis")
 
 
@@ -230,6 +364,74 @@ def _merge_analyzed_assignments(current: list[dict], analyzed: list[dict]) -> li
     return merged
 
 
+def _dispatch_after_auto_design(
+    iid: uuid.UUID, item_id: str, attempt_id: str, ownership_epoch: int
+) -> None:
+    """GUIDED_AUTO_DESIGN_ENABLED: dispatch after a draft attempt settles.
+
+    Called unconditionally after _run_draft_attempt returns normally (i.e.
+    every early-return failure path, plus the success path) — never after a
+    re-raised Retry/SoftTimeLimitExceeded, since the attempt isn't actually
+    over yet in those cases. Re-reads the proposal fresh (superseded-attempt
+    fence via attempt_id) rather than threading final state through every
+    return statement above:
+
+      approved                              -> dispatch normally (bypass=False)
+      failed, zero pool assets, has clips    -> dispatch anyway (bypass=True),
+                                                 mark design_fallback (legacy
+                                                 montage render — never for an
+                                                 item with pool assets, which
+                                                 would silently drop them)
+      anything else (analyzing/drafting/     -> nothing to do
+      stale/failed-with-pool-assets/no clips)
+    """
+
+    from app.tasks.content_plan_build import dispatch_item_render_for  # noqa: PLC0415
+
+    bypass = False
+    with sync_session() as db:
+        locked = _locked_item(db, iid, ownership_epoch)
+        item = locked[0] if locked else None
+        current = parse_edit_proposal(item.edit_proposal) if item else None
+        if item is None or current is None or current.generation_attempt_id != attempt_id:
+            return  # superseded by a newer attempt — nothing to do
+        if current.status == "approved":
+            bypass = False
+        elif current.status == "failed" and not current.design_fallback:
+            pool_count = db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(PlanItemAsset.plan_item_id == item.id)
+            ).scalar_one()
+            if pool_count > 0 or not (item.clip_gcs_paths or []):
+                return
+            failure_code = current.failure.code if current.failure else "unknown"
+            fallback = current.model_copy(
+                update={
+                    "proposal_version": current.proposal_version + 1,
+                    "design_fallback": failure_code,
+                }
+            )
+            item.edit_proposal = fallback.model_dump(mode="json")
+            db.commit()
+            bypass = True
+        else:
+            return
+
+    result = dispatch_item_render_for(item_id, ownership_epoch, bypass_guided_edit_gate=bypass)
+    if result.outcome not in {"dispatched", "already_active"}:
+        # The proposal is already committed (approved, or failed+design_fallback)
+        # — leave it there. The next manual Generate click dispatches directly
+        # (approved reads identically regardless of approval_mode) or
+        # re-triggers auto-design (failed), never wedged.
+        log.warning(
+            "edit_proposal.auto_finalize_dispatch_failed",
+            item_id=item_id,
+            outcome=result.outcome,
+            fallback=bypass,
+        )
+
+
 @celery_app.task(
     bind=True,
     name="app.tasks.edit_proposal_build.draft_edit_proposal",
@@ -237,13 +439,29 @@ def _merge_analyzed_assignments(current: list[dict], analyzed: list[dict]) -> li
     default_retry_delay=15,
     **_TASK_LIMITS,
 )
-def draft_edit_proposal(self, item_id: str, attempt_id: str, expected_ownership_epoch: int) -> None:  # noqa: ANN001
-    from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents.edit_proposal import (  # noqa: PLC0415
-        EditProposalAgent,
-        EditProposalAgentInput,
-        EditProposalMedia,
-    )
+def draft_edit_proposal(
+    self,  # noqa: ANN001
+    item_id: str,
+    attempt_id: str,
+    expected_ownership_epoch: int,
+) -> None:
+    """Analyze media, draft the story, persist it.
+
+    No auto_finalize kwarg (P2-6, 2026-08-18 adversarial review — a task
+    kwarg is a Celery deploy-skew hazard: an old worker consuming a message
+    from a new producer, or vice versa, either crashes on an unknown kwarg or
+    silently drops it). The GUIDED_AUTO_DESIGN_ENABLED intent is read
+    straight off the persisted envelope instead
+    (_attempt_wants_auto_finalize — approval_mode="auto", set by
+    begin_proposal_attempt at reservation time): a successful draft is
+    auto-approved and the render dispatched — AFTER the approval commits,
+    never while holding the PlanItem row lock — or, on a drafting failure
+    with zero registered pool assets, falls back to a legacy clip render
+    instead (_dispatch_after_auto_design). On any other failure the proposal
+    simply stays "failed" — the next manual Generate click re-triggers
+    auto-design, never wedged.
+    """
+
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     try:
@@ -252,262 +470,417 @@ def draft_edit_proposal(self, item_id: str, attempt_id: str, expected_ownership_
     except (TypeError, ValueError):
         return
 
-    with pipeline_trace_for(item_id):
-        try:
-            with sync_session() as db:
-                locked = _locked_item(db, iid, ownership_epoch)
-                if locked is None:
-                    return
-                item, owner_id = locked
-                proposal = parse_edit_proposal(item.edit_proposal)
-                if proposal is None or proposal.generation_attempt_id != attempt_id:
-                    return
-                pool_rows = db.execute(
-                    select(PlanItemAsset.status, PlanItemAsset.user_id).where(
-                        PlanItemAsset.plan_item_id == item.id
-                    )
-                ).all()
-                if any(row.user_id != owner_id for row in pool_rows):
-                    _fail(
-                        item,
-                        proposal,
-                        "media_ownership_mismatch",
-                        "Kria couldn't safely use one of these visuals. Remove it and try again.",
-                    )
-                    db.commit()
-                    return
-                # Reservations and cleanup claims are not creator-visible media.
-                # Registered assets may still be finishing their own queued
-                # analysis, so keep this proposal attempt alive and retry
-                # instead of turning a normal queue race into a user failure.
-                registered_states = {"uploaded", "queued", "analyzing", "ready", "failed"}
-                pool_states = [row.status for row in pool_rows if row.status in registered_states]
-                if any(state == "failed" for state in pool_states):
-                    _fail(
-                        item,
-                        proposal,
-                        "media_analysis_failed",
-                        "One or more visuals could not be analyzed. Retry or remove them.",
-                    )
-                    db.commit()
-                    return
-                if any(state != "ready" for state in pool_states):
-                    try:
-                        raise self.retry(countdown=15)
-                    except MaxRetriesExceededError:
-                        _fail(
-                            item,
-                            proposal,
-                            "media_analysis_incomplete",
-                            "Some visuals are still being analyzed. Retry or remove them.",
-                        )
-                        db.commit()
-                        return
-                pool = _pool_refs(db, item, owner_id)
-                assignments = [
-                    dict(a)
-                    for a in (item.clip_assignments or [])
-                    if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
-                ]
-                idea, theme, brief = item.idea, item.theme or "", proposal.brief
+    auto_finalize = _attempt_wants_auto_finalize(iid, attempt_id, ownership_epoch)
 
-            pool_by_path = {row.gcs_path: row for row in pool}
-            analyzed_assignments: list[dict] = []
-            clip_refs: list[MediaRef] = []
-            for assignment in assignments:
-                if not _attempt_is_active(iid, attempt_id, ownership_epoch):
+    with pipeline_trace_for(item_id):
+        _run_draft_attempt(self, iid, item_id, attempt_id, ownership_epoch, auto_finalize)
+
+    if auto_finalize:
+        _dispatch_after_auto_design(iid, item_id, attempt_id, ownership_epoch)
+
+
+def _run_draft_attempt(
+    self,  # noqa: ANN001
+    iid: uuid.UUID,
+    item_id: str,
+    attempt_id: str,
+    ownership_epoch: int,
+    auto_finalize: bool,
+) -> None:
+    """The actual analyze -> draft -> (auto-approve) body of one attempt.
+
+    Every early return below is a normal, handled outcome (the failure/stale
+    state is already persisted) — the caller always proceeds to
+    _dispatch_after_auto_design when auto_finalize is set, regardless of
+    which return statement fired. Only Retry/SoftTimeLimitExceeded propagate
+    out (the attempt genuinely isn't over: Celery is rescheduling it, or
+    killing the worker process).
+    """
+
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents.edit_proposal import (  # noqa: PLC0415
+        EditProposalAgent,
+        EditProposalAgentInput,
+        EditProposalMedia,
+    )
+    from app.services.edit_proposals import approve_proposal  # noqa: PLC0415
+
+    try:
+        with sync_session() as db:
+            locked = _locked_item(db, iid, ownership_epoch)
+            if locked is None:
+                return
+            item, owner_id = locked
+            proposal = parse_edit_proposal(item.edit_proposal)
+            if proposal is None or proposal.generation_attempt_id != attempt_id:
+                return
+            pool_rows = db.execute(
+                select(PlanItemAsset.status, PlanItemAsset.user_id).where(
+                    PlanItemAsset.plan_item_id == item.id
+                )
+            ).all()
+            if any(row.user_id != owner_id for row in pool_rows):
+                _fail(
+                    item,
+                    proposal,
+                    "media_ownership_mismatch",
+                    "Kria couldn't safely use one of these visuals. Remove it and try again.",
+                )
+                db.commit()
+                return
+            # Reservations and cleanup claims are not creator-visible media.
+            # Registered assets may still be finishing their own queued
+            # analysis, so keep this proposal attempt alive and retry
+            # instead of turning a normal queue race into a user failure.
+            registered_states = {"uploaded", "queued", "analyzing", "ready", "failed"}
+            pool_states = [row.status for row in pool_rows if row.status in registered_states]
+            if any(state == "failed" for state in pool_states):
+                _fail(
+                    item,
+                    proposal,
+                    "media_analysis_failed",
+                    "One or more visuals could not be analyzed. Retry or remove them.",
+                )
+                db.commit()
+                return
+            if any(state != "ready" for state in pool_states):
+                try:
+                    raise self.retry(countdown=15)
+                except MaxRetriesExceededError:
+                    _fail(
+                        item,
+                        proposal,
+                        "media_analysis_incomplete",
+                        "Some visuals are still being analyzed. Retry or remove them.",
+                    )
+                    db.commit()
                     return
+            pool = _pool_refs(db, item, owner_id)
+            assignments = [
+                dict(a)
+                for a in (item.clip_assignments or [])
+                if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
+            ]
+            idea, theme, brief = item.idea, item.theme or "", proposal.brief
+
+        # Pool/clip media analysis (_analyze_clip_assignment -> analyze_pool_video /
+        # analyze_pool_image) runs a raw Gemini call outside the Agent framework, so
+        # it never produces an agent_run row — any failure here is otherwise
+        # invisible to admin/debug. autoplace already distinguishes a permanently
+        # unreadable file from a transient provider hiccup (same split
+        # analyze_pool_asset uses); mirror that here instead of letting both
+        # collapse into the outer blanket-exception handler below, which used to
+        # wedge a creator behind a retryable=True failure that never actually
+        # retried anything (2026-08 guided-auto-design incident).
+        from app.tasks.autoplace import (  # noqa: PLC0415
+            AnalysisTemporarilyUnavailableError,
+            AssetUnreadableError,
+        )
+
+        pool_by_path = {row.gcs_path: row for row in pool}
+        analyzed_assignments: list[dict] = []
+        clip_refs: list[MediaRef] = []
+        for assignment in assignments:
+            if not _attempt_is_active(iid, attempt_id, ownership_epoch):
+                return
+            try:
                 analyzed, ref = _analyze_clip_assignment(assignment, pool_by_path)
-                analyzed_assignments.append(analyzed)
-                clip_refs.append(ref)
-            # De-duplicate pool assets promoted into the clip lane: they remain
-            # stored separately, but one object must not count twice in the story.
-            clip_paths = {ref.gcs_path for ref in clip_refs}
-            media = clip_refs + [ref for ref in pool if ref.gcs_path not in clip_paths]
-            if not media:
+            except AssetUnreadableError as exc:
                 with sync_session() as db:
                     locked = _locked_item(db, iid, ownership_epoch)
                     item = locked[0] if locked else None
                     current = parse_edit_proposal(item.edit_proposal) if item else None
-                    if item and current and current.generation_attempt_id == attempt_id:
+                    if (
+                        item
+                        and current
+                        and current.generation_attempt_id == attempt_id
+                        and current.status == "analyzing"
+                    ):
                         _fail(
                             item,
                             current,
-                            "proposal_required",
-                            "Upload media before planning an edit.",
+                            "media_unreadable",
+                            "Kria couldn't read one of these clips. Export it as JPG, "
+                            "PNG, WebP, HEIC, HEIF, MP4, or MOV and try again.",
+                            retryable=False,
+                            detail=_exc_detail(exc),
                         )
                         db.commit()
                 return
-            digest = canonical_media_digest(media)
-
+            except AnalysisTemporarilyUnavailableError as exc:
+                try:
+                    raise self.retry(countdown=15)
+                except MaxRetriesExceededError:
+                    with sync_session() as db:
+                        locked = _locked_item(db, iid, ownership_epoch)
+                        item = locked[0] if locked else None
+                        current = parse_edit_proposal(item.edit_proposal) if item else None
+                        if (
+                            item
+                            and current
+                            and current.generation_attempt_id == attempt_id
+                            and current.status == "analyzing"
+                        ):
+                            _fail(
+                                item,
+                                current,
+                                "media_analysis_temporarily_unavailable",
+                                "Kria temporarily couldn't analyze one of these clips. "
+                                "Try again in a bit.",
+                                detail=_exc_detail(exc),
+                            )
+                            db.commit()
+                    return
+            analyzed_assignments.append(analyzed)
+            clip_refs.append(ref)
+        # De-duplicate pool assets promoted into the clip lane: they remain
+        # stored separately, but one object must not count twice in the story.
+        clip_paths = {ref.gcs_path for ref in clip_refs}
+        media = clip_refs + [ref for ref in pool if ref.gcs_path not in clip_paths]
+        if not media:
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)
                 item = locked[0] if locked else None
-                owner_id = locked[1] if locked else None
+                current = parse_edit_proposal(item.edit_proposal) if item else None
+                if item and current and current.generation_attempt_id == attempt_id:
+                    _fail(
+                        item,
+                        current,
+                        "proposal_required",
+                        "Upload media before planning an edit.",
+                    )
+                    db.commit()
+            return
+        feasible_duration_s = feasible_guided_duration_s(media)
+        feasibility_threshold_s = guided_feasibility_threshold_s(len(media))
+        if feasible_duration_s < feasibility_threshold_s:
+            with sync_session() as db:
+                locked = _locked_item(db, iid, ownership_epoch)
+                item = locked[0] if locked else None
                 current = parse_edit_proposal(item.edit_proposal) if item else None
                 if (
-                    item is None
-                    or current is None
-                    or current.generation_attempt_id != attempt_id
-                    or current.status != "analyzing"
+                    item
+                    and current
+                    and current.generation_attempt_id == attempt_id
+                    and current.status == "analyzing"
                 ):
-                    return
-                current_assignments = [
-                    dict(a)
-                    for a in (item.clip_assignments or [])
-                    if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
-                ]
-                merged_assignments = _merge_analyzed_assignments(
-                    current_assignments, analyzed_assignments
-                )
-                if merged_assignments is None:
                     _fail(
                         item,
                         current,
-                        "proposal_stale",
-                        "The uploaded media changed while planning.",
+                        "guided_edit_infeasible",
+                        "This footage is only about "
+                        f"{feasible_duration_s:.1f}s long — too short for a guided "
+                        "edit. Add more media or use a shorter format.",
                     )
                     db.commit()
-                    return
-                if not media_generations_match_sync(clip_refs):
-                    _fail(
-                        item,
-                        current,
-                        "proposal_stale",
-                        "The uploaded media changed while planning.",
-                    )
-                    db.commit()
-                    return
-                assert owner_id is not None
-                fresh_pool = _pool_refs(db, item, owner_id)
-                fresh_media = clip_refs + [
-                    ref for ref in fresh_pool if ref.gcs_path not in clip_paths
-                ]
-                if canonical_media_digest(fresh_media) != digest:
-                    _fail(
-                        item,
-                        current,
-                        "proposal_stale",
-                        "The uploaded media changed while planning.",
-                    )
-                    db.commit()
-                    return
-                item.clip_assignments = merged_assignments
-                drafting = current.model_copy(
-                    update={
-                        "proposal_version": current.proposal_version + 1,
-                        "status": "drafting",
-                        "media_digest": digest,
-                        "failure": None,
-                    }
-                )
-                item.edit_proposal = drafting.model_dump(mode="json")
-                db.commit()
+            return
+        target_duration_s = adapt_target_duration_s(brief.duration_s, feasible_duration_s)
+        digest = canonical_media_digest(media)
 
-            agent_media = [
-                EditProposalMedia(
-                    media_id=ref.media_id,
-                    lane=ref.lane,
-                    kind=ref.kind,
-                    source_filename=ref.source_filename,
-                    duration_s=ref.duration_s,
-                    user_context=ref.user_context,
-                    subject=str(ref.analysis.get("subject") or ""),
-                    description=str(ref.analysis.get("description") or ""),
-                    on_screen_text=str(ref.analysis.get("on_screen_text") or ""),
-                    best_moments=list(ref.analysis.get("best_moments") or []),
-                )
-                for ref in media
+        with sync_session() as db:
+            locked = _locked_item(db, iid, ownership_epoch)
+            item = locked[0] if locked else None
+            owner_id = locked[1] if locked else None
+            current = parse_edit_proposal(item.edit_proposal) if item else None
+            if (
+                item is None
+                or current is None
+                or current.generation_attempt_id != attempt_id
+                or current.status != "analyzing"
+            ):
+                return
+            current_assignments = [
+                dict(a)
+                for a in (item.clip_assignments or [])
+                if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
             ]
-            output = EditProposalAgent(default_client()).run(
-                EditProposalAgentInput(
-                    idea=idea,
-                    theme=theme,
-                    direction=brief.direction,
-                    goal=brief.goal,
-                    pace=brief.pace,
-                    target_duration_s=brief.duration_s,
-                    media=agent_media,
-                )
+            merged_assignments = _merge_analyzed_assignments(
+                current_assignments, analyzed_assignments
             )
-            snapshot = EditProposalSnapshot(
+            if merged_assignments is None:
+                _fail(
+                    item,
+                    current,
+                    "proposal_stale",
+                    "The uploaded media changed while planning.",
+                )
+                db.commit()
+                return
+            if not media_generations_match_sync(clip_refs):
+                _fail(
+                    item,
+                    current,
+                    "proposal_stale",
+                    "The uploaded media changed while planning.",
+                )
+                db.commit()
+                return
+            assert owner_id is not None
+            fresh_pool = _pool_refs(db, item, owner_id)
+            fresh_media = clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths]
+            if canonical_media_digest(fresh_media) != digest:
+                _fail(
+                    item,
+                    current,
+                    "proposal_stale",
+                    "The uploaded media changed while planning.",
+                )
+                db.commit()
+                return
+            item.clip_assignments = merged_assignments
+            drafting = current.model_copy(
+                update={
+                    "proposal_version": current.proposal_version + 1,
+                    "status": "drafting",
+                    "media_digest": digest,
+                    "failure": None,
+                }
+            )
+            item.edit_proposal = drafting.model_dump(mode="json")
+            db.commit()
+
+        agent_media = [
+            EditProposalMedia(
+                media_id=ref.media_id,
+                lane=ref.lane,
+                kind=ref.kind,
+                source_filename=ref.source_filename,
+                duration_s=ref.duration_s,
+                user_context=ref.user_context,
+                subject=str(ref.analysis.get("subject") or ""),
+                description=str(ref.analysis.get("description") or ""),
+                on_screen_text=str(ref.analysis.get("on_screen_text") or ""),
+                best_moments=list(ref.analysis.get("best_moments") or []),
+            )
+            for ref in media
+        ]
+        output = EditProposalAgent(default_client()).run(
+            EditProposalAgentInput(
+                idea=idea,
+                theme=theme,
                 direction=brief.direction,
                 goal=brief.goal,
                 pace=brief.pace,
-                duration_s=output.duration_s,
-                title=output.title,
-                media=media,
-                story_beats=[
-                    StoryBeat(
-                        beat_id=str(uuid.uuid4()),
-                        topic=beat.topic,
-                        thought=beat.thought,
-                        thought_source="ai_draft",
-                        media_ids=beat.media_ids,
-                        layout=beat.layout,
-                        duration_s=beat.duration_s,
-                    )
-                    for beat in output.story_beats
-                ],
+                target_duration_s=target_duration_s,
+                media=agent_media,
             )
+        )
+        # EditProposalAgent.parse()'s +/-5s tolerance checks output.duration_s
+        # against target_duration_s, NOT against real footage — with a small
+        # target (e.g. the MIN_GUIDED_DURATION_S=3 floor) that tolerance
+        # window alone could still accept an output nobody validated against
+        # the true footage cap (P2-1a, 2026-08-18 adversarial review). Reject
+        # rather than silently rewrite per-beat durations the agent already
+        # sized for a specific total.
+        if output.duration_s > math.floor(feasible_duration_s):
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)
                 item = locked[0] if locked else None
                 current = parse_edit_proposal(item.edit_proposal) if item else None
                 if (
-                    item is None
-                    or current is None
-                    or current.generation_attempt_id != attempt_id
-                    or current.status != "drafting"
-                    or current.media_digest != digest
+                    item
+                    and current
+                    and current.generation_attempt_id == attempt_id
+                    and current.status == "drafting"
                 ):
-                    return
-                save_proposal_draft(
+                    _fail(
+                        item,
+                        current,
+                        "guided_edit_infeasible",
+                        "Kria's draft ran longer than the actual footage allows. "
+                        "Try again or add more media.",
+                        detail=(
+                            f"output.duration_s={output.duration_s} exceeds "
+                            f"feasible={feasible_duration_s:.2f} "
+                            f"(target={target_duration_s})"
+                        ),
+                    )
+                    db.commit()
+            return
+        snapshot = EditProposalSnapshot(
+            direction=brief.direction,
+            goal=brief.goal,
+            pace=brief.pace,
+            duration_s=output.duration_s,
+            title=output.title,
+            media=media,
+            story_beats=[
+                StoryBeat(
+                    beat_id=str(uuid.uuid4()),
+                    topic=beat.topic,
+                    thought=beat.thought,
+                    thought_source="ai_draft",
+                    media_ids=beat.media_ids,
+                    layout=beat.layout,
+                    duration_s=beat.duration_s,
+                )
+                for beat in output.story_beats
+            ],
+        )
+        with sync_session() as db:
+            locked = _locked_item(db, iid, ownership_epoch)
+            item = locked[0] if locked else None
+            current = parse_edit_proposal(item.edit_proposal) if item else None
+            if (
+                item is None
+                or current is None
+                or current.generation_attempt_id != attempt_id
+                or current.status != "drafting"
+                or current.media_digest != digest
+            ):
+                return
+            drafted = save_proposal_draft(
+                item,
+                expected_version=current.proposal_version,
+                snapshot=snapshot,
+            )
+            if auto_finalize:
+                # Dispatch happens in _dispatch_after_auto_design, called by
+                # draft_edit_proposal only after this function returns and
+                # the lock above is released — never while holding it.
+                approve_proposal(item, expected_version=drafted.proposal_version)
+            db.commit()
+    except Retry:
+        raise
+    except SoftTimeLimitExceeded:
+        # Celery will terminate the task after this signal. Persist a
+        # creator-visible retry state first so the UI never polls an
+        # abandoned analyzing/drafting attempt forever.
+        with sync_session() as db:
+            locked = _locked_item(db, iid, ownership_epoch)
+            item = locked[0] if locked else None
+            current = parse_edit_proposal(item.edit_proposal) if item else None
+            if (
+                item
+                and current
+                and current.generation_attempt_id == attempt_id
+                and current.status in {"analyzing", "drafting"}
+            ):
+                _fail(
                     item,
-                    expected_version=current.proposal_version,
-                    snapshot=snapshot,
+                    current,
+                    "proposal_generation_timeout",
+                    "Kria took too long to plan this edit. Try again.",
                 )
                 db.commit()
-        except Retry:
-            raise
-        except SoftTimeLimitExceeded:
-            # Celery will terminate the task after this signal. Persist a
-            # creator-visible retry state first so the UI never polls an
-            # abandoned analyzing/drafting attempt forever.
-            with sync_session() as db:
-                locked = _locked_item(db, iid, ownership_epoch)
-                item = locked[0] if locked else None
-                current = parse_edit_proposal(item.edit_proposal) if item else None
-                if (
-                    item
-                    and current
-                    and current.generation_attempt_id == attempt_id
-                    and current.status in {"analyzing", "drafting"}
-                ):
-                    _fail(
-                        item,
-                        current,
-                        "proposal_generation_timeout",
-                        "Kria took too long to plan this edit. Try again.",
-                    )
-                    db.commit()
-            raise
-        except Exception:  # noqa: BLE001
-            log.exception("edit_proposal.draft_failed", item_id=item_id)
-            with sync_session() as db:
-                locked = _locked_item(db, iid, ownership_epoch)
-                item = locked[0] if locked else None
-                current = parse_edit_proposal(item.edit_proposal) if item else None
-                if (
-                    item
-                    and current
-                    and current.generation_attempt_id == attempt_id
-                    and current.status in {"analyzing", "drafting"}
-                ):
-                    _fail(
-                        item,
-                        current,
-                        "proposal_generation_failed",
-                        "Kria couldn't plan this edit. Try again.",
-                    )
-                    db.commit()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.exception("edit_proposal.draft_failed", item_id=item_id)
+        with sync_session() as db:
+            locked = _locked_item(db, iid, ownership_epoch)
+            item = locked[0] if locked else None
+            current = parse_edit_proposal(item.edit_proposal) if item else None
+            if (
+                item
+                and current
+                and current.generation_attempt_id == attempt_id
+                and current.status in {"analyzing", "drafting"}
+            ):
+                _fail(
+                    item,
+                    current,
+                    "proposal_generation_failed",
+                    "Kria couldn't plan this edit. Try again.",
+                    detail=_exc_detail(exc),
+                )
+                db.commit()

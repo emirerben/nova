@@ -269,6 +269,10 @@ def _edit_proposal_response(item: PlanItem) -> dict | None:
     if proposal is None:
         return None
     payload = proposal.model_dump(mode="json")
+    # Admin/debug-only diagnostic (exception type + short reason) — never
+    # surfaced to end users. See ProposalFailure.detail / _exc_detail().
+    if isinstance(payload.get("failure"), dict):
+        payload["failure"].pop("detail", None)
     attempt = proposal.conversation_attempt
     if attempt is not None:
         from app.services.edit_proposals import (  # noqa: PLC0415
@@ -367,6 +371,11 @@ class PlanItemResponse(BaseModel):
     edit_proposal: EditProposalResponse | None = None
     guided_edit_available: bool = False
     guided_edit_conversation_available: bool = False
+    # GUIDED_AUTO_DESIGN_ENABLED (config.py). False on an old API that predates
+    # this field — the frontend gates the AI-designs-by-default Generate
+    # button behavior on this exact default so a new web build against an old
+    # API deploy keeps today's strict-gate behavior (deploy-skew safe).
+    guided_edit_auto_design: bool = False
     status: str
     current_job_id: str | None
     finished_at: datetime | None = None
@@ -478,6 +487,7 @@ def plan_item_response(
         edit_proposal=_edit_proposal_response(item) if include_edit_proposal else None,
         guided_edit_available=settings.guided_edit_capability_enabled,
         guided_edit_conversation_available=settings.guided_edit_conversation_enabled,
+        guided_edit_auto_design=settings.guided_auto_design_enabled,
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,
         finished_at=item.current_job.finished_at if item.current_job is not None else None,
@@ -1802,11 +1812,303 @@ _PROPOSAL_GENERATE_MESSAGES = {
     "proposal_draft": "Approve the edit plan before generating.",
     "proposal_stale": "Your media changed. Plan the edit again before generating.",
     "proposal_analyzing": "Kria is still planning this edit.",
+    # Was unmapped and fell through to "proposal_draft"'s generic "Approve the
+    # edit plan before generating" — misleading for a plan that was never
+    # drafted (2026-08 guided-auto-design incident). See
+    # proposal_generate_error() in services/edit_proposals.py.
+    "proposal_failed": "Kria couldn't finish planning this edit — open the planner to try again.",
 }
 
 
 def _raise_proposal_generate_conflict(code: str) -> NoReturn:
     raise _proposal_http_conflict(code, _PROPOSAL_GENERATE_MESSAGES[code])
+
+
+async def _respond_to_dispatch_result(
+    result,  # noqa: ANN001 - DispatchResult, imported locally by every caller
+    item_id: str,
+    owner_id: uuid.UUID,
+    db: AsyncSession,
+) -> PlanItemResponse:
+    """Map a dispatch_item_render_for outcome to the shared Generate response.
+
+    Shared by generate_item's normal dispatch and the auto-design
+    draft->approve->dispatch path so the two can never drift.
+    """
+
+    if result.outcome == "missing_row":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
+    if result.outcome == "invalid_persona":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+        )
+    if result.outcome == "invalid_clips":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Your clips couldn't be validated — re-upload them and try again",
+        )
+    if result.outcome == "publish_failed":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The render couldn't be queued — give it another go",
+        )
+    if result.outcome in {
+        "proposal_required",
+        "proposal_draft",
+        "proposal_stale",
+        "proposal_analyzing",
+        "proposal_failed",
+    }:
+        _raise_proposal_generate_conflict(result.outcome)
+    if result.outcome not in ("dispatched", "already_active"):
+        # A future/unknown outcome must never read as success (review CA3/M1) —
+        # the silent-no-op class this whole feature exists to kill.
+        log.error("plan_item_generate.unexpected_outcome", outcome=result.outcome)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Generation failed unexpectedly — try again",
+        )
+    # dispatched | already_active → 200 with the item's current state. The
+    # helper committed on a SEPARATE sync session; expire this async session's
+    # identity map or the reload serves the pre-dispatch row and the response
+    # misses the fresh current_job_id (plans/014 A2).
+    db.expire_all()
+    reloaded = await _load_owned_item(item_id, owner_id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+async def _auto_design_idempotent_current(
+    item_id: str, owner_id: uuid.UUID, db: AsyncSession
+) -> PlanItemResponse:
+    """Reload after a rollback and serialize the FRESH row.
+
+    AsyncSession expires every ORM attribute on rollback (expire_on_commit=False
+    only covers commit) — serializing the object that was `await db.rollback()`-ed
+    without reloading first raises MissingGreenlet the instant a field is
+    touched outside an awaited context. Mirrors the reload the success path
+    already does after dispatch.
+    """
+
+    await db.rollback()
+    reloaded = await _load_owned_item(item_id, owner_id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+async def _auto_finalize_existing_draft(
+    item_id: str,
+    owner_id: uuid.UUID,
+    locked: PlanItem,
+    ownership_epoch: int,
+    current,  # noqa: ANN001 - EditProposal, imported locally by every caller
+    db: AsyncSession,
+) -> PlanItemResponse | None:
+    """Approve + dispatch an existing reviewable draft instead of discarding
+
+    it for a fresh redraft — the creator (or an earlier auto-design attempt)
+    already produced a story worth approving. Mirrors
+    approve_item_edit_proposal's own validate-then-approve sequence
+    (_proposal_media_is_current, mark_edit_proposal_stale, approve_proposal
+    CAS) so the two approval paths cannot drift, then dispatches
+    synchronously exactly like generate_item's normal success path.
+    """
+
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        ProposalConflictError,
+        approve_proposal,
+        mark_edit_proposal_stale,
+    )
+
+    if current.draft is None or current.media_digest is None:
+        # Should be structurally impossible for status="draft" (save_proposal_draft
+        # always sets both) — fail safe rather than approving nothing.
+        await db.rollback()
+        return None
+    if not await _proposal_media_is_current(locked, current.draft, db, user_id=owner_id):
+        mark_edit_proposal_stale(locked)
+        await db.commit()
+        raise _proposal_http_conflict(
+            "proposal_stale", "The uploaded media changed. Plan the edit again."
+        )
+    try:
+        approve_proposal(locked, expected_version=current.proposal_version)
+    except ProposalConflictError:
+        # Lost the race to a concurrent mutation (another tab approved or
+        # replanned first) — from the creator's point of view this is just a
+        # duplicate click; report current state rather than a hard error.
+        return await _auto_design_idempotent_current(item_id, owner_id, db)
+    await db.commit()
+
+    from anyio import to_thread  # noqa: PLC0415
+
+    from app.tasks.content_plan_build import dispatch_item_render_for  # noqa: PLC0415
+
+    result = await to_thread.run_sync(dispatch_item_render_for, item_id, ownership_epoch)
+    return await _respond_to_dispatch_result(result, item_id, owner_id, db)
+
+
+async def _maybe_auto_design_generate(
+    item_id: str,
+    item: PlanItem,
+    plan: ContentPlan,
+    user: CurrentUser,
+    db: AsyncSession,
+) -> PlanItemResponse | None:
+    """GUIDED_AUTO_DESIGN_ENABLED: reserve+draft instead of 409ing Generate.
+
+    Product decision (2026-08-18): asking the creator for direction stays
+    optional — if they never open the planner, Kria designs the edit and
+    Generate still works in one click, as long as media exists. Returns None
+    when the item has no media at all (nothing to auto-design — the caller
+    falls through to the ordinary 409) or when the flag is off. Returns a 200
+    PlanItemResponse otherwise.
+
+    Re-checks proposal status under the FOR-UPDATE lock and branches per
+    state instead of unconditionally clobbering whatever is there
+    (begin_proposal_attempt would otherwise reset ANY non-in-flight proposal,
+    including one a human is actively reviewing or has already approved):
+
+      None / failed / stale / briefing -> reserve a fresh auto attempt,
+        preserving any brief the creator already stated (never reset their
+        stated goal/pace/duration to ProposalBrief() defaults).
+      analyzing / drafting             -> idempotent no-op, current state.
+      a live conversation_attempt      -> idempotent no-op — Generate must
+        (regardless of proposal status)  never void a turn Kria is mid-reply
+                                          to.
+      draft                            -> auto-finalize THAT draft (approve +
+                                          dispatch) instead of discarding it
+                                          for a redraft.
+      approved                         -> rare race with a manual approval
+                                          (or an already-approved auto-design
+                                          attempt) landing between the
+                                          caller's initial unlocked read and
+                                          this lock — never reset it. Dispatch
+                                          it directly from this fresh read
+                                          (the caller's `item` is the stale
+                                          pre-lock snapshot, so falling
+                                          through to it would incorrectly
+                                          re-raise the original conflict).
+    """
+
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.guided_auto_design_enabled:
+        return None
+    if not (item.clip_gcs_paths or []):
+        ready_assets = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.status == "ready",
+                    )
+                )
+            ).scalar_one()
+        )
+        if ready_assets == 0:
+            return None  # nothing to design from — fall through to the normal 409
+
+    from app.services.edit_proposals import EDIT_CONVERSATION_ATTEMPT_TTL_S  # noqa: PLC0415
+
+    owner_id = user.id
+    ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
+    locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
+    current = parse_edit_proposal(locked.edit_proposal)
+
+    attempt = current.conversation_attempt if current else None
+    if attempt is not None:
+        age_s = max(0.0, (datetime.now(UTC) - attempt.started_at).total_seconds())
+        if age_s < EDIT_CONVERSATION_ATTEMPT_TTL_S:
+            return await _auto_design_idempotent_current(item_id, owner_id, db)
+
+    live_status = current.status if current else None
+    if live_status in {"analyzing", "drafting"}:
+        # An attempt (auto or manual) is already in flight — idempotent
+        # no-op, never mint a duplicate attempt/task.
+        return await _auto_design_idempotent_current(item_id, owner_id, db)
+    if live_status == "approved":
+        # Reached by a race with a manual approval (or an already-approved
+        # auto-design attempt) that landed between generate_item's initial
+        # unlocked read and this lock — never reset it. Dispatch it directly
+        # from THIS fresh, locked read rather than returning None: the
+        # caller's `item`/`proposal_error` are the STALE pre-lock snapshot,
+        # so falling through to them would incorrectly re-raise the original
+        # conflict for a proposal that is actually approved now.
+        await db.rollback()  # release the row lock before the separate sync-session dispatch call
+        from anyio import to_thread  # noqa: PLC0415
+
+        from app.tasks.content_plan_build import dispatch_item_render_for  # noqa: PLC0415
+
+        result = await to_thread.run_sync(dispatch_item_render_for, item_id, ownership_epoch)
+        return await _respond_to_dispatch_result(result, item_id, owner_id, db)
+    if live_status == "draft":
+        return await _auto_finalize_existing_draft(
+            item_id, owner_id, locked, ownership_epoch, current, db
+        )
+
+    from app.schemas.edit_proposal import ProposalFailure  # noqa: PLC0415
+    from app.services.edit_proposals import begin_proposal_attempt  # noqa: PLC0415
+    from app.services.plan_clips import ensure_clip_media_ids  # noqa: PLC0415
+    from app.tasks.edit_proposal_build import draft_edit_proposal  # noqa: PLC0415
+
+    ensure_clip_media_ids(locked)
+    # Preserve the creator's stated direction/goal/pace/duration (from a
+    # failed/stale/briefing attempt) instead of resetting it to
+    # ProposalBrief() defaults — begin_proposal_attempt already defaults to
+    # ProposalBrief() when brief=None, so this is a no-op for a brand new item.
+    proposal = begin_proposal_attempt(
+        locked,
+        brief=current.brief if current else None,
+        approval_mode="auto",
+    )
+    await db.commit()
+    try:
+        # No auto_finalize kwarg: draft_edit_proposal reads approval_mode
+        # off the persisted envelope itself (P2-6) — an old worker that
+        # doesn't know about auto-finalize still produces a normal draft
+        # instead of crashing on an unexpected kwarg.
+        draft_edit_proposal.apply_async(
+            args=[
+                str(locked.id),
+                proposal.generation_attempt_id,
+                ownership_epoch,
+            ],
+            queue=settings.pool_asset_analysis_queue,
+        )
+    except Exception as exc:  # noqa: BLE001
+        relocked = await _load_owned_item(item_id, owner_id, db, for_update=True)
+        relocked_current = parse_edit_proposal(relocked.edit_proposal)
+        if (
+            relocked_current
+            and relocked_current.generation_attempt_id == proposal.generation_attempt_id
+        ):
+            failed = relocked_current.model_copy(
+                update={
+                    "proposal_version": relocked_current.proposal_version + 1,
+                    "status": "failed",
+                    "failure": ProposalFailure(
+                        code="proposal_dispatch_failed",
+                        message="Kria couldn't start planning this edit. Try again.",
+                        retryable=True,
+                    ),
+                }
+            )
+            relocked.edit_proposal = failed.model_dump(mode="json")
+            await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "proposal_dispatch_failed",
+                "message": "Kria couldn't start planning this edit. Try again.",
+            },
+        ) from exc
+    reloaded = await _load_owned_item(item_id, owner_id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
 
 
 async def _proposal_media_is_current(
@@ -1899,6 +2201,30 @@ async def edit_proposal_conversation_turn(
         reserve_edit_conversation_attempt,
         save_edit_conversation_turn,
     )
+
+    # Mirror draft_item_edit_proposal's media gate: talking to Kria about an
+    # edit with nothing uploaded yet burns a model call for advice the item
+    # page can't act on. Registered assets still finishing their own analysis
+    # count as media (they'll be ready by the time the creator approves). Only
+    # queries the pool when clip_assignments is empty — the common case never
+    # pays for the extra round trip.
+    if not (item.clip_assignments or []):
+        ready_assets = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.status.in_({"queued", "analyzing", "ready"}),
+                    )
+                )
+            ).scalar_one()
+        )
+        if ready_assets == 0:
+            raise _proposal_http_conflict(
+                "media_required", "Add a photo or video first — then tell Kria what to make."
+            )
 
     try:
         _reserved, conversation_token = reserve_edit_conversation_attempt(
@@ -2196,6 +2522,11 @@ async def update_item_edit_proposal(
             # text, ordering, and layout, but cannot smuggle arbitrary analysis
             # or context into the approved render snapshot.
             snapshot=body.snapshot.model_copy(update={"media": current.draft.media}),
+            # A human submitting their own corrected snapshot is unambiguous
+            # manual review — never let a subsequent approval still record
+            # approval_mode="auto" from the original auto-design reservation
+            # (P3, 2026-08-18 adversarial review).
+            clear_approval_mode=True,
         )
     except ProposalConflictError as exc:
         raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
@@ -2254,19 +2585,48 @@ async def generate_item(
     """Enqueue a render from attached clips or an approved guided story."""
     item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
+    from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS  # noqa: PLC0415
+    from app.config import settings  # noqa: PLC0415
+
+    # These two validations are hard business rules independent of guided-edit
+    # state and MUST run before auto-design gets a chance to intercept the
+    # request below — auto-design's own clip-only fallback dispatches through
+    # the exact same legacy montage path these checks guard (adversarial
+    # review P1-2, 2026-08-18): a narrated item with no recorded voiceover and
+    # self-narration off would otherwise silently render a captionless
+    # montage instead of 409ing, and raw photos would slip past the
+    # collage-preset requirement.
+    #
     # Narrated walkthroughs are spined by narration. With self-narration OFF that
     # means a recorded voiceover — block generation until one is attached (without it
     # the job silently falls back to montage: the "started a narrated render with no
     # audio" dogfood bug). With self-narration ON the footage's own audio may carry
     # the voice, so dispatch proceeds and _resolve_archetype routes by speech; a
     # no-speech clip set falls back to montage WITH a persisted, user-visible reason.
-    from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS  # noqa: PLC0415
-    from app.config import settings  # noqa: PLC0415
+    if (
+        (item.edit_format or "") in NARRATED_EDIT_FORMATS
+        and not item.voiceover_gcs_path
+        and not settings.narrated_self_narration_enabled
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Record or upload your voiceover before generating a Voiceover edit",
+        )
+    if not _item_uses_collage_preset(item) and any(
+        _is_image_clip_path(p) for p in (item.clip_gcs_paths or [])
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Photos require a collage preset",
+        )
 
     if settings.guided_edit_enforcement_enabled:
         from app.services.edit_proposals import proposal_generate_error  # noqa: PLC0415
 
         if proposal_error := proposal_generate_error(item):
+            auto_response = await _maybe_auto_design_generate(item_id, item, plan, user, db)
+            if auto_response is not None:
+                return auto_response
             _raise_proposal_generate_conflict(proposal_error)
 
     approved_guided_media = False
@@ -2279,26 +2639,10 @@ async def generate_item(
             and any(beat.media_ids for beat in proposal.last_approved.snapshot.story_beats)
         )
 
-    if (
-        (item.edit_format or "") in NARRATED_EDIT_FORMATS
-        and not item.voiceover_gcs_path
-        and not settings.narrated_self_narration_enabled
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Record or upload your voiceover before generating a Voiceover edit",
-        )
     if not (item.clip_gcs_paths or []) and not approved_guided_media:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload at least one clip before generating",
-        )
-    if not _item_uses_collage_preset(item) and any(
-        _is_image_clip_path(p) for p in (item.clip_gcs_paths or [])
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Photos require a collage preset",
         )
     from app.tasks.content_plan_build import (  # noqa: PLC0415
         dispatch_item_render_for,
@@ -2343,46 +2687,7 @@ async def generate_item(
         str(item.id),
         ownership_epoch,
     )
-    if result.outcome == "missing_row":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
-    if result.outcome == "invalid_persona":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
-        )
-    if result.outcome == "invalid_clips":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Your clips couldn't be validated — re-upload them and try again",
-        )
-    if result.outcome == "publish_failed":
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="The render couldn't be queued — give it another go",
-        )
-    if result.outcome in {
-        "proposal_required",
-        "proposal_draft",
-        "proposal_stale",
-        "proposal_analyzing",
-    }:
-        _raise_proposal_generate_conflict(result.outcome)
-    if result.outcome not in ("dispatched", "already_active"):
-        # A future/unknown outcome must never read as success (review CA3/M1) —
-        # the silent-no-op class this whole feature exists to kill.
-        log.error("plan_item_generate.unexpected_outcome", outcome=result.outcome)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Generation failed unexpectedly — try again",
-        )
-    # dispatched | already_active → 200 with the item's current state. The
-    # helper committed on a SEPARATE sync session; expire this async session's
-    # identity map or the reload serves the pre-dispatch row and the response
-    # misses the fresh current_job_id (plans/014 A2).
-    db.expire_all()
-    reloaded = await _load_owned_item(item_id, owner_id, db)
-    instruction_level = await _get_instruction_level(reloaded, db)
-    return plan_item_response(reloaded, instruction_level=instruction_level)
+    return await _respond_to_dispatch_result(result, item_id, owner_id, db)
 
 
 # ── Per-variant editing (swap song / edit text / change style) ────────────────

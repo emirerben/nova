@@ -35,6 +35,9 @@ ConversationRole = Literal["user", "agent"]
 ConversationPhase = Literal["briefing", "review"]
 ConversationSuggestion = Annotated[str, Field(min_length=1, max_length=100)]
 EDIT_CONVERSATION_MAX_TURNS = 20
+# Who/what approved a proposal — "auto" for AI-designs-by-default
+# (GUIDED_AUTO_DESIGN_ENABLED); "user" for an explicit creator approval.
+ApprovalMode = Literal["user", "auto"]
 
 
 class MediaRef(BaseModel):
@@ -67,7 +70,8 @@ class EditProposalSnapshot(BaseModel):
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
     pace: ProposalPace = "balanced"
-    duration_s: int = Field(ge=10, le=60)
+    # No artificial floor — see ProposalBrief.duration_s.
+    duration_s: int = Field(ge=3, le=60)
     title: str = Field(min_length=1, max_length=100)
     media: list[MediaRef] = Field(min_length=1, max_length=60)
     story_beats: list[StoryBeat] = Field(min_length=1, max_length=20)
@@ -165,19 +169,31 @@ class ApprovedProposalSnapshot(BaseModel):
     media_digest: str = Field(min_length=64, max_length=64)
     approved_at: datetime
     snapshot: EditProposalSnapshot
+    # Recorded distinctly from the envelope's mutable EditProposal.approval_mode
+    # (which a later reservation can overwrite) so an approved-and-rendered
+    # story permanently remembers whether a human or the auto-design flow
+    # approved it. None = legacy approvals predating this field (treat as "user").
+    approval_mode: ApprovalMode | None = None
 
 
 class ProposalFailure(BaseModel):
     code: str = Field(min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=500)
     retryable: bool = True
+    # Admin/debug-only diagnostic (exception type + short reason). Never shown
+    # to end users — _edit_proposal_response() strips this key before the
+    # public PlanItem response is built (routes/plan_items.py).
+    detail: str | None = Field(default=None, max_length=2000)
 
 
 class ProposalBrief(BaseModel):
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
     pace: ProposalPace = "balanced"
-    duration_s: int = Field(default=24, ge=10, le=60)
+    # No artificial floor: the planner adapts the story length to whatever
+    # footage is actually available (draft_edit_proposal clamps this against
+    # analyzed media before it reaches the agent). See agents/DECISIONS.md.
+    duration_s: int = Field(default=24, ge=3, le=60)
 
 
 class EditConversationTurn(BaseModel):
@@ -205,6 +221,11 @@ class EditProposal(BaseModel):
     generation_attempt_id: str = Field(min_length=1, max_length=100)
     media_digest: str | None = Field(default=None, min_length=64, max_length=64)
     status: ProposalStatus
+    # Who/what approved this attempt — "auto" for AI-designs-by-default
+    # (GUIDED_AUTO_DESIGN_ENABLED); None/"user" for an explicit creator
+    # approval. Set when the attempt is reserved (begin_proposal_attempt) and
+    # carried through to ApprovedProposalSnapshot.approval_mode on approval.
+    approval_mode: ApprovalMode | None = None
     brief: ProposalBrief = Field(default_factory=ProposalBrief)
     conversation: list[EditConversationTurn] = Field(
         default_factory=list, max_length=EDIT_CONVERSATION_MAX_TURNS
@@ -214,6 +235,12 @@ class EditProposal(BaseModel):
     draft: EditProposalSnapshot | None = None
     last_approved: ApprovedProposalSnapshot | None = None
     failure: ProposalFailure | None = None
+    # GUIDED_AUTO_DESIGN_ENABLED clip-only fallback: set to the failure code
+    # that triggered a legacy montage render instead of a guided story (e.g.
+    # "guided_edit_infeasible"). None everywhere else, including a normal
+    # failure with pool assets present (never silently dropped — see
+    # draft_edit_proposal's auto_finalize fallback).
+    design_fallback: str | None = Field(default=None, max_length=100)
 
 
 class MediaRefResponse(MediaRef):

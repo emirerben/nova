@@ -1370,3 +1370,50 @@ the editor then disabled the control that could have corrected it.
 - **Editorial defaults do not outline text.** New guided titles use Fraunces and thoughts use DM Sans
   with warm-white fill, a lime accent, and soft shadow. Both persist `stroke_width=0`; old plans and
   user edits remain unchanged.
+
+## [2026-08-18] Guided-edit wedge: no duration floor, AI designs by default
+
+A real user's plan item (6.77s clip, 0 pool assets) was permanently stuck: `status="failed"`,
+`failure.code="proposal_generation_failed"`, zero `agent_run` rows in the failure window, Generate
+409ing forever with no retry path. Two root causes, one product gap:
+
+- **The crash.** `_analyze_clip_assignment`'s cache-miss path calls `analyze_pool_video` — a raw
+  Gemini call outside the `Agent` framework, so it never produces an `agent_run` row on failure
+  (matches the "zero rows" evidence exactly; a `SchemaError` from the real `EditProposalAgent` would
+  have logged one). A transient `AnalysisTemporarilyUnavailableError` propagated uncaught through
+  `draft_edit_proposal`'s outer blanket `except Exception`, permanently marking the proposal failed
+  with `retryable=True` that never actually retried anything. Fixed: mirror
+  `autoplace.analyze_pool_asset`'s existing `AssetUnreadableError`/`AnalysisTemporarilyUnavailableError`
+  split — transient errors now trigger a real Celery retry; unreadable media fails fast, non-retryable.
+  The outer blanket handler (and every `_fail` call) now also persists an admin/debug-only
+  `ProposalFailure.detail` (exception type + reason), stripped before the public response.
+- **The artificial floor.** Even with the crash fixed, `EditProposalSnapshot.duration_s`/agent
+  input+output all required `ge=10` — a 6.77s clip can never reach 10s without inventing footage.
+  `draft_edit_proposal` now computes a feasible-duration estimate from analyzed media
+  (`feasible_guided_duration_s`: real video durations summed, images credited a fixed floor) and
+  clamps the brief's target down to it (`adapt_target_duration_s`) before calling the agent — no
+  slow-mo/stretch. Floors dropped to `ge=3` end to end; under 3s is genuinely infeasible and fails
+  fast (`guided_edit_infeasible`) without ever calling the agent.
+- **The product gap.** Even correctly failing fast, the creator was still stuck behind a review step
+  they never asked for. `GUIDED_AUTO_DESIGN_ENABLED` (default true) makes Generate reserve, draft, and
+  auto-approve (`approval_mode="auto"`) instead of 409ing whenever media exists — one-click Generate
+  always works. A drafting failure with zero registered pool assets falls back to the legacy montage
+  render directly (`bypass_guided_edit_gate` on `_dispatch_item_render`, used only by this caller);
+  pool assets present never silently fall back (2026-08-15 pool-media-drop invariant) — the failure
+  just stays retryable. Flipping the flag off is not byte-identical rollback: proposals an earlier
+  auto-design attempt already approved stay approved (see
+  `docs/runbooks/conversational-edit-rollback.md`).
+
+**Adversarial review same day** found the first cut unconditionally clobbered any non-in-flight
+proposal (including one a human was reviewing or had already approved), serialized an
+already-`rollback()`-expired ORM row on the idempotent path (`MissingGreenlet` in prod under a real
+`AsyncSession`), let auto-design's clip-only montage fallback bypass the narrated-voiceover and
+photo-collage business rules, fed the agent a feasible-duration estimate that credited too-short
+videos as if they were full images, and passed `auto_finalize` as a Celery task kwarg (a rolling-
+deploy hazard). All fixed same day: `_maybe_auto_design_generate` now branches on the FOR-UPDATE-
+locked proposal status (never clobbers `approved`/`draft`/a live `conversation_attempt`; auto-
+finalizes an existing draft instead of redrafting it); the idempotent path always reloads after
+rollback before serializing; the two hard business-rule checks run before auto-design can intercept;
+`feasible_guided_duration_s` credits a video only when its own duration clears the renderer's
+per-moment minimum; the auto-finalize intent is read off the persisted `approval_mode` field instead
+of a task kwarg. See `docs/pipelines/guided-edit.md` for the full mechanism.

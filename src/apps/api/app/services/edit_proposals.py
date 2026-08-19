@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from app.models import PlanItem
 from app.schemas.edit_proposal import (
     EDIT_CONVERSATION_MAX_TURNS,
+    ApprovalMode,
     ApprovedProposalSnapshot,
     ConversationPhase,
     EditConversationAttempt,
@@ -24,7 +25,11 @@ class ProposalConflictError(ValueError):
     pass
 
 
-EDIT_CONVERSATION_ATTEMPT_TTL_S = 90
+# Matches the Next.js proxy's maxDuration=60 (see conversational-edit route) so
+# a client-visible request timeout and the server-side reservation expire
+# together — was 90s, leaving a 30s window where the client had already given
+# up but the server still reported the attempt as in-flight.
+EDIT_CONVERSATION_ATTEMPT_TTL_S = 60
 
 
 def reserve_edit_conversation_attempt(
@@ -229,13 +234,27 @@ def media_generations_match_sync(refs) -> bool:  # noqa: ANN001
         return False
 
 
-def begin_proposal_attempt(item: PlanItem, *, brief: ProposalBrief | None = None) -> EditProposal:
+def begin_proposal_attempt(
+    item: PlanItem,
+    *,
+    brief: ProposalBrief | None = None,
+    approval_mode: ApprovalMode | None = None,
+) -> EditProposal:
+    """Reserve one analysis attempt.
+
+    ``approval_mode="auto"`` marks the attempt for GUIDED_AUTO_DESIGN_ENABLED
+    (dispatch_item_render_for's caller auto-finalizes on success instead of
+    waiting on creator approval). Default None = an explicit creator-driven
+    attempt (unchanged behavior).
+    """
+
     current = parse_edit_proposal(item.edit_proposal)
     proposal = EditProposal(
         proposal_version=(current.proposal_version + 1 if current else 1),
         generation_attempt_id=str(uuid.uuid4()),
         media_digest=None,
         status="analyzing",
+        approval_mode=approval_mode,
         brief=brief or ProposalBrief(),
         conversation=current.conversation if current else [],
         brief_ready=current.brief_ready if current else False,
@@ -262,21 +281,44 @@ def save_proposal_draft(
     *,
     expected_version: int,
     snapshot: EditProposalSnapshot,
+    clear_approval_mode: bool = False,
 ) -> EditProposal:
+    """Persist a draft snapshot.
+
+    ``clear_approval_mode=True`` is for the human-driven PATCH /edit-proposal
+    endpoint ONLY (P3, 2026-08-18 adversarial review): a creator submitting
+    their own corrected snapshot is unambiguous evidence of manual review, so
+    the envelope's approval_mode must not still read "auto" from the original
+    auto-design reservation once approved. Default False preserves it — the
+    Celery auto-design pipeline (draft_edit_proposal -> save_proposal_draft ->
+    approve_proposal, all in the same attempt) relies on approval_mode
+    surviving THIS call so approve_proposal can carry it onto
+    last_approved.approval_mode.
+    """
+
     current = require_expected_version(item, expected_version)
-    proposal = current.model_copy(
-        update={
-            "proposal_version": current.proposal_version + 1,
-            "status": "draft",
-            "draft": snapshot,
-            "failure": None,
-        }
-    )
+    update: dict = {
+        "proposal_version": current.proposal_version + 1,
+        "status": "draft",
+        "draft": snapshot,
+        "failure": None,
+    }
+    if clear_approval_mode:
+        update["approval_mode"] = None
+    proposal = current.model_copy(update=update)
     item.edit_proposal = proposal.model_dump(mode="json")
     return proposal
 
 
 def approve_proposal(item: PlanItem, *, expected_version: int) -> EditProposal:
+    """Approve the current draft. ``current.approval_mode`` (set at reservation
+
+    time by begin_proposal_attempt) rides onto the ApprovedProposalSnapshot so
+    "who/what approved this" survives any later reservation overwriting the
+    envelope's mutable field — "user" (explicit endpoint) and "auto"
+    (GUIDED_AUTO_DESIGN_ENABLED auto-finalize) both call this same function.
+    """
+
     current = require_expected_version(item, expected_version)
     if current.status != "draft" or current.draft is None or current.media_digest is None:
         raise ProposalConflictError("Only a current draft can be approved.")
@@ -286,6 +328,7 @@ def approve_proposal(item: PlanItem, *, expected_version: int) -> EditProposal:
         media_digest=current.media_digest,
         approved_at=datetime.now(UTC),
         snapshot=current.draft,
+        approval_mode=current.approval_mode,
     )
     proposal = current.model_copy(
         update={
@@ -324,6 +367,13 @@ def proposal_generate_error(item: PlanItem) -> str | None:
         return "proposal_analyzing"
     if proposal.status == "stale":
         return "proposal_stale"
+    if proposal.status == "failed":
+        # Previously fell through to the generic "proposal_draft" branch below
+        # (draft_edit_proposal writes status="failed", never "draft", so a
+        # failed attempt is never actually a reviewable draft) — the creator
+        # got "Approve the edit plan before generating" for an edit that was
+        # never drafted, with no path back to a retry.
+        return "proposal_failed"
     if proposal.status != "approved" or proposal.last_approved is None:
         return "proposal_draft"
     return None

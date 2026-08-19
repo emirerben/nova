@@ -119,11 +119,25 @@ jest.mock("@/app/library/_components/FeedbackButtons", () => ({
 }));
 jest.mock("@/app/plan/_components/AssetPool", () => ({
   __esModule: true,
-  default: ({ onMutated }: { onMutated?: () => void }) => (
+  default: ({
+    onMutated,
+    onAssetsChanged,
+  }: {
+    onMutated?: () => void;
+    onAssetsChanged?: (assets: { id: string; status: string }[]) => void;
+  }) => (
     <div data-testid="asset-pool">
       {onMutated ? (
         <button type="button" onClick={onMutated}>
           Simulate asset mutation
+        </button>
+      ) : null}
+      {onAssetsChanged ? (
+        <button
+          type="button"
+          onClick={() => onAssetsChanged([{ id: "pool-1", status: "ready" }])}
+        >
+          Simulate ready pool asset
         </button>
       ) : null}
     </div>
@@ -188,7 +202,7 @@ function makeItem(overrides = {}) {
   };
 }
 
-function makeGuidedProposal(status: "analyzing" | "draft" | "approved" | "stale") {
+function makeGuidedProposal(status: "analyzing" | "draft" | "approved" | "stale" | "failed") {
   const snapshot = {
     direction: "guided_story",
     goal: "Tell the Corfu story",
@@ -1076,21 +1090,27 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
 });
 
 describe("PlanItemPage — guided edit Generate gating", () => {
-  function guidedItem(editProposal: ReturnType<typeof makeGuidedProposal> | null) {
+  function guidedItem(
+    editProposal: ReturnType<typeof makeGuidedProposal> | null,
+    options: { autoDesign?: boolean; poolOnly?: boolean } = {},
+  ) {
     return makeItem({
       status: "awaiting_clips",
       edit_format: "montage",
       guided_edit_available: true,
+      guided_edit_auto_design: options.autoDesign ?? false,
       edit_proposal: editProposal,
-      clip_gcs_paths: ["users/u1/plan/test-item-id/corfu.mp4"],
-      clip_assignments: [
-        {
-          media_id: "clip-1",
-          gcs_path: "users/u1/plan/test-item-id/corfu.mp4",
-          shot_id: null,
-          user_note: "",
-        },
-      ],
+      clip_gcs_paths: options.poolOnly ? [] : ["users/u1/plan/test-item-id/corfu.mp4"],
+      clip_assignments: options.poolOnly
+        ? []
+        : [
+            {
+              media_id: "clip-1",
+              gcs_path: "users/u1/plan/test-item-id/corfu.mp4",
+              shot_id: null,
+              user_note: "",
+            },
+          ],
     });
   }
 
@@ -1119,6 +1139,167 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
     expect(screen.getByText(hint)).toBeInTheDocument();
   });
+
+  it("stays disabled with no approved proposal when guided_edit_auto_design is false", async () => {
+    const item = guidedItem(null, { autoDesign: false });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
+    expect(screen.getByText("Plan this edit before generating.")).toBeInTheDocument();
+  });
+
+  it("enables Generate with media and no approved proposal when auto-design is on", async () => {
+    const item = guidedItem(null, { autoDesign: true });
+    mockGeneratePlanItem.mockResolvedValue(item);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    // Clicking just works — Kria designs the edit, no planner step required.
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /generate video/i }));
+    });
+    await waitFor(() => {
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+  });
+
+  it("P2-5: a pool-only item becomes generate-able once AssetPool reports a ready asset", async () => {
+    const item = guidedItem(null, { autoDesign: true, poolOnly: true });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    // No clips, no approval, no known pool media yet -> blocked.
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /simulate ready pool asset/i }));
+    });
+
+    // AssetPool reported a ready pool asset up -> the gate now sees media.
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled();
+  });
+
+  it("shows the designing hint while auto-design is drafting, but stays enabled", async () => {
+    const item = guidedItem(makeGuidedProposal("analyzing"), { autoDesign: true });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled();
+    expect(screen.getByText("Kria is designing your edit…")).toBeInTheDocument();
+  });
+
+  it("P3: the render-register watchdog does not fire while auto-design is still designing", async () => {
+    const nowSpy = jest.spyOn(Date, "now");
+    const startMs = 1_700_000_000_000;
+    nowSpy.mockReturnValue(startMs);
+
+    const readyItem = guidedItem(null, { autoDesign: true });
+    const designingItem = guidedItem(makeGuidedProposal("analyzing"), { autoDesign: true });
+    mockGeneratePlanItem.mockResolvedValue(designingItem);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: readyItem, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    const { rerender } = render(<PlanItemPage />);
+    await act(async () => {});
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /generate video/i }));
+    });
+    await waitFor(() => {
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+
+    // The poll now reflects the design phase in progress.
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: designingItem, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+    await act(async () => {
+      rerender(<PlanItemPage />);
+    });
+
+    // Fast-forward well past RENDER_REGISTER_TIMEOUT_MS (15 min) while the
+    // item is STILL designing — no render Job could possibly have registered
+    // yet, so the watchdog must not fire.
+    nowSpy.mockReturnValue(startMs + 20 * 60_000);
+    await act(async () => {
+      rerender(<PlanItemPage />);
+    });
+
+    expect(
+      screen.queryByText("The render didn't register — give it another go."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Kria is designing your edit…")).toBeInTheDocument();
+
+    nowSpy.mockRestore();
+  });
+
+  it.each([
+    [
+      true,
+      "Kria couldn't finish planning this edit — it'll retry when you hit Generate.",
+    ],
+    [
+      false,
+      "Kria couldn't finish planning this edit — open the planner to try again.",
+    ],
+  ])(
+    "shows the failed-status hint (auto-design=%s)",
+    async (autoDesign, hint) => {
+      const item = guidedItem(makeGuidedProposal("failed"), { autoDesign });
+      mockUsePolledJobStatus.mockReturnValue({
+        data: { item, job: null },
+        error: null,
+        refetch: mockRefetch,
+      });
+
+      await act(async () => {
+        render(<PlanItemPage />);
+      });
+
+      expect(screen.getByText(hint)).toBeInTheDocument();
+      const generateBtn = screen.getByRole("button", { name: /generate video/i });
+      if (autoDesign) {
+        expect(generateBtn).toBeEnabled();
+      } else {
+        expect(generateBtn).toBeDisabled();
+      }
+    },
+  );
 
   it("enables Generate for a current approved proposal", async () => {
     const item = guidedItem(makeGuidedProposal("approved"));

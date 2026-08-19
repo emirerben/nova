@@ -98,7 +98,7 @@ class EditGuideAgent(Agent[EditGuideInput, EditGuideOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_guide",
         prompt_id="edit_guide",
-        prompt_version="1.0.5",
+        prompt_version="1.0.6",
         model="gemini-2.5-flash",
         # Stay below the web proxy's 60s hard budget even when both attempts
         # reach their timeout. This prevents a late invisible DB commit after
@@ -222,10 +222,12 @@ class EditGuideAgent(Agent[EditGuideInput, EditGuideOutput]):
                         )
             ready_to_plan = True
 
-        # Answer chips are only useful while Kria is asking the creator a question.
-        # Models sometimes return generic affirmations even after the brief is complete;
-        # suppress those rather than presenting dead-end choices in the UI.
-        if ready_to_plan or "?" not in reply:
+        # Answer chips are only useful while Kria is still briefing. Previously
+        # also cleared whenever the reply had no "?" — but a reply can keep
+        # briefing without literally asking a question (e.g. restating an
+        # option), and that clause was silently dropping valid suggestions the
+        # creator could have tapped. ready_to_plan alone is the correct signal.
+        if ready_to_plan:
             suggestions = []
 
         return output.model_copy(

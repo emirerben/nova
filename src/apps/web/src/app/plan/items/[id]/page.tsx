@@ -523,6 +523,11 @@ export default function PlanItemPage() {
   // embedded overlay's src_gcs_path so HeroOverlayEditor can resolve by overlay.
   const autoplaceEnabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true";
   const [suggestionPoolAssets, setSuggestionPoolAssets] = useState<PoolAsset[]>([]);
+  // Live-mirrors AssetPool's own list (fetch/poll/register/delete/promote) —
+  // lets the Generate gate see a ready pool video without a second fetch.
+  // Only relevant when guided-edit auto-design is available (P2-5, 2026-08-18
+  // adversarial review); see guidedEditAutoDesign below.
+  const [poolAssets, setPoolAssets] = useState<PoolAsset[]>([]);
   const hasSuggestionRows = overlaySuggestions.rows.length > 0;
   useEffect(() => {
     if (!autoplaceEnabled || !hasSuggestionRows) return;
@@ -1391,6 +1396,18 @@ export default function PlanItemPage() {
       setError((prev) => (prev === RENDER_REGISTER_ERROR ? null : prev));
     }
     if (!generating) return;
+    // Auto-design's design phase (analyzing/drafting) can legitimately run
+    // past RENDER_REGISTER_TIMEOUT_MS under transient-analysis retries — no
+    // render Job even exists to register yet. Keep re-arming the wait window
+    // while designing so the watchdog only starts counting once design
+    // settles and a render is actually expected to register (P3, 2026-08-18
+    // adversarial review).
+    const designing =
+      item?.edit_proposal?.status === "analyzing" || item?.edit_proposal?.status === "drafting";
+    if (designing) {
+      awaitingJobSince.current = Date.now();
+      return;
+    }
     if (registered) {
       awaitingJobSince.current = null;
       setGenerating(false);
@@ -1485,6 +1502,9 @@ export default function PlanItemPage() {
     process.env.NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED === "true";
   const guidedEditActive = GUIDED_EDIT_ENABLED && item.guided_edit_available === true;
   const guidedEditApproved = item.edit_proposal?.status === "approved";
+  // GUIDED_AUTO_DESIGN_ENABLED: absent/false on an old API keeps today's
+  // strict-gate behavior (deploy-skew safe) — see PlanItem.guided_edit_auto_design.
+  const guidedEditAutoDesign = item.guided_edit_auto_design ?? false;
   const hasApprovedGuidedMedia = Boolean(
     guidedEditActive &&
       guidedEditApproved &&
@@ -1492,6 +1512,13 @@ export default function PlanItemPage() {
         (beat) => beat.media_ids.length > 0,
       ),
   );
+  // Matches the backend's own eligibility check (_maybe_auto_design_generate:
+  // PlanItemAsset.status == "ready", no kind filter) so a pool-only item is
+  // reachable from Generate exactly when the server would actually design
+  // from it. Gated on guidedEditAutoDesign so a pool-only item with
+  // auto-design off/undefined keeps today's exact behavior (P2-5).
+  const hasReadyPoolMedia =
+    guidedEditAutoDesign && poolAssets.some((asset) => asset.status === "ready");
   // Existing upload/format rules come from one decision; guided-edit approval
   // composes a second explicit gate immediately below.
   const gate = generateGate({
@@ -1504,6 +1531,7 @@ export default function PlanItemPage() {
     uploaderBusy: uploaderBusy || uploading || hasActivePoolUploads,
     clipCount,
     hasApprovedGuidedMedia,
+    hasReadyPoolMedia,
     isNarrated,
     hasVoiceover: !!voiceoverGcsPath,
     selfNarrationEnabled,
@@ -1514,10 +1542,16 @@ export default function PlanItemPage() {
     item.edit_proposal?.status === "stale"
       ? "Your media changed — plan the edit again."
       : item.edit_proposal?.status === "analyzing" || item.edit_proposal?.status === "drafting"
-        ? "Nova is still planning this edit."
+        ? guidedEditAutoDesign
+          ? "Kria is designing your edit…"
+          : "Nova is still planning this edit."
         : item.edit_proposal?.status === "draft"
           ? "Review and approve the edit plan first."
-          : "Plan this edit before generating.";
+          : item.edit_proposal?.status === "failed"
+            ? guidedEditAutoDesign
+              ? "Kria couldn't finish planning this edit — it'll retry when you hit Generate."
+              : "Kria couldn't finish planning this edit — open the planner to try again."
+            : "Plan this edit before generating.";
   // "Your narrated render became a montage" explanation (no_speech etc.) —
   // persisted by the orchestrator, surfaced here so the swap is never silent.
   const fallbackBanner = narrationFallbackBanner(
@@ -2023,6 +2057,7 @@ export default function PlanItemPage() {
                 attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
                 onUseInEdit={promotePoolAsset}
                 attachBusy={uploading || uploaderBusy || hasActivePoolUploads}
+                onAssetsChanged={setPoolAssets}
                 onMutated={() => {
                   forceFreshFetchRef.current = true;
                   refetch();
@@ -2087,7 +2122,10 @@ export default function PlanItemPage() {
               <div className="mt-4 space-y-2">
                 <InkButton
                   onClick={handleGenerate}
-                  disabled={gate.disabled || (guidedEditActive && !guidedEditApproved)}
+                  disabled={
+                    gate.disabled ||
+                    (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign)
+                  }
                 >
                   {generating
                     ? "Starting…"
@@ -2099,7 +2137,14 @@ export default function PlanItemPage() {
                     gating copy (why the button is off / what drives the edit) —
                     DESIGN.md §8 keeps faint ink decorative-only. */}
                 <p className="text-center text-sm text-[#71717a]">
-                  {guidedEditActive && !guidedEditApproved ? guidedEditHint : gate.hint}
+                  {guidedEditActive &&
+                  !guidedEditApproved &&
+                  // With auto-design on and no attempt yet, Generate just works —
+                  // only show guided-specific copy once there's a real state to
+                  // report (analyzing/drafting/failed/stale/draft).
+                  (!guidedEditAutoDesign || item.edit_proposal?.status)
+                    ? guidedEditHint
+                    : gate.hint}
                 </p>
               </div>
             )}

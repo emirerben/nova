@@ -80,6 +80,30 @@ def test_question_keeps_concrete_answer_suggestions() -> None:
     assert output.suggestions == ["Food", "Architecture", "The coast"]
 
 
+def test_no_question_reply_keeps_suggestions_while_still_briefing() -> None:
+    """Regression: suggestions must survive a briefing reply that doesn't
+
+    literally end in "?" (e.g. restating an option) — only ready_to_plan
+    should clear them. Previously any reply without "?" wiped valid tappable
+    suggestions even while still briefing.
+    """
+
+    output = EditGuideAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(
+            {
+                "reply": "Got it — a reflective diary about food and architecture.",
+                "suggestions": ["Add the coast too", "Keep it just food"],
+                "brief": _brief_payload(),
+                "ready_to_plan": False,
+                "revision": None,
+            }
+        ),
+        EditGuideInput(phase="briefing"),
+    )
+    assert output.ready_to_plan is False
+    assert output.suggestions == ["Add the coast too", "Keep it just food"]
+
+
 def test_malformed_model_json_is_rejected() -> None:
     with pytest.raises(SchemaError, match="invalid output"):
         EditGuideAgent(None).parse("not-json", EditGuideInput(phase="briefing"))  # type: ignore[arg-type]

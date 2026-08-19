@@ -23,6 +23,7 @@ function input(overrides: Partial<GenerateGateInput> = {}): GenerateGateInput {
     uploaderBusy: false,
     clipCount: 1,
     hasApprovedGuidedMedia: false,
+    hasReadyPoolMedia: false,
     isNarrated: false,
     hasVoiceover: false,
     selfNarrationEnabled: false,
@@ -31,6 +32,24 @@ function input(overrides: Partial<GenerateGateInput> = {}): GenerateGateInput {
     ...overrides,
   };
 }
+
+describe("generateGate — pool-only items with auto-design (P2-5)", () => {
+  it("a ready pool asset alone counts as generate media", () => {
+    const gate = generateGate(
+      input({ clipCount: 0, hasApprovedGuidedMedia: false, hasReadyPoolMedia: true }),
+    );
+    expect(gate.disabled).toBe(false);
+    expect(gate.hint).toBeNull();
+  });
+
+  it("no clips, no approval, no ready pool media -> still blocked (auto-design off/undefined default)", () => {
+    const gate = generateGate(
+      input({ clipCount: 0, hasApprovedGuidedMedia: false, hasReadyPoolMedia: false }),
+    );
+    expect(gate.disabled).toBe(true);
+    expect(gate.hint).toBe("Add clips to generate");
+  });
+});
 
 describe("generateGate — narrated voiceover gate", () => {
   it("flag OFF: narrated without voiceover stays blocked with the record hint", () => {
