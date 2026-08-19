@@ -163,7 +163,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Per-variant state lives in `Job.assembly_plan["variants"]` (task-owned); jobs are `Job` rows with `mode == "generative"`.
 - **Intro-text persistence:** text + highlight word persist on `variants[i]["intro_text"]`/`["intro_highlight_word"]`; re-render without override reuses them (no LLM); intro_writer runs only on first render or legacy variants.
 - **Fast reburn invariant:** pure text edits need a non-stale, exact-canvas `base_video_path`; otherwise full-render. Outputs are generation-keyed and token-gated. Kill switch: `GENERATIVE_FAST_REBURN_ENABLED=false` + worker restart.
-- **Text-behind-subject:** `TEXT_BEHIND_SUBJECT_ENABLED` (default `false`); MediaPipe matte occludes text behind subject; `fly secrets set TEXT_BEHIND_SUBJECT_ENABLED=false --app nova-video` + restart to disable. See `docs/pipelines/text-behind-subject.md`.
+- **Text-behind-subject:** `TEXT_BEHIND_SUBJECT_ENABLED`/`MATTE_DEPTH_OCCLUDER_ENABLED` (both default `false`; latter = depth backbone for non-person subjects) — matte occludes text behind subject. See `docs/pipelines/text-behind-subject.md`.
 - See `docs/pipelines/generative.md` (music reuse, variant mechanics).
 
 ## Template pipeline
