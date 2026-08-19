@@ -4350,10 +4350,21 @@ _SUBJECT_MATTE_WINDOW_PAD_S = 0.25
 
 # Matte cache-key suffix. v2: RVM backbone + boundary-aware temporal reset +
 # oscillation gate + frame-aligned windows (the beach-glitch fix, prod job
-# add80a9c). A persisted subject_matte_path WITHOUT this suffix predates the
-# fix and may be a glitching matte the old gate accepted — treated as a cache
-# miss so the next matte-needing burn recomputes under the v2 key.
-_MATTE_CACHE_SUFFIX = ".matte.v2.mp4"
+# add80a9c). v3: adds the depth-occluder backbone for non-person subjects
+# (auto-selected when the person pass finds nothing; prod job 30b717b9,
+# see docs/pipelines/text-behind-subject.md). A persisted subject_matte_path
+# matching NONE of the accepted suffixes predates the current fix and is
+# treated as a cache miss so the next matte-needing burn recomputes under
+# the current key.
+_MATTE_CACHE_SUFFIX = ".matte.v3.mp4"
+# Healthy v2 BLOBS stay accepted as cache hits: a v2 blob only ever exists
+# where the person pass found a real subject (insane mattes were never
+# uploaded), and the person path's write contract is unchanged in v3 — so a
+# v3 recompute of a v2 blob would run the identical person pass for pure
+# churn (one ~90s recompute + GCS delete/re-upload per cached base,
+# fleet-wide). Only the v2 UNSTABLE SENTINELS carry information the depth
+# backbone can overturn, and those have their own (now-stale) suffix.
+_MATTE_ACCEPTED_CACHE_SUFFIXES = (_MATTE_CACHE_SUFFIX, ".matte.v2.mp4")
 
 # Persisted marker (a path-shaped sentinel, no GCS object behind it) recorded
 # when a freshly computed matte DEFINITIVELY fails the sanity gate (stats
@@ -4363,7 +4374,24 @@ _MATTE_CACHE_SUFFIX = ".matte.v2.mp4"
 # the sentinel short-circuits straight to plain text. Full re-renders reset
 # subject_matte_path to None, so new footage retries naturally. Transient
 # failures (download/upload/budget/compute error) never mint the sentinel.
-_MATTE_UNSTABLE_SUFFIX = ".matte.v2.unstable"
+_MATTE_UNSTABLE_SUFFIX = ".matte.v3.unstable"
+# RETRYABLE-rejection sentinel: the person pass found nothing AND the depth
+# pass never delivered a conclusive verdict (flag off during dark ship,
+# model missing, inference budget, mid-flight crash) — see
+# matte_rejection_is_retryable. Short-circuits like the permanent sentinel
+# ONLY while MATTE_DEPTH_OCCLUDER_ENABLED stays off (recomputing could only
+# repeat the person-only rejection, so every text edit would pay the full
+# matte budget for nothing); once the flag flips on it no longer
+# short-circuits and falls through the stale-suffix branch into a
+# depth-eligible recompute. Net: one compute per base per flag state, never
+# a permanently poisoned cache, never a per-reburn recompute tax.
+_MATTE_NODEPTH_UNSTABLE_SUFFIX = ".matte.v3.nodepth.unstable"
+
+
+class _CachedDepthMatteDisabled(RuntimeError):
+    """Control-flow signal: a cached matte's sidecar says backbone="depth"
+    while MATTE_DEPTH_OCCLUDER_ENABLED is off — evict it (rollback support)
+    instead of treating it as a generic broken-cache miss."""
 
 
 def _matte_delete_allowed(path: str) -> bool:
@@ -4494,18 +4522,28 @@ def _resolve_subject_matte_for_burn(
     is logged with the reason. `matte_gcs_path` is `cached_matte_path` unchanged
     on failure (a bad recompute must never clobber a previously-good cache).
 
-    Cache contract: `cached_matte_path` set AND carrying the current
-    `_MATTE_CACHE_SUFFIX` → downloaded and opened, never recomputed (the
-    "steady state" fast-reburn path). A path WITHOUT the suffix is a v1
-    matte from before the beach-glitch fix — possibly a glitching matte the
-    old sanity gate accepted — so it is treated as a cache miss: a fresh
-    matte is computed under the v2 key and the v1 blob is deleted
-    best-effort after a successful upload. On recompute failure the ORIGINAL
-    (possibly v1) path is returned unchanged so the next matte-needing burn
-    retries the migration. `None` → a fresh matte is computed over the union
-    of `behind_subject` windows (padded, duration-clamped), sanity-gated,
-    uploaded next to `upload_key_base`, and returned as the new
-    `matte_gcs_path` for the caller to persist.
+    Cache contract: `cached_matte_path` set AND carrying an ACCEPTED blob
+    suffix (`_MATTE_ACCEPTED_CACHE_SUFFIXES`: current v3, or a healthy v2
+    blob — the person path's write contract is unchanged, so recomputing v2
+    blobs would be pure churn) → downloaded and opened, never recomputed
+    (the "steady state" fast-reburn path); EXCEPT a depth-backbone blob
+    while the depth flag is off, which is evicted (rollback support). A
+    path matching no accepted suffix — a pre-beach-glitch-fix v1 path, or
+    an old v2 `_MATTE_UNSTABLE_SUFFIX` sentinel — is treated as stale: it
+    is a cache miss, so a fresh matte is computed under the current (v3)
+    key and the old blob (or sentinel) is deleted best-effort after a
+    successful upload (a real stale BLOB additionally survives any
+    non-conclusive rejection — see the retryable branch below). This is how
+    a person-only rejection recorded against object footage under v2 gets a
+    second chance: the v2 unstable sentinel no longer matches
+    `_MATTE_UNSTABLE_SUFFIX`, so the early known-unstable short-circuit is
+    skipped and the burn falls through to a real recompute — now eligible
+    for the depth backbone (see `docs/pipelines/text-behind-subject.md`).
+    On recompute failure the ORIGINAL (possibly stale) path is returned
+    unchanged so the next matte-needing burn retries the migration. `None` → a fresh matte is
+    computed over the union of `behind_subject` windows (padded,
+    duration-clamped), sanity-gated, uploaded next to `upload_key_base`, and
+    returned as the new `matte_gcs_path` for the caller to persist.
 
     `cut_boundaries_s` (output-timeline hard-cut times, best-effort) is
     forwarded to `compute_subject_matte` so the segmenter's temporal state
@@ -4522,6 +4560,7 @@ def _resolve_subject_matte_for_burn(
         SubjectMatteProvider,
         compute_subject_matte,
         matte_is_sane,
+        matte_rejection_is_retryable,
     )
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
     from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
@@ -4543,15 +4582,38 @@ def _resolve_subject_matte_for_burn(
         stripped = [{k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlays]
         return None, cached_matte_path, stripped
 
+    # Retryable-rejection sentinel: short-circuit ONLY while the depth
+    # occluder stays disabled — with the flag on this suffix doesn't match
+    # _MATTE_CACHE_SUFFIX either, so it falls through the stale-suffix
+    # branch below into a depth-eligible recompute.
+    if (
+        cached_matte_path
+        and cached_matte_path.endswith(_MATTE_NODEPTH_UNSTABLE_SUFFIX)
+        and not getattr(settings, "matte_depth_occluder_enabled", False)
+    ):
+        record_pipeline_event(
+            "overlay",
+            "subject_matte_resolved",
+            {
+                "variant_id": variant_id,
+                "outcome": "cached_unstable",
+                "matte_path": cached_matte_path,
+            },
+        )
+        stripped = [{k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlays]
+        return None, cached_matte_path, stripped
+
     stale_matte_path: str | None = None
-    if cached_matte_path and not cached_matte_path.endswith(_MATTE_CACHE_SUFFIX):
+    evicted_depth_cache = False
+    if cached_matte_path and not cached_matte_path.endswith(_MATTE_ACCEPTED_CACHE_SUFFIXES):
         stale_matte_path = cached_matte_path
-        cached_matte_path = None  # v1 matte — force a recompute under the v2 key
+        cached_matte_path = None  # stale-version matte — force a recompute under the current key
 
     provider = None
     matte_gcs_path = original_matte_path
     newly_uploaded_paths: list[str] = []
     upload_replaced_existing_cache = False
+    backbone_for_trace: str | None = None
     try:
         windows = _behind_subject_windows(behind, duration_s)
         if not windows:
@@ -4570,9 +4632,39 @@ def _resolve_subject_matte_for_burn(
                     # makes mask_at return None mid-overlay (occlusion
                     # silently drops out). Recompute for the new windows.
                     raise RuntimeError("cached matte does not cover requested windows")
+                try:
+                    with open(f"{local_matte}.json") as _matte_sidecar_f:
+                        backbone_for_trace = json.load(_matte_sidecar_f).get("backbone")
+                except Exception:  # noqa: BLE001 — trace enrichment only, never blocks a burn
+                    backbone_for_trace = None
+                if backbone_for_trace == "depth" and not getattr(
+                    settings, "matte_depth_occluder_enabled", False
+                ):
+                    # Rollback contract: flipping the depth flag off must
+                    # stop DEPTH occlusion, including mattes already in the
+                    # cache (a rollback usually means those look wrong).
+                    # Evict: recompute under the same key — the person pass
+                    # finds nobody on this footage, so the burn falls to
+                    # the retryable-sentinel path (cheap short-circuits
+                    # thereafter) and the depth blob is freed.
+                    raise _CachedDepthMatteDisabled(
+                        "cached depth matte with depth occluder disabled"
+                    )
+            except _CachedDepthMatteDisabled as evict_exc:
+                log.warning(
+                    "text_behind_subject_depth_cache_evicted",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(evict_exc),
+                )
+                stale_matte_path = cached_matte_path
+                provider = None
+                cached_matte_path = None
+                backbone_for_trace = None
+                evicted_depth_cache = True
             except Exception as cache_exc:  # noqa: BLE001 — treat as a miss
                 # A broken blob/sidecar (or stale coverage) must not poison
-                # the cache forever: recompute under the same v2 key
+                # the cache forever: recompute under the same key
                 # (overwrites in place) instead of failing this and every
                 # future burn the same way.
                 log.warning(
@@ -4590,24 +4682,91 @@ def _resolve_subject_matte_for_burn(
             )
             if stats is None:
                 raise RuntimeError("matte compute failed")
-            had_v2_cache = bool(
-                original_matte_path and original_matte_path.endswith(_MATTE_CACHE_SUFFIX)
+            backbone_for_trace = getattr(stats, "backbone", None)
+            had_current_cache = bool(
+                original_matte_path
+                and original_matte_path.endswith(_MATTE_ACCEPTED_CACHE_SUFFIXES)
+                # A deliberately evicted depth cache must not trigger the
+                # keeping-cache branch below — it is exactly what the
+                # eviction is removing.
+                and not evicted_depth_cache
             )
-            if not matte_is_sane(stats) and had_v2_cache:
-                # A v2 cache existed and only this recompute (typically a
-                # coverage-miss after a text-timing move) failed the gate —
-                # the failure is window-local, not a property of the whole
-                # base. Keep the old cache: text moved back into its span
-                # works instantly, and the moved window stays retryable.
-                raise RuntimeError(f"matte insane for new windows (keeping v2 cache): {stats}")
+            if not matte_is_sane(stats) and had_current_cache:
+                # A current-version cache existed and only this recompute
+                # (typically a coverage-miss after a text-timing move) failed
+                # the gate — the failure is window-local, not a property of
+                # the whole base. Keep the old cache: text moved back into
+                # its span works instantly, and the moved window stays
+                # retryable.
+                raise RuntimeError(f"matte insane for new windows (keeping cache): {stats}")
             if not matte_is_sane(stats) and not cut_boundaries_s:
                 # Gate rejection WITHOUT cut hints is ambiguous: on legacy
                 # variants (no persisted timeline) and subtitled silence-cut
                 # joins, real cuts count as jumps/flips, so the rejection may
                 # be the hints' absence, not the footage. Fall back for this
                 # burn only — never mint the permanent sentinel from
-                # known-incomplete inputs.
+                # known-incomplete inputs. This branch DELIBERATELY outranks
+                # the conclusive-depth branch below: the depth pass computed
+                # its stability stats under the same missing hints, so even
+                # a depth_rejected verdict is not trustworthy here.
                 raise RuntimeError(f"matte insane (no cut hints): {stats}")
+            if not matte_is_sane(stats) and matte_rejection_is_retryable(stats):
+                # No subject found AND the depth-occluder pass never got a
+                # conclusive look at the footage (flag off during dark ship,
+                # model missing, budget, mid-flight crash): the rejection is
+                # circumstantial, not a property of the base, so the
+                # PERMANENT sentinel must not mint — but recomputing on
+                # every text edit would pay the full matte budget for the
+                # same person-only rejection each time. Mint the RETRYABLE
+                # sentinel instead: short-circuits while the depth flag
+                # stays off, reads as stale (one depth-eligible recompute)
+                # once it flips on.
+                if (
+                    stale_matte_path
+                    and stale_matte_path.endswith(".mp4")
+                    and not evicted_depth_cache
+                ):
+                    # A REAL previous-version matte blob exists (v1): this
+                    # non-conclusive rejection must not destroy user data —
+                    # keep the old blob and its persisted path, retry the
+                    # migration on the next burn (mirrors the
+                    # keeping-cache branch above). Path-shaped sentinels
+                    # and a deliberately evicted depth cache still fall
+                    # through to the mint below.
+                    raise RuntimeError(f"matte insane but retryable (keeping stale cache): {stats}")
+                sentinel = f"{upload_key_base}{_MATTE_NODEPTH_UNSTABLE_SUFFIX}"
+                if (
+                    stale_matte_path
+                    and stale_matte_path != sentinel
+                    and _matte_delete_allowed(stale_matte_path)
+                ):
+                    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+                    delete_object_best_effort(stale_matte_path)
+                    delete_object_best_effort(f"{stale_matte_path}.json")
+                log.warning(
+                    "text_behind_subject_retryable_rejection",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    stats=str(stats)[:300],
+                )
+                retryable_payload = {
+                    "variant_id": variant_id,
+                    "outcome": "unstable_rejected_retryable",
+                    "matte_path": sentinel,
+                    "stats": str(stats)[:200],
+                }
+                if backbone_for_trace is not None:
+                    retryable_payload["backbone"] = backbone_for_trace
+                record_pipeline_event(
+                    "overlay",
+                    "subject_matte_resolved",
+                    retryable_payload,
+                )
+                stripped = [
+                    {k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlays
+                ]
+                return None, sentinel, stripped
             if not matte_is_sane(stats):
                 # Definitive footage-level rejection — persist the sentinel so
                 # every later reburn of this base skips straight to plain text
@@ -4624,15 +4783,18 @@ def _resolve_subject_matte_for_burn(
                     variant_id=variant_id,
                     stats=str(stats)[:300],
                 )
+                unstable_payload = {
+                    "variant_id": variant_id,
+                    "outcome": "unstable_rejected",
+                    "matte_path": sentinel,
+                    "stats": str(stats)[:200],
+                }
+                if backbone_for_trace is not None:
+                    unstable_payload["backbone"] = backbone_for_trace
                 record_pipeline_event(
                     "overlay",
                     "subject_matte_resolved",
-                    {
-                        "variant_id": variant_id,
-                        "outcome": "unstable_rejected",
-                        "matte_path": sentinel,
-                        "stats": str(stats)[:200],
-                    },
+                    unstable_payload,
                 )
                 stripped = [
                     {k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlays
@@ -4679,26 +4841,32 @@ def _resolve_subject_matte_for_burn(
             variant_id=variant_id,
             error=str(exc),
         )
+        fallback_payload = {
+            "variant_id": variant_id,
+            "outcome": "fallback_stripped",
+            "error": str(exc)[:200],
+        }
+        if backbone_for_trace is not None:
+            fallback_payload["backbone"] = backbone_for_trace
         record_pipeline_event(
             "overlay",
             "subject_matte_resolved",
-            {
-                "variant_id": variant_id,
-                "outcome": "fallback_stripped",
-                "error": str(exc)[:200],
-            },
+            fallback_payload,
         )
         stripped = [{k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlays]
         return None, original_matte_path, stripped
 
+    success_payload = {
+        "variant_id": variant_id,
+        "source": "cache" if cached_matte_path else "computed",
+        "matte_path": matte_gcs_path,
+    }
+    if backbone_for_trace is not None:
+        success_payload["backbone"] = backbone_for_trace
     record_pipeline_event(
         "overlay",
         "subject_matte_resolved",
-        {
-            "variant_id": variant_id,
-            "source": "cache" if cached_matte_path else "computed",
-            "matte_path": matte_gcs_path,
-        },
+        success_payload,
     )
     return provider, matte_gcs_path, overlays
 
@@ -8471,8 +8639,8 @@ def _run_regenerate_variant(
         # the SAME blob — no orphan there. The orphan cases the old!=new delete
         # below covers: the previous render had a matte and this one didn't
         # recompute one (behind_subject/flag now off, or no overlay needs it),
-        # and the v1→v2 suffix migration (old ".matte.mp4" key retired when the
-        # recompute lands under ".matte.v2.mp4").
+        # and any suffix-version migration (e.g. an old ".matte.v2.mp4" key
+        # retired when the recompute lands under the current ".matte.v3.mp4").
         old_matte_path = existing.get("subject_matte_path")
         new_matte_path = result.get("subject_matte_path")
         if (
