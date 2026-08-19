@@ -187,16 +187,16 @@ async def _run_prefetch_locked(gcs_path: str, filter_hint: str) -> None:
             return
 
         try:
-            meta = await asyncio.to_thread(
-                analyze_clip, file_ref, None, None, filter_hint
-            )
+            meta = await asyncio.to_thread(analyze_clip, file_ref, None, None, filter_hint)
         except Exception as exc:
             log.info("prefetch_gemini_analyze_failed", gcs_path=gcs_path, error=str(exc))
             return
 
         # ── Cache write ──────────────────────────────────────────────────
-        # set_cached_meta refuses to write degraded/failed metas; we don't
-        # need to check that here.
+        # set_cached_meta refuses to write degraded/failed/synthetic-moments
+        # metas; we don't need to check that here. A meta with legitimately
+        # empty best_moments IS cached — the read side backfills it
+        # (_backfill_cached_empty_moments in template_orchestrate.py).
         await asyncio.to_thread(set_cached_meta, clip_hash, filter_hint, meta)
         log.info(
             "prefetch_complete",

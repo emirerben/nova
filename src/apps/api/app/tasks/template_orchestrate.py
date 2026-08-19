@@ -2203,6 +2203,7 @@ def _analyze_clips_with_cache(
     if not miss_indices:
         # Full cache hit: still need probe data for slot planning.
         probe_map = _probe_clips(local_paths)
+        _backfill_cached_empty_moments(clip_metas_ordered, probe_map)
         compact = [m for m in clip_metas_ordered if m is not None]
         return compact, clip_metas_ordered, file_refs_ordered, probe_map, 0
 
@@ -2250,6 +2251,10 @@ def _analyze_clips_with_cache(
         if h:
             set_cached_meta(h, filter_hint, meta)
 
+    # Cache-hit entries never passed through _analyze_one, so give any
+    # empty-moments hits the same synthetic-moments backfill (idempotent for
+    # freshly analyzed metas — they always have moments by this point).
+    _backfill_cached_empty_moments(clip_metas_ordered, probe_map)
     compact = [m for m in clip_metas_ordered if m is not None]
     return compact, clip_metas_ordered, file_refs_ordered, probe_map, failed_count
 
@@ -2280,7 +2285,7 @@ def _analyze_clips_parallel(
         t0 = time.monotonic()
         try:
             if is_image_file(path):
-                clip_dur = probe_map[path].duration_s if probe_map and path in probe_map else 15.0
+                clip_dur = _clip_duration(path, probe_map, 15.0)
                 image_meta = ClipMeta(
                     clip_id=f"clip_{idx}",
                     transcript="",
@@ -2328,17 +2333,53 @@ def _analyze_clips_parallel(
                         "clip_path": os.path.basename(path),
                     },
                 )
-            # Defense-in-depth: empty `best_moments` from a "successful" analysis
-            # is unusable downstream (matcher has nothing to match). Treat it the
-            # same as an analysis failure so the Whisper fallback engages and the
-            # job still produces output.
+            # Empty `best_moments` from a "successful" analysis is a legitimate
+            # answer for static single-shot clips (talking head, product b-roll),
+            # not a failure: hook_text/hook_score/detected_subject/transcript
+            # drive hero selection and every downstream agent, so discarding the
+            # whole meta for the Whisper fallback poisons them all. Keep the real
+            # analysis and synthesize only the moments the matcher needs.
             if not meta.best_moments:
                 log.warning(
                     "clip_analysis_empty_moments",
                     clip_idx=idx,
                     clip_path=path,
+                    backfilled=True,
                 )
-                raise GeminiAnalysisError("analyze_clip succeeded but returned 0 best_moments")
+                if not meta.transcript:
+                    # The old discard path guaranteed a Whisper transcript for
+                    # every empty-moments clip; keep that guarantee when Gemini
+                    # also omitted the transcript (best-effort — silent b-roll
+                    # is common and Whisper returns fast on it).
+                    from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+
+                    try:
+                        transcript = transcribe_whisper(path)
+                        meta.transcript = transcript.full_text
+                        if not meta.hook_text and transcript.full_text:
+                            meta.hook_text = transcript.full_text[:100]
+                    except Exception as whisper_exc:  # noqa: BLE001
+                        log.warning(
+                            "whisper_transcript_backstop_failed",
+                            clip_idx=idx,
+                            error=str(whisper_exc),
+                        )
+                clip_dur = _clip_duration(path, probe_map, 30.0)
+                meta.best_moments = _fallback_moments(
+                    clip_dur, description=_synthetic_moment_description(meta)
+                )
+                meta.moments_synthetic = True
+                if record_sub_phases and job_id is not None:
+                    record_sub_phase(
+                        job_id,
+                        PHASE_ANALYZE_CLIPS,
+                        "gemini_moments_backfilled",
+                        elapsed_ms=int((time.monotonic() - t0) * 1000),
+                        detail={
+                            "clip_idx": idx,
+                            "clip_path": os.path.basename(path),
+                        },
+                    )
             meta.clip_path = path
             return meta, None
         except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
@@ -2364,7 +2405,7 @@ def _analyze_clips_parallel(
 
             try:
                 transcript = transcribe_whisper(path)
-                clip_dur = probe_map[path].duration_s if probe_map and path in probe_map else 30.0
+                clip_dur = _clip_duration(path, probe_map, 30.0)
                 fallback_meta = ClipMeta(
                     clip_id=getattr(ref, "name", f"clip_{idx}"),
                     transcript=transcript.full_text,
@@ -2399,23 +2440,60 @@ def _analyze_clips_parallel(
 # ── Fallback helpers ──────────────────────────────────────────────────────────
 
 
-def _fallback_moments(clip_dur: float) -> list[dict]:
-    """Generate overlapping moments at multiple durations for Whisper-fallback clips.
+def _clip_duration(path: str, probe_map: dict | None, default: float) -> float:
+    """Clip duration from the shared probe map, or `default` when unprobed."""
+    if probe_map and path in probe_map:
+        return probe_map[path].duration_s
+    return default
+
+
+def _synthetic_moment_description(meta: "ClipMeta") -> str:
+    """Best available label for synthetic moments.
+
+    Router candidates are built from moment descriptions (agentic_matcher
+    reads `moment.description` before `meta.hook_text`), so a preserved
+    Gemini analysis should surface its real subject/hook there instead of
+    the literal string "fallback".
+    """
+    label = (meta.detected_subject or meta.hook_text or "").strip()
+    return label[:80] if label else "fallback"
+
+
+def _fallback_moments(clip_dur: float, description: str = "fallback") -> list[dict]:
+    """Generate overlapping moments at multiple durations for fallback clips.
 
     Covers short (3–5s), medium (8–12s), and long (15s+) slot ranges so that
     a fallback clip can satisfy template slots of any target_duration_s.
     """
     moments = [
-        {"start_s": 0.0, "end_s": min(clip_dur, 5.0), "energy": 5.0, "description": "fallback"},
-        {"start_s": 0.0, "end_s": min(clip_dur, 10.0), "energy": 5.0, "description": "fallback"},
-        {"start_s": 0.0, "end_s": min(clip_dur, 15.0), "energy": 5.0, "description": "fallback"},
+        {"start_s": 0.0, "end_s": min(clip_dur, 5.0), "energy": 5.0, "description": description},
+        {"start_s": 0.0, "end_s": min(clip_dur, 10.0), "energy": 5.0, "description": description},
+        {"start_s": 0.0, "end_s": min(clip_dur, 15.0), "energy": 5.0, "description": description},
     ]
     # Add a full-clip moment only if it meaningfully extends beyond 15s
     if clip_dur > 21.0:
         moments.append(
-            {"start_s": 0.0, "end_s": clip_dur, "energy": 5.0, "description": "fallback"}
+            {"start_s": 0.0, "end_s": clip_dur, "energy": 5.0, "description": description}
         )
     return moments
+
+
+def _backfill_cached_empty_moments(clip_metas_ordered: list, probe_map: dict | None) -> None:
+    """Apply the synthetic-moments backfill to cache-hit metas.
+
+    Prefetch-cached analyses (clip_prefetch.py) may legitimately carry
+    best_moments=[] — cache hits skip _analyze_one entirely, so without this
+    sweep an empty-moments Redis entry would reach the matcher with nothing
+    to match while a cold run of the same clip would succeed.
+    """
+    for meta in clip_metas_ordered:
+        if meta is None or meta.best_moments or getattr(meta, "is_image", False):
+            continue
+        clip_dur = _clip_duration(meta.clip_path, probe_map, 30.0)
+        meta.best_moments = _fallback_moments(
+            clip_dur, description=_synthetic_moment_description(meta)
+        )
+        meta.moments_synthetic = True
 
 
 # ── FFmpeg assembly ────────────────────────────────────────────────────────────

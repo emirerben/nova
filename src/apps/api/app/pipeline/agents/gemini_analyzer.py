@@ -50,6 +50,9 @@ class ClipMeta:
     best_moments: list[dict]  # [{start_s, end_s, energy, description}]
     detected_subject: str = ""  # location, topic, or main subject detected from visuals/audio
     analysis_degraded: bool = False
+    # Real Gemini analysis whose empty best_moments were backfilled with
+    # duration-bucketed synthetic moments (template_orchestrate._fallback_moments).
+    moments_synthetic: bool = False
     failed: bool = False
     clip_path: str = ""  # set by caller for fallback
     # Composition signal for agent-decided overlay sizing (overlay_sizing.py).

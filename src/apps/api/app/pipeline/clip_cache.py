@@ -51,7 +51,7 @@ CLIP_ANALYSIS_PROMPT_VERSION = "v1"
 # with the default value for the new field — a subtle correctness bug because
 # downstream code can't distinguish "cached from before the field existed"
 # from "actually scored 0.0". Schema version is the cache's contract version.
-CACHE_SCHEMA_VERSION = "s1"
+CACHE_SCHEMA_VERSION = "s2"  # s2: ClipMeta gained moments_synthetic
 
 # 30-day TTL. Clip content is immutable but the cache shouldn't grow unbounded.
 CACHE_TTL_S = 30 * 24 * 60 * 60
@@ -163,6 +163,7 @@ def get_cached_meta(clip_hash: str, filter_hint: str) -> ClipMeta | None:
         return None
     try:
         from app.pipeline.agents.gemini_analyzer import ClipMeta  # noqa: PLC0415
+
         data = json.loads(raw)
         # clip_path is call-site-specific; never serialized.
         data.pop("clip_path", None)
@@ -174,9 +175,14 @@ def get_cached_meta(clip_hash: str, filter_hint: str) -> ClipMeta | None:
 
 def set_cached_meta(clip_hash: str, filter_hint: str, meta: ClipMeta) -> None:
     """Write ClipMeta to cache. Best-effort — failures are logged, not raised."""
-    # Don't poison the cache with degraded fallbacks — those are job-specific
-    # heuristics; a retry might succeed via the real Gemini path.
-    if getattr(meta, "analysis_degraded", False) or getattr(meta, "failed", False):
+    # Don't poison the cache with degraded fallbacks or synthetic moments —
+    # those are job-specific heuristics; a retry might succeed via the real
+    # Gemini path.
+    if (
+        getattr(meta, "analysis_degraded", False)
+        or getattr(meta, "failed", False)
+        or getattr(meta, "moments_synthetic", False)
+    ):
         return
     r = _get_redis()
     if r is None:
