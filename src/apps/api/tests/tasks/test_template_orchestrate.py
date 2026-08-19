@@ -341,6 +341,7 @@ class TestOrchestratePipelineHelpers:
             return _make_clip_meta(f"clip_{file_refs.index(ref)}")
 
         from app.pipeline.transcribe import Transcript
+
         whisper_transcript = Transcript(words=[], full_text="", low_confidence=True)
 
         with (
@@ -356,26 +357,70 @@ class TestOrchestratePipelineHelpers:
         # With whisper fallback, no clips should be counted as failed
         assert failed_count == 0
 
-    def test_empty_best_moments_engages_whisper_fallback(self):
-        """Defense-in-depth: when analyze_clip 'succeeds' but returns 0
-        best_moments (a bug we've seen in prod), the orchestrator must treat
-        it the same as an analysis failure and engage the Whisper fallback,
-        which generates synthetic fallback moments. Without this, downstream
-        matching has nothing to work with and the whole job fails."""
+    def test_empty_best_moments_backfills_moments_keeps_analysis(self):
+        """Empty best_moments from a successful analyze_clip is a legitimate
+        answer for static single-shot clips (prod jobs 82fb4c57/f95b43b8:
+        6 of 7 clips), NOT a failure. The orchestrator must keep the real
+        Gemini analysis — hook_text/hook_score/detected_subject drive hero
+        selection and every downstream agent — and synthesize only the
+        moments. Discarding the whole meta for the Whisper fallback poisoned
+        hero selection (hardcoded 5.0 tie) and produced off-topic hooks."""
         from app.tasks.template_orchestrate import _analyze_clips_parallel
 
         file_refs = [MagicMock()]
         local_paths = ["/tmp/clip_0.mp4"]
 
-        # analyze_clip "succeeds" but returns a meta with empty best_moments.
+        # analyze_clip succeeds with rich fields but empty best_moments.
         empty_meta = _make_clip_meta("clip_0")
         empty_meta.best_moments = []
+        empty_meta.hook_score = 7.5
+        empty_meta.detected_subject = "woman speaking to camera"
 
+        whisper = MagicMock()
+        with (
+            patch(
+                "app.tasks.template_orchestrate.analyze_clip",
+                return_value=empty_meta,
+            ),
+            patch(
+                "app.pipeline.transcribe.transcribe_whisper",
+                whisper,
+            ),
+        ):
+            metas, failed_count = _analyze_clips_parallel(file_refs, local_paths)
+
+        assert failed_count == 0
+        assert len(metas) == 1
+        # Real analysis preserved — not the Whisper fallback.
+        whisper.assert_not_called()
+        assert metas[0].hook_score == 7.5
+        assert metas[0].detected_subject == "woman speaking to camera"
+        assert metas[0].analysis_degraded is False
+        # Only the moments are synthetic, and flagged as such (cache gate).
+        assert metas[0].moments_synthetic is True
+        assert len(metas[0].best_moments) > 0
+        # Synthetic moments carry the real subject signal, not "fallback" —
+        # agentic_matcher builds router candidates from moment descriptions.
+        assert metas[0].best_moments[0]["description"] == "woman speaking to camera"
+
+    def test_empty_moments_and_empty_transcript_gets_whisper_backstop(self):
+        """When Gemini returns empty best_moments AND an empty transcript,
+        the backfill branch must still deliver the Whisper transcript the old
+        discard path guaranteed (hook generation needs the speech)."""
         from app.pipeline.transcribe import Transcript
-        whisper_transcript = Transcript(
-            words=[], full_text="hello world", low_confidence=False
-        )
+        from app.tasks.template_orchestrate import _analyze_clips_parallel
 
+        file_refs = [MagicMock()]
+        local_paths = ["/tmp/clip_0.mp4"]
+
+        empty_meta = _make_clip_meta("clip_0")
+        empty_meta.best_moments = []
+        empty_meta.transcript = ""
+        empty_meta.hook_text = ""
+
+        whisper_transcript = Transcript(
+            words=[], full_text="hello from whisper", low_confidence=False
+        )
         with (
             patch(
                 "app.tasks.template_orchestrate.analyze_clip",
@@ -388,12 +433,70 @@ class TestOrchestratePipelineHelpers:
         ):
             metas, failed_count = _analyze_clips_parallel(file_refs, local_paths)
 
-        # Whisper fallback engaged → meta is present, marked degraded, with
-        # synthesized fallback moments.
+        assert failed_count == 0
+        assert metas[0].transcript == "hello from whisper"
+        assert metas[0].hook_text == "hello from whisper"
+        assert metas[0].moments_synthetic is True
+
+    def test_backfill_cached_empty_moments_sweep(self):
+        """Cache-hit metas skip _analyze_one, so a prefetch-cached analysis
+        with best_moments=[] must be backfilled by the sweep — otherwise a
+        warm render fails where a cold render of the same clip succeeds."""
+        from app.tasks.template_orchestrate import _backfill_cached_empty_moments
+
+        cached = _make_clip_meta("clip_cached")
+        cached.best_moments = []
+        cached.detected_subject = "can of coffee"
+
+        normal = _make_clip_meta("clip_normal")
+        image = _make_clip_meta("clip_image")
+        image.best_moments = []
+        image.is_image = True
+
+        _backfill_cached_empty_moments([cached, None, normal, image], None)
+
+        assert cached.moments_synthetic is True
+        assert len(cached.best_moments) > 0
+        assert cached.best_moments[0]["description"] == "can of coffee"
+        # Untouched: metas that already have moments, and image tiles.
+        assert normal.moments_synthetic is False
+        assert image.best_moments == []
+
+    def test_moments_backfilled_records_phase_log_event(self):
+        """The backfill branch must record a `gemini_moments_backfilled`
+        sub-phase so the admin job-debug view shows which clips got synthetic
+        moments (same contract as `gemini_analyze_failed`)."""
+        from app.tasks.template_orchestrate import _analyze_clips_parallel
+
+        file_refs = [MagicMock()]
+        local_paths = ["/tmp/clip_0.mp4"]
+        empty_meta = _make_clip_meta("clip_0")
+        empty_meta.best_moments = []
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate.analyze_clip",
+                return_value=empty_meta,
+            ),
+            patch("app.tasks.template_orchestrate.record_sub_phase") as mock_record,
+        ):
+            metas, failed_count = _analyze_clips_parallel(
+                file_refs,
+                local_paths,
+                job_id="job-xyz",
+                record_sub_phases=True,
+            )
+
         assert failed_count == 0
         assert len(metas) == 1
-        assert metas[0].analysis_degraded is True
-        assert len(metas[0].best_moments) > 0
+        backfill_calls = [
+            c
+            for c in mock_record.call_args_list
+            if len(c.args) >= 3 and c.args[2] == "gemini_moments_backfilled"
+        ]
+        assert len(backfill_calls) == 1
+        assert backfill_calls[0].args[0] == "job-xyz"
+        assert backfill_calls[0].kwargs["detail"]["clip_idx"] == 0
 
     def test_threshold_check_50_percent_failure(self):
         """If >50% of clips fail even whisper fallback, failed_count > 50%."""
@@ -402,8 +505,10 @@ class TestOrchestratePipelineHelpers:
         file_refs = [MagicMock() for _ in range(4)]
         local_paths = [f"/tmp/clip_{i}.mp4" for i in range(4)]
 
-        with patch("app.tasks.template_orchestrate.analyze_clip") as mock_analyze, \
-             patch("app.pipeline.transcribe.transcribe_whisper") as mock_whisper:
+        with (
+            patch("app.tasks.template_orchestrate.analyze_clip") as mock_analyze,
+            patch("app.pipeline.transcribe.transcribe_whisper") as mock_whisper,
+        ):
             mock_analyze.side_effect = GeminiAnalysisError("failed")
             mock_whisper.side_effect = Exception("whisper also failed")
 
@@ -433,6 +538,7 @@ class TestOrchestratePipelineHelpers:
             return _make_clip_meta("clip_0")
 
         from app.pipeline.transcribe import Transcript
+
         whisper_transcript = Transcript(words=[], full_text="hello", low_confidence=False)
 
         with (
@@ -452,7 +558,8 @@ class TestOrchestratePipelineHelpers:
 
         # Find the failure event among recorded sub-phases.
         failure_calls = [
-            c for c in mock_record.call_args_list
+            c
+            for c in mock_record.call_args_list
             if len(c.args) >= 3 and c.args[2] == "gemini_analyze_failed"
         ]
         assert len(failure_calls) == 1, (
@@ -478,6 +585,7 @@ class TestOrchestratePipelineHelpers:
         local_paths = ["/tmp/clip_0.mp4"]
 
         from app.pipeline.transcribe import Transcript
+
         whisper_transcript = Transcript(words=[], full_text="", low_confidence=True)
 
         with (
@@ -721,11 +829,12 @@ class TestAnalyzeTemplateTask:
         mock_template.gcs_path = "templates/test.mp4"
         mock_template.analysis_status = "analyzing"
 
-        with patch("app.tasks.template_orchestrate._sync_session") as mock_session_ctx, \
-             patch("app.tasks.template_orchestrate.download_to_file"), \
-             patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as mock_upload, \
-             patch("app.tasks.template_orchestrate.analyze_template") as mock_analyze:
-
+        with (
+            patch("app.tasks.template_orchestrate._sync_session") as mock_session_ctx,
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as mock_upload,
+            patch("app.tasks.template_orchestrate.analyze_template") as mock_analyze,
+        ):
             session = MagicMock()
             mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
             mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
@@ -745,10 +854,11 @@ class TestAnalyzeTemplateTask:
         mock_template = MagicMock()
         mock_template.gcs_path = "templates/test.mp4"
 
-        with patch("app.tasks.template_orchestrate._sync_session") as mock_session_ctx, \
-             patch("app.tasks.template_orchestrate.download_to_file"), \
-             patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as mock_upload:
-
+        with (
+            patch("app.tasks.template_orchestrate._sync_session") as mock_session_ctx,
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as mock_upload,
+        ):
             session = MagicMock()
             mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
             mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
@@ -785,8 +895,22 @@ class TestAnalyzeTemplateTask:
 
         mock_track = MagicMock(spec=MusicTrack)
         mock_track.beat_timestamps_s = [
-            70.0, 70.5, 71.0, 71.5, 72.0, 72.5, 73.0, 73.5,
-            74.0, 74.5, 75.0, 75.5, 76.0, 76.5, 77.0, 77.5,
+            70.0,
+            70.5,
+            71.0,
+            71.5,
+            72.0,
+            72.5,
+            73.0,
+            73.5,
+            74.0,
+            74.5,
+            75.0,
+            75.5,
+            76.0,
+            76.5,
+            77.0,
+            77.5,
         ]
         mock_track.track_config = {
             "best_start_s": 69.02,
@@ -862,9 +986,7 @@ class TestAnalyzeTemplateTask:
         with (
             patch(f"{_orch}._sync_session") as mock_session_ctx,
             patch(f"{_orch}.download_to_file") as mock_download,
-            patch(
-                "app.pipeline.music_recipe.generate_music_recipe"
-            ) as mock_gen,
+            patch("app.pipeline.music_recipe.generate_music_recipe") as mock_gen,
         ):
             session = MagicMock()
             mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
@@ -895,8 +1017,14 @@ class TestBug1AspectRatioRegression:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=10.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=10.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = MagicMock()
         step.clip_id = "clip_a"
@@ -930,8 +1058,14 @@ class TestBug2TimingRegression:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=10.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=10.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = MagicMock()
         step.clip_id = "clip_a"
@@ -959,8 +1093,11 @@ class TestBug2TimingRegression:
 
 class TestAssembleClipsTiming:
     def _make_step(
-        self, clip_id: str, start_s: float,
-        end_s: float, target_dur: float,
+        self,
+        clip_id: str,
+        start_s: float,
+        end_s: float,
+        target_dur: float,
     ) -> MagicMock:
         step = MagicMock()
         step.clip_id = clip_id
@@ -1027,8 +1164,14 @@ class TestAssembleClipsTiming:
         clip_file = tmp_path / "clip_0.mp4"
         clip_file.write_bytes(b"fake")
         probe = VideoProbe(
-            duration_s=30.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=30.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = self._make_step("clip_a", start_s=0.0, end_s=2.0, target_dur=5.0)
 
@@ -1067,8 +1210,11 @@ class TestClipFootageExhausted:
     """
 
     def _make_step(
-        self, clip_id: str, start_s: float,
-        end_s: float, target_dur: float,
+        self,
+        clip_id: str,
+        start_s: float,
+        end_s: float,
+        target_dur: float,
     ) -> MagicMock:
         step = MagicMock()
         step.clip_id = clip_id
@@ -1092,8 +1238,14 @@ class TestClipFootageExhausted:
         # Real probe says the clip is 2.97s — the exact value from job
         # 5282cab7's slot 5 (sharks swimming).
         probe = VideoProbe(
-            duration_s=2.97, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=2.97,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = self._make_step("clip_a", start_s=0.0, end_s=3.9, target_dur=5.5)
 
@@ -1112,8 +1264,7 @@ class TestClipFootageExhausted:
             # Speed factor slowed to fill the slot
             expected_speed = 2.97 / 5.5
             assert kwargs["speed_factor"] == pytest.approx(expected_speed, rel=0.01), (
-                f"expected speed_factor ≈ {expected_speed:.3f}, got "
-                f"{kwargs['speed_factor']}"
+                f"expected speed_factor ≈ {expected_speed:.3f}, got {kwargs['speed_factor']}"
             )
             # Window covers ALL available footage from start
             assert kwargs["start_s"] == 0.0
@@ -1134,8 +1285,14 @@ class TestClipFootageExhausted:
         # Clip 1.0s in a 5.5s slot → would need speed_factor 0.18, well
         # below the 0.4 floor.
         probe = VideoProbe(
-            duration_s=1.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=1.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = self._make_step("clip_a", start_s=0.0, end_s=1.0, target_dur=5.5)
 
@@ -1166,8 +1323,14 @@ class TestClipFootageExhausted:
         clip_file = tmp_path / "clip_0.mp4"
         clip_file.write_bytes(b"fake")
         probe = VideoProbe(
-            duration_s=10.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=10.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = self._make_step("clip_a", start_s=0.0, end_s=10.0, target_dur=5.5)
 
@@ -1211,8 +1374,14 @@ class TestBanSlowdownFill:
         clip_file = tmp_path / "clip_0.mp4"
         clip_file.write_bytes(b"fake")
         probe = VideoProbe(
-            duration_s=2.97, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=2.97,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = self._make_step("clip_a", start_s=0.0, end_s=3.9, target_dur=5.5)
 
@@ -1256,8 +1425,14 @@ class TestBanSlowdownFill:
 
         def _probe(dur):
             return VideoProbe(
-                duration_s=dur, fps=30.0, width=1920, height=1080,
-                has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+                duration_s=dur,
+                fps=30.0,
+                width=1920,
+                height=1080,
+                has_audio=True,
+                codec="h264",
+                aspect_ratio="16:9",
+                file_size_bytes=4,
             )
 
         durations = {"A": 10.0, "B": 1.2, "C": 10.0, "D": 10.0}
@@ -1269,7 +1444,13 @@ class TestBanSlowdownFill:
             probes[str(f)] = _probe(dur)
 
         plans, _cursors, final_cumulative = _plan_slots(
-            steps, id2local, probes, beats, None, "none", str(tmp_path),
+            steps,
+            id2local,
+            probes,
+            beats,
+            None,
+            "none",
+            str(tmp_path),
             allow_slowdown_fill=False,
         )
 
@@ -1279,9 +1460,9 @@ class TestBanSlowdownFill:
             assert rendered == pytest.approx(p.slot_target_dur, abs=1e-6), "no freeze-pad"
         b_slot = next(p for p in plans if p.clip_path == id2local["B"])
         assert b_slot.slot_target_dur == pytest.approx(1.2, abs=1e-6)
-        assert final_cumulative == pytest.approx(
-            sum(p.slot_target_dur for p in plans), abs=1e-6
-        ), "timeline drift: cumulative must equal summed slot durations"
+        assert final_cumulative == pytest.approx(sum(p.slot_target_dur for p in plans), abs=1e-6), (
+            "timeline drift: cumulative must equal summed slot durations"
+        )
 
     def test_default_still_slows_down(self, tmp_path):
         """Regression guard: the default (allow_slowdown_fill=True) path —
@@ -1292,8 +1473,14 @@ class TestBanSlowdownFill:
         clip_file = tmp_path / "clip_0.mp4"
         clip_file.write_bytes(b"fake")
         probe = VideoProbe(
-            duration_s=2.97, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=2.97,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = self._make_step("clip_a", start_s=0.0, end_s=3.9, target_dur=5.5)
 
@@ -1325,8 +1512,14 @@ class TestAssembleClipsAspectRatio:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=5.0, fps=30.0, width=1080, height=1920,
-            has_audio=True, codec="h264", aspect_ratio="9:16", file_size_bytes=4,
+            duration_s=5.0,
+            fps=30.0,
+            width=1080,
+            height=1920,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="9:16",
+            file_size_bytes=4,
         )
         step = MagicMock()
         step.clip_id = "clip_a"
@@ -1392,8 +1585,14 @@ class TestAssembleClipsAspectRatio:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=10.0, fps=30.0, width=1024, height=576,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=10.0,
+            fps=30.0,
+            width=1024,
+            height=576,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = MagicMock()
         step.clip_id = "locked_a"
@@ -1431,8 +1630,14 @@ class TestAssembleClipsAspectRatio:
         clip_file.write_bytes(b"fake")
 
         fake_probe = VideoProbe(
-            duration_s=10.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=10.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
 
         with patch("app.pipeline.probe.probe_video", return_value=fake_probe):
@@ -1457,8 +1662,14 @@ class TestAssembleClipsTimeCursor:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=30.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=30.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         steps = []
         for pos in range(3):
@@ -1480,6 +1691,7 @@ class TestAssembleClipsTimeCursor:
             ) as mock_reframe,
             patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
         ):
+
             def fake_ffmpeg(cmd, **kw):
                 # Create whatever output file the command targets (-y <path>)
                 if "-y" in cmd:
@@ -1501,9 +1713,7 @@ class TestAssembleClipsTimeCursor:
             assert mock_reframe.call_count == 3
             start_times = [c.kwargs["start_s"] for c in mock_reframe.call_args_list]
             # All three uses must start at different times
-            assert len(set(start_times)) == 3, (
-                f"Expected 3 different start_s, got {start_times}"
-            )
+            assert len(set(start_times)) == 3, f"Expected 3 different start_s, got {start_times}"
 
     def test_cursor_clamps_when_clip_exhausted(self, tmp_path):
         """Cursor clamps to end of clip when exhausted — never wraps to 0.0."""
@@ -1514,8 +1724,14 @@ class TestAssembleClipsTimeCursor:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=3.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=3.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         steps = []
         for pos in range(5):
@@ -1536,6 +1752,7 @@ class TestAssembleClipsTimeCursor:
             ) as mock_reframe,
             patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
         ):
+
             def fake_ffmpeg(cmd, **kw):
                 if "-y" in cmd:
                     idx = cmd.index("-y") + 1
@@ -1645,7 +1862,8 @@ class TestTemplateAudio:
         audio_local = os.path.join(str(tmp_path), "template_audio.m4a")
         # Find "-i audio_local" and check the two args before it are "-ss" + offset
         i_audio = next(
-            i for i, a in enumerate(cmd)
+            i
+            for i, a in enumerate(cmd)
             if a == "-i" and i + 1 < len(cmd) and cmd[i + 1] == audio_local
         )
         assert cmd[i_audio - 2 : i_audio] == ["-ss", "12.500"], (
@@ -1853,9 +2071,13 @@ class TestTemplateAudio:
             patch("app.tasks.template_orchestrate._mix_template_audio") as mock_mix,
             patch("app.tasks.template_orchestrate._extract_hook_text", return_value=""),
             patch("app.tasks.template_orchestrate._extract_transcript", return_value=""),
-            patch("app.tasks.template_orchestrate.upload_public_read", return_value="https://cdn/out.mp4"),
+            patch(
+                "app.tasks.template_orchestrate.upload_public_read",
+                return_value="https://cdn/out.mp4",
+            ),
         ):
             from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep
+
             step = AssemblyStep(
                 slot={"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"},
                 clip_id="clip_0",
@@ -1952,11 +2174,10 @@ class TestTemplateAudio:
             patch(f"{_orch}._mix_template_audio") as mock_mix,
             patch(f"{_orch}._extract_hook_text", return_value=""),
             patch(f"{_orch}._extract_transcript", return_value=""),
-            patch(
-                f"{_orch}.upload_public_read", return_value="https://cdn/out.mp4"
-            ),
+            patch(f"{_orch}.upload_public_read", return_value="https://cdn/out.mp4"),
         ):
             from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep
+
             step = AssemblyStep(
                 slot={"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"},
                 clip_id="clip_0",
@@ -2041,11 +2262,10 @@ class TestTemplateAudio:
             patch(f"{_orch}._mix_template_audio") as mock_mix,
             patch(f"{_orch}._extract_hook_text", return_value=""),
             patch(f"{_orch}._extract_transcript", return_value=""),
-            patch(
-                f"{_orch}.upload_public_read", return_value="https://cdn/out.mp4"
-            ),
+            patch(f"{_orch}.upload_public_read", return_value="https://cdn/out.mp4"),
         ):
             from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep
+
             step = AssemblyStep(
                 slot={"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"},
                 clip_id="clip_0",
@@ -2084,23 +2304,26 @@ class TestTemplateMatcher2Pass:
                 transcript="",
                 hook_text="",
                 hook_score=5.0,
-                best_moments=[{
-                    "start_s": 0.0,
-                    "end_s": moment_dur,
-                    "energy": energy,
-                    "description": "test",
-                }],
+                best_moments=[
+                    {
+                        "start_s": 0.0,
+                        "end_s": moment_dur,
+                        "energy": energy,
+                        "description": "test",
+                    }
+                ],
             )
 
         target = 5.0
         # clip_a: moment=9s — within ±6s fallback but outside ±2s tight
         # clip_b: moment=5s — within ±2s tight
         # clip_c: moment=5s — tight match, used to ensure coverage + greedy both run
-        clip_a = _clip("clip_a", moment_dur=9.0, energy=9.0)   # loose-only, high energy
-        clip_b = _clip("clip_b", moment_dur=5.0, energy=7.0)   # tight match, lower energy
-        clip_c = _clip("clip_c", moment_dur=5.0, energy=6.0)   # tight match, filler
+        clip_a = _clip("clip_a", moment_dur=9.0, energy=9.0)  # loose-only, high energy
+        clip_b = _clip("clip_b", moment_dur=5.0, energy=7.0)  # tight match, lower energy
+        clip_c = _clip("clip_c", moment_dur=5.0, energy=6.0)  # tight match, filler
 
         from app.pipeline.agents.gemini_analyzer import TemplateRecipe
+
         recipe = TemplateRecipe(
             shot_count=2,
             total_duration_s=target * 2,
@@ -2145,8 +2368,10 @@ class TestOrchestrateTemplateJobErrors:
         _mock_session = MagicMock()
         _mock_session.get.return_value = mock_job
 
-        with patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx), \
-             patch("app.tasks.template_orchestrate._run_template_job") as mock_run:
+        with (
+            patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx),
+            patch("app.tasks.template_orchestrate._run_template_job") as mock_run,
+        ):
             mock_run.side_effect = TemplateMismatchError(
                 "No clip fits slot 2 requiring ~5.0s.",
                 code="TEMPLATE_CLIP_DURATION_MISMATCH",
@@ -2183,8 +2408,10 @@ class TestOrchestrateTemplateJobErrors:
         _mock_session = MagicMock()
         _mock_session.get.return_value = mock_job
 
-        with patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx), \
-             patch("app.tasks.template_orchestrate._run_template_job") as mock_run:
+        with (
+            patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx),
+            patch("app.tasks.template_orchestrate._run_template_job") as mock_run,
+        ):
             mock_run.side_effect = _StageError(
                 FAILURE_REASON_USER_CLIP_UNUSABLE,
                 "TEMPLATE_CLIP_DURATION_MISMATCH: No clip fits slot 2",
@@ -2208,8 +2435,10 @@ class TestOrchestrateTemplateJobErrors:
         session = MagicMock()
         session.get.return_value = MagicMock()
 
-        with patch("app.tasks.template_orchestrate._run_template_job") as mock_run, \
-             patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx):
+        with (
+            patch("app.tasks.template_orchestrate._run_template_job") as mock_run,
+            patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx),
+        ):
             mock_run.side_effect = RuntimeError("unexpected crash")
 
             # Must not raise
@@ -2242,8 +2471,10 @@ class TestOrchestrateTemplateJobErrors:
         _mock_session = MagicMock()
         _mock_session.get.return_value = mock_job
 
-        with patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx), \
-             patch("app.tasks.template_orchestrate._run_template_job") as mock_run:
+        with (
+            patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx),
+            patch("app.tasks.template_orchestrate._run_template_job") as mock_run,
+        ):
             mock_run.side_effect = GeminiRefusalError(
                 "nova.video.clip_metadata: refusal — Missing required field: hook_text",
             )
@@ -2278,8 +2509,10 @@ class TestOrchestrateTemplateJobErrors:
         _mock_session = MagicMock()
         _mock_session.get.return_value = mock_job
 
-        with patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx), \
-             patch("app.tasks.template_orchestrate._run_template_job") as mock_run:
+        with (
+            patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx),
+            patch("app.tasks.template_orchestrate._run_template_job") as mock_run,
+        ):
             mock_run.side_effect = ReframeError(
                 "FFmpeg failed (rc=234): Unsupported input primaries 2 (unknown)",
             )
@@ -2326,10 +2559,7 @@ class TestClassifySinglePassFailure:
             _classify_single_pass_failure,
         )
 
-        msg = (
-            "single-pass ffmpeg failed (rc=1, output=/tmp/x/assembled.mp4):\n"
-            "Invalid filter"
-        )
+        msg = "single-pass ffmpeg failed (rc=1, output=/tmp/x/assembled.mp4):\nInvalid filter"
         assert _classify_single_pass_failure(msg) == FAILURE_REASON_UNKNOWN
 
     def test_classify_single_pass_failure_no_rc_is_unknown(self):
@@ -2497,8 +2727,14 @@ class TestAssembleClipsBeatSnap:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=30.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=30.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = MagicMock()
         step.clip_id = "clip_a"
@@ -2533,8 +2769,14 @@ class TestAssembleClipsBeatSnap:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=30.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=30.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = MagicMock()
         step.clip_id = "clip_a"
@@ -2565,8 +2807,14 @@ class TestAssembleClipsBeatSnap:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=30.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=30.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = MagicMock()
         step.clip_id = "clip_a"
@@ -2621,7 +2869,9 @@ class TestAssembleClipsTextOverlays:
     """Tests for post-join text overlay collection and dedup in _assemble_clips."""
 
     def _make_step_with_overlays(
-        self, clip_id: str = "clip_a", overlays: list | None = None,
+        self,
+        clip_id: str = "clip_a",
+        overlays: list | None = None,
     ) -> MagicMock:
         step = MagicMock()
         step.clip_id = clip_id
@@ -2642,18 +2892,26 @@ class TestAssembleClipsTextOverlays:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=10.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=10.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
 
-        overlays = [{
-            "role": "hook",
-            "start_s": 0.5,
-            "end_s": 2.5,
-            "position": "center",
-            "effect": "pop-in",
-            "sample_text": "WOW",
-        }]
+        overlays = [
+            {
+                "role": "hook",
+                "start_s": 0.5,
+                "end_s": 2.5,
+                "position": "center",
+                "effect": "pop-in",
+                "sample_text": "WOW",
+            }
+        ]
         step = self._make_step_with_overlays(overlays=overlays)
         meta = _make_clip_meta(clip_id="clip_a")
 
@@ -2685,8 +2943,14 @@ class TestAssembleClipsTextOverlays:
         clip_file.write_bytes(b"fake")
 
         probe = VideoProbe(
-            duration_s=10.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=10.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
 
         step = self._make_step_with_overlays(overlays=[])
@@ -2710,13 +2974,17 @@ class TestAssembleClipsTextOverlays:
         """CTA role resolves to empty string → excluded from collected overlays."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step_with_overlays(overlays=[{
-            "role": "cta",
-            "start_s": 0.5,
-            "end_s": 2.5,
-            "position": "center",
-            "sample_text": "",
-        }])
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "cta",
+                    "start_s": 0.5,
+                    "end_s": 2.5,
+                    "position": "center",
+                    "sample_text": "",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert result == []
 
@@ -2831,12 +3099,27 @@ class TestAssembleClipsTextOverlays:
 
     def _gappy_reveal_overlays(self):
         return [
-            {"role": "hook", "start_s": 0.0, "end_s": 0.4, "position": "center",
-             "sample_text": "if"},
-            {"role": "hook", "start_s": 0.4, "end_s": 0.8, "position": "center",
-             "sample_text": "if you"},
-            {"role": "hook", "start_s": 1.2, "end_s": 1.6, "position": "center",
-             "sample_text": "if you put"},  # 0.4s gap before this
+            {
+                "role": "hook",
+                "start_s": 0.0,
+                "end_s": 0.4,
+                "position": "center",
+                "sample_text": "if",
+            },
+            {
+                "role": "hook",
+                "start_s": 0.4,
+                "end_s": 0.8,
+                "position": "center",
+                "sample_text": "if you",
+            },
+            {
+                "role": "hook",
+                "start_s": 1.2,
+                "end_s": 1.6,
+                "position": "center",
+                "sample_text": "if you put",
+            },  # 0.4s gap before this
         ]
 
     def test_intra_phrase_gaps_closed_at_render_time(self):
@@ -2883,22 +3166,24 @@ class TestAssembleClipsTextOverlays:
         starts."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step_with_overlays(overlays=[
-            {
-                "role": "hook",
-                "start_s": 0.5,
-                "end_s": 3.0,
-                "position": "center",
-                "sample_text": "alpha",
-            },
-            {
-                "role": "hook",
-                "start_s": 2.0,
-                "end_s": 4.0,
-                "position": "center",
-                "sample_text": "beta",
-            },
-        ])
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "hook",
+                    "start_s": 0.5,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "sample_text": "alpha",
+                },
+                {
+                    "role": "hook",
+                    "start_s": 2.0,
+                    "end_s": 4.0,
+                    "position": "center",
+                    "sample_text": "beta",
+                },
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "")
         by_text = {o["text"]: o for o in result}
         assert set(by_text) == {"alpha", "beta"}
@@ -2925,19 +3210,23 @@ class TestAssembleClipsTextOverlays:
             "Indie Flower",
             "Architects Daughter",
         ]
-        step = self._make_step_with_overlays(overlays=[{
-            "role": "label",
-            "start_s": 0.0,
-            "end_s": 2.4,
-            "position": "center",
-            "effect": "font-cycle",
-            "sample_text": "AFRICA",
-            "font_family": "Permanent Marker",
-            "cycle_fonts": list(africa_cycle),
-            "subject_substitute": False,
-            "text_color": "#FFD700",
-            "text_size_px": 250,
-        }])
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 2.4,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "AFRICA",
+                    "font_family": "Permanent Marker",
+                    "cycle_fonts": list(africa_cycle),
+                    "subject_substitute": False,
+                    "text_color": "#FFD700",
+                    "text_size_px": 250,
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [2.4], None, "Morocco")
         assert len(result) == 1
         entry = result[0]
@@ -2960,23 +3249,26 @@ class TestAssembleClipsTextOverlays:
         masked the bug during local verification."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step_with_overlays(overlays=[{
-            "role": "label",
-            "start_s": 0.0,
-            "end_s": 2.4,
-            "position": "center",
-            "sample_text": "It's not just luck",
-            "text_anchor": "left",
-            "position_x_frac": 0.05,
-            "text_size_px": 120,
-            "subject_substitute": False,
-        }])
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 2.4,
+                    "position": "center",
+                    "sample_text": "It's not just luck",
+                    "text_anchor": "left",
+                    "position_x_frac": 0.05,
+                    "text_size_px": 120,
+                    "subject_substitute": False,
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [2.4], None, "")
         assert len(result) == 1
         entry = result[0]
         assert entry.get("text_anchor") == "left", (
-            "text_anchor must survive to the renderer entry dict; "
-            f"got {entry.get('text_anchor')!r}"
+            f"text_anchor must survive to the renderer entry dict; got {entry.get('text_anchor')!r}"
         )
         assert entry.get("position_x_frac") == 0.05
 
@@ -2984,20 +3276,27 @@ class TestAssembleClipsTextOverlays:
         """Curtain-close slot overlays are pre-burned, so skipped in _collect."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step_with_overlays(overlays=[{
-            "role": "label",
-            "start_s": 0.0,
-            "end_s": 5.0,
-            "position": "center",
-            "effect": "font-cycle",
-            "sample_text": "PERU",
-        }])
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "PERU",
+                }
+            ]
+        )
 
         interstitial_map = {
             1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
         }
         result = _collect_absolute_overlays(
-            [step], [5.0], None, "Peru",
+            [step],
+            [5.0],
+            None,
+            "Peru",
             interstitial_map=interstitial_map,
         )
         # Curtain-close slot overlays are pre-burned onto slot clip,
@@ -3008,14 +3307,18 @@ class TestAssembleClipsTextOverlays:
         """Subject labels always get accel_at_s=8.0 from _LABEL_CONFIG, even without curtain."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step_with_overlays(overlays=[{
-            "role": "label",
-            "start_s": 0.0,
-            "end_s": 5.0,
-            "position": "center",
-            "effect": "font-cycle",
-            "sample_text": "TOKYO",
-        }])
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "TOKYO",
+                }
+            ]
+        )
 
         result = _collect_absolute_overlays([step], [5.0], None, "Tokyo")
         assert len(result) == 1
@@ -3040,37 +3343,44 @@ class TestAssembleClipsTextOverlays:
 
         step1 = self._make_step_with_overlays(
             clip_id="clip_a",
-            overlays=[{
-                "role": "hook",
-                "text": "Welcome to",
-                "start_s": 0.5,
-                "end_s": 2.3,
-                "position": "center",
-                "effect": "fade-in",
-                "sample_text": "Welcome to",
-                # position_y_frac intentionally absent — legacy default
-            }],
+            overlays=[
+                {
+                    "role": "hook",
+                    "text": "Welcome to",
+                    "start_s": 0.5,
+                    "end_s": 2.3,
+                    "position": "center",
+                    "effect": "fade-in",
+                    "sample_text": "Welcome to",
+                    # position_y_frac intentionally absent — legacy default
+                }
+            ],
         )
         step1.slot["position"] = 1
         step2 = self._make_step_with_overlays(
             clip_id="clip_b",
-            overlays=[{
-                "role": "hook",
-                "text": "PERU",
-                "start_s": 0.0,
-                "end_s": 2.7,
-                "position": "center",
-                "effect": "font-cycle",
-                "sample_text": "PERU",
-                "position_y_frac": 0.45,
-                "text_size_px": 265,
-            }],
+            overlays=[
+                {
+                    "role": "hook",
+                    "text": "PERU",
+                    "start_s": 0.0,
+                    "end_s": 2.7,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "PERU",
+                    "position_y_frac": 0.45,
+                    "text_size_px": 265,
+                }
+            ],
         )
         step2.slot["position"] = 2
 
         # Must not raise.
         result = _collect_absolute_overlays(
-            [step1, step2], [3.0, 3.0], None, "Peru",
+            [step1, step2],
+            [3.0, 3.0],
+            None,
+            "Peru",
         )
 
         texts = [o["text"] for o in result]
@@ -3082,14 +3392,18 @@ class TestAssembleClipsTextOverlays:
         """Non-subject font-cycle labels without curtain don't get accel timestamp."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step_with_overlays(overlays=[{
-            "role": "hook",
-            "start_s": 0.0,
-            "end_s": 5.0,
-            "position": "center",
-            "effect": "font-cycle",
-            "sample_text": "Check this out",
-        }])
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "hook",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "Check this out",
+                }
+            ]
+        )
 
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
@@ -3099,20 +3413,27 @@ class TestAssembleClipsTextOverlays:
         """All curtain-close slot overlays are skipped (pre-burned), including static."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step_with_overlays(overlays=[{
-            "role": "label",
-            "start_s": 0.0,
-            "end_s": 5.0,
-            "position": "center",
-            "effect": "none",
-            "sample_text": "Welcome to",
-        }])
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "Welcome to",
+                }
+            ]
+        )
 
         interstitial_map = {
             1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
         }
         result = _collect_absolute_overlays(
-            [step], [5.0], None, "",
+            [step],
+            [5.0],
+            None,
+            "",
             interstitial_map=interstitial_map,
         )
         # Pre-burned, so skipped
@@ -3129,17 +3450,40 @@ class TestAssembleClipsTextOverlays:
         """
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step_with_overlays(overlays=[
-            {"role": "hook", "text": "The", "start_s": 0.4, "end_s": 3.0,
-             "position": "center", "position_y_frac": 0.45,
-             "text_color": "#FFFFFF", "sample_text": "The"},
-            {"role": "hook", "text": "Rule of", "start_s": 0.4, "end_s": 3.0,
-             "position": "center", "position_y_frac": 0.50,
-             "text_color": "#FFFFFF", "sample_text": "Rule of"},
-            {"role": "hook", "text": "Thirds", "start_s": 0.4, "end_s": 3.0,
-             "position": "center", "position_y_frac": 0.56,
-             "text_color": "#FFFFFF", "sample_text": "Thirds"},
-        ])
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "hook",
+                    "text": "The",
+                    "start_s": 0.4,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "position_y_frac": 0.45,
+                    "text_color": "#FFFFFF",
+                    "sample_text": "The",
+                },
+                {
+                    "role": "hook",
+                    "text": "Rule of",
+                    "start_s": 0.4,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "position_y_frac": 0.50,
+                    "text_color": "#FFFFFF",
+                    "sample_text": "Rule of",
+                },
+                {
+                    "role": "hook",
+                    "text": "Thirds",
+                    "start_s": 0.4,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "position_y_frac": 0.56,
+                    "text_color": "#FFFFFF",
+                    "sample_text": "Thirds",
+                },
+            ]
+        )
         result = _collect_absolute_overlays([step], [3.0], None, "")
         texts = sorted(o["text"] for o in result)
         assert texts == ["Rule of", "The", "Thirds"], (
@@ -3158,14 +3502,30 @@ class TestAssembleClipsTextOverlays:
         """
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step_with_overlays(overlays=[
-            {"role": "hook", "text": "Thirds", "start_s": 0.4, "end_s": 1.4,
-             "position": "center", "position_y_frac": 0.56,
-             "text_color": "#FFFFFF", "sample_text": "Thirds"},
-            {"role": "hook", "text": "Thirds", "start_s": 1.4, "end_s": 3.0,
-             "position": "center", "position_y_frac": 0.56,
-             "text_color": "#E63946", "sample_text": "Thirds"},
-        ])
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "hook",
+                    "text": "Thirds",
+                    "start_s": 0.4,
+                    "end_s": 1.4,
+                    "position": "center",
+                    "position_y_frac": 0.56,
+                    "text_color": "#FFFFFF",
+                    "sample_text": "Thirds",
+                },
+                {
+                    "role": "hook",
+                    "text": "Thirds",
+                    "start_s": 1.4,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "position_y_frac": 0.56,
+                    "text_color": "#E63946",
+                    "sample_text": "Thirds",
+                },
+            ]
+        )
         result = _collect_absolute_overlays([step], [3.0], None, "")
         assert len(result) == 2, (
             f"expected 2 distinct overlays for the color transition, got {len(result)}"
@@ -3181,7 +3541,9 @@ class TestCrossSlotMerge:
     """Tests for cross-slot same-text overlay merging (replaces old drop-duplicate logic)."""
 
     def _make_step_with_overlays(
-        self, clip_id: str = "clip_a", overlays: list | None = None,
+        self,
+        clip_id: str = "clip_a",
+        overlays: list | None = None,
         position: int = 1,
     ) -> MagicMock:
         step = MagicMock()
@@ -3200,23 +3562,39 @@ class TestCrossSlotMerge:
 
         # Use non-curtain slots so overlays are collected normally
         step1 = self._make_step_with_overlays(
-            position=1, overlays=[{
-                "role": "label", "start_s": 0.0, "end_s": 5.0,
-                "position": "center", "effect": "none",
-                "sample_text": "PERU",
-            }],
+            position=1,
+            overlays=[
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "PERU",
+                }
+            ],
         )
         step2 = self._make_step_with_overlays(
-            clip_id="clip_b", position=2, overlays=[{
-                "role": "label", "start_s": 0.0, "end_s": 5.0,
-                "position": "center", "effect": "none",
-                "sample_text": "PERU",
-            }],
+            clip_id="clip_b",
+            position=2,
+            overlays=[
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "PERU",
+                }
+            ],
         )
 
         # No curtain-close → both slots' overlays collected
         result = _collect_absolute_overlays(
-            [step1, step2], [5.0, 5.0], None, "Peru",
+            [step1, step2],
+            [5.0, 5.0],
+            None,
+            "Peru",
             interstitial_map={},
         )
         # Should be merged into one overlay
@@ -3228,23 +3606,39 @@ class TestCrossSlotMerge:
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step1 = self._make_step_with_overlays(
-            position=1, overlays=[{
-                "role": "label", "start_s": 0.0, "end_s": 5.0,
-                "position": "center", "effect": "none",
-                "sample_text": "PERU",
-            }],
+            position=1,
+            overlays=[
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "PERU",
+                }
+            ],
         )
         step2 = self._make_step_with_overlays(
-            clip_id="clip_b", position=2, overlays=[{
-                "role": "label", "start_s": 0.0, "end_s": 5.0,
-                "position": "center", "effect": "font-cycle",
-                "sample_text": "PERU",
-            }],
+            clip_id="clip_b",
+            position=2,
+            overlays=[
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "PERU",
+                }
+            ],
         )
 
         # No curtain-close → both slots collected
         result = _collect_absolute_overlays(
-            [step1, step2], [5.0, 5.0], None, "Peru",
+            [step1, step2],
+            [5.0, 5.0],
+            None,
+            "Peru",
             interstitial_map={},
         )
         peru_overlays = [o for o in result if o["text"].lower() == "peru"]
@@ -3258,23 +3652,39 @@ class TestCrossSlotMerge:
 
         # Use hook role (not label) to avoid _LABEL_CONFIG timing overrides
         step1 = self._make_step_with_overlays(
-            position=1, overlays=[{
-                "role": "hook", "start_s": 0.0, "end_s": 2.0,
-                "position": "center", "effect": "none",
-                "sample_text": "Check this",
-            }],
+            position=1,
+            overlays=[
+                {
+                    "role": "hook",
+                    "start_s": 0.0,
+                    "end_s": 2.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "Check this",
+                }
+            ],
         )
         # Second overlay starts 5s into a 10s slot = 8s gap from first overlay's end
         step2 = self._make_step_with_overlays(
-            clip_id="clip_b", position=2, overlays=[{
-                "role": "hook", "start_s": 5.0, "end_s": 10.0,
-                "position": "center", "effect": "none",
-                "sample_text": "Check this",
-            }],
+            clip_id="clip_b",
+            position=2,
+            overlays=[
+                {
+                    "role": "hook",
+                    "start_s": 5.0,
+                    "end_s": 10.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "Check this",
+                }
+            ],
         )
 
         result = _collect_absolute_overlays(
-            [step1, step2], [5.0, 10.0], None, "",
+            [step1, step2],
+            [5.0, 10.0],
+            None,
+            "",
         )
         matching = [o for o in result if o["text"].lower() == "check this"]
         assert len(matching) == 2, "Non-adjacent same text should stay separate"
@@ -3284,22 +3694,32 @@ class TestCrossSlotMerge:
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step1 = self._make_step_with_overlays(
-            position=1, overlays=[
+            position=1,
+            overlays=[
                 {
-                    "role": "label", "start_s": 0.0, "end_s": 5.0,
-                    "position": "top", "effect": "none",
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "top",
+                    "effect": "none",
                     "sample_text": "PERU",
                 },
                 {
-                    "role": "label", "start_s": 0.0, "end_s": 5.0,
-                    "position": "bottom", "effect": "none",
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "bottom",
+                    "effect": "none",
                     "sample_text": "PERU",
                 },
             ],
         )
 
         result = _collect_absolute_overlays(
-            [step1], [5.0], None, "Peru",
+            [step1],
+            [5.0],
+            None,
+            "Peru",
         )
         peru_overlays = [o for o in result if o["text"].lower() == "peru"]
         assert len(peru_overlays) == 2, "Same text at different positions should stay separate"
@@ -3314,6 +3734,7 @@ class TestResolveOverlayText:
         leaked Gemini's per-clip description into the rendered video
         (job a1091488, Rule of Thirds, 2026-05-13)."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         meta = _make_clip_meta()  # hook_text="test hook" populated
         result = _resolve_overlay_text("hook", meta, {})
         assert result == "", (
@@ -3324,25 +3745,33 @@ class TestResolveOverlayText:
 
     def test_reaction_role_uses_sample_text(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "reaction", None, {"sample_text": "OMG"},
+            "reaction",
+            None,
+            {"sample_text": "OMG"},
         )
         assert result == "OMG"
 
     def test_label_role_uses_sample_text(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "label", None, {"sample_text": "Day 1"},
+            "label",
+            None,
+            {"sample_text": "Day 1"},
         )
         assert result == "Day 1"
 
     def test_cta_role_returns_empty(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text("cta", _make_clip_meta(), {})
         assert result == ""
 
     def test_hook_role_no_meta_returns_empty(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text("hook", None, {})
         assert result == ""
 
@@ -3357,15 +3786,23 @@ class TestSubjectSubstitution:
 
     def test_whole_text_allcaps_replaced_uppercased(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "hook", None, {"text": "PERU"}, subject="Tokyo",
+            "hook",
+            None,
+            {"text": "PERU"},
+            subject="Tokyo",
         )
         assert result == "TOKYO"
 
     def test_title_case_replaced_subject_as_is(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "hook", None, {"text": "Peru"}, subject="Tokyo",
+            "hook",
+            None,
+            {"text": "Peru"},
+            subject="Tokyo",
         )
         assert result == "Tokyo"
 
@@ -3374,51 +3811,76 @@ class TestSubjectSubstitution:
         when subject is provided — otherwise hook says TOKYO but the joined
         caption still says PERU."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "hook", None, {"text": "Welcome to PERU"}, subject="Tokyo",
+            "hook",
+            None,
+            {"text": "Welcome to PERU"},
+            subject="Tokyo",
         )
         assert result == "Welcome to TOKYO"
 
     def test_embedded_allcaps_lowercase_subject_uppercased(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "hook", None, {"text": "Welcome to PERU"}, subject="brazil",
+            "hook",
+            None,
+            {"text": "Welcome to PERU"},
+            subject="brazil",
         )
         assert result == "Welcome to BRAZIL"
 
     def test_no_subject_passes_through_unchanged(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "hook", None, {"text": "Welcome to PERU"}, subject="",
+            "hook",
+            None,
+            {"text": "Welcome to PERU"},
+            subject="",
         )
         assert result == "Welcome to PERU"
 
     def test_non_ascii_subject_preserved(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "hook", None, {"text": "PERU"}, subject="São Paulo",
+            "hook",
+            None,
+            {"text": "PERU"},
+            subject="São Paulo",
         )
         assert result == "SÃO PAULO"
 
     def test_fixed_phrase_no_substitution(self):
         """'Welcome to' has no all-caps token — must NOT substitute."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "hook", None, {"text": "Welcome to"}, subject="Tokyo",
+            "hook",
+            None,
+            {"text": "Welcome to"},
+            subject="Tokyo",
         )
         assert result == "Welcome to"
 
     def test_lowercase_phrase_no_substitution(self):
         """'discovering a hidden river' has no placeholder shape — passes through."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "hook", None, {"text": "discovering a hidden river"}, subject="Tokyo",
+            "hook",
+            None,
+            {"text": "discovering a hidden river"},
+            subject="Tokyo",
         )
         assert result == "discovering a hidden river"
 
     def test_two_allcaps_tokens_ambiguous_no_substitution(self):
         """Two all-caps tokens → ambiguous which to swap; pass through unchanged."""
         from app.tasks.template_orchestrate import _is_subject_placeholder
+
         # Whole-text all-caps still matches the existing rule (≤3 words).
         # But "BREAKING news from PERU" has TWO embedded all-caps tokens
         # (4 words, mixed case) — must not match.
@@ -3426,11 +3888,13 @@ class TestSubjectSubstitution:
 
     def test_is_subject_placeholder_detects_welcome_pattern(self):
         from app.tasks.template_orchestrate import _is_subject_placeholder
+
         assert _is_subject_placeholder("Welcome to PERU") is True
         assert _is_subject_placeholder("Living in TOKYO") is True
 
     def test_is_subject_placeholder_rejects_no_allcaps_token(self):
         from app.tasks.template_orchestrate import _is_subject_placeholder
+
         assert _is_subject_placeholder("Welcome to peru") is False
         assert _is_subject_placeholder("Welcome to") is False
 
@@ -3449,8 +3913,10 @@ class TestSubjectSubstituteOptOut:
         """REGRESSION: 'This' is title-case and would otherwise match the
         heuristic; opt-out must return the literal text."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "label", None,
+            "label",
+            None,
             {"sample_text": "This", "subject_substitute": False},
             subject="Morocco",
         )
@@ -3460,8 +3926,10 @@ class TestSubjectSubstituteOptOut:
         """REGRESSION: 'AFRICA' is all-caps and would otherwise be replaced
         with 'MOROCCO'; opt-out must return the literal text."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "label", None,
+            "label",
+            None,
             {"sample_text": "AFRICA", "subject_substitute": False},
             subject="Morocco",
         )
@@ -3470,8 +3938,10 @@ class TestSubjectSubstituteOptOut:
     def test_optout_beats_subject_template(self):
         """`subject_template` would normally interpolate; opt-out wins."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "label", None,
+            "label",
+            None,
             {
                 "sample_text": "that one trip to AFRICA",
                 "subject_template": "that one trip to {subject}",
@@ -3484,8 +3954,10 @@ class TestSubjectSubstituteOptOut:
     def test_optout_beats_subject_part(self):
         """`subject_part` would normally slice and substitute; opt-out wins."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "label", None,
+            "label",
+            None,
             {
                 "sample_text": "lon",
                 "subject_part": "first_half",
@@ -3498,8 +3970,10 @@ class TestSubjectSubstituteOptOut:
     def test_optout_preserves_empty_subject_fallback(self):
         """Opt-out returns the literal text regardless of subject value."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "label", None,
+            "label",
+            None,
             {"sample_text": "This", "subject_substitute": False},
             subject="",
         )
@@ -3510,8 +3984,12 @@ class TestSubjectSubstituteOptOut:
         (substitute via heuristic) behavior is preserved — Dimples Passport
         and similar templates still work."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "label", None, {"sample_text": "PERU"}, subject="Tokyo",
+            "label",
+            None,
+            {"sample_text": "PERU"},
+            subject="Tokyo",
         )
         assert result == "TOKYO"
 
@@ -3519,8 +3997,10 @@ class TestSubjectSubstituteOptOut:
         """Explicit subject_substitute=True is functionally equivalent to
         the field being absent — heuristic still applies."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "label", None,
+            "label",
+            None,
             {"sample_text": "PERU", "subject_substitute": True},
             subject="Tokyo",
         )
@@ -3529,8 +4009,10 @@ class TestSubjectSubstituteOptOut:
     def test_optout_does_not_break_cta_role(self):
         """CTA always returns empty regardless of overlay fields."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         result = _resolve_overlay_text(
-            "cta", None,
+            "cta",
+            None,
             {"sample_text": "click me", "subject_substitute": False},
             subject="Tokyo",
         )
@@ -3544,41 +4026,49 @@ class TestEmbeddedAllcapsToken:
 
     def test_single_word_returns_none(self):
         from app.tasks.template_orchestrate import _embedded_allcaps_token
+
         assert _embedded_allcaps_token("PERU") is None
 
     def test_six_or_more_words_returns_none(self):
         """5-word window is the upper bound; 6 words exit the heuristic."""
         from app.tasks.template_orchestrate import _embedded_allcaps_token
+
         assert _embedded_allcaps_token("a b c d e PERU") is None
 
     def test_length_one_allcaps_filtered(self):
         """Single-letter all-caps ('I', 'A') is excluded — too noisy."""
         from app.tasks.template_orchestrate import _embedded_allcaps_token
+
         assert _embedded_allcaps_token("Welcome to A") is None
 
     def test_non_alpha_token_filtered(self):
         """Tokens with digits/punctuation are excluded."""
         from app.tasks.template_orchestrate import _embedded_allcaps_token
+
         assert _embedded_allcaps_token("Welcome to PERU2") is None
         assert _embedded_allcaps_token("Visit U.S.A. tomorrow") is None
 
     def test_fully_uppercase_returns_none(self):
         """Whole-text caps is handled by the existing rule, not this helper."""
         from app.tasks.template_orchestrate import _embedded_allcaps_token
+
         assert _embedded_allcaps_token("WELCOME TO PERU") is None
 
     def test_happy_path_returns_token(self):
         from app.tasks.template_orchestrate import _embedded_allcaps_token
+
         assert _embedded_allcaps_token("Welcome to PERU") == "PERU"
 
     def test_five_word_with_allcaps_matches(self):
         """Top of the 2-5 word window."""
         from app.tasks.template_orchestrate import _is_subject_placeholder
+
         assert _is_subject_placeholder("a b c d PERU") is True
 
     def test_six_word_with_allcaps_rejects(self):
         """Just past the window — must not match."""
         from app.tasks.template_orchestrate import _is_subject_placeholder
+
         assert _is_subject_placeholder("a b c d e PERU") is False
 
 
@@ -3591,15 +4081,18 @@ class TestSubstituteSubjectMultiWord:
         The token-swap loop replaces only the matched token; subject's
         internal space is preserved by .upper()."""
         from app.tasks.template_orchestrate import _substitute_subject
+
         assert _substitute_subject("Welcome to PERU", "New York") == "Welcome to NEW YORK"
 
     def test_hyphenated_subject_in_allcaps_path(self):
         from app.tasks.template_orchestrate import _substitute_subject
+
         assert _substitute_subject("PERU", "Saint-Tropez") == "SAINT-TROPEZ"
 
     def test_already_uppercase_subject_in_title_case_path(self):
         """Title-case sample returns subject as-is (no .upper() applied)."""
         from app.tasks.template_orchestrate import _substitute_subject
+
         assert _substitute_subject("Peru", "TOKYO") == "TOKYO"
 
 
@@ -3608,31 +4101,38 @@ class TestMatchCasing:
 
     def test_lowercase_sample_lowers_text(self):
         from app.tasks.template_orchestrate import _match_casing
+
         assert _match_casing("Paris", "lon") == "paris"
 
     def test_uppercase_sample_uppers_text(self):
         from app.tasks.template_orchestrate import _match_casing
+
         assert _match_casing("paris", "LON") == "PARIS"
 
     def test_title_sample_titles_text(self):
         from app.tasks.template_orchestrate import _match_casing
+
         assert _match_casing("paris", "Lon") == "Paris"
 
     def test_empty_sample_preserves_text(self):
         from app.tasks.template_orchestrate import _match_casing
+
         assert _match_casing("paris", "") == "paris"
 
     def test_no_cased_chars_in_sample_preserves_text(self):
         from app.tasks.template_orchestrate import _match_casing
+
         # Digits and punctuation carry no casing signal.
         assert _match_casing("Paris", "1234") == "Paris"
 
     def test_empty_text_returns_empty(self):
         from app.tasks.template_orchestrate import _match_casing
+
         assert _match_casing("", "LON") == ""
 
     def test_mixed_case_sample_preserves_text(self):
         from app.tasks.template_orchestrate import _match_casing
+
         # "iPhone"-style mixed casing — neither upper/lower/title — leaves text alone.
         assert _match_casing("paris", "iPhone") == "paris"
 
@@ -3642,39 +4142,47 @@ class TestSplitSubject:
 
     def test_first_half_even_length(self):
         from app.tasks.template_orchestrate import _split_subject
+
         assert _split_subject("london", "first_half") == "lon"
 
     def test_second_half_even_length(self):
         from app.tasks.template_orchestrate import _split_subject
+
         assert _split_subject("london", "second_half") == "don"
 
     def test_first_half_odd_length_takes_ceil(self):
         from app.tasks.template_orchestrate import _split_subject
+
         # Paris (5) → first half "Par" (3 chars), second half "is" (2 chars)
         assert _split_subject("Paris", "first_half") == "Par"
         assert _split_subject("Paris", "second_half") == "is"
 
     def test_first_half_long_word(self):
         from app.tasks.template_orchestrate import _split_subject
+
         assert _split_subject("Amsterdam", "first_half") == "Amste"
         assert _split_subject("Amsterdam", "second_half") == "rdam"
 
     def test_full_returns_subject_unchanged(self):
         from app.tasks.template_orchestrate import _split_subject
+
         assert _split_subject("Tokyo", "full") == "Tokyo"
 
     def test_empty_subject_returns_empty(self):
         from app.tasks.template_orchestrate import _split_subject
+
         assert _split_subject("", "first_half") == ""
         assert _split_subject("", "second_half") == ""
 
     def test_single_char_subject_first_half_is_char(self):
         from app.tasks.template_orchestrate import _split_subject
+
         assert _split_subject("a", "first_half") == "a"
         assert _split_subject("a", "second_half") == ""
 
     def test_unknown_part_returns_full_subject(self):
         from app.tasks.template_orchestrate import _split_subject
+
         assert _split_subject("Tokyo", "third_half") == "Tokyo"
 
 
@@ -3683,27 +4191,32 @@ class TestResolveOverlayTextSubjectPart:
 
     def test_first_half_substitutes_lowercase_fragment(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {"sample_text": "lon", "subject_part": "first_half"}
         assert _resolve_overlay_text("label", None, ov, subject="Paris") == "par"
 
     def test_second_half_substitutes_lowercase_fragment(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {"sample_text": "don", "subject_part": "second_half"}
         assert _resolve_overlay_text("label", None, ov, subject="Paris") == "is"
 
     def test_first_half_long_subject(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {"sample_text": "lon", "subject_part": "first_half"}
         assert _resolve_overlay_text("label", None, ov, subject="Amsterdam") == "amste"
 
     def test_second_half_long_subject(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {"sample_text": "don", "subject_part": "second_half"}
         assert _resolve_overlay_text("label", None, ov, subject="Amsterdam") == "rdam"
 
     def test_empty_subject_falls_back_to_sample_text(self):
         """No user input → render the original placeholder so dry runs still show 'lon'/'don'."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov_first = {"sample_text": "lon", "subject_part": "first_half"}
         ov_second = {"sample_text": "don", "subject_part": "second_half"}
         assert _resolve_overlay_text("label", None, ov_first, subject="") == "lon"
@@ -3717,6 +4230,7 @@ class TestResolveOverlayTextSubjectPart:
         an aesthetic edge case, not a broken state.
         """
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov_first = {"sample_text": "lon", "subject_part": "first_half"}
         ov_second = {"sample_text": "don", "subject_part": "second_half"}
         assert _resolve_overlay_text("label", None, ov_first, subject="a") == "a"
@@ -3724,6 +4238,7 @@ class TestResolveOverlayTextSubjectPart:
 
     def test_full_replaces_with_casing_match(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         # Title-cased sample → title-cased substitution.
         ov_title = {"sample_text": "London", "subject_part": "full"}
         assert _resolve_overlay_text("label", None, ov_title, subject="tokyo") == "Tokyo"
@@ -3733,6 +4248,7 @@ class TestResolveOverlayTextSubjectPart:
 
     def test_subject_part_full_with_empty_subject_falls_back(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {"sample_text": "London", "subject_part": "full"}
         assert _resolve_overlay_text("label", None, ov, subject="") == "London"
 
@@ -3740,6 +4256,7 @@ class TestResolveOverlayTextSubjectPart:
         """Even if sample_text would match _is_subject_placeholder,
         subject_part="first_half" wins and slices instead of full-substituting."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         # "PERU" would be heuristic-matched as a full subject, but the
         # explicit subject_part="first_half" forces a slice.
         ov = {"sample_text": "PERU", "subject_part": "first_half"}
@@ -3752,6 +4269,7 @@ class TestResolveOverlayTextSubjectPart:
         Dimples-style ALL-CAPS placeholder still gets substituted.
         """
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         # Lowercase fragment + no opt-in → renders literally.
         ov_frag = {"sample_text": "lon"}
         assert _resolve_overlay_text("label", None, ov_frag, subject="Paris") == "lon"
@@ -3765,6 +4283,7 @@ class TestResolveOverlayTextSubjectPart:
     def test_unknown_subject_part_value_falls_through(self):
         """An unrecognized subject_part value should not crash; falls through to heuristic."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {"sample_text": "PERU", "subject_part": "left_third"}
         # Fall-through hits the heuristic which substitutes PERU → BRAZIL.
         assert _resolve_overlay_text("label", None, ov, subject="Brazil") == "BRAZIL"
@@ -3772,6 +4291,7 @@ class TestResolveOverlayTextSubjectPart:
     def test_cta_role_still_returns_empty_even_with_subject_part(self):
         """CTA short-circuit happens first — subject_part doesn't change that."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {"sample_text": "lon", "subject_part": "first_half"}
         assert _resolve_overlay_text("cta", None, ov, subject="Paris") == ""
 
@@ -3786,76 +4306,80 @@ class TestResolveOverlayTextSubjectTemplate:
 
     def test_full_substitution(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "text": "that one trip to london",
             "subject_template": "that one trip to {subject}",
         }
-        assert _resolve_overlay_text("label", None, ov, subject="Morocco") == \
-            "that one trip to Morocco"
+        assert (
+            _resolve_overlay_text("label", None, ov, subject="Morocco")
+            == "that one trip to Morocco"
+        )
 
     def test_partial_reveal_via_subject_chars(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "text": "that one trip to lon",
             "subject_template": "that one trip to {subject}",
             "subject_chars": 3,
         }
-        assert _resolve_overlay_text("label", None, ov, subject="Morocco") == \
-            "that one trip to Mor"
+        assert _resolve_overlay_text("label", None, ov, subject="Morocco") == "that one trip to Mor"
 
     def test_partial_reveal_short_subject_renders_full(self):
         """Short city (< subject_chars) renders entirely — no padding."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "text": "that one trip to lon",
             "subject_template": "that one trip to {subject}",
             "subject_chars": 3,
         }
-        assert _resolve_overlay_text("label", None, ov, subject="NY") == \
-            "that one trip to NY"
+        assert _resolve_overlay_text("label", None, ov, subject="NY") == "that one trip to NY"
 
     def test_empty_subject_falls_back_to_text(self):
         """No user input → render the literal text so admin previews still show 'london'."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "text": "that one trip to london",
             "subject_template": "that one trip to {subject}",
         }
-        assert _resolve_overlay_text("label", None, ov, subject="") == \
-            "that one trip to london"
+        assert _resolve_overlay_text("label", None, ov, subject="") == "that one trip to london"
 
     def test_empty_subject_with_partial_falls_back(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "text": "that one trip to lon",
             "subject_template": "that one trip to {subject}",
             "subject_chars": 3,
         }
-        assert _resolve_overlay_text("label", None, ov, subject="") == \
-            "that one trip to lon"
+        assert _resolve_overlay_text("label", None, ov, subject="") == "that one trip to lon"
 
     def test_subject_chars_zero_treats_as_full(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "subject_template": "that one trip to {subject}",
             "subject_chars": 0,
         }
-        assert _resolve_overlay_text("label", None, ov, subject="Paris") == \
-            "that one trip to Paris"
+        assert _resolve_overlay_text("label", None, ov, subject="Paris") == "that one trip to Paris"
 
     def test_subject_chars_invalid_string_ignored(self):
         """A non-int subject_chars (e.g. from corrupted JSONB) shouldn't crash."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "subject_template": "that one trip to {subject}",
             "subject_chars": "not-a-number",
         }
-        assert _resolve_overlay_text("label", None, ov, subject="Paris") == \
-            "that one trip to Paris"
+        assert _resolve_overlay_text("label", None, ov, subject="Paris") == "that one trip to Paris"
 
     def test_subject_template_without_placeholder_falls_through(self):
         """Malformed subject_template (no {subject}) is ignored — falls through to heuristic."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "sample_text": "PERU",
             "subject_template": "no placeholder here",
@@ -3866,24 +4390,31 @@ class TestResolveOverlayTextSubjectTemplate:
     def test_subject_template_beats_subject_part(self):
         """If both fields set, subject_template wins (more specific)."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "text": "that one trip to london",
             "subject_template": "that one trip to {subject}",
             "subject_part": "first_half",
         }
-        assert _resolve_overlay_text("label", None, ov, subject="Morocco") == \
-            "that one trip to Morocco"
+        assert (
+            _resolve_overlay_text("label", None, ov, subject="Morocco")
+            == "that one trip to Morocco"
+        )
 
     def test_cta_role_short_circuits_subject_template(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {"subject_template": "that one trip to {subject}"}
         assert _resolve_overlay_text("cta", None, ov, subject="Morocco") == ""
 
     def test_subject_with_spaces_preserved(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {"subject_template": "that one trip to {subject}"}
-        assert _resolve_overlay_text("label", None, ov, subject="New York") == \
-            "that one trip to New York"
+        assert (
+            _resolve_overlay_text("label", None, ov, subject="New York")
+            == "that one trip to New York"
+        )
 
 
 class TestWakaWakaSubjectTemplate:
@@ -3899,46 +4430,50 @@ class TestWakaWakaSubjectTemplate:
 
     def test_substitutes_user_location(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "text": "",
             "sample_text": "shukran Africa!",
             "subject_template": "shukran {subject}!",
         }
-        assert _resolve_overlay_text("reaction", None, ov, subject="Bali") == \
-            "shukran Bali!"
+        assert _resolve_overlay_text("reaction", None, ov, subject="Bali") == "shukran Bali!"
 
     def test_empty_subject_falls_back_to_africa(self):
         """Blank Location input → renders 'shukran Africa!' (per product spec)."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "text": "",
             "sample_text": "shukran Africa!",
             "subject_template": "shukran {subject}!",
         }
-        assert _resolve_overlay_text("reaction", None, ov, subject="") == \
-            "shukran Africa!"
+        assert _resolve_overlay_text("reaction", None, ov, subject="") == "shukran Africa!"
 
     def test_preserves_input_casing(self):
         """Subject 'new york' → 'shukran new york!' — the subject_template
         branch never auto-uppercases, unlike the heuristic AFRICA→BALI path."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "text": "",
             "sample_text": "shukran Africa!",
             "subject_template": "shukran {subject}!",
         }
-        assert _resolve_overlay_text("reaction", None, ov, subject="new york") == \
-            "shukran new york!"
+        assert (
+            _resolve_overlay_text("reaction", None, ov, subject="new york") == "shukran new york!"
+        )
 
     def test_multi_word_location_preserved(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         ov = {
             "text": "",
             "sample_text": "shukran Africa!",
             "subject_template": "shukran {subject}!",
         }
-        assert _resolve_overlay_text("reaction", None, ov, subject="New York") == \
-            "shukran New York!"
+        assert (
+            _resolve_overlay_text("reaction", None, ov, subject="New York") == "shukran New York!"
+        )
 
 
 # ── Timeout & error_detail tests ──────────────────────────────────────────────
@@ -4113,7 +4648,10 @@ class TestOverlayFineTuning:
     """Tests for Issue 1-5: timing overrides, role overrides, curtain sync, exit clamp."""
 
     def _make_step(
-        self, overlays: list, position: int = 1, clip_id: str = "clip_a",
+        self,
+        overlays: list,
+        position: int = 1,
+        clip_id: str = "clip_a",
     ) -> MagicMock:
         step = MagicMock()
         step.clip_id = clip_id
@@ -4131,11 +4669,19 @@ class TestOverlayFineTuning:
         """start_s_override shifts overlay start from Gemini value."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "hook", "start_s": 0.5, "end_s": 3.0,
-            "start_s_override": 1.0,
-            "position": "center", "effect": "pop-in", "sample_text": "WOW",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "hook",
+                    "start_s": 0.5,
+                    "end_s": 3.0,
+                    "start_s_override": 1.0,
+                    "position": "center",
+                    "effect": "pop-in",
+                    "sample_text": "WOW",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
         assert result[0]["start_s"] == 1.0  # overridden from 0.5
@@ -4144,11 +4690,19 @@ class TestOverlayFineTuning:
         """end_s_override shifts overlay end from Gemini value."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "hook", "start_s": 0.0, "end_s": 5.0,
-            "end_s_override": 3.5,
-            "position": "center", "effect": "pop-in", "sample_text": "WOW",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "hook",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "end_s_override": 3.5,
+                    "position": "center",
+                    "effect": "pop-in",
+                    "sample_text": "WOW",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
         assert result[0]["end_s"] == 3.5  # overridden from 5.0
@@ -4157,10 +4711,18 @@ class TestOverlayFineTuning:
         """Without overrides, Gemini values are used as-is."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "hook", "start_s": 0.5, "end_s": 3.0,
-            "position": "center", "effect": "pop-in", "sample_text": "WOW",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "hook",
+                    "start_s": 0.5,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "effect": "pop-in",
+                    "sample_text": "WOW",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
         assert result[0]["start_s"] == 0.5
@@ -4170,11 +4732,19 @@ class TestOverlayFineTuning:
         """Negative start_s_override is clamped to 0.0."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "hook", "start_s": 0.5, "end_s": 3.0,
-            "start_s_override": -1.0,
-            "position": "center", "effect": "pop-in", "sample_text": "WOW",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "hook",
+                    "start_s": 0.5,
+                    "end_s": 3.0,
+                    "start_s_override": -1.0,
+                    "position": "center",
+                    "effect": "pop-in",
+                    "sample_text": "WOW",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
         assert result[0]["start_s"] == 0.0
@@ -4185,12 +4755,21 @@ class TestOverlayFineTuning:
         """Subject-placeholder label (PERU) preserves recipe styling (WYSIWYG)."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "label", "start_s": 0.0, "end_s": 5.0,
-            "position": "center", "effect": "none",
-            "sample_text": "PERU",
-            "text_size": "medium", "font_style": "display", "text_color": "#FFFFFF",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "PERU",
+                    "text_size": "medium",
+                    "font_style": "display",
+                    "text_color": "#FFFFFF",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "Peru")
         assert len(result) == 1
         # Recipe styling is preserved — no _LABEL_CONFIG override
@@ -4202,12 +4781,21 @@ class TestOverlayFineTuning:
         """Non-subject label ('Welcome to') preserves recipe styling (WYSIWYG)."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "label", "start_s": 0.0, "end_s": 5.0,
-            "position": "center", "effect": "none",
-            "sample_text": "Welcome to",
-            "text_size": "large", "font_style": "sans", "text_color": "#F4D03F",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "Welcome to",
+                    "text_size": "large",
+                    "font_style": "sans",
+                    "text_color": "#F4D03F",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
         assert result[0]["text_size"] == "large"
@@ -4216,11 +4804,18 @@ class TestOverlayFineTuning:
         """First-slot prefix label starts at 2.0s (not Gemini's 0.0)."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "label", "start_s": 0.0, "end_s": 5.0,
-            "position": "center", "effect": "none",
-            "sample_text": "Welcome to",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "Welcome to",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
         assert result[0]["start_s"] == 2.0
@@ -4229,11 +4824,18 @@ class TestOverlayFineTuning:
         """First-slot subject label starts at 3.0s (not Gemini's 0.0)."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "label", "start_s": 0.0, "end_s": 5.0,
-            "position": "center", "effect": "none",
-            "sample_text": "PERU",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "PERU",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "Peru")
         assert len(result) == 1
         assert result[0]["start_s"] == 3.0
@@ -4243,13 +4845,24 @@ class TestOverlayFineTuning:
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step1 = self._make_step([], position=1)
-        step2 = self._make_step([{
-            "role": "label", "start_s": 0.5, "end_s": 4.0,
-            "position": "center", "effect": "none",
-            "sample_text": "Welcome to",
-        }], position=2)
+        step2 = self._make_step(
+            [
+                {
+                    "role": "label",
+                    "start_s": 0.5,
+                    "end_s": 4.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "Welcome to",
+                }
+            ],
+            position=2,
+        )
         result = _collect_absolute_overlays(
-            [step1, step2], [5.0, 5.0], None, "",
+            [step1, step2],
+            [5.0, 5.0],
+            None,
+            "",
         )
         assert len(result) == 1
         # cumulative_s = 5.0 (after first slot), so start_s = 5.0 + 0.5 = 5.5
@@ -4259,11 +4872,18 @@ class TestOverlayFineTuning:
         """Subject label preserves recipe effect (WYSIWYG, no forced font-cycle)."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "label", "start_s": 0.0, "end_s": 5.0,
-            "position": "center", "effect": "none",
-            "sample_text": "PERU",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "PERU",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "Peru")
         assert len(result) == 1
         assert result[0]["effect"] == "none"
@@ -4272,11 +4892,18 @@ class TestOverlayFineTuning:
         """Subject label gets font_cycle_accel_at_s=8.0 from config."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "label", "start_s": 0.0, "end_s": 10.0,
-            "position": "center", "effect": "none",
-            "sample_text": "PERU",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 10.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "PERU",
+                }
+            ]
+        )
         step.slot["target_duration_s"] = 10.0
         result = _collect_absolute_overlays([step], [10.0], None, "Peru")
         assert len(result) == 1
@@ -4286,17 +4913,27 @@ class TestOverlayFineTuning:
         """Curtain-close slots are pre-burned so _collect skips them entirely."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "label", "start_s": 0.0, "end_s": 10.0,
-            "position": "center", "effect": "font-cycle",
-            "sample_text": "PERU",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 10.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "PERU",
+                }
+            ]
+        )
         step.slot["target_duration_s"] = 10.0
         interstitial_map = {
             1: {"type": "curtain-close", "animate_s": 1.0, "hold_s": 1.0},
         }
         result = _collect_absolute_overlays(
-            [step], [10.0], None, "Peru",
+            [step],
+            [10.0],
+            None,
+            "Peru",
             interstitial_map=interstitial_map,
         )
         # Pre-burned onto slot clip → skipped here
@@ -4306,12 +4943,21 @@ class TestOverlayFineTuning:
         """Hook role with non-label-like text keeps Gemini defaults."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "hook", "start_s": 0.0, "end_s": 5.0,
-            "position": "center", "effect": "pop-in",
-            "sample_text": "discovering a hidden river",
-            "text_size": "medium", "font_style": "display", "text_color": "#FFFFFF",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "hook",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "pop-in",
+                    "sample_text": "discovering a hidden river",
+                    "text_size": "medium",
+                    "font_style": "display",
+                    "text_color": "#FFFFFF",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
         assert result[0]["text_size"] == "medium"
@@ -4324,15 +4970,26 @@ class TestOverlayFineTuning:
         """Curtain-close slot overlays are pre-burned, so skipped in _collect."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "hook", "start_s": 0.0, "end_s": 7.0,
-            "position": "center", "effect": "none", "sample_text": "WOW",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "hook",
+                    "start_s": 0.0,
+                    "end_s": 7.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "WOW",
+                }
+            ]
+        )
         interstitial_map = {
             1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
         }
         result = _collect_absolute_overlays(
-            [step], [5.0], None, "",
+            [step],
+            [5.0],
+            None,
+            "",
             interstitial_map=interstitial_map,
         )
         assert len(result) == 0  # pre-burned, skipped
@@ -4341,10 +4998,18 @@ class TestOverlayFineTuning:
         """Without curtain-close, end_s is NOT clamped to slot end."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "hook", "start_s": 0.0, "end_s": 7.0,
-            "position": "center", "effect": "none", "sample_text": "WOW",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "hook",
+                    "start_s": 0.0,
+                    "end_s": 7.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "WOW",
+                }
+            ]
+        )
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
         assert result[0]["end_s"] == 7.0  # not clamped
@@ -4353,15 +5018,26 @@ class TestOverlayFineTuning:
         """Even short overlays on curtain-close slots are pre-burned, skipped."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "hook", "start_s": 0.0, "end_s": 4.0,
-            "position": "center", "effect": "none", "sample_text": "WOW",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "hook",
+                    "start_s": 0.0,
+                    "end_s": 4.0,
+                    "position": "center",
+                    "effect": "none",
+                    "sample_text": "WOW",
+                }
+            ]
+        )
         interstitial_map = {
             1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
         }
         result = _collect_absolute_overlays(
-            [step], [5.0], None, "",
+            [step],
+            [5.0],
+            None,
+            "",
             interstitial_map=interstitial_map,
         )
         assert len(result) == 0  # pre-burned, skipped
@@ -4372,15 +5048,26 @@ class TestOverlayFineTuning:
         """Subject labels get default accel_at_s from _LABEL_CONFIG without curtain."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "label", "start_s": 0.0, "end_s": 10.0,
-            "position": "center", "effect": "font-cycle", "sample_text": "PERU",
-        }])
+        step = self._make_step(
+            [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 10.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "PERU",
+                }
+            ]
+        )
         step.slot["target_duration_s"] = 10.0
 
         # No curtain-close → normal collection
         result = _collect_absolute_overlays(
-            [step], [10.0], None, "Peru",
+            [step],
+            [10.0],
+            None,
+            "Peru",
             interstitial_map={},
         )
         assert len(result) == 1
@@ -4405,14 +5092,16 @@ class TestPreBurnCurtainFontCycleEndS:
         step.slot = {
             "position": 5,
             "target_duration_s": 7.0,
-            "text_overlays": [{
-                "role": "label",
-                "start_s": 0.0,
-                "end_s": 5.0,  # Gemini says 5s, slot is 7s
-                "position": "center",
-                "effect": "font-cycle",
-                "sample_text": "PERU",
-            }],
+            "text_overlays": [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,  # Gemini says 5s, slot is 7s
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "PERU",
+                }
+            ],
         }
 
         inter = {
@@ -4428,7 +5117,14 @@ class TestPreBurnCurtainFontCycleEndS:
             mock_gen.return_value = []  # no PNGs → returns original path
 
             _pre_burn_curtain_slot_text(
-                str(clip_file), step, 7.0, None, "Peru", 4, str(tmp_path), inter,
+                str(clip_file),
+                step,
+                7.0,
+                None,
+                "Peru",
+                4,
+                str(tmp_path),
+                inter,
             )
 
             # Verify the overlay passed to generate_text_overlay_png
@@ -4452,14 +5148,16 @@ class TestPreBurnCurtainFontCycleEndS:
         step.slot = {
             "position": 5,
             "target_duration_s": 7.0,
-            "text_overlays": [{
-                "role": "label",
-                "start_s": 0.0,
-                "end_s": 5.0,
-                "position": "center",
-                "effect": "font-cycle",
-                "sample_text": "PERU",
-            }],
+            "text_overlays": [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 5.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "PERU",
+                }
+            ],
         }
 
         inter = {
@@ -4475,7 +5173,14 @@ class TestPreBurnCurtainFontCycleEndS:
             mock_gen.return_value = []
 
             _pre_burn_curtain_slot_text(
-                str(clip_file), step, 7.0, None, "Peru", 4, str(tmp_path), inter,
+                str(clip_file),
+                step,
+                7.0,
+                None,
+                "Peru",
+                4,
+                str(tmp_path),
+                inter,
             )
 
             overlays_arg = mock_gen.call_args[0][0]
@@ -4494,14 +5199,16 @@ class TestPreBurnCurtainFontCycleEndS:
         step.slot = {
             "position": 5,
             "target_duration_s": 7.0,
-            "text_overlays": [{
-                "role": "label",
-                "start_s": 0.0,
-                "end_s": 3.0,
-                "position": "top-center",
-                "effect": "fade-in",
-                "sample_text": "Welcome to",
-            }],
+            "text_overlays": [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 3.0,
+                    "position": "top-center",
+                    "effect": "fade-in",
+                    "sample_text": "Welcome to",
+                }
+            ],
         }
 
         inter = {
@@ -4517,7 +5224,14 @@ class TestPreBurnCurtainFontCycleEndS:
             mock_gen.return_value = []
 
             _pre_burn_curtain_slot_text(
-                str(clip_file), step, 7.0, None, "Peru", 4, str(tmp_path), inter,
+                str(clip_file),
+                step,
+                7.0,
+                None,
+                "Peru",
+                4,
+                str(tmp_path),
+                inter,
             )
 
             overlays_arg = mock_gen.call_args[0][0]
@@ -4553,8 +5267,13 @@ class TestInterstitialZeroHoldSkip:
         ]
 
         interstitial_list = [
-            {"type": "curtain-close", "after_slot": 1, "hold_s": 0.0,
-             "animate_s": 2.0, "hold_color": "#000000"},
+            {
+                "type": "curtain-close",
+                "after_slot": 1,
+                "hold_s": 0.0,
+                "animate_s": 2.0,
+                "hold_color": "#000000",
+            },
         ]
 
         def fake_reframe(**kwargs):
@@ -4571,6 +5290,7 @@ class TestInterstitialZeroHoldSkip:
             ) as mock_insert,
             patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
         ):
+
             def fake_ffmpeg(cmd, **kw):
                 if "-y" in cmd:
                     idx = cmd.index("-y") + 1
@@ -4613,8 +5333,13 @@ class TestInterstitialZeroHoldSkip:
         ]
 
         interstitial_list = [
-            {"type": "curtain-close", "after_slot": 1, "hold_s": 1.0,
-             "animate_s": 2.0, "hold_color": "#000000"},
+            {
+                "type": "curtain-close",
+                "after_slot": 1,
+                "hold_s": 1.0,
+                "animate_s": 2.0,
+                "hold_color": "#000000",
+            },
         ]
 
         def fake_reframe(**kwargs):
@@ -4631,6 +5356,7 @@ class TestInterstitialZeroHoldSkip:
             ) as mock_insert,
             patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
         ):
+
             def fake_ffmpeg(cmd, **kw):
                 if "-y" in cmd:
                     idx = cmd.index("-y") + 1
@@ -4670,8 +5396,13 @@ class TestInterstitialZeroHoldSkip:
         ]
 
         interstitial_list = [
-            {"type": "curtain-close", "after_slot": 1, "hold_s": 0.0,
-             "animate_s": 2.0, "hold_color": "#000000"},
+            {
+                "type": "curtain-close",
+                "after_slot": 1,
+                "hold_s": 0.0,
+                "animate_s": 2.0,
+                "hold_color": "#000000",
+            },
         ]
 
         def fake_reframe(**kwargs):
@@ -4688,6 +5419,7 @@ class TestInterstitialZeroHoldSkip:
             ),
             patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
         ):
+
             def fake_ffmpeg(cmd, **kw):
                 if "-y" in cmd:
                     idx = cmd.index("-y") + 1
@@ -4719,6 +5451,7 @@ class TestInterstitialZeroHoldSkip:
 # existing recipe. TemplateRecipe is a strict dataclass; without stripping
 # the routing-only field, every legacy template crashes at init.
 
+
 class TestTemplateKindStrip:
     def test_template_recipe_init_succeeds_with_template_kind_in_data(self):
         """Recipe payload (as backfilled by migration 0010) must construct
@@ -4744,11 +5477,13 @@ class TestTemplateKindStrip:
 
         # Direct init MUST raise — proves the regression existed
         import pytest
+
         with pytest.raises(TypeError, match="template_kind"):
             TemplateRecipe(**recipe_data)
 
         # The shared build_recipe helper MUST succeed
         from app.pipeline.agents.gemini_analyzer import build_recipe
+
         recipe = build_recipe(recipe_data)
         assert recipe.shot_count == 3
         assert len(recipe.slots) == 3
@@ -4773,48 +5508,62 @@ class TestRuleOfThirdsHookLiterals:
             transcript="",
             hook_text="pilot in cockpit",
             hook_score=7.0,
-            best_moments=[{
-                "start_s": 0.0,
-                "end_s": 2.0,
-                "energy": 6.0,
-                "description": "pilot adjusts controls",
-            }],
+            best_moments=[
+                {
+                    "start_s": 0.0,
+                    "end_s": 2.0,
+                    "energy": 6.0,
+                    "description": "pilot adjusts controls",
+                }
+            ],
             clip_path="/tmp/clip.mp4",
         )
 
     def test_overlay_the_returns_literal(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         overlay = {
             "role": "hook",
             "text": "The",
             "subject_substitute": False,
         }
         result = _resolve_overlay_text(
-            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+            "hook",
+            self._clip_meta_with_hook(),
+            overlay,
+            subject="Vieques",
         )
         assert result == "The"
 
     def test_overlay_rule_of_returns_literal(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         overlay = {
             "role": "hook",
             "text": "Rule of",
             "subject_substitute": False,
         }
         result = _resolve_overlay_text(
-            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+            "hook",
+            self._clip_meta_with_hook(),
+            overlay,
+            subject="Vieques",
         )
         assert result == "Rule of"
 
     def test_overlay_thirds_returns_literal(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         overlay = {
             "role": "hook",
             "text": "Thirds",
             "subject_substitute": False,
         }
         result = _resolve_overlay_text(
-            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+            "hook",
+            self._clip_meta_with_hook(),
+            overlay,
+            subject="Vieques",
         )
         assert result == "Thirds"
 
@@ -4828,6 +5577,7 @@ class TestRuleOfThirdsHookLiterals:
         """
         from app.tasks.template_orchestrate import _is_subject_placeholder
         from scripts.seed_rule_of_thirds import build_recipe
+
         recipe = build_recipe()
         hook_seen = False
         for slot in recipe["slots"]:
@@ -4873,6 +5623,7 @@ class TestNoGeminiTextLeaks:
         in a diff. Reintroducing the helper without updating this test
         is a deliberate review event."""
         from app.tasks import template_orchestrate
+
         assert not hasattr(template_orchestrate, "_consensus_subject"), (
             "_consensus_subject was reintroduced. This function lets "
             "Gemini's clip_meta.detected_subject become subject-substitution "
@@ -4890,6 +5641,7 @@ class TestNoGeminiTextLeaks:
         import inspect
 
         from app.tasks import template_orchestrate
+
         src = inspect.getsource(template_orchestrate._assemble_clips)
         assert "_consensus_subject" not in src, (
             "_assemble_clips references _consensus_subject — the Gemini "
@@ -4916,6 +5668,7 @@ class TestNoGeminiTextLeaks:
         import inspect
 
         from app.tasks import template_orchestrate
+
         src = inspect.cleandoc(inspect.getsource(template_orchestrate._assemble_clips))
         tree = ast.parse(src)
         fn = tree.body[0]
@@ -4923,9 +5676,7 @@ class TestNoGeminiTextLeaks:
         for node in ast.walk(fn):
             if not isinstance(node, ast.Assign):
                 continue
-            if not any(
-                isinstance(t, ast.Name) and t.id == "subject" for t in node.targets
-            ):
+            if not any(isinstance(t, ast.Name) and t.id == "subject" for t in node.targets):
                 continue
             # Walk the RHS; any function call that takes `clip_metas` as
             # an argument is a Gemini-leak reintroduction.
@@ -4951,6 +5702,7 @@ class TestNoGeminiTextLeaks:
         sample is empty, the resolver must return empty — not the
         Gemini-derived hook text. Pins the lack of the fallback branch."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
+
         meta = ClipMeta(
             clip_id="x",
             transcript="",
@@ -4984,8 +5736,14 @@ class TestSinglePassRuntimeFallback:
         clip_file = tmp_path / f"clip_{slot_idx}.mp4"
         clip_file.write_bytes(b"fake")
         probe = VideoProbe(
-            duration_s=10.0, fps=30.0, width=1920, height=1080,
-            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            duration_s=10.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="16:9",
+            file_size_bytes=4,
         )
         step = MagicMock()
         step.clip_id = f"clip_{slot_idx}"
@@ -5029,9 +5787,7 @@ class TestSinglePassRuntimeFallback:
             mock_single.assert_called_once()
             mock_reframe.assert_called_once()
             # Canonical alert key must be emitted.
-            warning_events = [
-                call.args[0] for call in mock_log.warning.call_args_list
-            ]
+            warning_events = [call.args[0] for call in mock_log.warning.call_args_list]
             assert "single_pass_failed_falling_back_multipass" in warning_events
 
     def test_single_pass_filter_syntax_error_also_falls_back(self, tmp_path):
@@ -5052,8 +5808,7 @@ class TestSinglePassRuntimeFallback:
             patch("app.tasks.template_orchestrate.log") as mock_log,
         ):
             mock_single.side_effect = SinglePassError(
-                "single-pass ffmpeg failed (rc=1, output=/tmp/x):\n"
-                "Invalid filter graph: [bad]"
+                "single-pass ffmpeg failed (rc=1, output=/tmp/x):\nInvalid filter graph: [bad]"
             )
             _assemble_clips(
                 steps=[step],
@@ -5065,9 +5820,7 @@ class TestSinglePassRuntimeFallback:
             )
             mock_single.assert_called_once()
             mock_reframe.assert_called_once()
-            warning_events = [
-                call.args[0] for call in mock_log.warning.call_args_list
-            ]
+            warning_events = [call.args[0] for call in mock_log.warning.call_args_list]
             assert "single_pass_failed_falling_back_multipass" in warning_events
 
     def test_single_pass_unsupported_still_falls_back(self, tmp_path):
@@ -5097,9 +5850,7 @@ class TestSinglePassRuntimeFallback:
             )
             mock_single.assert_called_once()
             mock_reframe.assert_called_once()
-            warning_events = [
-                call.args[0] for call in mock_log.warning.call_args_list
-            ]
+            warning_events = [call.args[0] for call in mock_log.warning.call_args_list]
             # The pre-existing alert key remains, NOT the new SinglePassError
             # key — the two failure modes are still distinguishable in logs.
             assert "single_pass_unsupported_fallback_to_multi" in warning_events

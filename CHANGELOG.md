@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.40.0.1] — 2026-08-19
+
+### Fixed
+- **Calm single-shot footage no longer gets a hook written about the wrong clip.** When the AI's clip analysis finds no distinct "best moments" in a static clip (a talking-head take, product b-roll), the pipeline used to throw the whole analysis away and fall back to a bare transcription — so hook text, subject, and quality scores were lost, the hero clip was picked by a coin-flip tie, and the music matcher was left with only a flat neutral energy score for the footage (prod jobs 82fb4c57/f95b43b8: 6 of 7 clips affected, producing an off-topic "subscribe" hook on a coffee ad). The real analysis is now kept and only the moment windows are synthesized, with the clip's actual subject carried into matching (synthetic windows are flagged `moments_synthetic`, never cached, and still carry the neutral 5.0 energy; they surface in the job-debug view as `gemini_moments_backfilled`). Bumping the clip-analysis cache schema (s1→s2) orphans existing cached analyses — a one-time re-analysis cost per clip on first access. Clips analyzed via prefetch get the same treatment on cache read, and a Whisper transcript still backstops clips where the analysis omitted speech.
+
 ## [0.40.0.0] — 2026-08-18
 
 ### Added

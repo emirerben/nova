@@ -184,6 +184,14 @@ def test_set_skips_failed_metas(fake_redis):
     assert clip_cache.get_cached_meta("hash1", "ball") is None
 
 
+def test_set_skips_synthetic_moments_metas(fake_redis):
+    """Backfilled moments are job-specific heuristics — a later run should
+    retry the real Gemini path rather than inherit them from cache."""
+    synth = _meta(moments_synthetic=True)
+    clip_cache.set_cached_meta("hash1", "ball", synth)
+    assert clip_cache.get_cached_meta("hash1", "ball") is None
+
+
 def test_clip_path_never_serialized(fake_redis):
     """clip_path is call-site-specific (the local download path on this run);
     it must not survive into the cache."""

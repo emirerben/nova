@@ -931,12 +931,12 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 **Priority:** P2 — add before marketing drives volume
 **Depends on:** Usage baseline from real jobs
 
-### Content-aware `_fallback_moments()` (added 2026-05-16)
-**What:** Replace the three hardcoded `[0, min(clip_dur, 5/10/15)]` windows in `_fallback_moments()` (`app/tasks/template_orchestrate.py:1359`) with content-aware moments derived from the Whisper transcript — e.g., longest speech bursts, word-density peaks.
-**Why:** Current fallback is a last-resort code path that produces near-useless moments. For clips ≤ 5s all three windows collapse to identical `[0, clip_dur]`, leaving the matcher with no real choice. When the matcher picks a fallback clip the rendered slot is structurally weak. Surfaced during the v0.4.22.0 investigation — clip 3 of job `9ec8e5ff-…` was assigned its single collapsed `[0, 5]` fallback moment for a 10s slot, producing the 6s silent-failure output.
-**How:** Use the Whisper transcript already computed at `template_orchestrate.py:1321`. Score windows by speech density / longest contiguous phrase. Generate 2-3 candidates of different lengths so the matcher still has options.
+### Content-aware `_fallback_moments()` (added 2026-05-16; scope grew 2026-08-19)
+**What:** Replace the hardcoded `[0, min(clip_dur, 5/10/15)]` windows (plus a full-clip window past 21s) in `_fallback_moments()` (`app/tasks/template_orchestrate.py`) with content-aware moments derived from the Whisper transcript — e.g., longest speech bursts, word-density peaks. As of v0.40.0.1 the empty-moments backfill and cache-sweep paths pass a content-derived `description` (`_synthetic_moment_description`: detected_subject/hook_text, 80-char cap, literal "fallback" when both are empty); the genuine Whisper-failure fallback still passes no description, and window *timing* + `energy` (flat 5.0) are still hardcoded on every path.
+**Why:** No longer a last-resort path: v0.40.0.1 also uses these windows to backfill preserved Gemini analyses whose `best_moments` came back legitimately empty (`moments_synthetic=True` — static talking-head/b-roll clips hit this routinely, see agents/DECISIONS.md 2026-08-19). For clips ≤ 5s all windows collapse to identical `[0, clip_dur]`, leaving the matcher with no real choice. Originally surfaced in the v0.4.22.0 investigation — clip 3 of job `9ec8e5ff-…` was assigned its single collapsed `[0, 5]` fallback moment for a 10s slot, producing the 6s silent-failure output.
+**How:** Use the Whisper/Gemini transcript already on the meta. Score windows by speech density / longest contiguous phrase. Generate 2-3 candidates of different lengths so the matcher still has options. Keep `moments_synthetic=True` on the result — synthetic windows must stay uncached (`test_set_skips_synthetic_moments_metas`).
 **Effort:** S (human: ~3h / CC: ~20 min)
-**Priority:** P3 — low-leverage if Gemini reliability stays high (the common case never hits fallback)
+**Priority:** P2 (was P3) — the backfill path now runs for every static clip with legit-empty best_moments, not just Gemini failures
 **Depends on:** nothing — standalone PR
 
 ### Multiple Template Support

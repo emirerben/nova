@@ -1417,3 +1417,52 @@ rollback before serializing; the two hard business-rule checks run before auto-d
 `feasible_guided_duration_s` credits a video only when its own duration clears the renderer's
 per-moment minimum; the auto-finalize intent is read off the persisted `approval_mode` field instead
 of a task kwarg. See `docs/pipelines/guided-edit.md` for the full mechanism.
+
+## [2026-08-19] Empty best_moments is an answer, not a failure — keep the Gemini analysis, synthesize the windows (v0.40.0.1)
+
+**Incident:** prod jobs `82fb4c57`/`f95b43b8` — 6 of 7 clips across the pair (a coffee-ad shoot)
+were calm single-shot footage (talking-head take, product b-roll). Gemini analyzed each successfully
+but returned `best_moments: []`, and `_analyze_one` (`app/tasks/template_orchestrate.py`) treated
+that as a hard failure (`GeminiAnalysisError`), discarding the whole ClipMeta for the bare Whisper
+fallback. Each discarded field poisoned a different downstream consumer: hero selection lost
+`hook_score` (coin-flip tie at the default), the hook was written about the wrong clip (off-topic
+"subscribe" hook on a coffee ad), `detected_subject` vanished from matching, and the music matcher
+was left with the fallback's flat `energy: 5.0` — the field's neutral midpoint, carrying no real
+signal. Note the fix does NOT change energy: synthetic windows still carry the flat 5.0 (only the
+subject/description improved); content-aware energy stays open in TODOS.md.
+
+**Fix:** empty `best_moments` from a successful analysis keeps the real meta and synthesizes only
+the moment windows: `_fallback_moments(clip_dur, description=...)` duration-bucketed windows,
+labeled via `_synthetic_moment_description` with the clip's real `detected_subject`/`hook_text`
+instead of the literal `"fallback"` (agentic_matcher builds router candidates from
+`moment.description` before `meta.hook_text`). New `ClipMeta.moments_synthetic=True` marks them.
+When Gemini also omitted the transcript, a best-effort Whisper pass restores the old discard path's
+transcript guarantee.
+
+**Cache contract (the subtle half):**
+- Synthetic moments are job-local heuristics — `set_cached_meta` refuses `moments_synthetic` metas
+  (same rule as degraded/failed) so a later run retries the real Gemini path.
+- Prefetch (`services/clip_prefetch.py`) DOES cache legitimately-empty `best_moments`, and cache
+  hits skip `_analyze_one` entirely — so `_backfill_cached_empty_moments` sweeps cache-hit metas
+  on BOTH the full-hit and partial-hit returns of `_analyze_clips_with_cache` (idempotent for
+  freshly analyzed metas; skips image metas via the runtime-only `is_image` attr — not a ClipMeta
+  field, so it never survives a cache round-trip; unprobed clips default to 30.0s via
+  `_clip_duration`). Without the sweep, a warm cache renders worse than a cold run of the same
+  clip.
+- Adding the field bumped `CACHE_SCHEMA_VERSION` `s1`→`s2` in `pipeline/clip_cache.py`: any new
+  ClipMeta field MUST bump it, or pre-field cache entries deserialize with silently-defaulted
+  values. `scripts/export_clip_metadata_fixtures.py` now parses the key's schema segment
+  generically instead of hardcoding `s1`.
+- The generative path threads the field through `_clip_meta_to_cache`/`_clip_meta_from_cache` in
+  `tasks/generative_build.py` — same class of trap as the clip_metadata parse()-threading bug
+  (#398): a field left out of these mirrors silently defaults on round-trip.
+
+**Guards:** `test_empty_best_moments_backfills_moments_keeps_analysis`,
+`test_empty_moments_and_empty_transcript_gets_whisper_backstop`,
+`test_backfill_cached_empty_moments_sweep`, `test_moments_backfilled_records_phase_log_event`
+(tests/tasks/test_template_orchestrate.py); `test_set_skips_synthetic_moments_metas`
+(tests/pipeline/test_clip_cache.py).
+
+**Revisit if:** synthetic windows show up in a rendered-quality regression (the windows are still
+duration buckets, not content-aware — see the "Content-aware `_fallback_moments()`" TODO), or a
+new consumer starts trusting `best_moments` energy/timing without checking `moments_synthetic`.

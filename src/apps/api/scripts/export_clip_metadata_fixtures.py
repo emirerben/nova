@@ -2,7 +2,7 @@
 
 The clip_metadata agent's output (best_moments) is not persisted in Postgres —
 only the chosen window per JobClip is. But every successful analyze_clip call
-is content-addressably cached in Redis with key prefix `clip_analysis:v1:s1:*`,
+is content-addressably cached in Redis with key prefix `clip_analysis:v1:s2:*`,
 so we can reconstruct historical fixtures from there.
 
 Output goes to tests/fixtures/agent_evals/clip_metadata/prod_snapshots/.
@@ -158,7 +158,7 @@ def main() -> None:
             print(f"[skip] decode failed for {raw_key!r}: {exc}", file=sys.stderr)
             continue
 
-        # Key shape: clip_analysis:v1:s1:{filter_hint_hash}:{clip_hash}
+        # Key shape: clip_analysis:v1:{schema}:{filter_hint_hash}:{clip_hash}
         key_str = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else str(raw_key)
         parts = key_str.split(":")
         if len(parts) < 5:
