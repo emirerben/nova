@@ -436,6 +436,20 @@ class Settings(BaseSettings):
     # restart workers); read lazily per matte compute, no deploy needed.
     matte_rvm_enabled: bool = True
 
+    # Depth-based scene-occluder backbone (non-person subjects — landmarks,
+    # objects, scenery with no person in frame). When True, the subject-matte
+    # engine (`app.pipeline.subject_matte`) attempts a second pass with a
+    # monocular depth model (Depth Anything V2 small, onnxruntime CPU) after
+    # the person pass finds nothing, so "text behind subject" can occlude
+    # against a non-person foreground (e.g. a hill/landmark against sky).
+    # Default OFF (dark-ship): no depth inference ever runs, no extra GCS
+    # scratch object is written, output is byte-identical to before this
+    # flag existed. Flip on Fly (`fly secrets set
+    # MATTE_DEPTH_OCCLUDER_ENABLED=true --app nova-video` then restart
+    # workers); read lazily per matte compute (`_depth_occluder_enabled()`),
+    # no deploy needed. Rollback = flip back to False + restart.
+    matte_depth_occluder_enabled: bool = False
+
     # Linear LRCLIB re-anchor for synced lyrics. When True (default), the
     # alignment layer can fit a small per-time drift curve before falling
     # back to the existing uniform median / single-L0 paths. This catches
