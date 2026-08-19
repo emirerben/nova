@@ -1420,14 +1420,16 @@ of a task kwarg. See `docs/pipelines/guided-edit.md` for the full mechanism.
 
 ## [2026-08-19] Empty best_moments is an answer, not a failure — keep the Gemini analysis, synthesize the windows (v0.40.0.1)
 
-**Incident:** prod jobs `82fb4c57`/`f95b43b8` — 6 of 7 clips in a coffee-ad job were calm
-single-shot footage (talking-head take, product b-roll). Gemini analyzed each successfully but
-returned `best_moments: []`, and `_analyze_one` (`app/tasks/template_orchestrate.py`) treated that
-as a hard failure (`GeminiAnalysisError`), discarding the whole ClipMeta for the bare Whisper
+**Incident:** prod jobs `82fb4c57`/`f95b43b8` — 6 of 7 clips across the pair (a coffee-ad shoot)
+were calm single-shot footage (talking-head take, product b-roll). Gemini analyzed each successfully
+but returned `best_moments: []`, and `_analyze_one` (`app/tasks/template_orchestrate.py`) treated
+that as a hard failure (`GeminiAnalysisError`), discarding the whole ClipMeta for the bare Whisper
 fallback. Each discarded field poisoned a different downstream consumer: hero selection lost
 `hook_score` (coin-flip tie at the default), the hook was written about the wrong clip (off-topic
 "subscribe" hook on a coffee ad), `detected_subject` vanished from matching, and the music matcher
-read the fallback's hardcoded `energy: 5.0` as high energy on calm footage.
+was left with the fallback's flat `energy: 5.0` — the field's neutral midpoint, carrying no real
+signal. Note the fix does NOT change energy: synthetic windows still carry the flat 5.0 (only the
+subject/description improved); content-aware energy stays open in TODOS.md.
 
 **Fix:** empty `best_moments` from a successful analysis keeps the real meta and synthesizes only
 the moment windows: `_fallback_moments(clip_dur, description=...)` duration-bucketed windows,
@@ -1443,8 +1445,10 @@ transcript guarantee.
 - Prefetch (`services/clip_prefetch.py`) DOES cache legitimately-empty `best_moments`, and cache
   hits skip `_analyze_one` entirely — so `_backfill_cached_empty_moments` sweeps cache-hit metas
   on BOTH the full-hit and partial-hit returns of `_analyze_clips_with_cache` (idempotent for
-  freshly analyzed metas). Without the sweep, a warm cache renders worse than a cold run of the
-  same clip.
+  freshly analyzed metas; skips image metas via the runtime-only `is_image` attr — not a ClipMeta
+  field, so it never survives a cache round-trip; unprobed clips default to 30.0s via
+  `_clip_duration`). Without the sweep, a warm cache renders worse than a cold run of the same
+  clip.
 - Adding the field bumped `CACHE_SCHEMA_VERSION` `s1`→`s2` in `pipeline/clip_cache.py`: any new
   ClipMeta field MUST bump it, or pre-field cache entries deserialize with silently-defaulted
   values. `scripts/export_clip_metadata_fixtures.py` now parses the key's schema segment
